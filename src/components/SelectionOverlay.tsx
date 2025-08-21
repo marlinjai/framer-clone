@@ -3,6 +3,7 @@
 'use client';
 import React, { useRef, useEffect, useState } from 'react';
 import { ComponentInstance } from '../models/ComponentModel';
+import { observer } from 'mobx-react-lite';
 
 interface SelectionOverlayProps {
   selectedComponent?: ComponentInstance;
@@ -10,11 +11,11 @@ interface SelectionOverlayProps {
   isVisible: boolean;
 }
 
-export default function SelectionOverlay({ 
+export default observer(({ 
   selectedComponent, 
   zoom, 
   isVisible 
-}: SelectionOverlayProps) {
+}: SelectionOverlayProps) => {
   const overlayRef = useRef<HTMLDivElement>(null);
   const [bounds, setBounds] = useState<DOMRect | null>(null);
 
@@ -70,4 +71,4 @@ export default function SelectionOverlay({
       </div>
     </div>
   );
-}
+});

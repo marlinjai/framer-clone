@@ -4,7 +4,7 @@
 import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { ComponentInstance } from '../models/ComponentModel';
-import { EditorUIInstance, EditorTool } from '../stores/EditorUIStore';
+import { EditorUIType, EditorTool } from '../stores/EditorUIStore';
 
 // Component Registry for function components
 // In a real app, this would be dynamically populated
@@ -52,16 +52,16 @@ interface ComponentRendererProps {
   component: ComponentInstance;
   className?: string;
   style?: React.CSSProperties;
-  editorUI?: EditorUIInstance; // Optional for design-time interactions
+  editorUI?: EditorUIType; // Optional for design-time interactions
 }
 
 // Recursive component renderer with MST observer for reactivity
-const ComponentRenderer: React.FC<ComponentRendererProps> = observer(({ 
+const ComponentRenderer = observer(({ 
   component, 
   className,
   style,
   editorUI 
-}) => {
+}: ComponentRendererProps) => {
   // Handle component selection clicks
   const handleComponentClick = (e: React.MouseEvent) => {
     // Only handle clicks if we have editorUI and SELECT tool is active

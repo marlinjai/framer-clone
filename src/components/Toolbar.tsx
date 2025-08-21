@@ -4,7 +4,7 @@
 import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { PiCursorLight, PiHandGrabbingBold } from "react-icons/pi";
-import { EditorTool, EditorUIInstance } from '../stores/EditorUIStore';
+import { EditorTool, EditorUIType } from '../stores/EditorUIStore';
 
 // Tool configuration with React Icons
 const TOOLS = {
@@ -21,10 +21,10 @@ const TOOLS = {
 };
 
 interface ToolbarProps {
-  editorUI: EditorUIInstance;
+  editorUI: EditorUIType;
 }
 
-const Toolbar: React.FC<ToolbarProps> = observer(({ editorUI }) => {
+const Toolbar = observer(({ editorUI }: ToolbarProps) => {
   return (
     <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
       <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200/50 p-2">

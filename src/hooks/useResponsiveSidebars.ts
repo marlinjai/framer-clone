@@ -3,9 +3,9 @@
 'use client';
 
 import { useEffect } from 'react';
-import { EditorUIInstance } from '../stores/EditorUIStore';
+import { EditorUIType } from '../stores/EditorUIStore';
 
-export const useResponsiveSidebars = (editorUI: EditorUIInstance) => {
+export const useResponsiveSidebars = (editorUI: EditorUIType) => {
   useEffect(() => {
     const handleResize = () => {
       const width = window.innerWidth;

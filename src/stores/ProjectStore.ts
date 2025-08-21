@@ -105,6 +105,6 @@ const ProjectStore = types.model('ProjectStore', {
 }))
 
 // TypeScript types
-export type ProjectStoreInstance = Instance<typeof ProjectStore>;
+export type ProjectStoreType = Instance<typeof ProjectStore>;
 
 export default ProjectStore;

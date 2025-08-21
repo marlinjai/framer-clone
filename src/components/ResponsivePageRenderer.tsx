@@ -5,7 +5,7 @@ import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { PageInstance, BreakpointInstance } from '../models/PageModel';
 import ComponentRenderer from './ComponentRenderer';
-import { EditorUIInstance } from '../stores/EditorUIStore';
+import { EditorUIType } from '../stores/EditorUIStore';
 
 interface ResponsivePageRendererProps {
   page: PageInstance;
@@ -13,7 +13,7 @@ interface ResponsivePageRendererProps {
   className?: string;
   showLabel?: boolean;
   showDeviceFrame?: boolean;
-  editorUI?: EditorUIInstance; // Optional for design-time interactions
+  editorUI?: EditorUIType; // Optional for design-time interactions
 }
 
 // Uniform device frame styles like Framer (consistent across all breakpoints)
@@ -32,7 +32,7 @@ const getDeviceFrameStyle = (page: PageInstance, breakpointName: string) => {
   };
 };
 
-const ResponsivePageRenderer: React.FC<ResponsivePageRendererProps> = observer(({
+const ResponsivePageRenderer = observer(({
   page,
   breakpointName,
   className = '',

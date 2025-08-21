@@ -8,13 +8,13 @@ import { ChevronLeft, ChevronRight, Layers, Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
-import { EditorUIInstance } from '../stores/EditorUIStore';
+import { EditorUIType } from '../stores/EditorUIStore';
 
 interface LeftSidebarProps {
-  editorUI: EditorUIInstance;
+  editorUI: EditorUIType;
 }
 
-const LeftSidebar: React.FC<LeftSidebarProps> = observer(({ editorUI }) => {
+const LeftSidebar = observer(({ editorUI }: LeftSidebarProps) => {
   const isCollapsed = editorUI.leftSidebarCollapsed;
 
   return (

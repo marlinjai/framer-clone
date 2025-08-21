@@ -270,6 +270,6 @@ const EditorUIStore = types.model('EditorUI', {
 }));
 
 // TypeScript types
-export type EditorUIInstance = Instance<typeof EditorUIStore>;
+export type EditorUIType = Instance<typeof EditorUIStore>;
 
 export default EditorUIStore;

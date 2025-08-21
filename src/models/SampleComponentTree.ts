@@ -1,8 +1,7 @@
 // src/models/SampleComponentTree.ts
-import ComponentModel, { 
+import { 
   createIntrinsicComponent, 
   createFunctionComponent,
-  ComponentTypeEnum,
   ComponentInstance
 } from './ComponentModel';
 
@@ -221,13 +220,3 @@ export const printTreeStructure = (component: ComponentInstance, indent = 0): vo
     printTreeStructure(child, indent + 1);
   });
 };
-
-// Example usage:
-console.log("Sample Component Tree Structure:");
-console.log("================================");
-printTreeStructure(sampleComponentTree);
-
-// Test serialization
-console.log("\nSerialized Tree (JSON):");
-console.log("======================");
-console.log(JSON.stringify(sampleComponentTree, null, 2));

@@ -18,7 +18,7 @@ interface CanvasProps {
   rootStore: RootStoreType;
 }
 
-const Canvas = observer(function Canvas({ rootStore }: CanvasProps) {
+const Canvas = observer(({ rootStore }: CanvasProps) => {
   // Performance-optimized refs for direct DOM manipulation
   const canvasRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
