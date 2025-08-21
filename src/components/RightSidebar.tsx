@@ -22,7 +22,7 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
 
   return (
     <div className={`
-      bg-white border-l border-gray-200 flex flex-col transition-all duration-300 ease-in-out
+      bg-white border-l border-gray-200 flex flex-col transition-all duration-300 ease-in-out h-[calc(100vh-4rem)] 
       ${isCollapsed ? 'w-12' : 'w-64'}
     `}>
       {/* Header with collapse toggle */}

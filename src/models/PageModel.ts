@@ -25,9 +25,6 @@ const PageMetadataModel = types.model('PageMetadata', {
   canonicalUrl: types.optional(types.string, ''),
 });
 
-// Pre-declare the interface to avoid circular reference issues
-interface IPageModel extends Instance<typeof PageModel> {}
-
 // Main PageModel
 const PageModel: IAnyModelType = types.model('Page', {
   // Identity
@@ -142,7 +139,7 @@ const PageModel: IAnyModelType = types.model('Page', {
   },
   
   // Clone page with new ID and slug
-  clone(newId: string, newSlug: string): IPageModel {
+  clone(newId: string, newSlug: string): PageModelType {
     return PageModel.create({
       id: newId,
       slug: newSlug,
@@ -267,7 +264,7 @@ export const createPage = (
 };
 
 // TypeScript types
-export type PageInstance = IPageModel;
+export type PageModelType = Instance<typeof PageModel>;
 export type PageSnapshotIn = SnapshotIn<typeof PageModel>;
 export type PageSnapshotOut = SnapshotOut<typeof PageModel>;
 export type BreakpointInstance = Instance<typeof BreakpointModel>;

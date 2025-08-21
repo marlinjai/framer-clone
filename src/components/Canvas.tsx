@@ -1,6 +1,6 @@
 // src/components/Canvas.tsx - High-performance infinite canvas with optimized zoom and pan
 'use client';
-import React, { useRef, useCallback, useEffect, useState } from 'react';
+import React, { useRef, useCallback, useEffect } from 'react';
 import ResponsivePageRenderer from './ResponsivePageRenderer';
 import Toolbar from './Toolbar';
 import SelectionOverlay from './SelectionOverlay';
@@ -33,14 +33,6 @@ const Canvas = observer(({ rootStore }: CanvasProps) => {
     panY: 0,
   });
 
-  // React state for UI updates only (throttled)
-  const [displayState, setDisplayState] = useState<CanvasState>({
-    zoom: 1,
-    panX: 0,
-    panY: 0,
-  });
-
-
   // Fastest possible approach - direct string interpolation
   const applyTransform = useCallback(() => {
     if (contentRef.current) {
@@ -49,16 +41,6 @@ const Canvas = observer(({ rootStore }: CanvasProps) => {
       // Direct string creation - fastest approach
       contentRef.current.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
     }
-  }, []);
-
-  // Throttled state update for UI display
-  const updateDisplayState = useCallback(() => {
-    if (animationRef.current) return;
-    
-    animationRef.current = requestAnimationFrame(() => {
-      setDisplayState({ ...transformState.current });
-      animationRef.current = 0;
-    });
   }, []);
 
   // Handle mouse wheel - pan by default, zoom with Command key
@@ -114,8 +96,9 @@ const Canvas = observer(({ rootStore }: CanvasProps) => {
     
     // Apply transform immediately
     applyTransform();
-    updateDisplayState();
-  }, [applyTransform, updateDisplayState]);
+    
+    // Note: UI elements that need transform state will read directly from transformState.current
+  }, [applyTransform]);
 
   // Handle mouse down - start dragging (only for GRAB tool)
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -146,10 +129,9 @@ const Canvas = observer(({ rootStore }: CanvasProps) => {
 
     // Apply transform immediately
     applyTransform();
-    updateDisplayState();
 
     lastMousePos.current = { x: e.clientX, y: e.clientY };
-  }, [applyTransform, updateDisplayState]);
+  }, [applyTransform]); 
 
   // Handle mouse up - stop dragging
   const handleMouseUp = useCallback(() => {
@@ -187,10 +169,15 @@ const Canvas = observer(({ rootStore }: CanvasProps) => {
         canvas.removeEventListener('wheel', handleWheel);
       }
       document.removeEventListener('mouseup', handleGlobalMouseUp);
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
+      
+      // Copy ref value for cleanup to avoid stale closure warning
+      const currentAnimation = animationRef.current;
+      if (currentAnimation) {
+        cancelAnimationFrame(currentAnimation);
       }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handleWheel]);
 
   // Update cursor when tool changes
@@ -217,16 +204,28 @@ const Canvas = observer(({ rootStore }: CanvasProps) => {
   }
 
   return (
-    <main className="flex-1 p-8 flex items-center justify-center">
-      <div className="w-full h-full bg-white border-2 border-dashed border-gray-400 rounded-lg overflow-hidden relative">
+    <main className="w-screen h-screen bg-gray-100 relative">
+      <div className="w-full h-full bg-gray-100 overflow-hidden relative">
         {/* Canvas viewport */}
         <div
           ref={canvasRef}
-          className={`w-full h-full select-none ${rootStore.editorUI.selectedTool === EditorTool.GRAB ? 'cursor-grab' : 'cursor-default'}`}
+          className={`w-full h-full select-none ${rootStore.editorUI.selectedTool === EditorTool.GRAB ? 'cursor-grab' : 'cursor-default'} relative overflow-hidden`}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
         >
+          {/* Fixed grid background - stays in viewport, doesn't transform */}
+          <div
+            className="absolute inset-0 opacity-40 pointer-events-none"
+            style={{
+              backgroundImage: `
+                linear-gradient(to right, #e5e7eb 1px, transparent 1px),
+                linear-gradient(to bottom, #e5e7eb 1px, transparent 1px)
+              `,
+              backgroundSize: '20px 20px',
+            }}
+          />
+          
           {/* Transformed canvas content - anchored at top-left to avoid pivot drift */}
           <div
             ref={contentRef}
@@ -236,17 +235,6 @@ const Canvas = observer(({ rootStore }: CanvasProps) => {
               willChange: 'transform',
             }}
           >
-            {/* Grid background for infinite canvas feel */}
-            <div
-              className="absolute inset-0 opacity-20"
-              style={{
-                backgroundImage: `
-                  linear-gradient(to right, #e5e7eb 1px, transparent 1px),
-                  linear-gradient(to bottom, #e5e7eb 1px, transparent 1px)
-                `,
-                backgroundSize: '20px 20px',
-              }}
-            />
             
             {/* Dynamic Component Tree - Rendered from ComponentModel */}
             
@@ -287,11 +275,9 @@ const Canvas = observer(({ rootStore }: CanvasProps) => {
           </div>
         </div>
         
-        {/* Canvas controls overlay - uses throttled display state */}
-        <div className="absolute top-4 left-4 bg-white rounded-lg shadow-md p-3 text-sm text-gray-600">
-          <div>Zoom: {(displayState.zoom * 100).toFixed(0)}%</div>
-          <div>Pan: {displayState.panX.toFixed(0)}, {displayState.panY.toFixed(0)}</div>
-          <div className="text-xs text-gray-400 mt-1">
+        {/* Canvas controls info */}
+        <div className="absolute top-24 left-24 bg-white rounded-lg shadow-md p-3 text-sm text-gray-600">
+          <div className="text-xs text-gray-400">
             Scroll: pan | ⌘+Scroll: zoom | Drag: pan
           </div>
         </div>
@@ -299,7 +285,7 @@ const Canvas = observer(({ rootStore }: CanvasProps) => {
         {/* Selection Overlay - shows selection indicators */}
         <SelectionOverlay 
           selectedComponent={rootStore.editorUI.selectedComponent}
-          zoom={displayState.zoom}
+          zoom={1}
           isVisible={rootStore.editorUI.selectedTool === EditorTool.SELECT && !!rootStore.editorUI.selectedComponent}
         />
         

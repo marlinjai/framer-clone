@@ -9,7 +9,6 @@ import { useResponsiveSidebars } from "../hooks/useResponsiveSidebars";
 import { useStore } from "@/hooks/useStore";
 import { getSnapshot } from "mobx-state-tree";
 import { samplePage } from "@/models/SamplePage";
-import { createSampleTree } from "@/models/SampleComponentTree";
 
 export default function Home() {
   const rootStore = useStore();
@@ -34,9 +33,14 @@ export default function Home() {
   useResponsiveSidebars(rootStore.editorUI);
 
   return (
-    <div className="w-full h-screen bg-gray-50 flex flex-col">
+    <div className="relative w-screen h-screen">
+      {/* Full-viewport Canvas - base layer */}
+      <Canvas rootStore={rootStore} />
+      
+      {/* Floating UI Elements - positioned on top */}
+      
       {/* Header - wireframe style */}
-      <header className="h-16 bg-white border-b border-gray-200 flex items-center px-6 z-10">
+      <header className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-gray-200 flex items-center px-6 z-90">
         <div className="w-32 h-8 bg-gray-300 rounded"></div>
         <div className="ml-auto flex space-x-4">
           <div className="w-16 h-8 bg-gray-300 rounded"></div>
@@ -45,21 +49,20 @@ export default function Home() {
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar - Components/Layers */}
+      {/* Left Sidebar - Components/Layers */}
+      <div className="fixed top-16 left-0 bottom-0 z-90">
         <LeftSidebar editorUI={rootStore.editorUI} />
+      </div>
 
-        {/* Main Canvas Area */}
-        <div className="flex-1 flex flex-col">
-          <Canvas rootStore={rootStore} />
-        </div>
-
-        {/* Right Sidebar - Properties */}
+      {/* Right Sidebar - Properties */}
+      <div className="fixed top-16 right-0 bottom-0 z-90">
         <RightSidebar editorUI={rootStore.editorUI} />
       </div>
 
       {/* Bottom Toolbar */}
-      <Toolbar editorUI={rootStore.editorUI} />
+      <div className="fixed bottom-0 left-0 right-0 z-30">
+        <Toolbar editorUI={rootStore.editorUI} />
+      </div>
     </div>
   );
 }

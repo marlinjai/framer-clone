@@ -1,8 +1,8 @@
 // src/stores/EditorUIStore.ts
 // UI state store - manages current selections, tools, and transient editor state
 import { types, Instance } from 'mobx-state-tree';
-import ProjectModel, { ProjectInstance } from '../models/ProjectModel';
-import PageModel, { PageInstance } from '../models/PageModel';
+import ProjectModel, { ProjectModelType } from '../models/ProjectModel';
+import PageModel, { PageModelType } from '../models/PageModel';
 import ComponentModel, { ComponentInstance } from '../models/ComponentModel';
 
 // Available tools in our design editor (expanded from basic ToolStore)
@@ -57,7 +57,7 @@ const EditorUIStore = types.model('EditorUI', {
 }))
 .actions(self => ({
   // Project selection
-  setCurrentProject(project?: ProjectInstance) {
+  setCurrentProject(project?: ProjectModelType) {
     self.currentProject = project;
     // Auto-select first page when switching projects
     if (project?.hasPages) {
@@ -68,7 +68,7 @@ const EditorUIStore = types.model('EditorUI', {
   },
   
   // Page selection  
-  setCurrentPage(page?: PageInstance) {
+  setCurrentPage(page?: PageModelType) {
     self.currentPage = page;
     // Auto-select root component when switching pages
     if (page?.rootComponent) {

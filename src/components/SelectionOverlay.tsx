@@ -18,22 +18,44 @@ export default observer(({
 }: SelectionOverlayProps) => {
   const overlayRef = useRef<HTMLDivElement>(null);
   const [bounds, setBounds] = useState<DOMRect | null>(null);
+  const animationRef = useRef<number>(0);
 
-  // Update overlay position when selection changes
+  // Framer-style real-time overlay synchronization
   useEffect(() => {
     if (!selectedComponent || !isVisible) {
       setBounds(null);
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = 0;
+      }
       return;
     }
 
-    // Find the DOM element for the selected component
-    const element = document.querySelector(`[data-component-id="${selectedComponent.id}"]`) as HTMLElement;
-    
-    if (element) {
-      const rect = element.getBoundingClientRect();
-      setBounds(rect);
-    }
-  }, [selectedComponent, zoom, isVisible]);
+    // Real-time position tracking using animation frames
+    const updateOverlayPosition = () => {
+      const element = document.querySelector(`[data-component-id="${selectedComponent.id}"]`) as HTMLElement;
+      
+      if (element) {
+        // Since canvas now fills entire viewport, getBoundingClientRect() works perfectly with absolute positioning
+        const rect = element.getBoundingClientRect();
+        setBounds(rect);
+      }
+      
+      // Continue the animation loop for smooth real-time sync
+      animationRef.current = requestAnimationFrame(updateOverlayPosition);
+    };
+
+    // Start the real-time sync loop
+    animationRef.current = requestAnimationFrame(updateOverlayPosition);
+
+    // Cleanup animation frame on unmount or dependency change
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = 0;
+      }
+    };
+  }, [selectedComponent, isVisible]); // Simple viewport positioning - canvas fills entire viewport
 
   // Don't render if no selection or not visible
   if (!bounds || !selectedComponent || !isVisible) {
@@ -43,7 +65,7 @@ export default observer(({
   return (
     <div
       ref={overlayRef}
-      className="fixed pointer-events-none z-50"
+      className="absolute pointer-events-none z-50"
       style={{
         left: bounds.left - 2,
         top: bounds.top - 2,

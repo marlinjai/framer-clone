@@ -1,7 +1,7 @@
 // src/stores/ProjectStore.ts  
 // Domain store for managing projects collection
-import { types, Instance, flow, getRoot } from 'mobx-state-tree';
-import ProjectModel, { ProjectInstance, createProject } from '../models/ProjectModel';
+import { types, Instance } from 'mobx-state-tree';
+import ProjectModel, { ProjectModelType, createProject } from '../models/ProjectModel';
 import { createPage } from '../models/PageModel';
 
 // ProjectStore - manages the collection of all projects (domain logic)
@@ -11,24 +11,24 @@ const ProjectStore = types.model('ProjectStore', {
 })
 .views(self => ({
   // Get all projects as array
-  get allProjects(): ProjectInstance[] {
+  get allProjects(): ProjectModelType[] {
     return Array.from(self.projects.values());
   },
   
   // Get projects sorted by creation date (newest first)
-  get projectsSorted(): ProjectInstance[] {
+  get projectsSorted(): ProjectModelType[] {
     return this.allProjects.sort((a, b) => 
       b.metadata.createdAt.getTime() - a.metadata.createdAt.getTime()
     );
   },
   
   // Get project by ID
-  getProject(id: string): ProjectInstance | undefined {
+  getProject(id: string): ProjectModelType | undefined {
     return self.projects.get(id);
   },
   
   // Find project by title
-  findProjectByTitle(title: string): ProjectInstance | undefined {
+  findProjectByTitle(title: string): ProjectModelType | undefined {
     return this.allProjects.find(project => 
       project.metadata.title.toLowerCase() === title.toLowerCase()
     );
@@ -40,7 +40,7 @@ const ProjectStore = types.model('ProjectStore', {
   },
   
   // Get most recently created project
-  get latestProject(): ProjectInstance | undefined {
+  get latestProject(): ProjectModelType | undefined {
     return this.projectsSorted[0];
   },
   
@@ -56,7 +56,7 @@ const ProjectStore = types.model('ProjectStore', {
 }))
 .actions(self => ({
   // Add a project
-  addProject(project: ProjectInstance | Parameters<typeof createProject>) {
+  addProject(project: ProjectModelType | Parameters<typeof createProject>) {
     if (Array.isArray(project)) {
       // Create from parameters
       const [id, title, description] = project;
@@ -71,7 +71,7 @@ const ProjectStore = types.model('ProjectStore', {
   },
   
   // Create a new project with default page
-  createProject(id: string, title: string, description = ''): ProjectInstance {
+  createProject(id: string, title: string, description = ''): ProjectModelType {
     const project = createProject(id, title, description);
     
     // Add a default "Home" page
@@ -88,7 +88,7 @@ const ProjectStore = types.model('ProjectStore', {
   },
   
   // Clone a project
-  cloneProject(projectId: string, newTitle?: string): ProjectInstance | undefined {
+  cloneProject(projectId: string, newTitle?: string): ProjectModelType | undefined {
     const originalProject = self.projects.get(projectId);
     if (!originalProject) return undefined;
     

@@ -3,12 +3,12 @@
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
-import { PageInstance, BreakpointInstance } from '../models/PageModel';
+import { PageModelType } from '../models/PageModel';
 import ComponentRenderer from './ComponentRenderer';
 import { EditorUIType } from '../stores/EditorUIStore';
 
 interface ResponsivePageRendererProps {
-  page: PageInstance;
+  page: PageModelType;
   breakpointName: string;
   className?: string;
   showLabel?: boolean;
@@ -17,7 +17,7 @@ interface ResponsivePageRendererProps {
 }
 
 // Uniform device frame styles like Framer (consistent across all breakpoints)
-const getDeviceFrameStyle = (page: PageInstance, breakpointName: string) => {
+const getDeviceFrameStyle = (page: PageModelType, breakpointName: string) => {
   const effectiveWidth = page.getBreakpoint(breakpointName)?.minWidth;
   
   return {
@@ -46,7 +46,7 @@ const ResponsivePageRenderer = observer(({
     return (
       <div className="border-2 border-dashed border-red-300 bg-red-50 p-4 rounded">
         <div className="text-red-600 font-medium">Invalid Breakpoint</div>
-        <div className="text-red-500 text-sm">Breakpoint "{breakpointName}" not found</div>
+        <div className="text-red-500 text-sm">Breakpoint {breakpointName} not found</div>
       </div>
     );
   }

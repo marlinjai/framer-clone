@@ -1,7 +1,7 @@
 // src/models/ProjectModel.ts
 // Domain model for projects - contains multiple pages and project-level settings
 import { types, Instance, SnapshotIn, SnapshotOut, IAnyModelType } from 'mobx-state-tree';
-import PageModel, { PageInstance } from './PageModel';
+import PageModel, { PageModelType } from './PageModel';
 
 // Project metadata model
 const ProjectMetadataModel = types.model('ProjectMetadata', {
@@ -16,8 +16,7 @@ const ProjectMetadataModel = types.model('ProjectMetadata', {
   updatedAt: types.optional(types.Date, () => new Date()),
 });
 
-// Pre-declare the interface to avoid circular reference issues
-interface IProjectModel extends Instance<typeof ProjectModel> {}
+
 
 // Main ProjectModel - domain logic only
 const ProjectModel: IAnyModelType = types.model('Project', {
@@ -59,7 +58,7 @@ const ProjectModel: IAnyModelType = types.model('Project', {
   },
   
   // Clone project with new ID
-  clone(newId: string): IProjectModel {
+  clone(newId: string): ProjectModelType {
     return ProjectModel.create({
       id: newId,
       metadata: { 
@@ -72,24 +71,24 @@ const ProjectModel: IAnyModelType = types.model('Project', {
         const newPageId = `${newId}-${pageId}`;
         acc[newPageId] = page.clone(newPageId, `${page.slug}-copy`);
         return acc;
-      }, {} as any),
+      }, {} as Record<string, PageModelType>),
       settings: { ...self.settings }
     });
   }
 }))
 .views(self => ({
   // Get page by ID
-  getPage(pageId: string): PageInstance | undefined {
+  getPage(pageId: string): PageModelType | undefined {
     return self.pages.get(pageId);
   },
   
   // Get all pages as array
-  get pagesArray(): PageInstance[] {
+  get pagesArray(): PageModelType[] {
     return Array.from(self.pages.values());
   },
   
   // Get pages sorted by creation date
-  get pagesSorted(): PageInstance[] {
+  get pagesSorted(): PageModelType[] {
     return this.pagesArray.sort((a, b) => 
       a.createdAt.getTime() - b.createdAt.getTime()
     );
@@ -101,12 +100,12 @@ const ProjectModel: IAnyModelType = types.model('Project', {
   },
   
   // Get first page (useful for default selection)
-  get firstPage(): PageInstance | undefined {
+  get firstPage(): PageModelType | undefined {
     return this.pagesSorted[0];
   },
   
   // Find page by slug
-  findPageBySlug(slug: string): PageInstance | undefined {
+  findPageBySlug(slug: string): PageModelType | undefined {
     return this.pagesArray.find(page => page.slug === slug);
   },
   
@@ -136,7 +135,7 @@ export const createProject = (
   id: string,
   title: string,
   description = ''
-): IProjectModel => {
+): ProjectModelType => {
   return ProjectModel.create({
     id,
     metadata: {
@@ -147,7 +146,7 @@ export const createProject = (
 };
 
 // TypeScript types
-export type ProjectInstance = IProjectModel;
+export type ProjectModelType = Instance<typeof ProjectModel>;
 export type ProjectSnapshotIn = SnapshotIn<typeof ProjectModel>;
 export type ProjectSnapshotOut = SnapshotOut<typeof ProjectModel>;
 
