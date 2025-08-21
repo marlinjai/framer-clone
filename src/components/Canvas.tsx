@@ -1,6 +1,10 @@
 // src/components/Canvas.tsx - High-performance infinite canvas with optimized zoom and pan
 'use client';
 import React, { useRef, useCallback, useEffect, useState } from 'react';
+import ResponsivePageRenderer from './ResponsivePageRenderer';
+import Toolbar from './Toolbar';
+import { samplePage } from '../models/SamplePage';
+import { RootStoreInstance } from '../models/RootStore';
 
 interface CanvasState {
   zoom: number;
@@ -8,7 +12,11 @@ interface CanvasState {
   panY: number;
 }
 
-export default function Canvas() {
+interface CanvasProps {
+  rootStore: RootStoreInstance;
+}
+
+export default function Canvas({ rootStore }: CanvasProps) {
   // Performance-optimized refs for direct DOM manipulation
   const canvasRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -208,153 +216,38 @@ export default function Canvas() {
               }}
             />
             
-            {/* Responsive Breakpoint Frames - Framer style */}
+            {/* Dynamic Component Tree - Rendered from ComponentModel */}
             
-            {/* Mobile Frame - iPhone 14 Pro (393x852) */}
-            <div className="absolute" style={{ left: '200px', top: '100px' }}>
-              <div className="relative">
-                {/* Frame Label */}
-                <div className="absolute -top-8 left-0 text-sm font-medium text-gray-600">
-                  Mobile • 393×852
-                </div>
-                {/* Device Frame */}
-                <div className="bg-gray-900 rounded-[2.5rem] p-2 shadow-2xl">
-                  <div className="bg-white rounded-[2rem] overflow-hidden" style={{ width: '393px', height: '852px' }}>
-                    {/* Status Bar */}
-                    <div className="bg-gray-50 h-12 flex items-center justify-between px-6 text-sm">
-                      <span className="font-medium">9:41</span>
-                      <div className="flex space-x-1">
-                        <div className="w-4 h-2 bg-gray-300 rounded-sm"></div>
-                        <div className="w-6 h-2 bg-green-500 rounded-sm"></div>
-                      </div>
-                    </div>
-                    {/* Content Area */}
-                    <div className="p-6 bg-gradient-to-b from-blue-50 to-white h-full">
-                      <div className="space-y-4">
-                        <div className="h-8 bg-gray-200 rounded w-48"></div>
-                        <div className="h-4 bg-gray-100 rounded w-32"></div>
-                        <div className="h-32 bg-gray-100 rounded"></div>
-                        <div className="space-y-2">
-                          <div className="h-3 bg-gray-100 rounded w-full"></div>
-                          <div className="h-3 bg-gray-100 rounded w-3/4"></div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+            {/* Individual Breakpoint Frames - Positioned like in Framer (Desktop → Tablet → Mobile) */}
+            
+            {/* Desktop Breakpoint (leftmost) */}
+            <div className="absolute" style={{ left: '100px', top: '100px' }}>
+              <ResponsivePageRenderer 
+                page={samplePage}
+                breakpointName="desktop"
+                showLabel={true}
+                showDeviceFrame={true}
+              />
             </div>
 
-            {/* Tablet Frame - iPad (768x1024) */}
-            <div className="absolute" style={{ left: '700px', top: '50px' }}>
-              <div className="relative">
-                {/* Frame Label */}
-                <div className="absolute -top-8 left-0 text-sm font-medium text-gray-600">
-                  Tablet • 768×1024
-                </div>
-                {/* Device Frame */}
-                <div className="bg-gray-800 rounded-3xl p-4 shadow-2xl">
-                  <div className="bg-white rounded-2xl overflow-hidden" style={{ width: '768px', height: '1024px' }}>
-                    {/* Header */}
-                    <div className="bg-white border-b border-gray-200 h-16 flex items-center justify-between px-8">
-                      <div className="h-6 bg-gray-200 rounded w-32"></div>
-                      <div className="flex space-x-4">
-                        <div className="h-6 bg-gray-100 rounded w-16"></div>
-                        <div className="h-6 bg-blue-500 rounded w-20"></div>
-                      </div>
-                    </div>
-                    {/* Content Grid */}
-                    <div className="p-8 bg-gray-50 h-full">
-                      <div className="grid grid-cols-2 gap-6 h-full">
-                        <div className="space-y-6">
-                          <div className="h-12 bg-white rounded-lg shadow-sm"></div>
-                          <div className="h-48 bg-white rounded-lg shadow-sm"></div>
-                          <div className="h-32 bg-white rounded-lg shadow-sm"></div>
-                        </div>
-                        <div className="space-y-6">
-                          <div className="h-32 bg-white rounded-lg shadow-sm"></div>
-                          <div className="h-48 bg-white rounded-lg shadow-sm"></div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+            {/* Tablet Breakpoint (middle) */}
+            <div className="absolute" style={{ left: '1600px', top: '100px' }}>
+              <ResponsivePageRenderer 
+                page={samplePage}
+                breakpointName="tablet"
+                showLabel={true}
+                showDeviceFrame={true}
+              />
             </div>
 
-            {/* Desktop Frame - Large Desktop (1440x900) */}
-            <div className="absolute" style={{ left: '1600px', top: '200px' }}>
-              <div className="relative">
-                {/* Frame Label */}
-                <div className="absolute -top-8 left-0 text-sm font-medium text-gray-600">
-                  Desktop • 1440×900
-                </div>
-                {/* Browser Frame */}
-                <div className="bg-gray-200 rounded-t-lg shadow-2xl" style={{ width: '1440px' }}>
-                  {/* Browser Chrome */}
-                  <div className="bg-gray-100 rounded-t-lg p-3 border-b border-gray-300">
-                    <div className="flex items-center space-x-2">
-                      <div className="flex space-x-2">
-                        <div className="w-3 h-3 bg-red-400 rounded-full"></div>
-                        <div className="w-3 h-3 bg-yellow-400 rounded-full"></div>
-                        <div className="w-3 h-3 bg-green-400 rounded-full"></div>
-                      </div>
-                      <div className="flex-1 mx-4">
-                        <div className="bg-white rounded border px-3 py-1 text-xs text-gray-500">
-                          https://myapp.com
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  {/* Content */}
-                  <div className="bg-white overflow-hidden" style={{ height: '900px' }}>
-                    {/* Navigation */}
-                    <div className="bg-white border-b border-gray-200 h-16 flex items-center justify-between px-12">
-                      <div className="h-8 bg-gray-200 rounded w-48"></div>
-                      <div className="flex space-x-6">
-                        <div className="h-6 bg-gray-100 rounded w-16"></div>
-                        <div className="h-6 bg-gray-100 rounded w-16"></div>
-                        <div className="h-6 bg-gray-100 rounded w-16"></div>
-                        <div className="h-6 bg-blue-500 rounded w-24"></div>
-                      </div>
-                    </div>
-                    {/* Hero Section */}
-                    <div className="bg-gradient-to-r from-blue-50 to-purple-50 px-12 py-16">
-                      <div className="max-w-4xl">
-                        <div className="h-16 bg-gray-200 rounded w-96 mb-6"></div>
-                        <div className="space-y-3 mb-8">
-                          <div className="h-4 bg-gray-100 rounded w-full"></div>
-                          <div className="h-4 bg-gray-100 rounded w-5/6"></div>
-                          <div className="h-4 bg-gray-100 rounded w-4/6"></div>
-                        </div>
-                        <div className="flex space-x-4">
-                          <div className="h-12 bg-blue-500 rounded w-32"></div>
-                          <div className="h-12 bg-gray-200 rounded w-32"></div>
-                        </div>
-                      </div>
-                    </div>
-                    {/* Content Sections */}
-                    <div className="px-12 py-16 space-y-16">
-                      <div className="grid grid-cols-3 gap-8">
-                        <div className="h-64 bg-gray-100 rounded-lg"></div>
-                        <div className="h-64 bg-gray-100 rounded-lg"></div>
-                        <div className="h-64 bg-gray-100 rounded-lg"></div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-12">
-                        <div className="space-y-4">
-                          <div className="h-8 bg-gray-200 rounded w-48"></div>
-                          <div className="space-y-2">
-                            <div className="h-4 bg-gray-100 rounded"></div>
-                            <div className="h-4 bg-gray-100 rounded w-5/6"></div>
-                            <div className="h-4 bg-gray-100 rounded w-4/6"></div>
-                          </div>
-                        </div>
-                        <div className="h-48 bg-gray-100 rounded-lg"></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+            {/* Mobile Breakpoint (rightmost) */}
+            <div className="absolute" style={{ left: '2800px', top: '100px' }}>
+              <ResponsivePageRenderer 
+                page={samplePage}
+                breakpointName="mobile"
+                showLabel={true}
+                showDeviceFrame={true}
+              />
             </div>
           </div>
         </div>
@@ -367,6 +260,9 @@ export default function Canvas() {
             Scroll: pan | ⌘+Scroll: zoom | Drag: pan
           </div>
         </div>
+        
+        {/* Toolbar */}
+        <Toolbar editorUI={rootStore.editorUI} />
       </div>
     </main>
   );

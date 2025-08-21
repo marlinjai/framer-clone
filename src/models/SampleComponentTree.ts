@@ -108,6 +108,14 @@ export const createSampleTree = (): ComponentInstance => {
   const customButton = createFunctionComponent("custom-btn", "Button", {
     variant: "danger",
     size: "large",
+    style: {
+      backgroundColor: "red",
+      padding: "8px 16px",
+      color: "white",
+      border: "none",
+      borderRadius: "4px",
+      cursor: "pointer"
+    },
     onClick: () => console.log("Custom button clicked!"),
     children: "Custom Button"
   });
