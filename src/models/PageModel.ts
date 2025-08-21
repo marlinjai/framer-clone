@@ -59,7 +59,7 @@ const PageModel: IAnyModelType = types.model('Page', {
   },
   
   // Set root component
-  setRootComponent(component: ComponentInstance) {
+  setRootComponent(component: ComponentInstance | SnapshotIn<typeof ComponentModel>) {
     self.rootComponent = component;
     self.updatedAt = new Date();
   },

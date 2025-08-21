@@ -4,6 +4,7 @@
 import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { ComponentInstance } from '../models/ComponentModel';
+import { EditorUIInstance, EditorTool } from '../stores/EditorUIStore';
 
 // Component Registry for function components
 // In a real app, this would be dynamically populated
@@ -51,14 +52,29 @@ interface ComponentRendererProps {
   component: ComponentInstance;
   className?: string;
   style?: React.CSSProperties;
+  editorUI?: EditorUIInstance; // Optional for design-time interactions
 }
 
 // Recursive component renderer with MST observer for reactivity
 const ComponentRenderer: React.FC<ComponentRendererProps> = observer(({ 
   component, 
   className,
-  style 
+  style,
+  editorUI 
 }) => {
+  // Handle component selection clicks
+  const handleComponentClick = (e: React.MouseEvent) => {
+    // Only handle clicks if we have editorUI and SELECT tool is active
+    if (!editorUI || editorUI.selectedTool !== EditorTool.SELECT) {
+      return;
+    }
+    
+    // Prevent event bubbling to parent components
+    e.stopPropagation();
+    
+    // Select this component
+    editorUI.selectComponent(component);
+  };
   // Handle host elements (intrinsic HTML elements)
   if (component.isHostElement) {
     const elementType = component.type as keyof React.JSX.IntrinsicElements;
@@ -68,12 +84,23 @@ const ComponentRenderer: React.FC<ComponentRendererProps> = observer(({
       ...component.props,
       className: className ? `${component.props.className || ''} ${className}`.trim() : component.props.className,
       style: style ? { ...component.props.style, ...style } : component.props.style,
+      // Add data attribute for selection system
+      'data-component-id': component.id,
+      // Add click handler for selection (only if editorUI is provided)
+      onClick: editorUI ? (e: React.MouseEvent) => {
+        // Call original onClick if it exists
+        if (component.props.onClick) {
+          component.props.onClick(e);
+        }
+        // Handle selection
+        handleComponentClick(e);
+      } : component.props.onClick,
     };
 
     // Render children recursively
     const children = component.children.length > 0 
       ? component.children.map((child: ComponentInstance) => (
-          <ComponentRenderer key={child.id} component={child} />
+          <ComponentRenderer key={child.id} component={child} editorUI={editorUI} />
         ))
       : component.props.children; // Use props.children if no component children
 
@@ -103,12 +130,23 @@ const ComponentRenderer: React.FC<ComponentRendererProps> = observer(({
       ...component.props,
       className: className ? `${component.props.className || ''} ${className}`.trim() : component.props.className,
       style: style ? { ...component.props.style, ...style } : component.props.style,
+      // Add data attribute for selection system
+      'data-component-id': component.id,
+      // Add click handler for selection (only if editorUI is provided)
+      onClick: editorUI ? (e: React.MouseEvent) => {
+        // Call original onClick if it exists
+        if (component.props.onClick) {
+          component.props.onClick(e);
+        }
+        // Handle selection
+        handleComponentClick(e);
+      } : component.props.onClick,
     };
 
     // Add children if they exist
     if (component.children.length > 0) {
       mergedProps.children = component.children.map((child: ComponentInstance) => (
-        <ComponentRenderer key={child.id} component={child} />
+        <ComponentRenderer key={child.id} component={child} editorUI={editorUI} />
       ));
     }
 

@@ -3,8 +3,10 @@
 import React, { useRef, useCallback, useEffect, useState } from 'react';
 import ResponsivePageRenderer from './ResponsivePageRenderer';
 import Toolbar from './Toolbar';
-import { samplePage } from '../models/SamplePage';
-import { RootStoreInstance } from '../models/RootStore';
+import SelectionOverlay from './SelectionOverlay';
+import { RootStoreType } from '../stores/RootStore';
+import { EditorTool } from '../stores/EditorUIStore';
+import { observer } from 'mobx-react-lite';
 
 interface CanvasState {
   zoom: number;
@@ -13,10 +15,10 @@ interface CanvasState {
 }
 
 interface CanvasProps {
-  rootStore: RootStoreInstance;
+  rootStore: RootStoreType;
 }
 
-export default function Canvas({ rootStore }: CanvasProps) {
+const Canvas = observer(function Canvas({ rootStore }: CanvasProps) {
   // Performance-optimized refs for direct DOM manipulation
   const canvasRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -115,8 +117,13 @@ export default function Canvas({ rootStore }: CanvasProps) {
     updateDisplayState();
   }, [applyTransform, updateDisplayState]);
 
-  // Handle mouse down - start dragging
+  // Handle mouse down - start dragging (only for GRAB tool)
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    // Only handle canvas dragging for GRAB tool
+    if (rootStore.editorUI.selectedTool !== EditorTool.GRAB) {
+      return;
+    }
+    
     isDragging.current = true;
     lastMousePos.current = { x: e.clientX, y: e.clientY };
     
@@ -124,7 +131,7 @@ export default function Canvas({ rootStore }: CanvasProps) {
     if (canvasRef.current) {
       canvasRef.current.style.cursor = 'grabbing';
     }
-  }, []);
+  }, [rootStore.editorUI.selectedTool]);
 
   // High-performance mouse move with direct DOM updates
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
@@ -148,11 +155,12 @@ export default function Canvas({ rootStore }: CanvasProps) {
   const handleMouseUp = useCallback(() => {
     isDragging.current = false;
     
-    // Reset cursor
+    // Reset cursor based on current tool
     if (canvasRef.current) {
-      canvasRef.current.style.cursor = 'grab';
+      const cursor = rootStore.editorUI.selectedTool === EditorTool.GRAB ? 'grab' : 'default';
+      canvasRef.current.style.cursor = cursor;
     }
-  }, []);
+  }, [rootStore.editorUI.selectedTool]);
 
   // Setup native event listeners and cleanup on unmount
   useEffect(() => {
@@ -161,7 +169,8 @@ export default function Canvas({ rootStore }: CanvasProps) {
     const handleGlobalMouseUp = () => {
       isDragging.current = false;
       if (canvasRef.current) {
-        canvasRef.current.style.cursor = 'grab';
+        const cursor = rootStore.editorUI.selectedTool === EditorTool.GRAB ? 'grab' : 'default';
+        canvasRef.current.style.cursor = cursor;
       }
     };
 
@@ -184,13 +193,36 @@ export default function Canvas({ rootStore }: CanvasProps) {
     };
   }, [handleWheel]);
 
+  // Update cursor when tool changes
+  useEffect(() => {
+    if (canvasRef.current) {
+      const cursor = rootStore.editorUI.selectedTool === EditorTool.GRAB ? 'grab' : 'default';
+      canvasRef.current.style.cursor = cursor;
+    }
+  }, [rootStore.editorUI.selectedTool]);
+
+  // Get the current page from the store
+  const currentPage = rootStore.editorUI.currentPage;
+
+  // Don't render if no page is selected
+  if (!currentPage) {
+    return (
+      <main className="flex-1 p-8 flex items-center justify-center">
+        <div className="text-gray-500 text-center">
+          <div className="text-lg font-medium">No page selected</div>
+          <div className="text-sm">Create a project to start designing</div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="flex-1 p-8 flex items-center justify-center">
       <div className="w-full h-full bg-white border-2 border-dashed border-gray-400 rounded-lg overflow-hidden relative">
         {/* Canvas viewport */}
         <div
           ref={canvasRef}
-          className="w-full h-full cursor-grab select-none"
+          className={`w-full h-full select-none ${rootStore.editorUI.selectedTool === EditorTool.GRAB ? 'cursor-grab' : 'cursor-default'}`}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
@@ -223,30 +255,33 @@ export default function Canvas({ rootStore }: CanvasProps) {
             {/* Desktop Breakpoint (leftmost) */}
             <div className="absolute" style={{ left: '100px', top: '100px' }}>
               <ResponsivePageRenderer 
-                page={samplePage}
+                page={currentPage}
                 breakpointName="desktop"
                 showLabel={true}
                 showDeviceFrame={true}
+                editorUI={rootStore.editorUI}
               />
             </div>
 
             {/* Tablet Breakpoint (middle) */}
             <div className="absolute" style={{ left: '1600px', top: '100px' }}>
               <ResponsivePageRenderer 
-                page={samplePage}
+                page={currentPage}
                 breakpointName="tablet"
                 showLabel={true}
                 showDeviceFrame={true}
+                editorUI={rootStore.editorUI}
               />
             </div>
 
             {/* Mobile Breakpoint (rightmost) */}
             <div className="absolute" style={{ left: '2800px', top: '100px' }}>
               <ResponsivePageRenderer 
-                page={samplePage}
+                page={currentPage}
                 breakpointName="mobile"
                 showLabel={true}
                 showDeviceFrame={true}
+                editorUI={rootStore.editorUI}
               />
             </div>
           </div>
@@ -261,9 +296,18 @@ export default function Canvas({ rootStore }: CanvasProps) {
           </div>
         </div>
         
+        {/* Selection Overlay - shows selection indicators */}
+        <SelectionOverlay 
+          selectedComponent={rootStore.editorUI.selectedComponent}
+          zoom={displayState.zoom}
+          isVisible={rootStore.editorUI.selectedTool === EditorTool.SELECT && !!rootStore.editorUI.selectedComponent}
+        />
+        
         {/* Toolbar */}
         <Toolbar editorUI={rootStore.editorUI} />
       </div>
     </main>
   );
-}
+});
+
+export default Canvas;
