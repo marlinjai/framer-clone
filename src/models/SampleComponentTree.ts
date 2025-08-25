@@ -1,4 +1,5 @@
 // src/models/SampleComponentTree.ts
+import { RootStore } from '@/stores/RootStore';
 import { 
   createIntrinsicComponent, 
   createFunctionComponent,
@@ -7,6 +8,7 @@ import {
 
 // Create a sample component tree for testing
 export const createSampleTree = (): ComponentInstance => {
+
   // Root container (div)
   const rootContainer = createIntrinsicComponent("root", "div", {
     className: "app-container",
@@ -34,7 +36,7 @@ export const createSampleTree = (): ComponentInstance => {
   // Title (h1)
   const title = createIntrinsicComponent("title", "h1", {
     style: {
-      margin: "0",
+      margin: { "desktop": "0", "tablet": "0", "mobile": "0" },
       fontSize: "24px",
       fontWeight: "bold"
     },
@@ -200,7 +202,7 @@ export const createSampleTree = (): ComponentInstance => {
 };
 
 // Create the sample tree
-export const sampleComponentTree = createSampleTree();
+export const sampleComponentTree = createSampleTree(RootStore);
 
 // Helper function to print tree structure
 export const printTreeStructure = (component: ComponentInstance, indent = 0): void => {

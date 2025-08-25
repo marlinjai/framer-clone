@@ -14,20 +14,25 @@ import {
   Eye,
   MoreHorizontal,
   Component,
-  Box
+  Box,
+  Monitor,
+  Tablet,
+  Smartphone
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { EditorUIType } from '../stores/EditorUIStore';
 import { ComponentInstance } from '../models/ComponentModel';
+import { BreakpointType } from '@/models/BreakpointModel';
 
 interface LeftSidebarProps {
   editorUI: EditorUIType;
 }
 
-// LayersPanel component
+// LayersPanel component with breakpoint-aware trees
 const LayersPanel = observer(({ editorUI }: { editorUI: EditorUIType }) => {
+  const currentProject = editorUI.currentProject;
   const currentPage = editorUI.currentPage;
   const rootComponent = currentPage?.rootComponent;
   const selectedComponent = editorUI.selectedComponent;
@@ -53,9 +58,53 @@ const LayersPanel = observer(({ editorUI }: { editorUI: EditorUIType }) => {
     setExpandedNodes(newExpanded);
   };
 
-  const renderComponentTree = (component: ComponentInstance, depth = 0): React.ReactNode => {
-    const isExpanded = expandedNodes.has(component.id);
-    const hasChildren = component.children.length > 0;
+  // Get breakpoint icon based on device type
+  const getBreakpointIcon = (deviceType: string) => {
+    switch (deviceType.toLowerCase()) {
+      case 'mobile':
+        return <Smartphone size={14} />;
+      case 'tablet':
+        return <Tablet size={14} />;
+      case 'desktop':
+        return <Monitor size={14} />;
+      default:
+        return <Monitor size={14} />;
+    }
+  };
+
+  // Get component tree for specific breakpoint (for now, all breakpoints show the same tree)
+  // Later we can extend this to filter components based on responsive visibility
+  const getComponentTreeForBreakpoint = () => {
+    // For now, we show the same component tree for all breakpoints
+    // In the future, we could filter based on responsive visibility props
+    return rootComponent;
+  };
+
+  // Get breakpoints for display
+  const getBreakpoints = () => {
+    if (!currentProject) return [];
+    const breakpoints: Array<{name: string, bp: BreakpointType}> = [];
+    for (const [name, bp] of currentProject!.breakpoints.entries()) {
+      breakpoints.push({ name, bp });
+    }
+    return breakpoints.sort((a, b) => a.bp.minWidth - b.bp.minWidth);
+  };
+
+  // Handle component selection for a specific breakpoint
+  const selectComponentInBreakpoint = (component: ComponentInstance, breakpointName: string) => {
+    console.log('selectComponentInBreakpoint called:', { component: component.id, breakpointName });
+  
+    
+    // Then select the component
+  console.log('Selecting component:', component.id);
+  editorUI.selectComponent(component, breakpointName);
+  };
+
+  const renderComponentTree = (component: ComponentInstance, breakpoint: BreakpointType, depth = 0): React.ReactNode => {
+  const isExpanded = expandedNodes.has(`${breakpoint.id}-${component.id}`);
+  const hasChildren = component.children.length > 0;
+  const isSelectionBreakpoint = editorUI.selectedBreakpoint === breakpoint; // explicit selection context
+  const isSelectedInThisBreakpoint = selectedComponent?.id === component.id && isSelectionBreakpoint;
     
     // Get component icon based on type
     const getComponentIcon = (type: string) => {
@@ -84,14 +133,14 @@ const LayersPanel = observer(({ editorUI }: { editorUI: EditorUIType }) => {
     };
 
     return (
-      <div key={component.id} className="select-none">
+      <div key={`${breakpoint.id}-${component.id}`} className="select-none">
         <div
           className={`
-            flex items-center py-1 px-2 rounded-md cursor-pointer transition-colors group
-            ${selectedComponent?.id === component.id ? 'bg-blue-100 text-blue-900' : 'hover:bg-gray-50'}
+            flex items-center py-1 px-2 rounded-md cursor-pointer transition-colors group relative
+            ${isSelectedInThisBreakpoint ? 'bg-blue-100 text-blue-900 ring-1 ring-blue-300' : 'hover:bg-gray-50'}
           `}
           style={{ paddingLeft: `${8 + depth * 16}px` }}
-          onClick={() => editorUI.selectComponent(component)}
+          onClick={() => selectComponentInBreakpoint(component, breakpoint.id)}
         >
           {/* Expand/Collapse button */}
           <div className="w-4 flex justify-center">
@@ -99,7 +148,7 @@ const LayersPanel = observer(({ editorUI }: { editorUI: EditorUIType }) => {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  toggleExpansion(component.id);
+                  toggleExpansion(`${breakpoint.id}-${component.id}`);
                 }}
                 className="p-0.5 hover:bg-gray-200 rounded"
               >
@@ -125,11 +174,16 @@ const LayersPanel = observer(({ editorUI }: { editorUI: EditorUIType }) => {
             )}
           </span>
           
+          {/* Breakpoint indicator (future: show if component has responsive overrides) */}
+          <div className="text-xs text-gray-400 mr-2">
+            {/* Future: Show colored dot if component has overrides in this breakpoint */}
+          </div>
+          
           {/* Visibility toggle */}
           <button
             onClick={(e) => {
               e.stopPropagation();
-              console.log('Toggle visibility for', component.id);
+              console.log('Toggle visibility for', component.id, 'in', breakpoint.label);
             }}
             className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded transition-opacity"
           >
@@ -149,7 +203,7 @@ const LayersPanel = observer(({ editorUI }: { editorUI: EditorUIType }) => {
         {hasChildren && isExpanded && (
           <div>
             {component.children.map((child: ComponentInstance) => 
-              renderComponentTree(child, depth + 1)
+              renderComponentTree(child, breakpoint, depth + 1)
             )}
           </div>
         )}
@@ -157,16 +211,62 @@ const LayersPanel = observer(({ editorUI }: { editorUI: EditorUIType }) => {
     );
   };
 
-  // Initialize expanded state for root component
+  // Initialize expanded state for root component across all breakpoints
   React.useEffect(() => {
-    if (rootComponent && !expandedNodes.has(rootComponent.id)) {
-      setExpandedNodes(new Set([rootComponent.id]));
+    if (rootComponent && currentPage) {
+      const breakpoints: Array<{name: string, bp: BreakpointType}> = [];
+      for (const [name, bp] of currentProject!.breakpoints.entries()) {
+        breakpoints.push({ name, bp });
+      }
+      
+      setExpandedNodes(prev => {
+        const newExpanded = new Set(prev);
+        let hasChanges = false;
+        
+        breakpoints.forEach(({ name }) => {
+          const key = `${name}-${rootComponent.id}`;
+          if (!newExpanded.has(key)) {
+            newExpanded.add(key);
+            hasChanges = true;
+          }
+        });
+        
+        return hasChanges ? newExpanded : prev;
+      });
     }
-  }, [rootComponent, expandedNodes]);
+  }, [rootComponent, currentPage]);
+
+  const breakpoints = getBreakpoints();
 
   return (
-    <div className="layers-panel">
-      {renderComponentTree(rootComponent)}
+    <div className="layers-panel space-y-4">
+      {/* All Breakpoint Trees Stacked Vertically */}
+      {breakpoints.map(({ name, bp }) => {
+        const treeToRender = getComponentTreeForBreakpoint();
+        // Derive viewport (preview) breakpoint locally from viewportWidth
+        const isSelectionBreakpoint = editorUI.selectedBreakpoint?.id === name;   // selection context
+        
+        return (
+          <div key={name} className={`border rounded-lg overflow-hidden transition-colors ${isSelectionBreakpoint ? 'border-blue-500 bg-blue-50/50'  : 'border-gray-200'}`}>
+            {/* Breakpoint Header */}
+            <div className={`flex items-center justify-between px-3 py-2 border-b ${isSelectionBreakpoint ? 'border-blue-300 bg-blue-100/60' :  'border-gray-200 bg-gray-50'}`}>
+              <div className="flex items-center space-x-2">
+                {getBreakpointIcon(bp.label || 'desktop')}
+                <span className="text-sm font-medium">{bp.label}</span>
+                <span className="text-xs text-gray-500">({bp.minWidth}px+)</span>
+                {isSelectionBreakpoint&& (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500 text-white uppercase tracking-wide">Selected</span>
+                )}
+              </div>
+            </div>
+            
+            {/* Component Tree for this Breakpoint */}
+            <div className="p-2">
+              {treeToRender && renderComponentTree(treeToRender, bp)}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 });
@@ -180,7 +280,7 @@ const LeftSidebar = observer(({ editorUI }: LeftSidebarProps) => {
   return (
     <div className={`
       bg-white border-r border-gray-200 flex flex-col transition-all duration-300 ease-in-out h-[calc(100vh-4rem)]
-      ${isCollapsed ? 'w-12' : 'w-64'}
+  ${isCollapsed ? 'w-12' : 'w-80'}
     `}>
       {/* Header with section tabs when expanded */}
       <div className="h-16 flex items-center border-b border-gray-200">

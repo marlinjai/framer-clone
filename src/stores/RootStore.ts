@@ -1,6 +1,6 @@
 // src/models/RootStore.ts
 // Root store that composes all domain and UI stores
-import { types, Instance, flow } from 'mobx-state-tree';
+import { types, Instance } from 'mobx-state-tree';
 import ProjectStore from './ProjectStore';
 import EditorUIStore from './EditorUIStore';
 

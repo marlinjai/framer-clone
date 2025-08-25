@@ -1,227 +1,153 @@
-// src/models/ComponentModel.ts
-import { types, Instance, SnapshotIn, SnapshotOut, IAnyModelType } from 'mobx-state-tree';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { types, Instance, SnapshotIn, SnapshotOut } from 'mobx-state-tree';
 import React from 'react';
 
-// Pre-declare the type to avoid circular reference issues
-interface IComponentModel extends Instance<typeof ComponentModel> {}
+export type PropsRecord = Record<string, any>;
 
-// Component type enum to differentiate between host elements and function components
 export enum ComponentTypeEnum {
-  HOST = 'host',           // JSX intrinsic elements: "div", "span", "button" 
-  FUNCTION = 'function'    // Function components: "MyButton", "CustomCard"
+  HOST = 'host',
+  FUNCTION = 'function',
 }
 
-// Type-safe intrinsic element types using React's JSX system
 export type IntrinsicElementType = keyof React.JSX.IntrinsicElements;
-
-// Helper type to get props for intrinsic elements
 export type IntrinsicElementProps<T extends IntrinsicElementType> = React.JSX.IntrinsicElements[T];
-
-// Type for function component names (serializable string references)
 export type FunctionComponentType = string;
-
-// Union type for all possible component types in our system
 export type ComponentType = IntrinsicElementType | FunctionComponentType;
 
-// Helper functions to work with React's type system
-export const isIntrinsicElement = (type: string): type is string & IntrinsicElementType => {
-  // Simple check: intrinsic elements are lowercase and follow HTML tag pattern
-  return /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(type);
-};
+// --- helpers ---
+function isObject(x: any): x is Record<string, any> {
+  return !!x && typeof x === 'object' && !Array.isArray(x);
+}
 
-// Validate props for intrinsic elements using React's type system
-export const validateIntrinsicProps = <T extends IntrinsicElementType>(
-  type: T, 
-  props: any
-): props is IntrinsicElementProps<T> => {
-  // In a real implementation, you could add runtime validation here
-  // For now, TypeScript handles compile-time validation
-  return true;
-};
+export const CSS_PROP_SET = new Set<string>([
+  'width','height','minWidth','minHeight','maxWidth','maxHeight',
+  'display','position','top','right','bottom','left','inset',
+  'padding','paddingTop','paddingRight','paddingBottom','paddingLeft',
+  'margin','marginTop','marginRight','marginBottom','marginLeft',
+  'gap','rowGap','columnGap',
+  'flex','flexGrow','flexShrink','flexBasis','flexDirection','flexWrap','alignItems','alignContent','alignSelf','justifyItems','justifySelf','justifyContent','order',
+  'grid','gridTemplate','gridTemplateColumns','gridTemplateRows','gridTemplateAreas','gridArea','gridColumn','gridRow','gridAutoFlow','gridAutoRows','gridAutoColumns',
+  'font','fontFamily','fontSize','fontWeight','fontStyle','lineHeight','letterSpacing','textAlign','textDecoration','textTransform','whiteSpace',
+  'color','background','backgroundColor','backgroundImage','backgroundSize','backgroundPosition','backgroundRepeat','backgroundClip',
+  'border','borderWidth','borderStyle','borderColor','borderTop','borderRight','borderBottom','borderLeft',
+  'borderRadius','borderTopLeftRadius','borderTopRightRadius','borderBottomLeftRadius','borderBottomRightRadius','boxShadow','outline',
+  'opacity','filter','backdropFilter','mixBlendMode',
+  'transform','transformOrigin','transition','transitionProperty','transitionDuration','transitionDelay','transitionTimingFunction',
+  'overflow','overflowX','overflowY','zIndex','cursor','objectFit','objectPosition'
+]);
 
-// Define the React-like element model - handles both host and function components
-const ComponentModel: IAnyModelType = types.model('Component', {
-    id: types.identifier,
-    
-    // The component type name - always a string for serialization
-    // For host elements: "div", "span", "button"
-    // For function components: "MyButton", "CustomCard" 
-    type: types.string,
-    
-    // Distinguishes between host elements and function components
-    componentType: types.enumeration(Object.values(ComponentTypeEnum)),
-    
-    // Matches ReactElement.props - contains ALL attributes, styles, event handlers, children
-    props: types.optional(types.frozen(), {}),
-    
-    // Children stored separately for easier tree manipulation in design tool
-    // Note: This is also available in props.children but separate for convenience
-    children: types.optional(types.array(types.late((): IAnyModelType => ComponentModel)), [])
+function isResponsiveMap(v: any, breakpointIds: Set<string>): v is Record<string, any> {
+  return isObject(v) && Object.keys(v).some(k => breakpointIds.has(k) || k === 'base');
+}
+
+function resolveResponsiveValue(
+  map: Record<string, any>,
+  breakpointId: string,
+  ordered: { id: string; minWidth: number }[],
+  primaryId: string
+) {
+  if (map[breakpointId] !== undefined) return map[breakpointId];
+  if (map[primaryId] !== undefined) return map[primaryId];
+
+  const idx = ordered.findIndex(b => b.id === breakpointId);
+
+  // search smaller first
+  for (let i = idx - 1; i >= 0; i--) {
+    const id = ordered[i].id;
+    if (map[id] !== undefined) return map[id];
+  }
+
+  // then search larger
+  for (let i = idx + 1; i < ordered.length; i++) {
+    const id = ordered[i].id;
+    if (map[id] !== undefined) return map[id];
+  }
+
+  return map.base;
+}
+
+// ---------- BASE MODEL (no recursion) ----------
+const ComponentBase = types.model('ComponentBase', {
+  id: types.identifier,
+  type: types.string,
+  componentType: types.enumeration(Object.values(ComponentTypeEnum)),
+  props: types.optional(types.frozen<PropsRecord>(), {}),
+});
+
+// ---------- FINAL MODEL (add recursive children + logic) ----------
+const ComponentModel = ComponentBase
+  .props({
+    children: types.optional(types.array(types.late((): any => ComponentModel)), []),
   })
-  .actions(self => ({
-    // Add a child component
-    addChild(child: SnapshotIn<typeof ComponentModel>) {
-      self.children.push(child);
-    },
-    
-    // Remove a child by id
-    removeChild(childId: string) {
-      const index = self.children.findIndex((child: any) => child.id === childId);
-      if (index >= 0) {
-        self.children.splice(index, 1);
-      }
-    },
-    
-    // Update props (merges with existing props)
-    updateProps(newProps: Record<string, any>) {
-      self.props = { ...self.props, ...newProps };
-    },
-    
-    // Set a specific prop value
-    setProp(key: string, value: any) {
-      self.props = { ...self.props, [key]: value };
-    },
-    
-    // Convenience method for updating styles (they're in props.style)
-    updateStyle(styleUpdates: Record<string, any>) {
-      const currentStyle = (self.props as any).style || {};
-      self.props = { 
-        ...self.props, 
-        style: { ...currentStyle, ...styleUpdates }
-      };
-    },
-  }))
   .views(self => ({
-    // Check if this is a host element (intrinsic HTML/SVG element)
-    get isHostElement(): boolean {
-      return self.componentType === ComponentTypeEnum.HOST && isIntrinsicElement(self.type);
-    },
-    
-    // Check if this is a function component
-    get isFunctionComponent(): boolean {
-      return self.componentType === ComponentTypeEnum.FUNCTION;
-    },
-    
-    // Get typed props for intrinsic elements
-    get typedProps(): any {
-      if (this.isHostElement && isIntrinsicElement(self.type)) {
-        // TypeScript will validate these props against React.JSX.IntrinsicElements[type]
-        return self.props;
+    get isHostElement() { return self.componentType === ComponentTypeEnum.HOST; },
+    get isFunctionComponent() { return self.componentType === ComponentTypeEnum.FUNCTION; },
+
+    // In a real app, you’d traverse up to project/page to access breakpoints
+    getResolvedProps(breakpointId: string, allBreakpoints: { id: string; minWidth: number }[], primaryId: string) {
+      const ordered = [...allBreakpoints].sort((a,b)=>a.minWidth-b.minWidth);
+      const bpIds = new Set(ordered.map(bp => bp.id));
+
+      const attributes: Record<string, any> = {};
+      const style: Record<string, any> = {};
+
+      // resolve top-level props
+      for (const [key, raw] of Object.entries(self.props)) {
+        if (key === 'style') continue;
+
+        if (isResponsiveMap(raw, bpIds)) {
+          const val = resolveResponsiveValue(raw, breakpointId, ordered, primaryId);
+          if (CSS_PROP_SET.has(key)) style[key] = val;
+          else attributes[key] = val;
+        } else {
+          if (CSS_PROP_SET.has(key)) style[key] = raw;
+          else attributes[key] = raw;
+        }
       }
-      return self.props;
-    },
-    
-    // Get the React-like element representation
-    get reactElement(): { type: string; props: any } {
-      return {
-        type: self.type,
-        props: { ...self.props, children: self.children.length > 0 ? self.children : self.props.children }
-      };
-    },
-    
-    // Get all descendant components (recursive)
-    get allDescendants(): IComponentModel[] {
-      const descendants: IComponentModel[] = [];
-      
-      function collectDescendants(component: IComponentModel) {
-        component.children.forEach((child: IComponentModel) => {
-          descendants.push(child);
-          collectDescendants(child);
-        });
+
+      // resolve nested style
+      const rawStyle = (self.props as any).style;
+      if (isObject(rawStyle)) {
+        for (const [sKey, sVal] of Object.entries(rawStyle)) {
+          if (isResponsiveMap(sVal, bpIds)) {
+            style[sKey] = resolveResponsiveValue(sVal, breakpointId, ordered, primaryId);
+          } else {
+            style[sKey] = sVal;
+          }
+        }
       }
-      
-      collectDescendants(self as IComponentModel);
-      return descendants;
+
+      return { attributes, style };
     },
-    
-    // Find component by id in tree
-    findById(id: string): IComponentModel | undefined {
-      if (self.id === id) return self as IComponentModel;
-      
-      for (const child of self.children) {
-        const found = (child as IComponentModel).findById(id);
-        if (found) return found;
-      }
-      
-      return undefined;
-    }
   }));
 
-// Export TypeScript types for the model
-export type ComponentInstance = IComponentModel;
+export type ComponentInstance = Instance<typeof ComponentModel>;
 export type ComponentSnapshotIn = SnapshotIn<typeof ComponentModel>;
 export type ComponentSnapshotOut = SnapshotOut<typeof ComponentModel>;
 
-// Type-safe helper functions for creating components
+// ---------- HELPERS ----------
 export const createIntrinsicComponent = <T extends IntrinsicElementType>(
   id: string,
   type: T,
-  props: IntrinsicElementProps<T>
-) => {
-  return ComponentModel.create({
+  props: PropsRecord
+): ComponentInstance =>
+  ComponentModel.create({
     id,
     type,
     componentType: ComponentTypeEnum.HOST,
-    props: props as any // MST frozen type requires any
+    props,
   });
-};
 
 export const createFunctionComponent = (
   id: string,
   type: FunctionComponentType,
-  props: Record<string, any>
-) => {
-  return ComponentModel.create({
+  props: PropsRecord
+): ComponentInstance =>
+  ComponentModel.create({
     id,
     type,
     componentType: ComponentTypeEnum.FUNCTION,
-    props
+    props,
   });
-};
 
 export default ComponentModel;
-
-// Example usage with type safety:
-/*
-// Type-safe host element creation - TypeScript validates props!
-const divElement = createIntrinsicComponent("div-1", "div", {
-  className: "container",
-  style: { backgroundColor: "blue", width: 200, height: 100 },
-  onClick: (e) => console.log("clicked", e.currentTarget), // ✅ Typed as MouseEvent<HTMLDivElement>
-  // href: "invalid" // ❌ TypeScript error: href doesn't exist on div
-});
-
-// Type-safe button element
-const buttonElement = createIntrinsicComponent("btn-1", "button", {
-  disabled: true,
-  onClick: (e) => console.log("button clicked"), // ✅ Typed correctly
-  children: "Click me"
-});
-
-// Function component (custom)
-const customButton = createFunctionComponent("custom-1", "MyButton", {
-  variant: "primary",
-  disabled: false,
-  children: "Custom Button"
-});
-
-// Add children
-divElement.addChild(buttonElement);
-divElement.addChild(customButton);
-
-// Type-safe rendering:
-function renderComponent(element: ComponentInstance): React.ReactElement {
-  if (element.isHostElement) {
-    // element.type is typed as keyof JSX.IntrinsicElements
-    // element.typedProps are validated against JSX.IntrinsicElements[type]
-    return React.createElement(element.type, element.typedProps, ...element.children.map(renderComponent));
-  } 
-  
-  if (element.isFunctionComponent) {
-    // Look up in component registry
-    const ComponentFn = ComponentRegistry[element.type];
-    return ComponentFn(element.props);
-  }
-}
-*/
-  

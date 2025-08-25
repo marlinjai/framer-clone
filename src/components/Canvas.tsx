@@ -3,10 +3,9 @@
 import React, { useRef, useCallback, useEffect } from 'react';
 import ResponsivePageRenderer from './ResponsivePageRenderer';
 import Toolbar from './Toolbar';
-import SelectionOverlay from './SelectionOverlay';
-import { RootStoreType } from '../stores/RootStore';
 import { EditorTool } from '../stores/EditorUIStore';
 import { observer } from 'mobx-react-lite';
+import { useStore } from '@/hooks/useStore';
 
 interface CanvasState {
   zoom: number;
@@ -14,18 +13,15 @@ interface CanvasState {
   panY: number;
 }
 
-interface CanvasProps {
-  rootStore: RootStoreType;
-}
 
-const Canvas = observer(({ rootStore }: CanvasProps) => {
+const Canvas = observer(() => {
   // Performance-optimized refs for direct DOM manipulation
   const canvasRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
-  const animationRef = useRef<number>(0);
-  
+  const rootStore = useStore();
+
   // Current transform state (for direct DOM updates)
   const transformState = useRef<CanvasState>({
     zoom: 1,
@@ -169,16 +165,8 @@ const Canvas = observer(({ rootStore }: CanvasProps) => {
         canvas.removeEventListener('wheel', handleWheel);
       }
       document.removeEventListener('mouseup', handleGlobalMouseUp);
-      
-      // Copy ref value for cleanup to avoid stale closure warning
-      const currentAnimation = animationRef.current;
-      if (currentAnimation) {
-        cancelAnimationFrame(currentAnimation);
-      }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handleWheel]);
+  }, [handleWheel, rootStore.editorUI.selectedTool]);
 
   // Update cursor when tool changes
   useEffect(() => {
@@ -188,11 +176,10 @@ const Canvas = observer(({ rootStore }: CanvasProps) => {
     }
   }, [rootStore.editorUI.selectedTool]);
 
-  // Get the current page from the store
-  const currentPage = rootStore.editorUI.currentPage;
+
 
   // Don't render if no page is selected
-  if (!currentPage) {
+  if (!rootStore.editorUI.currentPage) {
     return (
       <main className="flex-1 p-8 flex items-center justify-center">
         <div className="text-gray-500 text-center">
@@ -229,49 +216,15 @@ const Canvas = observer(({ rootStore }: CanvasProps) => {
           {/* Transformed canvas content - anchored at top-left to avoid pivot drift */}
           <div
             ref={contentRef}
-            className="w-full h-full origin-top-left"
+            className="w-0 h-0 origin-top-left"
             style={{
               transform: `translate(${transformState.current.panX}px, ${transformState.current.panY}px) scale(${transformState.current.zoom})`,
               willChange: 'transform',
             }}
           >
-            
-            {/* Dynamic Component Tree - Rendered from ComponentModel */}
-            
-            {/* Individual Breakpoint Frames - Positioned like in Framer (Desktop → Tablet → Mobile) */}
-            
-            {/* Desktop Breakpoint (leftmost) */}
-            <div className="absolute" style={{ left: '100px', top: '100px' }}>
-              <ResponsivePageRenderer 
-                page={currentPage}
-                breakpointName="desktop"
-                showLabel={true}
-                showDeviceFrame={true}
-                editorUI={rootStore.editorUI}
-              />
-            </div>
-
-            {/* Tablet Breakpoint (middle) */}
-            <div className="absolute" style={{ left: '1600px', top: '100px' }}>
-              <ResponsivePageRenderer 
-                page={currentPage}
-                breakpointName="tablet"
-                showLabel={true}
-                showDeviceFrame={true}
-                editorUI={rootStore.editorUI}
-              />
-            </div>
-
-            {/* Mobile Breakpoint (rightmost) */}
-            <div className="absolute" style={{ left: '2800px', top: '100px' }}>
-              <ResponsivePageRenderer 
-                page={currentPage}
-                breakpointName="mobile"
-                showLabel={true}
-                showDeviceFrame={true}
-                editorUI={rootStore.editorUI}
-              />
-            </div>
+            <ResponsivePageRenderer 
+              page={rootStore.editorUI.currentPage}
+            />
           </div>
         </div>
         
@@ -282,13 +235,17 @@ const Canvas = observer(({ rootStore }: CanvasProps) => {
           </div>
         </div>
         
-        {/* Selection Overlay - shows selection indicators */}
+        {/* Primary selection overlay 
         <SelectionOverlay 
           selectedComponent={rootStore.editorUI.selectedComponent}
-          zoom={1}
           isVisible={rootStore.editorUI.selectedTool === EditorTool.SELECT && !!rootStore.editorUI.selectedComponent}
         />
-        
+        */}
+        {/* Secondary (faded) overlays in other breakpoints 
+        <SecondarySelectionOverlays
+          isVisible={rootStore.editorUI.selectedTool === EditorTool.SELECT && !!rootStore.editorUI.selectedComponent}
+        />
+        */} 
         {/* Toolbar */}
         <Toolbar editorUI={rootStore.editorUI} />
       </div>

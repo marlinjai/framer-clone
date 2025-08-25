@@ -1,8 +1,9 @@
 // src/stores/ProjectStore.ts  
 // Domain store for managing projects collection
 import { types, Instance } from 'mobx-state-tree';
-import ProjectModel, { ProjectModelType, createProject } from '../models/ProjectModel';
-import { createPage } from '../models/PageModel';
+import ProjectModel, { ProjectModelType } from '../models/ProjectModel';
+import { v4 as uuidv4 } from 'uuid';
+import { createIntrinsicComponent } from '@/models/ComponentModel';
 
 // ProjectStore - manages the collection of all projects (domain logic)
 const ProjectStore = types.model('ProjectStore', {
@@ -55,52 +56,58 @@ const ProjectStore = types.model('ProjectStore', {
   }
 }))
 .actions(self => ({
-  // Add a project
-  addProject(project: ProjectModelType | Parameters<typeof createProject>) {
-    if (Array.isArray(project)) {
-      // Create from parameters
-      const [id, title, description] = project;
-      const newProject = createProject(id, title, description);
-      self.projects.set(id, newProject);
-      return newProject;
-    } else {
-      // Add existing project instance
-      self.projects.set(project.id, project);
-      return project;
-    }
-  },
-  
+
   // Create a new project with default page
-  createProject(id: string, title: string, description = ''): ProjectModelType {
-    const project = createProject(id, title, description);
-    
-    // Add a default "Home" page
-    const homePage = createPage(`${id}-home`, 'home', 'Home', 'Default home page');
-    project.addPage(homePage);
-    
-    self.projects.set(id, project);
-    return project;
+  createProject(title: string, description = '') {
+    const projectId = uuidv4();
+    const primaryBreakpointId = uuidv4();
+    const pageId = uuidv4();
+    const rootComponentId = uuidv4();
+
+    // Root component (responsive style maps keyed by primary breakpoint id)
+    const rootComponent = createIntrinsicComponent('root-' + rootComponentId, 'div', {
+      style: {
+        width: { [primaryBreakpointId]: '1280px' },
+        height: { [primaryBreakpointId]: '1000px' },
+        backgroundColor: { [primaryBreakpointId]: '#000' },
+      },
+    });
+
+    self.projects.set(projectId, {
+      id: projectId,
+      metadata: {
+        title,
+        description,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      pages: {
+        [pageId]: {
+          id: pageId,
+            slug: '',
+            metadata: {
+              title: 'Home',
+              description: 'Default home page'
+            },
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            rootComponent, // <-- direct component snapshot (correct shape)
+        }
+      },
+      breakpoints: {
+        [primaryBreakpointId]: {
+          id: primaryBreakpointId,
+          label: 'Default',
+          minWidth: 1280,
+        },
+      },
+      primaryBreakpoint: primaryBreakpointId, // reference to existing breakpoint
+    });
   },
   
   // Remove a project
   removeProject(projectId: string) {
     self.projects.delete(projectId);
-  },
-  
-  // Clone a project
-  cloneProject(projectId: string, newTitle?: string): ProjectModelType | undefined {
-    const originalProject = self.projects.get(projectId);
-    if (!originalProject) return undefined;
-    
-    const newId = `${projectId}-copy-${Date.now()}`;
-    const clonedProject = originalProject.clone(newId);
-    
-    if (newTitle) {
-      clonedProject.updateMetadata({ title: newTitle });
-    }
-    
-    self.projects.set(newId, clonedProject);
-    return clonedProject;
   },
 }))
 

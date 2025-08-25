@@ -4,6 +4,7 @@ import { types, Instance } from 'mobx-state-tree';
 import ProjectModel, { ProjectModelType } from '../models/ProjectModel';
 import PageModel, { PageModelType } from '../models/PageModel';
 import ComponentModel, { ComponentInstance } from '../models/ComponentModel';
+import { BreakpointModel } from '@/models/BreakpointModel';
 
 // Available tools in our design editor (expanded from basic ToolStore)
 export enum EditorTool {
@@ -26,15 +27,15 @@ const EditorUIStore = types.model('EditorUI', {
   // Currently selected component (domain reference)
   selectedComponent: types.maybe(types.safeReference(ComponentModel)),
   
+  // Explicit selected breakpoint (decoupled from viewport width)
+  selectedBreakpoint: types.maybe(types.safeReference(BreakpointModel)),
+
   // Active tool
-  selectedTool: types.optional(types.enumeration(Object.values(EditorTool)), EditorTool.GRAB),
+  selectedTool: types.optional(types.enumeration(Object.values(EditorTool)), EditorTool.SELECT),
   
   // Canvas settings
   zoom: types.optional(types.number, 1),
   canvasOffset: types.optional(types.frozen<{ x: number; y: number }>(), { x: 0, y: 0 }),
-  
-  // Current viewport width for responsive preview
-  viewportWidth: types.optional(types.number, 1024),
   
   // UI panel states
   showPropertiesPanel: types.optional(types.boolean, true),
@@ -59,12 +60,6 @@ const EditorUIStore = types.model('EditorUI', {
   // Project selection
   setCurrentProject(project?: ProjectModelType) {
     self.currentProject = project;
-    // Auto-select first page when switching projects
-    if (project?.hasPages) {
-      this.setCurrentPage(project.firstPage);
-    } else {
-      this.setCurrentPage(undefined);
-    }
   },
   
   // Page selection  
@@ -78,9 +73,12 @@ const EditorUIStore = types.model('EditorUI', {
     }
   },
   
-  // Component selection
-  selectComponent(component?: ComponentInstance) {
+  // Component selection with optional breakpoint context
+  selectComponent(component?: ComponentInstance, breakpointId?: string) {
     self.selectedComponent = component;
+    if (breakpointId) {
+      self.selectedBreakpoint = self.currentProject?.breakpoints.get(breakpointId);
+    }
   },
   
   // Tool selection
@@ -109,20 +107,6 @@ const EditorUIStore = types.model('EditorUI', {
     self.canvasOffset = offset;
   },
   
-  // Responsive preview
-  setViewportWidth(width: number) {
-    self.viewportWidth = Math.max(320, width); // Minimum mobile width
-    
-    // Auto-collapse sidebars on smaller screens
-    if (width < 1024) {
-      self.leftSidebarCollapsed = true;
-      self.rightSidebarCollapsed = true;
-    } else if (width < 1280) {
-      // On medium screens, collapse right sidebar by default
-      self.rightSidebarCollapsed = true;
-    }
-  },
-  
   // Panel visibility
   togglePropertiesPanel() {
     self.showPropertiesPanel = !self.showPropertiesPanel;
@@ -143,14 +127,6 @@ const EditorUIStore = types.model('EditorUI', {
   
   toggleRightSidebar() {
     self.rightSidebarCollapsed = !self.rightSidebarCollapsed;
-  },
-  
-  setLeftSidebarCollapsed(collapsed: boolean) {
-    self.leftSidebarCollapsed = collapsed;
-  },
-  
-  setRightSidebarCollapsed(collapsed: boolean) {
-    self.rightSidebarCollapsed = collapsed;
   },
   
   // Transient interaction state
@@ -194,9 +170,16 @@ const EditorUIStore = types.model('EditorUI', {
   
   // Current breakpoint based on viewport width
   get currentBreakpoint() {
-    return self.currentPage?.getActiveBreakpoint(self.viewportWidth);
+    return self.selectedBreakpoint;
   },
   
+  // Available breakpoints for the current page
+  get availableBreakpoints() {
+    if (!self.currentProject) return [];
+    return self.currentProject.breakpoints;
+  },
+  
+
   // Tool state
   get currentCursor(): string {
     switch (self.selectedTool) {
@@ -217,38 +200,12 @@ const EditorUIStore = types.model('EditorUI', {
     return self.selectedTool === tool;
   },
   
-  // Component hierarchy helpers
-  get selectedComponentPath(): string {
-    if (!self.selectedComponent) return '';
-    
-    const path: string[] = [];
-    let current: ComponentInstance | undefined = self.selectedComponent;
-    
-    // Build path from selected component to root
-    while (current) {
-      path.unshift(current.type);
-      // Find parent (simplified - in real implementation you'd traverse the tree)
-      current = undefined; // TODO: implement parent traversal
-    }
-    
-    return path.join(' > ');
-  },
-  
   // Canvas calculations
   get effectiveZoom(): number {
     return Math.max(0.1, Math.min(5, self.zoom));
   },
   
-  // Panel layout
-  get layoutClasses(): string {
-    const classes: string[] = ['editor-layout'];
-    
-    if (!self.showPropertiesPanel) classes.push('no-properties');
-    if (!self.showLayersPanel) classes.push('no-layers');
-    if (!self.showToolbar) classes.push('no-toolbar');
-    
-    return classes.join(' ');
-  },
+  //
   
   // Export current UI state (for debugging/persistence)
   get uiState() {
@@ -256,10 +213,10 @@ const EditorUIStore = types.model('EditorUI', {
       currentProjectId: self.currentProject?.id,
       currentPageId: self.currentPage?.id,
       selectedComponentId: self.selectedComponent?.id,
+      selectedBreakpoint: self.selectedBreakpoint,
       selectedTool: self.selectedTool,
       zoom: self.zoom,
       canvasOffset: self.canvasOffset,
-      viewportWidth: self.viewportWidth,
       panels: {
         properties: self.showPropertiesPanel,
         layers: self.showLayersPanel,

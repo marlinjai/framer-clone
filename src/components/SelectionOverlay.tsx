@@ -4,21 +4,23 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { ComponentInstance } from '../models/ComponentModel';
 import { observer } from 'mobx-react-lite';
+import { useStore } from '@/hooks/useStore';
 
 interface SelectionOverlayProps {
   selectedComponent?: ComponentInstance;
-  zoom: number;
   isVisible: boolean;
+
 }
 
 export default observer(({ 
   selectedComponent, 
-  zoom, 
-  isVisible 
+  isVisible,
 }: SelectionOverlayProps) => {
   const overlayRef = useRef<HTMLDivElement>(null);
   const [bounds, setBounds] = useState<DOMRect | null>(null);
   const animationRef = useRef<number>(0);
+  const rootStore = useStore();
+  const currentBreakpoint = rootStore.editorUI.currentBreakpoint;
 
   // Framer-style real-time overlay synchronization
   useEffect(() => {
@@ -33,12 +35,36 @@ export default observer(({
 
     // Real-time position tracking using animation frames
     const updateOverlayPosition = () => {
-      const element = document.querySelector(`[data-component-id="${selectedComponent.id}"]`) as HTMLElement;
+      const breakpointComponentId = `${currentBreakpoint}-${selectedComponent.id}`;
+      console.log('SelectionOverlay: Looking for component', breakpointComponentId, 'in breakpoint', currentBreakpoint);
+      
+      // Look for the component in the specific breakpoint context
+      // This targets the component within the current breakpoint's ResponsivePageRenderer
+      const breakpointSelector = `[data-breakpoint="${currentBreakpoint}"]`;
+      const breakpointContainer = document.querySelector(breakpointSelector);
+      
+      console.log('SelectionOverlay: Breakpoint container found:', !!breakpointContainer);
+      
+      let element: HTMLElement | null = null;
+      
+      if (breakpointContainer) {
+        // Look for the component within the specific breakpoint container using breakpoint-specific ID
+        element = breakpointContainer.querySelector(`[data-component-id="${breakpointComponentId}"]`) as HTMLElement;
+        console.log('SelectionOverlay: Component in breakpoint container found:', !!element);
+      }
+      
+      // Fallback: look for any element with the breakpoint-specific component ID
+      if (!element) {
+        element = document.querySelector(`[data-component-id="${breakpointComponentId}"]`) as HTMLElement;
+        console.log('SelectionOverlay: Component fallback found:', !!element);
+      }
       
       if (element) {
         // Since canvas now fills entire viewport, getBoundingClientRect() works perfectly with absolute positioning
         const rect = element.getBoundingClientRect();
         setBounds(rect);
+      } else {
+        setBounds(null);
       }
       
       // Continue the animation loop for smooth real-time sync
@@ -55,7 +81,7 @@ export default observer(({
         animationRef.current = 0;
       }
     };
-  }, [selectedComponent, isVisible]); // Simple viewport positioning - canvas fills entire viewport
+  }, [selectedComponent, isVisible, currentBreakpoint]); // Add currentBreakpoint dependency
 
   // Don't render if no selection or not visible
   if (!bounds || !selectedComponent || !isVisible) {
@@ -87,10 +113,6 @@ export default observer(({
       <div className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 w-2 h-2 bg-blue-500 rounded-full"></div>
       <div className="absolute -bottom-1 -right-1 w-2 h-2 bg-blue-500 rounded-full"></div>
 
-      {/* Component info label */}
-      <div className="absolute -top-6 left-0 bg-blue-500 text-white text-xs px-2 py-1 rounded whitespace-nowrap">
-        {selectedComponent.type}#{selectedComponent.id}
-      </div>
     </div>
   );
 });

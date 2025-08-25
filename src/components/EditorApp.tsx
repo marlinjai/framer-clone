@@ -1,0 +1,48 @@
+'use client';
+
+import React from 'react';
+import Canvas from "@/components/Canvas";
+import LeftSidebar from "@/components/LeftSidebar";
+import RightSidebar from "@/components/RightSidebar";
+import Toolbar from "@/components/Toolbar";
+import { useStore } from "@/hooks/useStore";
+
+export default function EditorApp() {
+  const rootStore = useStore();
+  const initRef = React.useRef(false);
+
+  if (!initRef.current) {
+rootStore.projectStore.createProject(
+      'Framer Clone Demo',
+      'Sample project with component tree'
+    );
+
+  // Set this project as current in the editor
+    rootStore.editorUI.setCurrentProject(rootStore.projectStore.findProjectByTitle('Framer Clone Demo'));
+    rootStore.editorUI.setCurrentPage(rootStore.editorUI.currentProject?.findPageBySlug(''));
+    initRef.current = true;
+  }
+
+  return (
+    <div className="relative w-screen h-screen">
+      <Canvas />
+      <header className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-gray-200 flex items-center px-6 z-90">
+        <div className="w-32 h-8 bg-gray-300 rounded" />
+        <div className="ml-auto flex space-x-4">
+          <div className="w-16 h-8 bg-gray-300 rounded" />
+          <div className="w-16 h-8 bg-gray-300 rounded" />
+          <div className="w-16 h-8 bg-gray-300 rounded" />
+        </div>
+      </header>
+      <div className="fixed top-16 left-0 bottom-0 z-90">
+        <LeftSidebar editorUI={rootStore.editorUI} />
+      </div>
+      <div className="fixed top-16 right-0 bottom-0 z-90">
+        <RightSidebar editorUI={rootStore.editorUI} />
+      </div>
+      <div className="fixed bottom-0 left-0 right-0 z-30">
+        <Toolbar editorUI={rootStore.editorUI} />
+      </div>
+    </div>
+  );
+}
