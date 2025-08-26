@@ -72,6 +72,22 @@ const ComponentBase = types.model('ComponentBase', {
   type: types.string,
   componentType: types.enumeration(Object.values(ComponentTypeEnum)),
   props: types.optional(types.frozen<PropsRecord>(), {}),
+  
+  // Canvas positioning for root-level components (Framer-style)
+  // Only used when component has no parent (is a root canvas component)
+  canvasX: types.maybe(types.number),
+  canvasY: types.maybe(types.number),
+  canvasScale: types.optional(types.number, 1),
+  canvasRotation: types.optional(types.number, 0),
+  canvasZIndex: types.optional(types.number, 0),
+  
+  // Breakpoint visibility constraints (like Framer)
+  visibleFromBreakpoint: types.maybe(types.string), // breakpoint ID
+  visibleUntilBreakpoint: types.maybe(types.string), // breakpoint ID
+  
+  // Canvas-level properties
+  canvasVisible: types.optional(types.boolean, true),
+  canvasLocked: types.optional(types.boolean, false),
 });
 
 // ---------- FINAL MODEL (add recursive children + logic) ----------
@@ -79,9 +95,76 @@ const ComponentModel = ComponentBase
   .props({
     children: types.optional(types.array(types.late((): any => ComponentModel)), []),
   })
+  .actions(self => ({
+    // Canvas positioning actions (for root components)
+    setCanvasPosition(x: number, y: number) {
+      self.canvasX = x;
+      self.canvasY = y;
+    },
+    
+    updateCanvasTransform(updates: {
+      x?: number;
+      y?: number;
+      scale?: number;
+      rotation?: number;
+      zIndex?: number;
+    }) {
+      if (updates.x !== undefined) self.canvasX = updates.x;
+      if (updates.y !== undefined) self.canvasY = updates.y;
+      if (updates.scale !== undefined) self.canvasScale = Math.max(0.1, Math.min(10, updates.scale));
+      if (updates.rotation !== undefined) self.canvasRotation = updates.rotation % 360;
+      if (updates.zIndex !== undefined) self.canvasZIndex = updates.zIndex;
+    },
+    
+    // Breakpoint visibility actions
+    setBreakpointVisibility(fromBreakpoint?: string, untilBreakpoint?: string) {
+      self.visibleFromBreakpoint = fromBreakpoint;
+      self.visibleUntilBreakpoint = untilBreakpoint;
+    },
+    
+    // Canvas-level actions
+    toggleCanvasVisibility() {
+      self.canvasVisible = !self.canvasVisible;
+    },
+    
+    toggleCanvasLock() {
+      self.canvasLocked = !self.canvasLocked;
+    },
+  }))
   .views(self => ({
     get isHostElement() { return self.componentType === ComponentTypeEnum.HOST; },
     get isFunctionComponent() { return self.componentType === ComponentTypeEnum.FUNCTION; },
+    
+    // Check if this is a root canvas component (has canvas positioning)
+    get isRootCanvasComponent(): boolean {
+      return self.canvasX !== undefined && self.canvasY !== undefined;
+    },
+    
+    // Get CSS transform for canvas positioning
+    get canvasTransform(): string {
+      if (!this.isRootCanvasComponent) return '';
+      return `translate(${self.canvasX}px, ${self.canvasY}px) scale(${self.canvasScale}) rotate(${self.canvasRotation}deg)`;
+    },
+    
+    // Get canvas bounds
+    get canvasBounds() {
+      if (!this.isRootCanvasComponent) return null;
+      
+      const width = self.props?.width || self.props?.style?.width || 200;
+      const height = self.props?.height || self.props?.style?.height || 100;
+      
+      return {
+        x: self.canvasX!,
+        y: self.canvasY!,
+        width: typeof width === 'string' ? parseInt(width) : width,
+        height: typeof height === 'string' ? parseInt(height) : height,
+      };
+    },
+    
+    // Check if component is editable on canvas
+    get isCanvasEditable(): boolean {
+      return !self.canvasLocked && self.canvasVisible;
+    },
 
     // In a real app, you’d traverse up to project/page to access breakpoints
     getResolvedProps(breakpointId: string, allBreakpoints: { id: string; minWidth: number }[], primaryId: string) {
@@ -148,6 +231,35 @@ export const createFunctionComponent = (
     type,
     componentType: ComponentTypeEnum.FUNCTION,
     props,
+  });
+
+// Create root canvas component with absolute positioning (Framer-style)
+export const createRootCanvasComponent = <T extends IntrinsicElementType>(
+  id: string,
+  type: T,
+  props: PropsRecord,
+  x: number,
+  y: number,
+  options: {
+    scale?: number;
+    rotation?: number;
+    zIndex?: number;
+    visibleFromBreakpoint?: string;
+    visibleUntilBreakpoint?: string;
+  } = {}
+): ComponentInstance =>
+  ComponentModel.create({
+    id,
+    type,
+    componentType: ComponentTypeEnum.HOST,
+    props,
+    canvasX: x,
+    canvasY: y,
+    canvasScale: options.scale || 1,
+    canvasRotation: options.rotation || 0,
+    canvasZIndex: options.zIndex || 0,
+    visibleFromBreakpoint: options.visibleFromBreakpoint,
+    visibleUntilBreakpoint: options.visibleUntilBreakpoint,
   });
 
 export default ComponentModel;

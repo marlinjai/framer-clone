@@ -3,7 +3,8 @@
 import { types, Instance } from 'mobx-state-tree';
 import ProjectModel, { ProjectModelType } from '../models/ProjectModel';
 import { v4 as uuidv4 } from 'uuid';
-import { createIntrinsicComponent } from '@/models/ComponentModel';
+import { createIntrinsicComponent, createRootCanvasComponent } from '@/models/ComponentModel';
+import { createBreakpointViewportComponent } from '@/utils/canvasHelpers';
 
 // ProjectStore - manages the collection of all projects (domain logic)
 const ProjectStore = types.model('ProjectStore', {
@@ -60,18 +61,87 @@ const ProjectStore = types.model('ProjectStore', {
   // Create a new project with default page
   createProject(title: string, description = '') {
     const projectId = uuidv4();
-    const primaryBreakpointId = uuidv4();
+    const desktopBreakpointId = uuidv4();
+    const tabletBreakpointId = uuidv4();
+    const mobileBreakpointId = uuidv4();
     const pageId = uuidv4();
     const rootComponentId = uuidv4();
 
     // Root component (responsive style maps keyed by primary breakpoint id)
     const rootComponent = createIntrinsicComponent('root-' + rootComponentId, 'div', {
       style: {
-        width: { [primaryBreakpointId]: '1280px' },
-        height: { [primaryBreakpointId]: '1000px' },
-        backgroundColor: { [primaryBreakpointId]: '#000' },
+        position: { [desktopBreakpointId]: '' },
+        width: { [desktopBreakpointId]: '1280px', [tabletBreakpointId]: '768px', [mobileBreakpointId]: '320px' },
+        height: { [desktopBreakpointId]: '1000px' },
+        backgroundColor: { [desktopBreakpointId]: '#4A90E2' },
       },
     });
+
+    // Create sample root canvas components for demonstration
+    const sampleImageComponent = createRootCanvasComponent(
+      uuidv4(),
+      'img',
+      {
+        src: 'https://picsum.photos/400/300',
+        alt: 'Sample image',
+        width: '400px',
+        height: '300px',
+        style: {
+          objectFit: 'cover',
+          borderRadius: '8px',
+        }
+      },
+      1600,
+      200
+    );
+
+    const sampleTextComponent = createRootCanvasComponent(
+      uuidv4(),
+      'div',
+      {
+        children: 'Welcome to Framer Clone!\nDrag elements around the canvas.',
+        style: {
+          width: '300px',
+          height: '100px',
+          fontSize: '16px',
+          fontFamily: 'Inter, sans-serif',
+          color: '#000000',
+          padding: '8px',
+          boxSizing: 'border-box',
+          whiteSpace: 'pre-wrap',
+          userSelect: 'none',
+          border: '2px solid blue',
+          backgroundColor: 'rgba(255, 255, 255, 0.9)',
+        }
+      },
+      1700,
+      550
+    );
+
+    // Create root canvas components for breakpoint viewports (positioned on canvas)
+    const desktopViewportComponent = createBreakpointViewportComponent(
+      `viewport-${desktopBreakpointId}`,
+      desktopBreakpointId,
+      100, // X position
+      100, // Y position
+      1280 // Width
+    );
+
+    const tabletViewportComponent = createBreakpointViewportComponent(
+      `viewport-${tabletBreakpointId}`,
+      tabletBreakpointId,
+      1430, // X position (100 + 1280 + 50 spacing)
+      100,  // Y position
+      768   // Width
+    );
+
+    const mobileViewportComponent = createBreakpointViewportComponent(
+      `viewport-${mobileBreakpointId}`,
+      mobileBreakpointId,
+      2248, // X position (100 + 1280 + 50 + 768 + 50)
+      100,  // Y position
+      320   // Width
+    );
 
     self.projects.set(projectId, {
       id: projectId,
@@ -92,16 +162,33 @@ const ProjectStore = types.model('ProjectStore', {
             createdAt: new Date(),
             updatedAt: new Date(),
             rootComponent, // <-- direct component snapshot (correct shape)
+            rootCanvasComponents: {
+              [sampleImageComponent.id]: sampleImageComponent,
+              [sampleTextComponent.id]: sampleTextComponent,
+              [desktopViewportComponent.id]: desktopViewportComponent,
+              [tabletViewportComponent.id]: tabletViewportComponent,
+              [mobileViewportComponent.id]: mobileViewportComponent,
+            },
         }
       },
       breakpoints: {
-        [primaryBreakpointId]: {
-          id: primaryBreakpointId,
-          label: 'Default',
+        [desktopBreakpointId]: {
+          id: desktopBreakpointId,
+          label: 'Desktop',
           minWidth: 1280,
         },
+        [tabletBreakpointId]: {
+          id: tabletBreakpointId,
+          label: 'Tablet',
+          minWidth: 768,
+        },
+        [mobileBreakpointId]: {
+          id: mobileBreakpointId,
+          label: 'Mobile',
+          minWidth: 320,
+        },
       },
-      primaryBreakpoint: primaryBreakpointId, // reference to existing breakpoint
+      primaryBreakpoint: desktopBreakpointId, // reference to existing breakpoint
     });
   },
   

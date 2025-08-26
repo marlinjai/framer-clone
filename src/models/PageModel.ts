@@ -1,6 +1,6 @@
 // src/models/PageModel.ts
 import { types, Instance, SnapshotIn, SnapshotOut, IAnyModelType } from 'mobx-state-tree';
-import ComponentModel, { ComponentInstance } from './ComponentModel';
+import ComponentModel, { ComponentInstance, ComponentSnapshotIn } from './ComponentModel';
 
 
 
@@ -33,6 +33,10 @@ const PageBase = types.model('Page', {
 // Explicit annotation to help TS not collapse inference during staged extension
 const PageWithRoot = PageBase.props({
   rootComponent: types.late((): IAnyModelType => ComponentModel),
+  
+  // Root canvas components - components positioned absolutely on canvas (like Framer)
+  // These are components that have no parent and live directly on the canvas
+  rootCanvasComponents: types.optional(types.map(ComponentModel), {}),
 });
 
 const PageModel = PageWithRoot
@@ -47,6 +51,25 @@ const PageModel = PageWithRoot
   setRootComponent(component: ComponentInstance | SnapshotIn<typeof ComponentModel>) {
     self.rootComponent = component;
     self.updatedAt = new Date();
+  },
+  
+  // Root canvas component management (Framer-style)
+  addRootCanvasComponent(component: ComponentInstance | ComponentSnapshotIn) {
+    self.rootCanvasComponents.set(component.id, component);
+    self.updatedAt = new Date();
+  },
+  
+  removeRootCanvasComponent(componentId: string) {
+    self.rootCanvasComponents.delete(componentId);
+    self.updatedAt = new Date();
+  },
+  
+  updateRootCanvasComponent(componentId: string, updates: Partial<ComponentSnapshotIn>) {
+    const component = self.rootCanvasComponents.get(componentId);
+    if (component) {
+      Object.assign(component, updates);
+      self.updatedAt = new Date();
+    }
   },
 }))
 .views(self => ({
@@ -76,6 +99,36 @@ const PageModel = PageWithRoot
     return !!self.rootComponent;
   },
   
+  // Check if page has root canvas components
+  get hasRootCanvasComponents(): boolean {
+    return self.rootCanvasComponents.size > 0;
+  },
+  
+  // Get all root canvas components as array
+  get rootCanvasComponentsArray(): ComponentInstance[] {
+    return Array.from(self.rootCanvasComponents.values());
+  },
+  
+  // Get root canvas component by ID
+  getRootCanvasComponent(componentId: string): ComponentInstance | undefined {
+    return self.rootCanvasComponents.get(componentId);
+  },
+  
+  // Get root canvas components by type
+  getRootCanvasComponentsByType(type: string): ComponentInstance[] {
+    return this.rootCanvasComponentsArray.filter(component => component.type === type);
+  },
+  
+  // Get visible root canvas components
+  get visibleRootCanvasComponents(): ComponentInstance[] {
+    return this.rootCanvasComponentsArray.filter(component => component.canvasVisible);
+  },
+  
+  // Get root canvas components that are positioned (have canvas coordinates)
+  get positionedRootCanvasComponents(): ComponentInstance[] {
+    return this.rootCanvasComponentsArray.filter(component => component.isRootCanvasComponent);
+  },
+  
   // Get serializable page data
   get exportData() {
     return {
@@ -83,6 +136,7 @@ const PageModel = PageWithRoot
       slug: self.slug,
       metadata: self.metadata,
       rootComponent: self.rootComponent,
+      rootCanvasComponents: self.rootCanvasComponents,
       createdAt: self.createdAt,
       updatedAt: self.updatedAt
     };

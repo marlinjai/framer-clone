@@ -12,6 +12,7 @@ import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { EditorUIType } from '../stores/EditorUIStore';
+import { useStore } from '@/hooks/useStore';
 
 interface RightSidebarProps {
   editorUI: EditorUIType;
@@ -19,6 +20,15 @@ interface RightSidebarProps {
 
 const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
   const isCollapsed = editorUI.rightSidebarCollapsed;
+  const rootStore = useStore();
+  const currentPage = editorUI.currentPage;
+  const selectedBreakpoint = editorUI.selectedBreakpoint;
+  const selectedRootCanvasComponent = editorUI.selectedRootCanvasComponent;
+  
+  // Get root canvas component for selected breakpoint
+  const viewportComponent = selectedBreakpoint && currentPage 
+    ? currentPage.getRootCanvasComponent(`viewport-${selectedBreakpoint.id}`)
+    : null;
 
   return (
     <div className={`
@@ -37,7 +47,14 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
         </Button>
         {!isCollapsed && (
           <div className="flex items-center space-x-2">
-            <span className="font-medium text-gray-900">Properties</span>
+            <span className="font-medium text-gray-900">
+              {selectedBreakpoint 
+                ? `${selectedBreakpoint.label} Properties` 
+                : selectedRootCanvasComponent && !selectedRootCanvasComponent.id.startsWith('viewport-')
+                  ? 'Position & Size'
+                  : 'Properties'
+              }
+            </span>
             <Settings size={20} className="text-gray-600" />
           </div>
         )}
@@ -47,35 +64,158 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
       {!isCollapsed && (
         <div className="flex-1 overflow-y-auto">
           <div className="p-3 space-y-6">
-            {/* Layout Properties */}
-            <div>
-              <div className="flex items-center space-x-2 mb-3">
-                <Layout size={16} className="text-gray-600" />
-                <h3 className="text-sm font-medium text-gray-900">Layout</h3>
-              </div>
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label className="text-xs text-gray-500">Width</Label>
-                    <Input placeholder="auto" className="h-8 text-sm" />
+            {/* Breakpoint Properties */}
+            {selectedBreakpoint && viewportComponent ? (
+              <div>
+                <div className="flex items-center space-x-2 mb-3">
+                  <Layout size={16} className="text-gray-600" />
+                  <h3 className="text-sm font-medium text-gray-900">Breakpoint Layout</h3>
+                </div>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs text-gray-500">Width (min-width)</Label>
+                      <Input 
+                        value={selectedBreakpoint.minWidth} 
+                        onChange={(e) => {
+                          const newWidth = parseInt(e.target.value) || 0;
+                          if (rootStore.editorUI.currentProject) {
+                            rootStore.editorUI.currentProject.updateBreakpoint(selectedBreakpoint.id, { minWidth: newWidth });
+                          }
+                        }}
+                        className="h-8 text-sm" 
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-500">Height</Label>
+                      <Input placeholder="600" className="h-8 text-sm" disabled />
+                      <div className="text-xs text-gray-400 mt-1">Managed by component</div>
+                    </div>
                   </div>
-                  <div>
-                    <Label className="text-xs text-gray-500">Height</Label>
-                    <Input placeholder="auto" className="h-8 text-sm" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs text-gray-500">X Position</Label>
+                      <Input 
+                        value={viewportComponent.canvasX || 0} 
+                        onChange={(e) => {
+                          const newX = parseInt(e.target.value) || 0;
+                          viewportComponent.updateCanvasTransform({ x: newX });
+                        }}
+                        className="h-8 text-sm" 
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-500">Y Position</Label>
+                      <Input 
+                        value={viewportComponent.canvasY || 0} 
+                        onChange={(e) => {
+                          const newY = parseInt(e.target.value) || 0;
+                          viewportComponent.updateCanvasTransform({ y: newY });
+                        }}
+                        className="h-8 text-sm" 
+                      />
+                    </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label className="text-xs text-gray-500">X</Label>
-                    <Input placeholder="0" className="h-8 text-sm" />
+              </div>
+            ) : selectedRootCanvasComponent && !selectedRootCanvasComponent.id.startsWith('viewport-') ? (
+              <div>
+                <div className="flex items-center space-x-2 mb-3">
+                  <Layout size={16} className="text-gray-600" />
+                  <h3 className="text-sm font-medium text-gray-900">Position & Size</h3>
+                </div>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs text-gray-500">Width</Label>
+                      <Input 
+                        value={selectedRootCanvasComponent.props?.width || '200'} 
+                        onChange={(e) => {
+                          const newWidth = e.target.value;
+                          const currentProps = selectedRootCanvasComponent.props || {};
+                          // Note: In MST, we'd need to update the component props through an action
+                          // This is a simplified version - in a real implementation, you'd have an updateProps action
+                          Object.assign(selectedRootCanvasComponent.props, {
+                            ...currentProps,
+                            width: newWidth
+                          });
+                        }}
+                        className="h-8 text-sm" 
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-500">Height</Label>
+                      <Input 
+                        value={selectedRootCanvasComponent.props?.height || '100'} 
+                        onChange={(e) => {
+                          const newHeight = e.target.value;
+                          const currentProps = selectedRootCanvasComponent.props || {};
+                          // Note: In MST, we'd need to update the component props through an action
+                          Object.assign(selectedRootCanvasComponent.props, {
+                            ...currentProps,
+                            height: newHeight
+                          });
+                        }}
+                        className="h-8 text-sm" 
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <Label className="text-xs text-gray-500">Y</Label>
-                    <Input placeholder="0" className="h-8 text-sm" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs text-gray-500">X Position</Label>
+                      <Input 
+                        value={selectedRootCanvasComponent.canvasX || 0} 
+                        onChange={(e) => {
+                          const newX = parseInt(e.target.value) || 0;
+                          selectedRootCanvasComponent.updateCanvasTransform({ x: newX });
+                        }}
+                        className="h-8 text-sm" 
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-500">Y Position</Label>
+                      <Input 
+                        value={selectedRootCanvasComponent.canvasY || 0} 
+                        onChange={(e) => {
+                          const newY = parseInt(e.target.value) || 0;
+                          selectedRootCanvasComponent.updateCanvasTransform({ y: newY });
+                        }}
+                        className="h-8 text-sm" 
+                      />
+                    </div>
                   </div>
+                  {selectedRootCanvasComponent.type === 'img' && (
+                    <div>
+                      <Label className="text-xs text-gray-500">Image URL</Label>
+                      <Input 
+                        value={selectedRootCanvasComponent.props?.src || ''} 
+                        onChange={(e) => {
+                          const newSrc = e.target.value;
+                          const currentProps = selectedRootCanvasComponent.props || {};
+                          // Note: In MST, we'd need to update the component props through an action
+                          Object.assign(selectedRootCanvasComponent.props, {
+                            ...currentProps,
+                            src: newSrc
+                          });
+                        }}
+                        className="h-8 text-sm" 
+                        placeholder="https://example.com/image.jpg"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
+            ) : (
+              <div>
+                <div className="flex items-center space-x-2 mb-3">
+                  <Layout size={16} className="text-gray-600" />
+                  <h3 className="text-sm font-medium text-gray-900">Layout</h3>
+                </div>
+                <div className="text-sm text-gray-500 text-center py-8">
+                  Select a breakpoint viewport or root canvas component to edit its properties
+                </div>
+              </div>
+            )}
 
             <Separator />
 

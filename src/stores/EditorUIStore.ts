@@ -4,7 +4,7 @@ import { types, Instance } from 'mobx-state-tree';
 import ProjectModel, { ProjectModelType } from '../models/ProjectModel';
 import PageModel, { PageModelType } from '../models/PageModel';
 import ComponentModel, { ComponentInstance } from '../models/ComponentModel';
-import { BreakpointModel } from '@/models/BreakpointModel';
+import { BreakpointModel, BreakpointType } from '@/models/BreakpointModel';
 
 // Available tools in our design editor (expanded from basic ToolStore)
 export enum EditorTool {
@@ -29,6 +29,9 @@ const EditorUIStore = types.model('EditorUI', {
   
   // Explicit selected breakpoint (decoupled from viewport width)
   selectedBreakpoint: types.maybe(types.safeReference(BreakpointModel)),
+  
+  // Currently selected root canvas component ID (for floating elements)
+  selectedRootCanvasComponentId: types.maybe(types.string),
 
   // Active tool
   selectedTool: types.optional(types.enumeration(Object.values(EditorTool)), EditorTool.SELECT),
@@ -79,6 +82,23 @@ const EditorUIStore = types.model('EditorUI', {
     if (breakpointId) {
       self.selectedBreakpoint = self.currentProject?.breakpoints.get(breakpointId);
     }
+  },
+  
+  // Breakpoint selection
+  setSelectedBreakpoint(breakpoint?: BreakpointType) {
+    self.selectedBreakpoint = breakpoint;
+    // Clear component and root canvas component selection when selecting a breakpoint
+    self.selectedComponent = undefined;
+    self.selectedRootCanvasComponentId = undefined;
+  },
+  
+  // Root canvas component selection (floating elements)
+  setSelectedRootCanvasComponent(component?: ComponentInstance) {
+    console.log('EditorUIStore: setSelectedRootCanvasComponent called with ID:', component?.id);
+    self.selectedRootCanvasComponentId = component?.id;
+    // Clear component and breakpoint selection when selecting a root canvas component
+    self.selectedComponent = undefined;
+    self.selectedBreakpoint = undefined;
   },
   
   // Tool selection
@@ -166,6 +186,11 @@ const EditorUIStore = types.model('EditorUI', {
   
   get hasComponentSelected(): boolean {
     return !!self.selectedComponent;
+  },
+  
+  get selectedRootCanvasComponent() {
+    if (!self.selectedRootCanvasComponentId || !self.currentPage) return undefined;
+    return self.currentPage.getRootCanvasComponent(self.selectedRootCanvasComponentId);
   },
   
   // Current breakpoint based on viewport width

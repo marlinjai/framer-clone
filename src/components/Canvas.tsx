@@ -2,7 +2,9 @@
 'use client';
 import React, { useRef, useCallback, useEffect } from 'react';
 import ResponsivePageRenderer from './ResponsivePageRenderer';
+import CanvasDebugPanel from './CanvasDebugPanel';
 import Toolbar from './Toolbar';
+import SelectionOverlay from './SelectionOverlay';
 import { EditorTool } from '../stores/EditorUIStore';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
@@ -16,8 +18,10 @@ interface CanvasState {
 
 const Canvas = observer(() => {
   // Performance-optimized refs for direct DOM manipulation
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
+  // ground wrapper (fills viewport, hosts grid & overlays, NOT transformed)
+  const groundRef = useRef<HTMLDivElement>(null);
+  // camera wrapper (only transformed element containing page trees)
+  const cameraRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
   const rootStore = useStore();
@@ -31,11 +35,11 @@ const Canvas = observer(() => {
 
   // Fastest possible approach - direct string interpolation
   const applyTransform = useCallback(() => {
-    if (contentRef.current) {
+    if (cameraRef.current) {
       const { zoom, panX, panY } = transformState.current;
       
       // Direct string creation - fastest approach
-      contentRef.current.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+      cameraRef.current.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
     }
   }, []);
 
@@ -43,14 +47,14 @@ const Canvas = observer(() => {
   const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
     
-    if (!canvasRef.current) return;
+  if (!groundRef.current) return;
     
     // Check if Command key is pressed (metaKey on Mac, ctrlKey on Windows/Linux)
     const isZoomModifier = e.metaKey || e.ctrlKey;
     
     if (isZoomModifier) {
       // ZOOM MODE: Stack Overflow proven cursor-centered zoom algorithm
-      const rect = canvasRef.current.getBoundingClientRect();
+  const rect = groundRef.current.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
       
@@ -107,8 +111,8 @@ const Canvas = observer(() => {
     lastMousePos.current = { x: e.clientX, y: e.clientY };
     
     // Change cursor to grabbing
-    if (canvasRef.current) {
-      canvasRef.current.style.cursor = 'grabbing';
+    if (groundRef.current) {
+      groundRef.current.style.cursor = 'grabbing';
     }
   }, [rootStore.editorUI.selectedTool]);
 
@@ -134,35 +138,35 @@ const Canvas = observer(() => {
     isDragging.current = false;
     
     // Reset cursor based on current tool
-    if (canvasRef.current) {
+    if (groundRef.current) {
       const cursor = rootStore.editorUI.selectedTool === EditorTool.GRAB ? 'grab' : 'default';
-      canvasRef.current.style.cursor = cursor;
+      groundRef.current.style.cursor = cursor;
     }
   }, [rootStore.editorUI.selectedTool]);
 
   // Setup native event listeners and cleanup on unmount
   useEffect(() => {
-    const canvas = canvasRef.current;
+  const ground = groundRef.current;
     
     const handleGlobalMouseUp = () => {
       isDragging.current = false;
-      if (canvasRef.current) {
+      if (groundRef.current) {
         const cursor = rootStore.editorUI.selectedTool === EditorTool.GRAB ? 'grab' : 'default';
-        canvasRef.current.style.cursor = cursor;
+        groundRef.current.style.cursor = cursor;
       }
     };
 
     // Add native wheel event listener with non-passive option
-    if (canvas) {
-      canvas.addEventListener('wheel', handleWheel, { passive: false });
+    if (ground) {
+      ground.addEventListener('wheel', handleWheel, { passive: false });
     }
 
     document.addEventListener('mouseup', handleGlobalMouseUp);
     
     return () => {
       // Cleanup event listeners
-      if (canvas) {
-        canvas.removeEventListener('wheel', handleWheel);
+      if (ground) {
+        ground.removeEventListener('wheel', handleWheel);
       }
       document.removeEventListener('mouseup', handleGlobalMouseUp);
     };
@@ -170,9 +174,9 @@ const Canvas = observer(() => {
 
   // Update cursor when tool changes
   useEffect(() => {
-    if (canvasRef.current) {
+    if (groundRef.current) {
       const cursor = rootStore.editorUI.selectedTool === EditorTool.GRAB ? 'grab' : 'default';
-      canvasRef.current.style.cursor = cursor;
+      groundRef.current.style.cursor = cursor;
     }
   }, [rootStore.editorUI.selectedTool]);
 
@@ -195,7 +199,7 @@ const Canvas = observer(() => {
       <div className="w-full h-full bg-gray-100 overflow-hidden relative">
         {/* Canvas viewport */}
         <div
-          ref={canvasRef}
+          ref={groundRef}
           className={`w-full h-full select-none ${rootStore.editorUI.selectedTool === EditorTool.GRAB ? 'cursor-grab' : 'cursor-default'} relative overflow-hidden`}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
@@ -213,17 +217,22 @@ const Canvas = observer(() => {
             }}
           />
           
-          {/* Transformed canvas content - anchored at top-left to avoid pivot drift */}
+          {/* Camera (transform wrapper) only element that pans/zooms */}
           <div
-            ref={contentRef}
-            className="w-0 h-0 origin-top-left"
-            style={{
-              transform: `translate(${transformState.current.panX}px, ${transformState.current.panY}px) scale(${transformState.current.zoom})`,
-              willChange: 'transform',
-            }}
+            ref={cameraRef}
+            className="absolute top-0 left-0 w-0 h-0 origin-top-left will-change-transform"
+            style={{ transform: `translate(${transformState.current.panX}px, ${transformState.current.panY}px) scale(${transformState.current.zoom})` }}
           >
-            <ResponsivePageRenderer 
-              page={rootStore.editorUI.currentPage}
+            {/* Page root(s) */}
+            <ResponsivePageRenderer page={rootStore.editorUI.currentPage} />
+          </div>
+
+          {/* Overlay layer (screen space) */}
+          <div className="pointer-events-none absolute inset-0" id="canvas-overlay-layer">
+            {/* Selection overlay */}
+            <SelectionOverlay 
+              selectedComponent={rootStore.editorUI.selectedComponent}
+              isVisible={rootStore.editorUI.selectedTool === EditorTool.SELECT}
             />
           </div>
         </div>
@@ -234,18 +243,10 @@ const Canvas = observer(() => {
             Scroll: pan | ⌘+Scroll: zoom | Drag: pan
           </div>
         </div>
+
+        {/* Debug panel */}
+        <CanvasDebugPanel />
         
-        {/* Primary selection overlay 
-        <SelectionOverlay 
-          selectedComponent={rootStore.editorUI.selectedComponent}
-          isVisible={rootStore.editorUI.selectedTool === EditorTool.SELECT && !!rootStore.editorUI.selectedComponent}
-        />
-        */}
-        {/* Secondary (faded) overlays in other breakpoints 
-        <SecondarySelectionOverlays
-          isVisible={rootStore.editorUI.selectedTool === EditorTool.SELECT && !!rootStore.editorUI.selectedComponent}
-        />
-        */} 
         {/* Toolbar */}
         <Toolbar editorUI={rootStore.editorUI} />
       </div>

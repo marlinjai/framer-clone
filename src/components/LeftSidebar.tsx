@@ -17,7 +17,9 @@ import {
   Box,
   Monitor,
   Tablet,
-  Smartphone
+  Smartphone,
+  Image,
+  Type
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -238,35 +240,84 @@ const LayersPanel = observer(({ editorUI }: { editorUI: EditorUIType }) => {
 
   const breakpoints = getBreakpoints();
 
-  return (
-    <div className="layers-panel space-y-4">
-      {/* All Breakpoint Trees Stacked Vertically */}
-      {breakpoints.map(({ name, bp }) => {
-        const treeToRender = getComponentTreeForBreakpoint();
-        // Derive viewport (preview) breakpoint locally from viewportWidth
-        const isSelectionBreakpoint = editorUI.selectedBreakpoint?.id === name;   // selection context
+  // Render a single unified layer tree (Framer-style)
+  const renderLayerTree = (): React.ReactNode[] => {
+    const layers: React.ReactNode[] = [];
+    
+    // Add root canvas components (floating elements like images, text)
+    if (currentPage && currentPage.hasRootCanvasComponents) {
+      currentPage.rootCanvasComponentsArray.forEach((component) => {
+        const isBreakpointViewport = component.id.startsWith('viewport-');
         
-        return (
-          <div key={name} className={`border rounded-lg overflow-hidden transition-colors ${isSelectionBreakpoint ? 'border-blue-500 bg-blue-50/50'  : 'border-gray-200'}`}>
-            {/* Breakpoint Header */}
-            <div className={`flex items-center justify-between px-3 py-2 border-b ${isSelectionBreakpoint ? 'border-blue-300 bg-blue-100/60' :  'border-gray-200 bg-gray-50'}`}>
-              <div className="flex items-center space-x-2">
-                {getBreakpointIcon(bp.label || 'desktop')}
-                <span className="text-sm font-medium">{bp.label}</span>
-                <span className="text-xs text-gray-500">({bp.minWidth}px+)</span>
-                {isSelectionBreakpoint&& (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500 text-white uppercase tracking-wide">Selected</span>
-                )}
-              </div>
+        // Skip viewport elements - they're not user-created content
+        if (isBreakpointViewport) return;
+        
+        const isSelected = editorUI.selectedRootCanvasComponent?.id === component.id;
+        
+        layers.push(
+          <div
+            key={component.id}
+            className={`
+              flex items-center space-x-2 px-2 py-1.5 rounded cursor-pointer text-sm
+              ${isSelected ? 'bg-blue-100 text-blue-900' : 'hover:bg-gray-100 text-gray-700'}
+            `}
+            onClick={() => editorUI.setSelectedRootCanvasComponent(component)}
+          >
+            {/* Element Icon */}
+            <div className="flex-shrink-0">
+              {component.type === 'img' ? (
+                <Image size={14} />
+              ) : (
+                <Type size={14} />
+              )}
             </div>
             
-            {/* Component Tree for this Breakpoint */}
-            <div className="p-2">
-              {treeToRender && renderComponentTree(treeToRender, bp)}
-            </div>
+            {/* Element Name */}
+            <span className="flex-1 truncate">
+              {component.type === 'img' ? 'Image' : component.type === 'div' ? 'Text' : component.type}
+            </span>
           </div>
         );
-      })}
+      });
+    }
+    
+    // Add breakpoint viewports
+    if (currentProject) {
+      const sortedBreakpoints = Array.from(currentProject.breakpoints.values())
+        .sort((a, b) => b.minWidth - a.minWidth); // Largest first (Desktop, Tablet, Mobile)
+      
+      sortedBreakpoints.forEach((breakpoint) => {
+        const isSelected = editorUI.selectedBreakpoint?.id === breakpoint.id;
+        
+        layers.push(
+          <div key={`breakpoint-${breakpoint.id}`}>
+            {/* Breakpoint Viewport */}
+            <div
+              className={`
+                flex items-center space-x-2 px-2 py-1.5 rounded cursor-pointer text-sm
+                ${isSelected ? 'bg-blue-100 text-blue-900' : 'hover:bg-gray-100 text-gray-700'}
+              `}
+              onClick={() => editorUI.setSelectedBreakpoint(breakpoint)}
+            >
+              <div className="flex-shrink-0">
+                {getBreakpointIcon(breakpoint.label || 'desktop')}
+              </div>
+              <span className="flex-1 truncate">{breakpoint.label}</span>
+            </div>
+            
+            {/* Component tree for this breakpoint */}
+            {rootComponent && renderComponentTree(rootComponent, breakpoint, 1)}
+          </div>
+        );
+      });
+    }
+    
+    return layers;
+  };
+
+  return (
+    <div className="layers-panel space-y-1">
+      {renderLayerTree()}
     </div>
   );
 });
