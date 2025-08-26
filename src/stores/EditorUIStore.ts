@@ -36,10 +36,6 @@ const EditorUIStore = types.model('EditorUI', {
   // Active tool
   selectedTool: types.optional(types.enumeration(Object.values(EditorTool)), EditorTool.SELECT),
   
-  // Canvas settings
-  zoom: types.optional(types.number, 1),
-  canvasOffset: types.optional(types.frozen<{ x: number; y: number }>(), { x: 0, y: 0 }),
-  
   // UI panel states
   showPropertiesPanel: types.optional(types.boolean, true),
   showLayersPanel: types.optional(types.boolean, true),
@@ -104,27 +100,6 @@ const EditorUIStore = types.model('EditorUI', {
   // Tool selection
   setSelectedTool(tool: EditorTool) {
     self.selectedTool = tool;
-  },
-  
-  // Canvas controls
-  setZoom(zoom: number) {
-    self.zoom = Math.max(0.1, Math.min(5, zoom)); // Clamp between 0.1x and 5x
-  },
-  
-  zoomIn() {
-    this.setZoom(self.zoom * 1.2);
-  },
-  
-  zoomOut() {
-    this.setZoom(self.zoom / 1.2);
-  },
-  
-  resetZoom() {
-    this.setZoom(1);
-  },
-  
-  setCanvasOffset(offset: { x: number; y: number }) {
-    self.canvasOffset = offset;
   },
   
   // Panel visibility
@@ -225,13 +200,6 @@ const EditorUIStore = types.model('EditorUI', {
     return self.selectedTool === tool;
   },
   
-  // Canvas calculations
-  get effectiveZoom(): number {
-    return Math.max(0.1, Math.min(5, self.zoom));
-  },
-  
-  //
-  
   // Export current UI state (for debugging/persistence)
   get uiState() {
     return {
@@ -240,8 +208,6 @@ const EditorUIStore = types.model('EditorUI', {
       selectedComponentId: self.selectedComponent?.id,
       selectedBreakpoint: self.selectedBreakpoint,
       selectedTool: self.selectedTool,
-      zoom: self.zoom,
-      canvasOffset: self.canvasOffset,
       panels: {
         properties: self.showPropertiesPanel,
         layers: self.showLayersPanel,

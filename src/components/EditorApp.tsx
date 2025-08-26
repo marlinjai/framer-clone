@@ -7,12 +7,14 @@ import RightSidebar from "@/components/RightSidebar";
 import Toolbar from "@/components/Toolbar";
 import HudSurface from "@/components/HudSurface";
 import { TransformProvider } from '@/contexts/TransformContext';
+import makeInspectable from 'mobx-devtools-mst';
 
 import { useStore } from "@/hooks/useStore";
 
 export default function EditorApp() {
   const rootStore = useStore();
   const initRef = React.useRef(false);
+  makeInspectable(rootStore);
 
   if (!initRef.current) {
 rootStore.projectStore.createProject(

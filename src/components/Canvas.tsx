@@ -265,7 +265,7 @@ const CanvasInner = observer(() => {
         </div>
 
         {/* Debug panel */}
-        <CanvasDebugPanel />
+        {/* <CanvasDebugPanel /> */}
         
         {/* Toolbar */}
         <Toolbar editorUI={rootStore.editorUI} />
