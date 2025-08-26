@@ -4,19 +4,17 @@ import React, { useRef, useCallback, useEffect } from 'react';
 import ResponsivePageRenderer from './ResponsivePageRenderer';
 import CanvasDebugPanel from './CanvasDebugPanel';
 import Toolbar from './Toolbar';
-import SelectionOverlay from './SelectionOverlay';
+import { useTransformContext, useTransformNotifier } from '@/contexts/TransformContext';
+// HudSurface is now imported in EditorApp
 import { EditorTool } from '../stores/EditorUIStore';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 
-interface CanvasState {
-  zoom: number;
-  panX: number;
-  panY: number;
-}
+// Interface removed - now using TransformContext
 
 
-const Canvas = observer(() => {
+// Inner Canvas component that uses TransformContext
+const CanvasInner = observer(() => {
   // Performance-optimized refs for direct DOM manipulation
   // ground wrapper (fills viewport, hosts grid & overlays, NOT transformed)
   const groundRef = useRef<HTMLDivElement>(null);
@@ -26,12 +24,9 @@ const Canvas = observer(() => {
   const lastMousePos = useRef({ x: 0, y: 0 });
   const rootStore = useStore();
 
-  // Current transform state (for direct DOM updates)
-  const transformState = useRef<CanvasState>({
-    zoom: 1,
-    panX: 0,
-    panY: 0,
-  });
+  // Get transform state and notifier from context
+  const { state: transformState } = useTransformContext();
+  const notifySubscribers = useTransformNotifier();
 
   // Fastest possible approach - direct string interpolation
   const applyTransform = useCallback(() => {
@@ -39,9 +34,26 @@ const Canvas = observer(() => {
       const { zoom, panX, panY } = transformState.current;
       
       // Direct string creation - fastest approach
-      cameraRef.current.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+      const transformString = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+      cameraRef.current.style.transform = transformString;
+      
+      // Update data attribute for external access
+      cameraRef.current.setAttribute('data-camera-transform', `${panX},${panY},${zoom}`);
+      
+      // Debug logging for transform state
+      console.log('🎯 Canvas Transform Applied:', {
+        panX: panX.toFixed(2),
+        panY: panY.toFixed(2), 
+        zoom: zoom.toFixed(3),
+        transformString,
+        cameraElement: cameraRef.current,
+        cameraRect: cameraRef.current.getBoundingClientRect()
+      });
+      
+      // Notify all subscribers (overlays, etc.)
+      notifySubscribers();
     }
-  }, []);
+  }, [notifySubscribers, transformState]);
 
   // Handle mouse wheel - pan by default, zoom with Command key
   const handleWheel = useCallback((e: WheelEvent) => {
@@ -78,11 +90,9 @@ const Canvas = observer(() => {
       const newPanY = mouseY - worldY * newZoom;
       
       // Update transform state
-      transformState.current = {
-        zoom: newZoom,
-        panX: newPanX,
-        panY: newPanY,
-      };
+      transformState.current.zoom = newZoom;
+      transformState.current.panX = newPanX;
+      transformState.current.panY = newPanY;
     } else {
       // PAN MODE: Regular scroll = pan canvas
       const panFactor = 1.0;
@@ -98,7 +108,7 @@ const Canvas = observer(() => {
     applyTransform();
     
     // Note: UI elements that need transform state will read directly from transformState.current
-  }, [applyTransform]);
+  }, [applyTransform, transformState]);
 
   // Handle mouse down - start dragging (only for GRAB tool)
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -131,7 +141,7 @@ const Canvas = observer(() => {
     applyTransform();
 
     lastMousePos.current = { x: e.clientX, y: e.clientY };
-  }, [applyTransform]); 
+  }, [applyTransform, transformState]); 
 
   // Handle mouse up - stop dragging
   const handleMouseUp = useCallback(() => {
@@ -222,19 +232,13 @@ const Canvas = observer(() => {
             ref={cameraRef}
             className="absolute top-0 left-0 w-0 h-0 origin-top-left will-change-transform"
             style={{ transform: `translate(${transformState.current.panX}px, ${transformState.current.panY}px) scale(${transformState.current.zoom})` }}
+            data-camera-transform={`${transformState.current.panX},${transformState.current.panY},${transformState.current.zoom}`}
           >
             {/* Page root(s) */}
-            <ResponsivePageRenderer page={rootStore.editorUI.currentPage} />
+            <ResponsivePageRenderer  />
           </div>
 
-          {/* Overlay layer (screen space) */}
-          <div className="pointer-events-none absolute inset-0" id="canvas-overlay-layer">
-            {/* Selection overlay */}
-            <SelectionOverlay 
-              selectedComponent={rootStore.editorUI.selectedComponent}
-              isVisible={rootStore.editorUI.selectedTool === EditorTool.SELECT}
-            />
-          </div>
+          {/* Note: Overlays now handled by HudSurface outside this container */}
         </div>
         
         {/* Canvas controls info */}
@@ -253,5 +257,12 @@ const Canvas = observer(() => {
     </main>
   );
 });
+
+// Main Canvas component (TransformProvider now in EditorApp)
+const Canvas = observer(() => {
+  return <CanvasInner />;
+});
+
+Canvas.displayName = 'Canvas';
 
 export default Canvas;

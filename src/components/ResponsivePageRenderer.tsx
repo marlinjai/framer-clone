@@ -3,20 +3,16 @@
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
-import { PageModelType } from '../models/PageModel';
 import ComponentRenderer from './ComponentRenderer';
 import RootCanvasComponentRenderer from './RootCanvasComponentRenderer';
 import GroundWrapper from './GroundWrapper';
 import { useStore } from '@/hooks/useStore';
 import { BreakpointType } from '@/models/BreakpointModel';
 
-interface ResponsivePageRendererProps {
-  page: PageModelType;
-}
-
-const ResponsivePageRenderer = observer(({ page }: ResponsivePageRendererProps) => {
+const ResponsivePageRenderer = observer(() => {
   const rootStore = useStore();
   const project = rootStore.editorUI.currentProject;
+  const page = rootStore.editorUI.currentPage;
   if (!project || !page) return null;
 
   const breakpoints: BreakpointType[] = Array
