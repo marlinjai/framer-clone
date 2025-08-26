@@ -6,7 +6,6 @@ import LeftSidebar from "@/components/LeftSidebar";
 import RightSidebar from "@/components/RightSidebar";
 import Toolbar from "@/components/Toolbar";
 import HudSurface from "@/components/HudSurface";
-import TransformDebugOverlay from "@/components/TransformDebugOverlay";
 import { TransformProvider } from '@/contexts/TransformContext';
 
 import { useStore } from "@/hooks/useStore";
@@ -35,9 +34,6 @@ rootStore.projectStore.createProject(
       
       {/* Framer-style HudSurface for overlays (outside canvas) */}
       <HudSurface />
-      
-      {/* Debug overlay to verify transform subscription */}
-      <TransformDebugOverlay />
       
       <header className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-gray-200 flex items-center px-6 z-90">
         <div className="w-32 h-8 bg-gray-300 rounded" />

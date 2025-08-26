@@ -28,29 +28,45 @@ const CanvasInner = observer(() => {
   const { state: transformState } = useTransformContext();
   const notifySubscribers = useTransformNotifier();
 
-  // Fastest possible approach - direct string interpolation
+  /**
+   * Apply transform to canvas camera element and notify subscribers
+   * 
+   * This is the core function that:
+   * 1. Reads current transform state from context ref
+   * 2. Applies CSS transform directly to DOM (bypassing React)
+   * 3. Updates data attribute for external debugging
+   * 4. Notifies all subscribers (HudSurface, etc.) via context
+   * 
+   * Performance optimizations:
+   * - Direct DOM manipulation (no React re-render)
+   * - String interpolation (faster than template literals in loops)
+   * - Single transform application (not separate translate/scale)
+   * - Cached callback with stable dependencies
+   */
   const applyTransform = useCallback(() => {
     if (cameraRef.current) {
       const { zoom, panX, panY } = transformState.current;
       
-      // Direct string creation - fastest approach
+      // Direct CSS transform application - fastest approach for real-time updates
+      // Format: translate(x, y) scale(z) - order matters for proper transformation
       const transformString = `translate(${panX}px, ${panY}px) scale(${zoom})`;
       cameraRef.current.style.transform = transformString;
       
-      // Update data attribute for external access
+      // Update data attribute for external debugging and HudSurface compatibility
       cameraRef.current.setAttribute('data-camera-transform', `${panX},${panY},${zoom}`);
       
-      // Debug logging for transform state
-      console.log('🎯 Canvas Transform Applied:', {
-        panX: panX.toFixed(2),
-        panY: panY.toFixed(2), 
-        zoom: zoom.toFixed(3),
-        transformString,
-        cameraElement: cameraRef.current,
-        cameraRect: cameraRef.current.getBoundingClientRect()
-      });
+      // Debug logging for transform state (disabled for production performance)
+      // console.log('🎯 Canvas Transform Applied:', {
+      //   panX: panX.toFixed(2),
+      //   panY: panY.toFixed(2), 
+      //   zoom: zoom.toFixed(3),
+      //   transformString,
+      //   cameraElement: cameraRef.current,
+      //   cameraRect: cameraRef.current.getBoundingClientRect()
+      // });
       
-      // Notify all subscribers (overlays, etc.)
+      // Notify all subscribers (HudSurface, debug overlays, etc.)
+      // This triggers direct DOM updates in subscribed components
       notifySubscribers();
     }
   }, [notifySubscribers, transformState]);
