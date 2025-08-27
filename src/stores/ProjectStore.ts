@@ -64,35 +64,6 @@ const ProjectStore = types.model('ProjectStore', {
     const tabletBreakpointId = uuidv4();
     const mobileBreakpointId = uuidv4();
     const pageId = uuidv4();
-    // Removed rootComponentId - no longer needed with direct component structure
-
-    // Create the app component tree (Framer-style: direct components, no wrapper)
-    // In Framer, the app tree is a collection of root-level components
-    const appComponentTree = createIntrinsicComponent('header-' + uuidv4(), 'header', {
-      style: {
-        color: 'white',
-        padding: '16px',
-        borderRadius: '8px',
-        marginBottom: '20px',
-        fontFamily: 'Inter, sans-serif'
-      },
-      children: 'Welcome to Framer Clone!'
-    });
-
-    // Add a main component as a sibling (this would be handled differently in a real app)
-    const mainComponent = createIntrinsicComponent('main-' + uuidv4(), 'main', {
-      style: {
-        padding: '20px',
-        backgroundColor: 'black',
-        borderRadius: '8px',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-        fontFamily: 'Inter, sans-serif'
-      },
-      children: 'This is the main content area. Click on components to select them across viewports!'
-    });
-
-    // Add the main component as a child of the header (simplified structure)
-    appComponentTree.addChildren([mainComponent]);
 
     // Create viewport nodes (Framer-style: positioned on canvas)
     const desktopViewport = createViewportNode(
@@ -128,8 +99,36 @@ const ProjectStore = types.model('ProjectStore', {
       667   // Viewport height
     );
 
+    // Create the app component tree (Framer-style: direct components, no wrapper)
+    // In Framer, the app tree is the Tree that represents the final page of the app
+    const appComponentTree = createIntrinsicComponent('header-' + uuidv4(), 'header', {
+      style: {
+        color: 'white',
+        padding: '16px',
+        borderRadius: '8px',
+        marginBottom: '20px',
+        fontFamily: 'Inter, sans-serif'
+      },
+      children: 'Welcome to Framer Clone!'
+    });
+
+    // Add a main component as a sibling (this would be handled differently in a real app)
+    const mainComponent = createIntrinsicComponent('main-' + uuidv4(), 'main', {
+      style: {
+        padding: '20px',
+        backgroundColor: 'black',
+        borderRadius: '8px',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+        fontFamily: 'Inter, sans-serif',
+        color: 'white',
+      },
+      children: 'This is the main content area. Click on components to select them across viewports!'
+    });
+
+
+
     // Create sample floating elements (Framer-style image component)
-    const sampleImageComponent = createFloatingCanvasComponent('img-inner-' + uuidv4(), 'img', {
+    const FloatingImageComponent = createFloatingCanvasComponent('img-inner-' + uuidv4(), 'img', {
       src: '/images/sample-image.jpg',
       alt: 'Sample image',
       draggable: false, // Prevent default image drag
@@ -150,7 +149,29 @@ const ProjectStore = types.model('ProjectStore', {
     );
 
     // Set a proper label for the image component
-    sampleImageComponent.setLabel('Hero Image');
+    FloatingImageComponent.setLabel('Hero Image');
+
+    // Create sample floating elements (Framer-style image component)
+    const AppTreeImageComponent = createIntrinsicComponent('img-inner-' + uuidv4(), 'img', {
+      src: '/images/sample-image.jpg',
+      alt: 'Sample image',
+      draggable: false, // Prevent default image drag
+      style: {
+        display: 'block',
+        width: '400px',
+        height: '300px',
+        borderRadius: '8px',
+        objectPosition: 'center center',
+        objectFit: 'cover',
+        userSelect: 'none',
+        WebkitUserDrag: 'none',
+        pointerEvents: 'none', // Let parent handle all interactions
+        zIndex: 100,
+      }
+    });
+
+    // Set a proper label for the image component
+    AppTreeImageComponent.setLabel('App Tree Image');
 
 
     const sampleTextComponent = createFloatingCanvasComponent(
@@ -179,6 +200,10 @@ const ProjectStore = types.model('ProjectStore', {
     // Set a proper label for the text component
     sampleTextComponent.setLabel('Welcome Text');
 
+      // Add the main component as a child of the header (simplified structure)
+      // Parent relationships will be automatically set by addChildren()
+      appComponentTree.addChildren([mainComponent, AppTreeImageComponent]);
+
     self.projects.set(projectId, {
       id: projectId,
       metadata: {
@@ -204,7 +229,7 @@ const ProjectStore = types.model('ProjectStore', {
             [tabletViewport.id]: tabletViewport,
             [mobileViewport.id]: mobileViewport,
             // Floating elements
-            [sampleImageComponent.id]: sampleImageComponent,
+            [FloatingImageComponent.id]: FloatingImageComponent,
             [sampleTextComponent.id]: sampleTextComponent,
           },
         }

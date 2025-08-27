@@ -2,7 +2,6 @@
 'use client';
 import React, { useRef, useCallback, useEffect } from 'react';
 import ResponsivePageRenderer from './ResponsivePageRenderer';
-import CanvasDebugPanel from './CanvasDebugPanel';
 import Toolbar from './Toolbar';
 import { useTransformContext, useTransformNotifier } from '@/contexts/TransformContext';
 // HudSurface is now imported in EditorApp
@@ -170,6 +169,27 @@ const CanvasInner = observer(() => {
     }
   }, [rootStore.editorUI.selectedTool]);
 
+  // Handle canvas click - deselect when clicking empty space
+  const handleCanvasClick = useCallback((e: React.MouseEvent) => {
+    // Only deselect if we're in SELECT mode and clicking on empty canvas space
+    if (rootStore.editorUI.selectedTool === EditorTool.SELECT) {
+      const target = e.target as HTMLElement;
+      
+      // Check if we clicked on the ground element itself, the grid background, or camera wrapper
+      // (i.e., not on any actual content elements)
+      const isEmptySpace = target === groundRef.current || 
+                          target.classList.contains('opacity-40') || // Grid background
+                          target === cameraRef.current ||
+                          (target.closest && !target.closest('.ground-wrapper') && !target.closest('[data-component-id]') && !target.closest('[data-viewport-id]'));
+      
+      if (isEmptySpace) {
+        console.log('🎯 Canvas: Clicked empty space, clearing selection');
+        rootStore.editorUI.selectComponent(undefined);
+        rootStore.editorUI.setSelectedViewportNode(undefined);
+      }
+    }
+  }, [rootStore.editorUI]);
+
   // Setup native event listeners and cleanup on unmount
   useEffect(() => {
   const ground = groundRef.current;
@@ -230,6 +250,7 @@ const CanvasInner = observer(() => {
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
+          onClick={handleCanvasClick}
         >
           {/* Fixed grid background - stays in viewport, doesn't transform */}
           <div
@@ -253,8 +274,6 @@ const CanvasInner = observer(() => {
             {/* Page root(s) */}
             <ResponsivePageRenderer  />
           </div>
-
-          {/* Note: Overlays now handled by HudSurface outside this container */}
         </div>
         
         {/* Canvas controls info */}
@@ -264,8 +283,6 @@ const CanvasInner = observer(() => {
           </div>
         </div>
 
-        {/* Debug panel */}
-        {/* <CanvasDebugPanel /> */}
         
         {/* Toolbar */}
         <Toolbar editorUI={rootStore.editorUI} />

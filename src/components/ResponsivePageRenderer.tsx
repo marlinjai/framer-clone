@@ -43,7 +43,83 @@ const ResponsivePageRenderer = observer(() => {
           id={viewport.id}
           x={viewport.canvasX!} 
           y={viewport.canvasY!}
-          className="viewport-node"
+          className="viewport-node cursor-grab hover:cursor-grab"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (rootStore.editorUI.selectedTool === EditorTool.SELECT) {
+              rootStore.editorUI.setSelectedViewportNode(viewport);
+            }
+          }}
+          onMouseDown={(e: React.MouseEvent) => {
+            // Start drag operation for viewport nodes (same as floating elements)
+            if (rootStore.editorUI.selectedTool === EditorTool.SELECT && e.button === 0) {
+              e.preventDefault();
+              e.stopPropagation();
+              
+              // Select the viewport first
+              rootStore.editorUI.setSelectedViewportNode(viewport);
+              
+              // Start drag operation using EditorUIStore
+              const startPos = { x: e.clientX, y: e.clientY };
+              rootStore.editorUI.startDrag(viewport, startPos);
+              
+              const startCanvasX = viewport.canvasX || 0;
+              const startCanvasY = viewport.canvasY || 0;
+              
+              // Visual feedback: change cursor and add dragging class
+              const groundWrapper = e.currentTarget as HTMLElement;
+              groundWrapper.style.cursor = 'grabbing';
+              groundWrapper.style.opacity = '0.8';
+              groundWrapper.classList.add('dragging');
+              
+              const handleMouseMove = (moveEvent: MouseEvent) => {
+                const deltaX = moveEvent.clientX - startPos.x;
+                const deltaY = moveEvent.clientY - startPos.y;
+                
+                // Transform screen delta to canvas delta (account for zoom)
+                const { zoom } = transformState.current;
+                const canvasDeltaX = deltaX / zoom;
+                const canvasDeltaY = deltaY / zoom;
+                
+                // Calculate new position and snap to pixels (integer coordinates)
+                const newX = Math.round(startCanvasX + canvasDeltaX);
+                const newY = Math.round(startCanvasY + canvasDeltaY);
+                
+                // Update drag state in store
+                rootStore.editorUI.updateDrag({ x: moveEvent.clientX, y: moveEvent.clientY });
+                
+                // Update viewport position immediately for real-time feedback with pixel snapping
+                viewport.updateCanvasTransform({ x: newX, y: newY });
+              };
+              
+              const handleMouseUp = () => {
+                // End drag operation in store
+                rootStore.editorUI.endDrag();
+                
+                // Reset visual feedback
+                groundWrapper.style.cursor = 'grab';
+                groundWrapper.style.opacity = '1';
+                groundWrapper.classList.remove('dragging');
+                
+                // Cleanup event listeners
+                document.removeEventListener('mousemove', handleMouseMove);
+                document.removeEventListener('mouseup', handleMouseUp);
+                document.body.style.cursor = '';
+                
+                console.log('🎯 Viewport drag completed. Final position:', {
+                  canvasX: viewport.canvasX,
+                  canvasY: viewport.canvasY
+                });
+              };
+              
+              // Set drag cursor
+              document.body.style.cursor = 'grabbing';
+              
+              // Add global event listeners
+              document.addEventListener('mousemove', handleMouseMove);
+              document.addEventListener('mouseup', handleMouseUp);
+            }
+          }}
         >
           {/* Viewport frame */}
           <div

@@ -103,6 +103,9 @@ const ComponentBase = types.model('ComponentBase', {
   // Canvas-level properties
   canvasVisible: types.optional(types.boolean, true),
   canvasLocked: types.optional(types.boolean, false),
+  
+  // Parent relation tracking (for app tree navigation)
+  parentId: types.maybe(types.string),
 });
 
 // ---------- FINAL MODEL (add recursive children + logic) ----------
@@ -156,24 +159,100 @@ const ComponentModel: any = ComponentBase
       self.canvasNodeType = nodeType;
     },
     
-    // Children management actions
+    // Children management actions with parent tracking
     addChild(child: ComponentInstance) {
       self.children.push(child);
+      // Update parent relation
+      child.setParent(self.id);
     },
     
     addChildren(children: ComponentInstance[]) {
-      children.forEach(child => self.children.push(child));
+      children.forEach(child => {
+        self.children.push(child);
+        // Update parent relation
+        child.setParent(self.id);
+      });
     },
     
     removeChild(childId: string) {
       const index = self.children.findIndex(child => child.id === childId);
       if (index !== -1) {
+        const child = self.children[index];
+        // Clear parent relation
+        child.clearParent();
         self.children.splice(index, 1);
       }
     },
     
     clearChildren() {
+      // Clear parent relations for all children
+      self.children.forEach(child => child.clearParent());
       self.children.clear();
+    },
+    
+    // Parent relation management
+    setParent(parentId: string) {
+      self.parentId = parentId;
+    },
+    
+    clearParent() {
+      self.parentId = undefined;
+    },
+    
+    // Responsive style management with proper MST object replacement
+    updateResponsiveStyle(property: string, value: any, breakpointId?: string) {
+      const currentProps = self.props || {};
+      const currentStyle = currentProps.style || {};
+      const currentValue = currentStyle[property];
+      
+      if (breakpointId) {
+        // Create or update responsive map
+        let newValueMap;
+        if (typeof currentValue === 'object' && currentValue && !Array.isArray(currentValue)) {
+          // Update existing responsive map
+          newValueMap = { ...currentValue, [breakpointId]: value };
+        } else {
+          // Create new responsive map, preserving existing value as base
+          newValueMap = { 
+            base: currentValue || '',
+            [breakpointId]: value 
+          };
+        }
+        
+        // Replace entire props object (MST requirement)
+        self.props = {
+          ...currentProps,
+          style: {
+            ...currentStyle,
+            [property]: newValueMap
+          }
+        };
+      } else {
+        // Set direct value (no breakpoint context)
+        self.props = {
+          ...currentProps,
+          style: {
+            ...currentStyle,
+            [property]: value
+          }
+        };
+      }
+      
+      console.log(`🎨 Updated ${property} to:`, self.props.style[property]);
+    },
+    
+    // Get resolved style value for a specific breakpoint
+    getResponsiveStyleValue(property: string, breakpointId?: string): any {
+      const currentStyle = self.props?.style || {};
+      const currentValue = currentStyle[property];
+      
+      if (breakpointId && typeof currentValue === 'object' && currentValue && !Array.isArray(currentValue)) {
+        // Return breakpoint-specific value or fallback to base
+        return currentValue[breakpointId] || currentValue.base;
+      }
+      
+      // Return direct value
+      return currentValue;
     },
     
     // Canvas-level actions
@@ -235,6 +314,15 @@ const ComponentModel: any = ComponentBase
     // Check if component is editable on canvas
     get isCanvasEditable(): boolean {
       return !self.canvasLocked && self.canvasVisible;
+    },
+    
+    // Parent relation views
+    get hasParent(): boolean {
+      return !!self.parentId;
+    },
+    
+    get isRootComponent(): boolean {
+      return !self.parentId;
     },
     
     // Viewport node specific views

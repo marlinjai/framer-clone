@@ -116,14 +116,14 @@ export function getPrimaryRenderInstance(
  */
 export const HIGHLIGHT_STYLES = {
   primary: {
-    border: 'border-2 border-blue-500',
-    background: 'bg-blue-500/10',
+    border: 'border-2 border-green-500',
+    background: 'bg-green-500/10',
     zIndex: 'z-10',
     showHandles: true,
   },
   secondary: {
-    border: 'border-2 border-blue-300',
-    background: 'bg-blue-300/5',
+    border: 'border-2 border-green-300',
+    background: 'bg-green-300/5',
     zIndex: 'z-[9]',
     showHandles: false,
     animation: 'animate-pulse',
