@@ -113,8 +113,8 @@ const ComponentModel: any = ComponentBase
   .actions(self => ({
     // Canvas positioning actions (for root components)
     setCanvasPosition(x: number, y: number) {
-      self.canvasX = x;
-      self.canvasY = y;
+      self.canvasX = Math.round(x);
+      self.canvasY = Math.round(y);
     },
     
     updateCanvasTransform(updates: {
@@ -124,8 +124,8 @@ const ComponentModel: any = ComponentBase
       rotation?: number;
       zIndex?: number;
     }) {
-      if (updates.x !== undefined) self.canvasX = updates.x;
-      if (updates.y !== undefined) self.canvasY = updates.y;
+      if (updates.x !== undefined) self.canvasX = Math.round(updates.x);
+      if (updates.y !== undefined) self.canvasY = Math.round(updates.y);
       if (updates.scale !== undefined) self.canvasScale = Math.max(0.1, Math.min(10, updates.scale));
       if (updates.rotation !== undefined) self.canvasRotation = updates.rotation % 360;
       if (updates.zIndex !== undefined) self.canvasZIndex = updates.zIndex;

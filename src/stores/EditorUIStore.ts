@@ -46,6 +46,7 @@ const EditorUIStore = types.model('EditorUI', {
     component: ComponentInstance; 
     startPos: { x: number; y: number };
     currentPos: { x: number; y: number };
+    startCanvasPos: { x: number; y: number };
   } | undefined,
 }))
 .actions(self => ({
@@ -130,11 +131,13 @@ const EditorUIStore = types.model('EditorUI', {
   },
   
   startDrag(component: ComponentInstance, startPos: { x: number; y: number }) {
+    console.log('🎯 EditorUIStore: Starting drag operation for component:', component.id, 'at position:', startPos);
     self.isDragging = true;
     self.dragData = {
       component,
       startPos,
-      currentPos: startPos
+      currentPos: startPos,
+      startCanvasPos: { x: component.canvasX || 0, y: component.canvasY || 0 }
     };
   },
   
@@ -145,6 +148,7 @@ const EditorUIStore = types.model('EditorUI', {
   },
   
   endDrag() {
+    console.log('🎯 EditorUIStore: Ending drag operation');
     self.isDragging = false;
     self.dragData = undefined;
   },
@@ -161,6 +165,15 @@ const EditorUIStore = types.model('EditorUI', {
   
   get hasComponentSelected(): boolean {
     return !!self.selectedComponent;
+  },
+
+  // Drag state
+  get currentDragData() {
+    return self.dragData;
+  },
+
+  get isDragInProgress(): boolean {
+    return self.isDragging && !!self.dragData;
   },
 
   

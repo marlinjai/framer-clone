@@ -7,10 +7,12 @@ import ComponentRenderer from './ComponentRenderer';
 import GroundWrapper from './GroundWrapper';
 import { useStore } from '@/hooks/useStore';
 import { EditorTool } from '@/stores/EditorUIStore';
+import { useTransformContext } from '@/contexts/TransformContext';
 // Removed unused import: CanvasNodeType
 
 const ResponsivePageRenderer = observer(() => {
   const rootStore = useStore();
+  const { state: transformState } = useTransformContext();
   const project = rootStore.editorUI.currentProject;
   const page = rootStore.editorUI.currentPage;
   if (!project || !page) return null;
@@ -99,12 +101,81 @@ const ResponsivePageRenderer = observer(() => {
           zIndex={element.canvasZIndex}
           width={parseInt(element.props?.style?.width) || undefined}
           height={parseInt(element.props?.style?.height) || undefined}
-          className="floating-element"
+          className="floating-element cursor-grab hover:cursor-grab"
           onClick={(e) => {
             e.stopPropagation();
-            console.log("🎯 GroundWrapper onClick for floating element:", element.label || element.id);
             if (rootStore.editorUI.selectedTool === EditorTool.SELECT) {
               rootStore.editorUI.selectComponent(element);
+            }
+          }}
+          onMouseDown={(e: React.MouseEvent) => {
+            // Start drag operation for floating elements
+            if (rootStore.editorUI.selectedTool === EditorTool.SELECT && e.button === 0) {
+              e.preventDefault();
+              e.stopPropagation();
+              
+              // Select the element first
+              rootStore.editorUI.selectComponent(element);
+              
+              // Start drag operation using EditorUIStore
+              const startPos = { x: e.clientX, y: e.clientY };
+              rootStore.editorUI.startDrag(element, startPos);
+              
+              const startCanvasX = element.canvasX || 0;
+              const startCanvasY = element.canvasY || 0;
+              
+              // Visual feedback: change cursor and add dragging class
+              const groundWrapper = e.currentTarget as HTMLElement;
+              groundWrapper.style.cursor = 'grabbing';
+              groundWrapper.style.opacity = '0.8';
+              groundWrapper.classList.add('dragging');
+              
+              const handleMouseMove = (moveEvent: MouseEvent) => {
+                const deltaX = moveEvent.clientX - startPos.x;
+                const deltaY = moveEvent.clientY - startPos.y;
+                
+                // Transform screen delta to canvas delta (account for zoom)
+                const { zoom } = transformState.current;
+                const canvasDeltaX = deltaX / zoom;
+                const canvasDeltaY = deltaY / zoom;
+                
+                // Calculate new position and snap to pixels (integer coordinates)
+                const newX = Math.round(startCanvasX + canvasDeltaX);
+                const newY = Math.round(startCanvasY + canvasDeltaY);
+                
+                // Update drag state in store
+                rootStore.editorUI.updateDrag({ x: moveEvent.clientX, y: moveEvent.clientY });
+                
+                // Update component position immediately for real-time feedback with pixel snapping
+                element.updateCanvasTransform({ x: newX, y: newY });
+              };
+              
+              const handleMouseUp = () => {
+                // End drag operation in store
+                rootStore.editorUI.endDrag();
+                
+                // Reset visual feedback
+                groundWrapper.style.cursor = 'grab';
+                groundWrapper.style.opacity = '1';
+                groundWrapper.classList.remove('dragging');
+                
+                // Cleanup event listeners
+                document.removeEventListener('mousemove', handleMouseMove);
+                document.removeEventListener('mouseup', handleMouseUp);
+                document.body.style.cursor = '';
+                
+                console.log('🎯 Drag completed. Final position:', {
+                  canvasX: element.canvasX,
+                  canvasY: element.canvasY
+                });
+              };
+              
+              // Set drag cursor
+              document.body.style.cursor = 'grabbing';
+              
+              // Add global event listeners
+              document.addEventListener('mousemove', handleMouseMove);
+              document.addEventListener('mouseup', handleMouseUp);
             }
           }}
         >

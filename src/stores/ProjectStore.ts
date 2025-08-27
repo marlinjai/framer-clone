@@ -132,16 +132,17 @@ const ProjectStore = types.model('ProjectStore', {
     const sampleImageComponent = createFloatingCanvasComponent('img-inner-' + uuidv4(), 'img', {
       src: '/images/sample-image.jpg',
       alt: 'Sample image',
+      draggable: false, // Prevent default image drag
       style: {
         display: 'block',
         width: '400px',
         height: '300px',
-        borderRadius: 'inherit',
+        borderRadius: '8px',
         objectPosition: 'center center',
         objectFit: 'cover',
-        position: 'absolute',
-        top: 0,
-        left: 0,
+        userSelect: 'none',
+        WebkitUserDrag: 'none',
+        pointerEvents: 'none', // Let parent handle all interactions
       }
     },
       1600,

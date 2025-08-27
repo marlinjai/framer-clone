@@ -4,7 +4,7 @@
 import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
-import { addSampleImageToCanvas, addTextToCanvas, addComponentToCanvas } from '@/utils/canvasHelpers';
+// import { addSampleImageToCanvas, addTextToCanvas, addComponentToCanvas } from '@/utils/canvasHelpers';
 
 const CanvasDebugPanel = observer(() => {
   const rootStore = useStore();
@@ -13,27 +13,31 @@ const CanvasDebugPanel = observer(() => {
   if (!currentPage) return null;
 
   const handleAddImage = () => {
-    addSampleImageToCanvas(currentPage, 500, 400);
+    console.log('Add image functionality temporarily disabled');
+    // addSampleImageToCanvas(currentPage, 500, 400);
   };
 
   const handleAddText = () => {
-    addTextToCanvas(currentPage, 'New Text Element', 900, 300);
+    console.log('Add text functionality temporarily disabled');
+    // addTextToCanvas(currentPage, 'New Text Element', 900, 300);
   };
 
   const handleAddComponent = () => {
-    addComponentToCanvas(currentPage, 1000, 200);
+    console.log('Add component functionality temporarily disabled');
+    // addComponentToCanvas(currentPage, 1000, 200);
   };
 
   const handleClearAndReset = () => {
+    console.log('Clear and reset functionality temporarily disabled');
     // Clear existing root canvas components (except viewport components)
-    const componentIds = currentPage.rootCanvasComponentsArray
-      .filter(comp => !comp.id.startsWith('viewport-'))
-      .map(comp => comp.id);
-    componentIds.forEach(id => currentPage.removeRootCanvasComponent(id));
+    // const componentIds = currentPage.rootCanvasComponentsArray
+    //   .filter(comp => !comp.id.startsWith('viewport-'))
+    //   .map(comp => comp.id);
+    // componentIds.forEach(id => currentPage.removeRootCanvasComponent(id));
     
     // Add new sample elements at visible positions
-    addSampleImageToCanvas(currentPage, 1600, 200);
-    addTextToCanvas(currentPage, 'Sample Text Element', 1700, 550);
+    // addSampleImageToCanvas(currentPage, 1600, 200);
+    // addTextToCanvas(currentPage, 'Sample Text Element', 1700, 550);
   };
 
   return (
@@ -43,9 +47,9 @@ const CanvasDebugPanel = observer(() => {
       {/* Root Canvas Components Info */}
       <div className="mb-4">
         <div className="text-gray-600 mb-2">
-          Root Canvas Components: {currentPage.rootCanvasComponentsArray.length}
+          Floating Elements: {currentPage.floatingElements.length}
         </div>
-        {currentPage.rootCanvasComponentsArray.map((component) => (
+        {currentPage.floatingElements.map((component) => (
           <div key={component.id} className="text-xs text-gray-500 mb-1">
             • {component.type} at ({component.canvasX || 0}, {component.canvasY || 0})
           </div>

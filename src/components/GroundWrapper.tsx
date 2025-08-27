@@ -34,6 +34,9 @@ interface GroundWrapperProps {
   // Click handler
   onClick?: (e: React.MouseEvent) => void;
   
+  // Mouse down handler for drag operations
+  onMouseDown?: (e: React.MouseEvent) => void;
+  
   // Visibility
   visible?: boolean;
 }
@@ -63,6 +66,7 @@ const GroundWrapper = observer(forwardRef<HTMLDivElement, GroundWrapperProps>(fu
   className = '',
   children,
   onClick,
+  onMouseDown,
   visible = true,
 }, ref) {
   // Build CSS transform string
@@ -83,6 +87,11 @@ const GroundWrapper = observer(forwardRef<HTMLDivElement, GroundWrapperProps>(fu
     // Explicit dimensions - critical for proper sizing (like Framer)
     width: width ? `${width}px` : 'auto',
     height: height ? `${height}px` : 'auto',
+    // Prevent default drag behaviors on images and other elements
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+    MozUserSelect: 'none',
+    msUserSelect: 'none',
   };
 
   return (
@@ -92,6 +101,8 @@ const GroundWrapper = observer(forwardRef<HTMLDivElement, GroundWrapperProps>(fu
       className={`ground-wrapper ${className}`}
       style={style}
       onClick={onClick}
+      onMouseDown={onMouseDown}
+      onDragStart={(e) => e.preventDefault()} // Prevent default image drag
       data-ground-wrapper-id={id}
     >
       {/* Inner container with potential scaling compensation */}
@@ -105,7 +116,13 @@ const GroundWrapper = observer(forwardRef<HTMLDivElement, GroundWrapperProps>(fu
           width: '100%',
           height: '100%',
           overflow: 'visible', // Ensure content isn't clipped
+          // Prevent default behaviors on all child elements
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          MozUserSelect: 'none',
+          msUserSelect: 'none',
         }}
+        onDragStart={(e) => e.preventDefault()} // Prevent default drag on child elements
       >
         {children}
       </div>

@@ -12,7 +12,7 @@ import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { EditorUIType } from '../stores/EditorUIStore';
-import { useStore } from '@/hooks/useStore';
+// import { useStore } from '@/hooks/useStore'; // Unused for now
 
 interface RightSidebarProps {
   editorUI: EditorUIType;
@@ -20,10 +20,7 @@ interface RightSidebarProps {
 
 const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
   const isCollapsed = editorUI.rightSidebarCollapsed;
-  const rootStore = useStore();
-  const currentPage = editorUI.currentPage;
   const selectedViewportNode = editorUI.selectedViewportNode;
-  const selectedRootCanvasComponent = editorUI.selectedRootCanvasComponent;
 
   return (
     <div className={`
@@ -44,8 +41,8 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
           <div className="flex items-center space-x-2">
             <span className="font-medium text-gray-900">
               {selectedViewportNode 
-                ? `${selectedViewportNode.breakpointLabel} Properties` 
-                : selectedRootCanvasComponent && selectedRootCanvasComponent.isFloatingElement
+                ? `${selectedViewportNode.label} Properties` 
+                : editorUI.selectedComponent && editorUI.selectedComponent.isFloatingElement
                   ? 'Position & Size'
                   : 'Properties'
               }
@@ -111,7 +108,7 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
                   </div>
                 </div>
               </div>
-            ) : selectedRootCanvasComponent && !selectedRootCanvasComponent.id.startsWith('viewport-') ? (
+            ) : editorUI.selectedComponent && !editorUI.selectedComponent.id.startsWith('viewport-') ? (
               <div>
                 <div className="flex items-center space-x-2 mb-3">
                   <Layout size={16} className="text-gray-600" />
@@ -122,13 +119,13 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
                     <div>
                       <Label className="text-xs text-gray-500">Width</Label>
                       <Input 
-                        value={selectedRootCanvasComponent.props?.width || '200'} 
+                        value={editorUI.selectedComponent.props?.width || '200'} 
                         onChange={(e) => {
                           const newWidth = e.target.value;
-                          const currentProps = selectedRootCanvasComponent.props || {};
+                          const currentProps = editorUI.selectedComponent.props || {};
                           // Note: In MST, we'd need to update the component props through an action
                           // This is a simplified version - in a real implementation, you'd have an updateProps action
-                          Object.assign(selectedRootCanvasComponent.props, {
+                          Object.assign(editorUI.selectedComponent.props, {
                             ...currentProps,
                             width: newWidth
                           });
@@ -139,12 +136,12 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
                     <div>
                       <Label className="text-xs text-gray-500">Height</Label>
                       <Input 
-                        value={selectedRootCanvasComponent.props?.height || '100'} 
+                        value={editorUI.selectedComponent.props?.height || '100'} 
                         onChange={(e) => {
                           const newHeight = e.target.value;
-                          const currentProps = selectedRootCanvasComponent.props || {};
+                          const currentProps = editorUI.selectedComponent.props || {};
                           // Note: In MST, we'd need to update the component props through an action
-                          Object.assign(selectedRootCanvasComponent.props, {
+                          Object.assign(editorUI.selectedComponent.props, {
                             ...currentProps,
                             height: newHeight
                           });
@@ -157,10 +154,10 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
                     <div>
                       <Label className="text-xs text-gray-500">X Position</Label>
                       <Input 
-                        value={selectedRootCanvasComponent.canvasX || 0} 
+                        value={editorUI.selectedComponent.canvasX || 0} 
                         onChange={(e) => {
                           const newX = parseInt(e.target.value) || 0;
-                          selectedRootCanvasComponent.updateCanvasTransform({ x: newX });
+                          editorUI.selectedComponent.updateCanvasTransform({ x: newX });
                         }}
                         className="h-8 text-sm" 
                       />
@@ -168,25 +165,25 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
                     <div>
                       <Label className="text-xs text-gray-500">Y Position</Label>
                       <Input 
-                        value={selectedRootCanvasComponent.canvasY || 0} 
+                        value={editorUI.selectedComponent.canvasY || 0} 
                         onChange={(e) => {
                           const newY = parseInt(e.target.value) || 0;
-                          selectedRootCanvasComponent.updateCanvasTransform({ y: newY });
+                          editorUI.selectedComponent.updateCanvasTransform({ y: newY });
                         }}
                         className="h-8 text-sm" 
                       />
                     </div>
                   </div>
-                  {selectedRootCanvasComponent.type === 'img' && (
+                  {editorUI.selectedComponent.type === 'img' && (
                     <div>
                       <Label className="text-xs text-gray-500">Image URL</Label>
                       <Input 
-                        value={selectedRootCanvasComponent.props?.src || ''} 
+                        value={editorUI.selectedComponent.props?.src || ''} 
                         onChange={(e) => {
                           const newSrc = e.target.value;
-                          const currentProps = selectedRootCanvasComponent.props || {};
+                          const currentProps = editorUI.selectedComponent.props || {};
                           // Note: In MST, we'd need to update the component props through an action
-                          Object.assign(selectedRootCanvasComponent.props, {
+                          Object.assign(editorUI.selectedComponent.props, {
                             ...currentProps,
                             src: newSrc
                           });

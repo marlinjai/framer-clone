@@ -95,8 +95,8 @@ const HudSurface = observer(() => {
     //   selectedTool: editorUI.selectedTool
     // });
 
-    // Hide overlays if not in select mode (early return for performance)
-    if (editorUI.selectedTool !== EditorTool.SELECT) {
+    // Hide overlays if not in select mode OR if currently dragging (Framer-style UX)
+    if (editorUI.selectedTool !== EditorTool.SELECT || editorUI.isDragInProgress) {
       primaryOverlay.style.display = 'none';
       if (secondaryOverlaysContainer) {
         secondaryOverlaysContainer.style.display = 'none';
@@ -256,6 +256,8 @@ const HudSurface = observer(() => {
     canvasContainerRect,
     transformState,
     crossViewportSelection,
+    editorUI.isDragInProgress,
+    editorUI.currentDragData,
   ]);
 
   // Subscribe to transform updates (high-performance, no React re-renders)
