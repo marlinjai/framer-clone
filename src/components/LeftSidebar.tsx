@@ -75,10 +75,6 @@ const LayersPanel = observer(({ editorUI }: { editorUI: EditorUIType }) => {
 
   // Handle component selection for a specific viewport (Framer-style)
   const selectComponentInViewport = (component: ComponentInstance, viewportNode: ComponentInstance) => {
-    console.log('selectComponentInViewport called:', { component: component.id, viewport: viewportNode.breakpointLabel });
-    
-    // Select the component with viewport context
-    console.log('Selecting component:', component.id);
     editorUI.selectComponent(component, viewportNode.breakpointId!);
   };
 
@@ -165,7 +161,7 @@ const LayersPanel = observer(({ editorUI }: { editorUI: EditorUIType }) => {
           <button
             onClick={(e) => {
               e.stopPropagation();
-              console.log('Toggle visibility for', component.id, 'in', viewportNode.breakpointLabel);
+              console.log('Toggle visibility for', component.id, 'in', viewportNode.label);
             }}
             className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded transition-opacity"
           >
@@ -239,15 +235,15 @@ const LayersPanel = observer(({ editorUI }: { editorUI: EditorUIType }) => {
             {/* Element Icon */}
             <div className="flex-shrink-0">
               {component.type === 'img' ? (
-                <Image size={14} />
+                <Image size={14} aria-label="Image component" />
               ) : (
-                <Type size={14} />
+                <Type size={14} aria-label="Text component" />
               )}
             </div>
             
             {/* Element Name */}
             <span className="flex-1 truncate">
-              {component.type === 'img' ? 'Image' : component.type === 'div' ? 'Text' : component.type}
+              {component.displayName}
             </span>
           </div>
         );
@@ -272,9 +268,9 @@ const LayersPanel = observer(({ editorUI }: { editorUI: EditorUIType }) => {
               onClick={() => editorUI.setSelectedViewportNode(viewportNode)}
             >
               <div className="flex-shrink-0">
-                {getBreakpointIcon(viewportNode.breakpointLabel || 'desktop')}
+                {getBreakpointIcon(viewportNode.label || 'desktop')}
               </div>
-              <span className="flex-1 truncate">{viewportNode.breakpointLabel}</span>
+              <span className="flex-1 truncate">{viewportNode.displayName}</span>
             </div>
             
             {/* Component tree for this viewport */}

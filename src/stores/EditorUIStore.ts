@@ -67,14 +67,24 @@ const EditorUIStore = types.model('EditorUI', {
   
   // Component selection with viewport context (cross-viewport highlighting)
   selectComponent(component?: ComponentInstance, breakpointId?: string) {
+    console.log("🏪 EditorUIStore.selectComponent called:", {
+      componentId: component?.id,
+      componentLabel: component?.label,
+      componentType: component?.canvasNodeType,
+      breakpointId,
+      hasViewportContext: !!breakpointId
+    });
+    
     self.selectedComponent = component;
     
     if (breakpointId && self.currentPage) {
       // Component within a viewport - find the viewport node
       const viewportNode = self.currentPage.viewportNodes.find(v => v.breakpointId === breakpointId);
+      console.log("📍 Setting viewport context:", viewportNode?.label);
       self.selectedViewportNode = viewportNode;
     } else {
       // Floating element or no viewport context - clear viewport selection
+      console.log("🌊 Clearing viewport context - this is a floating element");
       self.selectedViewportNode = undefined;
     }
   },

@@ -58,8 +58,8 @@ const GroundWrapper = observer(forwardRef<HTMLDivElement, GroundWrapperProps>(fu
   scale = 1,
   rotation = 0,
   zIndex = 0,
-  width,
-  height,
+  width = 100,
+  height = 100,
   className = '',
   children,
   onClick,
@@ -70,7 +70,7 @@ const GroundWrapper = observer(forwardRef<HTMLDivElement, GroundWrapperProps>(fu
   
   // Build inline styles for maximum performance
   const style: React.CSSProperties = {
-    position: 'absolute', // Absolute positioning within camera space
+    position: 'fixed', // Absolute positioning within camera space
     top: 0,
     left: 0,
     transform,
@@ -80,7 +80,7 @@ const GroundWrapper = observer(forwardRef<HTMLDivElement, GroundWrapperProps>(fu
     contain: 'layout style', // Performance optimization
     zIndex,
     display: visible ? 'block' : 'none',
-    // Explicit dimensions - critical for proper sizing
+    // Explicit dimensions - critical for proper sizing (like Framer)
     width: width ? `${width}px` : 'auto',
     height: height ? `${height}px` : 'auto',
   };

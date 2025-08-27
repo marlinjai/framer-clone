@@ -128,23 +128,29 @@ const ProjectStore = types.model('ProjectStore', {
       667   // Viewport height
     );
 
-    // Create sample floating elements
-    const sampleImageComponent = createFloatingCanvasComponent(
-      uuidv4(),
-      'img',
-      {
-        src: '/images/sample-image.png',
-        alt: 'Sample image',
+    // Create sample floating elements (Framer-style image component)
+    const sampleImageComponent = createFloatingCanvasComponent('img-inner-' + uuidv4(), 'img', {
+      src: '/images/sample-image.jpg',
+      alt: 'Sample image',
+      style: {
+        display: 'block',
         width: '400px',
         height: '300px',
-        style: {
-          objectFit: 'cover',
-          borderRadius: '8px',
-        }
-      },
+        borderRadius: 'inherit',
+        objectPosition: 'center center',
+        objectFit: 'cover',
+        position: 'absolute',
+        top: 0,
+        left: 0,
+      }
+    },
       1600,
       -500 // Position below viewports
     );
+
+    // Set a proper label for the image component
+    sampleImageComponent.setLabel('Hero Image');
+
 
     const sampleTextComponent = createFloatingCanvasComponent(
       uuidv4(),
@@ -168,6 +174,9 @@ const ProjectStore = types.model('ProjectStore', {
       2100,
       500 // Position below viewports
     );
+
+    // Set a proper label for the text component
+    sampleTextComponent.setLabel('Welcome Text');
 
     self.projects.set(projectId, {
       id: projectId,

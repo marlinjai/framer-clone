@@ -91,9 +91,11 @@ const ComponentBase = types.model('ComponentBase', {
   canvasRotation: types.optional(types.number, 0),
   canvasZIndex: types.optional(types.number, 0),
   
+  // Universal label for all component types (replaces breakpointLabel)
+  label: types.maybe(types.string),               // Display name (e.g., "Desktop", "Hero Image", "Button")
+  
   // Viewport-specific properties (only used when canvasNodeType === 'viewport')
   breakpointId: types.maybe(types.string),        // Associated breakpoint ID
-  breakpointLabel: types.maybe(types.string),     // Breakpoint label (Desktop, Mobile, etc.)
   breakpointMinWidth: types.maybe(types.number),  // CSS min-width for this breakpoint
   viewportWidth: types.maybe(types.number),       // Viewport frame width on canvas
   viewportHeight: types.maybe(types.number),      // Viewport frame height on canvas
@@ -132,16 +134,21 @@ const ComponentModel: any = ComponentBase
     // Viewport node actions (for breakpoint viewports)
     setViewportProperties(updates: {
       breakpointId?: string;
-      breakpointLabel?: string;
+      label?: string;
       breakpointMinWidth?: number;
       viewportWidth?: number;
       viewportHeight?: number;
     }) {
       if (updates.breakpointId !== undefined) self.breakpointId = updates.breakpointId;
-      if (updates.breakpointLabel !== undefined) self.breakpointLabel = updates.breakpointLabel;
+      if (updates.label !== undefined) self.label = updates.label;
       if (updates.breakpointMinWidth !== undefined) self.breakpointMinWidth = updates.breakpointMinWidth;
       if (updates.viewportWidth !== undefined) self.viewportWidth = updates.viewportWidth;
       if (updates.viewportHeight !== undefined) self.viewportHeight = updates.viewportHeight;
+    },
+    
+    // Universal label setter for all component types
+    setLabel(label: string) {
+      self.label = label;
     },
     
     // Set canvas node type
@@ -245,9 +252,26 @@ const ComponentModel: any = ComponentBase
       if (!this.isViewportNode) return null;
       return {
         id: self.breakpointId!,
-        label: self.breakpointLabel || 'Unnamed',
+        label: self.label || 'Unnamed',
         minWidth: self.breakpointMinWidth || 320,
       };
+    },
+    
+    // Get display name for any component type
+    get displayName(): string {
+      if (self.label) return self.label;
+      
+      // Fallback based on component type
+      switch (self.type) {
+        case 'img': return 'Image';
+        case 'div': return this.isViewportNode ? 'Viewport' : 'Container';
+        case 'header': return 'Header';
+        case 'main': return 'Main';
+        case 'button': return 'Button';
+        case 'p': return 'Paragraph';
+        case 'h1': case 'h2': case 'h3': case 'h4': case 'h5': case 'h6': return 'Heading';
+        default: return self.type.charAt(0).toUpperCase() + self.type.slice(1);
+      }
     },
 
     // In a real app, you’d traverse up to project/page to access breakpoints
@@ -351,7 +375,7 @@ export const createFloatingCanvasComponent = <T extends IntrinsicElementType>(
 export const createViewportNode = (
   id: string,
   breakpointId: string,
-  breakpointLabel: string,
+  label: string,
   breakpointMinWidth: number,
   x: number,
   y: number,
@@ -368,6 +392,7 @@ export const createViewportNode = (
     type: 'div', // Viewport container is always a div
     componentType: ComponentTypeEnum.HOST,
     canvasNodeType: CanvasNodeType.VIEWPORT,
+    label, // Universal label property
     props: {
       className: 'viewport-frame',
       style: {
@@ -385,7 +410,6 @@ export const createViewportNode = (
     canvasRotation: options.rotation || 0,
     canvasZIndex: options.zIndex || 0,
     breakpointId,
-    breakpointLabel,
     breakpointMinWidth,
     viewportWidth,
     viewportHeight,

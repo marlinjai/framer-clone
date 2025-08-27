@@ -25,7 +25,7 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
     onClick: (e: React.MouseEvent) => {
       e.stopPropagation();
       if (editorUI.selectedTool === EditorTool.SELECT) {
-        editorUI.selectComponent(component, breakpointId);
+        editorUI.selectComponent(component, breakpointId || undefined);
       }
       (attributes as any)?.onClick?.(e);
     }

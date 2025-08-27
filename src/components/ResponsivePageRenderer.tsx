@@ -6,6 +6,7 @@ import { observer } from 'mobx-react-lite';
 import ComponentRenderer from './ComponentRenderer';
 import GroundWrapper from './GroundWrapper';
 import { useStore } from '@/hooks/useStore';
+import { EditorTool } from '@/stores/EditorUIStore';
 // Removed unused import: CanvasNodeType
 
 const ResponsivePageRenderer = observer(() => {
@@ -23,7 +24,7 @@ const ResponsivePageRenderer = observer(() => {
   const breakpoints = viewportNodes.map(viewport => ({
     id: viewport.breakpointId!,
     minWidth: viewport.breakpointMinWidth!,
-    label: viewport.breakpointLabel!
+    label: viewport.label!
   }));
   
   // Use first viewport as primary (largest minWidth)
@@ -61,7 +62,7 @@ const ResponsivePageRenderer = observer(() => {
               }}
             >
               <div className="flex items-center gap-2">
-                <div className="text-gray-600">{viewport.breakpointLabel}</div>
+                <div className="text-gray-600">{viewport.label}</div>
                 <div className="px-2 py-0.5 bg-gray-200 rounded text-xs">
                   {viewport.breakpointMinWidth}px
                 </div>
@@ -93,15 +94,23 @@ const ResponsivePageRenderer = observer(() => {
           id={element.id}
           x={element.canvasX!} 
           y={element.canvasY!}
+          scale={element.canvasScale}
+          rotation={element.canvasRotation}
+          zIndex={element.canvasZIndex}
+          width={parseInt(element.props?.style?.width) || undefined}
+          height={parseInt(element.props?.style?.height) || undefined}
           className="floating-element"
-          onClick={() => {
-            // Select floating element (no viewport context)
-            rootStore.editorUI.selectComponent(element);
+          onClick={(e) => {
+            e.stopPropagation();
+            console.log("🎯 GroundWrapper onClick for floating element:", element.label || element.id);
+            if (rootStore.editorUI.selectedTool === EditorTool.SELECT) {
+              rootStore.editorUI.selectComponent(element);
+            }
           }}
         >
           <ComponentRenderer 
             component={element}
-            breakpointId={primaryViewport?.breakpointId || 'default'}
+            breakpointId="" // No breakpoint context for floating elements
             allBreakpoints={breakpoints}
             primaryId={primaryViewport?.breakpointId || 'default'}
           />

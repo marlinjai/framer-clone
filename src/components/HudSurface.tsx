@@ -206,28 +206,29 @@ const HudSurface = observer(() => {
           secondaryOverlaysContainer.style.display = 'none';
         }
 
-        console.log('🎯 HudSurface: Viewport node highlighted:', editorUI.selectedViewportNode.breakpointLabel);
+        console.log('🎯 HudSurface: Viewport node highlighted:', editorUI.selectedViewportNode.label);
         return;
       }
     }
 
     // === Case 3: Floating element (selectedComponent without selectedViewportNode) ===
     // This handles floating elements that exist as canvas components outside viewports
-    // We need to manually transform their canvas coordinates to screen coordinates
+    // We need to find the actual DOM element and get its real bounds
     if (editorUI.selectedComponent && !editorUI.selectedViewportNode && editorUI.selectedComponent.isFloatingElement) {
-      const bounds = editorUI.selectedComponent.canvasBounds;
-      if (bounds) {
-        // Transform from canvas coordinates to screen coordinates
-        // Formula: screenPos = (canvasPos * zoom) + pan + containerOffset
-        const screenX = (bounds.x * zoom) + panX + canvasContainerRect.left;
-        const screenY = (bounds.y * zoom) + panY + canvasContainerRect.top;
-        const screenWidth = bounds.width * zoom;
-        const screenHeight = bounds.height * zoom;
+      // Find the GroundWrapper element for floating elements (more reliable than inner component)
+      const groundWrapperId = `ground-wrapper-${editorUI.selectedComponent.id}`;
+      const floatingElement = document.getElementById(groundWrapperId) as HTMLElement;
+
+      if (floatingElement) {
+        // Use getBoundingClientRect() to get real screen coordinates (like viewport components)
+        const rect = floatingElement.getBoundingClientRect();
+        const x = rect.left - 2;
+        const y = rect.top - 2;
 
         primaryOverlay.style.display = 'block';
-        primaryOverlay.style.transform = `translate(${screenX - 2}px, ${screenY - 2}px)`;
-        primaryOverlay.style.width = `${screenWidth + 4}px`;
-        primaryOverlay.style.height = `${screenHeight + 4}px`;
+        primaryOverlay.style.transform = `translate(${x}px, ${y}px)`;
+        primaryOverlay.style.width = `${rect.width + 4}px`;
+        primaryOverlay.style.height = `${rect.height + 4}px`;
         primaryOverlay.className = `absolute pointer-events-none ${HIGHLIGHT_STYLES.floating.border} ${HIGHLIGHT_STYLES.floating.background} ${HIGHLIGHT_STYLES.floating.zIndex}`;
 
         // Hide secondary overlays for floating element selection
@@ -235,8 +236,10 @@ const HudSurface = observer(() => {
           secondaryOverlaysContainer.style.display = 'none';
         }
 
-        console.log('🎯 HudSurface: Floating element highlighted:', editorUI.selectedComponent.id);
+        console.log('🎯 HudSurface: Floating element highlighted via GroundWrapper:', editorUI.selectedComponent.id);
         return;
+      } else {
+        console.warn('🚨 HudSurface: Could not find GroundWrapper for floating component:', editorUI.selectedComponent.id, 'with id:', groundWrapperId);
       }
     }
 
