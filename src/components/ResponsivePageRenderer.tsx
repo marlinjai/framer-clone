@@ -1,13 +1,12 @@
 // src/components/ResponsivePageRenderer.tsx
-// Renders all breakpoint viewports and root canvas components with ground wrappers (Framer-style)
+// Renders all canvas nodes using Framer-style unified approach
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
 import ComponentRenderer from './ComponentRenderer';
-import RootCanvasComponentRenderer from './RootCanvasComponentRenderer';
 import GroundWrapper from './GroundWrapper';
 import { useStore } from '@/hooks/useStore';
-import { BreakpointType } from '@/models/BreakpointModel';
+// Removed unused import: CanvasNodeType
 
 const ResponsivePageRenderer = observer(() => {
   const rootStore = useStore();
@@ -15,76 +14,99 @@ const ResponsivePageRenderer = observer(() => {
   const page = rootStore.editorUI.currentPage;
   if (!project || !page) return null;
 
-  const breakpoints: BreakpointType[] = Array
-    .from(project.breakpoints.values())
-    .sort((a,b)=>a.minWidth-b.minWidth);
+  const { appComponentTree } = page;
+  
+  // Get viewport nodes for responsive rendering
+  const viewportNodes = page.sortedViewportNodes;
+  
+  // Convert to format expected by ComponentRenderer
+  const breakpoints = viewportNodes.map(viewport => ({
+    id: viewport.breakpointId!,
+    minWidth: viewport.breakpointMinWidth!,
+    label: viewport.breakpointLabel!
+  }));
+  
+  // Use first viewport as primary (largest minWidth)
+  const primaryViewport = viewportNodes[0];
 
   return (
     <>
-      {/* Render breakpoint viewports using root canvas components for positioning */}
-      {breakpoints.map((bp) => {
-        // Find the root canvas component for this breakpoint viewport
-        const viewportComponent = page.getRootCanvasComponent(`viewport-${bp.id}`);
-        
-        if (!viewportComponent) {
-          console.warn(`No root canvas component found for breakpoint viewport: ${bp.id}`);
-          return null;
-        }
-        
-        return (
-          <GroundWrapper
-            key={`viewport-${bp.id}`}
-            id={`viewport-${bp.id}`}
-            x={viewportComponent.canvasX!}
-            y={viewportComponent.canvasY!}
-            className="breakpoint-viewport w-full"
-            onClick={() => {
-              // Select this breakpoint when viewport is clicked
-              rootStore.editorUI.setSelectedBreakpoint(bp);
+      {/* Framer-style unified approach: all canvas nodes */}
+      
+      {/* 1. Render viewport nodes */}
+      {viewportNodes.map(viewport => (
+        <GroundWrapper 
+          key={viewport.id}
+          id={viewport.id}
+          x={viewport.canvasX!} 
+          y={viewport.canvasY!}
+          className="viewport-node"
+        >
+          {/* Viewport frame */}
+          <div
+            className="relative bg-white shadow-lg rounded-lg "
+            style={{ 
+              width: `${viewport.viewportWidth}px`,
+              height: `${viewport.viewportHeight}px`,
             }}
+            data-viewport-id={viewport.id}
+            data-breakpoint-id={viewport.breakpointId}
           >
-            {/* Viewport container with background and dimensions */}
-            <div
-              className="relative bg-white shadow-lg rounded-lg overflow-hidden"
-              style={{ 
-                width: bp.minWidth ? `${bp.minWidth}px` : '400px',
-                minHeight: '600px',
+            {/* Viewport label - clickable for viewport selection */}
+            <div 
+              className="absolute -top-8 left-0 text-sm font-medium text-gray-600 cursor-pointer hover:bg-gray-100 rounded px-2 py-1 -mx-2 -my-1"
+              onClick={(e) => {
+                e.stopPropagation();
+                rootStore.editorUI.setSelectedViewportNode(viewport);
               }}
-              data-breakpoint={bp.id}
             >
-              {/* Viewport label */}
-              <div className="absolute -top-8 left-0 text-sm font-medium text-gray-600">
-                <div className="flex items-center gap-2">
-                  <div className="text-gray-600">{bp.label}</div>
-                  <div className="px-2 py-0.5 bg-gray-200 rounded text-xs">{bp.minWidth}px</div>
+              <div className="flex items-center gap-2">
+                <div className="text-gray-600">{viewport.breakpointLabel}</div>
+                <div className="px-2 py-0.5 bg-gray-200 rounded text-xs">
+                  {viewport.breakpointMinWidth}px
+                </div>
+                <div className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs">
+                  {viewport.viewportWidth}×{viewport.viewportHeight}
                 </div>
               </div>
+            </div>
 
-              {/* Render component tree for this breakpoint */}
-              {page.rootComponent && (
-                <ComponentRenderer
-                  component={page.rootComponent}
-                  breakpointId={bp.id}
+            {/* Render the same app tree with this viewport's breakpoint resolution */}
+            <div className="w-full h-full overflow-auto">
+              {appComponentTree && (
+                <ComponentRenderer 
+                  component={appComponentTree}
+                  breakpointId={viewport.breakpointId!}  // Use viewport's breakpoint ID
                   allBreakpoints={breakpoints}
-                  primaryId={project.primaryBreakpoint.id}
+                  primaryId={primaryViewport?.breakpointId || viewport.breakpointId!}
                 />
               )}
             </div>
-          </GroundWrapper>
-        );
-      })}
+          </div>
+        </GroundWrapper>
+      ))}
       
-      {/* Render floating root canvas components */}
-      {page.visibleRootCanvasComponents
-        .filter(component => !component.id.startsWith('viewport-')) // Exclude viewport components
-        .map((component) => (
-          <RootCanvasComponentRenderer
-            key={component.id}
-            component={component}
+      {/* 2. Render floating elements */}
+      {page.floatingElements.map(element => (
+        <GroundWrapper 
+          key={element.id}
+          id={element.id}
+          x={element.canvasX!} 
+          y={element.canvasY!}
+          className="floating-element"
+          onClick={() => {
+            // Select floating element (no viewport context)
+            rootStore.editorUI.selectComponent(element);
+          }}
+        >
+          <ComponentRenderer 
+            component={element}
+            breakpointId={primaryViewport?.breakpointId || 'default'}
             allBreakpoints={breakpoints}
-            primaryBreakpointId={project.primaryBreakpoint.id}
+            primaryId={primaryViewport?.breakpointId || 'default'}
           />
-        ))}
+        </GroundWrapper>
+      ))}
     </>
   );
 });

@@ -4,16 +4,12 @@ import { types, Instance } from 'mobx-state-tree';
 import ProjectModel, { ProjectModelType } from '../models/ProjectModel';
 import PageModel, { PageModelType } from '../models/PageModel';
 import ComponentModel, { ComponentInstance } from '../models/ComponentModel';
-import { BreakpointModel, BreakpointType } from '@/models/BreakpointModel';
+// Removed BreakpointModel - breakpoints are now viewport nodes
 
 // Available tools in our design editor (expanded from basic ToolStore)
 export enum EditorTool {
   GRAB = 'grab',
   SELECT = 'select',
-  FRAME = 'frame',
-  TEXT = 'text',
-  MOVE = 'move',
-  RESIZE = 'resize'
 }
 
 // EditorUI store - manages all UI state and current selections
@@ -27,11 +23,8 @@ const EditorUIStore = types.model('EditorUI', {
   // Currently selected component (domain reference)
   selectedComponent: types.maybe(types.safeReference(ComponentModel)),
   
-  // Explicit selected breakpoint (decoupled from viewport width)
-  selectedBreakpoint: types.maybe(types.safeReference(BreakpointModel)),
-  
-  // Currently selected root canvas component ID (for floating elements)
-  selectedRootCanvasComponentId: types.maybe(types.string),
+  // Currently selected viewport node (Framer-style)
+  selectedViewportNode: types.maybe(types.safeReference(ComponentModel)),
 
   // Active tool
   selectedTool: types.optional(types.enumeration(Object.values(EditorTool)), EditorTool.SELECT),
@@ -65,37 +58,34 @@ const EditorUIStore = types.model('EditorUI', {
   setCurrentPage(page?: PageModelType) {
     self.currentPage = page;
     // Auto-select root component when switching pages
-    if (page?.rootComponent) {
-      this.selectComponent(page.rootComponent);
+    if (page?.appComponentTree) {
+      this.selectComponent(page.appComponentTree);
     } else {
       this.selectComponent(undefined);
     }
   },
   
-  // Component selection with optional breakpoint context
+  // Component selection with viewport context (cross-viewport highlighting)
   selectComponent(component?: ComponentInstance, breakpointId?: string) {
     self.selectedComponent = component;
-    if (breakpointId) {
-      self.selectedBreakpoint = self.currentProject?.breakpoints.get(breakpointId);
+    
+    if (breakpointId && self.currentPage) {
+      // Component within a viewport - find the viewport node
+      const viewportNode = self.currentPage.viewportNodes.find(v => v.breakpointId === breakpointId);
+      self.selectedViewportNode = viewportNode;
+    } else {
+      // Floating element or no viewport context - clear viewport selection
+      self.selectedViewportNode = undefined;
     }
   },
   
-  // Breakpoint selection
-  setSelectedBreakpoint(breakpoint?: BreakpointType) {
-    self.selectedBreakpoint = breakpoint;
-    // Clear component and root canvas component selection when selecting a breakpoint
+  // Viewport node selection (Framer-style)
+  setSelectedViewportNode(viewportNode?: ComponentInstance) {
+    self.selectedViewportNode = viewportNode;
+    // Clear component selection when selecting a viewport
     self.selectedComponent = undefined;
-    self.selectedRootCanvasComponentId = undefined;
   },
   
-  // Root canvas component selection (floating elements)
-  setSelectedRootCanvasComponent(component?: ComponentInstance) {
-    console.log('EditorUIStore: setSelectedRootCanvasComponent called with ID:', component?.id);
-    self.selectedRootCanvasComponentId = component?.id;
-    // Clear component and breakpoint selection when selecting a root canvas component
-    self.selectedComponent = undefined;
-    self.selectedBreakpoint = undefined;
-  },
   
   // Tool selection
   setSelectedTool(tool: EditorTool) {
@@ -162,21 +152,17 @@ const EditorUIStore = types.model('EditorUI', {
   get hasComponentSelected(): boolean {
     return !!self.selectedComponent;
   },
+
   
-  get selectedRootCanvasComponent() {
-    if (!self.selectedRootCanvasComponentId || !self.currentPage) return undefined;
-    return self.currentPage.getRootCanvasComponent(self.selectedRootCanvasComponentId);
+  // Current viewport node (Framer-style)
+  get currentViewportNode() {
+    return self.selectedViewportNode;
   },
   
-  // Current breakpoint based on viewport width
-  get currentBreakpoint() {
-    return self.selectedBreakpoint;
-  },
-  
-  // Available breakpoints for the current page
-  get availableBreakpoints() {
-    if (!self.currentProject) return [];
-    return self.currentProject.breakpoints;
+  // Available viewport nodes for the current page
+  get availableViewportNodes() {
+    if (!self.currentPage) return [];
+    return self.currentPage.viewportNodes;
   },
   
 
@@ -187,10 +173,6 @@ const EditorUIStore = types.model('EditorUI', {
         return self.isDragging ? 'grabbing' : 'grab';
       case EditorTool.SELECT:
         return 'default';
-      case EditorTool.MOVE:
-        return 'move';
-      case EditorTool.RESIZE:
-        return 'nw-resize';
       default:
         return 'default';
     }
@@ -206,7 +188,7 @@ const EditorUIStore = types.model('EditorUI', {
       currentProjectId: self.currentProject?.id,
       currentPageId: self.currentPage?.id,
       selectedComponentId: self.selectedComponent?.id,
-      selectedBreakpoint: self.selectedBreakpoint,
+      selectedViewportNode: self.selectedViewportNode,
       selectedTool: self.selectedTool,
       panels: {
         properties: self.showPropertiesPanel,

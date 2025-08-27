@@ -1,9 +1,7 @@
 // src/models/ProjectModel.ts
 // Domain model for projects - contains multiple pages and project-level settings
-import { types, Instance, SnapshotIn, getSnapshot, applySnapshot, SnapshotOut } from 'mobx-state-tree';
+import { types, Instance, SnapshotIn, SnapshotOut } from 'mobx-state-tree';
 import PageModel, { PageModelType } from './PageModel';
-import { BreakpointModel, BreakpointSnapshotIn, BreakpointType } from './BreakpointModel';
-import { v4 as uuidv4 } from 'uuid';
 
 // Project metadata model
 const ProjectMetadataModel = types.model('ProjectMetadata', {
@@ -17,7 +15,7 @@ const ProjectMetadataModel = types.model('ProjectMetadata', {
 
 
 
-// Main ProjectModel - domain logic only
+// Main ProjectModel - Framer-style unified architecture
 export const ProjectModel = types
   .model('Project', {
     // Identity
@@ -26,54 +24,12 @@ export const ProjectModel = types
     // Project metadata
     metadata: ProjectMetadataModel,
 
-    // All breakpoints
-    breakpoints: types.map(BreakpointModel),
-
-    // Required reference (must exist in breakpoints snapshot at creation)
-    primaryBreakpoint: types.reference(BreakpointModel),
-
     // Pages collection - all pages in this project
+    // Each page manages its own viewport nodes (Framer-style)
     pages: types.map(PageModel),
 
   })
   .actions(self => ({
-
-    // Internal initializer (only use during creation if hydrating)
-    _setPrimary(id: string) {
-      // Only allow if currently consistent
-      if (!self.breakpoints.has(id)) throw new Error('Primary breakpoint id not found in map');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (self as any).primaryBreakpoint = id; // MST assignment
-    },
-    // Add a new secondary breakpoint (UUID auto)
-    addBreakpoint(label: string, minWidth: number): BreakpointType {
-      const breakpointId = uuidv4();
-
-      self.breakpoints.set(breakpointId, {
-        id: breakpointId,
-        label,
-        minWidth,
-      });
-      self.metadata = { ...self.metadata, updatedAt: new Date() };
-      return self.breakpoints.get(breakpointId)!;
-    },
-    // Remove a breakpoint from the project
-    removeBreakpoint(breakpointId: string) {
-      if (breakpointId === self.primaryBreakpoint.id) {
-        throw new Error('Cannot remove the primary breakpoint');
-      }
-      self.breakpoints.delete(breakpointId);
-      self.metadata.updatedAt = new Date();
-    },
-
-    // Update an existing breakpoint
-    updateBreakpoint(breakpointId: string, updates: Partial<BreakpointSnapshotIn>) {
-      const breakpoint = self.breakpoints.get(breakpointId);
-      if (breakpoint) {
-        applySnapshot(breakpoint, { ...getSnapshot(breakpoint), ...updates });
-        self.metadata.updatedAt = new Date();
-      }
-    },
 
     // Add a new page to the project
     addPage(page: SnapshotIn<typeof PageModel>) {
@@ -114,18 +70,46 @@ export const ProjectModel = types
       return this.pagesArray.find(page => page.slug === slug);
     },
     
-    // Get project statistics
+    // Get project statistics (Framer-style)
     get stats() {
       return {
         pageCount: self.pages.size,
-        totalComponents: this.pagesArray.reduce((total, page) => {
-          return total + (page.rootComponent?.allDescendants.length || 0);
+        totalViewportNodes: this.pagesArray.reduce((total, page) => {
+          return total + page.viewportNodes.length;
+        }, 0),
+        totalFloatingElements: this.pagesArray.reduce((total, page) => {
+          return total + page.floatingElements.length;
+        }, 0),
+        totalCanvasNodes: this.pagesArray.reduce((total, page) => {
+          return total + page.canvasNodesArray.length;
         }, 0)
       };
     },
 
-    get orderedBreakpoints(): BreakpointType[] {
-      return Array.from(self.breakpoints.values()).sort((a,b)=>a.minWidth-b.minWidth);
+    // Get all unique breakpoint labels across all pages (for suggestions)
+    get allBreakpointLabels(): string[] {
+      const labels = new Set<string>();
+      this.pagesArray.forEach(page => {
+        page.viewportNodes.forEach(viewport => {
+          if (viewport.breakpointLabel) {
+            labels.add(viewport.breakpointLabel);
+          }
+        });
+      });
+      return Array.from(labels).sort();
+    },
+
+    // Get all unique breakpoint minWidths across all pages
+    get allBreakpointWidths(): number[] {
+      const widths = new Set<number>();
+      this.pagesArray.forEach(page => {
+        page.viewportNodes.forEach(viewport => {
+          if (viewport.breakpointMinWidth) {
+            widths.add(viewport.breakpointMinWidth);
+          }
+        });
+      });
+      return Array.from(widths).sort((a, b) => a - b);
     },
   }));
 

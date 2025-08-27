@@ -30,16 +30,17 @@ const PageBase = types.model('Page', {
 });
 
 // Stage 2 – add late-bound / potentially circular fields
-// Explicit annotation to help TS not collapse inference during staged extension
-const PageWithRoot = PageBase.props({
-  rootComponent: types.late((): IAnyModelType => ComponentModel),
+// Framer-style unified node architecture
+const PageWithComponents = PageBase.props({
+  // Single responsive app component tree (deployable)
+  appComponentTree: types.late((): IAnyModelType => ComponentModel),
   
-  // Root canvas components - components positioned absolutely on canvas (like Framer)
-  // These are components that have no parent and live directly on the canvas
-  rootCanvasComponents: types.optional(types.map(ComponentModel), {}),
+  // All canvas nodes - unified collection (Framer-style)
+  // Includes viewport nodes, floating elements, etc.
+  canvasNodes: types.optional(types.map(ComponentModel), {}),
 });
 
-const PageModel = PageWithRoot
+const PageModel = PageWithComponents
   .actions(self => ({
   // Update page metadata
   updateMetadata(metadata: Partial<SnapshotIn<typeof PageMetadataModel>>) {
@@ -47,27 +48,28 @@ const PageModel = PageWithRoot
     self.updatedAt = new Date();
   },
   
-  // Set root component
-  setRootComponent(component: ComponentInstance | SnapshotIn<typeof ComponentModel>) {
-    self.rootComponent = component;
+  // Set app component tree (deployable responsive app)
+  setAppComponentTree(component: ComponentInstance | SnapshotIn<typeof ComponentModel>) {
+    self.appComponentTree = component;
     self.updatedAt = new Date();
   },
   
-  // Root canvas component management (Framer-style)
-  addRootCanvasComponent(component: ComponentInstance | ComponentSnapshotIn) {
-    self.rootCanvasComponents.set(component.id, component);
+  // Unified canvas node management (Framer-style)
+  addCanvasNode(node: ComponentInstance | ComponentSnapshotIn) {
+    self.canvasNodes.set(node.id, node);
+    self.updatedAt = new Date();
+    return self.canvasNodes.get(node.id)!;
+  },
+  
+  removeCanvasNode(nodeId: string) {
+    self.canvasNodes.delete(nodeId);
     self.updatedAt = new Date();
   },
   
-  removeRootCanvasComponent(componentId: string) {
-    self.rootCanvasComponents.delete(componentId);
-    self.updatedAt = new Date();
-  },
-  
-  updateRootCanvasComponent(componentId: string, updates: Partial<ComponentSnapshotIn>) {
-    const component = self.rootCanvasComponents.get(componentId);
-    if (component) {
-      Object.assign(component, updates);
+  updateCanvasNode(nodeId: string, updates: Partial<ComponentSnapshotIn>) {
+    const node = self.canvasNodes.get(nodeId);
+    if (node) {
+      Object.assign(node, updates);
       self.updatedAt = new Date();
     }
   },
@@ -94,49 +96,63 @@ const PageModel = PageWithRoot
     };
   },
   
-  // Check if page has components
-  get hasComponents() {
-    return !!self.rootComponent;
+  // Check if page has app component tree
+  get hasAppComponentTree() {
+    return !!self.appComponentTree;
   },
   
-  // Check if page has root canvas components
-  get hasRootCanvasComponents(): boolean {
-    return self.rootCanvasComponents.size > 0;
+  // Check if page has canvas nodes
+  get hasCanvasNodes(): boolean {
+    return self.canvasNodes.size > 0;
   },
   
-  // Get all root canvas components as array
-  get rootCanvasComponentsArray(): ComponentInstance[] {
-    return Array.from(self.rootCanvasComponents.values());
+  // Get all canvas nodes as array
+  get canvasNodesArray(): ComponentInstance[] {
+    return Array.from(self.canvasNodes.values());
   },
   
-  // Get root canvas component by ID
+  // Get canvas node by ID
+  getCanvasNode(nodeId: string): ComponentInstance | undefined {
+    return self.canvasNodes.get(nodeId);
+  },
+  
+  // Get viewport nodes (breakpoint viewports)
+  get viewportNodes(): ComponentInstance[] {
+    return this.canvasNodesArray.filter(node => node.isViewportNode);
+  },
+  
+  // Get floating elements
+  get floatingElements(): ComponentInstance[] {
+    return this.canvasNodesArray.filter(node => node.isFloatingElement);
+  },
+  
+  // Get visible canvas nodes
+  get visibleCanvasNodes(): ComponentInstance[] {
+    return this.canvasNodesArray.filter(node => node.canvasVisible);
+  },
+  
+  // Get viewport nodes sorted by minWidth (largest first, like Framer)
+  get sortedViewportNodes(): ComponentInstance[] {
+    return this.viewportNodes.sort((a, b) => {
+      const aMinWidth = a.breakpointMinWidth || 0;
+      const bMinWidth = b.breakpointMinWidth || 0;
+      return bMinWidth - aMinWidth;
+    });
+  },
+  
+  // Get root canvas component by ID (for floating elements)
   getRootCanvasComponent(componentId: string): ComponentInstance | undefined {
-    return self.rootCanvasComponents.get(componentId);
+    return self.canvasNodes.get(componentId);
   },
   
-  // Get root canvas components by type
-  getRootCanvasComponentsByType(type: string): ComponentInstance[] {
-    return this.rootCanvasComponentsArray.filter(component => component.type === type);
-  },
-  
-  // Get visible root canvas components
-  get visibleRootCanvasComponents(): ComponentInstance[] {
-    return this.rootCanvasComponentsArray.filter(component => component.canvasVisible);
-  },
-  
-  // Get root canvas components that are positioned (have canvas coordinates)
-  get positionedRootCanvasComponents(): ComponentInstance[] {
-    return this.rootCanvasComponentsArray.filter(component => component.isRootCanvasComponent);
-  },
-  
-  // Get serializable page data
+  // Get exportable page data (only app component tree + breakpoint definitions)
   get exportData() {
     return {
       id: self.id,
       slug: self.slug,
       metadata: self.metadata,
-      rootComponent: self.rootComponent,
-      rootCanvasComponents: self.rootCanvasComponents,
+      appComponentTree: self.appComponentTree, // Deployable app tree
+      breakpoints: this.viewportNodes.map(viewport => viewport.breakpointInfo), // CSS breakpoint definitions
       createdAt: self.createdAt,
       updatedAt: self.updatedAt
     };

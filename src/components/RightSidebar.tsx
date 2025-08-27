@@ -22,13 +22,8 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
   const isCollapsed = editorUI.rightSidebarCollapsed;
   const rootStore = useStore();
   const currentPage = editorUI.currentPage;
-  const selectedBreakpoint = editorUI.selectedBreakpoint;
+  const selectedViewportNode = editorUI.selectedViewportNode;
   const selectedRootCanvasComponent = editorUI.selectedRootCanvasComponent;
-  
-  // Get root canvas component for selected breakpoint
-  const viewportComponent = selectedBreakpoint && currentPage 
-    ? currentPage.getRootCanvasComponent(`viewport-${selectedBreakpoint.id}`)
-    : null;
 
   return (
     <div className={`
@@ -48,9 +43,9 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
         {!isCollapsed && (
           <div className="flex items-center space-x-2">
             <span className="font-medium text-gray-900">
-              {selectedBreakpoint 
-                ? `${selectedBreakpoint.label} Properties` 
-                : selectedRootCanvasComponent && !selectedRootCanvasComponent.id.startsWith('viewport-')
+              {selectedViewportNode 
+                ? `${selectedViewportNode.breakpointLabel} Properties` 
+                : selectedRootCanvasComponent && selectedRootCanvasComponent.isFloatingElement
                   ? 'Position & Size'
                   : 'Properties'
               }
@@ -65,7 +60,7 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
         <div className="flex-1 overflow-y-auto">
           <div className="p-3 space-y-6">
             {/* Breakpoint Properties */}
-            {selectedBreakpoint && viewportComponent ? (
+            {selectedViewportNode ? (
               <div>
                 <div className="flex items-center space-x-2 mb-3">
                   <Layout size={16} className="text-gray-600" />
@@ -76,12 +71,10 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
                     <div>
                       <Label className="text-xs text-gray-500">Width (min-width)</Label>
                       <Input 
-                        value={selectedBreakpoint.minWidth} 
+                        value={selectedViewportNode.breakpointMinWidth || 0} 
                         onChange={(e) => {
                           const newWidth = parseInt(e.target.value) || 0;
-                          if (rootStore.editorUI.currentProject) {
-                            rootStore.editorUI.currentProject.updateBreakpoint(selectedBreakpoint.id, { minWidth: newWidth });
-                          }
+                          selectedViewportNode.setViewportProperties({ breakpointMinWidth: newWidth });
                         }}
                         className="h-8 text-sm" 
                       />
@@ -96,10 +89,10 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
                     <div>
                       <Label className="text-xs text-gray-500">X Position</Label>
                       <Input 
-                        value={viewportComponent.canvasX || 0} 
+                        value={selectedViewportNode.canvasX || 0} 
                         onChange={(e) => {
                           const newX = parseInt(e.target.value) || 0;
-                          viewportComponent.updateCanvasTransform({ x: newX });
+                          selectedViewportNode.updateCanvasTransform({ x: newX });
                         }}
                         className="h-8 text-sm" 
                       />
@@ -107,10 +100,10 @@ const RightSidebar = observer(({ editorUI }: RightSidebarProps) => {
                     <div>
                       <Label className="text-xs text-gray-500">Y Position</Label>
                       <Input 
-                        value={viewportComponent.canvasY || 0} 
+                        value={selectedViewportNode.canvasY || 0} 
                         onChange={(e) => {
                           const newY = parseInt(e.target.value) || 0;
-                          viewportComponent.updateCanvasTransform({ y: newY });
+                          selectedViewportNode.updateCanvasTransform({ y: newY });
                         }}
                         className="h-8 text-sm" 
                       />

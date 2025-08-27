@@ -6,6 +6,14 @@ import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 import { useTransformContext } from '@/contexts/TransformContext';
 import { EditorTool } from '../stores/EditorUIStore';
+import { 
+  createCrossViewportSelection, 
+  hasMultipleViewportAppearances,
+  getPrimaryRenderInstance,
+  getSecondaryRenderInstances,
+  HIGHLIGHT_STYLES,
+  type CrossViewportSelection 
+} from '@/utils/crossViewportHighlighting';
 
 /**
  * HudSurface - High-performance component selection overlay
@@ -23,8 +31,14 @@ const HudSurface = observer(() => {
   // Canvas container rect (updated on resize)
   const [canvasContainerRect, setCanvasContainerRect] = useState<DOMRect | null>(null);
 
-  // Single overlay ref
-  const overlayRef = useRef<HTMLDivElement>(null);
+  // Cross-viewport selection state
+  const [crossViewportSelection, setCrossViewportSelection] = useState<CrossViewportSelection | null>(null);
+
+  // Primary overlay ref (for main selection)
+  const primaryOverlayRef = useRef<HTMLDivElement>(null);
+  
+  // Secondary overlays container ref (for cross-viewport highlights)
+  const secondaryOverlaysRef = useRef<HTMLDivElement>(null);
 
   // Setup canvas container tracking
   useEffect(() => {
@@ -60,12 +74,13 @@ const HudSurface = observer(() => {
    * screenPos = (canvasPos * zoom) + pan + containerOffset
    */
   const updateOverlayPosition = useCallback(() => {
-    if (!overlayRef.current || !canvasContainerRect) {
+    if (!primaryOverlayRef.current || !canvasContainerRect) {
       // console.log('⚠️ HudSurface: Missing overlay ref or container rect');
       return;
     }
 
-    const overlay = overlayRef.current;
+    const primaryOverlay = primaryOverlayRef.current;
+    const secondaryOverlaysContainer = secondaryOverlaysRef.current;
     const { panX, panY, zoom } = transformState.current;
 
     // Debug logging for transform state and container position (disabled for production)
@@ -80,133 +95,164 @@ const HudSurface = observer(() => {
     //   selectedTool: editorUI.selectedTool
     // });
 
-    // Hide overlay if not in select mode (early return for performance)
+    // Hide overlays if not in select mode (early return for performance)
     if (editorUI.selectedTool !== EditorTool.SELECT) {
-      overlay.style.display = 'none';
+      primaryOverlay.style.display = 'none';
+      if (secondaryOverlaysContainer) {
+        secondaryOverlaysContainer.style.display = 'none';
+      }
       return;
     }
 
-    // === Case 1: Selected component (real DOM element) ===
+    // === Case 1: Selected component (cross-viewport highlighting) ===
     // This handles components that exist in the DOM (within breakpoint viewports)
-    // We can use getBoundingClientRect() to get their exact screen position
-    if (editorUI.selectedComponent && editorUI.selectedBreakpoint) {
-      const breakpointComponentId = `${editorUI.selectedBreakpoint.id}-${editorUI.selectedComponent.id}`;
-      const element = document.querySelector(
-        `[data-component-id="${breakpointComponentId}"]`
-      ) as HTMLElement;
+    // We highlight the component in ALL viewports where it appears
+    if (editorUI.selectedComponent && editorUI.selectedViewportNode && crossViewportSelection) {
+      const primaryInstance = getPrimaryRenderInstance(crossViewportSelection);
+      const secondaryInstances = getSecondaryRenderInstances(crossViewportSelection);
 
-      if (element) {
-        // getBoundingClientRect() gives us the element's position relative to the viewport
-        // This already accounts for all CSS transforms applied by the canvas camera
-        const rect = element.getBoundingClientRect();
-
-        // Debug logging for component positioning (disabled for production)
-        // console.log('📍 HudSurface: Component Element Found', {
-        //   breakpointComponentId,
-        //   elementRect: {
-        //     left: rect.left.toFixed(2),
-        //     top: rect.top.toFixed(2),
-        //     width: rect.width.toFixed(2),
-        //     height: rect.height.toFixed(2)
-        //   },
-        //   canvasContainerRect: {
-        //     left: canvasContainerRect.left.toFixed(2),
-        //     top: canvasContainerRect.top.toFixed(2)
-        //   }
-        // });
-
-        // Since HudSurface uses fixed positioning, we can use rect coordinates directly
-        // Subtract 2px for border offset to center the selection border around the element
+      // Primary highlight (where selection happened)
+      if (primaryInstance?.domElement) {
+        const rect = primaryInstance.domElement.getBoundingClientRect();
         const x = rect.left - 2;
         const y = rect.top - 2;
 
-        // console.log('🎯 HudSurface: Component Overlay Position', {
-        //   calculatedX: x.toFixed(2),
-        //   calculatedY: y.toFixed(2),
-        //   overlayTransform: `translate(${x}px, ${y}px)`
-        // });
+        primaryOverlay.style.display = 'block';
+        primaryOverlay.style.transform = `translate(${x}px, ${y}px)`;
+        primaryOverlay.style.width = `${rect.width + 4}px`;
+        primaryOverlay.style.height = `${rect.height + 4}px`;
+        primaryOverlay.className = `absolute pointer-events-none ${HIGHLIGHT_STYLES.primary.border} ${HIGHLIGHT_STYLES.primary.background} ${HIGHLIGHT_STYLES.primary.zIndex}`;
 
-        // Apply overlay positioning and styling via direct DOM manipulation
-        overlay.style.display = 'block';
-        overlay.style.transform = `translate(${x}px, ${y}px)`;
-        overlay.style.width = `${rect.width + 4}px`;   // +4px for border (2px each side)
-        overlay.style.height = `${rect.height + 4}px`; // +4px for border (2px each side)
-        overlay.className =
-          'absolute pointer-events-none border-2 border-blue-500 bg-blue-500/10 z-10';
+        console.log('🎯 HudSurface: Primary highlight positioned for component:', primaryInstance.componentId, 'in breakpoint:', primaryInstance.breakpointId);
+      }
+
+      // Secondary highlights (same component in other viewports)
+      if (secondaryOverlaysContainer && secondaryInstances.length > 0) {
+        // Clear existing secondary overlays
+        secondaryOverlaysContainer.innerHTML = '';
+        secondaryOverlaysContainer.style.display = 'block';
+
+        secondaryInstances.forEach((instance, index) => {
+          if (!instance.domElement) return;
+
+          const rect = instance.domElement.getBoundingClientRect();
+          const x = rect.left - 2;
+          const y = rect.top - 2;
+
+          // Create secondary overlay element
+          const secondaryOverlay = document.createElement('div');
+          secondaryOverlay.className = `absolute pointer-events-none ${HIGHLIGHT_STYLES.secondary.border} ${HIGHLIGHT_STYLES.secondary.background} ${HIGHLIGHT_STYLES.secondary.zIndex} ${HIGHLIGHT_STYLES.secondary.animation}`;
+          secondaryOverlay.style.transform = `translate(${x}px, ${y}px)`;
+          secondaryOverlay.style.width = `${rect.width + 4}px`;
+          secondaryOverlay.style.height = `${rect.height + 4}px`;
+          
+          secondaryOverlaysContainer.appendChild(secondaryOverlay);
+
+          console.log(`🎯 HudSurface: Secondary highlight ${index + 1} positioned for component:`, instance.componentId, 'in breakpoint:', instance.breakpointId);
+        });
+      }
+
+      return;
+    }
+
+    // Fallback: Single viewport component selection (no cross-viewport highlighting)
+    if (editorUI.selectedComponent && editorUI.selectedViewportNode) {
+      const primaryBreakpointId = editorUI.selectedViewportNode.breakpointId!;
+      const primaryComponentId = `${primaryBreakpointId}-${editorUI.selectedComponent.id}`;
+      const primaryElement = document.querySelector(
+        `[data-component-id="${primaryComponentId}"]`
+      ) as HTMLElement;
+
+      if (primaryElement) {
+        const rect = primaryElement.getBoundingClientRect();
+        const x = rect.left - 2;
+        const y = rect.top - 2;
+
+        primaryOverlay.style.display = 'block';
+        primaryOverlay.style.transform = `translate(${x}px, ${y}px)`;
+        primaryOverlay.style.width = `${rect.width + 4}px`;
+        primaryOverlay.style.height = `${rect.height + 4}px`;
+        primaryOverlay.className = `absolute pointer-events-none ${HIGHLIGHT_STYLES.primary.border} ${HIGHLIGHT_STYLES.primary.background} ${HIGHLIGHT_STYLES.primary.zIndex}`;
+
+        // Hide secondary overlays for single viewport selection
+        if (secondaryOverlaysContainer) {
+          secondaryOverlaysContainer.style.display = 'none';
+        }
+
         return;
-      } else {
-        // console.log('❌ HudSurface: Component element not found:', breakpointComponentId);
       }
     }
 
-    // === Case 2: Root canvas component (virtual model, no DOM node) ===
-    // This handles floating elements that exist only as data models (images, text, etc.)
-    // We need to manually transform their canvas coordinates to screen coordinates
-    if (editorUI.selectedRootCanvasComponent?.isRootCanvasComponent) {
-      const bounds = editorUI.selectedRootCanvasComponent.canvasBounds;
-      if (bounds) {
-        // Debug logging for root canvas component (disabled for production)
-        // console.log('🟢 HudSurface: Root Canvas Component Selected', {
-        //   componentId: editorUI.selectedRootCanvasComponent.id,
-        //   canvasBounds: {
-        //     x: bounds.x,
-        //     y: bounds.y,
-        //     width: bounds.width,
-        //     height: bounds.height
-        //   },
-        //   transformState: { panX: panX.toFixed(2), panY: panY.toFixed(2), zoom: zoom.toFixed(3) }
-        // });
+    // === Case 2: Selected viewport node (highlight viewport frame) ===
+    // This handles when a viewport node itself is selected from the layers panel
+    // We highlight the viewport frame on the canvas
+    if (editorUI.selectedViewportNode && !editorUI.selectedComponent) {
+      const viewportBounds = editorUI.selectedViewportNode.viewportBounds;
+      if (viewportBounds) {
+        // Transform viewport canvas coordinates to screen coordinates
+        const screenX = (viewportBounds.x * zoom) + panX + canvasContainerRect.left;
+        const screenY = (viewportBounds.y * zoom) + panY + canvasContainerRect.top;
+        const screenWidth = viewportBounds.width * zoom;
+        const screenHeight = viewportBounds.height * zoom;
 
+        primaryOverlay.style.display = 'block';
+        primaryOverlay.style.transform = `translate(${screenX - 2}px, ${screenY - 2}px)`;
+        primaryOverlay.style.width = `${screenWidth + 4}px`;
+        primaryOverlay.style.height = `${screenHeight + 4}px`;
+        primaryOverlay.className = `absolute pointer-events-none ${HIGHLIGHT_STYLES.primary.border} ${HIGHLIGHT_STYLES.primary.background} ${HIGHLIGHT_STYLES.primary.zIndex}`;
+
+        // Hide secondary overlays for viewport selection
+        if (secondaryOverlaysContainer) {
+          secondaryOverlaysContainer.style.display = 'none';
+        }
+
+        console.log('🎯 HudSurface: Viewport node highlighted:', editorUI.selectedViewportNode.breakpointLabel);
+        return;
+      }
+    }
+
+    // === Case 3: Floating element (selectedComponent without selectedViewportNode) ===
+    // This handles floating elements that exist as canvas components outside viewports
+    // We need to manually transform their canvas coordinates to screen coordinates
+    if (editorUI.selectedComponent && !editorUI.selectedViewportNode && editorUI.selectedComponent.isFloatingElement) {
+      const bounds = editorUI.selectedComponent.canvasBounds;
+      if (bounds) {
         // Transform from canvas coordinates to screen coordinates
-        // This replicates the same transform that CSS applies to the canvas camera
-        //
-        // Breakdown of coordinate transformation:
-        // 1. bounds.x/y = position in canvas space (before any transforms)
-        // 2. bounds.x * zoom = apply zoom scaling to position
-        // 3. + panX/panY = apply canvas pan offset
-        // 4. + canvasContainerRect.left/top = account for canvas container position in viewport
-        //
         // Formula: screenPos = (canvasPos * zoom) + pan + containerOffset
         const screenX = (bounds.x * zoom) + panX + canvasContainerRect.left;
         const screenY = (bounds.y * zoom) + panY + canvasContainerRect.top;
-        
-        // Apply border offset to center overlay around the element
-        const x = screenX - 2; // Overlay border offset
-        const y = screenY - 2; // Overlay border offset
-        
-        // Scale the element dimensions by current zoom level
-        const scaledWidth = bounds.width * zoom;
-        const scaledHeight = bounds.height * zoom;
+        const screenWidth = bounds.width * zoom;
+        const screenHeight = bounds.height * zoom;
 
-        // console.log('🎯 HudSurface: Root Canvas Overlay Position', {
-        //   canvasCoords: { x: bounds.x, y: bounds.y },
-        //   screenCoords: { x: screenX.toFixed(2), y: screenY.toFixed(2) },
-        //   finalOverlayPos: { x: x.toFixed(2), y: y.toFixed(2) },
-        //   scaledSize: { width: scaledWidth.toFixed(2), height: scaledHeight.toFixed(2) },
-        //   overlayTransform: `translate(${x}px, ${y}px)`
-        // });
+        primaryOverlay.style.display = 'block';
+        primaryOverlay.style.transform = `translate(${screenX - 2}px, ${screenY - 2}px)`;
+        primaryOverlay.style.width = `${screenWidth + 4}px`;
+        primaryOverlay.style.height = `${screenHeight + 4}px`;
+        primaryOverlay.className = `absolute pointer-events-none ${HIGHLIGHT_STYLES.floating.border} ${HIGHLIGHT_STYLES.floating.background} ${HIGHLIGHT_STYLES.floating.zIndex}`;
 
-        // Apply overlay positioning and styling via direct DOM manipulation
-        overlay.style.display = 'block';
-        overlay.style.transform = `translate(${x}px, ${y}px)`;
-        overlay.style.width = `${scaledWidth + 4}px`;   // +4px for border (2px each side)
-        overlay.style.height = `${scaledHeight + 4}px`; // +4px for border (2px each side)
-        overlay.className =
-          'absolute pointer-events-none border-2 border-green-500 bg-green-500/10 z-50';
+        // Hide secondary overlays for floating element selection
+        if (secondaryOverlaysContainer) {
+          secondaryOverlaysContainer.style.display = 'none';
+        }
+
+        console.log('🎯 HudSurface: Floating element highlighted:', editorUI.selectedComponent.id);
         return;
       }
     }
 
-    // No valid selection - hide overlay
-    // console.log('👻 HudSurface: No valid selection found, hiding overlay');
-    overlay.style.display = 'none';
+    // No valid selection - hide all overlays
+    // console.log('👻 HudSurface: No valid selection found, hiding overlays');
+    primaryOverlay.style.display = 'none';
+    if (secondaryOverlaysContainer) {
+      secondaryOverlaysContainer.style.display = 'none';
+    }
   }, [
     editorUI.selectedTool,
     editorUI.selectedComponent,
-    editorUI.selectedBreakpoint,
-    editorUI.selectedRootCanvasComponent,
+    editorUI.selectedViewportNode,
     canvasContainerRect,
     transformState,
+    crossViewportSelection,
   ]);
 
   // Subscribe to transform updates (high-performance, no React re-renders)
@@ -224,6 +270,29 @@ const HudSurface = observer(() => {
     };
   }, [subscribe, updateOverlayPosition]);
 
+  // Update cross-viewport selection when component selection changes
+  useEffect(() => {
+    if (editorUI.selectedComponent && editorUI.selectedViewportNode && editorUI.currentPage) {
+      const viewportNodes = editorUI.currentPage.viewportNodes;
+      const primaryViewport = editorUI.selectedViewportNode;
+      
+      // Check if this component appears in multiple viewports
+      if (primaryViewport && hasMultipleViewportAppearances(editorUI.selectedComponent, viewportNodes)) {
+        const selection = createCrossViewportSelection(
+          editorUI.selectedComponent,
+          primaryViewport,
+          viewportNodes
+        );
+        setCrossViewportSelection(selection);
+        console.log('🎯 HudSurface: Cross-viewport selection created:', selection);
+      } else {
+        setCrossViewportSelection(null);
+      }
+    } else {
+      setCrossViewportSelection(null);
+    }
+  }, [editorUI.selectedComponent, editorUI.selectedViewportNode, editorUI.currentPage]);
+
   // React-based updates (only when selection changes)
   useEffect(() => {
     updateOverlayPosition();
@@ -231,12 +300,12 @@ const HudSurface = observer(() => {
 
   return (
     <div className="fixed inset-0 pointer-events-none" style={{ zIndex: 10 }}>
-      {/* Single unified selection overlay */}
+      {/* Primary selection overlay */}
       <div
-        ref={overlayRef}
+        ref={primaryOverlayRef}
         className="absolute pointer-events-none"
         style={{ display: 'none' }}
-        data-testid="selection-overlay"
+        data-testid="primary-selection-overlay"
       >
         {/* Selection handles */}
         <div className="absolute -top-1 -left-1 w-2 h-2 bg-blue-500 rounded-full" />
@@ -248,6 +317,14 @@ const HudSurface = observer(() => {
         <div className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 w-2 h-2 bg-blue-500 rounded-full" />
         <div className="absolute -bottom-1 -right-1 w-2 h-2 bg-blue-500 rounded-full" />
       </div>
+      
+      {/* Secondary overlays container (for cross-viewport highlighting) */}
+      <div
+        ref={secondaryOverlaysRef}
+        className="absolute pointer-events-none"
+        style={{ display: 'none' }}
+        data-testid="secondary-overlays-container"
+      />
     </div>
   );
 });

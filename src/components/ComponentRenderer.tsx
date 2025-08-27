@@ -31,7 +31,7 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
     }
   };
 
-  const children = component.children.map(ch =>
+  const children = component.children.map((ch: ComponentInstance) =>
     <ComponentRenderer
       key={ch.id}
       component={ch}

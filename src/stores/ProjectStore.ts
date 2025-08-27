@@ -3,8 +3,7 @@
 import { types, Instance } from 'mobx-state-tree';
 import ProjectModel, { ProjectModelType } from '../models/ProjectModel';
 import { v4 as uuidv4 } from 'uuid';
-import { createIntrinsicComponent, createRootCanvasComponent } from '@/models/ComponentModel';
-import { createBreakpointViewportComponent } from '@/utils/canvasHelpers';
+import { createIntrinsicComponent, createFloatingCanvasComponent, createViewportNode } from '@/models/ComponentModel';
 
 // ProjectStore - manages the collection of all projects (domain logic)
 const ProjectStore = types.model('ProjectStore', {
@@ -52,37 +51,89 @@ const ProjectStore = types.model('ProjectStore', {
     return {
       totalProjects: projects.length,
       totalPages: projects.reduce((sum, p) => sum + p.stats.pageCount, 0),
-      totalComponents: projects.reduce((sum, p) => sum + p.stats.totalComponents, 0)
+      totalCanvasNodes: projects.reduce((sum, p) => sum + p.stats.totalCanvasNodes, 0)
     };
   }
 }))
 .actions(self => ({
 
-  // Create a new project with default page
+  // Create a new project with default page (Framer-style unified architecture)
   createProject(title: string, description = '') {
     const projectId = uuidv4();
     const desktopBreakpointId = uuidv4();
     const tabletBreakpointId = uuidv4();
     const mobileBreakpointId = uuidv4();
     const pageId = uuidv4();
-    const rootComponentId = uuidv4();
+    // Removed rootComponentId - no longer needed with direct component structure
 
-    // Root component (responsive style maps keyed by primary breakpoint id)
-    const rootComponent = createIntrinsicComponent('root-' + rootComponentId, 'div', {
+    // Create the app component tree (Framer-style: direct components, no wrapper)
+    // In Framer, the app tree is a collection of root-level components
+    const appComponentTree = createIntrinsicComponent('header-' + uuidv4(), 'header', {
       style: {
-        position: { [desktopBreakpointId]: '' },
-        width: { [desktopBreakpointId]: '1280px', [tabletBreakpointId]: '768px', [mobileBreakpointId]: '320px' },
-        height: { [desktopBreakpointId]: '1000px' },
-        backgroundColor: { [desktopBreakpointId]: '#4A90E2' },
+        color: 'white',
+        padding: '16px',
+        borderRadius: '8px',
+        marginBottom: '20px',
+        fontFamily: 'Inter, sans-serif'
       },
+      children: 'Welcome to Framer Clone!'
     });
 
-    // Create sample root canvas components for demonstration
-    const sampleImageComponent = createRootCanvasComponent(
+    // Add a main component as a sibling (this would be handled differently in a real app)
+    const mainComponent = createIntrinsicComponent('main-' + uuidv4(), 'main', {
+      style: {
+        padding: '20px',
+        backgroundColor: 'black',
+        borderRadius: '8px',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+        fontFamily: 'Inter, sans-serif'
+      },
+      children: 'This is the main content area. Click on components to select them across viewports!'
+    });
+
+    // Add the main component as a child of the header (simplified structure)
+    appComponentTree.addChildren([mainComponent]);
+
+    // Create viewport nodes (Framer-style: positioned on canvas)
+    const desktopViewport = createViewportNode(
+      `viewport-${desktopBreakpointId}`,
+      desktopBreakpointId,
+      'Desktop',
+      1280,
+      100, // X position
+      100, // Y position
+      1280, // Viewport width
+      800   // Viewport height
+    );
+
+    const tabletViewport = createViewportNode(
+      `viewport-${tabletBreakpointId}`,
+      tabletBreakpointId,
+      'Tablet',
+      768,
+      1430, // X position (100 + 1280 + 50 spacing)
+      100,  // Y position
+      768,  // Viewport width
+      1024  // Viewport height
+    );
+
+    const mobileViewport = createViewportNode(
+      `viewport-${mobileBreakpointId}`,
+      mobileBreakpointId,
+      'Mobile',
+      320,
+      2248, // X position (100 + 1280 + 50 + 768 + 50)
+      100,  // Y position
+      375,  // Viewport width
+      667   // Viewport height
+    );
+
+    // Create sample floating elements
+    const sampleImageComponent = createFloatingCanvasComponent(
       uuidv4(),
       'img',
       {
-        src: 'https://picsum.photos/400/300',
+        src: '/images/sample-image.png',
         alt: 'Sample image',
         width: '400px',
         height: '300px',
@@ -92,10 +143,10 @@ const ProjectStore = types.model('ProjectStore', {
         }
       },
       1600,
-      200
+      -500 // Position below viewports
     );
 
-    const sampleTextComponent = createRootCanvasComponent(
+    const sampleTextComponent = createFloatingCanvasComponent(
       uuidv4(),
       'div',
       {
@@ -114,33 +165,8 @@ const ProjectStore = types.model('ProjectStore', {
           backgroundColor: 'rgba(255, 255, 255, 0.9)',
         }
       },
-      1700,
-      550
-    );
-
-    // Create root canvas components for breakpoint viewports (positioned on canvas)
-    const desktopViewportComponent = createBreakpointViewportComponent(
-      `viewport-${desktopBreakpointId}`,
-      desktopBreakpointId,
-      100, // X position
-      100, // Y position
-      1280 // Width
-    );
-
-    const tabletViewportComponent = createBreakpointViewportComponent(
-      `viewport-${tabletBreakpointId}`,
-      tabletBreakpointId,
-      1430, // X position (100 + 1280 + 50 spacing)
-      100,  // Y position
-      768   // Width
-    );
-
-    const mobileViewportComponent = createBreakpointViewportComponent(
-      `viewport-${mobileBreakpointId}`,
-      mobileBreakpointId,
-      2248, // X position (100 + 1280 + 50 + 768 + 50)
-      100,  // Y position
-      320   // Width
+      2100,
+      500 // Position below viewports
     );
 
     self.projects.set(projectId, {
@@ -154,41 +180,25 @@ const ProjectStore = types.model('ProjectStore', {
       pages: {
         [pageId]: {
           id: pageId,
-            slug: '',
-            metadata: {
-              title: 'Home',
-              description: 'Default home page'
-            },
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            rootComponent, // <-- direct component snapshot (correct shape)
-            rootCanvasComponents: {
-              [sampleImageComponent.id]: sampleImageComponent,
-              [sampleTextComponent.id]: sampleTextComponent,
-              [desktopViewportComponent.id]: desktopViewportComponent,
-              [tabletViewportComponent.id]: tabletViewportComponent,
-              [mobileViewportComponent.id]: mobileViewportComponent,
-            },
+          slug: '',
+          metadata: {
+            title: 'Home',
+            description: 'Default home page'
+          },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          appComponentTree: appComponentTree, // Deployable app tree
+          canvasNodes: {
+            // Viewport nodes (breakpoint frames)
+            [desktopViewport.id]: desktopViewport,
+            [tabletViewport.id]: tabletViewport,
+            [mobileViewport.id]: mobileViewport,
+            // Floating elements
+            [sampleImageComponent.id]: sampleImageComponent,
+            [sampleTextComponent.id]: sampleTextComponent,
+          },
         }
-      },
-      breakpoints: {
-        [desktopBreakpointId]: {
-          id: desktopBreakpointId,
-          label: 'Desktop',
-          minWidth: 1280,
-        },
-        [tabletBreakpointId]: {
-          id: tabletBreakpointId,
-          label: 'Tablet',
-          minWidth: 768,
-        },
-        [mobileBreakpointId]: {
-          id: mobileBreakpointId,
-          label: 'Mobile',
-          minWidth: 320,
-        },
-      },
-      primaryBreakpoint: desktopBreakpointId, // reference to existing breakpoint
+      }
     });
   },
   

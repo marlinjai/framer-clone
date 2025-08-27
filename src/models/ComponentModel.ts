@@ -9,6 +9,13 @@ export enum ComponentTypeEnum {
   FUNCTION = 'function',
 }
 
+// Framer-style node types - everything on canvas is a node
+export enum CanvasNodeType {
+  COMPONENT = 'component',           // Regular component in app tree
+  VIEWPORT = 'viewport',             // Breakpoint viewport frame
+  FLOATING_ELEMENT = 'floating',     // Floating element (image, text, etc.)
+}
+
 export type IntrinsicElementType = keyof React.JSX.IntrinsicElements;
 export type IntrinsicElementProps<T extends IntrinsicElementType> = React.JSX.IntrinsicElements[T];
 export type FunctionComponentType = string;
@@ -73,17 +80,23 @@ const ComponentBase = types.model('ComponentBase', {
   componentType: types.enumeration(Object.values(ComponentTypeEnum)),
   props: types.optional(types.frozen<PropsRecord>(), {}),
   
-  // Canvas positioning for root-level components (Framer-style)
-  // Only used when component has no parent (is a root canvas component)
+  // Framer-style: Canvas node type (determines rendering behavior)
+  canvasNodeType: types.optional(types.enumeration(Object.values(CanvasNodeType)), CanvasNodeType.COMPONENT),
+  
+  // Canvas positioning for root-level nodes (Framer-style)
+  // Used by viewport nodes and floating elements
   canvasX: types.maybe(types.number),
   canvasY: types.maybe(types.number),
   canvasScale: types.optional(types.number, 1),
   canvasRotation: types.optional(types.number, 0),
   canvasZIndex: types.optional(types.number, 0),
   
-  // Breakpoint visibility constraints (like Framer)
-  visibleFromBreakpoint: types.maybe(types.string), // breakpoint ID
-  visibleUntilBreakpoint: types.maybe(types.string), // breakpoint ID
+  // Viewport-specific properties (only used when canvasNodeType === 'viewport')
+  breakpointId: types.maybe(types.string),        // Associated breakpoint ID
+  breakpointLabel: types.maybe(types.string),     // Breakpoint label (Desktop, Mobile, etc.)
+  breakpointMinWidth: types.maybe(types.number),  // CSS min-width for this breakpoint
+  viewportWidth: types.maybe(types.number),       // Viewport frame width on canvas
+  viewportHeight: types.maybe(types.number),      // Viewport frame height on canvas
   
   // Canvas-level properties
   canvasVisible: types.optional(types.boolean, true),
@@ -91,7 +104,7 @@ const ComponentBase = types.model('ComponentBase', {
 });
 
 // ---------- FINAL MODEL (add recursive children + logic) ----------
-const ComponentModel = ComponentBase
+const ComponentModel: any = ComponentBase
   .props({
     children: types.optional(types.array(types.late((): any => ComponentModel)), []),
   })
@@ -116,10 +129,44 @@ const ComponentModel = ComponentBase
       if (updates.zIndex !== undefined) self.canvasZIndex = updates.zIndex;
     },
     
-    // Breakpoint visibility actions
-    setBreakpointVisibility(fromBreakpoint?: string, untilBreakpoint?: string) {
-      self.visibleFromBreakpoint = fromBreakpoint;
-      self.visibleUntilBreakpoint = untilBreakpoint;
+    // Viewport node actions (for breakpoint viewports)
+    setViewportProperties(updates: {
+      breakpointId?: string;
+      breakpointLabel?: string;
+      breakpointMinWidth?: number;
+      viewportWidth?: number;
+      viewportHeight?: number;
+    }) {
+      if (updates.breakpointId !== undefined) self.breakpointId = updates.breakpointId;
+      if (updates.breakpointLabel !== undefined) self.breakpointLabel = updates.breakpointLabel;
+      if (updates.breakpointMinWidth !== undefined) self.breakpointMinWidth = updates.breakpointMinWidth;
+      if (updates.viewportWidth !== undefined) self.viewportWidth = updates.viewportWidth;
+      if (updates.viewportHeight !== undefined) self.viewportHeight = updates.viewportHeight;
+    },
+    
+    // Set canvas node type
+    setCanvasNodeType(nodeType: CanvasNodeType) {
+      self.canvasNodeType = nodeType;
+    },
+    
+    // Children management actions
+    addChild(child: ComponentInstance) {
+      self.children.push(child);
+    },
+    
+    addChildren(children: ComponentInstance[]) {
+      children.forEach(child => self.children.push(child));
+    },
+    
+    removeChild(childId: string) {
+      const index = self.children.findIndex(child => child.id === childId);
+      if (index !== -1) {
+        self.children.splice(index, 1);
+      }
+    },
+    
+    clearChildren() {
+      self.children.clear();
     },
     
     // Canvas-level actions
@@ -135,7 +182,24 @@ const ComponentModel = ComponentBase
     get isHostElement() { return self.componentType === ComponentTypeEnum.HOST; },
     get isFunctionComponent() { return self.componentType === ComponentTypeEnum.FUNCTION; },
     
-    // Check if this is a root canvas component (has canvas positioning)
+    // Framer-style node type checks
+    get isCanvasNode(): boolean {
+      return self.canvasNodeType !== CanvasNodeType.COMPONENT;
+    },
+    
+    get isViewportNode(): boolean {
+      return self.canvasNodeType === CanvasNodeType.VIEWPORT;
+    },
+    
+    get isFloatingElement(): boolean {
+      return self.canvasNodeType === CanvasNodeType.FLOATING_ELEMENT;
+    },
+    
+    get isAppComponent(): boolean {
+      return self.canvasNodeType === CanvasNodeType.COMPONENT;
+    },
+    
+    // Check if this is a root canvas node (has canvas positioning)
     get isRootCanvasComponent(): boolean {
       return self.canvasX !== undefined && self.canvasY !== undefined;
     },
@@ -164,6 +228,26 @@ const ComponentModel = ComponentBase
     // Check if component is editable on canvas
     get isCanvasEditable(): boolean {
       return !self.canvasLocked && self.canvasVisible;
+    },
+    
+    // Viewport node specific views
+    get viewportBounds() {
+      if (!this.isViewportNode) return null;
+      return {
+        x: self.canvasX!,
+        y: self.canvasY!,
+        width: self.viewportWidth || 400,
+        height: self.viewportHeight || 600,
+      };
+    },
+    
+    get breakpointInfo() {
+      if (!this.isViewportNode) return null;
+      return {
+        id: self.breakpointId!,
+        label: self.breakpointLabel || 'Unnamed',
+        minWidth: self.breakpointMinWidth || 320,
+      };
     },
 
     // In a real app, you’d traverse up to project/page to access breakpoints
@@ -234,7 +318,7 @@ export const createFunctionComponent = (
   });
 
 // Create root canvas component with absolute positioning (Framer-style)
-export const createRootCanvasComponent = <T extends IntrinsicElementType>(
+export const createFloatingCanvasComponent = <T extends IntrinsicElementType>(
   id: string,
   type: T,
   props: PropsRecord,
@@ -252,6 +336,7 @@ export const createRootCanvasComponent = <T extends IntrinsicElementType>(
     id,
     type,
     componentType: ComponentTypeEnum.HOST,
+    canvasNodeType: CanvasNodeType.FLOATING_ELEMENT,
     props,
     canvasX: x,
     canvasY: y,
@@ -260,6 +345,50 @@ export const createRootCanvasComponent = <T extends IntrinsicElementType>(
     canvasZIndex: options.zIndex || 0,
     visibleFromBreakpoint: options.visibleFromBreakpoint,
     visibleUntilBreakpoint: options.visibleUntilBreakpoint,
+  });
+
+// Create viewport node (Framer-style breakpoint viewport)
+export const createViewportNode = (
+  id: string,
+  breakpointId: string,
+  breakpointLabel: string,
+  breakpointMinWidth: number,
+  x: number,
+  y: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  options: {
+    scale?: number;
+    rotation?: number;
+    zIndex?: number;
+  } = {}
+): ComponentInstance =>
+  ComponentModel.create({
+    id,
+    type: 'div', // Viewport container is always a div
+    componentType: ComponentTypeEnum.HOST,
+    canvasNodeType: CanvasNodeType.VIEWPORT,
+    props: {
+      className: 'viewport-frame',
+      style: {
+        width: `${viewportWidth}px`,
+        height: `${viewportHeight}px`,
+        backgroundColor: 'white',
+        borderRadius: '8px',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+        overflow: 'hidden',
+      }
+    },
+    canvasX: x,
+    canvasY: y,
+    canvasScale: options.scale || 1,
+    canvasRotation: options.rotation || 0,
+    canvasZIndex: options.zIndex || 0,
+    breakpointId,
+    breakpointLabel,
+    breakpointMinWidth,
+    viewportWidth,
+    viewportHeight,
   });
 
 export default ComponentModel;
