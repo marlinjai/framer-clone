@@ -35,5 +35,5 @@ Uses MobX State Tree with a `RootStore` containing:
 
 ## Documentation
 
-- [Architecture](./architecture) — Ground wrapper system and state management
-- [Transform System](./transform-system) — Zero-React-render canvas transforms
+- [Architecture](/projects/framer-clone/architecture) — Ground wrapper system and state management
+- [Transform System](/projects/framer-clone/transform-system) — Zero-React-render canvas transforms

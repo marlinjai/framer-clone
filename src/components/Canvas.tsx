@@ -85,8 +85,12 @@ const CanvasInner = observer(() => {
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
       
-      // Zoom factor (like the Stack Overflow example)
-      const scaleFactor = 1.1;
+      // Detect pinch gestures (typically have larger deltaY and ctrlKey set)
+      // Use slower zoom factor for pinch gestures to make them feel more controlled
+      const isLikelyPinch = e.ctrlKey && Math.abs(e.deltaY) > 10;
+      // Pinch gestures: 1.01 (1% per step) for very slow, precise zoom
+      // Wheel zoom: 1.05 (5% per step) for reasonable responsiveness
+      const scaleFactor = isLikelyPinch ? 1.01 : 1.05;
       const zoomDirection = e.deltaY > 0 ? -1 : 1;
       const factor = Math.pow(scaleFactor, zoomDirection);
       const newZoom = Math.max(0.1, Math.min(5, transformState.current.zoom * factor));
