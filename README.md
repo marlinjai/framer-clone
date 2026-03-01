@@ -28,8 +28,8 @@ A high-performance, production-ready design tool built with Next.js, TypeScript,
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Node.js 18+ 
-- npm or yarn
+- Node.js 18+
+- pnpm 9+
 
 ### Installation
 
@@ -39,10 +39,10 @@ git clone <your-repo-url>
 cd framer-clone
 
 # Install dependencies
-npm install
+pnpm install
 
 # Start development server
-npm run dev
+pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) to see the design tool in action.
