@@ -7,7 +7,9 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "docs:dev": "clearify dev",
+    "docs:build": "clearify build"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.1",
@@ -64,6 +66,7 @@
     "zod": "^4.0.17"
   },
   "devDependencies": {
+    "@marlinjai/clearify": "^1.9.0",
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
