@@ -1,3 +1,12 @@
+---
+title: Architecture Changes - Ground Wrapper
+summary: Documents the architectural shift to Framer-style ground wrapper positioning, where each canvas element gets its own independently-positioned wrapper with GPU-optimized transforms, replacing the single camera transform approach.
+category: decision
+tags: [framer-clone, architecture, ground-wrapper, canvas, performance]
+status: active
+date: 2025-08-28
+---
+
 # Architecture Changes: Ground Wrapper Implementation
 
 ## Overview

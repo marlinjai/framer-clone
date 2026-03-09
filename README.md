@@ -1,3 +1,12 @@
+---
+title: Framer Clone
+summary: README for the Framer Clone, a high-performance visual design tool built with Next.js, TypeScript, and MobX State Tree featuring infinite canvas, drag-and-drop, responsive breakpoint editing, and ground wrapper architecture.
+category: documentation
+tags: [framer-clone, design-tool, nextjs, canvas, mobx]
+status: active
+date: 2025-08-21
+---
+
 # Framer Clone - Professional Design Tool
 
 A high-performance, production-ready design tool built with Next.js, TypeScript, and MobX State Tree. This project replicates Framer's core functionality with modern web technologies and clean architecture.

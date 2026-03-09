@@ -1,3 +1,12 @@
+---
+title: Transform System Summary
+summary: Technical deep-dive into the zero-React-render canvas transform system using a ref + subscription pattern for 60fps pan/zoom with real-time overlay synchronization, bypassing React's virtual DOM for direct DOM manipulation.
+category: internal
+tags: [framer-clone, performance, transforms, canvas, architecture]
+status: active
+date: 2025-08-28
+---
+
 # High-Performance Canvas Transform System
 
 ## 🎯 Overview

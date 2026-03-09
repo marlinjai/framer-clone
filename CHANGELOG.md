@@ -1,3 +1,12 @@
+---
+title: Framer Clone Changelog
+summary: Version history for the Framer Clone visual builder, covering releases from v0.1.0 through v0.4.0 including infinite canvas, drag-and-drop, layers panel, selection overlays, and documentation.
+category: changelog
+tags: [framer-clone, changelog, releases, visual-builder]
+status: active
+date: 2026-03-01
+---
+
 # Changelog
 
 All notable changes to the Framer Clone (Visual Builder) project will be documented in this file.

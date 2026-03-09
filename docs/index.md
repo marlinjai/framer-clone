@@ -2,6 +2,11 @@
 title: Framer Clone
 description: Visual website builder with infinite canvas and responsive design
 order: 0
+summary: Landing page for the Framer Clone documentation, a high-performance visual website builder with infinite canvas, responsive design, built with Next.js, TypeScript, and MobX State Tree.
+category: documentation
+tags: [framer-clone, index, visual-builder, infinite-canvas]
+projects: [framer-clone]
+status: active
 ---
 
 # Framer Clone

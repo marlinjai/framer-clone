@@ -2,6 +2,11 @@
 title: Architecture
 description: Ground wrapper implementation and state management
 order: 1
+summary: Architecture documentation covering the ground wrapper implementation and state management changes in the Framer Clone visual builder.
+category: documentation
+tags: [framer-clone, architecture, state-management, ground-wrapper]
+projects: [framer-clone]
+status: active
 ---
 
 # Architecture Changes: Ground Wrapper Implementation

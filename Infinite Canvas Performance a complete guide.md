@@ -1,3 +1,12 @@
+---
+title: Infinite Canvas Performance Guide
+summary: Comprehensive guide explaining how infinite canvas applications achieve 60fps performance through coordinate transformation (O(1) pan/zoom), GPU compositing, direct DOM manipulation, RAF throttling, and the trade-offs between CSS transforms, Canvas 2D, and WebGL approaches.
+category: research
+tags: [canvas, performance, gpu, coordinate-transforms, rendering]
+status: active
+date: 2025-08-28
+---
+
 # Infinite Canvas Performance: A Complete Guide
 
 ## Overview
