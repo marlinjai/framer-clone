@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "next lint",
     "docs:dev": "clearify dev",
-    "docs:build": "clearify build"
+    "docs:build": "clearify build",
+    "prepare": "husky"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.1",
@@ -66,14 +67,17 @@
     "zod": "^4.0.17"
   },
   "devDependencies": {
-    "@marlinjai/clearify": "^1.11.0",
+    "@commitlint/cli": "^20.4.3",
+    "@commitlint/config-conventional": "^20.4.3",
     "@eslint/eslintrc": "^3",
+    "@marlinjai/clearify": "^1.11.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "15.4.6",
+    "husky": "^9.1.7",
     "tailwindcss": "^4",
     "tw-animate-css": "^1.3.7",
     "typescript": "^5"
