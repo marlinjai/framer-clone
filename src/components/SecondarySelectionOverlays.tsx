@@ -4,23 +4,30 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 
-import { BreakpointType } from '@/models/BreakpointModel';
 import { useStore } from '@/hooks/useStore';
 
 interface SecondarySelectionOverlaysProps {
   isVisible: boolean;
 }
 
+interface BreakpointInfo {
+  id: string;
+  label: string;
+  minWidth: number;
+}
+
 interface Box {
-  left: number; top: number; width: number; height: number; breakpoint: BreakpointType;
+  left: number; top: number; width: number; height: number; breakpoint: BreakpointInfo;
 }
 
 const SecondarySelectionOverlays = observer(({ isVisible }: SecondarySelectionOverlaysProps) => {
   const [boxes, setBoxes] = useState<Box[]>([]);
   const rafRef = useRef<number>(0);
   const rootStore = useStore();
-  const primaryBreakpoint = rootStore.editorUI.currentBreakpoint; // may be undefined
-  const breakpointMap = rootStore.editorUI.currentProject?.breakpoints; // MST map
+  const selectedViewportNode = rootStore.editorUI.selectedViewportNode;
+  const primaryBreakpointId = selectedViewportNode?.breakpointId;
+  const viewportNodes = rootStore.editorUI.currentPage?.viewportNodes;
+  const breakpoints = viewportNodes?.map(v => v.breakpointInfo).filter((bp): bp is BreakpointInfo => bp !== null);
   const selectedComponent = rootStore.editorUI.selectedComponent;
 
   useEffect(() => {
@@ -30,13 +37,11 @@ const SecondarySelectionOverlays = observer(({ isVisible }: SecondarySelectionOv
       return;
     }
 
-  if (!breakpointMap || !primaryBreakpoint) return;
+    if (!breakpoints || !primaryBreakpointId) return;
 
-  // Convert MST map to array of breakpoint instances
-  const allBreakpoints: BreakpointType[] = Array.from(breakpointMap.values());
-  // Exclude the primary breakpoint (compare by id)
-  const secondary: BreakpointType[] = allBreakpoints.filter(bp => bp.id !== primaryBreakpoint.id);
-  if (secondary.length === 0) return;
+    // Exclude the primary breakpoint
+    const secondary = breakpoints.filter(bp => bp.id !== primaryBreakpointId);
+    if (secondary.length === 0) return;
 
     const update = () => {
       const next: Box[] = [];
@@ -53,7 +58,7 @@ const SecondarySelectionOverlays = observer(({ isVisible }: SecondarySelectionOv
     };
     rafRef.current = requestAnimationFrame(update);
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [selectedComponent, primaryBreakpoint, breakpointMap, isVisible]);
+  }, [selectedComponent, primaryBreakpointId, viewportNodes, breakpoints, isVisible]);
 
   if (!isVisible || !selectedComponent) return null;
 

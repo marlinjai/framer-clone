@@ -128,7 +128,7 @@ const LayersPanel = observer(() => {
         </div>
         
         {/* Children - pass down breakpoint context */}
-        {hasChildren && component.children.map(child => 
+        {hasChildren && component.children.map((child: ComponentInstance) =>
           renderComponentNode(child, depth + 1, breakpointId)
         )}
       </div>

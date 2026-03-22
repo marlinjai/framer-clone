@@ -8,37 +8,19 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
 
 /**
- * RightSidebarHeader - Header with title and collapse toggle
- * 
- * Features:
- * - Dynamic title based on current selection
- * - Collapse/expand toggle
- * - Context-aware labeling
- * 
- * Uses EditorUIStore directly - no prop drilling
+ * RightSidebarHeader - Header with dynamic title from component displayName
  */
 const RightSidebarHeader = observer(() => {
   const { editorUI } = useStore();
   const isCollapsed = editorUI.rightSidebarCollapsed;
-  const selectedViewportNode = editorUI.selectedViewportNode;
   const selectedComponent = editorUI.selectedComponent;
+  const selectedViewportNode = editorUI.selectedViewportNode;
 
-  // Determine header title based on current selection
-  const getHeaderTitle = () => {
-    if (selectedViewportNode) {
-      return `${selectedViewportNode.label} Properties`;
-    }
-    if (selectedComponent?.isFloatingElement) {
-      return 'Position & Size';
-    }
-    if (selectedComponent) {
-      return 'Component Properties';
-    }
-    return 'Properties';
-  };
+  const target = selectedComponent || selectedViewportNode;
+  const title = target ? target.displayName : 'Properties';
 
   return (
-    <div className="h-16 flex items-center justify-between px-3 border-b border-gray-200">
+    <div className="h-12 flex items-center justify-between px-3 border-b border-gray-200 shrink-0">
       {/* Collapse Toggle */}
       <Button
         variant="ghost"
@@ -48,14 +30,14 @@ const RightSidebarHeader = observer(() => {
       >
         {isCollapsed ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
       </Button>
-      
-      {/* Title and Icon */}
+
+      {/* Title */}
       {!isCollapsed && (
         <div className="flex items-center space-x-2">
-          <span className="font-medium text-gray-900">
-            {getHeaderTitle()}
+          <span className="font-medium text-gray-900 text-sm truncate max-w-[140px]">
+            {title}
           </span>
-          <Settings size={20} className="text-gray-600" />
+          <Settings size={16} className="text-gray-400 shrink-0" />
         </div>
       )}
     </div>
@@ -65,4 +47,3 @@ const RightSidebarHeader = observer(() => {
 RightSidebarHeader.displayName = 'RightSidebarHeader';
 
 export default RightSidebarHeader;
-

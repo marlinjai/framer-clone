@@ -303,6 +303,16 @@ const HudSurface = observer(() => {
     updateOverlayPosition();
   }, [updateOverlayPosition]);
 
+  // Re-position overlay when selected component's props change (layout might shift)
+  // Read props here so MobX observer tracks the dependency
+  const selectedProps = editorUI.selectedComponent?.props;
+  const selectedVPProps = editorUI.selectedViewportNode?.props;
+  useEffect(() => {
+    // Wait one frame for ComponentRenderer to apply new styles to the DOM
+    const rafId = requestAnimationFrame(() => updateOverlayPosition());
+    return () => cancelAnimationFrame(rafId);
+  }, [selectedProps, selectedVPProps, updateOverlayPosition]);
+
   return (
     <div className="fixed inset-0 pointer-events-none" style={{ zIndex: 10 }}>
       {/* Primary selection overlay */}

@@ -241,20 +241,6 @@ const ComponentModel: any = ComponentBase
       console.log(`🎨 Updated ${property} to:`, self.props.style[property]);
     },
     
-    // Get resolved style value for a specific breakpoint
-    getResponsiveStyleValue(property: string, breakpointId?: string): any {
-      const currentStyle = self.props?.style || {};
-      const currentValue = currentStyle[property];
-      
-      if (breakpointId && typeof currentValue === 'object' && currentValue && !Array.isArray(currentValue)) {
-        // Return breakpoint-specific value or fallback to base
-        return currentValue[breakpointId] || currentValue.base;
-      }
-      
-      // Return direct value
-      return currentValue;
-    },
-    
     // Canvas-level actions
     toggleCanvasVisibility() {
       self.canvasVisible = !self.canvasVisible;
@@ -265,6 +251,18 @@ const ComponentModel: any = ComponentBase
     },
   }))
   .views(self => ({
+    // Moved from actions to views so MobX tracks reads for observer re-renders
+    getResponsiveStyleValue(property: string, breakpointId?: string): any {
+      const currentStyle = self.props?.style || {};
+      const currentValue = currentStyle[property];
+
+      if (breakpointId && typeof currentValue === 'object' && currentValue && !Array.isArray(currentValue)) {
+        return currentValue[breakpointId] || currentValue.base;
+      }
+
+      return currentValue;
+    },
+
     get isHostElement() { return self.componentType === ComponentTypeEnum.HOST; },
     get isFunctionComponent() { return self.componentType === ComponentTypeEnum.FUNCTION; },
     

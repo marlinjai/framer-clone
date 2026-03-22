@@ -18,9 +18,12 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
 
   const { attributes, style } = component.getResolvedProps(breakpointId, allBreakpoints, primaryId);
 
+  // In the editor, always allow pointer events so components can be selected
+  const editorStyle = Object.keys(style).length ? { ...style, pointerEvents: 'auto' as const } : undefined;
+
   const finalProps: Record<string, unknown> = {
     ...attributes,
-    style: Object.keys(style).length ? style : undefined,
+    style: editorStyle,
     'data-component-id': `${breakpointId}-${component.id}`,
     onClick: (e: React.MouseEvent) => {
       e.stopPropagation();
