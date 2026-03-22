@@ -3,10 +3,9 @@ title: Transform System
 description: Zero-React-render canvas transform architecture for 60fps performance
 order: 2
 summary: Documentation of the zero-React-render canvas transform architecture that achieves 60fps performance by bypassing React's render cycle for drag, resize, and pan operations.
-category: documentation
+type: documentation
 tags: [framer-clone, transform-system, performance, canvas, 60fps]
 projects: [framer-clone]
-status: active
 ---
 
 # High-Performance Canvas Transform System
