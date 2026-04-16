@@ -43,3 +43,5 @@ next-env.d.ts
 #docs
 docs-dist/test
 docs-dist/
+
+.infisical.json
