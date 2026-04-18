@@ -1,0 +1,20 @@
+name: Docs Trigger
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'clearify.config.ts'
+
+jobs:
+  notify-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger hub rebuild
+        run: |
+          curl --fail-with-body -X POST \
+            -H "Authorization: token ${{ secrets.HUB_DISPATCH_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/marlinjai/ERP-suite/dispatches \
+            -d '{"event_type": "docs-update"}'
