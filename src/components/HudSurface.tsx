@@ -628,7 +628,7 @@ const HudSurface = observer(() => {
 
     // Capture originals so ESC can fully restore state.
     const origBorderRadius = readProp('borderRadius') ?? '';
-    const origCornerValues: Record<RadiusCorner, any> = {
+    const origCornerValues: Record<RadiusCorner, string | number> = {
       tl: readProp('borderTopLeftRadius') ?? '',
       tr: readProp('borderTopRightRadius') ?? '',
       bl: readProp('borderBottomLeftRadius') ?? '',

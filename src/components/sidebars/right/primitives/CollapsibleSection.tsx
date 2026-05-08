@@ -1,7 +1,6 @@
 'use client';
 import React, { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { cn } from '@/lib/utils';
 
 interface CollapsibleSectionProps {
   title: string;

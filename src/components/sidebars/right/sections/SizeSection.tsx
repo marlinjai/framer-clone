@@ -148,7 +148,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
             value={component.props?.src || ''}
             onChange={(e) => {
               const currentProps = component.props || {};
-              component.props = { ...currentProps, src: e.target.value } as any;
+              component.props = { ...currentProps, src: e.target.value } as Record<string, unknown>;
             }}
             className="h-7 text-xs"
             placeholder="https://example.com/image.jpg"

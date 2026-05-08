@@ -266,7 +266,7 @@ const PageModel = PageWithComponents
     const appTree = self.appComponentTree as ComponentInstance;
     // Search everywhere the component might live: the app tree, or nested inside any
     // floating element's subtree, or as a top-level canvasNodes entry (viewport / floating).
-    let component: ComponentInstance | undefined = findComponentInPage(self, componentId);
+    const component: ComponentInstance | undefined = findComponentInPage(self, componentId);
     if (!component) {
       console.warn(`[PageModel] moveTreeComponent: component ${componentId} not found`);
       return undefined;
