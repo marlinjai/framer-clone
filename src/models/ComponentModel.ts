@@ -1,6 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { types, Instance, SnapshotIn, SnapshotOut } from 'mobx-state-tree';
 import React from 'react';
+import type {
+  BindingEntry,
+  BindingsRecord,
+  ReadBinding,
+} from '@/lib/bindings/types';
 
 export type PropsRecord = Record<string, any>;
 
@@ -79,7 +84,16 @@ const ComponentBase = types.model('ComponentBase', {
   type: types.string,
   componentType: types.enumeration(Object.values(ComponentTypeEnum)),
   props: types.optional(types.frozen<PropsRecord>(), {}),
-  
+
+  // Data-binding map keyed by binding-slot name (e.g. `children`, `src`,
+  // `href`, `style.color`). Stored as a frozen record so MST round-trips
+  // the entire object on every mutation — this matches the persisted
+  // snapshot shape and avoids per-entry MST overhead. See
+  // `src/lib/bindings/types.ts` for the discriminated union; Phase 1 only
+  // USES `mode: 'read'` but the union reserves `'write'` and `'two-way'`
+  // so a future Phase 2 snapshot round-trips through a Phase 1 client.
+  bindings: types.optional(types.frozen<BindingsRecord>(), {}),
+
   // Framer-style: Canvas node type (determines rendering behavior)
   canvasNodeType: types.optional(types.enumeration(Object.values(CanvasNodeType)), CanvasNodeType.COMPONENT),
   
@@ -256,9 +270,33 @@ const ComponentModel: any = ComponentBase
     toggleCanvasVisibility() {
       self.canvasVisible = !self.canvasVisible;
     },
-    
+
     toggleCanvasLock() {
       self.canvasLocked = !self.canvasLocked;
+    },
+
+    // ---------- BINDINGS (MST-WRITE) ----------
+    // These three mutations are direct MST writes today. Once the
+    // multiplayer track lands and Yjs becomes canonical for canvas tree
+    // mutations, they MUST route through the same Yjs binding-application
+    // path as `addChild` / `removeChild`. See spec
+    // `data-bindings-binding-shape-on-component-model` and the
+    // multiplayer track's MST-projection design.
+    setBinding(slot: string, binding: BindingEntry) {
+      // Replace the entire frozen record (MST requirement for frozen
+      // types). Spread keeps every other slot intact.
+      self.bindings = { ...self.bindings, [slot]: binding };
+    },
+
+    clearBinding(slot: string) {
+      if (!(slot in self.bindings)) return;
+      const next: BindingsRecord = { ...self.bindings };
+      delete next[slot];
+      self.bindings = next;
+    },
+
+    clearAllBindings() {
+      self.bindings = {};
     },
   }))
   .views(self => ({
@@ -369,6 +407,30 @@ const ComponentModel: any = ComponentBase
         case 'h1': case 'h2': case 'h3': case 'h4': case 'h5': case 'h6': return 'Heading';
         default: return self.type.charAt(0).toUpperCase() + self.type.slice(1);
       }
+    },
+
+    // ---------- BINDINGS (read-only views) ----------
+    getBinding(slot: string): BindingEntry | undefined {
+      return self.bindings[slot];
+    },
+
+    get hasBindings(): boolean {
+      return Object.keys(self.bindings).length > 0;
+    },
+
+    /**
+     * Filtered view of bindings restricted to read-mode entries. Phase 1
+     * consumers (resolver runtime, render path) only act on read bindings;
+     * `'write'` and `'two-way'` entries are ignored until Phase 2 ships.
+     */
+    get readBindings(): Record<string, ReadBinding> {
+      const out: Record<string, ReadBinding> = {};
+      for (const [slot, entry] of Object.entries(self.bindings)) {
+        if (entry && entry.mode === 'read') {
+          out[slot] = entry;
+        }
+      }
+      return out;
     },
 
     // In a real app, you’d traverse up to project/page to access breakpoints

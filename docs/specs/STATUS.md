@@ -17,26 +17,26 @@ Updated by humans and agents as work progresses. Single source of truth for "wha
 
 ## Wave 1 (foundation): 18 specs
 
-| Track | Spec | P | depends_on |
-|-------|------|---|------------|
-| ai-pattern-a | anthropic-sdk-bootstrap | P0 | (none) |
-| ai-pattern-a | tool-schema-registry | P0 | sdk-bootstrap |
-| ai-pattern-a | mst-snapshot-serializer | P0 | (none) |
-| ai-pattern-a | read-tools-and-context | P1 | tool-schema-registry, mst-snapshot-serializer |
-| cms | service-scaffold | P0 | (none, blocked by runtime decision) |
-| cms | tenant-schema-bootstrap | P0 | service-scaffold |
-| cms | auth-middleware-dual-principal | P0 | tenant-schema-bootstrap |
-| data-bindings | binding-shape-on-component-model | P0 | (none) |
-| data-bindings | data-source-provider-interface | P0 | (none) |
-| data-bindings | component-registry-bindable-slots | P0 | binding-shape |
-| lumitra-studio | component-id-attribution | P0 | (overlaps static-html-data-component-id-fix) |
-| lumitra-studio | project-binding | P0 | (none) |
-| multiplayer | yjs-doc-shape | P0 | (none) |
-| multiplayer | hocuspocus-server-scaffold | P0 | yjs-doc-shape |
-| multiplayer | yjs-mst-binding-slice | P0 | yjs-doc-shape |
-| multiplayer | auth-brain-seam | P0 | hocuspocus-server-scaffold |
-| static-html | data-component-id-fix [done] | P0 | (none) |
-| static-html | spike | P0 | data-component-id-fix |
+| Track | Spec | P | depends_on | Status |
+|-------|------|---|------------|--------|
+| ai-pattern-a | anthropic-sdk-bootstrap | P0 | (none) | draft |
+| ai-pattern-a | tool-schema-registry | P0 | sdk-bootstrap | draft |
+| ai-pattern-a | mst-snapshot-serializer | P0 | (none) | draft |
+| ai-pattern-a | read-tools-and-context | P1 | tool-schema-registry, mst-snapshot-serializer | draft |
+| cms | service-scaffold | P0 | (none, blocked by runtime decision) | draft |
+| cms | tenant-schema-bootstrap | P0 | service-scaffold | draft |
+| cms | auth-middleware-dual-principal | P0 | tenant-schema-bootstrap | draft |
+| data-bindings | binding-shape-on-component-model | P0 | (none) | done |
+| data-bindings | data-source-provider-interface | P0 | (none) | draft |
+| data-bindings | component-registry-bindable-slots | P0 | binding-shape | draft |
+| lumitra-studio | component-id-attribution | P0 | (overlaps static-html-data-component-id-fix) | draft |
+| lumitra-studio | project-binding | P0 | (none) | draft |
+| multiplayer | yjs-doc-shape | P0 | (none) | draft |
+| multiplayer | hocuspocus-server-scaffold | P0 | yjs-doc-shape | draft |
+| multiplayer | yjs-mst-binding-slice | P0 | yjs-doc-shape | draft |
+| multiplayer | auth-brain-seam | P0 | hocuspocus-server-scaffold | draft |
+| static-html | data-component-id-fix | P0 | (none) | done |
+| static-html | spike | P0 | data-component-id-fix | draft |
 
 ## Wave 2 (build out): 19 specs
 

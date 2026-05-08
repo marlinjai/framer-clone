@@ -3,7 +3,7 @@ name: data-bindings-binding-shape-on-component-model
 track: data-bindings
 wave: 1
 priority: P0
-status: draft
+status: done
 depends_on: []
 estimated_value: 9
 estimated_cost: 4
