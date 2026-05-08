@@ -3,7 +3,7 @@ name: multiplayer-yjs-doc-shape
 track: multiplayer
 wave: 1
 priority: P0
-status: draft
+status: done
 depends_on: []
 estimated_value: 9
 estimated_cost: 4
