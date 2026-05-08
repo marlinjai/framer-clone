@@ -3,7 +3,7 @@ name: data-bindings-data-source-provider-interface
 track: data-bindings
 wave: 1
 priority: P0
-status: draft
+status: done
 depends_on: []
 estimated_value: 8
 estimated_cost: 4

@@ -27,7 +27,7 @@ Updated by humans and agents as work progresses. Single source of truth for "wha
 | cms | tenant-schema-bootstrap | P0 | service-scaffold | draft |
 | cms | auth-middleware-dual-principal | P0 | tenant-schema-bootstrap | draft |
 | data-bindings | binding-shape-on-component-model | P0 | (none) | done |
-| data-bindings | data-source-provider-interface | P0 | (none) | draft |
+| data-bindings | data-source-provider-interface | P0 | (none) | done |
 | data-bindings | component-registry-bindable-slots | P0 | binding-shape | draft |
 | lumitra-studio | component-id-attribution | P0 | (overlaps static-html-data-component-id-fix) | draft |
 | lumitra-studio | project-binding | P0 | (none) | draft |
