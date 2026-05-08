@@ -160,8 +160,13 @@ const ComponentModel: any = ComponentBase
     },
     
     // Children management actions with parent tracking
-    addChild(child: ComponentInstance) {
-      self.children.push(child);
+    addChild(child: ComponentInstance, index?: number) {
+      if (typeof index === 'number') {
+        const clamped = Math.max(0, Math.min(index, self.children.length));
+        self.children.splice(clamped, 0, child);
+      } else {
+        self.children.push(child);
+      }
       // Update parent relation
       child.setParent(self.id);
     },
@@ -241,6 +246,12 @@ const ComponentModel: any = ComponentBase
       console.log(`🎨 Updated ${property} to:`, self.props.style[property]);
     },
     
+    // Replace the string text content of this component. Used for inline
+    // editing of text / button / heading nodes. Leaves other props untouched.
+    setTextContent(value: string) {
+      self.props = { ...self.props, children: value };
+    },
+
     // Canvas-level actions
     toggleCanvasVisibility() {
       self.canvasVisible = !self.canvasVisible;

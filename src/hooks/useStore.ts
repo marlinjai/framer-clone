@@ -1,15 +1,10 @@
-import ProjectStore from '@/stores/ProjectStore';
-import { RootStore, RootStoreType } from '@/stores/RootStore';
-import EditorUIStore from '@/stores/EditorUIStore';
+import { createRootStore, RootStoreType } from '@/stores/RootStore';
 
 let store: RootStoreType | null = null;
 
 export const useStore = (): RootStoreType => {
   if (!store) {
-    store = RootStore.create({
-        projectStore: ProjectStore.create({ projects: {} }),
-        editorUI: EditorUIStore.create({}),
-    });
+    store = createRootStore();
   }
   return store;
 };

@@ -26,6 +26,11 @@ const EditorUIStore = types.model('EditorUI', {
   // Currently selected viewport node (Framer-style)
   selectedViewportNode: types.maybe(types.safeReference(ComponentModel)),
 
+  // Component currently being inline-edited (double-click to enter, blur / Enter
+  // to commit, ESC to cancel). `types.maybe` holds undefined when no edit is
+  // active — uses safeReference so it clears if the node is destroyed.
+  editingComponent: types.maybe(types.safeReference(ComponentModel)),
+
   // Active tool
   selectedTool: types.optional(types.enumeration(Object.values(EditorTool)), EditorTool.SELECT),
   
@@ -39,14 +44,18 @@ const EditorUIStore = types.model('EditorUI', {
   rightSidebarCollapsed: types.optional(types.boolean, false),
 })
 .volatile(() => ({
-  // Transient interaction state (won't be persisted)
+  // Transient interaction state (won't be persisted).
+  // Drag state lives in DragManager (src/lib/drag/DragManager.ts).
   hoverComponent: undefined as ComponentInstance | undefined,
-  isDragging: false,
-  dragData: undefined as { 
-    component: ComponentInstance; 
-    startPos: { x: number; y: number };
-    currentPos: { x: number; y: number };
-    startCanvasPos: { x: number; y: number };
+  isResizing: false,
+  resizeData: undefined as {
+    component: ComponentInstance;
+    direction: 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+    startPos: { x: number; y: number };         // screen px at mousedown
+    startDims: { width: number; height: number }; // canvas-space px at mousedown
+    startCanvasPos: { x: number; y: number };   // canvasX/Y at mousedown (floating/viewport)
+    kind: 'tree' | 'floating' | 'viewport';
+    breakpointId?: string;                       // set for 'tree' so we write responsive
   } | undefined,
 }))
 .actions(self => ({
@@ -129,28 +138,26 @@ const EditorUIStore = types.model('EditorUI', {
   setHoverComponent(component?: ComponentInstance) {
     self.hoverComponent = component;
   },
-  
-  startDrag(component: ComponentInstance, startPos: { x: number; y: number }) {
-    console.log('🎯 EditorUIStore: Starting drag operation for component:', component.id, 'at position:', startPos);
-    self.isDragging = true;
-    self.dragData = {
-      component,
-      startPos,
-      currentPos: startPos,
-      startCanvasPos: { x: component.canvasX || 0, y: component.canvasY || 0 }
-    };
+
+  // Resize interaction. HudSurface handles
+  // mouse events, this store just holds the pending resize context so other
+  // consumers (e.g. the HUD itself) can observe `isResizing`.
+  startResize(data: NonNullable<typeof self.resizeData>) {
+    self.isResizing = true;
+    self.resizeData = data;
   },
-  
-  updateDrag(currentPos: { x: number; y: number }) {
-    if (self.dragData) {
-      self.dragData.currentPos = currentPos;
-    }
+
+  endResize() {
+    self.isResizing = false;
+    self.resizeData = undefined;
   },
-  
-  endDrag() {
-    console.log('🎯 EditorUIStore: Ending drag operation');
-    self.isDragging = false;
-    self.dragData = undefined;
+
+  beginTextEdit(component: ComponentInstance) {
+    self.editingComponent = component;
+  },
+
+  endTextEdit() {
+    self.editingComponent = undefined;
   },
 }))
 .views(self => ({
@@ -167,16 +174,6 @@ const EditorUIStore = types.model('EditorUI', {
     return !!self.selectedComponent;
   },
 
-  // Drag state
-  get currentDragData() {
-    return self.dragData;
-  },
-
-  get isDragInProgress(): boolean {
-    return self.isDragging && !!self.dragData;
-  },
-
-  
   // Current viewport node (Framer-style)
   get currentViewportNode() {
     return self.selectedViewportNode;
@@ -193,7 +190,7 @@ const EditorUIStore = types.model('EditorUI', {
   get currentCursor(): string {
     switch (self.selectedTool) {
       case EditorTool.GRAB:
-        return self.isDragging ? 'grabbing' : 'grab';
+        return 'grab';
       case EditorTool.SELECT:
         return 'default';
       default:

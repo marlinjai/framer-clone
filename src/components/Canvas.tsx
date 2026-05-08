@@ -247,9 +247,12 @@ const CanvasInner = observer(() => {
   return (
     <main className="w-screen h-screen bg-gray-100 relative">
       <div className="w-full h-full bg-gray-100 overflow-hidden relative">
-        {/* Canvas viewport */}
+        {/* Canvas viewport. data-ground marks this as the drop region that
+            resolves to `{kind:'floating', x, y}` for the new DragManager when
+            the cursor is over empty canvas. */}
         <div
           ref={groundRef}
+          data-ground="true"
           className={`w-full h-full select-none ${rootStore.editorUI.selectedTool === EditorTool.GRAB ? 'cursor-grab' : 'cursor-default'} relative overflow-hidden`}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
@@ -279,15 +282,7 @@ const CanvasInner = observer(() => {
             <ResponsivePageRenderer  />
           </div>
         </div>
-        
-        {/* Canvas controls info */}
-        <div className="absolute top-24 left-24 bg-white rounded-lg shadow-md p-3 text-sm text-gray-600">
-          <div className="text-xs text-gray-400">
-            Scroll: pan | ⌘+Scroll: zoom | Drag: pan
-          </div>
-        </div>
 
-        
         {/* Toolbar */}
         <Toolbar editorUI={rootStore.editorUI} />
       </div>

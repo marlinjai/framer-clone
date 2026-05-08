@@ -33,10 +33,11 @@ interface GroundWrapperProps {
   
   // Click handler
   onClick?: (e: React.MouseEvent) => void;
-  
-  // Mouse down handler for drag operations
-  onMouseDown?: (e: React.MouseEvent) => void;
-  
+
+  // Pointer-down handler. The unified DragManager attaches here via
+  // useDragSource so viewport / floating elements can be moved or reparented.
+  onPointerDown?: (e: React.PointerEvent) => void;
+
   // Visibility
   visible?: boolean;
 }
@@ -66,7 +67,7 @@ const GroundWrapper = observer(forwardRef<HTMLDivElement, GroundWrapperProps>(fu
   className = '',
   children,
   onClick,
-  onMouseDown,
+  onPointerDown,
   visible = true,
 }, ref) {
   // Build CSS transform string
@@ -101,28 +102,26 @@ const GroundWrapper = observer(forwardRef<HTMLDivElement, GroundWrapperProps>(fu
       className={`ground-wrapper ${className}`}
       style={style}
       onClick={onClick}
-      onMouseDown={onMouseDown}
-      onDragStart={(e) => e.preventDefault()} // Prevent default image drag
+      onPointerDown={onPointerDown}
       data-ground-wrapper-id={id}
     >
-      {/* Inner container with potential scaling compensation */}
+      {/* Inner container with potential scaling compensation. userSelect:none
+          stops cursor drags through text from selecting it. The unified
+          DragManager owns all drag behaviour via pointer events; no HTML5
+          drag anywhere, so no dragstart preventDefault needed. */}
       <div
         id={`ground-inner-${id}`}
         className="ground-inner"
         style={{
           transformOrigin: 'left top',
-          // Apply inverse scale for text/content if needed
-          // transform: scale !== 1 ? `scale(${1 / scale})` : undefined,
           width: '100%',
           height: '100%',
-          overflow: 'visible', // Ensure content isn't clipped
-          // Prevent default behaviors on all child elements
+          overflow: 'visible',
           userSelect: 'none',
           WebkitUserSelect: 'none',
           MozUserSelect: 'none',
           msUserSelect: 'none',
         }}
-        onDragStart={(e) => e.preventDefault()} // Prevent default drag on child elements
       >
         {children}
       </div>
