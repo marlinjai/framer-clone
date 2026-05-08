@@ -63,11 +63,13 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
   const isTextEditable =
     component.children.length === 0 && typeof rawChildren === 'string';
 
+  // `data-component-id` and `data-inner-component-id` are emitted centrally
+  // by `createComponentElement` (see the `identity` option below) so the
+  // editor, headless preview, and static HTML paths share one source of
+  // truth.
   const finalProps: Record<string, unknown> = {
     ...attributes,
     style: editorStyle,
-    'data-component-id': `${breakpointId}-${component.id}`,
-    'data-inner-component-id': component.id,
     onClick: (e: React.MouseEvent) => {
       e.stopPropagation();
       if (editorUI.selectedTool === EditorTool.SELECT) {
@@ -138,6 +140,7 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
     finalProps,
     children,
     (attributes as any).children,
+    { identity: { breakpointId, componentId: component.id } },
   );
 
   // The editor surfaces unknown component types as a visible placeholder so

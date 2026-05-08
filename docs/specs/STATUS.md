@@ -35,7 +35,7 @@ Updated by humans and agents as work progresses. Single source of truth for "wha
 | multiplayer | hocuspocus-server-scaffold | P0 | yjs-doc-shape |
 | multiplayer | yjs-mst-binding-slice | P0 | yjs-doc-shape |
 | multiplayer | auth-brain-seam | P0 | hocuspocus-server-scaffold |
-| static-html | data-component-id-fix | P0 | (none) |
+| static-html | data-component-id-fix [done] | P0 | (none) |
 | static-html | spike | P0 | data-component-id-fix |
 
 ## Wave 2 (build out): 19 specs

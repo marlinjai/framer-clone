@@ -4,9 +4,15 @@
 // Used by both the editor (wrapped with selection/drag chrome inside
 // `src/components/ComponentRenderer.tsx`) and the preview surface (mounted
 // directly via HeadlessPageRenderer). Carries zero editor coupling: no store
-// reads, no event handlers, no `data-component-id` attributes, no
-// contenteditable. Just resolves responsive props, walks children, and emits
-// React elements via the registry / intrinsic HTML tag.
+// reads, no event handlers, no contenteditable. Just resolves responsive
+// props, walks children, and emits React elements via the registry /
+// intrinsic HTML tag.
+//
+// Identity (`data-component-id`, `data-inner-component-id`) is attached
+// inside the shared `createComponentElement` dispatch so the headless
+// preview and any future static HTML emitter ship the same DOM identifiers
+// the editor uses for selection, drag-resolve, and cross-viewport
+// highlighting.
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
@@ -51,7 +57,9 @@ const HeadlessComponentRenderer = observer(({
     />
   ));
 
-  return createComponentElement(component, finalProps, children, (attributes as any).children);
+  return createComponentElement(component, finalProps, children, (attributes as any).children, {
+    identity: { breakpointId, componentId: component.id },
+  });
 });
 
 HeadlessComponentRenderer.displayName = 'HeadlessComponentRenderer';
