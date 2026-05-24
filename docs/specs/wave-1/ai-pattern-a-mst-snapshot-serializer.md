@@ -3,7 +3,7 @@ name: ai-pattern-a-mst-snapshot-serializer
 track: ai-pattern-a
 wave: 1
 priority: P0
-status: draft
+status: done
 depends_on: []
 estimated_value: 7
 estimated_cost: 3

@@ -21,7 +21,7 @@ Updated by humans and agents as work progresses. Single source of truth for "wha
 |-------|------|---|------------|--------|
 | ai-pattern-a | anthropic-sdk-bootstrap | P0 | (none) | draft |
 | ai-pattern-a | tool-schema-registry | P0 | sdk-bootstrap | draft |
-| ai-pattern-a | mst-snapshot-serializer | P0 | (none) | draft |
+| ai-pattern-a | mst-snapshot-serializer | P0 | (none) | done |
 | ai-pattern-a | read-tools-and-context | P1 | tool-schema-registry, mst-snapshot-serializer | draft |
 | cms | service-scaffold | P0 | (none, blocked by runtime decision) | draft |
 | cms | tenant-schema-bootstrap | P0 | service-scaffold | draft |
