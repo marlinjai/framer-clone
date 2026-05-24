@@ -30,7 +30,7 @@ Updated by humans and agents as work progresses. Single source of truth for "wha
 | data-bindings | data-source-provider-interface | P0 | (none) | done |
 | data-bindings | component-registry-bindable-slots | P0 | binding-shape | done |
 | lumitra-studio | component-id-attribution | P0 | (overlaps static-html-data-component-id-fix) | draft |
-| lumitra-studio | project-binding | P0 | (none) | draft |
+| lumitra-studio | project-binding | P0 | (none) | done |
 | multiplayer | yjs-doc-shape | P0 | (none) | done |
 | multiplayer | hocuspocus-server-scaffold | P0 | yjs-doc-shape | draft |
 | multiplayer | yjs-mst-binding-slice | P0 | yjs-doc-shape | draft |

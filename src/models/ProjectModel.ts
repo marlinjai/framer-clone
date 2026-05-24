@@ -5,6 +5,42 @@ import { v4 as uuidv4 } from 'uuid';
 import PageModel, { PageModelType } from './PageModel';
 import { createIntrinsicComponent, createViewportNode } from './ComponentModel';
 
+// ---- Lumitra Studio binding ---------------------------------------------
+//
+// Optional sub-tree on `ProjectModel` that pairs a framer-clone site with a
+// Lumitra Analytics project. This is the foundation slice (Wave 1): the
+// fields persist here so later specs (snippet injection on publish,
+// dashboard deep-link, edit-mode heatmap overlay) can read them without
+// re-shaping MST. No UI in this spec.
+//
+// Secret-handling note: `apiKeyRef` stores a server-side reference
+// (Infisical path, workspace-scoped pointer, etc.) — NOT the literal API
+// key. The key resolution happens server-side on the publish path so the
+// secret never lives in MST or in the publish output.
+export const LumitraBindingModel = types
+  .model('LumitraBinding', {
+    projectId: types.maybe(types.string),
+    ingestionEndpoint: types.maybe(types.string),
+    apiKeyRef: types.maybe(types.string),
+    enabled: types.optional(types.boolean, false),
+  })
+  .actions(self => ({
+    setProjectId(id: string | undefined) {
+      self.projectId = id;
+    },
+    setIngestionEndpoint(url: string | undefined) {
+      self.ingestionEndpoint = url;
+    },
+    setApiKeyRef(ref: string | undefined) {
+      self.apiKeyRef = ref;
+    },
+    setEnabled(on: boolean) {
+      self.enabled = on;
+    },
+  }));
+
+export type LumitraBindingType = Instance<typeof LumitraBindingModel>;
+
 function slugify(input: string): string {
   const base = input.trim().toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -37,12 +73,45 @@ export const ProjectModel = types
     // Each page manages its own viewport nodes (Framer-style)
     pages: types.map(PageModel),
 
+    // Lumitra Analytics binding. `types.optional` with a factory means
+    // pre-existing snapshots that omit `lumitra` load with the default
+    // empty block (`enabled: false`, other fields undefined). No backcompat
+    // guards needed at call sites — read `project.lumitra` directly.
+    lumitra: types.optional(LumitraBindingModel, () => ({})),
+
   })
   .actions(self => ({
 
     // Add a new page to the project
     addPage(page: SnapshotIn<typeof PageModel>) {
       self.pages.set(page.id, page);
+      self.metadata.updatedAt = new Date();
+    },
+
+    // ---- Lumitra binding mutations ---------------------------------------
+    //
+    // Thin pass-through wrappers around `LumitraBindingModel` actions so the
+    // ProjectModel exposes a flat API surface for settings UIs (Wave 2) and
+    // so each write bumps `updatedAt` and shows up in history as a single
+    // user-visible action.
+
+    setLumitraProjectId(id: string | undefined) {
+      self.lumitra.setProjectId(id);
+      self.metadata.updatedAt = new Date();
+    },
+
+    setLumitraIngestionEndpoint(url: string | undefined) {
+      self.lumitra.setIngestionEndpoint(url);
+      self.metadata.updatedAt = new Date();
+    },
+
+    setLumitraApiKeyRef(ref: string | undefined) {
+      self.lumitra.setApiKeyRef(ref);
+      self.metadata.updatedAt = new Date();
+    },
+
+    setLumitraEnabled(on: boolean) {
+      self.lumitra.setEnabled(on);
       self.metadata.updatedAt = new Date();
     },
 

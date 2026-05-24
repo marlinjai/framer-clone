@@ -3,7 +3,7 @@ name: lumitra-studio-project-binding
 track: lumitra-studio
 wave: 1
 priority: P1
-status: draft
+status: done
 depends_on: []
 estimated_value: 7
 estimated_cost: 2
