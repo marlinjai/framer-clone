@@ -45,6 +45,43 @@ export function createComponentElement(
       if ('children' in props) delete (props as any).children;
       return React.createElement(component.type as any, props);
     }
+
+    // Data-component placeholder branch (Wave 1 stub). Registry entries with
+    // `dataComponentKind` carry a `data-component-kind` HTML attribute on
+    // their default props; we use it here as the dispatch marker. When the
+    // component is unbound (no source collection / record yet) and has no
+    // hand-authored children, render a dashed-box label so designers see
+    // immediately that the node exists and needs configuration. Wave 2 swaps
+    // this branch for the real renderer in
+    // `data-bindings-read-only-data-components`.
+    const dataKind = propsWithIdentity['data-component-kind'] as
+      | 'collection'
+      | 'record-view'
+      | 'table-view'
+      | undefined;
+    if (dataKind && !component.hasBindings && children.length === 0) {
+      const label =
+        dataKind === 'collection'
+          ? 'Collection'
+          : dataKind === 'record-view'
+            ? 'Record view'
+            : 'Table view';
+      const placeholder = React.createElement(
+        'span',
+        {
+          style: {
+            color: '#9ca3af',
+            fontSize: '12px',
+            fontFamily: 'Inter, sans-serif',
+            pointerEvents: 'none',
+            userSelect: 'none',
+          },
+        },
+        `${label} (no binding)`,
+      );
+      return React.createElement(component.type as any, propsWithIdentity, placeholder);
+    }
+
     const content: React.ReactNode = children.length ? children : rawTextChildren;
     return React.createElement(component.type as any, propsWithIdentity, content);
   }

@@ -3,7 +3,7 @@ name: data-bindings-component-registry-bindable-slots
 track: data-bindings
 wave: 1
 priority: P0
-status: draft
+status: done
 depends_on: [data-bindings-binding-shape-on-component-model]
 estimated_value: 8
 estimated_cost: 3

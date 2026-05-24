@@ -64,3 +64,38 @@ export type BindingEntry = ReadBinding | WriteBinding | TwoWayBinding;
  * componentRegistry binding-slot spec.
  */
 export type BindingsRecord = Record<string, BindingEntry>;
+
+/**
+ * Per-slot metadata declared by a `ComponentRegistryEntry.bindableSlots` map.
+ *
+ * Drives the binding picker UI (wave-2 spec
+ * `data-bindings-editor-binding-picker`): the picker reads which prop paths
+ * on a component can be bound, which modes the slot accepts, and which scope
+ * frame to filter eligible fields by.
+ *
+ * Phase 1 only renders read-mode slots. The shape RESERVES `'write'` and the
+ * `columnTypeFilter` field so the picker can grow into Phase 2 (Form,
+ * LoginForm, write-bindings) without a registry-format breaking change.
+ */
+export interface BindableSlotMeta {
+  /** Display label shown in the binding picker. e.g. `'Text'`, `'Image source'`. */
+  label: string;
+  /**
+   * Modes this slot accepts. Phase 1: most slots are `['read']` only.
+   * Phase 2 will add `'write'` / `'two-way'` for Form-field components. The
+   * registry shape MUST accept write-mode declarations now so a Phase 2 entry
+   * doesn't require a breaking schema change.
+   */
+  allowedModes: BindingMode[];
+  /**
+   * Which scope frame the slot should resolve in. Used by the picker to
+   * filter what fields / collections show up.
+   */
+  scopeHint?: 'row' | 'collection' | 'page' | 'any';
+  /**
+   * Phase 2 only: column-type compatibility filter for write-mode slots
+   * (e.g. `['text', 'longtext']` for a text input). Phase 1 ignores this
+   * field. Reserved here so Phase 2 doesn't need a registry breaking change.
+   */
+  columnTypeFilter?: string[];
+}

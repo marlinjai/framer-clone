@@ -35,6 +35,7 @@ const ComponentItem = ({ entry }: { entry: ComponentRegistryEntry }) => {
 const ComponentsPanel = observer(() => {
   const basicComponents = listComponentsByCategory('basic');
   const layoutComponents = listComponentsByCategory('layout');
+  const dataComponents = listComponentsByCategory('data');
 
   return (
     <div className="space-y-4">
@@ -61,6 +62,20 @@ const ComponentsPanel = observer(() => {
           ))}
         </div>
       </div>
+
+      {dataComponents.length > 0 && (
+        <div>
+          <div className="flex items-center space-x-2 mb-3">
+            <h3 className="text-sm font-medium text-gray-900">Data</h3>
+            <Plus size={14} className="text-gray-400" />
+          </div>
+          <div className="space-y-1">
+            {dataComponents.map((entry) => (
+              <ComponentItem key={entry.id} entry={entry} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 });
