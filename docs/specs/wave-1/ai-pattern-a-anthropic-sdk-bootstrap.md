@@ -3,7 +3,7 @@ name: ai-pattern-a-anthropic-sdk-bootstrap
 track: ai-pattern-a
 wave: 1
 priority: P0
-status: draft
+status: done
 depends_on: []
 estimated_value: 8
 estimated_cost: 3

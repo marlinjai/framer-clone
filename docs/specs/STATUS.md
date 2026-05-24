@@ -19,7 +19,7 @@ Updated by humans and agents as work progresses. Single source of truth for "wha
 
 | Track | Spec | P | depends_on | Status |
 |-------|------|---|------------|--------|
-| ai-pattern-a | anthropic-sdk-bootstrap | P0 | (none) | draft |
+| ai-pattern-a | anthropic-sdk-bootstrap | P0 | (none) | done |
 | ai-pattern-a | tool-schema-registry | P0 | sdk-bootstrap | draft |
 | ai-pattern-a | mst-snapshot-serializer | P0 | (none) | done |
 | ai-pattern-a | read-tools-and-context | P1 | tool-schema-registry, mst-snapshot-serializer | draft |
