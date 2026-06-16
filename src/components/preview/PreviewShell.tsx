@@ -11,7 +11,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useStore } from '@/hooks/useStore';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
-import { getSharedInMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
+import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
 import PreviewFrame from './PreviewFrame';
 import PreviewToolbar, { type PreviewMode } from './PreviewToolbar';
 import ResizeGutter from './ResizeGutter';
@@ -94,7 +94,7 @@ const PreviewShell = observer(() => {
   const activeBreakpointId = viewportNodes.find(v => v.viewportWidth === width)?.breakpointId;
 
   return (
-    <DataSourceProviderContext.Provider value={getSharedInMemoryDataSourceProvider()}>
+    <DataSourceProviderContext.Provider value={getSharedPrismaDataSourceProvider()}>
     <div className="w-screen h-screen flex flex-col bg-gray-950">
       <PreviewToolbar
         viewportNodes={viewportNodes}
