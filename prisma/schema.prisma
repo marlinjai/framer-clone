@@ -309,3 +309,144 @@ model Reservation {
   @@map("reservation")
   @@schema("commerce")
 }
+
+// ===========================================================================
+// Commerce engine: owned catalog (b4). Serial schema position: after b3
+// (guarded reservation), before b5 (pricing + tax). The purpose-built typed
+// catalog (product / option / option_value / variant + the variant<->option
+// matrix). Catalog CONTENT only: NO price (b5), NO inventory linkage (b2/b3),
+// NO Yjs (deferred E5).
+//
+// Two correctness-closing must-fixes live at the database level here:
+//   (1) the COMPOSITE FK on product_variant_option
+//       (option_value_id, option_id) -> product_option_value(id, option_id),
+//       so the DB REJECTS a variant option whose option_id does not match the
+//       option_value's real option. The FK target is the @@unique([id, optionId])
+//       on product_option_value below.
+//   (2) the option_signature BEFORE INSERT/UPDATE trigger (raw-SQL migration)
+//       that recomputes a variant's signature by sorting its option_value_ids
+//       from product_variant_option, plus a partial-UNIQUE on that signature so
+//       no two LIVE variants of a product can share an option combination.
+//
+// !!! TRIGGER-MAINTAINED-COLUMN DRIFT WARNING (read before `prisma migrate dev`) !!!
+// product_variant.option_signature is INTENTIONALLY ABSENT from this model: it is
+// a trigger-maintained column (BEFORE INSERT/UPDATE), added via the raw-SQL
+// migration together with its partial-UNIQUE index, because Prisma has no
+// datamodel representation for a trigger-computed column. As with the b2 generated
+// available_quantity column, the NEXT `prisma migrate dev` will detect it as drift
+// and PROPOSE a destructive
+//   ALTER TABLE "commerce"."product_variant" DROP COLUMN "option_signature";
+// in the generated migration. That DROP MUST be deleted before applying: it would
+// remove the no-duplicate-combination guarantee and break the signature trigger.
+// All partial-unique indexes below (handle, (product_id,title), (option_id,value),
+// sku, barcode, option_signature) are likewise raw SQL and must not be dropped.
+// ===========================================================================
+
+enum ProductStatus {
+  draft
+  published
+
+  @@schema("commerce")
+}
+
+model Product {
+  id          String        @id @default(uuid())
+  title       String
+  handle      String
+  description String?
+  status      ProductStatus @default(draft)
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+  deletedAt   DateTime?     @map("deleted_at")
+
+  options  ProductOption[]
+  variants ProductVariant[]
+
+  // handle is NOT a plain @@unique: a partial-unique index (UNIQUE WHERE
+  // deleted_at IS NULL) is added in the raw-SQL migration so a handle frees on
+  // soft-delete. Prisma cannot express partial unique indexes.
+  @@map("product")
+  @@schema("commerce")
+}
+
+model ProductOption {
+  id        String    @id @default(uuid())
+  productId String    @map("product_id")
+  title     String
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  product Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  values  ProductOptionValue[]
+
+  // unique (product_id, title) among LIVE rows: partial index in the raw-SQL
+  // migration (frees on soft-delete).
+  @@map("product_option")
+  @@schema("commerce")
+}
+
+model ProductOptionValue {
+  id        String    @id @default(uuid())
+  optionId  String    @map("option_id")
+  value     String
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  option         ProductOption          @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  variantOptions ProductVariantOption[]
+
+  // unique (option_id, value) among LIVE rows: partial index in the raw-SQL
+  // migration (frees on soft-delete).
+  //
+  // @@unique([id, optionId]) is the COMPOSITE-FK TARGET (must-fix 1): it lets
+  // product_variant_option carry a composite FK (option_value_id, option_id) ->
+  // (id, option_id), so the database REJECTS an option_value paired with the
+  // wrong option_id. id alone is already unique (it is the @id); this extra
+  // tuple-unique exists solely to be a valid multi-column FK reference target.
+  @@unique([id, optionId])
+  @@map("product_option_value")
+  @@schema("commerce")
+}
+
+model ProductVariant {
+  id        String    @id @default(uuid())
+  productId String    @map("product_id")
+  title     String?
+  sku       String?
+  barcode   String?
+  // option_signature is INTENTIONALLY ABSENT (see the drift warning above): a
+  // trigger-maintained, partial-UNIQUE column added in the raw-SQL migration.
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  product Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
+  options ProductVariantOption[]
+
+  // sku and barcode are each partial-unique among LIVE rows: partial indexes in
+  // the raw-SQL migration (each frees on soft-delete).
+  @@map("product_variant")
+  @@schema("commerce")
+}
+
+model ProductVariantOption {
+  variantId     String @map("variant_id")
+  optionId      String @map("option_id")
+  optionValueId String @map("option_value_id")
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  // The COMPOSITE FK (must-fix 1): (option_value_id, option_id) must be a real
+  // (id, option_id) pair in product_option_value, so an option_value can never be
+  // attached under the wrong option_id. option_id's referential validity flows
+  // transitively from product_option_value.option_id -> product_option.id, so no
+  // separate option FK is needed here.
+  optionValue ProductOptionValue @relation(fields: [optionValueId, optionId], references: [id, optionId], onDelete: Restrict)
+
+  // PK (variant_id, option_id): exactly ONE value per option per variant.
+  @@id([variantId, optionId])
+  @@map("product_variant_option")
+  @@schema("commerce")
+}
