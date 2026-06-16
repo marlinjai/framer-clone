@@ -11,13 +11,19 @@
 //     success path,
 //   - applyInventoryEffect dispatches all four effects and raises
 //     InventoryShortageError (rolling the caller's tx back) when a guard fails,
+//   - reserve / applyInventoryEffect re-throw on a CONCURRENT duplicate-request_id
+//     UNIQUE violation (P2002) instead of re-reading inside the now-aborted tx,
+//     and do NOT translate an UNRELATED P2002 (it propagates unchanged),
 //   - reserveKit locks/checks components in ASCENDING inventory_item_id order,
 //   - the isolation level constant is READ COMMITTED.
 //
 // The REAL two-transaction race, the CHECK backstop, the deferred transfer
-// trigger, and the live READ COMMITTED assertion are proven against Dockerized
-// Postgres in reserve.itest.ts (kept out of this gate by the `.itest.ts` suffix).
+// trigger, the live READ COMMITTED assertion, AND the concurrent-duplicate
+// idempotent recovery (reserveWithRetry re-reading in a fresh transaction) are
+// proven against Dockerized Postgres in reserve.itest.ts (kept out of this gate
+// by the `.itest.ts` suffix).
 
+import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -28,6 +34,15 @@ import {
   reserveKit,
   resolveLocation,
 } from '../reserve';
+
+/** Build a Prisma P2002 unique-violation error targeting the given constraint. */
+function makeP2002(target: string | string[]): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+    code: 'P2002',
+    clientVersion: 'test',
+    meta: { target },
+  });
+}
 
 // A programmable fake of Prisma.TransactionClient: only the members reserve.ts
 // touches are implemented, each as a vi.fn() the test wires per-scenario. The
@@ -147,6 +162,45 @@ describe('reserve', () => {
       quantity: 2,
       requestId: 'r2',
     });
+  });
+
+  it('CONCURRENT idempotency: a UNIQUE(request_id) P2002 on the insert throws (the in-tx re-read is forbidden by Postgres), so the WithRetry entrypoint recovers', async () => {
+    // The pre-check sees null (this tx raced past it), the guarded decrement
+    // matches one row, then the loser's stockMovement.create trips the
+    // UNIQUE(request_id) constraint on the winner's commit. reserve MUST NOT
+    // re-read inside this now-aborted transaction (Postgres state 25P02); it
+    // throws a sentinel that propagates out so the transaction rolls back. The
+    // recovery (re-read in a fresh transaction) lives in reserveWithRetry, which
+    // is covered against real Postgres in reserve.itest.ts. Here we assert reserve
+    // does NOT re-read in-transaction and DOES throw on the request_id P2002.
+    const tx = makeTx();
+    tx.stockLocation.findUnique.mockResolvedValue({ id: 'loc-1' });
+    tx.$executeRawUnsafe.mockResolvedValue(1); // our guarded decrement matched
+    tx.stockMovement.create.mockRejectedValue(makeP2002('stock_movement_request_id_key'));
+
+    await expect(
+      reserve(tx as never, {
+        inventoryItemId: 'item-1',
+        locationId: 'loc-1',
+        needed: 3,
+        requestId: 'concurrent-dup',
+      }),
+    ).rejects.toThrow(/duplicate request_id/);
+
+    // It did NOT attempt a re-read inside the aborted transaction (that would 25P02).
+    expect(tx.reservation.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('does NOT translate a P2002 on an UNRELATED constraint: it propagates the Prisma error unchanged', async () => {
+    const tx = makeTx();
+    tx.stockLocation.findUnique.mockResolvedValue({ id: 'loc-1' });
+    tx.$executeRawUnsafe.mockResolvedValue(1);
+    // A P2002 that is NOT the request_id constraint (a genuine bug) must surface.
+    tx.stockMovement.create.mockRejectedValue(makeP2002('some_other_unique_key'));
+
+    await expect(
+      reserve(tx as never, { inventoryItemId: 'item-1', locationId: 'loc-1', needed: 1, requestId: 'r' }),
+    ).rejects.toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
   });
 });
 
@@ -276,5 +330,45 @@ describe('applyInventoryEffect', () => {
         requestId: 'adj-0',
       }),
     ).rejects.toThrow(/non-zero integer/);
+  });
+
+  it('CONCURRENT idempotency: a UNIQUE(request_id) P2002 on the appended movement throws the sentinel (recovery is the WithRetry no-op)', async () => {
+    // release races past the pre-check, the guarded UPDATE matches, then the
+    // appended movement trips UNIQUE(request_id) on the winner's commit.
+    // applyInventoryEffect re-throws the sentinel so the transaction rolls back;
+    // applyInventoryEffectWithRetry absorbs the sentinel as the idempotent no-op
+    // (covered against real Postgres in reserve.itest.ts). The accepted target
+    // shape here is the field-name array form, proving both target shapes match.
+    const tx = makeTx();
+    tx.stockLocation.findUnique.mockResolvedValue({ id: 'loc-1' });
+    tx.$executeRawUnsafe.mockResolvedValue(1); // guarded release matched
+    tx.stockMovement.create.mockRejectedValue(makeP2002(['request_id']));
+
+    await expect(
+      applyInventoryEffect(tx as never, {
+        type: 'release',
+        inventoryItemId: 'item-1',
+        locationId: 'loc-1',
+        quantity: 2,
+        requestId: 'concurrent-rel',
+      }),
+    ).rejects.toThrow(/duplicate request_id/);
+  });
+
+  it('does NOT translate a P2002 on an UNRELATED constraint: it propagates the Prisma error unchanged', async () => {
+    const tx = makeTx();
+    tx.stockLocation.findUnique.mockResolvedValue({ id: 'loc-1' });
+    tx.$executeRawUnsafe.mockResolvedValue(1);
+    tx.stockMovement.create.mockRejectedValue(makeP2002('some_other_unique_key'));
+
+    await expect(
+      applyInventoryEffect(tx as never, {
+        type: 'release',
+        inventoryItemId: 'item-1',
+        locationId: 'loc-1',
+        quantity: 2,
+        requestId: 'rel',
+      }),
+    ).rejects.toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
   });
 });

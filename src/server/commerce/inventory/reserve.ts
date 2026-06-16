@@ -110,11 +110,64 @@ export class InventoryShortageError extends Error {
   }
 }
 
+/**
+ * Internal sentinel: a CONCURRENT duplicate request_id lost the UNIQUE(request_id)
+ * race and its insert raised P2002. This MUST propagate out of the transaction so
+ * Postgres rolls it back (rolling back the loser's own guarded decrement, so there
+ * is NO double-decrement). The prior, now-committed result CANNOT be re-read inside
+ * the same transaction (a constraint violation puts Postgres in state 25P02,
+ * "current transaction is aborted"), so the idempotent re-read happens in a FRESH
+ * transaction in the *WithRetry entrypoints below. This type is not exported: it
+ * never escapes the module; the entrypoints translate it into the idempotent
+ * success and any other error propagates unchanged.
+ */
+class DuplicateRequestError extends Error {
+  readonly requestId: string;
+  constructor(requestId: string) {
+    super(`duplicate request_id ${requestId} (concurrent idempotency)`);
+    this.name = 'DuplicateRequestError';
+    this.requestId = requestId;
+  }
+}
+
 // The commerce schema is a constant, allowlisted identifier (single-tenant v1).
 // It is interpolated into raw SQL for the table reference; every VALUE is bound
 // as a parameter ($1, $2, ...), never interpolated.
 const SCHEMA = COMMERCE_SCHEMA;
 const LEVEL = `"${SCHEMA}"."inventory_level"`;
+
+// The Postgres UNIQUE(request_id) constraints whose violation means a concurrent
+// duplicate request beat us to the commit. b2 creates these as named indexes:
+//   CREATE UNIQUE INDEX "stock_movement_request_id_key" ON ...("request_id")
+//   CREATE UNIQUE INDEX "reservation_request_id_key"    ON ...("request_id")
+// Either insert in a reserve/effect path can hit one of these on the concurrent
+// duplicate-request_id race; both translate to the idempotent prior-result return.
+const REQUEST_ID_CONSTRAINTS = ['stock_movement_request_id_key', 'reservation_request_id_key'];
+
+/**
+ * True iff `error` is a Prisma P2002 unique-constraint violation on one of the
+ * request_id constraints. Prisma's Postgres connector reports `meta.target` as
+ * the constraint name (a string) in current versions; older shapes report an
+ * array of field names. We accept either: a named request_id constraint, or a
+ * target that references the request_id column. Any OTHER P2002 (a real bug,
+ * e.g. a duplicate primary key) is NOT swallowed: it propagates unchanged.
+ */
+function isRequestIdUniqueViolation(error: unknown): boolean {
+  if (
+    !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+    error.code !== 'P2002'
+  ) {
+    return false;
+  }
+  const target = error.meta?.target;
+  if (typeof target === 'string') {
+    return REQUEST_ID_CONSTRAINTS.includes(target) || target.includes('request_id');
+  }
+  if (Array.isArray(target)) {
+    return target.some((t) => t === 'request_id' || t === 'requestId');
+  }
+  return false;
+}
 
 /**
  * Open a REAL prisma.$transaction at READ COMMITTED (the only isolation the
@@ -127,6 +180,108 @@ export function reserveTransaction<T>(
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
   return prisma.$transaction(fn, { isolationLevel: RESERVE_ISOLATION_LEVEL });
+}
+
+/**
+ * Reserve `needed` units, owning the transaction AND the concurrent-duplicate
+ * recovery. This is the entrypoint a caller that does not already hold a `tx`
+ * should use. It opens the READ COMMITTED transaction, runs `reserve`, and if a
+ * CONCURRENT duplicate request_id lost the UNIQUE(request_id) race (the inner
+ * transaction aborts and rolls back its own guarded decrement, so no double
+ * decrement), it re-reads the winner's now-committed reservation in a FRESH
+ * transaction and returns it as the idempotent success. The re-read is in a new
+ * transaction because Postgres forbids any query in the aborted one (state 25P02).
+ */
+export async function reserveWithRetry(prisma: PrismaClient, args: ReserveArgs): Promise<ReserveResult> {
+  try {
+    return await reserveTransaction(prisma, (tx) => reserve(tx, args));
+  } catch (error) {
+    if (error instanceof DuplicateRequestError) {
+      return reserveTransaction(prisma, (tx) => resolvePriorReservation(tx, error.requestId));
+    }
+    throw error;
+  }
+}
+
+/**
+ * Reserve a kit, owning the transaction AND the concurrent-duplicate recovery
+ * (see reserveWithRetry). On a lost CONCURRENT duplicate-kit race, re-reads the
+ * winner's now-committed per-component reservations in a FRESH transaction.
+ */
+export async function reserveKitWithRetry(
+  prisma: PrismaClient,
+  args: ReserveKitArgs,
+): Promise<ReserveKitResult> {
+  try {
+    return await reserveTransaction(prisma, (tx) => reserveKit(tx, args));
+  } catch (error) {
+    if (error instanceof DuplicateRequestError) {
+      const itemIds = args.components.map((c) => c.inventoryItemId);
+      return reserveTransaction(prisma, (tx) =>
+        resolvePriorKitReservations(tx, error.requestId, itemIds),
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * Apply one inventory effect, owning the transaction AND the concurrent-duplicate
+ * recovery. On a lost CONCURRENT duplicate race, the inner transaction rolls back
+ * its own guarded UPDATE (no double-apply) and the prior effect already committed,
+ * so the idempotent outcome is simply a no-op: the sentinel is absorbed.
+ */
+export async function applyInventoryEffectWithRetry(
+  prisma: PrismaClient,
+  effect: InventoryEffect,
+): Promise<void> {
+  try {
+    await reserveTransaction(prisma, (tx) => applyInventoryEffect(tx, effect));
+  } catch (error) {
+    if (error instanceof DuplicateRequestError) return;
+    throw error;
+  }
+}
+
+/**
+ * Re-read the now-committed prior reservation for `requestId` and return it as the
+ * idempotent success, mirroring the SEQUENTIAL pre-check branch's return shape
+ * exactly. Called in a FRESH transaction after a UNIQUE(request_id) violation
+ * proved the winner committed; if the prior reservation is somehow absent, surface
+ * loudly (never a silent 500).
+ */
+async function resolvePriorReservation(
+  tx: Prisma.TransactionClient,
+  requestId: string,
+): Promise<ReserveResult> {
+  const priorReservation = await tx.reservation.findUnique({ where: { requestId } });
+  if (!priorReservation) {
+    throw new Error(
+      `reserve: request_id ${requestId} hit a UNIQUE violation but no prior reservation was found`,
+    );
+  }
+  return { ok: true, reservationId: priorReservation.id };
+}
+
+/**
+ * Re-read the now-committed prior per-component reservations for a kit and return
+ * them as the idempotent success, mirroring the priorFirst pre-check branch's
+ * return shape exactly. Called in a FRESH transaction after a UNIQUE(request_id)
+ * violation proved a concurrent duplicate kit committed first.
+ */
+async function resolvePriorKitReservations(
+  tx: Prisma.TransactionClient,
+  kitRequestId: string,
+  itemIds: string[],
+): Promise<ReserveKitResult> {
+  const reservationIds: string[] = [];
+  for (const itemId of itemIds) {
+    const prior = await tx.reservation.findUnique({
+      where: { requestId: kitComponentRequestId(kitRequestId, itemId) },
+    });
+    if (prior) reservationIds.push(prior.id);
+  }
+  return { ok: true, reservationIds };
 }
 
 /**
@@ -253,27 +408,45 @@ export async function reserve(tx: Prisma.TransactionClient, args: ReserveArgs): 
   // reservation in the SAME transaction. Both carry the request_id (UNIQUE), so
   // a concurrent duplicate that slipped past the pre-check aborts here. Guard (2),
   // the reserved <= stocked CHECK, has already vetoed any oversell at the UPDATE.
-  await tx.stockMovement.create({
-    data: {
-      inventoryItemId: args.inventoryItemId,
-      locationId,
-      movementType: 'reserve',
-      quantity: args.needed,
-      requestId: args.requestId,
-      refType: args.refType ?? null,
-      refId: args.refId ?? null,
-    },
-  });
-  const reservation = await tx.reservation.create({
-    data: {
-      locationId,
-      quantity: args.needed,
-      requestId: args.requestId,
-      lineItemId: args.refType === 'order_line' ? (args.refId ?? null) : null,
-    },
-  });
+  //
+  // CONCURRENT idempotency (guard (3), live path): two transactions with the same
+  // request_id both pass the read-then-write pre-check under READ COMMITTED (each
+  // sees null), both run the guarded decrement, and the LOSER's insert below trips
+  // the UNIQUE(request_id) on the winner's commit (P2002). We re-throw it as the
+  // DuplicateRequestError sentinel so it propagates OUT of this transaction:
+  // Postgres rolls the loser's transaction back (undoing its own guarded decrement,
+  // so there is NO double decrement) and the reserveWithRetry entrypoint re-reads
+  // the winner's committed reservation in a FRESH transaction (the prior result
+  // cannot be read inside this now-aborted one). Any OTHER error propagates
+  // unchanged: it is never swallowed.
+  try {
+    await tx.stockMovement.create({
+      data: {
+        inventoryItemId: args.inventoryItemId,
+        locationId,
+        movementType: 'reserve',
+        quantity: args.needed,
+        requestId: args.requestId,
+        refType: args.refType ?? null,
+        refId: args.refId ?? null,
+      },
+    });
+    const reservation = await tx.reservation.create({
+      data: {
+        locationId,
+        quantity: args.needed,
+        requestId: args.requestId,
+        lineItemId: args.refType === 'order_line' ? (args.refId ?? null) : null,
+      },
+    });
 
-  return { ok: true, reservationId: reservation.id };
+    return { ok: true, reservationId: reservation.id };
+  } catch (error) {
+    if (isRequestIdUniqueViolation(error)) {
+      throw new DuplicateRequestError(args.requestId);
+    }
+    throw error;
+  }
 }
 
 /**
@@ -375,32 +548,48 @@ export async function reserveKit(
   }
 
   // Phase 2: every component is satisfiable under the held locks; write all.
+  //
+  // CONCURRENT idempotency: two kit reserves with the same kit request_id both
+  // pass the priorFirst pre-check under READ COMMITTED, both serialize on the
+  // ascending FOR UPDATE locks, and the LOSER trips the per-component
+  // UNIQUE(request_id) here on the winner's commit (P2002). We re-throw the
+  // DuplicateRequestError sentinel so it propagates out and Postgres rolls the
+  // loser's transaction back (undoing its guarded decrements, no double decrement);
+  // reserveKitWithRetry re-reads the winner's committed reservations in a FRESH
+  // transaction. Any other error propagates unchanged.
   const reservationIds: string[] = [];
-  for (const component of componentsAscending) {
-    const needed = component.requiredQuantity * multiplier;
-    const requestId = kitComponentRequestId(args.requestId, component.inventoryItemId);
-    const matched = await guardedReserveUpdate(tx, component.inventoryItemId, locationId, needed);
-    if (matched === 0) {
-      // Unreachable under the held FOR UPDATE locks; surface loudly if it ever happens.
-      throw new Error(
-        `reserveKit: guarded update matched zero rows for ${component.inventoryItemId} despite a held lock`,
-      );
+  try {
+    for (const component of componentsAscending) {
+      const needed = component.requiredQuantity * multiplier;
+      const requestId = kitComponentRequestId(args.requestId, component.inventoryItemId);
+      const matched = await guardedReserveUpdate(tx, component.inventoryItemId, locationId, needed);
+      if (matched === 0) {
+        // Unreachable under the held FOR UPDATE locks; surface loudly if it ever happens.
+        throw new Error(
+          `reserveKit: guarded update matched zero rows for ${component.inventoryItemId} despite a held lock`,
+        );
+      }
+      await tx.stockMovement.create({
+        data: {
+          inventoryItemId: component.inventoryItemId,
+          locationId,
+          movementType: 'reserve',
+          quantity: needed,
+          requestId,
+          refType: args.refType ?? null,
+          refId: args.refId ?? null,
+        },
+      });
+      const reservation = await tx.reservation.create({
+        data: { locationId, quantity: needed, requestId },
+      });
+      reservationIds.push(reservation.id);
     }
-    await tx.stockMovement.create({
-      data: {
-        inventoryItemId: component.inventoryItemId,
-        locationId,
-        movementType: 'reserve',
-        quantity: needed,
-        requestId,
-        refType: args.refType ?? null,
-        refId: args.refId ?? null,
-      },
-    });
-    const reservation = await tx.reservation.create({
-      data: { locationId, quantity: needed, requestId },
-    });
-    reservationIds.push(reservation.id);
+  } catch (error) {
+    if (isRequestIdUniqueViolation(error)) {
+      throw new DuplicateRequestError(args.requestId);
+    }
+    throw error;
   }
 
   return { ok: true, reservationIds };
@@ -428,6 +617,35 @@ export async function applyInventoryEffect(
 
   const locationId = await resolveLocation(tx, effect.locationId);
 
+  // CONCURRENT idempotency: two effects with the same request_id both pass the
+  // pre-check above under READ COMMITTED, both run their guarded UPDATE, and the
+  // LOSER trips the UNIQUE(request_id) on stock_movement at the winner's commit
+  // (P2002). We re-throw the DuplicateRequestError sentinel so it propagates out
+  // and Postgres rolls the loser's transaction back (undoing its own guarded
+  // UPDATE, so no double-apply); applyInventoryEffectWithRetry treats the sentinel
+  // as the idempotent no-op the sequential pre-check produces (no re-read needed:
+  // the effect itself is void). The 'reserve' case delegates to reserve(), which
+  // raises the same sentinel; it propagates here unchanged.
+  try {
+    await applyInventoryEffectInner(tx, effect, locationId);
+  } catch (error) {
+    if (isRequestIdUniqueViolation(error)) {
+      throw new DuplicateRequestError(effect.requestId);
+    }
+    throw error;
+  }
+}
+
+/**
+ * The effect dispatch itself, separated from applyInventoryEffect so the caller
+ * can wrap it in the single CONCURRENT-duplicate-request_id P2002 translation.
+ * The location is already resolved by the caller.
+ */
+async function applyInventoryEffectInner(
+  tx: Prisma.TransactionClient,
+  effect: InventoryEffect,
+  locationId: string,
+): Promise<void> {
   switch (effect.type) {
     case 'reserve': {
       const result = await reserve(tx, {
