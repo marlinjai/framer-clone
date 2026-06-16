@@ -600,17 +600,24 @@ model PriceList {
 // finalizes the FK). amount is integer minor units (cents), never a float.
 model CreditNote {
   id           String   @id @default(uuid())
-  // correctedRef: loose ref to the corrected Order/invoice id. The hard FK is
-  // wired by b6 (which owns Order). Nullable so a credit note can be staged
-  // before its target is linked.
+  // correctedRef: loose ref to the corrected Order/invoice id. Retained as the
+  // human/audit carrier; the HARD FK is `orderId` below, FINALIZED by b6.
   correctedRef String?  @map("corrected_ref")
+  // orderId (b6 finalization): the hard FK to the corrected Order/invoice. b5
+  // could not express it because it does not own the Order model; b6 owns Order
+  // and wires it here. Nullable so a credit note can still be staged before its
+  // target Order exists. onDelete: Restrict mirrors the no-DELETE-on-invoice
+  // contract: an Order that a credit note corrects can never be erased.
+  orderId      String?  @map("order_id")
   reason       String?
   currencyCode String   @map("currency_code")
   amount       Int
   createdAt    DateTime @default(now()) @map("created_at")
 
-  refs CreditNoteRef[]
+  order Order?          @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  refs  CreditNoteRef[]
 
+  @@index([orderId])
   @@map("credit_note")
   @@schema("commerce")
 }
@@ -631,5 +638,156 @@ model CreditNoteRef {
 
   @@index([refType, refId])
   @@map("credit_note_ref")
+  @@schema("commerce")
+}
+
+// ===========================================================================
+// Commerce engine: minimal orders (b6). Serial schema position: LAST in the
+// commerce schema chain (after b5). b6 OWNS the Order + OrderLineItem models,
+// INCLUDING the order-level German tax model, and finalizes the b5
+// CreditNote -> Order FK (above).
+//
+// SNAPSHOT, NOT REFERENCE: an order line copies the variant's title/sku, the
+// resolved unit_price (integer cents), the quantity, and the FULL tax treatment
+// (applied tax_class, resolved rate, tax_amount in cents, tax_treatment
+// discriminator) AT CREATION. A later price/catalog change therefore can NEVER
+// alter a placed order, and a reprint reproduces the original legal invoice with
+// ZERO recomputation. The variant linkage is a LOOSE (variant_ref,
+// variant_ref_source) carrier (none | datatable | owned, NEVER medusa), not a
+// hard FK, so an owned-catalog variant and a future data-table-backed variant
+// both fit without a schema change.
+//
+// MONEY IS INTEGER CENTS, ALWAYS: every monetary column (unit_price, subtotal,
+// tax_amount, total) is Int (minor units), and the b6 migration applies the b5
+// non-negative money floor CHECK to each. tax_rate is integer BASIS POINTS
+// (1900 = 19.00%), so no float/rounding error can enter the database. Totals are
+// SERVER-COMPUTED in createOrder (never client-trusted).
+//
+// NO-DELETE-ON-INVOICE: the b6 migration REVOKEs UPDATE, DELETE on order and
+// order_line_item from commerce_app (the same append-only pattern b2 applied to
+// stock_movement and b5 applied to credit_note): a placed order/invoice is a
+// permanent accounting record, corrected only by a CreditNote, never erased.
+// ===========================================================================
+
+// order.status: a freshly placed order is `confirmed` (its stock is reserved
+// inside the same atomic transaction). `pending`/`cancelled` are reserved for
+// later lifecycle work; v1 createOrder writes `confirmed`.
+enum OrderStatus {
+  pending
+  confirmed
+  cancelled
+
+  @@schema("commerce")
+}
+
+// order.customer_type: drives the German tax treatment. A B2B order with a VAT
+// id in another EU member state is the reverse_charge case; B2C is the default.
+enum CustomerType {
+  b2c
+  b2b
+
+  @@schema("commerce")
+}
+
+// order.net_or_gross: whether the resolved unit prices are interpreted as NET
+// (tax added on top) or GROSS (tax extracted from within). Default net.
+enum NetOrGross {
+  net
+  gross
+
+  @@schema("commerce")
+}
+
+// order_line_item.variant_ref_source: where the loose variant_ref points. NEVER
+// `medusa` (the owned engine has no Medusa coupling). `none` = no carrier.
+enum VariantRefSource {
+  none
+  datatable
+  owned
+
+  @@schema("commerce")
+}
+
+// order_line_item.tax_treatment (b5 TAX-04): the FULL discriminator a reprint
+// needs, snapshotted per line. `reverse_charge` and `kleinunternehmer` both
+// resolve to a zero tax_amount but carry DIFFERENT legal meaning, so they are
+// distinct from a plain `zero`-rated line.
+enum TaxTreatment {
+  standard
+  reduced
+  zero
+  reverse_charge
+  kleinunternehmer
+
+  @@schema("commerce")
+}
+
+model Order {
+  id          String      @id @default(uuid())
+  // order_number: a monotonic per-tenant invoice number, allocated from the
+  // commerce.order_number_seq sequence (concurrency-safe, unlike a COUNT).
+  orderNumber String      @unique @map("order_number")
+  // request_id: the ORDER-level idempotency key. A duplicate createOrder with
+  // the same request_id returns the prior order (sequential pre-check) or
+  // recovers the winner after a concurrent UNIQUE(request_id) race (createOrder
+  // replicates b3's fresh-transaction re-read at the order level).
+  requestId   String      @unique @map("request_id")
+  status      OrderStatus @default(confirmed)
+  currencyCode String     @map("currency_code")
+
+  // --- order-level German tax model (OWNED by b6) ---
+  taxRegion        String       @map("tax_region")
+  vatId            String?      @map("vat_id")
+  customerType     CustomerType @default(b2c) @map("customer_type")
+  reverseCharge    Boolean      @default(false) @map("reverse_charge")
+  netOrGross       NetOrGross   @default(net) @map("net_or_gross")
+  kleinunternehmer Boolean      @default(false)
+  // tax_note: the legal notice text set when VAT is suppressed (the reverse
+  // charge Section 13b notice, or the Kleinunternehmer Section 19 notice). NULL
+  // for an ordinary taxed order.
+  taxNote          String?      @map("tax_note")
+
+  // --- server-computed integer-cents totals (NEVER client-trusted) ---
+  subtotal  Int // sum of line net amounts (cents)
+  taxAmount Int @map("tax_amount") // sum of line tax amounts (cents)
+  total     Int // subtotal + taxAmount (cents)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  lineItems   OrderLineItem[]
+  creditNotes CreditNote[]
+
+  @@map("order")
+  @@schema("commerce")
+}
+
+model OrderLineItem {
+  id      String @id @default(uuid())
+  orderId String @map("order_id")
+
+  // --- snapshot (NOT reference) ---
+  variantTitle String? @map("variant_title")
+  variantSku   String? @map("variant_sku")
+  unitPrice    Int     @map("unit_price") // resolved unit price (cents) at creation
+  quantity     Int
+  subtotal     Int // line net amount (cents): the b5 money floor applies
+
+  // --- full tax treatment snapshot (b5 TAX-04) ---
+  taxClass     String?      @map("tax_class") // applied catalog tax class, snapshotted
+  taxRate      Int          @map("tax_rate") // integer BASIS POINTS (1900 = 19%)
+  taxAmount    Int          @map("tax_amount") // line tax (cents)
+  taxTreatment TaxTreatment @map("tax_treatment")
+
+  // --- loose variant carrier (none | datatable | owned, NEVER medusa) ---
+  variantRef       String?          @map("variant_ref")
+  variantRefSource VariantRefSource @default(none) @map("variant_ref_source")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_line_item")
   @@schema("commerce")
 }

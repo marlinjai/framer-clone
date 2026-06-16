@@ -34,6 +34,13 @@ import type {
   ProductOptionValue,
   ProductStatus,
   ProductVariant,
+  Order,
+  OrderLineItem,
+  CustomerType,
+  NetOrGross,
+  OrderStatus,
+  TaxTreatment,
+  VariantRefSource,
 } from '@prisma/client';
 
 /** Create-a-product input. status defaults to 'draft' when omitted. */
@@ -184,10 +191,78 @@ export interface PricingRepository {
 }
 
 /**
- * Order capture (minimal orders + line items): owned by b6.
- * Representative seam method; b6 widens this interface.
+ * The order row to INSERT. All monetary fields are integer cents and are
+ * SERVER-COMPUTED by createOrder (never client-trusted); the repository is a thin
+ * data-access seam that does no money math. order_number is allocated via
+ * nextOrderNumber; request_id is the order-level idempotency key.
+ */
+export interface CreateOrderRowInput {
+  orderNumber: string;
+  requestId: string;
+  status?: OrderStatus;
+  currency: string;
+  taxRegion: string;
+  vatId?: string | null;
+  customerType: CustomerType;
+  reverseCharge: boolean;
+  netOrGross: NetOrGross;
+  kleinunternehmer: boolean;
+  taxNote?: string | null;
+  subtotal: number;
+  taxAmount: number;
+  total: number;
+}
+
+/**
+ * One order line to INSERT: the SNAPSHOT of the variant at creation (title/sku,
+ * resolved unit_price cents, quantity) plus the FULL tax treatment snapshot
+ * (applied tax_class, resolved rate in basis points, tax_amount cents, treatment
+ * discriminator) and the loose variant carrier (none | datatable | owned).
+ */
+export interface CreateOrderLineItemInput {
+  orderId: string;
+  variantTitle?: string | null;
+  variantSku?: string | null;
+  unitPrice: number;
+  quantity: number;
+  subtotal: number;
+  taxClass?: string | null;
+  taxRate: number;
+  taxAmount: number;
+  taxTreatment: TaxTreatment;
+  variantRef?: string | null;
+  variantRefSource: VariantRefSource;
+}
+
+/**
+ * Order capture (minimal orders + line items): owned by b6. Widens the b1
+ * representative seam (nextOrderNumber) with the order/line INSERT surface and
+ * the request_id idempotency re-read. Every method takes the transaction client
+ * first (the b1 tx-first rule): the repository never opens its own transaction
+ * and never touches a bare PrismaClient. The atomic cart -> order orchestration
+ * (price resolution, tax math, stock reservation, rollback) lives in createOrder,
+ * NOT here: this is the data-access seam only.
  */
 export interface OrderRepository {
   /** Allocate the next monotonic order number within the current tenant schema. */
   nextOrderNumber(tx: Prisma.TransactionClient): Promise<string>;
+
+  /** Insert the order row (all monetary fields server-computed by the caller). */
+  insertOrder(tx: Prisma.TransactionClient, input: CreateOrderRowInput): Promise<Order>;
+
+  /** Insert one snapshot line item belonging to an order. */
+  insertLineItem(
+    tx: Prisma.TransactionClient,
+    input: CreateOrderLineItemInput,
+  ): Promise<OrderLineItem>;
+
+  /**
+   * Re-read an order by its request_id (the idempotency key), or null. Used both
+   * for the sequential idempotency pre-check and for the fresh-transaction
+   * recovery after a concurrent UNIQUE(request_id) race.
+   */
+  findByRequestId(
+    tx: Prisma.TransactionClient,
+    requestId: string,
+  ): Promise<Order | null>;
 }
