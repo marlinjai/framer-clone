@@ -1,15 +1,29 @@
 -- Commerce engine: owned inventory ledger (b2). FIRST commerce schema writer.
 --
 -- Creates the `commerce` schema and the five inventory models, then applies the
--- four things Prisma cannot express in the datamodel and which make oversell
+-- things Prisma cannot express in the datamodel and which make oversell
 -- structurally impossible at the schema level:
 --   1. the GENERATED STORED column inventory_level.available_quantity,
 --   2. the CHECK (reserved_quantity <= stocked_quantity) backstop,
---   3. the partial-unique sku index (UNIQUE WHERE deleted_at IS NULL),
---   4. the append-only REVOKE UPDATE,DELETE ON stock_movement FROM commerce_app.
+--   3. the non-negativity floor CHECKs (stocked_quantity >= 0,
+--      reserved_quantity >= 0) so negative pairs cannot mint phantom stock,
+--   4. the partial-unique sku index (UNIQUE WHERE deleted_at IS NULL),
+--   5. the append-only REVOKE UPDATE,DELETE ON stock_movement FROM commerce_app.
 --
 -- The dt_* tables already exist (20260616000000_init); this migration only adds
 -- the commerce objects.
+--
+-- !!! GENERATED-COLUMN DRIFT WARNING (read before running `prisma migrate dev`) !!!
+-- inventory_level.available_quantity is a raw-SQL GENERATED ALWAYS STORED column
+-- (created near the bottom of this file). It is INTENTIONALLY ABSENT from
+-- prisma/schema.prisma because Prisma has no datamodel representation for
+-- generated columns. As a direct consequence, the NEXT `prisma migrate dev` will
+-- detect the column as drift and PROPOSE a destructive
+--   `ALTER TABLE "commerce"."inventory_level" DROP COLUMN "available_quantity";`
+-- in the generated migration. That DROP MUST be deleted from any generated
+-- migration before it is applied: dropping it removes the structural oversell
+-- guarantee and breaks every available-quantity read (b7). Same caution applies
+-- to the CHECK constraints below, which Prisma also cannot express.
 
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "commerce";
@@ -132,14 +146,27 @@ ALTER TABLE "commerce"."inventory_level"
     ADD CONSTRAINT "inventory_level_reserved_lte_stocked_check"
     CHECK ("reserved_quantity" <= "stocked_quantity");
 
--- (3) Partial-unique sku: unique only among live rows (deleted_at IS NULL), so a
+-- (2b) Non-negativity floor. The reserved <= stocked CHECK alone is satisfied by
+-- negative pairs (e.g. reserved = -5, stocked = 0 yields available = 5), which
+-- would mint phantom available stock out of nothing. These two CHECKs floor both
+-- source columns at zero so available_quantity (= stocked - reserved) can never be
+-- inflated by a negative quantity. Combined with (2), the reachable region is
+-- 0 <= reserved <= stocked, so available is always in [0, stocked].
+ALTER TABLE "commerce"."inventory_level"
+    ADD CONSTRAINT "inventory_level_stocked_nonneg_check"
+    CHECK ("stocked_quantity" >= 0);
+ALTER TABLE "commerce"."inventory_level"
+    ADD CONSTRAINT "inventory_level_reserved_nonneg_check"
+    CHECK ("reserved_quantity" >= 0);
+
+-- (4) Partial-unique sku: unique only among live rows (deleted_at IS NULL), so a
 -- SKU frees the moment a row is soft-deleted and can be re-used. Prisma cannot
 -- express partial unique indexes, hence raw SQL.
 CREATE UNIQUE INDEX "inventory_item_sku_active_key"
     ON "commerce"."inventory_item" ("sku")
     WHERE "deleted_at" IS NULL;
 
--- (4) Append-only ledger: ordinary application traffic (commerce_app) may INSERT
+-- (5) Append-only ledger: ordinary application traffic (commerce_app) may INSERT
 -- and SELECT stock_movement but never UPDATE or DELETE, so the ledger is immutable
 -- at the database (a table owner / superuser still can, which is why migrations
 -- and corrections run as commerce_ddl, out of band). The REVOKE is guarded on role

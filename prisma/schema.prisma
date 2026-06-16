@@ -158,6 +158,8 @@ model DtRow {
 //   - a GENERATED STORED column available_quantity = stocked - reserved
 //     (added via raw-SQL migration; Prisma cannot express generated columns),
 //   - a CHECK (reserved_quantity <= stocked_quantity) backstop (raw-SQL),
+//   - non-negativity floor CHECKs (stocked_quantity >= 0, reserved_quantity >= 0,
+//     raw-SQL) so negative pairs cannot mint phantom available stock,
 //   - the append-only REVOKE UPDATE,DELETE ON stock_movement FROM commerce_app
 //     (raw-SQL, using the b1 role topology),
 //   - a `version` Int for optimistic concurrency,
@@ -221,11 +223,22 @@ model InventoryLevel {
   locationId       String   @map("location_id")
   stockedQuantity  Int      @default(0) @map("stocked_quantity")
   reservedQuantity Int      @default(0) @map("reserved_quantity")
+  // !!! GENERATED-COLUMN DRIFT GUARD: DO NOT add available_quantity here. !!!
   // available_quantity is a GENERATED ALWAYS AS (stocked - reserved) STORED
   // column added in the raw-SQL migration. It is intentionally ABSENT from this
   // model: Prisma has no representation for generated columns, and a row read
   // here must never let the app write it. b7 (REST reads) exposes it; it is
   // DB-filterable today.
+  //
+  // Because the column is absent here but present in the database, the next
+  // `prisma migrate dev` WILL detect drift and PROPOSE a destructive
+  //   ALTER TABLE "commerce"."inventory_level" DROP COLUMN "available_quantity";
+  // in the generated migration. That DROP MUST be deleted from any generated
+  // migration before applying it: it would remove the structural oversell
+  // guarantee and break every available-quantity read. The same applies to the
+  // three CHECK constraints (reserved <= stocked, stocked >= 0, reserved >= 0),
+  // which Prisma also cannot express and which migrate dev may likewise try to
+  // drop. See the matching warning in the migration header.
   version          Int      @default(0)
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
