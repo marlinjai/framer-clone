@@ -19,6 +19,7 @@ import CollectionRenderer, {
   type RenderNode,
 } from '@/lib/renderer/data/CollectionRenderer';
 import RecordViewRenderer from '@/lib/renderer/data/RecordViewRenderer';
+import TableViewRenderer from '@/lib/renderer/data/TableViewRenderer';
 
 export interface CreateComponentElementOptions {
   // When present, the dispatch attaches `data-component-id` and
@@ -74,9 +75,9 @@ export function createComponentElement(
 
     // BOUND data nodes dispatch to the real data renderers, which own their
     // own (per-row) children construction and ignore the generic `children`
-    // built by the host renderer. `table-view` is RESERVED here: its renderer
-    // ships in `slice2-tableview-renderer`, so until then a bound TableView
-    // falls back to the dashed-box placeholder with a `TableView pending` note.
+    // built by the host renderer. `table-view` now routes to TableViewRenderer
+    // (slice2-tableview-renderer): the host wrapper carries identity attrs and
+    // container styling while the read-only TableView renders inside it.
     if (dataKind && component.hasBindings) {
       const scope = options?.scope ?? createScope();
       const renderNode = options?.renderNode;
@@ -103,20 +104,13 @@ export function createComponentElement(
         );
       }
       if (dataKind === 'table-view') {
-        const pending = React.createElement(
-          'span',
-          {
-            style: {
-              color: '#9ca3af',
-              fontSize: '12px',
-              fontFamily: 'Inter, sans-serif',
-              pointerEvents: 'none',
-              userSelect: 'none',
-            },
-          },
-          'Table view (pending)',
+        const wrapperProps = { ...propsWithIdentity };
+        delete (wrapperProps as any).children;
+        return React.createElement(
+          component.type as any,
+          wrapperProps,
+          <TableViewRenderer node={component} scope={scope} />,
         );
-        return React.createElement(component.type as any, propsWithIdentity, pending);
       }
     }
 

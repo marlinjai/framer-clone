@@ -17,6 +17,9 @@ importers:
       '@marlinjai/data-table-adapter-prisma':
         specifier: ^0.2.2
         version: 0.2.2(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+      '@marlinjai/data-table-react':
+        specifier: ^0.3.1
+        version: 0.3.1(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@prisma/client':
         specifier: ^6.9.0
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
@@ -955,6 +958,12 @@ packages:
 
   '@marlinjai/data-table-core@0.3.0':
     resolution: {integrity: sha512-BMa7qGoDf0AukqorHPVEOc1i2KAa63PcNuklSA+LP9jXabLbY/dIlHLuuNIChhRgq7sA6RIrbYyQktHj9O3ZGQ==}
+
+  '@marlinjai/data-table-react@0.3.1':
+    resolution: {integrity: sha512-Nb1iY7LlzkrY5KLq1Z+v2Nqv9S6RtqF1s5h+RXHV9UFyJNm4f3a4TC40So2aFJrqsCr7hsUEFsQ7FIN3GHGmpw==}
+    peerDependencies:
+      react: ^18.0.0 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
 
   '@mdx-js/mdx@3.1.1':
     resolution: {integrity: sha512-f6ZO2ifpwAQIpzGWaBQT2TXxPv6z3RBzQKpVftEWN78Vl/YweF1uwussDx8ECAXVtr3Rs89fKyG9YlzUs9DyGQ==}
@@ -6388,6 +6397,12 @@ snapshots:
       '@marlinjai/data-table-core': 0.3.0
 
   '@marlinjai/data-table-core@0.3.0': {}
+
+  '@marlinjai/data-table-react@0.3.1(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
+    dependencies:
+      '@marlinjai/data-table-core': 0.3.0
+      react: 19.1.0
+      react-dom: 19.1.0(react@19.1.0)
 
   '@mdx-js/mdx@3.1.1':
     dependencies:
