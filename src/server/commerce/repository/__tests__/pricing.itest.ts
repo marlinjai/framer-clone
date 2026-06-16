@@ -255,6 +255,87 @@ describe('b5 pricing graph + tax_class + CreditNote (Dockerized Postgres)', () =
     expect(none).toBeNull();
   });
 
+  it('the database CHECK constraints bite: negative amount, inverted/negative band, mis-cased currency are all rejected', async () => {
+    const db = prisma!;
+    const variantId = await makeVariant(db, 'tee-checks', 'TEE-CHECKS-1');
+    const priceSet = await withTenant(db, (tx) =>
+      pricingRepository.createPriceSet(tx, { variantId }),
+    );
+
+    // The application-level assertIntegerCents would catch a negative amount
+    // before the insert, so to prove the DATABASE floor itself we INSERT raw,
+    // bypassing the repository guard. price_amount_nonneg_check (SQLSTATE 23514)
+    // rejects a negative price.amount, so a money-losing price can never land.
+    await expectRejectionMatching(
+      () =>
+        db.$executeRawUnsafe(
+          `INSERT INTO "commerce"."price" ("id", "price_set_id", "currency_code", "amount", "updated_at")
+             VALUES (gen_random_uuid(), $1, 'EUR', -1, CURRENT_TIMESTAMP)`,
+          priceSet.id,
+        ),
+      /23514|price_amount_nonneg_check|violates check constraint/,
+    );
+
+    // credit_note_amount_nonneg_check: a negative credit-note amount is rejected.
+    await expectRejectionMatching(
+      () =>
+        db.$executeRawUnsafe(
+          `INSERT INTO "commerce"."credit_note" ("id", "currency_code", "amount", "created_at")
+             VALUES (gen_random_uuid(), 'EUR', -1, CURRENT_TIMESTAMP)`,
+        ),
+      /23514|credit_note_amount_nonneg_check|violates check constraint/,
+    );
+
+    // price_quantity_band_check: an inverted band (min > max) can never match a
+    // quantity and would silently drop the price from resolution, so it is
+    // rejected loudly instead.
+    await expectRejectionMatching(
+      () =>
+        db.$executeRawUnsafe(
+          `INSERT INTO "commerce"."price" ("id", "price_set_id", "currency_code", "amount", "min_quantity", "max_quantity", "updated_at")
+             VALUES (gen_random_uuid(), $1, 'EUR', 1000, 5, 3, CURRENT_TIMESTAMP)`,
+          priceSet.id,
+        ),
+      /23514|price_quantity_band_check|violates check constraint/,
+    );
+
+    // price_min_quantity_nonneg_check: a negative band edge is rejected.
+    await expectRejectionMatching(
+      () =>
+        db.$executeRawUnsafe(
+          `INSERT INTO "commerce"."price" ("id", "price_set_id", "currency_code", "amount", "min_quantity", "updated_at")
+             VALUES (gen_random_uuid(), $1, 'EUR', 1000, -1, CURRENT_TIMESTAMP)`,
+          priceSet.id,
+        ),
+      /23514|price_min_quantity_nonneg_check|violates check constraint/,
+    );
+
+    // price_currency_code_iso4217_check: a mis-cased 'eur' would silently resolve
+    // to NO price (resolvePrice matches currencyCode exactly), so the ISO-4217
+    // alpha-3 UPPERCASE shape is enforced at the database.
+    await expectRejectionMatching(
+      () =>
+        db.$executeRawUnsafe(
+          `INSERT INTO "commerce"."price" ("id", "price_set_id", "currency_code", "amount", "updated_at")
+             VALUES (gen_random_uuid(), $1, 'eur', 1000, CURRENT_TIMESTAMP)`,
+          priceSet.id,
+        ),
+      /23514|price_currency_code_iso4217_check|violates check constraint/,
+    );
+
+    // A well-formed row still inserts cleanly: the CHECKs reject only the bad shapes.
+    const ok = await withTenant(db, (tx) =>
+      pricingRepository.addPrice(tx, {
+        priceSetId: priceSet.id,
+        currency: 'EUR',
+        amount: 1000,
+        minQuantity: 1,
+        maxQuantity: 10,
+      }),
+    );
+    expect(ok.amount).toBe(1000);
+  });
+
   it('tax_class is set and read on product and variant', async () => {
     const db = prisma!;
     const product = await withTenant(db, (tx) =>

@@ -37,16 +37,27 @@ import type { Price, PriceSet, Prisma } from '@prisma/client';
 type PriceWithList = Prisma.PriceGetPayload<{ include: { priceList: true } }>;
 
 /**
- * Guard: a monetary amount must be an integer number of minor units (cents). A
- * float (e.g. 19.99 euros instead of 1999 cents) is a programming error and is
- * rejected loudly rather than silently truncated, so a rounding bug can never be
- * written to the database. The DB column is Int, but Prisma would coerce a float
- * before the insert; this surfaces the mistake at the boundary.
+ * Guard: a monetary amount must be a NON-NEGATIVE integer number of minor units
+ * (cents). Two failure modes are rejected loudly at the boundary rather than
+ * silently persisted:
+ *   - a float (e.g. 19.99 euros instead of 1999 cents) is a programming error and
+ *     a rounding-bug source;
+ *   - a negative amount (e.g. -1999) is money-losing: resolvePrice picks the
+ *     lowest applicable amount, so a stray negative price would always "win" and
+ *     undercut every real price.
+ * The DB column is Int with a `>= 0` CHECK (the mirror of this guard, see the b5
+ * migration), but Prisma would coerce a float before the insert and the negative
+ * would only trip at the database; this surfaces both mistakes at the boundary.
  */
 function assertIntegerCents(amount: number, field: string): void {
   if (!Number.isInteger(amount)) {
     throw new Error(
       `pricing: ${field} must be an integer number of minor units (cents), got ${amount}`,
+    );
+  }
+  if (amount < 0) {
+    throw new Error(
+      `pricing: ${field} must be a non-negative number of minor units (cents), got ${amount}`,
     );
   }
 }
@@ -75,6 +86,30 @@ export const pricingRepository: PricingRepository = {
     });
   },
 
+  /**
+   * resolvePrice contract (b5 scope, B5-PRICE-02).
+   *
+   * Resolution in b5 is exactly three steps, in this order: (1) a quantity-band
+   * filter (a price applies only when quantity is within [min_quantity,
+   * max_quantity], NULL = unbounded on that side); (2) an active-list-window
+   * filter (a price_list price applies only when its list was requested in
+   * priceListIds, is `active`, and `now` is inside its optional [starts_at,
+   * ends_at] window; the base price, with no list, always passes); (3) a
+   * lowest-amount tie-break (a price-list price wins over the base price, and
+   * within the winning tier the LOWEST integer amount wins, which is the
+   * sale-undercuts-base semantics). The returned value is the stored Int (cents)
+   * unchanged: no float math is performed anywhere on the path.
+   *
+   * What b5 DELIBERATELY does NOT evaluate, and which lands in b7: price_rule
+   * (attribute / value / operator / priority) is stored but NOT applied here, and
+   * PriceListType (`override` vs `sale`) does NOT change which row wins (b5 prefers
+   * any list price over base and then takes the lowest amount, regardless of type
+   * or rule priority). When b7 adds priority-based or type-based precedence, the
+   * "lowest-wins" tie-break below will change; that current behavior is pinned by
+   * a unit test (the sale-1500 + override-1800 -> 1500 case in pricing.test.ts) so
+   * a future precedence change is a VISIBLE diff in that assertion, not a silent
+   * behavior shift.
+   */
   async resolvePrice(
     tx: Prisma.TransactionClient,
     variantId: string,

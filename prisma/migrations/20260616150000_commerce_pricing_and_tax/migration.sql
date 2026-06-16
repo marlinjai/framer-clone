@@ -158,6 +158,38 @@ ALTER TABLE "commerce"."price_rule" ADD CONSTRAINT "price_rule_price_id_fkey" FO
 ALTER TABLE "commerce"."credit_note_ref" ADD CONSTRAINT "credit_note_ref_credit_note_id_fkey" FOREIGN KEY ("credit_note_id") REFERENCES "commerce"."credit_note"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- ===========================================================================
+-- Raw-SQL CHECK constraints (b5): money + quantity-band + currency-code sanity.
+--
+-- These belong in the SAME drift-exclusion family as the b2/b4 database-level
+-- guarantees above: Prisma cannot express a CHECK constraint, so they live ONLY
+-- in this migration and are DELIBERATELY ABSENT from prisma/schema.prisma. A
+-- `prisma migrate diff` will NOT propose them and MUST NOT be used to "reconcile"
+-- them away (they are intentional, like the GENERATED column and the trigger).
+--
+-- MUST-FIX 1 (money floor): a money column with no non-negativity floor lets a
+-- negative price.amount insert cleanly, and resolvePrice then selects it as the
+-- lowest-amount winner (a money-losing price). The CHECK rejects it loudly at the
+-- database, the mirror of the assertIntegerCents tightening in pricing.ts.
+ALTER TABLE "commerce"."price" ADD CONSTRAINT "price_amount_nonneg_check" CHECK ("amount" >= 0);
+ALTER TABLE "commerce"."credit_note" ADD CONSTRAINT "credit_note_amount_nonneg_check" CHECK ("amount" >= 0);
+
+-- MS-2 (quantity-band sanity): a band must be non-negative and not inverted. An
+-- inverted band (min_quantity > max_quantity) can never match any quantity, so it
+-- would silently drop a price from resolution; reject it loudly instead. NULL on
+-- either side (unbounded) passes the comparison (NULL CHECK is treated as TRUE).
+ALTER TABLE "commerce"."price" ADD CONSTRAINT "price_min_quantity_nonneg_check" CHECK ("min_quantity" >= 0);
+ALTER TABLE "commerce"."price" ADD CONSTRAINT "price_max_quantity_nonneg_check" CHECK ("max_quantity" >= 0);
+ALTER TABLE "commerce"."price" ADD CONSTRAINT "price_quantity_band_check" CHECK ("min_quantity" <= "max_quantity");
+
+-- MS-3 (currency-code shape): currency_code must be an ISO-4217 alpha-3 code in
+-- UPPERCASE. Without this a mis-cased 'eur' inserts cleanly and then silently
+-- resolves to NO price (resolvePrice filters on an exact currencyCode match), so
+-- the band-sanity / money-floor guarantees would be moot for that row. Reject the
+-- mis-cased / mis-shaped code at the database.
+ALTER TABLE "commerce"."price" ADD CONSTRAINT "price_currency_code_iso4217_check" CHECK ("currency_code" ~ '^[A-Z]{3}$');
+ALTER TABLE "commerce"."credit_note" ADD CONSTRAINT "credit_note_currency_code_iso4217_check" CHECK ("currency_code" ~ '^[A-Z]{3}$');
+
+-- ===========================================================================
 -- Raw-SQL addition (b5): the no-DELETE-on-invoice contract.
 --
 -- A German invoice (and its corrective credit note) can NEVER be DELETEd or
