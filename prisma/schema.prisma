@@ -19,9 +19,20 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// Two named schemas in ONE Postgres database (multiSchema, GA in Prisma 6):
+//   public   -> the CMS engine (dt_* models, unchanged from Track 0).
+//   commerce -> the owned commerce engine. b1 built the role topology around
+//               a `commerce` schema (prisma/sql/commerce-roles.sql grants on
+//               SCHEMA commerce; b2's append-only REVOKE targets
+//               commerce.stock_movement), so the commerce tables MUST live in
+//               that schema for those grants/REVOKE to mean anything. One
+//               PrismaClient still serves both; multiSchema is what lets a
+//               single client span the two schemas. Every model and enum now
+//               carries an explicit @@schema (required once `schemas` is set).
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  schemas  = ["commerce", "public"]
 }
 
 model DtTable {
@@ -37,6 +48,7 @@ model DtTable {
   views       DtView[]
 
   @@map("dt_tables")
+  @@schema("public")
 }
 
 model DtColumn {
@@ -53,6 +65,7 @@ model DtColumn {
   table     DtTable  @relation(fields: [tableId], references: [id], onDelete: Cascade)
 
   @@map("dt_columns")
+  @@schema("public")
 }
 
 model SelectOption {
@@ -63,6 +76,7 @@ model SelectOption {
   position Int
 
   @@map("select_options")
+  @@schema("public")
 }
 
 model DtRowSelectValue {
@@ -73,6 +87,7 @@ model DtRowSelectValue {
 
   @@unique([rowId, columnId, optionId])
   @@map("dt_row_select_values")
+  @@schema("public")
 }
 
 model DtRelation {
@@ -84,6 +99,7 @@ model DtRelation {
 
   @@unique([sourceRowId, sourceColumnId, targetRowId])
   @@map("dt_relations")
+  @@schema("public")
 }
 
 model DtFile {
@@ -99,6 +115,7 @@ model DtFile {
   metadata     Json?
 
   @@map("dt_files")
+  @@schema("public")
 }
 
 model DtView {
@@ -114,6 +131,7 @@ model DtView {
   table     DtTable  @relation(fields: [tableId], references: [id], onDelete: Cascade)
 
   @@map("dt_views")
+  @@schema("public")
 }
 
 // Legacy table: kept during the migration transition period
@@ -128,4 +146,146 @@ model DtRow {
   updatedAt String  @map("_updated_at")
 
   @@map("dt_rows")
+  @@schema("public")
+}
+
+// ===========================================================================
+// Commerce engine: owned inventory ledger (b2). FIRST commerce schema writer.
+//
+// The event-sourced inventory ledger, purpose-built Prisma (NOT data-table).
+// stock_movement is the APPEND-ONLY source of truth; inventory_level is its
+// projection. Oversell is made structurally impossible at the schema level by:
+//   - a GENERATED STORED column available_quantity = stocked - reserved
+//     (added via raw-SQL migration; Prisma cannot express generated columns),
+//   - a CHECK (reserved_quantity <= stocked_quantity) backstop (raw-SQL),
+//   - non-negativity floor CHECKs (stocked_quantity >= 0, reserved_quantity >= 0,
+//     raw-SQL) so negative pairs cannot mint phantom available stock,
+//   - the append-only REVOKE UPDATE,DELETE ON stock_movement FROM commerce_app
+//     (raw-SQL, using the b1 role topology),
+//   - a `version` Int for optimistic concurrency,
+//   - the composite UNIQUE (inventory_item_id, location_id),
+//   - a partial-unique sku WHERE deleted_at IS NULL (raw-SQL) so a SKU frees on
+//     soft-delete.
+// Write logic / reservation guards / the guarded decrement are b3, NOT here.
+// ===========================================================================
+
+enum StockMovementType {
+  receive
+  reserve
+  release
+  fulfill
+  adjust
+  transfer
+
+  @@schema("commerce")
+}
+
+model InventoryItem {
+  id        String    @id @default(uuid())
+  sku       String
+  title     String?
+  // Physical dimensions (nullable; integer minor units: mm and grams).
+  lengthMm  Int?      @map("length_mm")
+  widthMm   Int?      @map("width_mm")
+  heightMm  Int?      @map("height_mm")
+  weightG   Int?      @map("weight_g")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  levels    InventoryLevel[]
+  movements StockMovement[]
+
+  // sku is NOT a plain @@unique here on purpose: a partial-unique index
+  // (UNIQUE WHERE deleted_at IS NULL) is added in the raw-SQL migration so the
+  // SKU frees on soft-delete. Prisma cannot express partial unique indexes.
+  @@map("inventory_item")
+  @@schema("commerce")
+}
+
+model StockLocation {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  levels       InventoryLevel[]
+  movements    StockMovement[]
+  reservations Reservation[]
+
+  @@map("stock_location")
+  @@schema("commerce")
+}
+
+model InventoryLevel {
+  id               String   @id @default(uuid())
+  inventoryItemId  String   @map("inventory_item_id")
+  locationId       String   @map("location_id")
+  stockedQuantity  Int      @default(0) @map("stocked_quantity")
+  reservedQuantity Int      @default(0) @map("reserved_quantity")
+  // !!! GENERATED-COLUMN DRIFT GUARD: DO NOT add available_quantity here. !!!
+  // available_quantity is a GENERATED ALWAYS AS (stocked - reserved) STORED
+  // column added in the raw-SQL migration. It is intentionally ABSENT from this
+  // model: Prisma has no representation for generated columns, and a row read
+  // here must never let the app write it. b7 (REST reads) exposes it; it is
+  // DB-filterable today.
+  //
+  // Because the column is absent here but present in the database, the next
+  // `prisma migrate dev` WILL detect drift and PROPOSE a destructive
+  //   ALTER TABLE "commerce"."inventory_level" DROP COLUMN "available_quantity";
+  // in the generated migration. That DROP MUST be deleted from any generated
+  // migration before applying it: it would remove the structural oversell
+  // guarantee and break every available-quantity read. The same applies to the
+  // three CHECK constraints (reserved <= stocked, stocked >= 0, reserved >= 0),
+  // which Prisma also cannot express and which migrate dev may likewise try to
+  // drop. See the matching warning in the migration header.
+  version          Int      @default(0)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  location      StockLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@unique([inventoryItemId, locationId])
+  @@map("inventory_level")
+  @@schema("commerce")
+}
+
+model StockMovement {
+  id              String            @id @default(uuid())
+  inventoryItemId String            @map("inventory_item_id")
+  locationId      String            @map("location_id")
+  movementType    StockMovementType @map("movement_type")
+  quantity        Int
+  requestId       String            @unique @map("request_id")
+  refType         String?           @map("ref_type")
+  refId           String?           @map("ref_id")
+  transferGroupId String?           @map("transfer_group_id")
+  createdAt       DateTime          @default(now()) @map("created_at")
+
+  // No updatedAt: the ledger is immutable. UPDATE/DELETE are revoked from
+  // commerce_app in the raw-SQL migration, enforcing append-only at the DB.
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  location      StockLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@index([inventoryItemId, locationId])
+  @@map("stock_movement")
+  @@schema("commerce")
+}
+
+model Reservation {
+  id         String   @id @default(uuid())
+  // line_item_id references a future order line item (b6 orders): nullable, no
+  // FK yet.
+  lineItemId String?  @map("line_item_id")
+  locationId String   @map("location_id")
+  quantity   Int
+  requestId  String   @unique @map("request_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  location StockLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@map("reservation")
+  @@schema("commerce")
 }
