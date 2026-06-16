@@ -115,11 +115,19 @@ ALTER TABLE "commerce"."order" ADD CONSTRAINT "order_subtotal_nonneg_check" CHEC
 ALTER TABLE "commerce"."order" ADD CONSTRAINT "order_tax_amount_nonneg_check" CHECK ("tax_amount" >= 0);
 ALTER TABLE "commerce"."order" ADD CONSTRAINT "order_total_nonneg_check" CHECK ("total" >= 0);
 ALTER TABLE "commerce"."order" ADD CONSTRAINT "order_currency_code_iso4217_check" CHECK ("currency_code" ~ '^[A-Z]{3}$');
+-- The order total is the sum of its parts: a DB-enforced accounting identity so a
+-- total can never drift from subtotal + tax_amount (server-computed in createOrder,
+-- but the database is the last line of defence). Per the drift-exclusion note above,
+-- Prisma cannot express this CHECK, so it lives ONLY here.
+ALTER TABLE "commerce"."order" ADD CONSTRAINT "order_total_sum_check" CHECK ("total" = "subtotal" + "tax_amount");
 
 ALTER TABLE "commerce"."order_line_item" ADD CONSTRAINT "order_line_item_unit_price_nonneg_check" CHECK ("unit_price" >= 0);
 ALTER TABLE "commerce"."order_line_item" ADD CONSTRAINT "order_line_item_subtotal_nonneg_check" CHECK ("subtotal" >= 0);
 ALTER TABLE "commerce"."order_line_item" ADD CONSTRAINT "order_line_item_tax_amount_nonneg_check" CHECK ("tax_amount" >= 0);
 ALTER TABLE "commerce"."order_line_item" ADD CONSTRAINT "order_line_item_tax_rate_nonneg_check" CHECK ("tax_rate" >= 0);
+-- tax_rate is integer BASIS POINTS, so a rate can never exceed 10000 (100%); an
+-- explicit rate above the ceiling is rejected in createOrder AND backstopped here.
+ALTER TABLE "commerce"."order_line_item" ADD CONSTRAINT "order_line_item_tax_rate_ceiling_check" CHECK ("tax_rate" <= 10000);
 ALTER TABLE "commerce"."order_line_item" ADD CONSTRAINT "order_line_item_quantity_pos_check" CHECK ("quantity" > 0);
 
 -- ===========================================================================

@@ -49,12 +49,17 @@ import { orderRepository } from '../repository/order';
 import { COMMERCE_SCHEMA } from '../withTenant';
 import type { CreateOrderLineItemInput } from '../repository/types';
 
-// German VAT default rates in integer BASIS POINTS (1900 = 19.00%, 700 = 7.00%).
-// b5 owns only the catalog-side tax_class CLASSIFICATION, not a rate (the bought
-// tax engine is E8), so v1 maps a class to one of these defaults; a caller may
-// override per line with an explicit taxRate.
+// German VAT default rates in integer BASIS POINTS (1900 = 19.00%, 700 = 7.00%,
+// 0 = zero-rated). b5 owns only the catalog-side tax_class CLASSIFICATION, not a
+// rate (the bought tax engine is E8), so v1 maps a class to one of these defaults;
+// a caller may override per line with an explicit taxRate.
 export const STANDARD_RATE_BPS = 1900;
 export const REDUCED_RATE_BPS = 700;
+export const ZERO_RATE_BPS = 0;
+// 100% in basis points: the upper bound on any tax rate. Mirrors the b6 migration's
+// CHECK (tax_rate <= 10000) on order_line_item; an explicit rate above this is a
+// programming error, surfaced loudly at the boundary (never persisted).
+export const MAX_RATE_BPS = 10000;
 
 // The legal notices set on the order when VAT is suppressed. ASCII-safe text (no
 // em-dashes / en-dashes per the repo convention).
@@ -117,7 +122,7 @@ export type CreateOrderResult =
  * shortages so the outer createOrder can roll back and return the explicit
  * { ok:false, shortages } contract. Never escapes this module.
  */
-class OrderShortageError extends Error {
+export class OrderShortageError extends Error {
   readonly shortages: Shortage[];
   constructor(shortages: Shortage[]) {
     super('order short-stocked; transaction rolled back');
@@ -141,7 +146,7 @@ function assertNonNegativeIntCents(value: number, label: string): void {
 }
 
 /** The resolved tax treatment for one line (b5 TAX-04 full snapshot). */
-interface LineTax {
+export interface LineTax {
   net: number;
   tax: number;
   gross: number;
@@ -158,7 +163,7 @@ interface LineTax {
  * the class-derived default. All arithmetic is integer (Math.round), so no float
  * can enter the totals.
  */
-function computeLineTax(
+export function computeLineTax(
   base: number,
   opts: {
     taxClass?: string | null;
@@ -176,11 +181,16 @@ function computeLineTax(
   }
 
   const rate = resolveLineRate(opts.taxClass, opts.explicitRate);
-  if (rate === 0) {
+  if (rate === ZERO_RATE_BPS) {
     return { net: base, tax: 0, gross: base, rate: 0, treatment: 'zero' };
   }
 
-  const treatment = opts.taxClass === 'reduced' ? 'reduced' : 'standard';
+  // Derive the treatment discriminator from the RESOLVED rate, not from taxClass
+  // alone: an explicit per-line rate override (e.g. 700 with a null taxClass) must
+  // snapshot a CONSISTENT (rate, treatment) pair so a per-Steuersatz reprint buckets
+  // it correctly. The reduced-rate bps maps to 'reduced', anything else 'standard'
+  // (the zero case is already returned above).
+  const treatment = treatmentForRate(rate);
   if (opts.netOrGross === 'gross') {
     // base is gross (tax-inclusive): extract the tax from within.
     const tax = Math.round((base * rate) / (10000 + rate));
@@ -192,25 +202,46 @@ function computeLineTax(
 }
 
 /** Map an applied tax class to its default rate, or honor an explicit override. */
-function resolveLineRate(taxClass: string | null | undefined, explicitRate?: number): number {
+export function resolveLineRate(taxClass: string | null | undefined, explicitRate?: number): number {
   if (explicitRate != null) {
     assertNonNegativeIntCents(explicitRate, 'taxRate');
+    // Reject an explicit rate above the basis-points ceiling (mirrors the b6
+    // migration's CHECK (tax_rate <= 10000)); a rate over 100% is a bug, not data.
+    if (explicitRate > MAX_RATE_BPS) {
+      throw new Error(
+        `createOrder: taxRate must be <= ${MAX_RATE_BPS} basis points, got ${explicitRate}`,
+      );
+    }
     return explicitRate;
   }
   if (taxClass === 'reduced') return REDUCED_RATE_BPS;
-  if (taxClass === 'zero') return 0;
+  if (taxClass === 'zero') return ZERO_RATE_BPS;
   return STANDARD_RATE_BPS;
 }
 
+/**
+ * Map a RESOLVED non-zero rate (basis points) to its treatment discriminator. The
+ * reduced-rate bps is 'reduced', everything else 'standard'. (A zero rate is the
+ * 'zero' treatment, handled by the caller before this is reached.) Deriving the
+ * treatment from the rate (not from taxClass) keeps the snapshotted (rate,
+ * treatment) pair consistent even when an explicit per-line rate overrides the
+ * class-derived default.
+ */
+function treatmentForRate(rate: number): CreateOrderLineItemInput['taxTreatment'] {
+  if (rate === ZERO_RATE_BPS) return 'zero';
+  if (rate === REDUCED_RATE_BPS) return 'reduced';
+  return 'standard';
+}
+
 /** True iff the error is the b3 inner-reserve concurrent-duplicate sentinel. */
-function isReserveDuplicate(error: unknown): boolean {
+export function isReserveDuplicate(error: unknown): boolean {
   // DuplicateRequestError is not exported from reserve.ts (it never escapes the
   // module by design), so we match its name tag, which it sets explicitly.
   return error instanceof Error && error.name === 'DuplicateRequestError';
 }
 
 /** True iff the error is a UNIQUE(request_id) violation on the order row itself. */
-function isOrderRequestIdConflict(error: unknown): boolean {
+export function isOrderRequestIdConflict(error: unknown): boolean {
   if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
     return false;
   }
@@ -415,12 +446,31 @@ async function resolvePriorOrder(
 }
 
 /** Boundary validation: a malformed cart is a programming error, surfaced loudly. */
-function validateCart(cart: Cart): void {
+export function validateCart(cart: Cart): void {
   if (!cart.requestId) throw new Error('createOrder: cart.requestId is required');
   if (!cart.currency) throw new Error('createOrder: cart.currency is required');
   if (!cart.taxRegion) throw new Error('createOrder: cart.taxRegion is required');
   if (!Array.isArray(cart.lines) || cart.lines.length === 0) {
     throw new Error('createOrder: cart must have at least one line');
+  }
+  // Reverse-charge precondition: the Section 13b reverse-charge mechanism only
+  // applies to a B2B sale to a VAT-registered recipient. reverseCharge is a bare
+  // client boolean that SUPPRESSES VAT and emits the 13b notice, so without this
+  // gate a {customerType:'b2c', reverseCharge:true} cart would silently yield a
+  // zero-VAT B2C invoice (illegal). REJECT loudly unless the recipient is B2B with
+  // a non-empty VAT id. (VIES / format validation of the vatId stays deferred to
+  // E8; only the b2b + non-empty-vatId precondition is enforced now.)
+  if (cart.reverseCharge) {
+    if (cart.customerType !== 'b2b') {
+      throw new Error(
+        'createOrder: reverseCharge requires customerType "b2b" (a B2C reverse-charge invoice is illegal)',
+      );
+    }
+    if (!cart.vatId || cart.vatId.trim() === '') {
+      throw new Error(
+        'createOrder: reverseCharge requires a non-empty vatId (the recipient must be VAT-registered)',
+      );
+    }
   }
   for (const line of cart.lines) {
     if (!line.inventoryItemId) throw new Error('createOrder: line.inventoryItemId is required');

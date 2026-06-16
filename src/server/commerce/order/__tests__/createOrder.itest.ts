@@ -32,6 +32,13 @@ import { createOrder, type Cart } from '../createOrder';
 
 let container: StartedTestContainer | undefined;
 let prisma: PrismaClient | undefined;
+// A second client authenticating as the DML-only application role, used to prove
+// the no-DELETE/no-UPDATE-on-invoice contract bites for ordinary application
+// traffic (mirrors the b5 pricing.itest.ts commerce_app pattern).
+let appPrisma: PrismaClient | undefined;
+
+const APP_ROLE = 'commerce_app';
+const APP_PASSWORD = 'commerce_app_pw';
 
 function makeUrl(user: string, password: string, host: string, port: number): string {
   return `postgresql://${user}:${password}@${host}:${port}/framer_clone_test`;
@@ -48,7 +55,9 @@ beforeAll(async () => {
     .withWaitStrategy(Wait.forLogMessage(/database system is ready to accept connections/, 2))
     .start();
 
-  const url = makeUrl('test', 'test', container.getHost(), container.getMappedPort(5432));
+  const host = container.getHost();
+  const port = container.getMappedPort(5432);
+  const url = makeUrl('test', 'test', host, port);
 
   // Apply every migration through b6.
   execSync('pnpm exec prisma migrate deploy', {
@@ -57,12 +66,69 @@ beforeAll(async () => {
   });
 
   prisma = new PrismaClient({ datasourceUrl: url });
+
+  // Provision the commerce_app DML-only role and apply the SAME REVOKE the b6
+  // migration encodes for order + order_line_item. In production the role exists
+  // out of band (prisma/sql/commerce-roles.sql) BEFORE migrations run, so the b6
+  // migration's role-guarded REVOKE fires at deploy time. Here the role does not
+  // exist when `migrate deploy` runs above, so that guarded block is skipped; we
+  // provision the role and re-issue the identical REVOKE to assert the contract's
+  // security OUTCOME against a live database. commerce_app is a non-owner role, so
+  // unlike the superuser 'test' it is actually bound by table GRANT/REVOKE.
+  await prisma.$executeRawUnsafe(`CREATE ROLE "${APP_ROLE}" LOGIN PASSWORD '${APP_PASSWORD}'`);
+  await prisma.$executeRawUnsafe(`GRANT USAGE ON SCHEMA "commerce" TO "${APP_ROLE}"`);
+  await prisma.$executeRawUnsafe(
+    `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "commerce" TO "${APP_ROLE}"`,
+  );
+  // The no-UPDATE/no-DELETE-on-invoice contract (mirrors the b6 migration block).
+  await prisma.$executeRawUnsafe(
+    `REVOKE UPDATE, DELETE ON "commerce"."order" FROM "${APP_ROLE}"`,
+  );
+  await prisma.$executeRawUnsafe(
+    `REVOKE UPDATE, DELETE ON "commerce"."order_line_item" FROM "${APP_ROLE}"`,
+  );
+
+  appPrisma = new PrismaClient({ datasourceUrl: makeUrl(APP_ROLE, APP_PASSWORD, host, port) });
 }, 180_000);
 
 afterAll(async () => {
+  await appPrisma?.$disconnect();
   await prisma?.$disconnect();
   await container?.stop();
 });
+
+// Flatten a Prisma / Postgres error into one searchable string so a rejection can
+// be asserted against the SPECIFIC SQLSTATE rather than a bare throw.
+function errorText(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const e = error as { message?: unknown; meta?: unknown; code?: unknown };
+    const parts: string[] = [];
+    if (typeof e.message === 'string') parts.push(e.message);
+    if (typeof e.code === 'string') parts.push(e.code);
+    if (e.meta) parts.push(JSON.stringify(e.meta));
+    return parts.join(' | ');
+  }
+  return String(error);
+}
+
+async function expectRejectionMatching(
+  op: () => Promise<unknown>,
+  ...patterns: RegExp[]
+): Promise<void> {
+  let caught: unknown;
+  let threw = false;
+  try {
+    await op();
+  } catch (error) {
+    threw = true;
+    caught = error;
+  }
+  expect(threw, 'expected the operation to reject, but it resolved').toBe(true);
+  const text = errorText(caught);
+  for (const pattern of patterns) {
+    expect(text, `rejection text did not match ${pattern}: ${text}`).toMatch(pattern);
+  }
+}
 
 let suffixCounter = 0;
 function suffix(): string {
@@ -332,5 +398,251 @@ describe('b6 createOrder (Dockerized Postgres)', () => {
     // No DELETE path for the invoice: the FK is ON DELETE RESTRICT, so an Order a
     // credit note corrects can never be erased.
     await expect(prisma!.order.delete({ where: { id: result.orderId } })).rejects.toThrow();
+  });
+
+  // =========================================================================
+  // TEST FIX 4: order-level idempotency on request_id.
+  // =========================================================================
+  it('idempotency (sequential): a duplicate requestId returns the SAME orderId, one order row, one reservation per line', async () => {
+    const { variantId } = await seedPricedVariant(1000);
+    const { itemId, locationId } = await seedStock(10);
+
+    const requestId = `idem-seq-${suffix()}`;
+    const cart: Cart = {
+      requestId,
+      currency: 'EUR',
+      taxRegion: 'DE',
+      lines: [{ inventoryItemId: itemId, variantId, quantity: 2, locationId }],
+    };
+
+    const first = await createOrder(prisma!, cart);
+    const second = await createOrder(prisma!, cart);
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    if (!first.ok || !second.ok) throw new Error('unreachable');
+
+    // Same orderId (the sequential pre-check re-read the prior order).
+    expect(second.orderId).toBe(first.orderId);
+
+    // EXACTLY one order row for the request_id.
+    expect(await prisma!.order.count({ where: { requestId } })).toBe(1);
+
+    // EXACTLY one reservation for the single line's per-line request_id (`${requestId}:0`),
+    // so the second call did NOT double-reserve.
+    expect(await prisma!.reservation.count({ where: { requestId: `${requestId}:0` } })).toBe(1);
+    expect(await prisma!.stockMovement.count({ where: { requestId: `${requestId}:0` } })).toBe(1);
+
+    // reserved bumped exactly once (by 2), not twice.
+    const level = await prisma!.inventoryLevel.findUniqueOrThrow({
+      where: { inventoryItemId_locationId: { inventoryItemId: itemId, locationId } },
+    });
+    expect(level.reservedQuantity).toBe(2);
+  });
+
+  it('idempotency (concurrent): two createOrder with the SAME requestId both return the SAME orderId, one order, no double reservation', async () => {
+    // Ample stock, so this isolates the IDEMPOTENCY race (not a shortage race).
+    // Both calls pass the sequential pre-check under READ COMMITTED (each sees no
+    // prior order), both try to insert; the LOSER trips the UNIQUE(request_id) on
+    // the order row (or on a per-line reservation). createOrder catches that, rolls
+    // back, and re-reads the winner's committed order in a FRESH transaction
+    // (resolvePriorOrder), returning the idempotent { ok:true } with the SAME id.
+    const { variantId } = await seedPricedVariant(1000);
+    const { itemId, locationId } = await seedStock(50);
+
+    const requestId = `idem-conc-${suffix()}`;
+    const cart: Cart = {
+      requestId,
+      currency: 'EUR',
+      taxRegion: 'DE',
+      lines: [{ inventoryItemId: itemId, variantId, quantity: 3, locationId }],
+    };
+
+    const [a, b] = await Promise.all([createOrder(prisma!, cart), createOrder(prisma!, cart)]);
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true);
+    if (!a.ok || !b.ok) throw new Error('unreachable');
+
+    // BOTH resolve to the SAME orderId (no unhandled 500-shaped throw).
+    expect(a.orderId).toBe(b.orderId);
+
+    // Exactly ONE order row and ONE reservation/movement for the per-line request_id.
+    expect(await prisma!.order.count({ where: { requestId } })).toBe(1);
+    expect(await prisma!.reservation.count({ where: { requestId: `${requestId}:0` } })).toBe(1);
+    expect(await prisma!.stockMovement.count({ where: { requestId: `${requestId}:0` } })).toBe(1);
+
+    // reserved bumped EXACTLY once (by 3), not twice: no double-decrement.
+    const level = await prisma!.inventoryLevel.findUniqueOrThrow({
+      where: { inventoryItemId_locationId: { inventoryItemId: itemId, locationId } },
+    });
+    expect(level.reservedQuantity).toBe(3);
+  });
+
+  // =========================================================================
+  // TEST FIX 5: the no-UPDATE/no-DELETE-on-invoice contract bites the
+  // commerce_app role (SQLSTATE 42501). The superuser FK-RESTRICT case stays
+  // separate (the CreditNote test above).
+  // =========================================================================
+  it('commerce_app role: DELETE on an order with NO credit note is denied (42501), UPDATE on a placed line is denied (42501)', async () => {
+    const { variantId } = await seedPricedVariant(1000);
+    const { itemId, locationId } = await seedStock(10);
+
+    const cart: Cart = {
+      requestId: `revoke-${suffix()}`,
+      currency: 'EUR',
+      taxRegion: 'DE',
+      lines: [{ inventoryItemId: itemId, variantId, quantity: 1, locationId }],
+    };
+    const result = await createOrder(prisma!, cart);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+
+    const line = await prisma!.orderLineItem.findFirstOrThrow({ where: { orderId: result.orderId } });
+    const app = appPrisma!;
+
+    // The order has NO credit note referencing it, so the superuser FK RESTRICT is
+    // NOT what bites here: it is the REVOKE on the commerce_app role. A non-owner
+    // role with DELETE revoked is denied at the privilege layer (42501), BEFORE the
+    // FK is even checked.
+    await expectRejectionMatching(
+      () => app.$executeRawUnsafe(`DELETE FROM "commerce"."order" WHERE "id" = $1`, result.orderId),
+      /42501|permission denied/,
+    );
+
+    // UPDATE on a placed line item is denied: a placed invoice line is append-only.
+    await expectRejectionMatching(
+      () =>
+        app.$executeRawUnsafe(
+          `UPDATE "commerce"."order_line_item" SET "quantity" = 99 WHERE "id" = $1`,
+          line.id,
+        ),
+      /42501|permission denied/,
+    );
+
+    // UPDATE on the order itself is likewise denied.
+    await expectRejectionMatching(
+      () =>
+        app.$executeRawUnsafe(
+          `UPDATE "commerce"."order" SET "status" = 'cancelled' WHERE "id" = $1`,
+          result.orderId,
+        ),
+      /42501|permission denied/,
+    );
+
+    // The order and line survived: the privilege check stopped the mutation cold.
+    const survived = await prisma!.order.findUniqueOrThrow({ where: { id: result.orderId } });
+    expect(survived.status).toBe('confirmed');
+  });
+
+  // =========================================================================
+  // TEST FIX 6: money-math branches against a live database.
+  // =========================================================================
+  it('money-math: gross-price extraction (1190 gross @ 1900bps -> tax=190, net=1000)', async () => {
+    const { variantId } = await seedPricedVariant(1190);
+    const { itemId, locationId } = await seedStock(10);
+
+    const cart: Cart = {
+      requestId: `gross-${suffix()}`,
+      currency: 'EUR',
+      taxRegion: 'DE',
+      netOrGross: 'gross',
+      lines: [{ inventoryItemId: itemId, variantId, quantity: 1, locationId }],
+    };
+    const result = await createOrder(prisma!, cart);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+
+    const order = await prisma!.order.findUniqueOrThrow({ where: { id: result.orderId } });
+    expect(order.subtotal).toBe(1000); // net extracted from within the gross
+    expect(order.taxAmount).toBe(190);
+    expect(order.total).toBe(1190); // gross is the price, unchanged
+
+    const line = await prisma!.orderLineItem.findFirstOrThrow({ where: { orderId: result.orderId } });
+    expect(line.taxRate).toBe(1900);
+    expect(line.taxTreatment).toBe('standard');
+  });
+
+  it('money-math: reduced 7% (taxClass=reduced) net path snapshots rate 700 + treatment reduced', async () => {
+    const { variantId } = await seedPricedVariant(1000, { taxClass: 'reduced' });
+    const { itemId, locationId } = await seedStock(10);
+
+    const cart: Cart = {
+      requestId: `reduced-${suffix()}`,
+      currency: 'EUR',
+      taxRegion: 'DE',
+      lines: [{ inventoryItemId: itemId, variantId, quantity: 1, locationId }],
+    };
+    const result = await createOrder(prisma!, cart);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+
+    const order = await prisma!.order.findUniqueOrThrow({ where: { id: result.orderId } });
+    expect(order.subtotal).toBe(1000);
+    expect(order.taxAmount).toBe(70); // 7% of 1000
+    expect(order.total).toBe(1070);
+
+    const line = await prisma!.orderLineItem.findFirstOrThrow({ where: { orderId: result.orderId } });
+    expect(line.taxRate).toBe(700);
+    expect(line.taxClass).toBe('reduced');
+    expect(line.taxTreatment).toBe('reduced');
+  });
+
+  it('money-math: explicit zero-rate (taxClass=zero) snapshots rate 0 + treatment zero, no VAT', async () => {
+    const { variantId } = await seedPricedVariant(1000, { taxClass: 'zero' });
+    const { itemId, locationId } = await seedStock(10);
+
+    const cart: Cart = {
+      requestId: `zero-${suffix()}`,
+      currency: 'EUR',
+      taxRegion: 'DE',
+      lines: [{ inventoryItemId: itemId, variantId, quantity: 2, locationId }],
+    };
+    const result = await createOrder(prisma!, cart);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+
+    const order = await prisma!.order.findUniqueOrThrow({ where: { id: result.orderId } });
+    expect(order.subtotal).toBe(2000);
+    expect(order.taxAmount).toBe(0);
+    expect(order.total).toBe(2000);
+
+    const line = await prisma!.orderLineItem.findFirstOrThrow({ where: { orderId: result.orderId } });
+    expect(line.taxRate).toBe(0);
+    expect(line.taxTreatment).toBe('zero');
+  });
+
+  it('money-math: a 2-line order sums line nets/taxes into the order totals with two distinct snapshot rows', async () => {
+    const a = await seedPricedVariant(1000); // standard 19%
+    const b = await seedPricedVariant(2000, { taxClass: 'reduced' }); // reduced 7%
+    const stockA = await seedStock(10);
+    const stockB = await seedStock(10);
+
+    const cart: Cart = {
+      requestId: `two-line-${suffix()}`,
+      currency: 'EUR',
+      taxRegion: 'DE',
+      lines: [
+        { inventoryItemId: stockA.itemId, variantId: a.variantId, quantity: 2, locationId: stockA.locationId }, // net 2000, tax 380
+        { inventoryItemId: stockB.itemId, variantId: b.variantId, quantity: 3, locationId: stockB.locationId }, // net 6000, tax 420
+      ],
+    };
+    const result = await createOrder(prisma!, cart);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+
+    const lines = await prisma!.orderLineItem.findMany({
+      where: { orderId: result.orderId },
+      orderBy: { subtotal: 'asc' },
+    });
+    expect(lines).toHaveLength(2); // two distinct snapshot rows
+    const sumNets = lines.reduce((acc, l) => acc + l.subtotal, 0);
+    const sumTaxes = lines.reduce((acc, l) => acc + l.taxAmount, 0);
+    expect(sumNets).toBe(8000); // 2000 + 6000
+    expect(sumTaxes).toBe(800); // 380 + 420
+
+    const order = await prisma!.order.findUniqueOrThrow({ where: { id: result.orderId } });
+    expect(order.subtotal).toBe(sumNets);
+    expect(order.taxAmount).toBe(sumTaxes);
+    expect(order.total).toBe(order.subtotal + order.taxAmount);
+    expect(order.total).toBe(8800);
   });
 });
