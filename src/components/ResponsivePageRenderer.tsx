@@ -21,6 +21,11 @@ import ComponentRenderer from './ComponentRenderer';
 import GroundWrapper from './GroundWrapper';
 import { useStore } from '@/hooks/useStore';
 import { useDragSource } from '@/lib/drag';
+import {
+  createScope,
+  pushPageFrame,
+  type BindingScope,
+} from '@/lib/bindings/resolver/scope';
 
 // Parse a CSS length into pixels for GroundWrapper sizing. Accepts a raw
 // number or a `<n>px` string. Anything else (e.g. '100%', 'auto',
@@ -62,6 +67,12 @@ const ResponsivePageRenderer = observer(() => {
   // Use first viewport as primary (largest minWidth).
   const primaryViewport = viewportNodes[0];
 
+  // Root binding scope: a page frame carrying route params. The editor canvas
+  // has no concrete route params yet, so this is an empty params bag; a bound
+  // RecordView therefore resolves `{{page.params.id}}` to undefined and shows
+  // its empty state until preview/publish supplies real params.
+  const rootScope: BindingScope = pushPageFrame(createScope(), {});
+
   return (
     <>
       {/* 1. Viewport frames */}
@@ -72,6 +83,7 @@ const ResponsivePageRenderer = observer(() => {
           appComponentTree={appComponentTree}
           breakpoints={breakpoints}
           primaryBreakpointId={primaryViewport?.breakpointId || viewport.breakpointId!}
+          scope={rootScope}
         />
       ))}
 
@@ -82,6 +94,7 @@ const ResponsivePageRenderer = observer(() => {
           element={element}
           breakpoints={breakpoints}
           primaryBreakpointId={primaryViewport?.breakpointId || 'default'}
+          scope={rootScope}
         />
       ))}
     </>
@@ -95,6 +108,7 @@ interface ViewportFrameProps {
   appComponentTree: ComponentInstance;
   breakpoints: { id: string; minWidth: number; label?: string }[];
   primaryBreakpointId: string;
+  scope: BindingScope;
 }
 
 const ViewportFrame = observer(({
@@ -102,6 +116,7 @@ const ViewportFrame = observer(({
   appComponentTree,
   breakpoints,
   primaryBreakpointId,
+  scope,
 }: ViewportFrameProps) => {
   const { editorUI } = useStore();
   const { onPointerDown } = useDragSource(
@@ -158,6 +173,7 @@ const ViewportFrame = observer(({
               breakpointId={viewport.breakpointId!}
               allBreakpoints={breakpoints}
               primaryId={primaryBreakpointId}
+              scope={scope}
             />
           )}
         </div>
@@ -172,12 +188,14 @@ interface FloatingElementProps {
   element: ComponentInstance;
   breakpoints: { id: string; minWidth: number; label?: string }[];
   primaryBreakpointId: string;
+  scope: BindingScope;
 }
 
 const FloatingElement = observer(({
   element,
   breakpoints,
   primaryBreakpointId,
+  scope,
 }: FloatingElementProps) => {
   const { editorUI } = useStore();
   const { onPointerDown } = useDragSource(
@@ -218,6 +236,7 @@ const FloatingElement = observer(({
           breakpointId=""
           allBreakpoints={breakpoints}
           primaryId={primaryBreakpointId}
+          scope={scope}
         />
       </div>
     </GroundWrapper>

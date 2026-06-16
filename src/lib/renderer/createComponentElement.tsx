@@ -13,6 +13,12 @@
 import React from 'react';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag';
+import type { BindingScope } from '@/lib/bindings/resolver/scope';
+import { createScope } from '@/lib/bindings/resolver/scope';
+import CollectionRenderer, {
+  type RenderNode,
+} from '@/lib/renderer/data/CollectionRenderer';
+import RecordViewRenderer from '@/lib/renderer/data/RecordViewRenderer';
 
 export interface CreateComponentElementOptions {
   // When present, the dispatch attaches `data-component-id` and
@@ -21,6 +27,17 @@ export interface CreateComponentElementOptions {
   // make the attributes visible in the DOM (an unwritten contract for entries
   // in `window.__componentRegistry`).
   identity?: { breakpointId: string; componentId: string };
+
+  // Binding scope active for this node. Threaded by both host renderers so
+  // BOUND data components (Collection / RecordView) can resolve their source
+  // and push row frames. Defaults to an empty scope when omitted.
+  scope?: BindingScope;
+
+  // Recursion callback into the active host renderer (editor vs headless).
+  // The data renderers use it to render the per-row template against a
+  // row-scoped binding chain, which keeps editor and headless output
+  // identical. Required for data-component dispatch; ordinary nodes ignore it.
+  renderNode?: RenderNode;
 }
 
 export function createComponentElement(
@@ -46,19 +63,65 @@ export function createComponentElement(
       return React.createElement(component.type as any, props);
     }
 
-    // Data-component placeholder branch (Wave 1 stub). Registry entries with
-    // `dataComponentKind` carry a `data-component-kind` HTML attribute on
-    // their default props; we use it here as the dispatch marker. When the
-    // component is unbound (no source collection / record yet) and has no
-    // hand-authored children, render a dashed-box label so designers see
-    // immediately that the node exists and needs configuration. Wave 2 swaps
-    // this branch for the real renderer in
-    // `data-bindings-read-only-data-components`.
+    // Data-component dispatch. Registry entries with `dataComponentKind`
+    // carry a `data-component-kind` HTML attribute on their default props; we
+    // use it here as the dispatch marker.
     const dataKind = propsWithIdentity['data-component-kind'] as
       | 'collection'
       | 'record-view'
       | 'table-view'
       | undefined;
+
+    // BOUND data nodes dispatch to the real data renderers, which own their
+    // own (per-row) children construction and ignore the generic `children`
+    // built by the host renderer. `table-view` is RESERVED here: its renderer
+    // ships in `slice2-tableview-renderer`, so until then a bound TableView
+    // falls back to the dashed-box placeholder with a `TableView pending` note.
+    if (dataKind && component.hasBindings) {
+      const scope = options?.scope ?? createScope();
+      const renderNode = options?.renderNode;
+      if (renderNode && dataKind === 'collection') {
+        return (
+          <CollectionRenderer
+            node={component}
+            scope={scope}
+            renderNode={renderNode}
+            hostType={component.type as string}
+            hostProps={propsWithIdentity}
+          />
+        );
+      }
+      if (renderNode && dataKind === 'record-view') {
+        return (
+          <RecordViewRenderer
+            node={component}
+            scope={scope}
+            renderNode={renderNode}
+            hostType={component.type as string}
+            hostProps={propsWithIdentity}
+          />
+        );
+      }
+      if (dataKind === 'table-view') {
+        const pending = React.createElement(
+          'span',
+          {
+            style: {
+              color: '#9ca3af',
+              fontSize: '12px',
+              fontFamily: 'Inter, sans-serif',
+              pointerEvents: 'none',
+              userSelect: 'none',
+            },
+          },
+          'Table view (pending)',
+        );
+        return React.createElement(component.type as any, propsWithIdentity, pending);
+      }
+    }
+
+    // Unbound data node: render a dashed-box label (the Wave 1 stub) so
+    // designers see immediately that the node exists and needs configuration.
     if (dataKind && !component.hasBindings && children.length === 0) {
       const label =
         dataKind === 'collection'
