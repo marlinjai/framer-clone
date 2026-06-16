@@ -12,12 +12,13 @@
 // each repeat gets its own `{{row.*}}` scope. It renders the host wrapper
 // element itself so identity attributes and the container styling survive.
 //
-// State handling is a MINIMAL inline placeholder (loading / empty / error
-// spans). The shared loading/empty/error directive helper lands in
-// `slice2-data-loading-empty-error-states`; this renderer threads its own
-// inline state until then. Errors (a failed `listRows`, a missing/unresolved
-// collection binding) ALWAYS surface to the error/empty path, never silently
-// render as success.
+// The loading / empty / error / content decision is routed through the shared
+// pure `resolveDataState` helper so the "errors surface, never swallow"
+// contract is defined once. In editor mode an ERROR shows an inline chip with
+// the real message; in preview/headless mode an ERROR renders nothing for the
+// slot (no broken layout, no throw during SSR/static emit). Errors (a failed
+// `listRows`, a missing/unresolved collection binding) ALWAYS surface to the
+// error/empty path, never silently render as success.
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
@@ -31,6 +32,7 @@ import {
 } from '@/lib/bindings/resolver/expression';
 import { useDataSource } from '@/lib/bindings/dataSource/context';
 import type { Query, Row } from '@/lib/bindings/dataSource/types';
+import { resolveDataState, type DataStateMode } from './resolveDataState';
 
 /** Render a single component node against a scope. Supplied by whichever host
  *  renderer (editor `ComponentRenderer` / `HeadlessComponentRenderer`) is
@@ -77,6 +79,32 @@ const NOTE_STYLE: React.CSSProperties = {
   userSelect: 'none',
 };
 
+// Editor-only error chip: visually distinct so a designer sees the failure,
+// carrying the REAL error message (the contract: errors surface, never swallow).
+const ERROR_CHIP_STYLE: React.CSSProperties = {
+  display: 'inline-block',
+  color: '#b91c1c',
+  background: '#fef2f2',
+  border: '1px solid #fecaca',
+  borderRadius: '4px',
+  padding: '2px 6px',
+  fontSize: '12px',
+  fontFamily: 'Inter, sans-serif',
+  pointerEvents: 'none',
+  userSelect: 'none',
+};
+
+/** Read a string-valued node prop (e.g. loadingContent / emptyContent),
+ *  falling back to `fallback` when absent or not a non-empty string. */
+function stringProp(
+  props: Record<string, unknown> | undefined,
+  key: string,
+  fallback: string,
+): string {
+  const raw = props?.[key];
+  return typeof raw === 'string' && raw.length > 0 ? raw : fallback;
+}
+
 type FetchState =
   | { status: 'loading' }
   | { status: 'ready'; rows: Row[] }
@@ -90,10 +118,12 @@ export interface CollectionRendererProps {
   hostType: string;
   /** Already-resolved wrapper props (identity attrs + style + marker). */
   hostProps: Record<string, unknown>;
+  /** Rendering surface: editor surfaces error chips, preview renders nothing. */
+  mode?: DataStateMode;
 }
 
 const CollectionRenderer = observer(
-  ({ node, scope, renderNode, hostType, hostProps }: CollectionRendererProps) => {
+  ({ node, scope, renderNode, hostType, hostProps, mode = 'preview' }: CollectionRendererProps) => {
     const dataSource = useDataSource();
 
     const collectionId = resolveCollectionId(node.bindings?.collection as ReadBinding | undefined, scope);
@@ -137,53 +167,55 @@ const CollectionRenderer = observer(
     const wrapperProps = { ...hostProps };
     delete (wrapperProps as any).children;
 
+    const note = (text: string, style: React.CSSProperties = NOTE_STYLE) =>
+      React.createElement(
+        hostType as any,
+        wrapperProps,
+        React.createElement('span', { style }, text),
+      );
+
     // Unresolved / missing collection binding: surface the error path, never
-    // a silent empty success.
+    // a silent empty success. (This is a configuration guard, not a fetch
+    // state, so it stays outside resolveDataState.)
     if (!collectionId) {
-      return React.createElement(
-        hostType as any,
-        wrapperProps,
-        React.createElement('span', { style: NOTE_STYLE }, 'Collection: no source collection bound'),
-      );
+      return note('Collection: no source collection bound');
     }
 
-    if (state.status === 'loading') {
-      return React.createElement(
-        hostType as any,
-        wrapperProps,
-        React.createElement('span', { style: NOTE_STYLE }, 'Loading...'),
-      );
+    // Route the loading/empty/error/content decision through the shared helper.
+    const directive = resolveDataState({
+      isLoading: state.status === 'loading',
+      rows: state.status === 'ready' ? state.rows : null,
+      error: state.status === 'error' ? new Error(state.message) : null,
+      mode,
+    });
+
+    if (directive.kind === 'loading') {
+      return note(stringProp(node.props as Record<string, unknown> | undefined, 'loadingContent', 'Loading...'));
     }
 
-    if (state.status === 'error') {
-      return React.createElement(
-        hostType as any,
-        wrapperProps,
-        React.createElement('span', { style: NOTE_STYLE }, `Failed to load collection: ${state.message}`),
-      );
+    if (directive.kind === 'error') {
+      // Editor: an inline chip carrying the real message. Preview/headless:
+      // render nothing for the slot (empty wrapper, no broken layout, no throw).
+      return directive.message
+        ? note(`Failed to load collection: ${directive.message}`, ERROR_CHIP_STYLE)
+        : React.createElement(hostType as any, wrapperProps);
     }
 
+    if (directive.kind === 'empty') {
+      return note(stringProp(node.props as Record<string, unknown> | undefined, 'emptyContent', 'No items'));
+    }
+
+    // CONTENT: rows present and non-empty.
+    const rows = state.status === 'ready' ? state.rows : [];
     const template = node.children.length > 0 ? node.children[0] : null;
-
-    if (state.rows.length === 0) {
-      return React.createElement(
-        hostType as any,
-        wrapperProps,
-        React.createElement('span', { style: NOTE_STYLE }, 'No results'),
-      );
-    }
 
     if (!template) {
       // Bound and populated but nothing to repeat: surface a configuration
       // note rather than rendering an empty success.
-      return React.createElement(
-        hostType as any,
-        wrapperProps,
-        React.createElement('span', { style: NOTE_STYLE }, 'Collection: add a child to use as the row template'),
-      );
+      return note('Collection: add a child to use as the row template');
     }
 
-    const items = state.rows.map((row) => {
+    const items = rows.map((row) => {
       const rowScope = pushRowFrame(scope, row);
       return <React.Fragment key={row.id}>{renderNode(template, rowScope)}</React.Fragment>;
     });

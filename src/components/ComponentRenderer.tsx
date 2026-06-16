@@ -162,6 +162,9 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
       identity: { breakpointId, componentId: component.id },
       scope: activeScope,
       renderNode,
+      // Editor surface: data renderers surface an inline error chip with the
+      // real message (errors must be visible to the designer).
+      mode: 'editor',
     },
   );
 

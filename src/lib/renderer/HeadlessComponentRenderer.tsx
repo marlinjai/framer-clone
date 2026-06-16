@@ -80,6 +80,9 @@ const HeadlessComponentRenderer = observer(({
     identity: { breakpointId, componentId: component.id },
     scope: activeScope,
     renderNode,
+    // Preview/headless/static-emit surface: data renderers render nothing for
+    // an errored slot (no broken layout, no thrown render during SSR).
+    mode: 'preview',
   });
 });
 
