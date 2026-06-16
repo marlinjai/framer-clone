@@ -209,11 +209,31 @@ model StockLocation {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  levels       InventoryLevel[]
-  movements    StockMovement[]
-  reservations Reservation[]
+  levels              InventoryLevel[]
+  movements           StockMovement[]
+  reservations        Reservation[]
+  fulfillmentDefaults FulfillmentLocationDefault[]
 
   @@map("stock_location")
+  @@schema("commerce")
+}
+
+// Per-workspace default fulfillment location (b3). When a reservation omits an
+// explicit locationId, resolveLocation reads the default for the workspace from
+// this table; NO reservation is ever created without a concrete location. v1
+// ships ONE constant workspace, so this table normally holds a single row, but
+// it is keyed by workspace_id so E7 multi-tenancy needs no shape change. The
+// deferred transfer-balance trigger ships in the same migration (raw SQL,
+// Prisma cannot express a CONSTRAINT TRIGGER).
+model FulfillmentLocationDefault {
+  workspaceId String   @id @map("workspace_id")
+  locationId  String   @map("location_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  location StockLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@map("fulfillment_location_default")
   @@schema("commerce")
 }
 
