@@ -90,8 +90,22 @@ export interface BindableSlotMeta {
   /**
    * Which scope frame the slot should resolve in. Used by the picker to
    * filter what fields / collections show up.
+   *
+   * The commerce hints (`'product'`, `'variant'`, `'availability'`) are added
+   * by the Track C commerce resolver: storefront slots resolve against the
+   * product / variant (incl. `variant.price.*`) / availability frames. There is
+   * no `'price'` hint: price is reached through the variant frame. The picker
+   * (`slice2-editor-binding-picker`) tolerates unknown hints by defaulting to
+   * the `'any'` branch, so this addition is backward compatible.
    */
-  scopeHint?: 'row' | 'collection' | 'page' | 'any';
+  scopeHint?:
+    | 'row'
+    | 'collection'
+    | 'page'
+    | 'product'
+    | 'variant'
+    | 'availability'
+    | 'any';
   /**
    * Phase 2 only: column-type compatibility filter for write-mode slots
    * (e.g. `['text', 'longtext']` for a text input). Phase 1 ignores this
