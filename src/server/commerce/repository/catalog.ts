@@ -17,11 +17,12 @@ import 'server-only';
 //   1. the COMPOSITE FK on product_variant_option ensures an option_value can
 //      only be attached under its OWN option_id; setVariantOptions therefore does
 //      not re-check the pairing in JS: a wrong pairing throws from Postgres.
-//   2. the option_signature BEFORE INSERT/UPDATE trigger recomputes a variant's
-//      signature from the matrix, and its partial-UNIQUE rejects a duplicate
-//      combination. The trigger fires on the product_variant row (not the matrix
-//      table), so setVariantOptions issues a no-op UPDATE on the variant after
-//      changing the matrix to force the recompute. A duplicate combination throws.
+//   2. the option_signature recompute triggers derive a variant's signature from
+//      the matrix, and the partial-UNIQUE rejects a duplicate combination. The
+//      authoritative trigger fires AFTER INSERT/UPDATE/DELETE on the matrix table
+//      (product_variant_option) itself, so setVariantOptions does NOT touch the
+//      variant row at all: the matrix writes alone recompute the signature, no
+//      matter who writes the matrix. A duplicate combination throws.
 //
 // Errors surface: a composite-FK rejection, a signature collision, or any other
 // constraint violation propagates to the caller (whose transaction rolls back).
@@ -36,13 +37,6 @@ import type {
   VariantOptionAssignment,
 } from './types';
 import type { Prisma, Product, ProductOption, ProductOptionValue, ProductVariant } from '@prisma/client';
-
-import { COMMERCE_SCHEMA } from '../withTenant';
-
-// The commerce schema is a constant, allowlisted identifier (single-tenant v1).
-// It is interpolated only into a fully-qualified table reference; the single
-// bound VALUE is passed as a parameter ($1), never interpolated.
-const VARIANT = `"${COMMERCE_SCHEMA}"."product_variant"`;
 
 export const catalogRepository: CatalogRepository = {
   count(tx: Prisma.TransactionClient): Promise<number> {
@@ -110,15 +104,11 @@ export const catalogRepository: CatalogRepository = {
       });
     }
 
-    // The option_signature trigger fires BEFORE UPDATE on the variant ROW, not on
-    // the matrix table, so a no-op UPDATE here forces the recompute from the
-    // now-current matrix. If another LIVE variant already owns this exact option
-    // combination, the option_signature partial-UNIQUE rejects this UPDATE and the
-    // error propagates (the caller's transaction rolls back). updated_at is
-    // refreshed in the same statement so the touch is also a truthful audit bump.
-    await tx.$executeRawUnsafe(
-      `UPDATE ${VARIANT} SET "updated_at" = CURRENT_TIMESTAMP WHERE "id" = $1`,
-      variantId,
-    );
+    // No variant-row touch is needed: the AFTER INSERT/UPDATE/DELETE trigger on
+    // product_variant_option recomputes option_signature from the now-current
+    // matrix on every matrix write above. If another LIVE variant already owns this
+    // exact option combination, the option_signature partial-UNIQUE rejects the
+    // recompute UPDATE the trigger issues and the error propagates (the caller's
+    // transaction rolls back).
   },
 };
