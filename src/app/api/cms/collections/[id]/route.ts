@@ -1,16 +1,23 @@
 // src/app/api/cms/collections/[id]/route.ts
 //
-// GET /api/cms/collections/:id
+// GET    /api/cms/collections/:id  (READ, unauthenticated)
+// PATCH  /api/cms/collections/:id  (WRITE, admin-guarded: rename)
+// DELETE /api/cms/collections/:id  (WRITE, admin-guarded: delete)
 //
-// Thin READ route: returns a single CMS collection. A missing collection is a
-// 404 error envelope (the client provider maps that back to `null`). A
-// repository throw SURFACES as a 5xx envelope, never a swallowed empty 200.
+// The GET stays UNAUTHENTICATED. PATCH/DELETE are mutations, guarded by
+// requireAdmin, surfacing the typed write-error contract (404 not_found, 409
+// collection_exists on a rename collision). A repository throw SURFACES as an
+// envelope, never a swallowed empty 200.
 
-import { getCmsRepository } from '@/server/cms';
-import { jsonError } from '@/lib/api/respond';
+import { z } from 'zod';
+import { getCmsRepository, getCmsWriteRepository, cmsWriteErrorResponse } from '@/server/cms';
+import { requireAdmin } from '@/server/auth/guard';
+import { jsonError, parseBody } from '@/lib/api/respond';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+const renameSchema = z.object({ name: z.string().trim().min(1) });
 
 export async function GET(
   _req: Request,
@@ -28,6 +35,59 @@ export async function GET(
       'cms_read_failed',
       err instanceof Error ? err.message : 'failed to get collection',
       500,
+    );
+  }
+}
+
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  const auth = requireAdmin(req);
+  if (!auth.ok) {
+    return auth.response;
+  }
+  const { id } = await params;
+  const body = await parseBody(req, renameSchema);
+  if (!body.ok) {
+    return body.response;
+  }
+  try {
+    await getCmsWriteRepository().renameCollection(id, body.data.name);
+    const collection = await getCmsRepository().getCollection(id);
+    return Response.json(collection);
+  } catch (err) {
+    return (
+      cmsWriteErrorResponse(err) ??
+      jsonError(
+        'cms_write_failed',
+        err instanceof Error ? err.message : 'failed to rename collection',
+        500,
+      )
+    );
+  }
+}
+
+export async function DELETE(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  const auth = requireAdmin(req);
+  if (!auth.ok) {
+    return auth.response;
+  }
+  const { id } = await params;
+  try {
+    await getCmsWriteRepository().deleteCollection(id);
+    return Response.json({ ok: true });
+  } catch (err) {
+    return (
+      cmsWriteErrorResponse(err) ??
+      jsonError(
+        'cms_write_failed',
+        err instanceof Error ? err.message : 'failed to delete collection',
+        500,
+      )
     );
   }
 }

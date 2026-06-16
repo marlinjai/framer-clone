@@ -7,7 +7,21 @@ import 'server-only';
 // hydrator (slice2-publish-read-binding-hydration). Everything here is
 // server-only and React-free.
 
-export { getCmsRepository, type CmsReadRepository } from './repository';
+export {
+  getCmsRepository,
+  getCmsWriteRepository,
+  type CmsReadRepository,
+  type CmsWriteRepository,
+  type NewField,
+  type RowValues,
+} from './repository';
+export {
+  CmsWriteError,
+  CollectionExistsError,
+  CmsNotFoundError,
+  CmsDdlError,
+  cmsWriteErrorResponse,
+} from './errors';
 export { mapDataTableColumnType } from './columnTypeMap';
 export { withTenant } from './withTenant';
 export { getCmsAdapter, CMS_SCHEMA, CMS_WORKSPACE_ID } from './adapterClient';
