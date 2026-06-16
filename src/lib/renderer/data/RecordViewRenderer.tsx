@@ -12,8 +12,10 @@
 // returns null (non-existent record) ALL hit the empty/error path. Errors
 // surface; they are never rendered as a silent success.
 //
-// State handling is a MINIMAL inline placeholder until the shared
-// loading/empty/error helper lands in `slice2-data-loading-empty-error-states`.
+// The loading / empty / error / content decision is routed through the shared
+// pure `resolveDataState` helper. In editor mode an ERROR shows an inline chip
+// with the real message; in preview/headless mode an ERROR renders nothing for
+// the slot (no broken layout, no throw during SSR/static emit).
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
@@ -24,6 +26,7 @@ import { lookup, pushRowFrame } from '@/lib/bindings/resolver/scope';
 import { useDataSource } from '@/lib/bindings/dataSource/context';
 import type { Row } from '@/lib/bindings/dataSource/types';
 import { resolveCollectionId, type RenderNode } from './CollectionRenderer';
+import { resolveDataState, type DataStateMode } from './resolveDataState';
 
 const NOTE_STYLE: React.CSSProperties = {
   color: '#9ca3af',
@@ -32,6 +35,32 @@ const NOTE_STYLE: React.CSSProperties = {
   pointerEvents: 'none',
   userSelect: 'none',
 };
+
+// Editor-only error chip: visually distinct, carrying the REAL error message
+// (the contract: errors surface, never swallow).
+const ERROR_CHIP_STYLE: React.CSSProperties = {
+  display: 'inline-block',
+  color: '#b91c1c',
+  background: '#fef2f2',
+  border: '1px solid #fecaca',
+  borderRadius: '4px',
+  padding: '2px 6px',
+  fontSize: '12px',
+  fontFamily: 'Inter, sans-serif',
+  pointerEvents: 'none',
+  userSelect: 'none',
+};
+
+/** Read a string-valued node prop (e.g. loadingContent / emptyContent),
+ *  falling back to `fallback` when absent or not a non-empty string. */
+function stringProp(
+  props: Record<string, unknown> | undefined,
+  key: string,
+  fallback: string,
+): string {
+  const raw = props?.[key];
+  return typeof raw === 'string' && raw.length > 0 ? raw : fallback;
+}
 
 type FetchState =
   | { status: 'loading' }
@@ -47,10 +76,12 @@ export interface RecordViewRendererProps {
   hostType: string;
   /** Already-resolved wrapper props (identity attrs + style + marker). */
   hostProps: Record<string, unknown>;
+  /** Rendering surface: editor surfaces error chips, preview renders nothing. */
+  mode?: DataStateMode;
 }
 
 const RecordViewRenderer = observer(
-  ({ node, scope, renderNode, hostType, hostProps }: RecordViewRendererProps) => {
+  ({ node, scope, renderNode, hostType, hostProps, mode = 'preview' }: RecordViewRendererProps) => {
     const dataSource = useDataSource();
 
     const collectionId = resolveCollectionId(node.bindings?.record as ReadBinding | undefined, scope);
@@ -91,19 +122,51 @@ const RecordViewRenderer = observer(
     const wrapperProps = { ...hostProps };
     delete (wrapperProps as any).children;
 
-    const note = (text: string) =>
+    const note = (text: string, style: React.CSSProperties = NOTE_STYLE) =>
       React.createElement(
         hostType as any,
         wrapperProps,
-        React.createElement('span', { style: NOTE_STYLE }, text),
+        React.createElement('span', { style }, text),
       );
 
+    // Configuration guards (not fetch states, so outside resolveDataState).
     if (!collectionId) return note('Record view: no record source bound');
     // No id in scope (e.g. editor canvas with no selected record): empty path.
     if (!rowId) return note('Record view: no record selected');
-    if (state.status === 'loading') return note('Loading...');
-    if (state.status === 'error') return note(`Failed to load record: ${state.message}`);
-    if (state.status === 'empty') return note('Record not found');
+
+    // Route the loading/empty/error/content decision through the shared helper.
+    // A resolved record is one row; a non-existent record is the empty array.
+    const directive = resolveDataState({
+      isLoading: state.status === 'loading',
+      rows:
+        state.status === 'ready'
+          ? [state.row]
+          : state.status === 'empty'
+            ? []
+            : null,
+      error: state.status === 'error' ? new Error(state.message) : null,
+      mode,
+    });
+
+    if (directive.kind === 'loading') {
+      return note(stringProp(node.props as Record<string, unknown> | undefined, 'loadingContent', 'Loading...'));
+    }
+
+    if (directive.kind === 'error') {
+      // Editor: an inline chip carrying the real message. Preview/headless:
+      // render nothing for the slot (empty wrapper, no broken layout, no throw).
+      return directive.message
+        ? note(`Failed to load record: ${directive.message}`, ERROR_CHIP_STYLE)
+        : React.createElement(hostType as any, wrapperProps);
+    }
+
+    if (directive.kind === 'empty') {
+      return note(stringProp(node.props as Record<string, unknown> | undefined, 'emptyContent', 'Record not found'));
+    }
+
+    // CONTENT: a resolved record. (Guarded for type narrowing; kind 'content'
+    // implies a ready row.)
+    if (state.status !== 'ready') return React.createElement(hostType as any, wrapperProps);
 
     const rowScope = pushRowFrame(scope, state.row);
     const children = node.children.map((child: ComponentInstance) => (

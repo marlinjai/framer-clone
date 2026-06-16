@@ -38,6 +38,12 @@ export interface CreateComponentElementOptions {
   // row-scoped binding chain, which keeps editor and headless output
   // identical. Required for data-component dispatch; ordinary nodes ignore it.
   renderNode?: RenderNode;
+
+  // Rendering surface for the data renderers' error split: 'editor' surfaces
+  // an inline error chip with the real message, 'preview' (preview/headless/
+  // static emit) renders nothing for an errored slot. Defaults to 'preview'
+  // (the safe SSR/published-site behavior).
+  mode?: 'editor' | 'preview';
 }
 
 export function createComponentElement(
@@ -80,6 +86,7 @@ export function createComponentElement(
     if (dataKind && component.hasBindings) {
       const scope = options?.scope ?? createScope();
       const renderNode = options?.renderNode;
+      const mode = options?.mode ?? 'preview';
       if (renderNode && dataKind === 'collection') {
         return (
           <CollectionRenderer
@@ -88,6 +95,7 @@ export function createComponentElement(
             renderNode={renderNode}
             hostType={component.type as string}
             hostProps={propsWithIdentity}
+            mode={mode}
           />
         );
       }
@@ -99,6 +107,7 @@ export function createComponentElement(
             renderNode={renderNode}
             hostType={component.type as string}
             hostProps={propsWithIdentity}
+            mode={mode}
           />
         );
       }
