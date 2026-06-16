@@ -8,12 +8,24 @@
 // per-field encoding. A malformed `query` param is a 400 (bad_query); a
 // repository throw SURFACES as a 5xx envelope, never a swallowed empty 200.
 
-import { getCmsRepository } from '@/server/cms';
+import { z } from 'zod';
+import { getCmsRepository, getCmsWriteRepository, cmsWriteErrorResponse } from '@/server/cms';
 import type { Query } from '@/lib/bindings/dataSource/types';
-import { jsonError } from '@/lib/api/respond';
+import { requireAdmin } from '@/server/auth/guard';
+import { jsonError, parseBody } from '@/lib/api/respond';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+// Binding RowValue: string | number | boolean | null | string[].
+const rowValue = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+  z.array(z.string()),
+]);
+const createRowSchema = z.object({ values: z.record(z.string(), rowValue) });
 
 export async function GET(
   req: Request,
@@ -39,6 +51,34 @@ export async function GET(
       'cms_read_failed',
       err instanceof Error ? err.message : 'failed to list rows',
       500,
+    );
+  }
+}
+
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  const auth = requireAdmin(req);
+  if (!auth.ok) {
+    return auth.response;
+  }
+  const { id } = await params;
+  const body = await parseBody(req, createRowSchema);
+  if (!body.ok) {
+    return body.response;
+  }
+  try {
+    const row = await getCmsWriteRepository().createRow(id, body.data.values);
+    return Response.json(row, { status: 201 });
+  } catch (err) {
+    return (
+      cmsWriteErrorResponse(err) ??
+      jsonError(
+        'cms_write_failed',
+        err instanceof Error ? err.message : 'failed to create row',
+        500,
+      )
     );
   }
 }
