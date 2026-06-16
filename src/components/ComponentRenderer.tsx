@@ -7,15 +7,22 @@ import { EditorTool } from '../stores/EditorUIStore';
 import { useStore } from '@/hooks/useStore';
 import { useDragSource } from '@/lib/drag';
 import { createComponentElement } from '@/lib/renderer/createComponentElement';
+import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
+import { createScope, type BindingScope } from '@/lib/bindings/resolver/scope';
 
 interface ComponentRendererProps {
   component: ComponentInstance;
   breakpointId: string;
   allBreakpoints: { id: string; minWidth: number; label?: string }[];
   primaryId: string;
+  // Active binding scope. Threaded from the page root (and through data
+  // renderers, which push a row frame per row) so descendants resolve
+  // `{{row.field}}` / `{{page.params.*}}`. Defaults to an empty scope.
+  scope?: BindingScope;
 }
 
-const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, primaryId }: ComponentRendererProps) => {
+const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, primaryId, scope }: ComponentRendererProps) => {
+  const activeScope = scope ?? createScope();
   const { editorUI } = useStore();
   const editRef = React.useRef<HTMLElement | null>(null);
 
@@ -53,13 +60,20 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
 
   const { attributes, style } = component.getResolvedProps(breakpointId, allBreakpoints, primaryId);
 
+  // Apply read bindings against the active scope. Feed style in alongside the
+  // attributes so dot-path slots (e.g. `style.color`) resolve, then split it
+  // back out. Unbound nodes pass through unchanged.
+  const { resolvedProps } = applyBindings(component, { ...attributes, style }, activeScope);
+  const { style: boundStyle, ...resolvedAttributes } = resolvedProps as Record<string, any>;
+  const effectiveStyle = (boundStyle ?? {}) as Record<string, any>;
+
   // In the editor, always allow pointer events so components can be selected.
-  const editorStyle = Object.keys(style).length ? { ...style, pointerEvents: 'auto' as const } : undefined;
+  const editorStyle = Object.keys(effectiveStyle).length ? { ...effectiveStyle, pointerEvents: 'auto' as const } : undefined;
 
   // Text-editing eligibility: a single string-valued `children` and no nested
   // components. Anything with child components renders its own subtree and
   // isn't safe to turn contenteditable (we'd lose the children).
-  const rawChildren = (attributes as any).children;
+  const rawChildren = (resolvedAttributes as any).children;
   const isTextEditable =
     component.children.length === 0 && typeof rawChildren === 'string';
 
@@ -68,14 +82,14 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
   // editor, headless preview, and static HTML paths share one source of
   // truth.
   const finalProps: Record<string, unknown> = {
-    ...attributes,
+    ...resolvedAttributes,
     style: editorStyle,
     onClick: (e: React.MouseEvent) => {
       e.stopPropagation();
       if (editorUI.selectedTool === EditorTool.SELECT) {
         editorUI.selectComponent(component, breakpointId || undefined);
       }
-      (attributes as any)?.onClick?.(e);
+      (resolvedAttributes as any)?.onClick?.(e);
     },
     onDoubleClick: (e: React.MouseEvent) => {
       if (!isTextEditable) return;
@@ -125,22 +139,30 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
     finalProps.onPointerDown = onPointerDown;
   }
 
-  const children = component.children.map((ch: ComponentInstance) =>
+  const renderNode = (node: ComponentInstance, childScope: BindingScope) => (
     <ComponentRenderer
-      key={ch.id}
-      component={ch}
+      component={node}
       breakpointId={breakpointId}
       allBreakpoints={allBreakpoints}
       primaryId={primaryId}
+      scope={childScope}
     />
   );
+
+  const children = component.children.map((ch: ComponentInstance) => (
+    <React.Fragment key={ch.id}>{renderNode(ch, activeScope)}</React.Fragment>
+  ));
 
   const element = createComponentElement(
     component,
     finalProps,
     children,
-    (attributes as any).children,
-    { identity: { breakpointId, componentId: component.id } },
+    (resolvedAttributes as any).children,
+    {
+      identity: { breakpointId, componentId: component.id },
+      scope: activeScope,
+      renderNode,
+    },
   );
 
   // The editor surfaces unknown component types as a visible placeholder so

@@ -18,12 +18,18 @@ import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { createComponentElement } from './createComponentElement';
+import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
+import { createScope, type BindingScope } from '@/lib/bindings/resolver/scope';
 
 export interface HeadlessComponentRendererProps {
   component: ComponentInstance;
   breakpointId: string;
   allBreakpoints: { id: string; minWidth: number; label?: string }[];
   primaryId: string;
+  // Active binding scope (mirrors the editor `ComponentRenderer`). Threaded so
+  // descendants resolve `{{row.field}}` / `{{page.params.*}}` and so the
+  // editor + headless paths produce identical output. Defaults to empty.
+  scope?: BindingScope;
 }
 
 const HeadlessComponentRenderer = observer(({
@@ -31,10 +37,13 @@ const HeadlessComponentRenderer = observer(({
   breakpointId,
   allBreakpoints,
   primaryId,
+  scope,
 }: HeadlessComponentRendererProps) => {
   // Honor LayersPanel visibility toggle in preview too: if the user hid the
   // node in the editor, it's hidden in preview as well.
   if (!component.canvasVisible) return null;
+
+  const activeScope = scope ?? createScope();
 
   const { attributes, style } = component.getResolvedProps(
     breakpointId,
@@ -42,23 +51,35 @@ const HeadlessComponentRenderer = observer(({
     primaryId,
   );
 
+  // Apply read bindings against the active scope. Style is fed in alongside
+  // attributes so `style.*` slots resolve, then split back out.
+  const { resolvedProps } = applyBindings(component, { ...attributes, style }, activeScope);
+  const { style: boundStyle, ...resolvedAttributes } = resolvedProps as Record<string, unknown>;
+  const effectiveStyle = (boundStyle ?? {}) as Record<string, unknown>;
+
   const finalProps: Record<string, unknown> = {
-    ...attributes,
-    style: Object.keys(style).length ? style : undefined,
+    ...resolvedAttributes,
+    style: Object.keys(effectiveStyle).length ? effectiveStyle : undefined,
   };
 
-  const children = component.children.map((ch: ComponentInstance) => (
+  const renderNode = (node: ComponentInstance, childScope: BindingScope) => (
     <HeadlessComponentRenderer
-      key={ch.id}
-      component={ch}
+      component={node}
       breakpointId={breakpointId}
       allBreakpoints={allBreakpoints}
       primaryId={primaryId}
+      scope={childScope}
     />
+  );
+
+  const children = component.children.map((ch: ComponentInstance) => (
+    <React.Fragment key={ch.id}>{renderNode(ch, activeScope)}</React.Fragment>
   ));
 
-  return createComponentElement(component, finalProps, children, (attributes as any).children, {
+  return createComponentElement(component, finalProps, children, (resolvedAttributes as any).children, {
     identity: { breakpointId, componentId: component.id },
+    scope: activeScope,
+    renderNode,
   });
 });
 
