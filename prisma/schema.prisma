@@ -1,0 +1,131 @@
+// prisma/schema.prisma
+//
+// framer-clone backend foundation (Track 0). SINGLE file, SINGLE Postgres
+// schema (NOT multiSchema). One PrismaClient serves both the CMS engine
+// (the dt_* models below) and, later, the commerce engine (Track B appends
+// its ~20 models onto THIS same file / datasource). Engine separation is a
+// code boundary (src/server/cms vs src/server/commerce), not a DB boundary.
+//
+// The 8 dt_* models are copied verbatim from
+//   data-table/packages/adapter-prisma/prisma/schema.prisma
+// so the single generated client also serves the adapter-prisma repo that
+// slice2-cms-server-adapter-and-repo wires in later.
+//
+// DATABASE_URL is injected via Infisical / Coolify, never a .env file and
+// never a literal. The singleton in src/server/db.ts reads it lazily, so a
+// placeholder value is enough for `next build`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model DtTable {
+  id          String     @id @default(uuid())
+  workspaceId String     @map("workspace_id")
+  name        String
+  description String?
+  icon        String?
+  migrated    Boolean    @default(false)
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  columns     DtColumn[]
+  views       DtView[]
+
+  @@map("dt_tables")
+}
+
+model DtColumn {
+  id        String   @id @default(uuid())
+  tableId   String   @map("table_id")
+  name      String
+  type      String
+  position  Int
+  width     Int      @default(200)
+  isPrimary Boolean  @default(false) @map("is_primary")
+  config    Json?
+  alignment String?
+  createdAt DateTime @default(now()) @map("created_at")
+  table     DtTable  @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  @@map("dt_columns")
+}
+
+model SelectOption {
+  id       String  @id @default(uuid())
+  columnId String  @map("column_id")
+  name     String
+  color    String?
+  position Int
+
+  @@map("select_options")
+}
+
+model DtRowSelectValue {
+  id       String @id @default(uuid())
+  rowId    String @map("row_id")
+  columnId String @map("column_id")
+  optionId String @map("option_id")
+
+  @@unique([rowId, columnId, optionId])
+  @@map("dt_row_select_values")
+}
+
+model DtRelation {
+  id             String   @id @default(uuid())
+  sourceRowId    String   @map("source_row_id")
+  sourceColumnId String   @map("source_column_id")
+  targetRowId    String   @map("target_row_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([sourceRowId, sourceColumnId, targetRowId])
+  @@map("dt_relations")
+}
+
+model DtFile {
+  id           String  @id @default(uuid())
+  rowId        String  @map("row_id")
+  columnId     String  @map("column_id")
+  fileId       String  @map("file_id")
+  fileUrl      String  @map("file_url")
+  originalName String  @map("original_name")
+  mimeType     String  @map("mime_type")
+  sizeBytes    Int?    @map("size_bytes")
+  position     Int     @default(0)
+  metadata     Json?
+
+  @@map("dt_files")
+}
+
+model DtView {
+  id        String   @id @default(uuid())
+  tableId   String   @map("table_id")
+  name      String
+  type      String   @default("table")
+  isDefault Boolean  @default(false) @map("is_default")
+  position  Int      @default(0)
+  config    Json?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  table     DtTable  @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  @@map("dt_views")
+}
+
+// Legacy table: kept during the migration transition period
+model DtRow {
+  id        String  @id @default(uuid())
+  tableId   String  @map("table_id")
+  cells     Json?
+  computed  Json?
+  title     String? @map("_title")
+  archived  Int     @default(0) @map("_archived")
+  createdAt String  @map("_created_at")
+  updatedAt String  @map("_updated_at")
+
+  @@map("dt_rows")
+}
