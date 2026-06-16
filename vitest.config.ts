@@ -13,8 +13,13 @@ const alias = {
 // Test substrate (Track 0): two projects.
 //   - jsdom: the existing client suite (components, renderer, drag, bindings,
 //     models, AI helpers). Unchanged environment for src/**.
-//   - node:  the server suite (src/server/**) plus the bindings resolver
-//     (src/lib/bindings/resolver/**), which run in a real Node environment.
+//   - node:  the server suite (src/server/**), which runs in a real Node
+//     environment. The src/lib/bindings/resolver/** glob is a forward-looking
+//     placeholder that matches zero files today: slice2-read-binding-resolver-runtime
+//     creates that dir later. API route tests that need Node (e.g. the db-health
+//     route) opt in per-file with a `// @vitest-environment node` directive (the
+//     repo convention, see src/app/api/ai/edit/__tests__), so they stay in the
+//     jsdom project's file set but run under Node.
 // The Dockerized-Postgres integration harness is a SEPARATE config
 // (vitest.integration.config.ts, run via `pnpm test:integration`) and is kept
 // OUT of this headless unit run.
