@@ -14,7 +14,7 @@ import { EditorTool } from '@/stores/EditorUIStore';
 import { getUndoManager, getHistoryStore, getDragManager } from '@/stores/RootStore';
 import { resolveAction } from '@/lib/keyBindings';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
-import { getSharedInMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
+import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
 
 import { useStore } from "@/hooks/useStore";
 
@@ -111,7 +111,7 @@ rootStore.projectStore.createProject(
   }, [rootStore.editorUI]);
 
   return (
-    <DataSourceProviderContext.Provider value={getSharedInMemoryDataSourceProvider()}>
+    <DataSourceProviderContext.Provider value={getSharedPrismaDataSourceProvider()}>
     <TransformProvider>
       <DragManagerBinding />
 

@@ -1,7 +1,12 @@
-// InMemoryDataSourceProvider — fixture-backed implementation of
-// DataSourceProvider used until the cms track ships its HTTP client. Lives
-// in-process; safe to mount in both the editor and the preview shell. Has a
-// `_mutate` test helper so unit tests can verify subscribe fires on change.
+// InMemoryDataSourceProvider: fixture-backed implementation of
+// DataSourceProvider. Lives in-process; has a `_mutate` test helper so unit
+// tests can verify subscribe fires on change.
+//
+// TEST DOUBLE ONLY (as of slice2-prisma-datasource-provider): the live app now
+// mounts PrismaDataSourceProvider (./prismaProvider.ts) at both root mounts
+// (EditorApp / PreviewShell). This provider is retained purely as the isolated
+// fixture/test double and the contract reference the live provider must match.
+// Do not mount it in the app.
 
 import type { DataSourceProvider } from './provider';
 import type {
