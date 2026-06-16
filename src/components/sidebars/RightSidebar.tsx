@@ -6,7 +6,7 @@ import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 import RightSidebarHeader from './right/RightSidebarHeader';
 import { getComponentCategory, SECTION_MAP, type SectionId } from './right/sectionConfig';
-import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographySection } from './right/sections';
+import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographySection, DataSourceSection } from './right/sections';
 import { ComponentInstance } from '@/models/ComponentModel';
 
 const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: ComponentInstance; breakpointId?: string }>> = {
@@ -53,16 +53,21 @@ const RightSidebar = observer(() => {
         <div className="flex-1 overflow-y-auto">
           <div className="p-3">
             {target ? (
-              sections.map((sectionId) => {
-                const SectionComponent = SECTION_COMPONENTS[sectionId];
-                return (
-                  <SectionComponent
-                    key={sectionId}
-                    component={target}
-                    breakpointId={breakpointId}
-                  />
-                );
-              })
+              <>
+                {sections.map((sectionId) => {
+                  const SectionComponent = SECTION_COMPONENTS[sectionId];
+                  return (
+                    <SectionComponent
+                      key={sectionId}
+                      component={target}
+                      breakpointId={breakpointId}
+                    />
+                  );
+                })}
+                {/* Data section: renders only when the node has bindable slots
+                    (text / button / image / data components); null otherwise. */}
+                <DataSourceSection component={target} breakpointId={breakpointId} />
+              </>
             ) : (
               <div className="flex items-center space-x-2 mb-3">
                 <span className="text-sm text-gray-500">Select an element to edit properties</span>

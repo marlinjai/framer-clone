@@ -6,6 +6,7 @@ import type {
   BindingsRecord,
   ReadBinding,
 } from '@/lib/bindings/types';
+import type { Query } from '@/lib/bindings/dataSource/types';
 
 export type PropsRecord = Record<string, any>;
 
@@ -297,6 +298,19 @@ const ComponentModel: any = ComponentBase
 
     clearAllBindings() {
       self.bindings = {};
+    },
+
+    // ---------- QUERY (MST-WRITE) ----------
+    // Structured filter / sort / limit for data components (Collection /
+    // TableView). The QueryBuilder picker writes the whole Query object here.
+    // This writes into the EXISTING frozen `props` record (NO new `.props()`
+    // field on the model) by replacing the entire object, which is the MST
+    // requirement for frozen types. Like setBinding / clearBinding above, this
+    // is a direct MST write today and MUST route through the same Yjs
+    // binding-application path once the multiplayer track lands.
+    // MST-WRITE
+    setQuery(query: Query) {
+      self.props = { ...self.props, query };
     },
   }))
   .views(self => ({
