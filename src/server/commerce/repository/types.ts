@@ -27,6 +27,8 @@ import 'server-only';
 
 import type {
   Prisma,
+  Price,
+  PriceSet,
   Product,
   ProductOption,
   ProductOptionValue,
@@ -119,13 +121,66 @@ export interface InventoryRepository {
   onHand(tx: Prisma.TransactionClient, sku: string): Promise<number>;
 }
 
+/** Create-a-price-set input. variantId attaches the set to a variant (one per variant). */
+export interface CreatePriceSetInput {
+  variantId?: string | null;
+}
+
 /**
- * Price + tax resolution (money in integer minor units): owned by b5.
- * Representative seam method; b5 widens this interface.
+ * Add-a-price input. amount is integer minor units (cents): an Int, NEVER a
+ * float. priceListId NULL means the base price; min/max quantity scope the price
+ * to a quantity band (NULL = unbounded on that side).
+ */
+export interface AddPriceInput {
+  priceSetId: string;
+  currency: string;
+  /** Integer minor units (cents). Must be an integer; floats are rejected. */
+  amount: number;
+  priceListId?: string | null;
+  minQuantity?: number | null;
+  maxQuantity?: number | null;
+}
+
+/**
+ * Options for resolvePrice. currency is required; priceListIds names the price
+ * lists the caller wants considered (an active list within its window wins over
+ * the base price); quantity defaults to 1; `now` is injectable for deterministic
+ * window evaluation in tests (defaults to the current time).
+ */
+export interface ResolvePriceOptions {
+  currency: string;
+  priceListIds?: string[];
+  quantity?: number;
+  now?: Date;
+}
+
+/**
+ * Price resolution (money in integer minor units): owned by b5. Widens the b1
+ * representative seam with the real pricing surface. Every method takes the
+ * transaction client first (the b1 tx-first rule); resolvePrice is a PURE READ
+ * over tx (no React, Node-evaluable) that returns integer cents unchanged, doing
+ * no float math. The catalog-side tax_class lives on Product/ProductVariant
+ * (b5), read directly off those rows; the bought tax-engine resolution is E8.
  */
 export interface PricingRepository {
-  /** Resolve the unit price for a SKU, in integer minor units (e.g. cents). */
-  resolveUnitPriceMinor(tx: Prisma.TransactionClient, sku: string): Promise<number>;
+  /** Create a price_set (optionally attached to a variant). */
+  createPriceSet(tx: Prisma.TransactionClient, input: CreatePriceSetInput): Promise<PriceSet>;
+
+  /** Add a price (integer cents) to a price_set, optionally on a price_list. */
+  addPrice(tx: Prisma.TransactionClient, input: AddPriceInput): Promise<Price>;
+
+  /**
+   * Resolve the unit price for a variant in integer minor units (cents), or null
+   * when no price applies. A price-list price (from an active list named in
+   * priceListIds, within its window, and matching the quantity band) wins over
+   * the base price; among a tier the lowest amount wins. The returned value is
+   * the stored Int amount unchanged: no float math is performed.
+   */
+  resolvePrice(
+    tx: Prisma.TransactionClient,
+    variantId: string,
+    options: ResolvePriceOptions,
+  ): Promise<number | null>;
 }
 
 /**

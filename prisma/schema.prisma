@@ -355,6 +355,12 @@ model Product {
   handle      String
   description String?
   status      ProductStatus @default(draft)
+  // taxClass (b5): the CATALOG-side tax CLASSIFICATION only (e.g. a
+  // product-tax-code string a future bought tax engine maps to a rate). It is
+  // NOT a tax rate and NOT an Order-level field (tax_region / vat_id /
+  // reverse_charge / net_or_gross / kleinunternehmer all live on the Order model
+  // b6 creates). Nullable: an unset product inherits the engine's default class.
+  taxClass    String?       @map("tax_class")
   createdAt   DateTime      @default(now()) @map("created_at")
   updatedAt   DateTime      @updatedAt @map("updated_at")
   deletedAt   DateTime?     @map("deleted_at")
@@ -416,14 +422,23 @@ model ProductVariant {
   title     String?
   sku       String?
   barcode   String?
+  // taxClass (b5): per-variant CATALOG-side tax classification override. A
+  // variant whose taxClass is NULL falls back to its product's taxClass at
+  // resolution time (the resolution itself is the bought tax engine's job, E8).
+  // Same constraint as Product.taxClass: a classification string, never a rate,
+  // never an Order-level tax field.
+  taxClass  String?   @map("tax_class")
   // option_signature is INTENTIONALLY ABSENT (see the drift warning above): a
   // trigger-maintained, partial-UNIQUE column added in the raw-SQL migration.
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  product Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
-  options ProductVariantOption[]
+  product  Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
+  options  ProductVariantOption[]
+  // priceSet (b5): a variant has at most ONE price_set (the container its
+  // currency/quantity-scoped prices hang off). Back-relation for PriceSet.variantId.
+  priceSet PriceSet?
 
   // sku and barcode are each partial-unique among LIVE rows: partial indexes in
   // the raw-SQL migration (each frees on soft-delete).
@@ -448,5 +463,173 @@ model ProductVariantOption {
   // PK (variant_id, option_id): exactly ONE value per option per variant.
   @@id([variantId, optionId])
   @@map("product_variant_option")
+  @@schema("commerce")
+}
+
+// ===========================================================================
+// Commerce engine: pricing graph + catalog-side tax_class + corrective-invoice
+// entity (b5). Serial schema position: after b4 (catalog), before b6 (orders).
+//
+// Money is ALWAYS an integer in minor units (cents), NEVER a float and NEVER
+// Yjs: every monetary column below is `Int` (amount in cents), so a price can
+// neither acquire a rounding error in the database nor drift through the
+// realtime layer. The resolver (src/server/commerce/repository/pricing.ts)
+// reads these rows over a tx and returns integer cents unchanged: no float math
+// is performed anywhere on the path.
+//
+// b5 owns ONLY: the pricing graph (price_set / price / price_rule / price_list),
+// the CATALOG-side tax_class (added above on Product/ProductVariant), and the
+// CreditNote (Storno/Gutschrift) + credit_note_ref corrective-invoice entity.
+// b5 adds NO Order.* fields and creates NO Order model: the order-level tax
+// fields (tax_region / vat_id / customer_type / reverse_charge / net_or_gross /
+// kleinunternehmer) and the Order model itself are OWNED by b6. The bought
+// tax-engine call, OSS accumulation, and invoice rendering are E8.
+// ===========================================================================
+
+// price_list.status: a draft list is invisible to resolution; only an `active`
+// list (within its optional date window) contributes prices.
+enum PriceListStatus {
+  draft
+  active
+
+  @@schema("commerce")
+}
+
+// price_list.type: an `override` list replaces the base price; a `sale` list is
+// a (typically lower) promotional price. Resolution prefers a price-list price
+// over the base price regardless of type; type is carried for downstream display
+// / reporting (b7) and does not change which row wins here.
+enum PriceListType {
+  override
+  sale
+
+  @@schema("commerce")
+}
+
+// price_set (pset): the container a variant's prices hang off. Exactly one per
+// variant (variant_id is UNIQUE), nullable so a price_set can be staged before
+// it is attached to a variant. The variant -> price_set -> price chain is the
+// path resolvePrice walks.
+model PriceSet {
+  id        String   @id @default(uuid())
+  variantId String?  @unique @map("variant_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  prices  Price[]
+
+  @@map("price_set")
+  @@schema("commerce")
+}
+
+// price (price): one priced row. amount is integer minor units (cents), NEVER a
+// float. Belongs to a price_set and OPTIONALLY to a price_list (price_list_id
+// NULL = the base price). min/max_quantity scope the price to a quantity band
+// (NULL = unbounded on that side), enabling quantity-break pricing.
+model Price {
+  id           String   @id @default(uuid())
+  priceSetId   String   @map("price_set_id")
+  priceListId  String?  @map("price_list_id")
+  currencyCode String   @map("currency_code")
+  // amount: integer minor units (cents). Int, so the database physically cannot
+  // store a fractional amount; resolvePrice returns this value unchanged.
+  amount       Int
+  minQuantity  Int?     @map("min_quantity")
+  maxQuantity  Int?     @map("max_quantity")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  priceSet  PriceSet    @relation(fields: [priceSetId], references: [id], onDelete: Cascade)
+  priceList PriceList?  @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+  rules     PriceRule[]
+
+  @@index([priceSetId, currencyCode])
+  @@map("price")
+  @@schema("commerce")
+}
+
+// price_rule (prule): an attribute-based predicate attached to a price
+// (attribute/value/operator with a priority for tie-breaking). The rule
+// evaluation engine is downstream; b5 lands the storage shape only.
+model PriceRule {
+  id        String   @id @default(uuid())
+  priceId   String   @map("price_id")
+  attribute String
+  value     String
+  operator  String   @default("eq")
+  priority  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  price Price @relation(fields: [priceId], references: [id], onDelete: Cascade)
+
+  @@index([priceId])
+  @@map("price_rule")
+  @@schema("commerce")
+}
+
+// price_list (plist): a named set of prices with a status and an optional
+// active window. Only an `active` list within [starts_at, ends_at] contributes
+// to resolution.
+model PriceList {
+  id        String          @id @default(uuid())
+  title     String?
+  status    PriceListStatus @default(draft)
+  type      PriceListType   @default(override)
+  startsAt  DateTime?       @map("starts_at")
+  endsAt    DateTime?       @map("ends_at")
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  prices Price[]
+
+  @@map("price_list")
+  @@schema("commerce")
+}
+
+// credit_note (Storno / Gutschrift): the corrective-invoice entity. A German
+// invoice can NEVER be DELETEd: a mistake is corrected by issuing a credit note
+// that references the corrected document, not by erasing the original. b5 builds
+// the entity and the no-DELETE contract (the raw-SQL REVOKE UPDATE, DELETE in
+// the migration makes a credit_note itself immutable for ordinary application
+// traffic, the same append-only pattern b2 applied to stock_movement).
+//
+// correctedRef is a LOOSE reference to the corrected Order/invoice: b5 does not
+// own the Order model, so the hard FK is DEFERRED to b6 (which creates Order and
+// finalizes the FK). amount is integer minor units (cents), never a float.
+model CreditNote {
+  id           String   @id @default(uuid())
+  // correctedRef: loose ref to the corrected Order/invoice id. The hard FK is
+  // wired by b6 (which owns Order). Nullable so a credit note can be staged
+  // before its target is linked.
+  correctedRef String?  @map("corrected_ref")
+  reason       String?
+  currencyCode String   @map("currency_code")
+  amount       Int
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  refs CreditNoteRef[]
+
+  @@map("credit_note")
+  @@schema("commerce")
+}
+
+// credit_note_ref: the junction tying a credit note to the document(s) it
+// corrects. refType / refId is a loose (type, id) pair (e.g. ('order', <id>))
+// rather than a hard FK, because the corrected document (Order/invoice) is owned
+// by b6; b6 finalizes the FK to Order. A credit note can reference more than one
+// document, hence a junction rather than a single column.
+model CreditNoteRef {
+  id           String   @id @default(uuid())
+  creditNoteId String   @map("credit_note_id")
+  refType      String   @map("ref_type")
+  refId        String   @map("ref_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  creditNote CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+
+  @@index([refType, refId])
+  @@map("credit_note_ref")
   @@schema("commerce")
 }
