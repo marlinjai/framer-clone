@@ -1,0 +1,30 @@
+import 'server-only';
+
+// src/server/commerce/index.ts
+//
+// Server-only barrel for the commerce bounded module. This is the single
+// import surface the rest of the server (route handlers, realtime consumers,
+// later commerce specs) pulls from. It re-exports:
+//
+//   - withTenant + COMMERCE_SCHEMA: the constant-schema SET LOCAL seam.
+//   - the four transport-agnostic repository interfaces.
+//
+// Auth is NOT re-exported and NOT re-created here. Commerce mutation routes
+// REUSE the admin-guard seam owned by Track A's `slice2-admin-guard-stub`
+// (the `requireAdmin` / `can()` shape documented in src/server/README.md).
+// There is one constant workspace in v1, so there is no commerce-specific
+// guard: a mutation route calls the shared guard, then opens `withTenant`,
+// then drives a repository with the tx. Do not add a guard module here.
+//
+// data-table's adapter-prisma is deliberately NOT imported anywhere in this
+// module: its `transaction()` is a verified no-op, so it cannot be the system
+// of record for stock or money. Commerce uses the purpose-built PrismaClient
+// singleton (src/server/db.ts) exclusively.
+
+export { COMMERCE_SCHEMA, withTenant } from './withTenant';
+export type {
+  CatalogRepository,
+  InventoryRepository,
+  OrderRepository,
+  PricingRepository,
+} from './repository/types';
