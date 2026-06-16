@@ -25,15 +25,88 @@ import 'server-only';
 // each taking the tx first, so the shape is fixed before the tables exist.
 // Later specs widen these interfaces; they do not change the `tx`-first rule.
 
-import type { Prisma } from '@prisma/client';
+import type {
+  Prisma,
+  Product,
+  ProductOption,
+  ProductOptionValue,
+  ProductStatus,
+  ProductVariant,
+} from '@prisma/client';
+
+/** Create-a-product input. status defaults to 'draft' when omitted. */
+export interface CreateProductInput {
+  title: string;
+  handle: string;
+  description?: string | null;
+  status?: ProductStatus;
+}
+
+/** Add-an-option input (an option belongs to a product, e.g. "Color"). */
+export interface AddOptionInput {
+  productId: string;
+  title: string;
+}
+
+/** Add-an-option-value input (a value belongs to an option, e.g. "Red"). */
+export interface AddOptionValueInput {
+  optionId: string;
+  value: string;
+}
+
+/** Add-a-variant input. The option_signature is computed by the DB trigger. */
+export interface AddVariantInput {
+  productId: string;
+  title?: string | null;
+  sku?: string | null;
+  barcode?: string | null;
+}
 
 /**
- * Catalog reads/writes (products, variants, options): owned by b4.
- * Representative seam method; b4 widens this interface.
+ * One (option, option_value) assignment for a variant. The composite FK rejects
+ * an optionValueId that does not belong to optionId, so a wrong pairing throws.
+ */
+export interface VariantOptionAssignment {
+  optionId: string;
+  optionValueId: string;
+}
+
+/**
+ * Catalog reads/writes (products, variants, options): owned by b4. Widens the b1
+ * representative seam (count) with the catalog write surface. Every method takes
+ * the transaction client first (the b1 tx-first rule): the repository never opens
+ * its own transaction and never touches a bare PrismaClient.
  */
 export interface CatalogRepository {
-  /** Count catalog entries visible in the current tenant schema. */
+  /** Count catalog entries (products) visible in the current tenant schema. */
   count(tx: Prisma.TransactionClient): Promise<number>;
+
+  /** Create a product. */
+  createProduct(tx: Prisma.TransactionClient, input: CreateProductInput): Promise<Product>;
+
+  /** Add an option (e.g. "Color") to a product. */
+  addOption(tx: Prisma.TransactionClient, input: AddOptionInput): Promise<ProductOption>;
+
+  /** Add a value (e.g. "Red") to an option. */
+  addOptionValue(
+    tx: Prisma.TransactionClient,
+    input: AddOptionValueInput,
+  ): Promise<ProductOptionValue>;
+
+  /** Add a variant to a product (its option_signature starts NULL). */
+  addVariant(tx: Prisma.TransactionClient, input: AddVariantInput): Promise<ProductVariant>;
+
+  /**
+   * Replace a variant's option assignments (the matrix), then recompute its
+   * option_signature. A wrong (option, value) pairing is rejected by the
+   * composite FK; an option combination already owned by another live variant
+   * is rejected by the option_signature partial-UNIQUE. Both surface as throws.
+   */
+  setVariantOptions(
+    tx: Prisma.TransactionClient,
+    variantId: string,
+    assignments: VariantOptionAssignment[],
+  ): Promise<void>;
 }
 
 /**
