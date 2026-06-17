@@ -12,13 +12,16 @@ const compat = new FlatCompat({
 const eslintConfig = [
   // Never lint build artifacts or generated output. `eslint .` would
   // otherwise pick up the `.next/` bundle (and any out/ build/ coverage
-  // output) when lint runs after `next build`.
+  // output) when lint runs after `next build`, or the `docs-dist/` Clearify
+  // docs bundle (minified vendor chunks) after `docs:build`. Both are
+  // gitignored generated output.
   {
     ignores: [
       ".next/**",
       "out/**",
       "build/**",
       "coverage/**",
+      "docs-dist/**",
       "next-env.d.ts",
     ],
   },
