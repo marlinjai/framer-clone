@@ -24,18 +24,36 @@ import {
   List as ListIcon,
   FileText as FileTextIcon,
   Table as TableIcon,
+  ShoppingBag as ShoppingBagIcon,
+  Package as PackageIcon,
+  SlidersHorizontal as SlidersIcon,
+  CirclePlus as CirclePlusIcon,
+  ShoppingCart as ShoppingCartIcon,
+  CreditCard as CreditCardIcon,
 } from 'lucide-react';
 import type { IntrinsicElementType, PropsRecord } from '@/models/ComponentModel';
 import type { BindableSlotMeta } from '@/lib/bindings/types';
 
-export type ComponentCategory = 'basic' | 'layout' | 'data';
+export type ComponentCategory = 'basic' | 'layout' | 'data' | 'commerce';
 
 /**
- * Phase 1 data-component variants. The renderer dispatches on this field to
- * the right wave-2 handler (`data-bindings-read-only-data-components`); Phase
- * 1 ships only a dashed-box placeholder when the component is unbound.
+ * Data-component variants. The renderer dispatches on this field to the right
+ * handler. The CMS kinds (`collection` / `record-view` / `table-view`) drive
+ * the Track A data renderers; the commerce kinds drive the Track C storefront
+ * renderers (`ProductListRenderer`, `ProductDetailRenderer`, `VariantSelector`,
+ * `AddToCartButton`, `CartView`, `CheckoutButton`). An unbound source component
+ * (product-list / product-detail) ships a dashed-box placeholder instead.
  */
-export type DataComponentKind = 'collection' | 'record-view' | 'table-view';
+export type DataComponentKind =
+  | 'collection'
+  | 'record-view'
+  | 'table-view'
+  | 'product-list'
+  | 'product-detail'
+  | 'variant-selector'
+  | 'add-to-cart'
+  | 'cart-view'
+  | 'checkout-button';
 
 export interface ComponentRegistryEntry {
   id: string;
@@ -359,6 +377,185 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
       filter: { label: 'Filter', allowedModes: ['read'], scopeHint: 'collection' },
       sort: { label: 'Sort', allowedModes: ['read'], scopeHint: 'collection' },
       limit: { label: 'Limit', allowedModes: ['read'], scopeHint: 'collection' },
+    },
+  },
+
+  // ---------- COMMERCE COMPONENTS (Track C storefront blocks) ----------
+  // Draggable, bindable canvas blocks for the owned-commerce storefront. They
+  // mirror the CMS data components above: a `data-component-kind` marker the
+  // renderer dispatches on, and `bindableSlots` the binding picker reads. The
+  // real runtime lives in the Track C renderers (src/lib/renderer/commerce/*);
+  // `createComponentElement` routes each kind to its renderer when bound and
+  // ships a dashed-box placeholder for an UNBOUND source component.
+  //
+  // Two of the six are SOURCE components gated on a read-binding: `product-list`
+  // (the `products` catalog marker) and `product-detail` (the `product` marker).
+  // The other four are context-driven controls: `variant-selector` reads the
+  // surrounding product frame from scope, and `add-to-cart` / `cart-view` /
+  // `checkout-button` read the client cart / selection from React context, so
+  // they carry no data-source slot.
+  productList: {
+    id: 'productList',
+    label: 'Product list',
+    category: 'commerce',
+    dataComponentKind: 'product-list',
+    icon: ShoppingBagIcon,
+    iconClassName: 'bg-indigo-100 text-indigo-600',
+    htmlType: 'div',
+    defaultProps: {
+      'data-component-kind': 'product-list',
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+        padding: '16px',
+        minHeight: '120px',
+        border: '1px dashed #d1d5db',
+        borderRadius: '8px',
+        backgroundColor: '#f9fafb',
+      },
+    },
+    defaultSize: { width: 360, height: 240 },
+    bindableSlots: {
+      // `products` is the marker that this node is bound to the product catalog.
+      // Unlike the CMS `collection` slot there is no source id to resolve
+      // (`listProducts` lists the whole catalog): presence of a read-binding is
+      // all that gates the fetch. Resolves against the commerce catalog (the
+      // `collection` scope is the closest analog the picker filters by).
+      products: {
+        label: 'Source catalog',
+        allowedModes: ['read'],
+        scopeHint: 'collection',
+      },
+    },
+  },
+  productDetail: {
+    id: 'productDetail',
+    label: 'Product detail',
+    category: 'commerce',
+    dataComponentKind: 'product-detail',
+    icon: PackageIcon,
+    iconClassName: 'bg-indigo-100 text-indigo-600',
+    htmlType: 'div',
+    defaultProps: {
+      'data-component-kind': 'product-detail',
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        padding: '16px',
+        minHeight: '120px',
+        border: '1px dashed #d1d5db',
+        borderRadius: '8px',
+        backgroundColor: '#f9fafb',
+      },
+    },
+    defaultSize: { width: 320, height: 240 },
+    bindableSlots: {
+      // A single product resolved from the dynamic-route param
+      // (`{{page.params.handle}}`); descendants resolve `{{product.*}}`,
+      // `{{variant.*}}`, and `{{availability.*}}` against the pushed frames.
+      product: { label: 'Product', allowedModes: ['read'], scopeHint: 'product' },
+    },
+  },
+  variantSelector: {
+    id: 'variantSelector',
+    label: 'Variant selector',
+    category: 'commerce',
+    dataComponentKind: 'variant-selector',
+    icon: SlidersIcon,
+    iconClassName: 'bg-indigo-100 text-indigo-600',
+    htmlType: 'div',
+    defaultProps: {
+      'data-component-kind': 'variant-selector',
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        padding: '12px',
+        minHeight: '60px',
+        border: '1px dashed #d1d5db',
+        borderRadius: '8px',
+        backgroundColor: '#f9fafb',
+      },
+    },
+    defaultSize: { width: 280, height: 120 },
+    // No data-source slot: the selector reads its product from the surrounding
+    // product frame (pushed by an enclosing product-detail) and re-pushes the
+    // SELECTED variant so descendant `{{variant.*}}` re-resolve to the choice.
+  },
+  addToCart: {
+    id: 'addToCart',
+    label: 'Add to cart',
+    category: 'commerce',
+    dataComponentKind: 'add-to-cart',
+    icon: CirclePlusIcon,
+    iconClassName: 'bg-indigo-100 text-indigo-600',
+    htmlType: 'div',
+    defaultProps: {
+      'data-component-kind': 'add-to-cart',
+      label: 'Add to cart',
+      style: {
+        display: 'inline-flex',
+        padding: '4px',
+      },
+    },
+    defaultSize: { width: 160, height: 48 },
+    bindableSlots: {
+      // The button label is bindable (e.g. bind to `{{product.title}}`); the
+      // selected variant comes from the VariantSelector via React context.
+      label: { label: 'Label', allowedModes: ['read'], scopeHint: 'any' },
+    },
+  },
+  cartView: {
+    id: 'cartView',
+    label: 'Cart',
+    category: 'commerce',
+    dataComponentKind: 'cart-view',
+    icon: ShoppingCartIcon,
+    iconClassName: 'bg-indigo-100 text-indigo-600',
+    htmlType: 'div',
+    defaultProps: {
+      'data-component-kind': 'cart-view',
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        padding: '16px',
+        minHeight: '120px',
+        border: '1px dashed #d1d5db',
+        borderRadius: '8px',
+        backgroundColor: '#f9fafb',
+      },
+    },
+    defaultSize: { width: 400, height: 280 },
+    bindableSlots: {
+      // The empty-cart message is bindable text; the lines come from the client
+      // cart (React context), so there is no data-source slot.
+      emptyContent: { label: 'Empty message', allowedModes: ['read'], scopeHint: 'any' },
+    },
+  },
+  checkoutButton: {
+    id: 'checkoutButton',
+    label: 'Checkout',
+    category: 'commerce',
+    dataComponentKind: 'checkout-button',
+    icon: CreditCardIcon,
+    iconClassName: 'bg-indigo-100 text-indigo-600',
+    htmlType: 'div',
+    defaultProps: {
+      'data-component-kind': 'checkout-button',
+      label: 'Checkout',
+      style: {
+        display: 'inline-flex',
+        padding: '4px',
+      },
+    },
+    defaultSize: { width: 160, height: 48 },
+    bindableSlots: {
+      // The button label is bindable text; checkout posts the client cart
+      // (React context) to the order-create route, so there is no source slot.
+      label: { label: 'Label', allowedModes: ['read'], scopeHint: 'any' },
     },
   },
 };

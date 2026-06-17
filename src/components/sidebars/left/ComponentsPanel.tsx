@@ -36,6 +36,7 @@ const ComponentsPanel = observer(() => {
   const basicComponents = listComponentsByCategory('basic');
   const layoutComponents = listComponentsByCategory('layout');
   const dataComponents = listComponentsByCategory('data');
+  const commerceComponents = listComponentsByCategory('commerce');
 
   return (
     <div className="space-y-4">
@@ -71,6 +72,20 @@ const ComponentsPanel = observer(() => {
           </div>
           <div className="space-y-1">
             {dataComponents.map((entry) => (
+              <ComponentItem key={entry.id} entry={entry} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {commerceComponents.length > 0 && (
+        <div>
+          <div className="flex items-center space-x-2 mb-3">
+            <h3 className="text-sm font-medium text-gray-900">Commerce</h3>
+            <Plus size={14} className="text-gray-400" />
+          </div>
+          <div className="space-y-1">
+            {commerceComponents.map((entry) => (
               <ComponentItem key={entry.id} entry={entry} />
             ))}
           </div>

@@ -20,6 +20,49 @@ import CollectionRenderer, {
 } from '@/lib/renderer/data/CollectionRenderer';
 import RecordViewRenderer from '@/lib/renderer/data/RecordViewRenderer';
 import TableViewRenderer from '@/lib/renderer/data/TableViewRenderer';
+import type { DataComponentKind } from '@/lib/componentRegistry';
+import ProductListRenderer from '@/lib/renderer/commerce/ProductListRenderer';
+import ProductDetailRenderer from '@/lib/renderer/commerce/ProductDetailRenderer';
+import VariantSelector from '@/lib/renderer/commerce/VariantSelector';
+import AddToCartButton from '@/lib/renderer/commerce/AddToCartButton';
+import CartView from '@/lib/renderer/commerce/CartView';
+import CheckoutButton from '@/lib/renderer/commerce/CheckoutButton';
+
+// The six Track C commerce kinds. Disjoint from the CMS kinds, so the commerce
+// branch in createComponentElement can claim them without touching the CMS path.
+const COMMERCE_KINDS: ReadonlySet<DataComponentKind> = new Set<DataComponentKind>([
+  'product-list',
+  'product-detail',
+  'variant-selector',
+  'add-to-cart',
+  'cart-view',
+  'checkout-button',
+]);
+
+function isCommerceKind(kind: DataComponentKind): boolean {
+  return COMMERCE_KINDS.has(kind);
+}
+
+const COMMERCE_KIND_LABELS: Record<string, string> = {
+  'product-list': 'Product list',
+  'product-detail': 'Product detail',
+  'variant-selector': 'Variant selector',
+  'add-to-cart': 'Add to cart',
+  'cart-view': 'Cart',
+  'checkout-button': 'Checkout',
+};
+
+function commerceKindLabel(kind: DataComponentKind): string {
+  return COMMERCE_KIND_LABELS[kind] ?? 'Commerce component';
+}
+
+const COMMERCE_PLACEHOLDER_STYLE: React.CSSProperties = {
+  color: '#9ca3af',
+  fontSize: '12px',
+  fontFamily: 'Inter, sans-serif',
+  pointerEvents: 'none',
+  userSelect: 'none',
+};
 
 export interface CreateComponentElementOptions {
   // When present, the dispatch attaches `data-component-id` and
@@ -74,10 +117,107 @@ export function createComponentElement(
     // carry a `data-component-kind` HTML attribute on their default props; we
     // use it here as the dispatch marker.
     const dataKind = propsWithIdentity['data-component-kind'] as
-      | 'collection'
-      | 'record-view'
-      | 'table-view'
+      | DataComponentKind
       | undefined;
+
+    // Commerce (Track C) dispatch. The six storefront kinds route to their own
+    // renderers, which OWN their children construction (per-product templates,
+    // per-line cart rows). Two kinds are SOURCE components gated on a binding;
+    // the other four are context-driven (scope / cart / selection) and render
+    // unconditionally. An UNBOUND source component (or a source kind reached
+    // without a recursion callback) falls through to the dashed-box placeholder
+    // below rather than silently rendering nothing.
+    if (dataKind && isCommerceKind(dataKind)) {
+      const scope = options?.scope ?? createScope();
+      const renderNode = options?.renderNode;
+      const mode = options?.mode ?? 'preview';
+      const hostType = component.type as string;
+
+      // Context-driven controls: always render (no data-source binding gate).
+      if (dataKind === 'cart-view') {
+        return (
+          <CartView
+            node={component}
+            scope={scope}
+            hostType={hostType}
+            hostProps={propsWithIdentity}
+            mode={mode}
+          />
+        );
+      }
+      if (dataKind === 'checkout-button') {
+        return (
+          <CheckoutButton
+            node={component}
+            scope={scope}
+            hostType={hostType}
+            hostProps={propsWithIdentity}
+          />
+        );
+      }
+      if (dataKind === 'add-to-cart') {
+        return (
+          <AddToCartButton
+            node={component}
+            scope={scope}
+            hostType={hostType}
+            hostProps={propsWithIdentity}
+            mode={mode}
+          />
+        );
+      }
+      if (dataKind === 'variant-selector' && renderNode) {
+        return (
+          <VariantSelector
+            node={component}
+            scope={scope}
+            renderNode={renderNode}
+            hostType={hostType}
+            hostProps={propsWithIdentity}
+            mode={mode}
+          />
+        );
+      }
+
+      // Source components: dispatch only when BOUND (a `products` / `product`
+      // read-binding present) and a recursion callback is available; otherwise
+      // fall through to the unbound dashed-box placeholder.
+      if (dataKind === 'product-list' && component.hasBindings && renderNode) {
+        return (
+          <ProductListRenderer
+            node={component}
+            scope={scope}
+            renderNode={renderNode}
+            hostType={hostType}
+            hostProps={propsWithIdentity}
+            mode={mode}
+          />
+        );
+      }
+      if (dataKind === 'product-detail' && component.hasBindings && renderNode) {
+        return (
+          <ProductDetailRenderer
+            node={component}
+            scope={scope}
+            renderNode={renderNode}
+            hostType={hostType}
+            hostProps={propsWithIdentity}
+            mode={mode}
+          />
+        );
+      }
+
+      // UNBOUND (or no renderNode): a dashed-box label so designers see the node
+      // exists and needs configuration. Never a silent empty success.
+      const wrapperProps = { ...propsWithIdentity };
+      delete (wrapperProps as any).children;
+      const placeholder = React.createElement(
+        'span',
+        { style: COMMERCE_PLACEHOLDER_STYLE },
+        `${commerceKindLabel(dataKind)} (no binding)`,
+      );
+      return React.createElement(component.type as any, wrapperProps, placeholder);
+    }
 
     // BOUND data nodes dispatch to the real data renderers, which own their
     // own (per-row) children construction and ignore the generic `children`
