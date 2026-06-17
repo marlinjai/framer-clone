@@ -10,6 +10,16 @@ summary: Research session on how framer-clone should provide a CMS and runtime d
 
 # CMS and Data Layer Research for Framer-Clone-Built Apps
 
+> [!note] SEQUENCING SUPERSEDED 2026-06-16 (architecture stands)
+> The ARCHITECTURE in this doc (Shape A: a multi-tenant Postgres-backed data service over adapter-prisma, schema-per-tenant, storage-brain for files, app_users until auth-brain Phase 3.5) is still the target. Only the SEQUENCING is superseded.
+>
+> Per the 2026-05-31 holistic platform plan (`knowledge-base/research/2026-05-31-holistic-lumitra-platform-plan.md`, DECIDED) and the 2026-06-01 owned-commerce plan (`knowledge-base/research/2026-06-01-owned-commerce-architecture.md`):
+> - The multi-tenant CMS **SERVICE** (`cms.lumitra.co`) described here is **P4-deferred**, gated behind the P3 validation gate, and built only at tenant two (epic E7 in `docs/specs/build-2026-06/ROADMAP.md`).
+> - What ships FIRST (Slice 1) is the **single-tenant in-process document tier** this doc describes in the data-table primitives section: adapter-prisma single-tenant, in lumitra-web, behind a transport-agnostic repository so the P4 generalization to the multi-tenant service is a transport swap.
+> - Schema-per-tenant + the 8 enterprise seams are **DESIGNED now, built at tenant two** (the `withTenant` seam collapses to a constant schema until then).
+>
+> See the "Original recommendation" caveats below: Revisions B and H already reverse the original paragraphs 1 (RLS-first / per-tenant schemas deferred to 1000+ customers) and 2 (global service-account key). Those originals are historical; trust Revisions B and H.
+
 > Strategic research doc. Not a build plan. Captures how the framer-clone-as-Bubble-killer thesis lands a CMS / runtime data layer for apps that NON-DEVELOPERS build, and whose END-USERS write data. Conclusion at the bottom.
 
 ## Revisions: 2026-05-05 (senior-review and phasing)
