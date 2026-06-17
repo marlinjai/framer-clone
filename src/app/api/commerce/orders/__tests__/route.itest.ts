@@ -156,6 +156,7 @@ describe('POST /api/commerce/orders (Dockerized Postgres)', () => {
 
     // A client that tries to author money/stock: the strict body rejects the
     // extra key with a 400, never trusting it.
+    const ordersBefore = await prisma!.order.count();
     const res = await postOrder({
       lines: [{ variantId, quantity: 1, priceCents: 1, stock: 999 }],
     });
@@ -163,13 +164,17 @@ describe('POST /api/commerce/orders (Dockerized Postgres)', () => {
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe('bad_body');
 
-    // No order was created from the rejected request.
-    expect(await prisma!.order.count()).toBe(0);
+    // No order was created from the rejected request. Delta-based, not an
+    // absolute count(): this file shares one testcontainers DB with the other
+    // integration suites under `pnpm test:integration`, and this file's own
+    // first test creates an order, so an absolute `toBe(0)` is not isolated.
+    expect(await prisma!.order.count()).toBe(ordersBefore);
   });
 
   it('returns 409 typed per-line shortages (keyed by variantId) on an oversell', async () => {
     const { variantId } = await seedBuyableVariant(1000, 1); // only 1 in stock
 
+    const ordersBefore = await prisma!.order.count();
     const res = await postOrder({ lines: [{ variantId, quantity: 5 }] });
     expect(res.status).toBe(409);
     const body = (await res.json()) as {
@@ -179,8 +184,10 @@ describe('POST /api/commerce/orders (Dockerized Postgres)', () => {
     expect(body.ok).toBe(false);
     expect(body.shortages).toEqual([{ variantId, needed: 5, available: 1 }]);
 
-    // The whole order rolled back: nothing persisted, no stock reserved.
-    expect(await prisma!.order.count()).toBe(0);
+    // The whole order rolled back: no NEW order persisted, no stock reserved.
+    // Delta-based for the shared-DB reason above (this variant was freshly
+    // seeded, so its own reservation count is the isolated signal if needed).
+    expect(await prisma!.order.count()).toBe(ordersBefore);
   });
 });
 
