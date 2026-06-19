@@ -11,9 +11,10 @@
 // (which row is being renamed / created / confirmed for delete) lives here.
 
 import React from 'react';
-import { Plus, MoreHorizontal, Pencil, Trash2, ArrowUpRight, Database } from 'lucide-react';
+import { Plus, MoreHorizontal, Pencil, Trash2, ArrowUpRight, Database, Settings2 } from 'lucide-react';
 import type { Collection } from '@/lib/bindings/dataSource/types';
-import { collectionIcon } from './collectionIcon';
+import { resolveCollectionIcon } from './collectionIcon';
+import CollectionSettingsDialog from './CollectionSettingsDialog';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -40,6 +41,7 @@ export interface CollectionListProps {
   onOpen: (id: string) => void;
   onCreate: (name: string) => void;
   onRename: (id: string, name: string) => void;
+  onUpdate: (id: string, updates: { name?: string; icon?: string }) => void;
   onDelete: (id: string) => void;
 }
 
@@ -50,11 +52,13 @@ const CollectionList: React.FC<CollectionListProps> = ({
   onOpen,
   onCreate,
   onRename,
+  onUpdate,
   onDelete,
 }) => {
   const [creating, setCreating] = React.useState(false);
   const [renamingId, setRenamingId] = React.useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = React.useState<Collection | null>(null);
+  const [settingsFor, setSettingsFor] = React.useState<Collection | null>(null);
   const empty = collections.length === 0;
 
   const startCreate = () => {
@@ -119,7 +123,7 @@ const CollectionList: React.FC<CollectionListProps> = ({
       ) : (
         <div className="flex flex-col gap-0.5">
           {collections.map((c) => {
-            const Icon = collectionIcon(c.id);
+            const Icon = resolveCollectionIcon(c.icon, c.id);
             const active = c.id === openId;
             if (renamingId === c.id) {
               return (
@@ -204,6 +208,10 @@ const CollectionList: React.FC<CollectionListProps> = ({
                       <Pencil />
                       Rename
                     </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => setSettingsFor(c)}>
+                      <Settings2 />
+                      Settings
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       variant="destructive"
@@ -281,6 +289,13 @@ const CollectionList: React.FC<CollectionListProps> = ({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <CollectionSettingsDialog
+        collection={settingsFor}
+        busy={busy}
+        onClose={() => setSettingsFor(null)}
+        onSave={onUpdate}
+      />
     </section>
   );
 };

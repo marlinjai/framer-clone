@@ -40,6 +40,7 @@ export interface CmsClient {
   listCollections(): Promise<Collection[]>;
   createCollection(name: string): Promise<Collection>;
   renameCollection(id: string, name: string): Promise<void>;
+  updateCollection(id: string, updates: { name?: string; icon?: string }): Promise<void>;
   deleteCollection(id: string): Promise<void>;
 }
 
@@ -101,6 +102,16 @@ export const httpCmsClient: CmsClient = {
         method: 'PATCH',
         headers: JSON_HEADERS,
         body: JSON.stringify({ name }),
+      }),
+    );
+  },
+
+  async updateCollection(id, updates) {
+    await expectOk(
+      await fetch(col(id), {
+        method: 'PATCH',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(updates),
       }),
     );
   },

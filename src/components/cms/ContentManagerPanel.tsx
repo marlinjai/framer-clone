@@ -102,6 +102,12 @@ const ContentManagerPanel: React.FC<ContentManagerPanelProps> = ({
       await refreshCollections();
     });
 
+  const onUpdateCollection = (id: string, updates: { name?: string; icon?: string }) =>
+    void run(async () => {
+      await client.updateCollection(id, updates);
+      await refreshCollections();
+    });
+
   const onDeleteCollection = (id: string) =>
     void run(async () => {
       await client.deleteCollection(id);
@@ -149,6 +155,7 @@ const ContentManagerPanel: React.FC<ContentManagerPanelProps> = ({
           onOpen={setOpenId}
           onCreate={onCreateCollection}
           onRename={onRenameCollection}
+          onUpdate={onUpdateCollection}
           onDelete={onDeleteCollection}
         />
       )}
@@ -157,6 +164,7 @@ const ContentManagerPanel: React.FC<ContentManagerPanelProps> = ({
         <CmsGridOverlay
           tableId={openCollection.id}
           collectionName={openCollection.name}
+          iconKey={openCollection.icon}
           onClose={onCloseOverlay}
         />
       )}

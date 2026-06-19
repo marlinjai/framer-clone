@@ -102,4 +102,12 @@ describe('renameCollection / deleteCollection', () => {
     await getCmsWriteRepository().deleteCollection('col_events');
     expect(deleteTable).toHaveBeenCalledWith('col_events');
   });
+
+  it('updates only the icon without running a name-uniqueness check', async () => {
+    getTable.mockResolvedValue(TABLE);
+    updateTable.mockResolvedValue({ ...TABLE, icon: 'calendar' });
+    await getCmsWriteRepository().updateCollection('col_events', { icon: 'calendar' });
+    expect(updateTable).toHaveBeenCalledWith('col_events', { icon: 'calendar' });
+    expect(listTables).not.toHaveBeenCalled();
+  });
 });

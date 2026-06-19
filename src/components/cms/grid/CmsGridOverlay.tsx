@@ -18,15 +18,22 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import CmsGrid from './CmsGrid';
-import { collectionIcon } from '../collectionIcon';
+import { resolveCollectionIcon } from '../collectionIcon';
 
 export interface CmsGridOverlayProps {
   tableId: string;
   collectionName: string;
+  /** The collection's chosen icon key (falls back to a deterministic icon). */
+  iconKey?: string;
   onClose: () => void;
 }
 
-export default function CmsGridOverlay({ tableId, collectionName, onClose }: CmsGridOverlayProps) {
+export default function CmsGridOverlay({
+  tableId,
+  collectionName,
+  iconKey,
+  onClose,
+}: CmsGridOverlayProps) {
   const [mounted, setMounted] = React.useState(false);
 
   React.useEffect(() => {
@@ -49,7 +56,7 @@ export default function CmsGridOverlay({ tableId, collectionName, onClose }: Cms
 
   if (!mounted) return null;
 
-  const Icon = collectionIcon(tableId);
+  const Icon = resolveCollectionIcon(iconKey, tableId);
 
   return createPortal(
     <div

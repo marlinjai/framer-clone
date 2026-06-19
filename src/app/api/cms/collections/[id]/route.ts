@@ -1,7 +1,7 @@
 // src/app/api/cms/collections/[id]/route.ts
 //
 // GET    /api/cms/collections/:id  (READ, unauthenticated)
-// PATCH  /api/cms/collections/:id  (WRITE, admin-guarded: rename)
+// PATCH  /api/cms/collections/:id  (WRITE, admin-guarded: rename / set icon)
 // DELETE /api/cms/collections/:id  (WRITE, admin-guarded: delete)
 //
 // The GET stays UNAUTHENTICATED. PATCH/DELETE are mutations, guarded by
@@ -17,7 +17,14 @@ import { jsonError, parseBody } from '@/lib/api/respond';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const renameSchema = z.object({ name: z.string().trim().min(1) });
+const updateSchema = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    icon: z.string().trim().min(1).optional(),
+  })
+  .refine((d) => d.name !== undefined || d.icon !== undefined, {
+    message: 'name or icon required',
+  });
 
 export async function GET(
   _req: Request,
@@ -48,12 +55,15 @@ export async function PATCH(
     return auth.response;
   }
   const { id } = await params;
-  const body = await parseBody(req, renameSchema);
+  const body = await parseBody(req, updateSchema);
   if (!body.ok) {
     return body.response;
   }
   try {
-    await getCmsWriteRepository().renameCollection(id, body.data.name);
+    await getCmsWriteRepository().updateCollection(id, {
+      name: body.data.name,
+      icon: body.data.icon,
+    });
     const collection = await getCmsRepository().getCollection(id);
     return Response.json(collection);
   } catch (err) {
@@ -61,7 +71,7 @@ export async function PATCH(
       cmsWriteErrorResponse(err) ??
       jsonError(
         'cms_write_failed',
-        err instanceof Error ? err.message : 'failed to rename collection',
+        err instanceof Error ? err.message : 'failed to update collection',
         500,
       )
     );

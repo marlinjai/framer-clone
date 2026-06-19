@@ -21,6 +21,7 @@ function makeClient(overrides: Partial<CmsClient> = {}): CmsClient {
     listCollections: vi.fn().mockResolvedValue([]),
     createCollection: vi.fn(),
     renameCollection: vi.fn().mockResolvedValue(undefined),
+    updateCollection: vi.fn().mockResolvedValue(undefined),
     deleteCollection: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
@@ -100,6 +101,30 @@ describe('ContentManagerPanel', () => {
     fireEvent.click(await screen.findByText('Delete collection'));
 
     await waitFor(() => expect(client.deleteCollection).toHaveBeenCalledWith('col_events'));
+  });
+
+  it('updates a collection icon through the settings dialog', async () => {
+    const client = makeClient({
+      listCollections: vi.fn().mockResolvedValue([EVENTS]),
+      updateCollection: vi.fn().mockResolvedValue(undefined),
+    });
+    render(<ContentManagerPanel client={client} />);
+
+    const trigger = await screen.findByRole('button', { name: 'Options for Events' });
+    fireEvent.pointerDown(trigger);
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByText('Settings'));
+
+    await screen.findByTestId('cms-settings-dialog');
+    fireEvent.click(screen.getByRole('button', { name: 'Icon calendar' }));
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() =>
+      expect(client.updateCollection).toHaveBeenCalledWith('col_events', {
+        name: 'Events',
+        icon: 'calendar',
+      }),
+    );
   });
 
   it('surfaces a TYPED collision error inline (collection_exists), not a generic message', async () => {

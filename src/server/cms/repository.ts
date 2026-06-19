@@ -59,6 +59,7 @@ export interface CmsReadRepository {
 export interface CmsWriteRepository extends CmsReadRepository {
   createCollection(name: string): Promise<Collection>;
   renameCollection(id: string, name: string): Promise<void>;
+  updateCollection(id: string, updates: { name?: string; icon?: string }): Promise<void>;
   deleteCollection(id: string): Promise<void>;
 }
 
@@ -107,6 +108,7 @@ function mapCollection(
     id: table.id,
     slug: deriveSlug(table.name, table.id),
     name: table.name,
+    icon: table.icon ?? undefined,
     columns: columns.map(mapColumn),
   };
 }
@@ -349,18 +351,33 @@ const writeRepository: CmsWriteRepository = {
   },
 
   async renameCollection(id: string, name: string): Promise<void> {
+    await this.updateCollection(id, { name });
+  },
+
+  async updateCollection(
+    id: string,
+    updates: { name?: string; icon?: string },
+  ): Promise<void> {
     const adapter = getCmsAdapter();
     await requireTable(id);
-    const others = (await adapter.listTables(CMS_WORKSPACE_ID)).filter(
-      (t) => t.id !== id,
-    );
-    const collision = others.find(
-      (t) => t.name.trim().toLowerCase() === name.trim().toLowerCase(),
-    );
-    if (collision) {
-      throw new CollectionExistsError(name);
+    const patch: { name?: string; icon?: string } = {};
+    if (updates.name !== undefined) {
+      const name = updates.name;
+      const others = (await adapter.listTables(CMS_WORKSPACE_ID)).filter(
+        (t) => t.id !== id,
+      );
+      const collision = others.find(
+        (t) => t.name.trim().toLowerCase() === name.trim().toLowerCase(),
+      );
+      if (collision) {
+        throw new CollectionExistsError(name);
+      }
+      patch.name = name;
     }
-    await ddl(() => adapter.updateTable(id, { name }));
+    if (updates.icon !== undefined) {
+      patch.icon = updates.icon;
+    }
+    await ddl(() => adapter.updateTable(id, patch));
   },
 
   async deleteCollection(id: string): Promise<void> {
