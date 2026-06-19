@@ -1,10 +1,14 @@
 // src/components/sidebars/right/RightSidebarHeader.tsx
-// Header component for the right sidebar with component type tile + name + settings icon.
-// 42px tall, sticky to the top of the panel.
+// Header for the right properties panel. 42px tall, sticky.
+//
+// Two rendering modes:
+//   Expanded: leading collapse chevron + type tile + element name + settings icon.
+//   Collapsed: only the expand chevron (centered in the 48px strip), matching the
+//              left sidebar pattern so the user always has a way back.
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
-import { Settings2, Type, Square, ImageIcon } from 'lucide-react';
+import { Settings2, Type, Square, ImageIcon, ChevronRight, ChevronLeft } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import type { ComponentInstance } from '@/models/ComponentModel';
 
@@ -18,21 +22,55 @@ function ElementTypeIcon({ component }: { component: ComponentInstance }) {
 }
 
 /**
- * RightSidebarHeader - 42px header with type tile (brand/12) + element name + settings icon.
- * MST wiring: reads editorUI.selectedComponent / editorUI.selectedViewportNode (observer).
+ * RightSidebarHeader
+ *
+ * Expanded (rightSidebarCollapsed = false):
+ *   [<] [tile + name]                  [settings]
+ *
+ * Collapsed (rightSidebarCollapsed = true):
+ *   [>]   (full-height strip, centered, re-expands the panel)
+ *
+ * MST wiring: reads editorUI.rightSidebarCollapsed, selectedComponent,
+ * selectedViewportNode; calls editorUI.toggleRightSidebar().
  */
 const RightSidebarHeader = observer(() => {
   const { editorUI } = useStore();
+  const isCollapsed = editorUI.rightSidebarCollapsed;
   const selectedComponent = editorUI.selectedComponent;
   const selectedViewportNode = editorUI.selectedViewportNode;
 
   const target = selectedComponent || selectedViewportNode;
   const title = target ? target.displayName : 'Properties';
 
+  // Collapsed: render just the expand button so the user is never dead-ended.
+  if (isCollapsed) {
+    return (
+      <div className="flex flex-col items-center py-2 border-b border-border shrink-0">
+        <button
+          aria-label="Expand properties"
+          onClick={() => editorUI.toggleRightSidebar()}
+          className="w-[28px] h-[28px] rounded-[6px] flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        >
+          <ChevronLeft size={16} />
+        </button>
+      </div>
+    );
+  }
+
+  // Expanded: 42px header with collapse chevron + type tile + name + settings.
   return (
-    <div className="h-[42px] flex items-center justify-between px-3 border-b border-border shrink-0 sticky top-0 bg-background z-10">
-      {/* Left: type tile + element name */}
-      <div className="flex items-center gap-2 min-w-0">
+    <div className="h-[42px] flex items-center gap-1.5 px-2 border-b border-border shrink-0 sticky top-0 bg-background z-10">
+      {/* Collapse toggle */}
+      <button
+        aria-label="Collapse properties"
+        onClick={() => editorUI.toggleRightSidebar()}
+        className="w-[28px] h-[28px] rounded-[6px] flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand flex-none"
+      >
+        <ChevronRight size={16} />
+      </button>
+
+      {/* Type tile + element name (min-w-0 so name can truncate) */}
+      <div className="flex items-center gap-2 flex-1 min-w-0">
         {/* Type tile: 22x22, bg-brand/12, text-brand, radius 6 */}
         <span
           className="w-[22px] h-[22px] rounded-[6px] bg-brand/12 text-brand flex items-center justify-center flex-none"
@@ -53,9 +91,9 @@ const RightSidebarHeader = observer(() => {
         </span>
       </div>
 
-      {/* Right: settings icon */}
+      {/* Settings icon */}
       <button
-        className="w-[28px] h-[28px] rounded-[6px] flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground flex-none"
+        className="w-[28px] h-[28px] rounded-[6px] flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand flex-none"
         title="Settings"
       >
         <Settings2 size={15} />

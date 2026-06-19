@@ -255,54 +255,68 @@ const CollectionRail: React.FC<CollectionRailProps> = ({
                 );
               }
 
+              // Each row is a flat flex container holding two sibling interactive
+              // controls: (1) the "open" button (full-width label + icon + count),
+              // and (2) the overflow menu trigger. Keeping them as siblings (not
+              // nested) satisfies the no-interactive-in-interactive rule and gives
+              // both controls clean focus rings and keyboard activation.
               return (
                 <div
                   key={c.id}
                   data-testid={`cms-rail-collection-${c.id}`}
                   className={[
-                    'group relative flex h-8 cursor-pointer items-center gap-2.5 rounded-[6px] px-2 transition-colors',
+                    'group relative flex h-8 items-center rounded-[6px] transition-colors',
                     active ? 'bg-brand/10' : 'hover:bg-accent',
                   ].join(' ')}
-                  onClick={() => !active && onOpen(c.id)}
                 >
                   {active && (
                     <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-brand" />
                   )}
-                  <span
-                    className={[
-                      'flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[6px] border transition-colors',
-                      active
-                        ? 'border-transparent bg-brand/12 text-brand'
-                        : 'border-border bg-background text-muted-foreground',
-                    ].join(' ')}
+                  {/* Open button: takes up all the space except the overflow trigger */}
+                  <button
+                    type="button"
+                    aria-label={`Open ${c.name}`}
+                    aria-current={active ? 'true' : undefined}
+                    disabled={active}
+                    onClick={() => onOpen(c.id)}
+                    className="flex min-w-0 flex-1 items-center gap-2.5 rounded-[5px] px-2 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 disabled:pointer-events-none"
                   >
-                    <Icon className="size-[13px]" />
-                  </span>
-                  <span
-                    className={[
-                      'min-w-0 flex-1 truncate text-[13px] font-medium',
-                      active ? 'text-brand' : 'text-foreground',
-                    ].join(' ')}
-                  >
-                    {c.name}
-                  </span>
-                  {typeof c.itemCount === 'number' && (
                     <span
-                      data-testid={`cms-rail-count-${c.id}`}
-                      className="shrink-0 font-mono text-[11px] text-muted-foreground"
+                      className={[
+                        'flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[6px] border transition-colors',
+                        active
+                          ? 'border-transparent bg-brand/12 text-brand'
+                          : 'border-border bg-background text-muted-foreground',
+                      ].join(' ')}
                     >
-                      {c.itemCount}
+                      <Icon className="size-[13px]" />
                     </span>
-                  )}
+                    <span
+                      className={[
+                        'min-w-0 flex-1 truncate text-[13px] font-medium',
+                        active ? 'text-brand' : 'text-foreground',
+                      ].join(' ')}
+                    >
+                      {c.name}
+                    </span>
+                    {typeof c.itemCount === 'number' && (
+                      <span
+                        data-testid={`cms-rail-count-${c.id}`}
+                        className="shrink-0 font-mono text-[11px] text-muted-foreground"
+                      >
+                        {c.itemCount}
+                      </span>
+                    )}
+                  </button>
 
+                  {/* Overflow menu: sibling of the open button, not nested inside it */}
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button
                         type="button"
                         aria-label={`Options for ${c.name}`}
                         disabled={busy}
-                        onClick={(e) => e.stopPropagation()}
-                        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:bg-background data-[state=open]:text-foreground data-[state=open]:opacity-100"
+                        className="mr-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:bg-background data-[state=open]:text-foreground data-[state=open]:opacity-100"
                       >
                         <MoreHorizontal className="size-[13px]" />
                       </button>

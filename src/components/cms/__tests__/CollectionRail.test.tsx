@@ -184,20 +184,36 @@ describe('CollectionRail', () => {
     expect(teamRow.className).not.toContain('bg-brand/10');
   });
 
-  it('clicking a non-active row calls onOpen with its id', () => {
+  it('each collection row has an "Open <name>" button with proper role and aria-label', () => {
+    render(<CollectionRail {...makeProps()} />);
+    // Both rows should be reachable as named buttons.
+    expect(screen.getByRole('button', { name: 'Open Events' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open Team' })).toBeTruthy();
+  });
+
+  it('the active row button carries aria-current="true"', () => {
+    render(<CollectionRail {...makeProps({ activeId: 'col_events' })} />);
+    const btn = screen.getByRole('button', { name: 'Open Events' });
+    expect(btn.getAttribute('aria-current')).toBe('true');
+  });
+
+  it('clicking a non-active row Open button calls onOpen with its id', () => {
     const onOpen = vi.fn();
     render(<CollectionRail {...makeProps({ activeId: 'col_events', onOpen })} />);
 
-    // Team is not active, click should call onOpen.
-    fireEvent.click(screen.getByTestId('cms-rail-collection-col_team'));
+    // Team is not active; click its Open button.
+    fireEvent.click(screen.getByRole('button', { name: 'Open Team' }));
     expect(onOpen).toHaveBeenCalledWith('col_team');
   });
 
-  it('clicking the already-active row does NOT call onOpen', () => {
+  it('clicking the already-active row does NOT call onOpen (button is disabled)', () => {
     const onOpen = vi.fn();
     render(<CollectionRail {...makeProps({ activeId: 'col_events', onOpen })} />);
 
-    fireEvent.click(screen.getByTestId('cms-rail-collection-col_events'));
+    // The active button is disabled so clicks should not reach onOpen.
+    const activeBtn = screen.getByRole('button', { name: 'Open Events' });
+    expect((activeBtn as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(activeBtn);
     expect(onOpen).not.toHaveBeenCalled();
   });
 

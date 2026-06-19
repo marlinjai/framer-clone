@@ -152,8 +152,12 @@ export default function CmsWorkspaceOverlay({
                   {activeCollection.name}
                 </span>
                 {typeof activeCollection.itemCount === 'number' && (
-                  <span className="font-mono text-[12px] text-muted-foreground">
-                    {activeCollection.itemCount} items
+                  <span
+                    className="font-mono text-[12px] text-muted-foreground"
+                    data-testid="workspace-item-count"
+                  >
+                    {activeCollection.itemCount}{' '}
+                    {activeCollection.itemCount === 1 ? 'item' : 'items'}
                   </span>
                 )}
               </>
