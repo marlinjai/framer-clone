@@ -30,8 +30,8 @@ const FILTER_OPS: { value: FilterOp; label: string }[] = [
   { value: 'contains', label: 'contains' },
 ];
 
-const SELECT_CLASS = 'h-7 rounded border border-gray-200 px-1 text-xs outline-none focus:border-blue-400';
-const INPUT_CLASS = 'h-7 rounded border border-gray-200 px-2 text-xs outline-none focus:border-blue-400';
+const SELECT_CLASS = 'h-7 rounded border border-gray-200 px-1 text-xs outline-none focus:border-brand';
+const INPUT_CLASS = 'h-7 rounded border border-gray-200 px-2 text-xs outline-none focus:border-brand';
 
 /** Read the literal source collection id off the node's `collection` binding. */
 function sourceCollectionId(node: ComponentInstance): string | null {

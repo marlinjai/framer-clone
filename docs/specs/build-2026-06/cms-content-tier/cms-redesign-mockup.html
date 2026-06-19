@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CMS Redesign — "Studio" direction</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  :root{
+    --bg:#EEF0F3; --panel:#FFFFFF; --raised:#FFFFFF; --sunken:#F5F6F8;
+    --bd:#E7E8EC; --bd-strong:#DCDEE3;
+    --t1:#1A1B1F; --t2:#5A5E66; --t3:#8A8F99;
+    --accent:#5B5BD6; --accent-12:rgba(91,91,214,.12); --accent-08:rgba(91,91,214,.08);
+    --green:#16A34A; --amber:#D97706; --blue:#2563EB; --red:#DC2626;
+    --row-hover:#F5F6F8;
+    --e1:0 1px 2px rgba(16,18,29,.06),0 1px 1px rgba(16,18,29,.04);
+    --e2:0 6px 16px rgba(16,18,29,.12),0 1px 3px rgba(16,18,29,.07);
+    --e3:0 24px 64px rgba(16,18,29,.22);
+    --r-sm:6px; --r-md:8px; --r-lg:12px;
+  }
+  .dark{
+    --bg:#0B0D12; --panel:#14171F; --raised:#1A1E27; --sunken:#0F1218;
+    --bd:#23262F; --bd-strong:#2C2F3A;
+    --t1:#F2F3F5; --t2:#9BA1AC; --t3:#6B7280;
+    --accent:#8B8BF5; --accent-12:rgba(139,139,245,.16); --accent-08:rgba(139,139,245,.10);
+    --green:#34D399; --amber:#FBBF24; --blue:#60A5FA; --red:#F87171;
+    --row-hover:#1A1E27;
+    --e1:0 1px 2px rgba(0,0,0,.4); --e2:0 6px 16px rgba(0,0,0,.5); --e3:0 24px 64px rgba(0,0,0,.6);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);font-family:Inter,system-ui,sans-serif;color:var(--t1);-webkit-font-smoothing:antialiased;padding:40px;transition:background .2s}
+  .mono{font-family:'JetBrains Mono',ui-monospace;font-variant-numeric:tabular-nums}
+  .lbl{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--t3)}
+  h2.fr{font-size:13px;font-weight:600;color:var(--t2);margin:0 0 12px 2px;letter-spacing:.01em}
+  .wrap{max-width:1320px;margin:0 auto;display:flex;flex-direction:column;gap:36px}
+  .titlebar{display:flex;align-items:baseline;justify-content:space-between;gap:16px}
+  .titlebar h1{font-size:20px;font-weight:700;margin:0;letter-spacing:-.01em}
+  .titlebar p{margin:0;color:var(--t2);font-size:13px}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:3px 8px;border-radius:999px}
+
+  /* editor frame */
+  .editor{display:grid;grid-template-columns:260px 1fr 248px;height:560px;border:1px solid var(--bd);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--e2);background:var(--panel)}
+  .topbar{grid-column:1/-1;height:46px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;padding:0 14px;background:var(--panel)}
+  .crumb{font-size:13px;font-weight:600}.crumb .sep{color:var(--t3);margin:0 6px;font-weight:400}.crumb .pg{color:var(--t2);font-weight:500}
+  .left{border-right:1px solid var(--bd);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+  .canvas{background:repeating-conic-gradient(var(--sunken) 0% 25%, transparent 0% 50%) 0 0/16px 16px,var(--bg);display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:12px}
+  .right{border-left:1px solid var(--bd);background:var(--panel);padding:14px}
+  .tabs{display:flex;border-bottom:1px solid var(--bd);padding:0 8px;gap:2px;height:40px;align-items:stretch}
+  .tab{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;font-size:12.5px;font-weight:500;color:var(--t3);border-bottom:2px solid transparent;cursor:pointer}
+  .tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+  .tab svg{width:15px;height:15px}
+
+  /* content panel */
+  .cm{padding:10px;display:flex;flex-direction:column;gap:2px;min-height:0;overflow:auto}
+  .cm-head{display:flex;align-items:center;justify-content:space-between;padding:6px 6px 8px}
+  .iconbtn{width:24px;height:24px;border-radius:var(--r-sm);display:inline-flex;align-items:center;justify-content:center;color:var(--t3);cursor:pointer;border:0;background:transparent}
+  .iconbtn:hover{background:var(--row-hover);color:var(--t1)}
+  .iconbtn svg{width:15px;height:15px}
+  .row{position:relative;display:flex;align-items:center;gap:9px;height:34px;padding:0 8px;border-radius:var(--r-sm);cursor:pointer;color:var(--t1)}
+  .row:hover{background:var(--row-hover)}
+  .row .tile{width:24px;height:24px;border-radius:7px;display:flex;align-items:center;justify-content:center;background:var(--sunken);color:var(--t2);flex:none}
+  .row .tile svg{width:14px;height:14px}
+  .row .nm{font-size:13px;font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .cnt{font-size:11.5px;color:var(--t3)}
+  .row .more{display:none;color:var(--t3)}
+  .row:hover .cnt{display:none}
+  .row:hover .more{display:inline-flex}
+  .row.on{background:var(--accent-08)}
+  .row.on .nm{color:var(--accent);font-weight:600}
+  .row.on .tile{background:var(--accent-12);color:var(--accent)}
+  .row.on::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:2px;border-radius:2px;background:var(--accent)}
+  .row .renm{flex:1;font-size:13px;font-weight:500;border:1px solid var(--accent);background:var(--panel);color:var(--t1);border-radius:5px;padding:3px 7px;box-shadow:0 0 0 3px var(--accent-12);outline:none}
+  .newrow{display:flex;align-items:center;gap:9px;height:34px;padding:0 8px;border-radius:var(--r-sm);color:var(--t3);font-size:13px;cursor:pointer;border:1px dashed var(--bd-strong)}
+  .newrow:hover{color:var(--t1);background:var(--row-hover)}
+  .newrow svg{width:15px;height:15px}
+  .helper{font-size:11px;color:var(--t3);padding:6px 8px;line-height:1.5}
+
+  /* popover menu */
+  .menu{position:absolute;z-index:30;min-width:188px;background:var(--raised);border:1px solid var(--bd);border-radius:var(--r-md);box-shadow:var(--e2);padding:5px;font-size:13px}
+  .mi{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:6px;color:var(--t1);cursor:pointer}
+  .mi:hover{background:var(--row-hover)}
+  .mi svg{width:15px;height:15px;color:var(--t2)}
+  .mi.danger{color:var(--red)} .mi.danger svg{color:var(--red)}
+  .msep{height:1px;background:var(--bd);margin:5px 0}
+  .mi .kb{margin-left:auto;font-size:11px;color:var(--t3)}
+
+  /* search + buttons */
+  .search{display:flex;align-items:center;gap:7px;height:30px;border:1px solid var(--bd);border-radius:7px;padding:0 9px;background:var(--sunken);color:var(--t3);font-size:12.5px;margin:0 6px 6px}
+  .search svg{width:14px;height:14px}
+  .btn{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 12px;border-radius:7px;font-size:12.5px;font-weight:600;border:1px solid transparent;cursor:pointer}
+  .btn svg{width:15px;height:15px}
+  .btn.pri{background:var(--accent);color:#fff;box-shadow:var(--e1)}
+  .btn.ghost{background:transparent;color:var(--t2);border-color:var(--bd)}
+  .btn.ghost:hover{background:var(--row-hover);color:var(--t1)}
+  .btn.danger{background:var(--red);color:#fff}
+
+  /* right panel filler */
+  .rp-lbl{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--t3);margin:0 0 8px}
+  .rp-field{height:30px;border:1px solid var(--bd);border-radius:7px;background:var(--sunken);margin-bottom:8px}
+  .rp-row{display:flex;gap:8px}.rp-row .rp-field{flex:1}
+
+  /* grid overlay frame */
+  .ov{border:1px solid var(--bd);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--e2);background:var(--panel);display:flex;flex-direction:column;height:520px}
+  .ov-top{height:48px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--bd)}
+  .seg{display:flex;background:var(--sunken);border-radius:8px;padding:2px;gap:2px}
+  .seg span{font-size:12px;font-weight:500;color:var(--t3);padding:4px 10px;border-radius:6px;cursor:pointer}
+  .seg span.on{background:var(--panel);color:var(--t1);box-shadow:var(--e1)}
+  .ov-body{flex:1;display:flex;min-height:0}
+  .grid{flex:1;overflow:auto}
+  .gh{display:grid;grid-template-columns:34px 30px 1.6fr 1fr 1fr .8fr;height:38px;align-items:center;border-bottom:1px solid var(--bd);background:var(--sunken);font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--t3)}
+  .gh>div,.gr>div{padding:0 12px;display:flex;align-items:center;gap:8px;overflow:hidden}
+  .gr{display:grid;grid-template-columns:34px 30px 1.6fr 1fr 1fr .8fr;height:42px;align-items:center;border-bottom:1px solid var(--bd);font-size:13px}
+  .gr:hover{background:var(--row-hover)}
+  .gr.sel{background:var(--accent-08)}
+  .dot{width:7px;height:7px;border-radius:999px;flex:none}
+  .ck{width:15px;height:15px;border:1.5px solid var(--bd-strong);border-radius:4px}
+  .tag{font-size:11px;font-weight:500;padding:2px 8px;border-radius:999px;background:var(--sunken);color:var(--t2)}
+  .gfoot{height:40px;border-top:1px solid var(--bd);display:flex;align-items:center;gap:14px;padding:0 14px;font-size:12px;color:var(--t2)}
+
+  /* detail panel */
+  .detail{width:340px;border-left:1px solid var(--bd);display:flex;flex-direction:column;background:var(--panel)}
+  .d-top{height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-bottom:1px solid var(--bd)}
+  .d-body{padding:16px;display:flex;flex-direction:column;gap:14px;overflow:auto}
+  .field label{display:block;font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--t3);margin-bottom:5px}
+  .input{width:100%;height:34px;border:1px solid var(--bd);border-radius:7px;background:var(--sunken);padding:0 10px;font-size:13px;color:var(--t1);display:flex;align-items:center}
+  .input.tall{height:auto;min-height:64px;padding:8px 10px;align-items:flex-start}
+  .switch{display:flex;background:var(--sunken);border-radius:8px;padding:3px}
+  .switch span{flex:1;text-align:center;font-size:12px;font-weight:600;padding:5px;border-radius:6px;color:var(--t3);cursor:pointer}
+  .switch span.on{box-shadow:var(--e1)}
+  .saved{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--green);font-weight:500}
+  .saved svg{width:13px;height:13px}
+
+  /* modal */
+  .scrim{position:relative;border-radius:var(--r-lg);overflow:hidden;background:rgba(16,18,29,.5);display:flex;align-items:center;justify-content:center;height:220px;border:1px solid var(--bd)}
+  .modal{width:380px;background:var(--raised);border:1px solid var(--bd);border-radius:var(--r-lg);box-shadow:var(--e3);padding:20px}
+  .modal .mt{display:flex;gap:12px}
+  .modal .warn{width:36px;height:36px;border-radius:9px;background:rgba(220,38,38,.12);color:var(--red);display:flex;align-items:center;justify-content:center;flex:none}
+  .modal h3{margin:0 0 4px;font-size:15px;font-weight:600}
+  .modal p{margin:0;font-size:13px;color:var(--t2);line-height:1.5}
+  .modal .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--t2)}
+  .legend b{color:var(--t1);font-weight:600}
+  .swatch{width:26px;height:18px;border-radius:5px;border:1px solid rgba(0,0,0,.08);display:inline-block;vertical-align:middle}
+  .tokrow{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--t2);margin-bottom:6px}
+  .card{background:var(--panel);border:1px solid var(--bd);border-radius:var(--r-lg);padding:18px;box-shadow:var(--e1)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="titlebar">
+    <div>
+      <h1>Content CMS &mdash; &ldquo;Studio&rdquo; direction</h1>
+      <p>Fresh, cohesive design system for the collection panel, item grid, and detail editor. Light + dark.</p>
+    </div>
+    <span class="pill" style="background:var(--accent-12);color:var(--accent)">Mockup &middot; for direction</span>
+  </div>
+
+  <!-- FRAME A: editor with new content panel -->
+  <div>
+    <h2 class="fr">A &nbsp;Content panel in the editor &mdash; collection rows, states, overflow menu</h2>
+    <div class="editor">
+      <div class="topbar">
+        <span class="crumb">Framer Clone <span class="sep">/</span><span class="pg">Home</span></span>
+        <div style="flex:1"></div>
+        <div class="iconbtn"><i data-lucide="play"></i></div>
+        <div class="iconbtn"><i data-lucide="rotate-ccw"></i></div>
+      </div>
+
+      <div class="left">
+        <div class="tabs">
+          <div class="tab"><i data-lucide="box"></i>Components</div>
+          <div class="tab"><i data-lucide="layers"></i>Layers</div>
+          <div class="tab on"><i data-lucide="database"></i>Content</div>
+        </div>
+        <div class="search"><i data-lucide="search"></i>Search collections</div>
+        <div class="cm">
+          <div class="cm-head"><span class="lbl">Collections</span><button class="iconbtn" title="New collection"><i data-lucide="plus"></i></button></div>
+
+          <!-- active/open -->
+          <div class="row on">
+            <span class="tile"><i data-lucide="calendar-days"></i></span>
+            <span class="nm">Events</span>
+            <span class="cnt mono">12</span>
+          </div>
+          <!-- hovered with menu open -->
+          <div class="row" style="background:var(--row-hover)">
+            <span class="tile"><i data-lucide="users"></i></span>
+            <span class="nm">Team</span>
+            <button class="iconbtn more" style="display:inline-flex"><i data-lucide="more-horizontal"></i></button>
+          </div>
+          <!-- inline rename -->
+          <div class="row">
+            <span class="tile"><i data-lucide="newspaper"></i></span>
+            <input class="renm" value="Blog posts" />
+          </div>
+          <!-- default -->
+          <div class="row">
+            <span class="tile"><i data-lucide="package"></i></span>
+            <span class="nm">Products</span>
+            <span class="cnt mono">38</span>
+          </div>
+          <div class="row">
+            <span class="tile"><i data-lucide="quote"></i></span>
+            <span class="nm">Testimonials</span>
+            <span class="cnt mono">7</span>
+          </div>
+
+          <div style="height:6px"></div>
+          <div class="newrow"><i data-lucide="plus"></i>New collection</div>
+
+          <!-- floating menu anchored to Team row -->
+          <div class="menu" style="left:150px;top:150px">
+            <div class="mi"><i data-lucide="square-pen"></i>Rename</div>
+            <div class="mi"><i data-lucide="copy"></i>Duplicate</div>
+            <div class="mi"><i data-lucide="settings-2"></i>Settings &amp; fields</div>
+            <div class="msep"></div>
+            <div class="mi danger"><i data-lucide="trash-2"></i>Delete<span class="kb">⌫</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="canvas">canvas</div>
+
+      <div class="right">
+        <p class="rp-lbl">Size</p>
+        <div class="rp-row"><div class="rp-field"></div><div class="rp-field"></div></div>
+        <p class="rp-lbl" style="margin-top:10px">Layout</p>
+        <div class="rp-field"></div>
+        <div class="rp-row"><div class="rp-field"></div><div class="rp-field"></div></div>
+        <p class="rp-lbl" style="margin-top:10px">Styles</p>
+        <div class="rp-field"></div>
+        <div class="rp-field"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FRAME B: grid overlay + detail -->
+  <div>
+    <h2 class="fr">B &nbsp;Item grid overlay + detail editor &mdash; draft/published, status dots, autosave</h2>
+    <div class="ov">
+      <div class="ov-top">
+        <span class="crumb"><span class="pg" style="display:inline-flex;align-items:center;gap:6px"><i data-lucide="database" style="width:14px;height:14px"></i>Content</span><span class="sep">/</span>Events <i data-lucide="chevron-down" style="width:14px;height:14px;color:var(--t3)"></i></span>
+        <div style="flex:1"></div>
+        <div class="seg"><span class="on">Table</span><span>Board</span><span>Calendar</span></div>
+        <button class="btn ghost"><i data-lucide="list-filter"></i>Filter</button>
+        <button class="btn ghost"><i data-lucide="arrow-up-down"></i>Sort</button>
+        <button class="btn pri"><i data-lucide="plus"></i>New item</button>
+        <button class="iconbtn" style="width:30px;height:30px"><i data-lucide="x"></i></button>
+      </div>
+      <div class="ov-body">
+        <div class="grid">
+          <div class="gh"><div></div><div></div><div>Title</div><div>Date</div><div>Cover</div><div>Status</div></div>
+          <div class="gr"><div><span class="ck"></span></div><div><span class="dot" style="background:var(--green)"></span></div><div style="font-weight:500">Summer Launch Party</div><div class="mono" style="color:var(--t2)">2026-07-12</div><div><span class="tag">cover.jpg</span></div><div><span class="pill" style="background:rgba(22,163,74,.12);color:var(--green)"><span class="dot" style="background:var(--green)"></span>Published</span></div></div>
+          <div class="gr sel"><div><span class="ck" style="background:var(--accent);border-color:var(--accent)"></span></div><div><span class="dot" style="background:var(--amber)"></span></div><div style="font-weight:500">Autumn Workshop</div><div class="mono" style="color:var(--t2)">2026-09-03</div><div><span class="tag">—</span></div><div><span class="pill" style="background:rgba(217,119,6,.12);color:var(--amber)"><span class="dot" style="background:var(--amber)"></span>Draft</span></div></div>
+          <div class="gr"><div><span class="ck"></span></div><div><span class="dot" style="background:var(--green)"></span></div><div style="font-weight:500">Founders Dinner</div><div class="mono" style="color:var(--t2)">2026-06-28</div><div><span class="tag">hero.png</span></div><div><span class="pill" style="background:rgba(22,163,74,.12);color:var(--green)"><span class="dot" style="background:var(--green)"></span>Published</span></div></div>
+          <div class="gr"><div><span class="ck"></span></div><div><span class="dot" style="background:var(--blue)"></span></div><div style="font-weight:500">New Year Keynote</div><div class="mono" style="color:var(--t2)">2027-01-09</div><div><span class="tag">—</span></div><div><span class="pill" style="background:rgba(37,99,235,.12);color:var(--blue)"><span class="dot" style="background:var(--blue)"></span>Scheduled</span></div></div>
+        </div>
+        <div class="detail">
+          <div class="d-top"><div style="display:flex;align-items:center;gap:8px"><button class="iconbtn"><i data-lucide="chevron-up"></i></button><button class="iconbtn"><i data-lucide="chevron-down"></i></button><span class="saved"><i data-lucide="check"></i>Saved</span></div><button class="iconbtn"><i data-lucide="x"></i></button></div>
+          <div class="d-body">
+            <div class="switch"><span style="color:var(--amber)">● Draft</span><span class="on" style="color:var(--green)">● Published</span></div>
+            <div class="field"><label>Title</label><div class="input">Autumn Workshop</div></div>
+            <div class="field"><label>Date</label><div class="input mono">2026-09-03</div></div>
+            <div class="field"><label>Cover</label><div class="input" style="color:var(--t3);gap:7px"><i data-lucide="image" style="width:15px;height:15px"></i>Upload image</div></div>
+            <div class="field"><label>Summary</label><div class="input tall" style="color:var(--t2);font-size:12.5px;line-height:1.5">A hands-on afternoon covering wire-wrapping technique and stone setting…</div></div>
+            <div class="field"><label>Tags</label><div style="display:flex;gap:6px"><span class="tag">craft</span><span class="tag">workshop</span><span class="tag" style="color:var(--t3)">+ add</span></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="gfoot"><span><b style="color:var(--t1)" class="mono">12</b> items</span><span style="color:var(--accent);font-weight:600">1 selected</span><div style="flex:1"></div><button class="btn ghost" style="height:26px"><i data-lucide="check-circle-2"></i>Publish</button><button class="btn ghost" style="height:26px;color:var(--red);border-color:rgba(220,38,38,.3)"><i data-lucide="trash-2"></i>Delete</button></div>
+    </div>
+  </div>
+
+  <!-- FRAME C: dark panel + modal + tokens -->
+  <div>
+    <h2 class="fr">C &nbsp;Dark mode parity, delete confirmation, empty state &amp; tokens</h2>
+    <div class="grid2">
+      <div class="dark" style="background:var(--bg);border-radius:var(--r-lg);padding:14px">
+        <div style="background:var(--panel);border:1px solid var(--bd);border-radius:var(--r-md);overflow:hidden">
+          <div class="cm" style="padding:10px">
+            <div class="cm-head"><span class="lbl">Collections</span><button class="iconbtn"><i data-lucide="plus"></i></button></div>
+            <div class="row on"><span class="tile"><i data-lucide="calendar-days"></i></span><span class="nm">Events</span><span class="cnt mono">12</span></div>
+            <div class="row"><span class="tile"><i data-lucide="users"></i></span><span class="nm">Team</span><span class="cnt mono">4</span></div>
+            <div class="row"><span class="tile"><i data-lucide="package"></i></span><span class="nm">Products</span><span class="cnt mono">38</span></div>
+            <div style="height:6px"></div>
+            <div class="newrow"><i data-lucide="plus"></i>New collection</div>
+          </div>
+        </div>
+        <!-- empty state -->
+        <div style="background:var(--panel);border:1px solid var(--bd);border-radius:var(--r-md);margin-top:14px;padding:26px 18px;text-align:center">
+          <div style="width:44px;height:44px;border-radius:11px;background:var(--accent-12);color:var(--accent);display:inline-flex;align-items:center;justify-content:center;margin-bottom:12px"><i data-lucide="database"></i></div>
+          <div style="font-size:13.5px;font-weight:600;color:var(--t1)">No collections yet</div>
+          <div style="font-size:12px;color:var(--t3);line-height:1.5;margin:6px auto 14px;max-width:230px">Collections hold the content your gallery, list, and detail pages bind to.</div>
+          <button class="btn pri" style="margin:0 auto"><i data-lucide="plus"></i>Create collection</button>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:18px">
+        <div class="scrim">
+          <div class="modal">
+            <div class="mt"><div class="warn"><i data-lucide="trash-2"></i></div><div><h3>Delete &ldquo;Events&rdquo;?</h3><p>This permanently removes the collection and its <b style="color:var(--t1)">12 items</b>. This can&rsquo;t be undone.</p></div></div>
+            <div class="acts"><button class="btn ghost">Cancel</button><button class="btn danger">Delete collection</button></div>
+          </div>
+        </div>
+        <div class="card">
+          <p class="rp-lbl" style="margin-bottom:12px">Design tokens</p>
+          <div class="tokrow"><span class="swatch" style="background:#5B5BD6"></span><b style="color:var(--t1)">Accent / iris</b> &nbsp;#5B5BD6 &mdash; primary action, selection, focus</div>
+          <div class="tokrow"><span class="swatch" style="background:#16A34A"></span>Published &nbsp;<span class="swatch" style="background:#D97706"></span>Draft &nbsp;<span class="swatch" style="background:#2563EB"></span>Scheduled &nbsp;<span class="swatch" style="background:#DC2626"></span>Destructive</div>
+          <div class="tokrow" style="margin-top:10px"><b style="color:var(--t1)">Type</b> &nbsp;Inter UI &middot; JetBrains Mono for counts &amp; data cells (tabular)</div>
+          <div class="tokrow"><b style="color:var(--t1)">Scale</b> &nbsp;11 label · 12 meta · 13 row · 16 title · 20 overlay</div>
+          <div class="tokrow"><b style="color:var(--t1)">Radius</b> 6 / 8 / 12 &nbsp;&middot;&nbsp; <b style="color:var(--t1)">Row</b> 34px &nbsp;&middot;&nbsp; <b style="color:var(--t1)">Grid</b> 4/8 rhythm</div>
+          <div class="tokrow"><b style="color:var(--t1)">Elevation</b> hairline+e1 rows · e2 menus · e3 modal &nbsp;&middot;&nbsp; <b style="color:var(--t1)">Motion</b> 150ms hover · 200ms menu · reduced-motion safe</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>lucide.createIcons();</script>
+</body>
+</html>

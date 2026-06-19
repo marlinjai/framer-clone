@@ -73,7 +73,7 @@ const LayersPanel = observer(() => {
             {/* Viewport Header */}
             <div
               className={`flex items-center justify-between p-2 rounded cursor-pointer hover:bg-gray-50 ${
-                isSelected ? 'bg-blue-50 border-l-2 border-blue-500' : ''
+                isSelected ? 'bg-brand/10 border-l-2 border-brand' : ''
               }`}
               onClick={() => {
                 editorUI.setSelectedViewportNode(viewport);
@@ -211,7 +211,7 @@ const LayerNode = observer(({ component, depth, breakpointId, getIcon }: LayerNo
         data-inner-component-id={component.id}
         onPointerDown={onPointerDown}
         className={`flex items-center space-x-2 p-1.5 rounded cursor-pointer hover:bg-gray-50 ${
-          isSelected ? 'bg-blue-50 border-l-2 border-blue-500' : ''
+          isSelected ? 'bg-brand/10 border-l-2 border-brand' : ''
         }`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
         onClick={() => {

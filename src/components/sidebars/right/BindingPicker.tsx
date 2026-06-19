@@ -58,7 +58,7 @@ export function visibleSectionsForHint(hint?: string): VisibleSections {
 }
 
 const ITEM_CLASS =
-  'flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs text-gray-700 hover:bg-blue-50';
+  'flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs text-gray-700 hover:bg-brand/10';
 
 const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPickerProps) => {
   const dataSource = useDataSource();
@@ -252,14 +252,14 @@ const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPicker
             className={`h-7 flex-1 rounded border px-2 font-mono text-xs outline-none ${
               freeFormInvalid
                 ? 'border-red-500 focus:border-red-500'
-                : 'border-gray-200 focus:border-blue-400'
+                : 'border-gray-200 focus:border-brand'
             }`}
           />
           <button
             type="button"
             onClick={applyFreeForm}
             disabled={freeFormInvalid || trimmed.length === 0}
-            className="h-7 rounded bg-blue-600 px-2 text-xs text-white disabled:opacity-40"
+            className="h-7 rounded bg-brand px-2 text-xs text-white disabled:opacity-40"
           >
             Apply
           </button>

@@ -188,7 +188,7 @@ const PageRow = observer(({
   return (
     <div
       className={`group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
-        isActive ? 'bg-blue-50 border-l-2 border-blue-500' : 'hover:bg-gray-50 border-l-2 border-transparent'
+        isActive ? 'bg-brand/10 border-l-2 border-brand' : 'hover:bg-gray-50 border-l-2 border-transparent'
       }`}
       onClick={() => {
         if (editingField) return;
@@ -196,7 +196,7 @@ const PageRow = observer(({
       }}
       onContextMenu={onContextMenu}
     >
-      <FileText size={12} className={`shrink-0 ${isActive ? 'text-blue-600' : 'text-gray-400'}`} />
+      <FileText size={12} className={`shrink-0 ${isActive ? 'text-brand' : 'text-gray-400'}`} />
       <div className="flex-1 min-w-0">
         {editingField === 'title' ? (
           <input
@@ -207,7 +207,7 @@ const PageRow = observer(({
             onBlur={commit}
             onKeyDown={onKeyDown}
             onClick={e => e.stopPropagation()}
-            className="w-full bg-white border border-blue-400 rounded px-1 py-[1px] text-sm text-gray-900 outline-none"
+            className="w-full bg-white border border-brand rounded px-1 py-[1px] text-sm text-gray-900 outline-none"
           />
         ) : (
           <div
@@ -232,7 +232,7 @@ const PageRow = observer(({
               onKeyDown={onKeyDown}
               onClick={e => e.stopPropagation()}
               className={`flex-1 min-w-0 bg-white border rounded px-1 py-[1px] text-[10px] text-gray-700 outline-none ${
-                invalid ? 'border-red-400' : 'border-blue-400'
+                invalid ? 'border-red-400' : 'border-brand'
               }`}
               title={invalid ? 'Slug already in use' : undefined}
             />
@@ -372,7 +372,7 @@ const PagesPanel = observer(() => {
                 <button
                   type="button"
                   onClick={handleCreate}
-                  className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                  className="inline-flex items-center gap-1 text-xs text-brand hover:text-brand"
                 >
                   <Plus size={12} /> Create your first page
                 </button>

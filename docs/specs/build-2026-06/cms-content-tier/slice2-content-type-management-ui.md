@@ -15,6 +15,12 @@ owner: unassigned
 
 # Content-type + custom-field management UI (define an Events collection with fields)
 
+> **Partially superseded (2026-06-19) by `slice2b-cms-datatable-grid-ui.md`.** The hand-rolled
+> FieldEditor/RowEditor editing UI and the narrow column/row WRITE routes + repo methods this spec
+> shipped were replaced by the full `@marlinjai/data-table-react` grid (driven via a server-actions
+> adapter) and removed as dead branches. STILL CURRENT from this spec: the COLLECTION write repo +
+> routes (create/rename/delete), the admin guard, the read repository, and the binding read routes.
+
 > The write-repository extension lands in framer-clone `src/server/cms/repository.ts` (NOT `packages/doc-tier-core` in lumitra-web). NO `@marlinjai/doc-tier-core`. Mutations go through `/api/cms/*` write routes guarded by the `slice2-admin-guard-stub` `requireAdmin`. KEEP the adapter-prisma `createTable`/`createColumn` DDL + the specific-error-contract surfacing.
 
 ## Goal

@@ -92,7 +92,7 @@ const BindingControl = observer(({ node, slot, meta, children }: BindingControlP
             className={`flex h-7 flex-1 items-center gap-1.5 rounded border px-2 text-xs ${
               broken
                 ? 'border-amber-400 bg-amber-50 text-amber-700'
-                : 'border-blue-200 bg-blue-50 text-blue-700'
+                : 'border-brand/20 bg-brand/10 text-brand'
             }`}
             title={readBinding.expression}
           >
@@ -125,7 +125,7 @@ const BindingControl = observer(({ node, slot, meta, children }: BindingControlP
             title="Bind to data"
             onClick={() => setPickerOpen((v) => !v)}
             className={`flex h-7 w-7 shrink-0 items-center justify-center rounded border text-gray-500 hover:bg-gray-50 ${
-              pickerOpen ? 'border-blue-400 text-blue-600' : 'border-gray-200'
+              pickerOpen ? 'border-brand text-brand' : 'border-gray-200'
             }`}
           >
             <Link2 size={13} />

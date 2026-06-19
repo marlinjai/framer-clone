@@ -57,7 +57,7 @@ const StaticSlotControl = observer(
           value={value}
           placeholder={label}
           onChange={(e) => node.setTextContent(e.target.value)}
-          className="h-7 w-full rounded border border-gray-200 px-2 text-xs outline-none focus:border-blue-400"
+          className="h-7 w-full rounded border border-gray-200 px-2 text-xs outline-none focus:border-brand"
         />
       );
     }

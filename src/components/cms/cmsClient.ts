@@ -1,24 +1,23 @@
 // src/components/cms/cmsClient.ts
 //
-// The browser-side client the content-manager panel talks to. It wraps the
-// /api/cms/* routes (read + admin-guarded write) and, crucially, preserves the
-// TYPED error contract end to end: a non-OK response is parsed into a
-// CmsClientError carrying the envelope's `code`/`message`/`status`, so the panel
-// can render the SPECIFIC error inline (for example `collection_exists`) instead
-// of a generic "something went wrong". A failure is never swallowed into a
-// resolved value that would read as success.
+// The browser-side client for COLLECTION-level CMS operations the content
+// manager panel performs: list / create / rename / delete. It wraps the
+// admin-guarded /api/cms/collections routes and preserves the TYPED error
+// contract end to end: a non-OK response is parsed into a CmsClientError carrying
+// the envelope's `code`/`message`/`status`, so the panel renders the SPECIFIC
+// error inline (for example `collection_exists`) instead of a generic failure. A
+// failure is never swallowed into a resolved value that would read as success.
 //
-// Admin auth: writes are same-origin requests; the interim admin secret rides
-// the `admin_secret` cookie (see src/server/auth/guard.ts), which the browser
+// In-collection editing (columns/rows/options/relations/files) is NOT done here:
+// the grid overlay drives it through the data-table server-actions adapter. The
+// narrow column/row write routes this client used to call were removed with the
+// hand-rolled FieldEditor/RowEditor they served.
+//
+// Admin auth: writes are same-origin requests; the interim admin secret rides the
+// `admin_secret` cookie (see src/server/auth/guard.ts), which the browser
 // attaches automatically. The client therefore sends no secret itself.
 
-import type {
-  Collection,
-  Column,
-  ColumnType,
-  Row,
-  RowsPage,
-} from '@/lib/bindings/dataSource/types';
+import type { Collection } from '@/lib/bindings/dataSource/types';
 
 /** A typed CMS API failure parsed from the `{ error: { code, message } }` envelope. */
 export class CmsClientError extends Error {
@@ -33,32 +32,15 @@ export class CmsClientError extends Error {
   }
 }
 
-/** A new field definition the panel sends to the add-column route. */
-export interface NewField {
-  name: string;
-  type: ColumnType;
-}
-
-/** Row cell values keyed by column id. */
-export type RowValues = Record<string, Row['values'][string]>;
-
 /**
- * The read + write surface the panel depends on. Declaring it as an interface
+ * The collection-CRUD surface the panel depends on. Declaring it as an interface
  * lets tests inject a fake implementation without mocking global fetch.
  */
 export interface CmsClient {
   listCollections(): Promise<Collection[]>;
-  listRows(id: string): Promise<RowsPage>;
   createCollection(name: string): Promise<Collection>;
   renameCollection(id: string, name: string): Promise<void>;
   deleteCollection(id: string): Promise<void>;
-  addColumn(id: string, field: NewField): Promise<Column>;
-  renameColumn(id: string, colId: string, name: string): Promise<void>;
-  retypeColumn(id: string, colId: string, type: ColumnType): Promise<void>;
-  deleteColumn(id: string, colId: string): Promise<void>;
-  createRow(id: string, values: RowValues): Promise<Row>;
-  updateRow(id: string, rowId: string, values: RowValues): Promise<Row>;
-  deleteRow(id: string, rowId: string): Promise<void>;
 }
 
 interface ErrorEnvelope {
@@ -103,10 +85,6 @@ export const httpCmsClient: CmsClient = {
     return readJson<Collection[]>(await fetch('/api/cms/collections'));
   },
 
-  async listRows(id) {
-    return readJson<RowsPage>(await fetch(`${col(id)}/rows`));
-  },
-
   async createCollection(name) {
     return readJson<Collection>(
       await fetch('/api/cms/collections', {
@@ -129,71 +107,5 @@ export const httpCmsClient: CmsClient = {
 
   async deleteCollection(id) {
     await expectOk(await fetch(col(id), { method: 'DELETE' }));
-  },
-
-  async addColumn(id, field) {
-    return readJson<Column>(
-      await fetch(`${col(id)}/columns`, {
-        method: 'POST',
-        headers: JSON_HEADERS,
-        body: JSON.stringify(field),
-      }),
-    );
-  },
-
-  async renameColumn(id, colId, name) {
-    await expectOk(
-      await fetch(`${col(id)}/columns/${encodeURIComponent(colId)}`, {
-        method: 'PATCH',
-        headers: JSON_HEADERS,
-        body: JSON.stringify({ name }),
-      }),
-    );
-  },
-
-  async retypeColumn(id, colId, type) {
-    await expectOk(
-      await fetch(`${col(id)}/columns/${encodeURIComponent(colId)}`, {
-        method: 'PATCH',
-        headers: JSON_HEADERS,
-        body: JSON.stringify({ type }),
-      }),
-    );
-  },
-
-  async deleteColumn(id, colId) {
-    await expectOk(
-      await fetch(`${col(id)}/columns/${encodeURIComponent(colId)}`, {
-        method: 'DELETE',
-      }),
-    );
-  },
-
-  async createRow(id, values) {
-    return readJson<Row>(
-      await fetch(`${col(id)}/rows`, {
-        method: 'POST',
-        headers: JSON_HEADERS,
-        body: JSON.stringify({ values }),
-      }),
-    );
-  },
-
-  async updateRow(id, rowId, values) {
-    return readJson<Row>(
-      await fetch(`${col(id)}/rows/${encodeURIComponent(rowId)}`, {
-        method: 'PATCH',
-        headers: JSON_HEADERS,
-        body: JSON.stringify({ values }),
-      }),
-    );
-  },
-
-  async deleteRow(id, rowId) {
-    await expectOk(
-      await fetch(`${col(id)}/rows/${encodeURIComponent(rowId)}`, {
-        method: 'DELETE',
-      }),
-    );
   },
 };

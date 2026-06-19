@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+// Notion-style CMS grid (data-table-react). Classes/vars are `dt-*`-namespaced,
+// so importing these globally does not bleed into the editor chrome.
+import "@marlinjai/data-table-react/dist/styles/variables.css";
+import "@marlinjai/data-table-react/dist/styles/base.css";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",

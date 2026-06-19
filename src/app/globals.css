@@ -37,6 +37,14 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  /* "Studio" design system: iris brand accent + content status colors.
+     Used app-wide for the editor refresh (active tabs, selection, focus,
+     primary actions) and the CMS draft/published states. */
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-status-published: var(--status-published);
+  --color-status-draft: var(--status-draft);
+  --color-status-scheduled: var(--status-scheduled);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -76,6 +84,15 @@
   --sidebar-ring: oklch(0.705 0.015 286.067);
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
+  /* Studio brand (iris #5B5BD6) + content status palette. */
+  --brand: oklch(0.543 0.179 276.7);
+  --brand-foreground: oklch(0.985 0 0);
+  --status-published: oklch(0.63 0.17 149);
+  --status-draft: oklch(0.68 0.16 58);
+  --status-scheduled: oklch(0.55 0.22 264);
+  /* Iris focus ring app-wide. */
+  --ring: oklch(0.543 0.179 276.7);
+  --sidebar-ring: oklch(0.543 0.179 276.7);
 }
 
 .dark {
@@ -110,6 +127,14 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.552 0.016 285.938);
+  /* Studio brand + status, dark variants (brighter iris, white-legible). */
+  --brand: oklch(0.62 0.17 278);
+  --brand-foreground: oklch(0.985 0 0);
+  --status-published: oklch(0.77 0.15 162);
+  --status-draft: oklch(0.83 0.16 82);
+  --status-scheduled: oklch(0.71 0.14 256);
+  --ring: oklch(0.62 0.17 278);
+  --sidebar-ring: oklch(0.62 0.17 278);
 }
 
 @layer base {

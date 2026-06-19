@@ -159,7 +159,7 @@ const ViewportFrame = observer(({
             <div className="px-2 py-0.5 bg-gray-200 rounded text-xs">
               {viewport.breakpointMinWidth}px
             </div>
-            <div className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs">
+            <div className="px-2 py-0.5 bg-brand/15 text-brand rounded text-xs">
               {viewport.viewportWidth}×{viewport.viewportHeight}
             </div>
           </div>

@@ -17,6 +17,9 @@ importers:
       '@marlinjai/data-table-adapter-prisma':
         specifier: ^0.2.2
         version: 0.2.2(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+      '@marlinjai/data-table-core':
+        specifier: ^0.3.0
+        version: 0.3.0
       '@marlinjai/data-table-react':
         specifier: ^0.3.1
         version: 0.3.1(react-dom@19.1.0(react@19.1.0))(react@19.1.0)

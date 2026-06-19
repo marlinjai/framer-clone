@@ -6,13 +6,14 @@
 'use client';
 import React, { useCallback, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
-import { ChevronLeft, ChevronRight, Layers, Boxes, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Layers, Boxes, Database, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useStore } from '@/hooks/useStore';
 import ComponentsPanel from './left/ComponentsPanel';
 import LayersPanel from './left/LayersPanel';
 import PagesPanel from './left/PagesPanel';
+import ContentManagerPanel from '@/components/cms/ContentManagerPanel';
 
 // Default and clamp values for the top (Pages) section height. The bottom
 // section (Components / Layers) gets whatever is left.
@@ -23,7 +24,7 @@ const MIN_BOTTOM_HEIGHT = 180;
 const LeftSidebar = observer(() => {
   const { editorUI } = useStore();
   const isCollapsed = editorUI.leftSidebarCollapsed;
-  const [activeTab, setActiveTab] = useState<'components' | 'layers'>('layers');
+  const [activeTab, setActiveTab] = useState<'components' | 'layers' | 'content'>('layers');
   const [searchQuery, setSearchQuery] = useState('');
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_HEIGHT);
   const paneContainerRef = useRef<HTMLDivElement>(null);
@@ -99,7 +100,7 @@ const LeftSidebar = observer(() => {
             role="separator"
             aria-orientation="horizontal"
             onPointerDown={onDividerPointerDown}
-            className="h-1 shrink-0 cursor-row-resize bg-gray-200 hover:bg-blue-400 transition-colors"
+            className="h-1 shrink-0 cursor-row-resize bg-gray-200 hover:bg-brand transition-colors"
           />
 
           {/* Bottom pane: Components / Layers */}
@@ -108,7 +109,7 @@ const LeftSidebar = observer(() => {
               <button
                 className={`flex-1 flex items-center justify-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
                   activeTab === 'components'
-                    ? 'border-blue-500 text-blue-600'
+                    ? 'border-brand text-brand'
                     : 'border-transparent text-gray-500 hover:text-gray-700'
                 }`}
                 onClick={() => setActiveTab('components')}
@@ -119,13 +120,24 @@ const LeftSidebar = observer(() => {
               <button
                 className={`flex-1 flex items-center justify-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
                   activeTab === 'layers'
-                    ? 'border-blue-500 text-blue-600'
+                    ? 'border-brand text-brand'
                     : 'border-transparent text-gray-500 hover:text-gray-700'
                 }`}
                 onClick={() => setActiveTab('layers')}
               >
                 <Layers size={16} />
                 <span>Layers</span>
+              </button>
+              <button
+                className={`flex-1 flex items-center justify-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === 'content'
+                    ? 'border-brand text-brand'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+                onClick={() => setActiveTab('content')}
+              >
+                <Database size={16} />
+                <span>Content</span>
               </button>
             </div>
 
@@ -144,6 +156,7 @@ const LeftSidebar = observer(() => {
             <div className="flex-1 overflow-y-auto p-3">
               {activeTab === 'components' && <ComponentsPanel />}
               {activeTab === 'layers' && <LayersPanel />}
+              {activeTab === 'content' && <ContentManagerPanel />}
             </div>
           </div>
         </div>

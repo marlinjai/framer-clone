@@ -182,7 +182,7 @@ const Toolbar = observer(({ editorUI }: ToolbarProps) => {
                   flex items-center justify-center w-10 h-10 rounded-lg 
                   transition-all duration-200 group relative
                   ${isActive 
-                    ? 'bg-blue-600 text-white shadow-sm scale-105' 
+                    ? 'bg-brand text-white shadow-sm scale-105' 
                     : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'
                   }
                 `}

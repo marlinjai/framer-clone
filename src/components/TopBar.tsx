@@ -104,7 +104,7 @@ const HistoryMenu = observer(() => {
                     onClick={() => history.jumpTo(originalIdx + 1)}
                     className={`w-full flex items-start gap-2 text-left px-2 py-1.5 rounded text-xs transition-colors ${
                       isCurrent
-                        ? 'bg-blue-50 border-l-2 border-blue-500'
+                        ? 'bg-brand/10 border-l-2 border-brand'
                         : isApplied
                           ? 'text-gray-700 hover:bg-gray-50'
                           : 'text-gray-400 hover:bg-gray-50'
@@ -126,7 +126,7 @@ const HistoryMenu = observer(() => {
               onClick={() => history.jumpTo(0)}
               className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs italic ${
                 history.undoIdx === 0
-                  ? 'bg-blue-50 border-l-2 border-blue-500 text-gray-700'
+                  ? 'bg-brand/10 border-l-2 border-brand text-gray-700'
                   : 'text-gray-400 hover:bg-gray-50'
               }`}
             >
