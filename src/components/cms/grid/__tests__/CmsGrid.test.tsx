@@ -21,6 +21,11 @@ vi.mock('@/server/cms/actions', () => {
   ]) {
     mod[name] = vi.fn();
   }
+  // The grid awaits ensureStatusField before mounting the table; resolve it.
+  mod.ensureStatusField = vi.fn().mockResolvedValue({
+    columnId: 'c_status',
+    options: { draft: 'd', published: 'p', scheduled: 's' },
+  });
   return mod;
 });
 

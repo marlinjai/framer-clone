@@ -22,6 +22,7 @@ import {
   useTable,
   useDbAdapter,
   TableView,
+  RowDetailPanel,
   SearchBar,
   FilterBar,
 } from '@marlinjai/data-table-react';
@@ -34,7 +35,8 @@ import type {
   Row,
   TextAlignment,
 } from '@marlinjai/data-table-core';
-import { CMS_WORKSPACE_ID } from '@/lib/cms/constants';
+import { CMS_WORKSPACE_ID, type CmsStatusField } from '@/lib/cms/constants';
+import { ensureStatusField } from '@/server/cms/actions';
 import { createCmsServerActionsAdapter } from './cmsServerActionsAdapter';
 import { cmsFileAdapter } from './cmsFileAdapter';
 
@@ -46,7 +48,13 @@ export interface CmsGridProps {
   dbAdapter?: DatabaseAdapter;
 }
 
-function CmsGridContent({ tableId }: { tableId: string }) {
+function CmsGridContent({
+  tableId,
+  statusField,
+}: {
+  tableId: string;
+  statusField: CmsStatusField | null;
+}) {
   const {
     table,
     columns,
@@ -77,7 +85,19 @@ function CmsGridContent({ tableId }: { tableId: string }) {
   const [selectedRows, setSelectedRows] = React.useState<Set<string>>(new Set());
   const [groupConfig, setGroupConfig] = React.useState<GroupConfig | undefined>(undefined);
   const [footerConfig, setFooterConfig] = React.useState<FooterConfig>({ calculations: {} });
+  const [detailRowId, setDetailRowId] = React.useState<string | null>(null);
   const displayRows = searchResults ?? rows;
+  // Resolve the open row from live data so detail-panel edits reflect immediately
+  // and the panel closes if the row is deleted.
+  const detailRow = detailRowId ? rows.find((r) => r.id === detailRowId) ?? null : null;
+
+  // New items default to Draft (the reserved Status field), so freshly added
+  // content is never accidentally treated as published.
+  const newItem = React.useCallback(() => {
+    void addRow(
+      statusField ? { cells: { [statusField.columnId]: statusField.options.draft } } : undefined,
+    );
+  }, [addRow, statusField]);
 
   // Delete the selected rows on Backspace/Delete, but never while the user is
   // typing in a cell editor (input/textarea/contentEditable).
@@ -172,7 +192,7 @@ function CmsGridContent({ tableId }: { tableId: string }) {
           </span>
           <button
             type="button"
-            onClick={() => addRow()}
+            onClick={newItem}
             className="inline-flex h-8 items-center gap-1.5 rounded-md bg-brand px-3 text-[13px] font-semibold text-brand-foreground shadow-xs transition-colors hover:bg-brand/90"
           >
             <Plus className="size-4" />
@@ -187,8 +207,9 @@ function CmsGridContent({ tableId }: { tableId: string }) {
           rows={displayRows}
           selectOptions={selectOptions}
           onCellChange={(rowId, columnId, value: CellValue) => updateCell(rowId, columnId, value)}
-          onAddRow={() => addRow()}
+          onAddRow={newItem}
           onDeleteRow={deleteRow}
+          onRowOpen={(row) => setDetailRowId(row.id)}
           onColumnResize={(columnId, width) => updateColumn(columnId, { width })}
           onColumnAlignmentChange={(columnId, alignment: TextAlignment) =>
             updateColumn(columnId, { alignment })
@@ -233,14 +254,74 @@ function CmsGridContent({ tableId }: { tableId: string }) {
           </button>
         </div>
       )}
+
+      {detailRow && (
+        <RowDetailPanel
+          row={detailRow}
+          columns={columns}
+          selectOptions={selectOptions}
+          isOpen
+          onClose={() => setDetailRowId(null)}
+          onCellChange={(columnId, value) => updateCell(detailRow.id, columnId, value)}
+          onDeleteRow={() => {
+            void deleteRow(detailRow.id);
+            setDetailRowId(null);
+          }}
+          onCreateSelectOption={createSelectOption}
+          onUpdateSelectOption={updateSelectOption}
+          onDeleteSelectOption={deleteSelectOption}
+          onUploadFile={(columnId, file) => uploadFile(detailRow.id, columnId, file)}
+          onDeleteFile={(columnId, fileId) => deleteFile(detailRow.id, columnId, fileId)}
+          onSearchRelationRows={searchRelationRows}
+          onGetRelationRowTitle={getRelationRowTitle}
+        />
+      )}
     </div>
   );
 }
 
 export default function CmsGrid({ tableId, dbAdapter = defaultAdapter }: CmsGridProps) {
+  // Ensure the reserved Status field exists BEFORE the table loads its columns,
+  // so it shows on first open. Failure (e.g. unauthenticated) degrades
+  // gracefully: the grid still opens, just without status defaulting.
+  const [statusField, setStatusField] = React.useState<CmsStatusField | null>(null);
+  const [ready, setReady] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setReady(false);
+    ensureStatusField(tableId)
+      .then((sf) => {
+        if (!cancelled) {
+          setStatusField(sf);
+          setReady(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStatusField(null);
+          setReady(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tableId]);
+
+  if (!ready) {
+    return (
+      <div
+        className="p-8 text-center text-sm text-muted-foreground"
+        data-testid="cms-grid-preparing"
+      >
+        Preparing collection...
+      </div>
+    );
+  }
+
   return (
     <DataTableProvider dbAdapter={dbAdapter} fileAdapter={cmsFileAdapter} workspaceId={CMS_WORKSPACE_ID}>
-      <CmsGridContent tableId={tableId} />
+      <CmsGridContent tableId={tableId} statusField={statusField} />
     </DataTableProvider>
   );
 }

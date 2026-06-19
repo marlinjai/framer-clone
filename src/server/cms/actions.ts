@@ -39,6 +39,7 @@ import type {
 } from '@marlinjai/data-table-core';
 import { getCmsAdapter } from './adapterClient';
 import { requireAdminAction } from '@/server/auth/adminAction';
+import type { CmsStatusField } from '@/lib/cms/constants';
 
 // --- Tables ---
 
@@ -253,4 +254,60 @@ export async function deleteView(viewId: string): Promise<void> {
 export async function reorderViews(tableId: string, viewIds: string[]): Promise<void> {
   await requireAdminAction();
   return getCmsAdapter().reorderViews(tableId, viewIds);
+}
+
+// --- CMS publish state (reserved "Status" field) ---
+
+// The reserved status field name + its option colors. Colors are keys of the
+// data-table engine's fixed 9-name tag palette (NOT hex), so they render with
+// the engine's own --dt-tag-* tokens. Module-level const (not exported: a
+// 'use server' file may only export async functions).
+const STATUS_FIELD_NAME = 'Status';
+const STATUS_OPTIONS = [
+  { key: 'draft', name: 'Draft', color: 'orange' },
+  { key: 'published', name: 'Published', color: 'green' },
+  { key: 'scheduled', name: 'Scheduled', color: 'blue' },
+] as const;
+
+/**
+ * Idempotently ensure a collection has the reserved "Status" select field with
+ * Draft / Published / Scheduled options, returning the column + option ids so the
+ * grid can default new items to Draft. Admin-guarded (it may create a column);
+ * safe to call on every grid open (a no-op once the field exists).
+ */
+export async function ensureStatusField(tableId: string): Promise<CmsStatusField> {
+  await requireAdminAction();
+  const adapter = getCmsAdapter();
+
+  const columns = await adapter.getColumns(tableId);
+  let statusColumn = columns.find(
+    (c) => c.type === 'select' && c.name.trim().toLowerCase() === STATUS_FIELD_NAME.toLowerCase(),
+  );
+  if (!statusColumn) {
+    statusColumn = await adapter.createColumn({
+      tableId,
+      name: STATUS_FIELD_NAME,
+      type: 'select',
+    });
+  }
+
+  const existing = await adapter.getSelectOptions(statusColumn.id);
+  const ids: Record<string, string> = {};
+  for (const opt of STATUS_OPTIONS) {
+    const found = existing.find((o) => o.name.trim().toLowerCase() === opt.name.toLowerCase());
+    ids[opt.key] = found
+      ? found.id
+      : (
+          await adapter.createSelectOption({
+            columnId: statusColumn.id,
+            name: opt.name,
+            color: opt.color,
+          })
+        ).id;
+  }
+
+  return {
+    columnId: statusColumn.id,
+    options: { draft: ids.draft, published: ids.published, scheduled: ids.scheduled },
+  };
 }
