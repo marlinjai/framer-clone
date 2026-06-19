@@ -4,16 +4,39 @@ import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/re
 import ContentManagerPanel from '../ContentManagerPanel';
 import { CmsClientError, type CmsClient } from '../cmsClient';
 
-// Mock the grid overlay: it would otherwise pull in the server-actions adapter
-// (server-only + Prisma). The stub renders the collection name and a close
-// button, which is all the panel-level open/close assertions need.
-vi.mock('../grid/CmsGridOverlay', () => ({
-  default: ({ collectionName, onClose }: { collectionName: string; onClose: () => void }) => (
-    <div data-testid="cms-grid-overlay">
-      <span data-testid="overlay-collection">{collectionName}</span>
-      <button onClick={onClose}>Close overlay</button>
-    </div>
-  ),
+// Mock the workspace overlay: it would otherwise pull in the server-actions
+// adapter (server-only + Prisma). The stub renders enough DOM for panel-level
+// assertions: the active collection name, a way to switch collections, and a
+// close button. It also renders a data-testid for the grid keyed by tableId so
+// we can assert the grid swaps when the active collection changes.
+vi.mock('../grid/CmsWorkspaceOverlay', () => ({
+  default: ({
+    collections,
+    activeId,
+    onSetActive,
+    onClose,
+  }: {
+    collections: Array<{ id: string; name: string }>;
+    activeId: string;
+    onSetActive: (id: string) => void;
+    onClose: () => void;
+  }) => {
+    const active = collections.find((c) => c.id === activeId);
+    return (
+      <div data-testid="cms-workspace-overlay">
+        <span data-testid="workspace-active-collection">{active?.name ?? ''}</span>
+        {/* Grid stub: key shows which tableId is currently active */}
+        <div data-testid={`cms-grid-${activeId}`} />
+        {/* Allow tests to switch the active collection */}
+        {collections.map((c) => (
+          <button key={c.id} data-testid={`set-active-${c.id}`} onClick={() => onSetActive(c.id)}>
+            Switch to {c.name}
+          </button>
+        ))}
+        <button onClick={onClose}>Close workspace</button>
+      </div>
+    );
+  },
 }));
 
 function makeClient(overrides: Partial<CmsClient> = {}): CmsClient {
@@ -27,14 +50,20 @@ function makeClient(overrides: Partial<CmsClient> = {}): CmsClient {
   };
 }
 
-const EVENTS = {
+const EVENTS: { id: string; slug: string; name: string; columns: []; itemCount: number } = {
   id: 'col_events',
   slug: 'events',
   name: 'Events',
-  columns: [
-    { id: 'title', name: 'title', type: 'text' as const },
-    { id: 'date', name: 'date', type: 'date' as const },
-  ],
+  columns: [],
+  itemCount: 12,
+};
+
+const TEAM: { id: string; slug: string; name: string; columns: []; itemCount: number } = {
+  id: 'col_team',
+  slug: 'team',
+  name: 'Team',
+  columns: [],
+  itemCount: 4,
 };
 
 beforeEach(() => {
@@ -52,7 +81,7 @@ describe('ContentManagerPanel', () => {
     expect(empty.textContent).toContain('No collections yet');
   });
 
-  it('creates a collection from the inline input and opens its grid', async () => {
+  it('creates a collection and opens the workspace with it active', async () => {
     const listCollections = vi
       .fn()
       .mockResolvedValueOnce([]) // initial: empty
@@ -70,18 +99,48 @@ describe('ContentManagerPanel', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => expect(client.createCollection).toHaveBeenCalledWith('Events'));
-    expect((await screen.findByTestId('overlay-collection')).textContent).toBe('Events');
+    // Workspace overlay should now be visible with Events active.
+    expect((await screen.findByTestId('workspace-active-collection')).textContent).toBe('Events');
   });
 
-  it('opens the editing grid overlay for a collection, then closes it', async () => {
+  it('opens the workspace overlay when clicking Open on a collection row', async () => {
     const client = makeClient({ listCollections: vi.fn().mockResolvedValue([EVENTS]) });
     render(<ContentManagerPanel client={client} />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Open Events' }));
-    expect((await screen.findByTestId('overlay-collection')).textContent).toBe('Events');
+    expect((await screen.findByTestId('workspace-active-collection')).textContent).toBe('Events');
+  });
 
-    fireEvent.click(screen.getByText('Close overlay'));
-    await waitFor(() => expect(screen.queryByTestId('cms-grid-overlay')).toBeNull());
+  it('switching the active collection in the rail re-keys the grid to the new tableId without closing', async () => {
+    const client = makeClient({
+      listCollections: vi.fn().mockResolvedValue([EVENTS, TEAM]),
+    });
+    render(<ContentManagerPanel client={client} />);
+
+    // Open workspace with Events.
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Events' }));
+    await screen.findByTestId('cms-workspace-overlay');
+
+    // Check Events grid is mounted.
+    expect(screen.getByTestId('cms-grid-col_events')).toBeTruthy();
+
+    // Switch to Team via the rail control exposed by the stub.
+    fireEvent.click(screen.getByTestId('set-active-col_team'));
+
+    // Workspace stays open, grid now keys to Team.
+    await waitFor(() => expect(screen.queryByTestId('cms-workspace-overlay')).toBeTruthy());
+    expect(screen.getByTestId('cms-grid-col_team')).toBeTruthy();
+  });
+
+  it('Close unmounts the workspace overlay', async () => {
+    const client = makeClient({ listCollections: vi.fn().mockResolvedValue([EVENTS]) });
+    render(<ContentManagerPanel client={client} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Events' }));
+    await screen.findByTestId('cms-workspace-overlay');
+
+    fireEvent.click(screen.getByText('Close workspace'));
+    await waitFor(() => expect(screen.queryByTestId('cms-workspace-overlay')).toBeNull());
   });
 
   it('deletes a collection through the overflow menu and confirmation dialog', async () => {
@@ -91,12 +150,10 @@ describe('ContentManagerPanel', () => {
     });
     render(<ContentManagerPanel client={client} />);
 
-    // Open the row's overflow menu (Radix opens on pointerdown).
     const trigger = await screen.findByRole('button', { name: 'Options for Events' });
     fireEvent.pointerDown(trigger);
     fireEvent.click(trigger);
 
-    // Choose Delete -> confirmation dialog -> confirm.
     fireEvent.click(await screen.findByText('Delete'));
     fireEvent.click(await screen.findByText('Delete collection'));
 

@@ -32,6 +32,8 @@ export interface Collection {
   /** Chosen icon key (collection settings); undefined falls back to a deterministic icon. */
   icon?: string;
   columns: Column[];
+  /** Total number of items in the collection (populated server-side; undefined means not yet fetched). */
+  itemCount?: number;
 }
 
 /**

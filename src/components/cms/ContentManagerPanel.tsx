@@ -4,8 +4,9 @@
 //
 // Root of the editor-side content manager. In the left-sidebar "Content" tab it
 // renders a COMPACT collection list (create / rename / delete); opening a
-// collection mounts the full Notion-style editing grid in a full-screen overlay
-// (CmsGridOverlay) over the canvas.
+// collection mounts the full workspace overlay (CmsWorkspaceOverlay) which shows
+// all collections in the rail on the left and the active collection's grid in the
+// center.
 //
 // Two write paths, each for its own concern:
 //   - COLLECTION-level CRUD goes through the injected CmsClient -> admin-guarded
@@ -19,12 +20,17 @@
 // This panel does NOT touch MST. Errors surface LOUDLY and inline: every mutation
 // runs through `run()`, which renders a CmsClientError's typed `code` + `message`
 // in the banner rather than swallowing a failure into a silent no-op.
+//
+// State: `activeId` is set when the workspace overlay is open. Opening a
+// collection from the compact sidebar list (or the workspace rail) sets activeId.
+// Switching collections within the rail calls onSetActive which updates activeId
+// without closing the workspace.
 
 import React from 'react';
 import type { Collection } from '@/lib/bindings/dataSource/types';
 import { httpCmsClient, CmsClientError, type CmsClient } from './cmsClient';
 import CollectionList from './CollectionList';
-import CmsGridOverlay from './grid/CmsGridOverlay';
+import CmsWorkspaceOverlay from './grid/CmsWorkspaceOverlay';
 
 export interface ContentManagerPanelProps {
   /** Injectable for tests; defaults to the live HTTP client. */
@@ -40,11 +46,11 @@ const ContentManagerPanel: React.FC<ContentManagerPanelProps> = ({
   client = httpCmsClient,
 }) => {
   const [collections, setCollections] = React.useState<Collection[] | null>(null);
-  const [openId, setOpenId] = React.useState<string | null>(null);
+  // activeId: the collection whose grid is displayed in the workspace. When set
+  // the workspace overlay is mounted; null means the overlay is closed.
+  const [activeId, setActiveId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<PanelError | null>(null);
   const [busy, setBusy] = React.useState(false);
-
-  const openCollection = collections?.find((c) => c.id === openId) ?? null;
 
   const refreshCollections = React.useCallback(async (): Promise<Collection[]> => {
     const next = await client.listCollections();
@@ -91,9 +97,8 @@ const ContentManagerPanel: React.FC<ContentManagerPanelProps> = ({
     void run(async () => {
       const created = await client.createCollection(name);
       await refreshCollections();
-      // Open the new collection's grid right away so the builder lands in the
-      // editing surface instead of an empty list row.
-      setOpenId(created.id);
+      // Open the new collection's workspace right away.
+      setActiveId(created.id);
     });
 
   const onRenameCollection = (id: string, name: string) =>
@@ -112,15 +117,17 @@ const ContentManagerPanel: React.FC<ContentManagerPanelProps> = ({
     void run(async () => {
       await client.deleteCollection(id);
       await refreshCollections();
-      if (openId === id) setOpenId(null);
+      if (activeId === id) setActiveId(null);
     });
 
-  // When the overlay closes, refresh the list so column/row counts edited through
-  // the grid's own adapter path are current in the sidebar.
-  const onCloseOverlay = React.useCallback(() => {
-    setOpenId(null);
+  // When the workspace closes, refresh so column/row counts edited through the
+  // grid's own adapter path are current in the sidebar.
+  const onCloseWorkspace = React.useCallback(() => {
+    setActiveId(null);
     void refreshCollections().catch((err) => setError(toPanelError(err)));
   }, [refreshCollections]);
+
+  const workspaceVisible = activeId !== null && collections !== null;
 
   return (
     <aside aria-label="Content manager" data-testid="cms-panel" className="flex flex-col">
@@ -150,9 +157,9 @@ const ContentManagerPanel: React.FC<ContentManagerPanelProps> = ({
       ) : (
         <CollectionList
           collections={collections}
-          openId={openId}
+          openId={activeId}
           busy={busy}
-          onOpen={setOpenId}
+          onOpen={setActiveId}
           onCreate={onCreateCollection}
           onRename={onRenameCollection}
           onUpdate={onUpdateCollection}
@@ -160,12 +167,17 @@ const ContentManagerPanel: React.FC<ContentManagerPanelProps> = ({
         />
       )}
 
-      {openCollection && (
-        <CmsGridOverlay
-          tableId={openCollection.id}
-          collectionName={openCollection.name}
-          iconKey={openCollection.icon}
-          onClose={onCloseOverlay}
+      {workspaceVisible && (
+        <CmsWorkspaceOverlay
+          collections={collections}
+          activeId={activeId}
+          busy={busy}
+          onSetActive={setActiveId}
+          onCreate={onCreateCollection}
+          onRename={onRenameCollection}
+          onUpdate={onUpdateCollection}
+          onDelete={onDeleteCollection}
+          onClose={onCloseWorkspace}
         />
       )}
     </aside>

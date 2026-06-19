@@ -103,6 +103,7 @@ function mapColumn(column: DataTableColumn): BindingColumn {
 function mapCollection(
   table: DataTableTable,
   columns: DataTableColumn[],
+  itemCount?: number,
 ): Collection {
   return {
     id: table.id,
@@ -110,6 +111,7 @@ function mapCollection(
     name: table.name,
     icon: table.icon ?? undefined,
     columns: columns.map(mapColumn),
+    itemCount,
   };
 }
 
@@ -251,10 +253,16 @@ const repository: CmsReadRepository = {
   async listCollections(): Promise<Collection[]> {
     const adapter = getCmsAdapter();
     const tables = await adapter.listTables(CMS_WORKSPACE_ID);
+    // N+1 over collections: fetch columns + count per table. Acceptable for
+    // phase 1 (single-tenant, few collections). A batched count is a later
+    // optimization once the adapter exposes a bulk method.
     return Promise.all(
       tables.map(async (table) => {
-        const columns = await adapter.getColumns(table.id);
-        return mapCollection(table, columns);
+        const [columns, itemCount] = await Promise.all([
+          adapter.getColumns(table.id),
+          adapter.getRows(table.id, { limit: 1 }).then((r) => r.total ?? 0).catch(() => 0),
+        ]);
+        return mapCollection(table, columns, itemCount);
       }),
     );
   },
