@@ -67,7 +67,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
       ref={rootRef}
       data-editor-ui="true"
       style={{ left: x, top: y }}
-      className="fixed z-[200] min-w-[160px] bg-white border border-gray-200 rounded-md shadow-lg py-1"
+      className="fixed z-[200] min-w-[160px] bg-background border border-border rounded-md shadow-lg py-1"
     >
       {items.map(item => (
         <button
@@ -81,10 +81,10 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
           }}
           className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left transition-colors ${
             item.disabled
-              ? 'text-gray-300 cursor-not-allowed'
+              ? 'text-muted-foreground cursor-not-allowed'
               : item.destructive
-                ? 'text-red-600 hover:bg-red-50'
-                : 'text-gray-700 hover:bg-gray-50'
+                ? 'text-destructive hover:bg-destructive/10'
+                : 'text-foreground hover:bg-accent'
           }`}
         >
           <span className="shrink-0 opacity-70">{item.icon}</span>
@@ -188,7 +188,7 @@ const PageRow = observer(({
   return (
     <div
       className={`group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
-        isActive ? 'bg-brand/10 border-l-2 border-brand' : 'hover:bg-gray-50 border-l-2 border-transparent'
+        isActive ? 'bg-brand/10 border-l-2 border-brand' : 'hover:bg-accent border-l-2 border-transparent'
       }`}
       onClick={() => {
         if (editingField) return;
@@ -196,7 +196,7 @@ const PageRow = observer(({
       }}
       onContextMenu={onContextMenu}
     >
-      <FileText size={12} className={`shrink-0 ${isActive ? 'text-brand' : 'text-gray-400'}`} />
+      <FileText size={12} className={`shrink-0 ${isActive ? 'text-brand' : 'text-muted-foreground'}`} />
       <div className="flex-1 min-w-0">
         {editingField === 'title' ? (
           <input
@@ -207,11 +207,11 @@ const PageRow = observer(({
             onBlur={commit}
             onKeyDown={onKeyDown}
             onClick={e => e.stopPropagation()}
-            className="w-full bg-white border border-brand rounded px-1 py-[1px] text-sm text-gray-900 outline-none"
+            className="w-full bg-background border border-brand rounded px-1 py-[1px] text-sm text-foreground outline-none"
           />
         ) : (
           <div
-            className={`text-sm truncate ${isActive ? 'font-medium text-gray-900' : 'text-gray-700'}`}
+            className={`text-sm truncate ${isActive ? 'font-medium text-foreground' : 'text-foreground'}`}
             onDoubleClick={e => {
               e.stopPropagation();
               onBeginEdit('title');
@@ -222,7 +222,7 @@ const PageRow = observer(({
         )}
         {editingField === 'slug' ? (
           <div className="flex items-center gap-0.5">
-            <span className="text-[10px] text-gray-400">/</span>
+            <span className="text-[10px] text-muted-foreground">/</span>
             <input
               ref={inputRef}
               type="text"
@@ -231,8 +231,8 @@ const PageRow = observer(({
               onBlur={commit}
               onKeyDown={onKeyDown}
               onClick={e => e.stopPropagation()}
-              className={`flex-1 min-w-0 bg-white border rounded px-1 py-[1px] text-[10px] text-gray-700 outline-none ${
-                invalid ? 'border-red-400' : 'border-brand'
+              className={`flex-1 min-w-0 bg-background border rounded px-1 py-[1px] text-[10px] text-foreground outline-none ${
+                invalid ? 'border-destructive' : 'border-brand'
               }`}
               title={invalid ? 'Slug already in use' : undefined}
             />
@@ -240,7 +240,7 @@ const PageRow = observer(({
         ) : (
           page.slug && (
             <div
-              className="text-[10px] text-gray-400 truncate leading-tight"
+              className="text-[10px] text-muted-foreground truncate leading-tight"
               onDoubleClick={e => {
                 e.stopPropagation();
                 onBeginEdit('slug');
@@ -259,7 +259,7 @@ const PageRow = observer(({
             onDelete();
           }}
           title="Delete page"
-          className="p-0.5 rounded text-gray-400 opacity-0 group-hover:opacity-100 hover:text-gray-700 hover:bg-gray-200 transition-opacity"
+          className="p-0.5 rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground hover:bg-accent transition-opacity"
         >
           <X size={12} />
         </button>
@@ -280,7 +280,7 @@ const PagesPanel = observer(() => {
 
   if (!project) {
     return (
-      <div className="p-4 text-center text-xs text-gray-400">
+      <div className="p-4 text-center text-xs text-muted-foreground">
         No project loaded.
       </div>
     );
@@ -331,14 +331,14 @@ const PagesPanel = observer(() => {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-3 h-8 shrink-0">
-        <span className="text-[11px] uppercase tracking-wide font-medium text-gray-500">
+        <span className="text-[11px] uppercase tracking-wide font-medium text-muted-foreground">
           Pages
         </span>
         <button
           type="button"
           onClick={handleCreate}
           title="New page"
-          className="p-0.5 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100"
+          className="p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent"
         >
           <Plus size={14} />
         </button>
@@ -347,13 +347,13 @@ const PagesPanel = observer(() => {
       {pages.length > 3 && (
         <div className="px-2 pb-2 shrink-0">
           <div className="relative">
-            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
               type="text"
               placeholder="Search pages..."
               value={query}
               onChange={e => setQuery(e.target.value)}
-              className="w-full pl-6 pr-2 py-1 text-xs bg-gray-50 rounded border border-transparent focus:border-gray-200 focus:bg-white focus:outline-none"
+              className="w-full pl-6 pr-2 py-1 text-xs bg-muted rounded border border-transparent focus:border-ring focus:bg-background focus:outline-none"
             />
           </div>
         </div>
@@ -361,7 +361,7 @@ const PagesPanel = observer(() => {
 
       <div className="flex-1 overflow-y-auto px-1 pb-1">
         {filtered.length === 0 ? (
-          <div className="text-center text-xs text-gray-400 py-6 px-2">
+          <div className="text-center text-xs text-muted-foreground py-6 px-2">
             {q ? (
               <>
                 No pages match <span className="font-mono">&ldquo;{query}&rdquo;</span>.

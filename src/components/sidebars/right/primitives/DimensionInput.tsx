@@ -81,7 +81,7 @@ export function DimensionInput({
 
   return (
     <div className={cn("space-y-1", className)}>
-      <label className="text-[11px] text-gray-500">{label}</label>
+      <label className="text-[11px] text-muted-foreground">{label}</label>
       <div className="flex gap-1">
         <Input
           value={unit === 'auto' ? 'auto' : localValue}
@@ -125,7 +125,7 @@ export function DimensionInput({
               setUnit(newUnit);
               commit(localValue, newUnit);
             }}
-            className="h-7 text-[10px] bg-gray-50 border border-gray-200 rounded px-1 text-gray-600 min-w-[40px]"
+            className="h-7 text-[10px] bg-muted border border-border rounded px-1 text-muted-foreground min-w-[40px]"
           >
             {units.map(u => (
               <option key={u} value={u}>{u}</option>

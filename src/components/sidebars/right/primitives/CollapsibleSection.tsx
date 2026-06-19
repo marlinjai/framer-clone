@@ -20,19 +20,19 @@ export function CollapsibleSection({
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   return (
-    <div className="border-b border-gray-100 last:border-b-0">
+    <div className="border-b border-border last:border-b-0">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center justify-between w-full py-2 px-1 hover:bg-gray-50 rounded-sm transition-colors"
+        className="flex items-center justify-between w-full py-2 px-1 hover:bg-accent rounded-sm transition-colors"
       >
         <div className="flex items-center gap-1.5">
           {isOpen ? (
-            <ChevronDown size={12} className="text-gray-400" />
+            <ChevronDown size={12} className="text-muted-foreground" />
           ) : (
-            <ChevronRight size={12} className="text-gray-400" />
+            <ChevronRight size={12} className="text-muted-foreground" />
           )}
-          {icon && <span className="text-gray-500">{icon}</span>}
-          <span className="text-xs font-medium text-gray-700 uppercase tracking-wider">{title}</span>
+          {icon && <span className="text-muted-foreground">{icon}</span>}
+          <span className="text-xs font-medium text-foreground uppercase tracking-wider">{title}</span>
         </div>
         {badge && (
           <span className="text-[10px] text-brand bg-brand/10 px-1.5 py-0.5 rounded">

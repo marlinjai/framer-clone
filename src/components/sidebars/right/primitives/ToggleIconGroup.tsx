@@ -20,7 +20,7 @@ export function ToggleIconGroup({
 }: ToggleIconGroupProps) {
   return (
     <div className={cn("space-y-1", className)}>
-      <label className="text-[11px] text-gray-500">{label}</label>
+      <label className="text-[11px] text-muted-foreground">{label}</label>
       <ToggleGroup
         type="single"
         value={value}

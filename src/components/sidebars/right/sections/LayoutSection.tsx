@@ -79,7 +79,7 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
 
           {/* Flex Wrap */}
           <div className="flex items-center justify-between">
-            <label className="text-[11px] text-gray-500">Wrap</label>
+            <label className="text-[11px] text-muted-foreground">Wrap</label>
             <Switch
               checked={getStyleValue('flexWrap') === 'wrap'}
               onCheckedChange={(checked) => setStyleValue('flexWrap', checked ? 'wrap' : 'nowrap')}
@@ -111,7 +111,7 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
       {/* Individual padding sides */}
       <button
         onClick={() => setShowPaddingSides(!showPaddingSides)}
-        className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600"
+        className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-muted-foreground"
       >
         {showPaddingSides ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
         Individual sides

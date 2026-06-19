@@ -57,7 +57,7 @@ const StaticSlotControl = observer(
           value={value}
           placeholder={label}
           onChange={(e) => node.setTextContent(e.target.value)}
-          className="h-7 w-full rounded border border-gray-200 px-2 text-xs outline-none focus:border-brand"
+          className="h-7 w-full rounded border border-border px-2 text-xs outline-none focus:border-brand"
         />
       );
     }
@@ -71,7 +71,7 @@ const StaticSlotControl = observer(
         aria-label={label}
         value={display}
         placeholder={`Unset (${label})`}
-        className="h-7 w-full rounded border border-gray-200 bg-gray-50 px-2 text-xs text-gray-500 outline-none"
+        className="h-7 w-full rounded border border-border bg-muted px-2 text-xs text-muted-foreground outline-none"
       />
     );
   },
@@ -99,7 +99,7 @@ export const DataSourceSection = observer(({ component }: DataSourceSectionProps
     <CollapsibleSection title="Data" icon={<Database size={12} />}>
       {slotEntries.map(([slot, meta]) => (
         <div key={slot} className="space-y-1">
-          <label className="text-[11px] text-gray-500">{meta.label}</label>
+          <label className="text-[11px] text-muted-foreground">{meta.label}</label>
           <BindingControl node={component} slot={slot} meta={meta}>
             <StaticSlotControl node={component} slot={slot} label={meta.label} />
           </BindingControl>
@@ -107,8 +107,8 @@ export const DataSourceSection = observer(({ component }: DataSourceSectionProps
       ))}
 
       {showQueryBuilder && (
-        <div className="mt-2 border-t border-gray-100 pt-2">
-          <div className="mb-1 text-[11px] font-medium text-gray-500">Query</div>
+        <div className="mt-2 border-t border-border pt-2">
+          <div className="mb-1 text-[11px] font-medium text-muted-foreground">Query</div>
           <QueryBuilder node={component} />
         </div>
       )}

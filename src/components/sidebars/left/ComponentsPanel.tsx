@@ -21,13 +21,13 @@ const ComponentItem = ({ entry }: { entry: ComponentRegistryEntry }) => {
   return (
     <div
       onPointerDown={onPointerDown}
-      className="flex items-center space-x-3 p-2 rounded hover:bg-gray-50 cursor-grab active:cursor-grabbing transition-colors select-none"
+      className="flex items-center space-x-3 p-2 rounded hover:bg-accent cursor-grab active:cursor-grabbing transition-colors select-none"
       title={`Drag to add ${entry.label}`}
     >
       <div className={`p-1.5 rounded ${entry.iconClassName}`}>
         <IconComponent size={14} />
       </div>
-      <span className="text-sm text-gray-700">{entry.label}</span>
+      <span className="text-sm text-foreground">{entry.label}</span>
     </div>
   );
 };
@@ -42,8 +42,8 @@ const ComponentsPanel = observer(() => {
     <div className="space-y-4">
       <div>
         <div className="flex items-center space-x-2 mb-3">
-          <h3 className="text-sm font-medium text-gray-900">Basic</h3>
-          <Plus size={14} className="text-gray-400" />
+          <h3 className="text-sm font-medium text-foreground">Basic</h3>
+          <Plus size={14} className="text-muted-foreground" />
         </div>
         <div className="space-y-1">
           {basicComponents.map((entry) => (
@@ -54,8 +54,8 @@ const ComponentsPanel = observer(() => {
 
       <div>
         <div className="flex items-center space-x-2 mb-3">
-          <h3 className="text-sm font-medium text-gray-900">Layout</h3>
-          <Plus size={14} className="text-gray-400" />
+          <h3 className="text-sm font-medium text-foreground">Layout</h3>
+          <Plus size={14} className="text-muted-foreground" />
         </div>
         <div className="space-y-1">
           {layoutComponents.map((entry) => (
@@ -67,8 +67,8 @@ const ComponentsPanel = observer(() => {
       {dataComponents.length > 0 && (
         <div>
           <div className="flex items-center space-x-2 mb-3">
-            <h3 className="text-sm font-medium text-gray-900">Data</h3>
-            <Plus size={14} className="text-gray-400" />
+            <h3 className="text-sm font-medium text-foreground">Data</h3>
+            <Plus size={14} className="text-muted-foreground" />
           </div>
           <div className="space-y-1">
             {dataComponents.map((entry) => (
@@ -81,8 +81,8 @@ const ComponentsPanel = observer(() => {
       {commerceComponents.length > 0 && (
         <div>
           <div className="flex items-center space-x-2 mb-3">
-            <h3 className="text-sm font-medium text-gray-900">Commerce</h3>
-            <Plus size={14} className="text-gray-400" />
+            <h3 className="text-sm font-medium text-foreground">Commerce</h3>
+            <Plus size={14} className="text-muted-foreground" />
           </div>
           <div className="space-y-1">
             {commerceComponents.map((entry) => (

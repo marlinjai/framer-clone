@@ -28,7 +28,7 @@ export function PropertySelect({
 }: PropertySelectProps) {
   return (
     <div className={cn("space-y-1", className)}>
-      <label className="text-[11px] text-gray-500">{label}</label>
+      <label className="text-[11px] text-muted-foreground">{label}</label>
       <Select value={value || undefined} onValueChange={onChange}>
         <SelectTrigger className="h-7 text-xs">
           <SelectValue placeholder={placeholder} />

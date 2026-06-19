@@ -69,7 +69,7 @@ export const PositionSection = observer(({ component, breakpointId }: PositionSe
 
       <div className="mt-2">
         <div className="space-y-1">
-          <label className="text-[11px] text-gray-500">Z-Index</label>
+          <label className="text-[11px] text-muted-foreground">Z-Index</label>
           <Input
             value={getStyleValue('zIndex') || ''}
             onChange={(e) => setStyleValue('zIndex', e.target.value)}

@@ -34,7 +34,7 @@ const LayersPanel = observer(() => {
 
   if (!currentPage) {
     return (
-      <div className="text-center text-gray-500 text-sm py-8">
+      <div className="text-center text-muted-foreground text-sm py-8">
         No page selected
       </div>
     );
@@ -72,7 +72,7 @@ const LayersPanel = observer(() => {
           <div key={viewport.id}>
             {/* Viewport Header */}
             <div
-              className={`flex items-center justify-between p-2 rounded cursor-pointer hover:bg-gray-50 ${
+              className={`flex items-center justify-between p-2 rounded cursor-pointer hover:bg-accent ${
                 isSelected ? 'bg-brand/10 border-l-2 border-brand' : ''
               }`}
               onClick={() => {
@@ -85,24 +85,24 @@ const LayersPanel = observer(() => {
                     e.stopPropagation();
                     toggleViewportCollapse(viewport.id);
                   }}
-                  className="p-0.5 hover:bg-gray-200 rounded"
+                  className="p-0.5 hover:bg-accent rounded"
                 >
                   {isCollapsed ? (
-                    <ChevronRight size={14} className="text-gray-400" />
+                    <ChevronRight size={14} className="text-muted-foreground" />
                   ) : (
-                    <ChevronDown size={14} className="text-gray-400" />
+                    <ChevronDown size={14} className="text-muted-foreground" />
                   )}
                 </button>
 
-                <div className="p-1 rounded bg-gray-100">
-                  <Square size={12} className="text-gray-600" />
+                <div className="p-1 rounded bg-muted">
+                  <Square size={12} className="text-muted-foreground" />
                 </div>
 
-                <span className="text-sm font-medium text-gray-900">
+                <span className="text-sm font-medium text-foreground">
                   {viewport.label}
                 </span>
 
-                <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                   {viewport.breakpointMinWidth}px
                 </span>
               </div>
@@ -110,31 +110,31 @@ const LayersPanel = observer(() => {
               <div className="flex items-center space-x-1">
                 {/* Visibility Toggle */}
                 <button
-                  className="p-1 hover:bg-gray-200 rounded"
+                  className="p-1 hover:bg-accent rounded"
                   onClick={(e) => {
                     e.stopPropagation();
                     viewport.toggleCanvasVisibility();
                   }}
                 >
                   {viewport.canvasVisible ? (
-                    <Eye size={12} className="text-gray-400" />
+                    <Eye size={12} className="text-muted-foreground" />
                   ) : (
-                    <EyeOff size={12} className="text-gray-400" />
+                    <EyeOff size={12} className="text-muted-foreground" />
                   )}
                 </button>
 
                 {/* Lock Toggle */}
                 <button
-                  className="p-1 hover:bg-gray-200 rounded"
+                  className="p-1 hover:bg-accent rounded"
                   onClick={(e) => {
                     e.stopPropagation();
                     viewport.toggleCanvasLock();
                   }}
                 >
                   {viewport.canvasLocked ? (
-                    <Lock size={12} className="text-gray-400" />
+                    <Lock size={12} className="text-muted-foreground" />
                   ) : (
-                    <Unlock size={12} className="text-gray-400" />
+                    <Unlock size={12} className="text-muted-foreground" />
                   )}
                 </button>
               </div>
@@ -159,8 +159,8 @@ const LayersPanel = observer(() => {
       {currentPage.floatingElements.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-gray-900">Floating Elements</h3>
-            <span className="text-xs text-gray-500">{currentPage.floatingElements.length}</span>
+            <h3 className="text-sm font-medium text-foreground">Floating Elements</h3>
+            <span className="text-xs text-muted-foreground">{currentPage.floatingElements.length}</span>
           </div>
           <div className="space-y-1">
             {currentPage.floatingElements.map(element =>
@@ -210,7 +210,7 @@ const LayerNode = observer(({ component, depth, breakpointId, getIcon }: LayerNo
       <div
         data-inner-component-id={component.id}
         onPointerDown={onPointerDown}
-        className={`flex items-center space-x-2 p-1.5 rounded cursor-pointer hover:bg-gray-50 ${
+        className={`flex items-center space-x-2 p-1.5 rounded cursor-pointer hover:bg-accent ${
           isSelected ? 'bg-brand/10 border-l-2 border-brand' : ''
         }`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
@@ -224,55 +224,55 @@ const LayerNode = observer(({ component, depth, breakpointId, getIcon }: LayerNo
       >
         {/* Expand/Collapse */}
         {hasChildren ? (
-          <ChevronDown size={14} className="text-gray-400" />
+          <ChevronDown size={14} className="text-muted-foreground" />
         ) : (
           <div className="w-3.5" />
         )}
 
         {/* Component Icon */}
-        <div className="p-1 rounded bg-gray-100">
-          <IconComponent size={12} className="text-gray-600" />
+        <div className="p-1 rounded bg-muted">
+          <IconComponent size={12} className="text-muted-foreground" />
         </div>
 
         {/* Component Name */}
-        <span className="text-sm text-gray-700 flex-1 truncate">
+        <span className="text-sm text-foreground flex-1 truncate">
           {component.displayName}
         </span>
 
         {/* Visibility Toggle */}
         <button
-          className="p-1 hover:bg-gray-200 rounded"
+          className="p-1 hover:bg-accent rounded"
           onClick={(e) => {
             e.stopPropagation();
             component.toggleCanvasVisibility();
           }}
         >
           {component.canvasVisible ? (
-            <Eye size={12} className="text-gray-400" />
+            <Eye size={12} className="text-muted-foreground" />
           ) : (
-            <EyeOff size={12} className="text-gray-400" />
+            <EyeOff size={12} className="text-muted-foreground" />
           )}
         </button>
 
         {/* Lock Toggle */}
         <button
-          className="p-1 hover:bg-gray-200 rounded"
+          className="p-1 hover:bg-accent rounded"
           onClick={(e) => {
             e.stopPropagation();
             component.toggleCanvasLock();
           }}
         >
           {component.canvasLocked ? (
-            <Lock size={12} className="text-gray-400" />
+            <Lock size={12} className="text-muted-foreground" />
           ) : (
-            <Unlock size={12} className="text-gray-400" />
+            <Unlock size={12} className="text-muted-foreground" />
           )}
         </button>
 
         {/* Delete - tree children only. Viewport nodes and root stay put. */}
         {!component.isViewportNode && component.hasParent && (
           <button
-            className="p-1 hover:bg-red-100 rounded"
+            className="p-1 hover:bg-destructive/10 rounded"
             title="Delete"
             onClick={(e) => {
               e.stopPropagation();
@@ -281,7 +281,7 @@ const LayerNode = observer(({ component, depth, breakpointId, getIcon }: LayerNo
               page.deleteComponent(component.id);
             }}
           >
-            <Trash2 size={12} className="text-gray-400" />
+            <Trash2 size={12} className="text-muted-foreground" />
           </button>
         )}
       </div>

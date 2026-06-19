@@ -57,7 +57,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
 
       {/* Visibility toggle */}
       <div className="flex items-center justify-between">
-        <label className="text-[11px] text-gray-500">Visible</label>
+        <label className="text-[11px] text-muted-foreground">Visible</label>
         <Switch
           checked={isVisible}
           onCheckedChange={(checked) => {
@@ -110,7 +110,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
       {/* Individual corners toggle */}
       <button
         onClick={() => setShowCorners(!showCorners)}
-        className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600"
+        className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-muted-foreground"
       >
         {showCorners ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
         Individual corners
@@ -127,7 +127,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
       {/* Border */}
       <button
         onClick={() => setShowBorder(!showBorder)}
-        className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600"
+        className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-muted-foreground"
       >
         {showBorder ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
         Border
@@ -162,7 +162,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
 
       {/* Box Shadow placeholder */}
       <div className="space-y-1">
-        <label className="text-[11px] text-gray-500">Box Shadow</label>
+        <label className="text-[11px] text-muted-foreground">Box Shadow</label>
         <Input
           value={getStyleValue('boxShadow') || ''}
           onChange={(e) => setStyleValue('boxShadow', e.target.value)}

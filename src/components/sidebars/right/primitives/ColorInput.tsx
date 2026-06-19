@@ -19,7 +19,7 @@ export function ColorInput({ label, value, onChange, className }: ColorInputProp
 
   return (
     <div className={cn("space-y-1", className)}>
-      <label className="text-[11px] text-gray-500">{label}</label>
+      <label className="text-[11px] text-muted-foreground">{label}</label>
       <div className="flex items-center gap-2">
         <input
           type="color"
@@ -28,7 +28,7 @@ export function ColorInput({ label, value, onChange, className }: ColorInputProp
             setLocalValue(e.target.value);
             onChange(e.target.value);
           }}
-          className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0.5 bg-transparent"
+          className="w-7 h-7 rounded border border-border cursor-pointer p-0.5 bg-transparent"
         />
         <Input
           value={localValue}

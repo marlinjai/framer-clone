@@ -28,7 +28,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
         <div className="space-y-2 mb-2">
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
-              <label className="text-[11px] text-gray-500">Min Width (BP)</label>
+              <label className="text-[11px] text-muted-foreground">Min Width (BP)</label>
               <Input
                 value={component.breakpointMinWidth || 320}
                 onChange={(e) => {
@@ -39,7 +39,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
               />
             </div>
             <div className="space-y-1">
-              <label className="text-[11px] text-gray-500">Viewport Height</label>
+              <label className="text-[11px] text-muted-foreground">Viewport Height</label>
               <Input
                 value={component.viewportHeight || 600}
                 onChange={(e) => {
@@ -52,7 +52,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
-              <label className="text-[11px] text-gray-500">Canvas X</label>
+              <label className="text-[11px] text-muted-foreground">Canvas X</label>
               <Input
                 value={component.canvasX || 0}
                 onChange={(e) => component.updateCanvasTransform({ x: parseInt(e.target.value) || 0 })}
@@ -60,7 +60,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
               />
             </div>
             <div className="space-y-1">
-              <label className="text-[11px] text-gray-500">Canvas Y</label>
+              <label className="text-[11px] text-muted-foreground">Canvas Y</label>
               <Input
                 value={component.canvasY || 0}
                 onChange={(e) => component.updateCanvasTransform({ y: parseInt(e.target.value) || 0 })}
@@ -75,7 +75,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
       {component.isFloatingElement && (
         <div className="grid grid-cols-2 gap-2 mb-2">
           <div className="space-y-1">
-            <label className="text-[11px] text-gray-500">Canvas X</label>
+            <label className="text-[11px] text-muted-foreground">Canvas X</label>
             <Input
               value={component.canvasX || 0}
               onChange={(e) => component.updateCanvasTransform({ x: parseInt(e.target.value) || 0 })}
@@ -83,7 +83,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
             />
           </div>
           <div className="space-y-1">
-            <label className="text-[11px] text-gray-500">Canvas Y</label>
+            <label className="text-[11px] text-muted-foreground">Canvas Y</label>
             <Input
               value={component.canvasY || 0}
               onChange={(e) => component.updateCanvasTransform({ y: parseInt(e.target.value) || 0 })}
@@ -110,7 +110,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
       {/* Min/Max toggle */}
       <button
         onClick={() => setShowMinMax(!showMinMax)}
-        className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600 mt-1"
+        className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-muted-foreground mt-1"
       >
         {showMinMax ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
         Min / Max
@@ -143,7 +143,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
       {/* Image URL for img elements */}
       {component.type === 'img' && (
         <div className="space-y-1 mt-2">
-          <label className="text-[11px] text-gray-500">Image URL</label>
+          <label className="text-[11px] text-muted-foreground">Image URL</label>
           <Input
             value={component.props?.src || ''}
             onChange={(e) => {

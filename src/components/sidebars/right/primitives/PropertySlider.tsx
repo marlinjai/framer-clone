@@ -36,7 +36,7 @@ export function PropertySlider({
 
   return (
     <div className={cn("space-y-1", className)}>
-      <label className="text-[11px] text-gray-500">{label}</label>
+      <label className="text-[11px] text-muted-foreground">{label}</label>
       <div className="flex items-center gap-2">
         <Slider
           value={[value]}
@@ -62,7 +62,7 @@ export function PropertySlider({
             }}
             className="h-7 w-14 text-xs text-center"
           />
-          {suffix && <span className="text-[10px] text-gray-400 ml-0.5">{suffix}</span>}
+          {suffix && <span className="text-[10px] text-muted-foreground ml-0.5">{suffix}</span>}
         </div>
       </div>
     </div>

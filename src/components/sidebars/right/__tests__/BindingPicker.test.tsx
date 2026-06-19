@@ -152,7 +152,7 @@ describe('BindingPicker', () => {
     );
     const input = screen.getByLabelText('Binding expression') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '{{bad expr}}' } });
-    expect(input.className).toContain('border-red-500');
+    expect(input.className).toContain('border-destructive');
   });
 });
 

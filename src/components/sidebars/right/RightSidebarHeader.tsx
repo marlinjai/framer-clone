@@ -20,13 +20,13 @@ const RightSidebarHeader = observer(() => {
   const title = target ? target.displayName : 'Properties';
 
   return (
-    <div className="h-12 flex items-center justify-between px-3 border-b border-gray-200 shrink-0">
+    <div className="h-12 flex items-center justify-between px-3 border-b border-border shrink-0">
       {/* Collapse Toggle */}
       <Button
         variant="ghost"
         size="sm"
         onClick={() => editorUI.toggleRightSidebar()}
-        className="p-1 hover:bg-gray-100"
+        className="p-1 hover:bg-accent"
       >
         {isCollapsed ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
       </Button>
@@ -34,10 +34,10 @@ const RightSidebarHeader = observer(() => {
       {/* Title */}
       {!isCollapsed && (
         <div className="flex items-center space-x-2">
-          <span className="font-medium text-gray-900 text-sm truncate max-w-[140px]">
+          <span className="font-medium text-foreground text-sm truncate max-w-[140px]">
             {title}
           </span>
-          <Settings size={16} className="text-gray-400 shrink-0" />
+          <Settings size={16} className="text-muted-foreground shrink-0" />
         </div>
       )}
     </div>

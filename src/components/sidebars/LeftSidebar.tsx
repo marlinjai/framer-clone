@@ -63,22 +63,22 @@ const LeftSidebar = observer(() => {
 
   return (
     <div className={`
-      bg-white border-r border-gray-200 flex flex-col transition-all duration-300 ease-in-out h-[calc(100vh-4rem)]
+      bg-background border-r border-border flex flex-col transition-all duration-300 ease-in-out h-[calc(100vh-4rem)]
       ${isCollapsed ? 'w-12' : 'w-64'}
     `}>
       {/* Collapse toggle */}
-      <div className="border-b border-gray-200 shrink-0">
+      <div className="border-b border-border shrink-0">
         <div className="h-12 flex items-center justify-between px-3">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => editorUI.toggleLeftSidebar()}
-            className="p-1 hover:bg-gray-100"
+            className="p-1 hover:bg-accent"
           >
             {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           </Button>
           {!isCollapsed && (
-            <div className="text-sm font-medium text-gray-900">Design</div>
+            <div className="text-sm font-medium text-foreground">Design</div>
           )}
         </div>
       </div>
@@ -89,7 +89,7 @@ const LeftSidebar = observer(() => {
           {/* Top pane: Pages */}
           <div
             style={{ height: topHeight }}
-            className="shrink-0 overflow-hidden border-b border-gray-100"
+            className="shrink-0 overflow-hidden border-b border-border"
           >
             <PagesPanel />
           </div>
@@ -100,17 +100,17 @@ const LeftSidebar = observer(() => {
             role="separator"
             aria-orientation="horizontal"
             onPointerDown={onDividerPointerDown}
-            className="h-1 shrink-0 cursor-row-resize bg-gray-200 hover:bg-brand transition-colors"
+            className="h-1 shrink-0 cursor-row-resize bg-border hover:bg-brand transition-colors"
           />
 
           {/* Bottom pane: Components / Layers */}
           <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="flex shrink-0 border-b border-gray-200">
+            <div className="flex shrink-0 border-b border-border">
               <button
                 className={`flex-1 flex items-center justify-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
                   activeTab === 'components'
                     ? 'border-brand text-brand'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                    : 'border-transparent text-muted-foreground hover:text-foreground'
                 }`}
                 onClick={() => setActiveTab('components')}
               >
@@ -121,7 +121,7 @@ const LeftSidebar = observer(() => {
                 className={`flex-1 flex items-center justify-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
                   activeTab === 'layers'
                     ? 'border-brand text-brand'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                    : 'border-transparent text-muted-foreground hover:text-foreground'
                 }`}
                 onClick={() => setActiveTab('layers')}
               >
@@ -132,7 +132,7 @@ const LeftSidebar = observer(() => {
                 className={`flex-1 flex items-center justify-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
                   activeTab === 'content'
                     ? 'border-brand text-brand'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                    : 'border-transparent text-muted-foreground hover:text-foreground'
                 }`}
                 onClick={() => setActiveTab('content')}
               >
@@ -141,9 +141,9 @@ const LeftSidebar = observer(() => {
               </button>
             </div>
 
-            <div className="p-3 border-b border-gray-200 shrink-0">
+            <div className="p-3 border-b border-border shrink-0">
               <div className="relative">
-                <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder={`Search ${activeTab}...`}
                   value={searchQuery}
