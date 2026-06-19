@@ -2,21 +2,20 @@
 
 // src/components/cms/grid/CmsWorkspaceOverlay.tsx
 //
-// Full-screen workspace overlay for the CMS. Replaces the single-collection
-// CmsGridOverlay with a [ collections rail | items grid ] surface where the
-// builder can see every collection at once and switch between them without
-// closing.
+// Full-screen workspace overlay for the CMS: a [ collections rail | items grid ]
+// surface where the builder can see every collection at once and switch between
+// them without closing.
 //
-// Reuses the same portal-to-body approach and Escape guard as CmsGridOverlay:
-// the panel lives deep in the left sidebar's stacking context, so portaling to
-// document.body is required for the overlay to cover the whole editor chrome.
-// The `.light` class is pinned on the inner surface so the data-table grid
-// always renders in its light theme regardless of the surrounding editor theme
-// (preserves the dark-theme fix from commit 079adb5).
+// Portals to document.body (via createPortal) so the overlay escapes the left
+// sidebar's stacking context and covers the full editor chrome at z-[1000].
+// Escape closes the overlay unless a cell editor (input/textarea/contentEditable)
+// is focused. The `.light` class is pinned on the root div so the data-table
+// grid always renders in its light theme regardless of the surrounding editor
+// theme (preserves the dark-theme fix from commit 079adb5).
 //
-// Phase 2 (right content-agent column) is left as a reserved slot: the layout
-// is currently `[rail | grid]`; adding the agent column later is a CSS-grid
-// column addition with no structural refactor.
+// Phase 2 (right content-agent column) is a reserved slot: the layout is
+// currently `[rail | grid]`; adding the agent column is a CSS-grid column
+// addition with no structural refactor.
 
 import React from 'react';
 import { createPortal } from 'react-dom';
