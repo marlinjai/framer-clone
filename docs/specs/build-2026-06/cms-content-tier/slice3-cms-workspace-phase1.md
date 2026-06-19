@@ -3,7 +3,7 @@ name: slice3-cms-workspace-phase1
 track: cms-content-tier
 wave: 3
 priority: P0
-status: decided
+status: completed
 type: plan
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [slice2b-cms-datatable-grid-ui]
@@ -147,3 +147,16 @@ date: 2026-06-20
 - [ ] Reuses `CmsGrid` for the center; grid stays `.light`; no dark-theme regression.
 - [ ] Placeholders (Fields/Bindings/Board/Calendar/Import-CSV/sort/filter/search) honestly disabled.
 - [ ] `pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint` green; status → in-progress → completed.
+
+## Outcome (shipped 2026-06-20)
+
+Delivered on `feat/cms-grid-studio-refresh`. The `[rail | grid]` workspace (`CmsWorkspaceOverlay`)
+replaces the single-collection `CmsGridOverlay` (deleted as dead code). The rail lists every
+collection with icon + name + live item count + active rail, switches the center grid on click
+without closing, and keeps the Open/Rename/Settings/Delete actions; rows are accessible buttons.
+`Collection.itemCount` is populated in `listCollections` via `getRows({ limit: 1 }).total` (N+1
+over collections, commented as a later batched-count optimization; count failure defaults to 0).
+The center reuses `CmsGrid` (re-keyed by `tableId` on switch). Fields/Bindings/Board/Calendar/
+Import-CSV/sort/filter/search are honestly disabled "coming soon". Grid stays `.light`. Header
+pluralization fixed ("1 item"). Live-verified (Team 0 / Events 1, swap, a11y); gates green
+(tsc, lint, 600 tests, build).

@@ -3,7 +3,7 @@ name: editor-chrome-redesign
 track: editor-chrome
 wave: 3
 priority: P1
-status: decided
+status: completed
 type: plan
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [slice2b-cms-datatable-grid-ui]
@@ -133,3 +133,14 @@ the live target).
 - [ ] Both hardcoded colors removed (`--warning` token added; amber + `text-white` gone).
 - [ ] All MST wiring preserved; no behavior change.
 - [ ] `tsc + lint + test` green; status → in-progress → completed.
+
+## Outcome (shipped 2026-06-20)
+
+Delivered on `feat/cms-grid-studio-refresh`. The Layers tree + Properties panel match the
+mockup (viewport groups with device icons + dimension pills, indent guides, type icons,
+hover-revealed actions, Floating-elements count pill; type-tile header, segmented Display,
+iris slider/switch, swatches, attached unit segments). The two hardcoded colors are gone (new
+`--warning` token; `BindingPicker` Apply uses `text-brand-foreground`). The right-sidebar
+collapse toggle was restored with accessible aria-labels (a follow-up after the first pass
+dropped it, fixed in-PR). All MST wiring preserved. Live-verified in the running editor;
+gates green (tsc, lint, 600 tests, build).
