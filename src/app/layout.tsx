@@ -5,6 +5,12 @@ import "./globals.css";
 // so importing these globally does not bleed into the editor chrome.
 import "@marlinjai/data-table-react/dist/styles/variables.css";
 import "@marlinjai/data-table-react/dist/styles/base.css";
+// Re-light the data-table after its stylesheets: pin its --dt-* tokens to the
+// light theme + the Studio iris accent. The engine auto-switches to a dark glass
+// theme under `@media (prefers-color-scheme: dark) :root:not(.light)`, so the
+// `.light` class on <html> below + these overrides keep the CMS grid clean and
+// on-brand regardless of the OS theme.
+import "./cms-grid-theme.css";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,7 +33,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className="light">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
