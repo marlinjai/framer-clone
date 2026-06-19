@@ -21,27 +21,35 @@ export function CollapsibleSection({
 
   return (
     <div className="border-b border-border last:border-b-0">
+      {/* Section header: 38px tall, chevron + icon + uppercase title */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center justify-between w-full py-2 px-1 hover:bg-accent rounded-sm transition-colors"
+        className="flex items-center gap-2 w-full h-[38px] px-3 hover:bg-accent transition-colors"
       >
-        <div className="flex items-center gap-1.5">
-          {isOpen ? (
-            <ChevronDown size={12} className="text-muted-foreground" />
-          ) : (
-            <ChevronRight size={12} className="text-muted-foreground" />
-          )}
-          {icon && <span className="text-muted-foreground">{icon}</span>}
-          <span className="text-xs font-medium text-foreground uppercase tracking-wider">{title}</span>
-        </div>
+        {isOpen ? (
+          <ChevronDown size={13} className="text-muted-foreground flex-none" />
+        ) : (
+          <ChevronRight size={13} className="text-muted-foreground flex-none" />
+        )}
+        {icon && (
+          <span className="text-muted-foreground flex-none">{icon}</span>
+        )}
+        <span
+          className="text-muted-foreground flex-1 text-left"
+          style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}
+        >
+          {title}
+        </span>
         {badge && (
-          <span className="text-[10px] text-brand bg-brand/10 px-1.5 py-0.5 rounded">
+          <span className="text-[10px] text-brand bg-brand/10 px-1.5 py-0.5 rounded flex-none">
             {badge}
           </span>
         )}
       </button>
+
+      {/* Section body: consistent padding + gap */}
       {isOpen && (
-        <div className="pb-3 px-1 space-y-2">
+        <div className="px-3 pb-3.5 flex flex-col gap-2.5">
           {children}
         </div>
       )}

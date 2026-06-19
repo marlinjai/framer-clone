@@ -91,7 +91,7 @@ const BindingControl = observer(({ node, slot, meta, children }: BindingControlP
           <div
             className={`flex h-7 flex-1 items-center gap-1.5 rounded border px-2 text-xs ${
               broken
-                ? 'border-amber-400 bg-amber-50 text-amber-700'
+                ? 'border-warning bg-warning/10 text-warning'
                 : 'border-brand/20 bg-brand/10 text-brand'
             }`}
             title={readBinding.expression}

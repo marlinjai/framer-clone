@@ -45,6 +45,9 @@
   --color-status-published: var(--status-published);
   --color-status-draft: var(--status-draft);
   --color-status-scheduled: var(--status-scheduled);
+  /* Warning token (amber, used for broken-binding chips and validation states). */
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -90,6 +93,9 @@
   --status-published: oklch(0.63 0.17 149);
   --status-draft: oklch(0.68 0.16 58);
   --status-scheduled: oklch(0.55 0.22 264);
+  /* Warning (amber) */
+  --warning: oklch(0.70 0.15 70);
+  --warning-foreground: oklch(0.985 0 0);
   /* Iris focus ring app-wide. */
   --ring: oklch(0.543 0.179 276.7);
   --sidebar-ring: oklch(0.543 0.179 276.7);
@@ -133,6 +139,9 @@
   --status-published: oklch(0.77 0.15 162);
   --status-draft: oklch(0.83 0.16 82);
   --status-scheduled: oklch(0.71 0.14 256);
+  /* Warning (amber), dark variant */
+  --warning: oklch(0.80 0.15 80);
+  --warning-foreground: oklch(0.985 0 0);
   --ring: oklch(0.62 0.17 278);
   --sidebar-ring: oklch(0.62 0.17 278);
 }

@@ -43,20 +43,23 @@ export const TypographySection = observer(({ component, breakpointId }: Typograp
   return (
     <CollapsibleSection
       title="Typography"
-      icon={<Type size={12} />}
+      icon={<Type size={14} />}
     >
-      {/* Font Family */}
-      <PropertySelect
-        label="Font Family"
-        value={getStyleValue('fontFamily') || 'inherit'}
-        onChange={(v) => setStyleValue('fontFamily', v)}
-        options={FONT_FAMILY_OPTIONS}
-      />
+      {/* Font Family on field grid */}
+      <div className="grid grid-cols-[64px_1fr] items-center gap-2">
+        <label className="text-muted-foreground" style={{ fontSize: '11.5px' }}>Font</label>
+        <PropertySelect
+          label=""
+          value={getStyleValue('fontFamily') || 'inherit'}
+          onChange={(v) => setStyleValue('fontFamily', v)}
+          options={FONT_FAMILY_OPTIONS}
+        />
+      </div>
 
-      {/* Font Size + Weight row */}
+      {/* Font Size + Weight: two-up */}
       <div className="grid grid-cols-2 gap-2">
         <DimensionInput
-          label="Font Size"
+          label="Size"
           value={getStyleValue('fontSize')}
           onChange={(v) => setStyleValue('fontSize', v)}
           units={['px', 'rem', 'em']}
@@ -72,17 +75,17 @@ export const TypographySection = observer(({ component, breakpointId }: Typograp
         />
       </div>
 
-      {/* Line Height + Letter Spacing */}
+      {/* Line Height + Letter Spacing: two-up */}
       <div className="grid grid-cols-2 gap-2">
         <DimensionInput
-          label="Line Height"
+          label="Line H"
           value={getStyleValue('lineHeight')}
           onChange={(v) => setStyleValue('lineHeight', v)}
           units={['px', 'em', '%']}
           placeholder="1.5"
         />
         <DimensionInput
-          label="Letter Spacing"
+          label="Spacing"
           value={getStyleValue('letterSpacing')}
           onChange={(v) => setStyleValue('letterSpacing', v)}
           units={['px', 'em']}
@@ -92,7 +95,7 @@ export const TypographySection = observer(({ component, breakpointId }: Typograp
 
       {/* Text Align */}
       <ToggleIconGroup
-        label="Text Align"
+        label="Align"
         value={getStyleValue('textAlign') || 'left'}
         onChange={(v) => setStyleValue('textAlign', v)}
         options={[
@@ -109,9 +112,9 @@ export const TypographySection = observer(({ component, breakpointId }: Typograp
         value={getStyleValue('textDecoration') || 'none'}
         onChange={(v) => setStyleValue('textDecoration', v)}
         options={[
-          { value: 'none', icon: <span className="text-[10px]">None</span>, tooltip: 'None' },
-          { value: 'underline', icon: <span className="text-[10px] underline">U</span>, tooltip: 'Underline' },
-          { value: 'line-through', icon: <span className="text-[10px] line-through">S</span>, tooltip: 'Strikethrough' },
+          { value: 'none', icon: <span style={{ fontSize: '10px' }}>None</span>, tooltip: 'None' },
+          { value: 'underline', icon: <span style={{ fontSize: '10px', textDecoration: 'underline' }}>U</span>, tooltip: 'Underline' },
+          { value: 'line-through', icon: <span style={{ fontSize: '10px', textDecoration: 'line-through' }}>S</span>, tooltip: 'Strikethrough' },
         ]}
       />
     </CollapsibleSection>

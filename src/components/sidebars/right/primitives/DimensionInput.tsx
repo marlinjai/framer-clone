@@ -1,6 +1,5 @@
 'use client';
 import React, { useState, useEffect, useCallback } from 'react';
-import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
 export interface ParsedValue {
@@ -59,6 +58,7 @@ export function DimensionInput({
   const parsed = parseStyleValue(value);
   const [localValue, setLocalValue] = useState(parsed.value?.toString() ?? '');
   const [unit, setUnit] = useState(parsed.unit);
+  const [focused, setFocused] = useState(false);
 
   useEffect(() => {
     const p = parseStyleValue(value);
@@ -80,11 +80,23 @@ export function DimensionInput({
   }, [onChange]);
 
   return (
-    <div className={cn("space-y-1", className)}>
-      <label className="text-[11px] text-muted-foreground">{label}</label>
-      <div className="flex gap-1">
-        <Input
+    <div className={cn("flex flex-col gap-1", className)}>
+      {/* Label row */}
+      <label
+        className="text-muted-foreground"
+        style={{ fontSize: '11px' }}
+      >
+        {label}
+      </label>
+
+      {/* Value input + attached unit segment */}
+      <div className="flex items-stretch">
+        {/* Value input: 30px tall, hairline border, radius 7 (left side only when unit shown) */}
+        <input
+          type="text"
           value={unit === 'auto' ? 'auto' : localValue}
+          disabled={unit === 'auto'}
+          placeholder={placeholder}
           onChange={(e) => {
             const v = e.target.value;
             if (v === 'auto') {
@@ -95,7 +107,11 @@ export function DimensionInput({
               setLocalValue(v);
             }
           }}
-          onBlur={() => commit(localValue, unit)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            setFocused(false);
+            commit(localValue, unit);
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') commit(localValue, unit);
             if (e.key === 'ArrowUp') {
@@ -113,10 +129,19 @@ export function DimensionInput({
               commit(newVal, unit);
             }
           }}
-          disabled={unit === 'auto'}
-          className="h-7 text-xs flex-1 min-w-0"
-          placeholder={placeholder}
+          className={cn(
+            "h-[30px] min-w-0 flex-1 bg-background border border-border px-2 outline-none",
+            "text-foreground disabled:text-muted-foreground disabled:bg-muted",
+            "transition-colors",
+            units.length > 1
+              ? "rounded-l-[7px] rounded-r-none border-r-0"
+              : "rounded-[7px]",
+            focused && "border-brand ring-3 ring-brand/12",
+          )}
+          style={{ fontSize: '12.5px' }}
         />
+
+        {/* Attached unit segment: 30px, min-width 48px, bg-muted, radius right side */}
         {units.length > 1 && (
           <select
             value={unit}
@@ -125,7 +150,8 @@ export function DimensionInput({
               setUnit(newUnit);
               commit(localValue, newUnit);
             }}
-            className="h-7 text-[10px] bg-muted border border-border rounded px-1 text-muted-foreground min-w-[40px]"
+            className="h-[30px] min-w-[48px] bg-muted border border-border rounded-r-[7px] px-2 text-muted-foreground font-mono outline-none cursor-pointer"
+            style={{ fontSize: '12px' }}
           >
             {units.map(u => (
               <option key={u} value={u}>{u}</option>
