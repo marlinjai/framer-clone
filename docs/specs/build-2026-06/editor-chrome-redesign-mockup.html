@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Editor chrome redesign — Layers + Properties</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  :root{
+    --bg:#EEF0F3; --panel:#FFFFFF; --sunken:#F5F6F8; --canvas:#EAECEF;
+    --bd:#E7E8EC; --bd-strong:#DCDEE3;
+    --t1:#1A1B1F; --t2:#5A5E66; --t3:#8A8F99;
+    --accent:#5B5BD6; --accent-12:rgba(91,91,214,.12); --accent-10:rgba(91,91,214,.10);
+    --green:#16A34A; --red:#DC2626;
+    --hover:#F5F6F8;
+    --e1:0 1px 2px rgba(16,18,29,.06),0 1px 1px rgba(16,18,29,.04);
+    --e2:0 6px 16px rgba(16,18,29,.12),0 1px 3px rgba(16,18,29,.07);
+    --r:8px; --r-sm:6px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);font-family:Inter,system-ui,sans-serif;color:var(--t1);-webkit-font-smoothing:antialiased;padding:40px}
+  .mono{font-family:'JetBrains Mono',ui-monospace;font-variant-numeric:tabular-nums}
+  .wrap{max-width:1340px;margin:0 auto;display:flex;flex-direction:column;gap:28px}
+  h1{font-size:20px;font-weight:700;margin:0;letter-spacing:-.01em}
+  .sub{margin:4px 0 0;color:var(--t2);font-size:13px}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:3px 8px;border-radius:999px;background:var(--accent-12);color:var(--accent)}
+  .lbl{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--t3)}
+
+  /* editor frame */
+  .editor{display:grid;grid-template-columns:270px 1fr 282px;height:660px;border:1px solid var(--bd);border-radius:12px;overflow:hidden;box-shadow:var(--e2);background:var(--panel)}
+  .topbar{grid-column:1/-1;height:46px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;padding:0 14px}
+  .crumb{font-size:13px;font-weight:600}.crumb .sep{color:var(--t3);margin:0 7px;font-weight:400}.crumb .pg{color:var(--t2);font-weight:500}
+  .ib{width:28px;height:28px;border-radius:var(--r-sm);display:inline-flex;align-items:center;justify-content:center;color:var(--t3);cursor:pointer;border:0;background:transparent}
+  .ib:hover{background:var(--hover);color:var(--t1)} .ib svg{width:15px;height:15px}
+
+  .left{border-right:1px solid var(--bd);display:flex;flex-direction:column;min-height:0}
+  .canvas{background:repeating-conic-gradient(var(--sunken) 0% 25%, transparent 0% 50%) 0 0/18px 18px,var(--canvas);display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:12px}
+  .right{border-left:1px solid var(--bd);display:flex;flex-direction:column;min-height:0;overflow:auto}
+
+  /* left: design header + pages */
+  .design-head{display:flex;align-items:center;justify-content:space-between;padding:0 10px;height:42px;border-bottom:1px solid var(--bd)}
+  .design-head .t{font-size:13px;font-weight:600}
+  .sec{padding:8px}
+  .sec-head{display:flex;align-items:center;justify-content:space-between;padding:5px 6px 7px}
+  .page-row{display:flex;align-items:center;gap:9px;height:32px;padding:0 8px;border-radius:var(--r-sm);position:relative}
+  .page-row.on{background:var(--accent-10)} .page-row.on::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:2px;border-radius:2px;background:var(--accent)}
+  .page-row svg{width:14px;height:14px;color:var(--t3)} .page-row.on svg{color:var(--accent)}
+  .page-row .nm{font-size:13px;font-weight:500} .page-row.on .nm{color:var(--accent)}
+
+  /* tabs */
+  .tabs{display:flex;gap:2px;padding:6px 8px;border-top:1px solid var(--bd);border-bottom:1px solid var(--bd)}
+  .tab{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:30px;border-radius:var(--r-sm);font-size:12.5px;font-weight:500;color:var(--t3);cursor:pointer}
+  .tab svg{width:14px;height:14px}
+  .tab.on{background:var(--accent-10);color:var(--accent)} .tab:not(.on):hover{background:var(--hover);color:var(--t1)}
+  .search{display:flex;align-items:center;gap:7px;height:30px;border:1px solid var(--bd);border-radius:7px;padding:0 9px;background:var(--sunken);color:var(--t3);font-size:12.5px;margin:8px}
+  .search svg{width:14px;height:14px}
+
+  /* layers tree */
+  .tree{flex:1;overflow:auto;padding:2px 8px 8px}
+  .vp{display:flex;align-items:center;gap:7px;height:30px;padding:0 6px;border-radius:var(--r-sm);cursor:pointer}
+  .vp:hover{background:var(--hover)}
+  .vp .chev{width:14px;height:14px;color:var(--t3)}
+  .vp .dico{width:15px;height:15px;color:var(--t2)}
+  .vp .nm{font-size:12.5px;font-weight:600;color:var(--t2);text-transform:uppercase;letter-spacing:.02em}
+  .vp .dim{margin-left:auto;font-size:10.5px;color:var(--t3);background:var(--sunken);border:1px solid var(--bd);border-radius:5px;padding:1px 6px}
+
+  .lr{display:flex;align-items:center;gap:7px;height:28px;padding:0 6px;border-radius:var(--r-sm);position:relative;cursor:pointer}
+  .lr:hover{background:var(--hover)}
+  .lr.on{background:var(--accent-10)} .lr.on::before{content:"";position:absolute;left:0;top:5px;bottom:5px;width:2px;border-radius:2px;background:var(--accent)}
+  .lr .guide{width:14px;display:flex;justify-content:center;color:var(--bd-strong)}
+  .lr .chev{width:13px;height:13px;color:var(--t3);flex:none}
+  .lr .tico{width:14px;height:14px;color:var(--t3);flex:none} .lr.on .tico{color:var(--accent)}
+  .lr .nm{font-size:13px;color:var(--t1);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .lr.on .nm{color:var(--accent);font-weight:500}
+  .lr .acts{display:none;align-items:center;gap:2px} .lr:hover .acts,.lr.on .acts{display:flex}
+  .lr .acts .ic{width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;color:var(--t3)} .lr .acts .ic:hover{background:rgba(0,0,0,.05);color:var(--t1)} .lr .acts .ic svg{width:13px;height:13px}
+  .lr .acts .ic.off{color:var(--bd-strong)}
+  .indent{padding-left:14px}
+
+  .float-head{display:flex;align-items:center;gap:7px;padding:10px 6px 6px}
+  .count{font-size:10.5px;font-weight:600;color:var(--t3);background:var(--sunken);border-radius:999px;padding:1px 7px}
+
+  /* right panel */
+  .rp-head{display:flex;align-items:center;justify-content:space-between;height:42px;padding:0 12px;border-bottom:1px solid var(--bd);position:sticky;top:0;background:var(--panel);z-index:1}
+  .rp-head .l{display:flex;align-items:center;gap:8px}
+  .rp-head .tile{width:22px;height:22px;border-radius:6px;background:var(--accent-12);color:var(--accent);display:flex;align-items:center;justify-content:center}
+  .rp-head .tile svg{width:13px;height:13px}
+  .rp-head .nm{font-size:13px;font-weight:600}
+  .rsec{border-bottom:1px solid var(--bd)}
+  .rsec-h{display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;cursor:pointer}
+  .rsec-h .chev{width:13px;height:13px;color:var(--t3)}
+  .rsec-h .ico{width:14px;height:14px;color:var(--t3)}
+  .rsec-h .t{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--t2)}
+  .rbody{padding:2px 12px 14px;display:flex;flex-direction:column;gap:10px}
+  .field{display:grid;grid-template-columns:64px 1fr;align-items:center;gap:8px}
+  .field .k{font-size:11.5px;color:var(--t2)}
+  .ctrl{display:flex;align-items:center;gap:6px}
+  .inp{height:30px;border:1px solid var(--bd);border-radius:7px;background:var(--panel);display:flex;align-items:center;padding:0 9px;font-size:12.5px;color:var(--t1);min-width:0;flex:1}
+  .inp.foc{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-12)}
+  .unit{height:30px;min-width:48px;border:1px solid var(--bd);border-radius:7px;background:var(--sunken);display:flex;align-items:center;justify-content:space-between;padding:0 8px;font-size:12px;color:var(--t2);gap:4px}
+  .unit svg{width:12px;height:12px;color:var(--t3)}
+  .two{display:flex;gap:8px} .two>.field{flex:1;grid-template-columns:auto 1fr}
+  .seg{display:flex;background:var(--sunken);border-radius:7px;padding:2px;gap:2px;flex:1}
+  .seg span{flex:1;text-align:center;font-size:12px;font-weight:500;color:var(--t3);padding:5px 0;border-radius:5px;cursor:pointer}
+  .seg span.on{background:var(--panel);color:var(--t1);box-shadow:var(--e1)}
+  .more-link{font-size:11.5px;color:var(--t3);display:flex;align-items:center;gap:4px;cursor:pointer;padding:2px 0} .more-link svg{width:12px;height:12px}
+  .slider{flex:1;height:4px;border-radius:999px;background:var(--sunken);position:relative}
+  .slider .fill{position:absolute;left:0;top:0;bottom:0;width:100%;background:var(--accent);border-radius:999px}
+  .slider .knob{position:absolute;right:-6px;top:50%;transform:translateY(-50%);width:14px;height:14px;border-radius:999px;background:#fff;border:1px solid var(--bd-strong);box-shadow:var(--e1)}
+  .switch{width:34px;height:20px;border-radius:999px;background:var(--accent);position:relative}
+  .switch i{position:absolute;right:2px;top:2px;width:16px;height:16px;border-radius:999px;background:#fff;box-shadow:var(--e1)}
+  .swatch{width:28px;height:28px;border-radius:7px;border:1px solid var(--bd);flex:none}
+  .sel{height:30px;border:1px solid var(--bd);border-radius:7px;background:var(--panel);display:flex;align-items:center;justify-content:space-between;padding:0 9px;font-size:12.5px;color:var(--t1);flex:1}
+  .sel svg{width:13px;height:13px;color:var(--t3)}
+
+  .callout{display:flex;gap:10px;align-items:flex-start;background:var(--panel);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;box-shadow:var(--e1)}
+  .callout .n{width:22px;height:22px;border-radius:999px;background:var(--accent-12);color:var(--accent);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none}
+  .callout b{font-size:13px} .callout p{margin:2px 0 0;font-size:12.5px;color:var(--t2);line-height:1.5}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div style="display:flex;align-items:baseline;justify-content:space-between;gap:16px">
+    <div>
+      <h1>Editor chrome redesign &mdash; Layers + Properties</h1>
+      <p class="sub">The left layers tree and right properties panel in the &ldquo;Studio&rdquo; language, to match the Content panel.</p>
+    </div>
+    <span class="pill">Mockup &middot; for approval</span>
+  </div>
+
+  <div class="editor">
+    <div class="topbar">
+      <span class="crumb">Framer Clone <span class="sep">/</span><span class="pg">Home</span></span>
+      <div style="flex:1"></div>
+      <div class="ib"><i data-lucide="play"></i></div>
+      <div class="ib"><i data-lucide="rotate-ccw"></i></div>
+      <div class="ib"><i data-lucide="history"></i></div>
+    </div>
+
+    <!-- LEFT -->
+    <div class="left">
+      <div class="design-head"><div class="ib"><i data-lucide="chevron-left"></i></div><span class="t">Design</span><div style="width:28px"></div></div>
+
+      <div class="sec">
+        <div class="sec-head"><span class="lbl">Pages</span><div class="ib" style="width:24px;height:24px"><i data-lucide="plus"></i></div></div>
+        <div class="page-row on"><i data-lucide="file-text"></i><span class="nm">Home</span></div>
+      </div>
+
+      <div class="tabs">
+        <div class="tab"><i data-lucide="box"></i>Components</div>
+        <div class="tab on"><i data-lucide="layers"></i>Layers</div>
+        <div class="tab"><i data-lucide="database"></i>Content</div>
+      </div>
+      <div class="search"><i data-lucide="search"></i>Search layers</div>
+
+      <div class="tree">
+        <!-- Desktop viewport -->
+        <div class="vp"><i data-lucide="chevron-down" class="chev"></i><i data-lucide="monitor" class="dico"></i><span class="nm">Desktop</span><span class="dim mono">1280</span></div>
+        <div class="indent">
+          <div class="lr on"><span class="guide">│</span><i data-lucide="chevron-down" class="chev"></i><i data-lucide="type" class="tico"></i><span class="nm">Header</span>
+            <span class="acts"><span class="ic"><i data-lucide="eye"></i></span><span class="ic"><i data-lucide="lock-open"></i></span><span class="ic"><i data-lucide="more-horizontal"></i></span></span></div>
+          <div class="indent">
+            <div class="lr"><span class="guide">│</span><span style="width:13px"></span><i data-lucide="type" class="tico"></i><span class="nm">Main</span>
+              <span class="acts"><span class="ic"><i data-lucide="eye"></i></span><span class="ic"><i data-lucide="lock-open"></i></span><span class="ic"><i data-lucide="trash-2"></i></span></span></div>
+            <div class="lr"><span class="guide">│</span><span style="width:13px"></span><i data-lucide="image" class="tico"></i><span class="nm">App Tree Image</span>
+              <span class="acts"><span class="ic off"><i data-lucide="eye-off"></i></span><span class="ic"><i data-lucide="lock-open"></i></span><span class="ic"><i data-lucide="trash-2"></i></span></span></div>
+          </div>
+        </div>
+        <!-- Tablet -->
+        <div class="vp"><i data-lucide="chevron-right" class="chev"></i><i data-lucide="tablet" class="dico"></i><span class="nm">Tablet</span><span class="dim mono">768</span></div>
+        <!-- Mobile -->
+        <div class="vp"><i data-lucide="chevron-right" class="chev"></i><i data-lucide="smartphone" class="dico"></i><span class="nm">Mobile</span><span class="dim mono">320</span></div>
+
+        <div class="float-head"><span class="lbl">Floating elements</span><span class="count mono">2</span></div>
+        <div class="lr"><span class="guide"></span><span style="width:13px"></span><i data-lucide="image" class="tico"></i><span class="nm">Hero Image</span>
+          <span class="acts"><span class="ic"><i data-lucide="eye"></i></span><span class="ic"><i data-lucide="lock-open"></i></span><span class="ic"><i data-lucide="more-horizontal"></i></span></span></div>
+        <div class="lr"><span class="guide"></span><span style="width:13px"></span><i data-lucide="type" class="tico"></i><span class="nm">Welcome Text</span>
+          <span class="acts"><span class="ic"><i data-lucide="eye"></i></span><span class="ic"><i data-lucide="lock-open"></i></span><span class="ic"><i data-lucide="more-horizontal"></i></span></span></div>
+      </div>
+    </div>
+
+    <div class="canvas">canvas</div>
+
+    <!-- RIGHT -->
+    <div class="right">
+      <div class="rp-head">
+        <div class="l"><span class="tile"><i data-lucide="type"></i></span><span class="nm">Header</span></div>
+        <div class="ib"><i data-lucide="settings-2"></i></div>
+      </div>
+
+      <div class="rsec">
+        <div class="rsec-h"><i data-lucide="chevron-down" class="chev"></i><i data-lucide="move-diagonal" class="ico"></i><span class="t">Size</span></div>
+        <div class="rbody">
+          <div class="two">
+            <div class="field"><span class="k">W</span><div class="ctrl"><div class="inp">auto</div><div class="unit mono">px <i data-lucide="chevron-down"></i></div></div></div>
+            <div class="field"><span class="k">H</span><div class="ctrl"><div class="inp">auto</div><div class="unit mono">px <i data-lucide="chevron-down"></i></div></div></div>
+          </div>
+          <div class="more-link"><i data-lucide="chevron-right"></i>Min / Max</div>
+        </div>
+      </div>
+
+      <div class="rsec">
+        <div class="rsec-h"><i data-lucide="chevron-right" class="chev"></i><i data-lucide="move" class="ico"></i><span class="t">Position</span></div>
+      </div>
+
+      <div class="rsec">
+        <div class="rsec-h"><i data-lucide="chevron-down" class="chev"></i><i data-lucide="layout-grid" class="ico"></i><span class="t">Layout</span></div>
+        <div class="rbody">
+          <div class="field"><span class="k">Display</span><div class="seg"><span class="on">Block</span><span>Flex</span><span>Grid</span></div></div>
+          <div class="field"><span class="k">Padding</span><div class="ctrl"><div class="inp mono">16</div><div class="unit mono">px <i data-lucide="chevron-down"></i></div></div></div>
+          <div class="more-link"><i data-lucide="chevron-right"></i>Individual sides</div>
+        </div>
+      </div>
+
+      <div class="rsec">
+        <div class="rsec-h"><i data-lucide="chevron-down" class="chev"></i><i data-lucide="paintbrush" class="ico"></i><span class="t">Styles</span></div>
+        <div class="rbody">
+          <div class="field"><span class="k">Opacity</span><div class="ctrl"><div class="slider"><div class="fill"></div><div class="knob"></div></div><div class="inp mono" style="flex:none;width:52px;justify-content:center">100</div></div></div>
+          <div class="field"><span class="k">Visible</span><div class="ctrl"><div class="switch"><i></i></div></div></div>
+          <div class="field"><span class="k">Fill</span><div class="ctrl"><span class="swatch" style="background:#fff"></span><div class="inp mono">#FFFFFF</div></div></div>
+          <div class="field"><span class="k">Text</span><div class="ctrl"><span class="swatch" style="background:#1A1B1F"></span><div class="inp mono">#1A1B1F</div></div></div>
+          <div class="field"><span class="k">Overflow</span><div class="sel">Visible <i data-lucide="chevron-down"></i></div></div>
+          <div class="field"><span class="k">Radius</span><div class="ctrl"><div class="inp mono">8</div><div class="unit mono">px <i data-lucide="chevron-down"></i></div></div></div>
+          <div class="field"><span class="k">Shadow</span><div class="inp mono" style="font-size:11px">0 2px 4px rgba(0,0,0,.1)</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid3">
+    <div class="callout"><span class="n">1</span><div><b>Layers tree</b><p>Viewport groups as labeled section rows (device icon + dimension pill); layer rows with a type icon, indent guides, iris selection rail, and hover-revealed visibility / lock / overflow. Off = a dimmed eye-off, not a missing control.</p></div></div>
+    <div class="callout"><span class="n">2</span><div><b>Properties panel</b><p>Aligned label-plus-control rows on a consistent grid; refined inputs with a subtle unit segment; a real segmented Display control; iris slider + switch; clean color swatches. Section headers gain an icon + chevron.</p></div></div>
+    <div class="callout"><span class="n">3</span><div><b>Same system</b><p>Inter + JetBrains Mono for values, iris #5B5BD6 accent, 6/8 radius, hairline borders, e1/e2 elevation, 150ms hover. Everything token-driven, so light/dark both work and it stays consistent with the Content panel + grid.</p></div></div>
+  </div>
+</div>
+<script>lucide.createIcons();</script>
+</body>
+</html>
