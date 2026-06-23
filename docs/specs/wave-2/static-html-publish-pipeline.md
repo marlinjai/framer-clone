@@ -3,11 +3,28 @@ name: static-html-publish-pipeline
 track: static-html
 wave: 2
 priority: P0
-status: draft
+status: done
 depends_on: [static-html-spike, static-html-css-flattener]
 estimated_value: 9
 estimated_cost: 7
 owner: unassigned
+status_note: |
+  Built on the P2 hosting-platform plan, which extends this wave-1-shaped spec
+  with per-variant emit + tracker-snippet injection (plan 2b/2c). Divergences
+  from the spec body, all documented in the PR:
+  - The wave-1 per-page emitter (`emitStaticHtmlForPage`) did not exist; it was
+    built inline at `src/lib/renderer/staticHtmlEmitter.ts` using
+    `renderToStaticMarkup(HeadlessPageRenderer)`.
+  - CSS: a minimal inline-style->class hoist (`flattenInlineStyles`) replaces the
+    deferred full responsive flattener; satisfies "no inline styles, style.css
+    per page" for the single emitted breakpoint.
+  - Output target is memory/local-disk via an OutputSink seam; R2 upload is the
+    P3 plug-in point (not implemented).
+  - Per-variant emit keys arms as `_exp/<experimentKey>/<variant>/<page>/` plus
+    the control baseline; arms are bounded + logged (never silently truncated).
+  - Tracker injection resolves the public ingestion key server-side (via
+    `PublishOptions.analytics`), gated on `project.lumitra.enabled`; no secret is
+    embedded beyond the public `ap_live_` key.
 ---
 
 # Multi-page publish pipeline: project tree to a deployable bundle
