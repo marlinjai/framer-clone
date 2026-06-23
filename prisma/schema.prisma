@@ -103,15 +103,15 @@ model DtRelation {
 }
 
 model DtFile {
-  id           String  @id @default(uuid())
-  rowId        String  @map("row_id")
-  columnId     String  @map("column_id")
-  fileId       String  @map("file_id")
-  fileUrl      String  @map("file_url")
-  originalName String  @map("original_name")
-  mimeType     String  @map("mime_type")
-  sizeBytes    Int?    @map("size_bytes")
-  position     Int     @default(0)
+  id           String @id @default(uuid())
+  rowId        String @map("row_id")
+  columnId     String @map("column_id")
+  fileId       String @map("file_id")
+  fileUrl      String @map("file_url")
+  originalName String @map("original_name")
+  mimeType     String @map("mime_type")
+  sizeBytes    Int?   @map("size_bytes")
+  position     Int    @default(0)
   metadata     Json?
 
   @@map("dt_files")
@@ -146,6 +146,207 @@ model DtRow {
   updatedAt String  @map("_updated_at")
 
   @@map("dt_rows")
+  @@schema("public")
+}
+
+// ===========================================================================
+// Site persistence (P1b): the multi-tenant source of truth for the visual
+// editor. Today the ProjectModel/PageModel MST tree lives only in browser
+// memory; these four tables make Prisma the source of truth and the MST a
+// working copy that is snapshotted in (load) and out (save).
+//
+// HARD ISOLATION BOUNDARY: every table here carries BOTH `workspace_id` AND
+// `tenant_group_id`, and BOTH are indexed. workspace_id is the per-request
+// scope every editor/API query filters by (the auth-brain consuming-app
+// contract: the caller's session yields a workspace, never cross-workspace
+// data). tenant_group_id is the coarser isolation boundary that keeps the
+// B2B2C door open: a site can later be promoted to its own tenant_group
+// without a schema change, and a tenant_group-wide query (export, deletion,
+// billing) is index-backed. Neither column is a foreign key into this app:
+// the tenant_group -> tenant -> workspace hierarchy is owned by auth-brain,
+// framer-clone models NO identity (no users/memberships table). These ids are
+// resolved from the verified session and stamped onto each row.
+//
+// One framer-clone "project" (a ProjectModel) == one `Site` row. Each MST
+// page (PageModel) == one `SitePage` row whose `snapshot` JSON is the full
+// PageModel SnapshotOut. The Lumitra Analytics binding (LumitraBindingModel)
+// is denormalised onto the Site row so a publish-path read needs no JSON
+// parse to find the analytics project/ingestion-key reference.
+// ===========================================================================
+
+enum SiteStatus {
+  draft
+  published
+  archived
+
+  @@schema("public")
+}
+
+enum DomainVerificationStatus {
+  pending
+  active
+  failed
+
+  @@schema("public")
+}
+
+enum SiteExperimentStatus {
+  draft
+  running
+  paused
+  completed
+
+  @@schema("public")
+}
+
+/// A persisted framer-clone site == one ProjectModel. The MST tree is the
+/// editor working copy; this row plus its `pages` is the source of truth.
+model Site {
+  id String @id @default(uuid())
+
+  // --- hard isolation boundary (both indexed) ---
+  workspaceId   String @map("workspace_id")
+  tenantGroupId String @map("tenant_group_id")
+
+  // --- ProjectModel.metadata snapshot ---
+  name        String
+  description String     @default("")
+  status      SiteStatus @default(draft)
+
+  // --- LumitraBindingModel snapshot (denormalised for the publish path) ---
+  // analyticsProjectId / ingestionEndpoint / apiKeyRef mirror the MST
+  // `lumitra` sub-tree. apiKeyRef is a SERVER-SIDE reference (Infisical path /
+  // workspace-scoped pointer), NEVER the literal ap_live_ key. lumitraEnabled
+  // gates snippet injection on publish.
+  analyticsProjectId String? @map("analytics_project_id")
+  ingestionEndpoint  String? @map("ingestion_endpoint")
+  apiKeyRef          String? @map("api_key_ref")
+  lumitraEnabled     Boolean @default(false) @map("lumitra_enabled")
+
+  // ProjectModel.metadata timestamps are APPLICATION-meaningful (the user's
+  // "created" / "last edited" shown in the UI), distinct from the row
+  // timestamps below which track the persistence layer. Persisted explicitly
+  // so a load -> save round-trip preserves them instead of resetting them via
+  // the MST `() => new Date()` factory.
+  projectCreatedAt DateTime @map("project_created_at")
+  projectUpdatedAt DateTime @map("project_updated_at")
+
+  // Persistence-layer timestamps (when the ROW was written), set by the DB.
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  pages       SitePage[]
+  domains     SiteDomain[]
+  experiments SiteExperiment[]
+
+  @@index([workspaceId])
+  @@index([tenantGroupId])
+  @@map("sites")
+  @@schema("public")
+}
+
+/// One serialized PageModel. `snapshot` is the full PageModel SnapshotOut
+/// (metadata + appComponentTree + canvasNodes), the unit the MST loads from /
+/// saves to. `pageId` is the MST page identifier (stable across saves);
+/// `slug` is mirrored out of the snapshot so the publish/router layer can
+/// resolve a page by URL without parsing the JSON.
+model SitePage {
+  id String @id @default(uuid())
+
+  siteId String @map("site_id")
+
+  // --- hard isolation boundary (both indexed), denormalised from the Site ---
+  workspaceId   String @map("workspace_id")
+  tenantGroupId String @map("tenant_group_id")
+
+  // MST PageModel.id (the `types.identifier`). Unique within a site so a
+  // save can upsert per page rather than delete-and-recreate.
+  pageId String @map("page_id")
+  slug   String
+
+  // Full PageModel SnapshotOut. Json (not Jsonb-via-bytes) so it stays
+  // human-readable in psql and the page tree round-trips losslessly.
+  snapshot Json
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, pageId])
+  @@index([workspaceId])
+  @@index([tenantGroupId])
+  @@index([siteId])
+  @@map("site_pages")
+  @@schema("public")
+}
+
+/// The subdomain-by-default + custom-hostname state for a site. Edge hosting
+/// (P3) consumes this; P1b only persists it. `subdomain` is the
+/// <name>.framer-host zone label; `customHostname` is the connected apex/www
+/// the site owner points at us (Cloudflare for SaaS custom hostname, verified
+/// out of band). One active custom hostname per row.
+model SiteDomain {
+  id String @id @default(uuid())
+
+  siteId String @map("site_id")
+
+  // --- hard isolation boundary (both indexed), denormalised from the Site ---
+  workspaceId   String @map("workspace_id")
+  tenantGroupId String @map("tenant_group_id")
+
+  subdomain          String?                  @map("subdomain")
+  customHostname     String?                  @map("custom_hostname")
+  verificationStatus DomainVerificationStatus @default(pending) @map("verification_status")
+  isPrimary          Boolean                  @default(false) @map("is_primary")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  // A subdomain label and a custom hostname are each globally unique (one host
+  // resolves to exactly one site). Partial uniqueness (NULLs allowed many
+  // times) is Postgres-default for @@unique on nullable columns.
+  @@unique([subdomain])
+  @@unique([customHostname])
+  @@index([workspaceId])
+  @@index([tenantGroupId])
+  @@index([siteId])
+  @@map("site_domains")
+  @@schema("public")
+}
+
+/// A reference to an experiment configured for a site (the per-variant publish
+/// + edge A/B layer is P2/P4; P1b only persists the config ref). `experimentKey`
+/// is the stable key the analytics platform + the precompute permutation set
+/// share; `config` carries variants/weights as authored. Scoped per site.
+model SiteExperiment {
+  id String @id @default(uuid())
+
+  siteId String @map("site_id")
+
+  // --- hard isolation boundary (both indexed), denormalised from the Site ---
+  workspaceId   String @map("workspace_id")
+  tenantGroupId String @map("tenant_group_id")
+
+  experimentKey String               @map("experiment_key")
+  status        SiteExperimentStatus @default(draft)
+
+  // variants / weights / targeting as authored. Shape owned by the experiment
+  // tooling (P5); persisted opaquely here.
+  config Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, experimentKey])
+  @@index([workspaceId])
+  @@index([tenantGroupId])
+  @@index([siteId])
+  @@map("site_experiments")
   @@schema("public")
 }
 
@@ -723,17 +924,17 @@ enum TaxTreatment {
 }
 
 model Order {
-  id          String      @id @default(uuid())
+  id           String      @id @default(uuid())
   // order_number: a monotonic per-tenant invoice number, allocated from the
   // commerce.order_number_seq sequence (concurrency-safe, unlike a COUNT).
-  orderNumber String      @unique @map("order_number")
+  orderNumber  String      @unique @map("order_number")
   // request_id: the ORDER-level idempotency key. A duplicate createOrder with
   // the same request_id returns the prior order (sequential pre-check) or
   // recovers the winner after a concurrent UNIQUE(request_id) race (createOrder
   // replicates b3's fresh-transaction re-read at the order level).
-  requestId   String      @unique @map("request_id")
-  status      OrderStatus @default(confirmed)
-  currencyCode String     @map("currency_code")
+  requestId    String      @unique @map("request_id")
+  status       OrderStatus @default(confirmed)
+  currencyCode String      @map("currency_code")
 
   // --- order-level German tax model (OWNED by b6) ---
   taxRegion        String       @map("tax_region")

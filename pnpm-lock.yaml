@@ -14,6 +14,9 @@ importers:
       '@hookform/resolvers':
         specifier: ^5.2.1
         version: 5.2.2(react-hook-form@7.71.2(react@19.1.0))
+      '@marlinjai/auth-brain-sdk':
+        specifier: ^1.1.0
+        version: 1.1.0(zod@4.3.6)
       '@marlinjai/data-table-adapter-prisma':
         specifier: ^0.2.2
         version: 0.2.2(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
@@ -938,6 +941,28 @@ packages:
 
   '@kwsites/file-exists@1.1.1':
     resolution: {integrity: sha512-m9/5YGR18lIwxSFDwfE3oA7bWuq9kdau6ugN4H2rJeyhFQZcG9AgSHkQtSD15a8WvTgfz9aikZMrKPHvbpqFiw==}
+
+  '@marlinjai/auth-brain-sdk@1.1.0':
+    resolution: {integrity: sha512-9hSHnSbWSmD8PndFK7mOrYS4d8Ree9NpC5gB2PvISlX1dMLf8IFzkhmOSfRQiVt3N7mR7i7h0aWAeVNjsw8D9A==}
+    peerDependencies:
+      hono: '>=4.0.0'
+    peerDependenciesMeta:
+      hono:
+        optional: true
+
+  '@marlinjai/auth-brain-shared@1.0.1':
+    resolution: {integrity: sha512-b9X2aIoLeOwTvgEzw8xp8Gxkr6l4gByXKPMwqO2Tfin1ovkIhlnrI6ehQ8UGPE5ppeteUfJT/WEWEaskL9R2/A==}
+
+  '@marlinjai/brain-core@0.2.1':
+    resolution: {integrity: sha512-lWLkn+X0ovN8RqIhz64BO86ECGWXs7wmc5youCb0PFJbvpWPTgELB9S+vTs/TLDPTShXc7KYoHr7UyCBYHBGVw==}
+    peerDependencies:
+      hono: ^4.0.0
+      zod: ^3.22.4
+    peerDependenciesMeta:
+      hono:
+        optional: true
+      zod:
+        optional: true
 
   '@marlinjai/clearify@1.11.2':
     resolution: {integrity: sha512-oiTZrYQJs6mhHA/FLRfSxD5vooNT/z97ruWYgvyPZBuvXqcXFt2PnPGDuX8c1jQPUeShLkI9n2uxdlLTlSEzvA==}
@@ -5695,6 +5720,9 @@ packages:
     resolution: {integrity: sha512-dSvYKdvLsAHCDqPOhIwk/q5CvuWtTB3Dgpoe0uVEFjTzIOAmsQpprX25InCvrvJsirEbu1OHyy67n/kAj1Sw/w==}
     engines: {node: '>=18'}
 
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
   zod@4.3.6:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
@@ -6338,6 +6366,21 @@ snapshots:
       debug: 4.4.3
     transitivePeerDependencies:
       - supports-color
+
+  '@marlinjai/auth-brain-sdk@1.1.0(zod@4.3.6)':
+    dependencies:
+      '@marlinjai/auth-brain-shared': 1.0.1
+      '@marlinjai/brain-core': 0.2.1(zod@4.3.6)
+    transitivePeerDependencies:
+      - zod
+
+  '@marlinjai/auth-brain-shared@1.0.1':
+    dependencies:
+      zod: 3.25.76
+
+  '@marlinjai/brain-core@0.2.1(zod@4.3.6)':
+    optionalDependencies:
+      zod: 4.3.6
 
   '@marlinjai/clearify@1.11.2(@types/node@20.19.35)(@types/react@19.2.14)(jiti@2.6.1)(lightningcss@1.31.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rollup@4.59.0)(yaml@2.8.2)':
     dependencies:
@@ -11940,6 +11983,8 @@ snapshots:
       compress-commons: 7.0.1
       normalize-path: 3.0.0
       readable-stream: 4.7.0
+
+  zod@3.25.76: {}
 
   zod@4.3.6: {}
 
