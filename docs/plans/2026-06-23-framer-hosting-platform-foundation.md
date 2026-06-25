@@ -85,3 +85,36 @@ Independent and parallelizable on the analytics side (does not block P1/P2): the
 1. End-user results UI shape (the publish-preview overlay idea).
 2. Custom-domain onboarding UX inside the editor (DCV method: HTTP vs delegated).
 3. When/whether a site graduates from `workspace` to its own `tenant_group` (the B2B2C trigger).
+
+## Reality update (2026-06-25)
+
+The render half of P2 (the demo "right half") SHIPPED as an autonomous orchestrator wave, all gated by
+the repo's first real CI workflow:
+
+- PR #36: CI integration-tests workflow (the first real test gate; testcontainers Postgres).
+- PR #37: `getCommerceServerRepository()` (read-only, RSC-callable, advisory availability).
+- PR #38: the right-rail content agent (slice4, locked).
+- PR #39: `framer-publish-write` (admin-guarded `POST /api/projects/publish` via the REAL auth-brain
+  `publishSite` permission + server-verified `TenantScope`; a Publish button; `publishProject` flips
+  `Site.status`). No new `PublishedSite` model: the P1 `Site`/`SitePage` are canonical (the demo plan's
+  `PublishedSite` proposal was dropped).
+- PR #40: `framer-server-renderer` (SSR-on-request public route `app/(site)/[...slug]` + a snapshot
+  tree-walk `ServerComponentRenderer` + the 4 commerce islands + analytics-snippet injection). Render
+  mode is SSR-on-request, NOT the static-HTML pipeline (a prior orchestrator run had drifted to static
+  on `orchestrator/framer-p2-publish` / commit `f0903ee`; that branch is PRESERVED as the seed for the
+  deferred static-export/ISR + A/B work, and only its reusable `trackerSnippet.ts` was salvaged).
+- PR #41: host-aware root routing (the editor lives on the fixed `EDITOR_HOST`; any other host serves
+  the storefront, its root `/` rewritten to the home page). Mirrors Framer's `framer.com/projects/<id>`
+  vs `<slug>.framer.app` split.
+
+**Decisions locked with Marlin (2026-06-25):** the demo runs on **Option A** (a lumitra-owned subdomain,
+matching Framer's default `*.framer.app`), checkout stops at plain order-created. **Custom domains
+(Option B)** are split into their own plan: `docs/plans/2026-06-25-framer-custom-domains.md`, background
+work after the demo. `framer-prod-provision` (the deploy + wildcard DNS + cert + analytics-key wiring)
+is PARKED for a hands-on flash session: it is irreversible_ops and needs Marlin's domain/subdomain +
+analytics project/key + his DNS/Coolify/Infisical hands.
+
+**Follow-ups filed (see ROADMAP.md "Post-demo roadmap"):** the CMS/commerce-write interim-guard ->
+auth-brain migration; the multi-site editor at `/projects/<id>` (multi-site UX on the already-shipped
+tenant layer, NOT new tenancy); auto-generated per-site subdomain slug; a `variant-selector`
+nested-scope contract-test refinement.
