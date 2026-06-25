@@ -33,6 +33,7 @@ export default defineConfig({
           name: 'jsdom',
           environment: 'jsdom',
           globals: false,
+          setupFiles: ['./test/setup.client.ts'],
           include: ['src/**/*.{test,spec}.{ts,tsx}'],
           exclude: [
             'src/server/**',

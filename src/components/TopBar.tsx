@@ -76,21 +76,21 @@ const HistoryMenu = observer(() => {
         type="button"
         onClick={() => setOpen(v => !v)}
         title="History"
-        className={`flex items-center gap-1.5 px-2 h-8 rounded text-sm text-gray-700 hover:bg-gray-100 ${open ? 'bg-gray-100' : ''}`}
+        className={`flex items-center gap-1.5 px-2 h-8 rounded text-sm text-foreground hover:bg-accent ${open ? 'bg-muted' : ''}`}
       >
         <HistoryIcon size={16} />
-        <span className="text-xs text-gray-500">
+        <span className="text-xs text-muted-foreground">
           {history.undoIdx}/{originalLen}
         </span>
       </button>
       {open && (
         <div
           data-editor-ui="true"
-          className="absolute right-0 top-full mt-1 w-72 bg-white border border-gray-200 rounded-md shadow-lg overflow-hidden z-[100]"
+          className="absolute right-0 top-full mt-1 w-72 bg-background border border-border rounded-md shadow-lg overflow-hidden z-[100]"
         >
           <div className="max-h-80 overflow-y-auto p-1">
             {entries.length === 0 ? (
-              <div className="px-3 py-6 text-center text-xs text-gray-500">
+              <div className="px-3 py-6 text-center text-xs text-muted-foreground">
                 No actions yet.
               </div>
             ) : (
@@ -104,16 +104,16 @@ const HistoryMenu = observer(() => {
                     onClick={() => history.jumpTo(originalIdx + 1)}
                     className={`w-full flex items-start gap-2 text-left px-2 py-1.5 rounded text-xs transition-colors ${
                       isCurrent
-                        ? 'bg-blue-50 border-l-2 border-blue-500'
+                        ? 'bg-brand/10 border-l-2 border-brand'
                         : isApplied
-                          ? 'text-gray-700 hover:bg-gray-50'
-                          : 'text-gray-400 hover:bg-gray-50'
+                          ? 'text-foreground hover:bg-accent'
+                          : 'text-muted-foreground hover:bg-accent'
                     }`}
                   >
                     <RotateCcw size={12} className="mt-0.5 shrink-0 opacity-60" />
                     <div className="flex-1 min-w-0">
                       <div className="truncate font-medium">{history.labelFor(entry)}</div>
-                      <div className="text-[10px] text-gray-400">
+                      <div className="text-[10px] text-muted-foreground">
                         {relativeTime(entry.timestamp, now)}
                         {entry.patches.length > 1 && ` · ${entry.patches.length} patches`}
                       </div>
@@ -126,8 +126,8 @@ const HistoryMenu = observer(() => {
               onClick={() => history.jumpTo(0)}
               className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs italic ${
                 history.undoIdx === 0
-                  ? 'bg-blue-50 border-l-2 border-blue-500 text-gray-700'
-                  : 'text-gray-400 hover:bg-gray-50'
+                  ? 'bg-brand/10 border-l-2 border-brand text-foreground'
+                  : 'text-muted-foreground hover:bg-accent'
               }`}
             >
               <RotateCcw size={12} className="opacity-60" />
@@ -153,19 +153,19 @@ const TopBar = observer(() => {
   return (
     <header
       data-editor-ui="true"
-      className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-gray-200 flex items-center z-90"
+      className="fixed top-0 left-0 right-0 h-16 bg-background border-b border-border flex items-center z-90"
     >
       {/* Left: project title + current page (Framer-style breadcrumb, since
           the page tabs moved to the sidebar). */}
       <div className="flex items-center gap-2 px-6 min-w-[200px] shrink-0">
-        <div className="text-sm font-semibold text-gray-900 truncate max-w-[180px]">
+        <div className="text-sm font-semibold text-foreground truncate max-w-[180px]">
           {project?.metadata.title ?? 'Untitled Project'}
         </div>
         {currentPage && (
           <>
-            <span className="text-gray-300">/</span>
+            <span className="text-muted-foreground">/</span>
             <div
-              className="text-sm text-gray-600 truncate max-w-[160px]"
+              className="text-sm text-muted-foreground truncate max-w-[160px]"
               title={currentPage.metadata.title}
             >
               {currentPage.metadata.title}
@@ -185,19 +185,19 @@ const TopBar = observer(() => {
         type="button"
         onClick={() => router.push('/preview')}
         title="Preview"
-        className="flex items-center justify-center w-8 h-8 rounded text-gray-700 hover:bg-gray-100 mr-2"
+        className="flex items-center justify-center w-8 h-8 rounded text-foreground hover:bg-accent mr-2"
       >
         <Play size={16} />
       </button>
 
       {/* Right: undo / redo / history */}
-      <div className="flex items-center gap-1 px-3 border-l border-gray-200 shrink-0 h-full">
+      <div className="flex items-center gap-1 px-3 border-l border-border shrink-0 h-full">
         <button
           type="button"
           onClick={() => history?.undo()}
           disabled={!history?.canUndo}
           title="Undo (Cmd+Z)"
-          className="flex items-center justify-center w-8 h-8 rounded text-gray-700 hover:bg-gray-100 disabled:text-gray-300 disabled:hover:bg-transparent"
+          className="flex items-center justify-center w-8 h-8 rounded text-foreground hover:bg-accent disabled:text-muted-foreground disabled:hover:bg-transparent"
         >
           <Undo2 size={16} />
         </button>
@@ -206,7 +206,7 @@ const TopBar = observer(() => {
           onClick={() => history?.redo()}
           disabled={!history?.canRedo}
           title="Redo (Cmd+Shift+Z)"
-          className="flex items-center justify-center w-8 h-8 rounded text-gray-700 hover:bg-gray-100 disabled:text-gray-300 disabled:hover:bg-transparent"
+          className="flex items-center justify-center w-8 h-8 rounded text-foreground hover:bg-accent disabled:text-muted-foreground disabled:hover:bg-transparent"
         >
           <Redo2 size={16} />
         </button>

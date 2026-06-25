@@ -14,7 +14,6 @@ import 'server-only';
 import type {
   Collection,
   Column as BindingColumn,
-  ColumnType as BindingColumnType,
   Row as BindingRow,
   RowValue,
   Query,
@@ -32,7 +31,6 @@ import {
 import type {
   DataTableTable,
   DataTableColumn,
-  DataTableColumnType,
   DataTableRow,
   DataTableCellValue,
   DataTableQueryOptions,
@@ -46,35 +44,23 @@ export interface CmsReadRepository {
   getRow(id: string, rowId: string): Promise<BindingRow | null>;
 }
 
-/** A new custom field definition: a display name plus a binding-layer type. */
-export interface NewField {
-  name: string;
-  type: BindingColumnType;
-}
-
-/** Row cell values keyed by column id, in binding-layer shape. */
-export type RowValues = Record<string, RowValue>;
-
 /**
- * The WRITE repository: extends the read door with content-type and field DDL
- * plus basic row writes, all through adapter-prisma's single-entity operations
- * (createTable/createColumn/createRow/updateRow), which are atomic on their own
- * per the adapter's atomicDDL. It does NOT touch MST and does NOT use the no-op
- * `adapter.transaction()`. Name-uniqueness and not-found checks the adapter does
- * not enforce are enforced here and surfaced as typed CmsWriteError (see
- * errors.ts).
+ * The WRITE repository: extends the read door with COLLECTION-level operations
+ * (create / rename / delete a content type) through adapter-prisma's
+ * single-entity DDL, which is atomic on its own per the adapter's atomicDDL. It
+ * does NOT touch MST and does NOT use the no-op `adapter.transaction()`.
+ * Name-uniqueness and not-found checks the adapter does not enforce are enforced
+ * here and surfaced as typed CmsWriteError (see errors.ts).
+ *
+ * In-collection editing (columns/rows/options/relations/files) is NOT done here:
+ * the editor grid drives it through the data-table server-actions adapter
+ * (src/server/cms/actions.ts) against the same PrismaAdapter.
  */
 export interface CmsWriteRepository extends CmsReadRepository {
   createCollection(name: string): Promise<Collection>;
   renameCollection(id: string, name: string): Promise<void>;
+  updateCollection(id: string, updates: { name?: string; icon?: string }): Promise<void>;
   deleteCollection(id: string): Promise<void>;
-  addColumn(id: string, field: NewField): Promise<BindingColumn>;
-  renameColumn(id: string, colId: string, name: string): Promise<void>;
-  retypeColumn(id: string, colId: string, type: BindingColumnType): Promise<void>;
-  deleteColumn(id: string, colId: string): Promise<void>;
-  createRow(id: string, values: RowValues): Promise<BindingRow>;
-  updateRow(id: string, rowId: string, values: Partial<RowValues>): Promise<BindingRow>;
-  deleteRow(id: string, rowId: string): Promise<void>;
 }
 
 // Always eager-load junction data so multi-select arrays, file URLs, and
@@ -117,12 +103,15 @@ function mapColumn(column: DataTableColumn): BindingColumn {
 function mapCollection(
   table: DataTableTable,
   columns: DataTableColumn[],
+  itemCount?: number,
 ): Collection {
   return {
     id: table.id,
     slug: deriveSlug(table.name, table.id),
     name: table.name,
+    icon: table.icon ?? undefined,
     columns: columns.map(mapColumn),
+    itemCount,
   };
 }
 
@@ -264,10 +253,16 @@ const repository: CmsReadRepository = {
   async listCollections(): Promise<Collection[]> {
     const adapter = getCmsAdapter();
     const tables = await adapter.listTables(CMS_WORKSPACE_ID);
+    // N+1 over collections: fetch columns + count per table. Acceptable for
+    // phase 1 (single-tenant, few collections). A batched count is a later
+    // optimization once the adapter exposes a bulk method.
     return Promise.all(
       tables.map(async (table) => {
-        const columns = await adapter.getColumns(table.id);
-        return mapCollection(table, columns);
+        const [columns, itemCount] = await Promise.all([
+          adapter.getColumns(table.id),
+          adapter.getRows(table.id, { limit: 1 }).then((r) => r.total ?? 0).catch(() => 0),
+        ]);
+        return mapCollection(table, columns, itemCount);
       }),
     );
   },
@@ -316,52 +311,6 @@ export function getCmsRepository(): CmsReadRepository {
 // write tier
 // =============================================================================
 
-// Reverse of mapDataTableColumnType for the 8 binding types the management UI
-// can create. The binding union is a strict subset of adapter-prisma's 13
-// types, so this direction is total and lossless: the only normalization is the
-// hyphen -> underscore on multi-select. (The 5 adapter-only types
-// url/formula/rollup/created_time/last_edited_time are not creatable from the
-// binding layer, by design.)
-function mapBindingColumnType(type: BindingColumnType): DataTableColumnType {
-  switch (type) {
-    case 'text':
-      return 'text';
-    case 'number':
-      return 'number';
-    case 'boolean':
-      return 'boolean';
-    case 'date':
-      return 'date';
-    case 'select':
-      return 'select';
-    case 'multi-select':
-      return 'multi_select';
-    case 'relation':
-      return 'relation';
-    case 'file':
-      return 'file';
-    default: {
-      const exhaustive: never = type;
-      throw new Error(
-        `CMS write repository: unsupported binding column type ${String(exhaustive)}`,
-      );
-    }
-  }
-}
-
-// Translate binding row values into adapter-prisma cells. Binding RowValue
-// (string | number | boolean | null | string[]) is a strict subset of the
-// adapter CellValue union, so this is a structural pass-through; it exists as a
-// named seam so the write path documents the contract symmetrically with the
-// read path's mapCellValue.
-function mapRowValuesToCells(values: RowValues): Record<string, DataTableCellValue> {
-  const cells: Record<string, DataTableCellValue> = {};
-  for (const [columnId, value] of Object.entries(values)) {
-    cells[columnId] = value;
-  }
-  return cells;
-}
-
 // Run an adapter DDL/persistence call, re-throwing typed CmsWriteError as-is but
 // wrapping any opaque adapter/Prisma throw as a typed CmsDdlError so the failure
 // surfaces loudly with a code instead of a bare 500.
@@ -388,20 +337,6 @@ async function requireTable(id: string): Promise<DataTableTable> {
   return table;
 }
 
-// Assert a column exists AND belongs to the given collection (the adapter's
-// getColumn is not collection-scoped), throwing the typed 404 otherwise.
-async function requireColumn(
-  id: string,
-  colId: string,
-): Promise<DataTableColumn> {
-  const adapter = getCmsAdapter();
-  const column = await adapter.getColumn(colId);
-  if (!column || column.tableId !== id) {
-    throw new CmsNotFoundError('column', colId);
-  }
-  return column;
-}
-
 const writeRepository: CmsWriteRepository = {
   ...repository,
 
@@ -424,108 +359,39 @@ const writeRepository: CmsWriteRepository = {
   },
 
   async renameCollection(id: string, name: string): Promise<void> {
+    await this.updateCollection(id, { name });
+  },
+
+  async updateCollection(
+    id: string,
+    updates: { name?: string; icon?: string },
+  ): Promise<void> {
     const adapter = getCmsAdapter();
     await requireTable(id);
-    const others = (await adapter.listTables(CMS_WORKSPACE_ID)).filter(
-      (t) => t.id !== id,
-    );
-    const collision = others.find(
-      (t) => t.name.trim().toLowerCase() === name.trim().toLowerCase(),
-    );
-    if (collision) {
-      throw new CollectionExistsError(name);
+    const patch: { name?: string; icon?: string } = {};
+    if (updates.name !== undefined) {
+      const name = updates.name;
+      const others = (await adapter.listTables(CMS_WORKSPACE_ID)).filter(
+        (t) => t.id !== id,
+      );
+      const collision = others.find(
+        (t) => t.name.trim().toLowerCase() === name.trim().toLowerCase(),
+      );
+      if (collision) {
+        throw new CollectionExistsError(name);
+      }
+      patch.name = name;
     }
-    await ddl(() => adapter.updateTable(id, { name }));
+    if (updates.icon !== undefined) {
+      patch.icon = updates.icon;
+    }
+    await ddl(() => adapter.updateTable(id, patch));
   },
 
   async deleteCollection(id: string): Promise<void> {
     const adapter = getCmsAdapter();
     await requireTable(id);
     await ddl(() => adapter.deleteTable(id));
-  },
-
-  async addColumn(id: string, field: NewField): Promise<BindingColumn> {
-    const adapter = getCmsAdapter();
-    await requireTable(id);
-    const column = await ddl(() =>
-      adapter.createColumn({
-        tableId: id,
-        name: field.name,
-        type: mapBindingColumnType(field.type),
-      }),
-    );
-    return mapColumn(column);
-  },
-
-  async renameColumn(id: string, colId: string, name: string): Promise<void> {
-    const adapter = getCmsAdapter();
-    await requireColumn(id, colId);
-    await ddl(() => adapter.updateColumn(colId, { name }));
-  },
-
-  async retypeColumn(
-    id: string,
-    colId: string,
-    type: BindingColumnType,
-  ): Promise<void> {
-    const adapter = getCmsAdapter();
-    const column = await requireColumn(id, colId);
-    // adapter-prisma's updateColumn cannot change a column's type (UpdateColumnInput
-    // has no `type` field, verified against data-table-core). The only adapter-based
-    // retype is drop + recreate with the new type; this preserves the column NAME
-    // and position but mints a NEW column id (and clears existing cell data for that
-    // field). Acceptable pre-MVP; documented so callers know the id is not stable
-    // across a retype.
-    await ddl(async () => {
-      await adapter.deleteColumn(colId);
-      await adapter.createColumn({
-        tableId: id,
-        name: column.name,
-        type: mapBindingColumnType(type),
-        position: column.position,
-      });
-    });
-  },
-
-  async deleteColumn(id: string, colId: string): Promise<void> {
-    const adapter = getCmsAdapter();
-    await requireColumn(id, colId);
-    await ddl(() => adapter.deleteColumn(colId));
-  },
-
-  async createRow(id: string, values: RowValues): Promise<BindingRow> {
-    const adapter = getCmsAdapter();
-    await requireTable(id);
-    const row = await ddl(() =>
-      adapter.createRow({ tableId: id, cells: mapRowValuesToCells(values) }),
-    );
-    return mapRow(row);
-  },
-
-  async updateRow(
-    id: string,
-    rowId: string,
-    values: Partial<RowValues>,
-  ): Promise<BindingRow> {
-    const adapter = getCmsAdapter();
-    // Scope the row to its collection (the adapter's getRow searches every table).
-    const existing = await adapter.getRow(rowId);
-    if (!existing || existing.tableId !== id) {
-      throw new CmsNotFoundError('row', rowId);
-    }
-    const row = await ddl(() =>
-      adapter.updateRow(rowId, mapRowValuesToCells(values as RowValues)),
-    );
-    return mapRow(row);
-  },
-
-  async deleteRow(id: string, rowId: string): Promise<void> {
-    const adapter = getCmsAdapter();
-    const existing = await adapter.getRow(rowId);
-    if (!existing || existing.tableId !== id) {
-      throw new CmsNotFoundError('row', rowId);
-    }
-    await ddl(() => adapter.deleteRow(rowId));
   },
 };
 

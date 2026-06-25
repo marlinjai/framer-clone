@@ -58,7 +58,7 @@ export function visibleSectionsForHint(hint?: string): VisibleSections {
 }
 
 const ITEM_CLASS =
-  'flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs text-gray-700 hover:bg-blue-50';
+  'flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-brand/10';
 
 const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPickerProps) => {
   const dataSource = useDataSource();
@@ -149,18 +149,18 @@ const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPicker
 
   return (
     <div
-      className="z-50 w-60 rounded-md border border-gray-200 bg-white p-2 shadow-lg"
+      className="z-50 w-60 rounded-md border border-border bg-background p-2 shadow-lg"
       role="dialog"
       aria-label={`Bind ${meta.label}`}
     >
-      <div className="mb-1 px-1 text-[11px] font-medium uppercase tracking-wider text-gray-500">
+      <div className="mb-1 px-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
         Bind {meta.label}
       </div>
 
       {/* Page scope */}
       {sections.page && (
         <div className="mb-2">
-          <div className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-medium text-gray-500">
+          <div className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-medium text-muted-foreground">
             <Globe size={11} />
             <span>Page</span>
           </div>
@@ -177,15 +177,15 @@ const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPicker
       {/* Row scope (columns of the ancestor collection) */}
       {sections.row && rowCollectionId && (
         <div className="mb-2">
-          <div className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-medium text-gray-500">
+          <div className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-medium text-muted-foreground">
             <FileText size={11} />
             <span>Row ({rowCollectionId})</span>
           </div>
           {rowColumns === null && !rowError && (
-            <div className="px-2 py-1 text-[11px] text-gray-400">Loading columns...</div>
+            <div className="px-2 py-1 text-[11px] text-muted-foreground">Loading columns...</div>
           )}
           {rowError && (
-            <div className="px-2 py-1 text-[11px] text-red-500">{rowError}</div>
+            <div className="px-2 py-1 text-[11px] text-destructive">{rowError}</div>
           )}
           {rowColumns &&
             rowColumns.map((col) => {
@@ -198,12 +198,12 @@ const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPicker
                   onClick={() => commitRead(expression)}
                 >
                   <span className="flex-1">{col.name}</span>
-                  <span className="font-mono text-[10px] text-gray-400">{expression}</span>
+                  <span className="font-mono text-[10px] text-muted-foreground">{expression}</span>
                 </button>
               );
             })}
           {rowColumns && rowColumns.length === 0 && !rowError && (
-            <div className="px-2 py-1 text-[11px] text-gray-400">No columns</div>
+            <div className="px-2 py-1 text-[11px] text-muted-foreground">No columns</div>
           )}
         </div>
       )}
@@ -211,12 +211,12 @@ const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPicker
       {/* Source-collection picker (binds a collectionId literal) */}
       {sections.collections && (
         <div className="mb-2">
-          <div className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-medium text-gray-500">
+          <div className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-medium text-muted-foreground">
             <Database size={11} />
             <span>Collections</span>
           </div>
           {collections === null && (
-            <div className="px-2 py-1 text-[11px] text-gray-400">Loading...</div>
+            <div className="px-2 py-1 text-[11px] text-muted-foreground">Loading...</div>
           )}
           {collections &&
             collections.map((collection) => (
@@ -227,18 +227,18 @@ const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPicker
                 onClick={() => commitRead(collection.id)}
               >
                 <span className="flex-1">{collection.name}</span>
-                <span className="font-mono text-[10px] text-gray-400">{collection.id}</span>
+                <span className="font-mono text-[10px] text-muted-foreground">{collection.id}</span>
               </button>
             ))}
           {collections && collections.length === 0 && (
-            <div className="px-2 py-1 text-[11px] text-gray-400">No collections</div>
+            <div className="px-2 py-1 text-[11px] text-muted-foreground">No collections</div>
           )}
         </div>
       )}
 
       {/* Free-form expression */}
-      <div className="mt-2 border-t border-gray-100 pt-2">
-        <label className="mb-1 block px-1 text-[11px] text-gray-500">Expression</label>
+      <div className="mt-2 border-t border-border pt-2">
+        <label className="mb-1 block px-1 text-[11px] text-muted-foreground">Expression</label>
         <div className="flex items-center gap-1">
           <input
             type="text"
@@ -251,21 +251,21 @@ const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPicker
             placeholder="{{row.title}}"
             className={`h-7 flex-1 rounded border px-2 font-mono text-xs outline-none ${
               freeFormInvalid
-                ? 'border-red-500 focus:border-red-500'
-                : 'border-gray-200 focus:border-blue-400'
+                ? 'border-destructive focus:border-destructive'
+                : 'border-border focus:border-brand'
             }`}
           />
           <button
             type="button"
             onClick={applyFreeForm}
             disabled={freeFormInvalid || trimmed.length === 0}
-            className="h-7 rounded bg-blue-600 px-2 text-xs text-white disabled:opacity-40"
+            className="h-7 rounded bg-brand px-2 text-xs text-brand-foreground disabled:opacity-40"
           >
             Apply
           </button>
         </div>
         {freeFormInvalid && (
-          <div className="mt-1 px-1 text-[11px] text-red-500">
+          <div className="mt-1 px-1 text-[11px] text-destructive">
             Invalid expression: use a single {'{{path.to.value}}'} template.
           </div>
         )}

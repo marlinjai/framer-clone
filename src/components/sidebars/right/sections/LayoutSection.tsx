@@ -24,19 +24,30 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
   return (
     <CollapsibleSection
       title="Layout"
-      icon={<LayoutGrid size={12} />}
+      icon={<LayoutGrid size={14} />}
     >
-      {/* Display mode */}
-      <ToggleIconGroup
-        label="Display"
-        value={display}
-        onChange={(v) => setStyleValue('display', v)}
-        options={[
-          { value: 'block', icon: <span className="text-[10px] font-medium">Block</span>, tooltip: 'Block' },
-          { value: 'flex', icon: <span className="text-[10px] font-medium">Flex</span>, tooltip: 'Flexbox' },
-          { value: 'grid', icon: <span className="text-[10px] font-medium">Grid</span>, tooltip: 'Grid' },
-        ]}
-      />
+      {/* Display mode: text segmented control (Block / Flex / Grid) */}
+      <div className="grid grid-cols-[64px_1fr] items-center gap-2">
+        <label className="text-muted-foreground" style={{ fontSize: '11.5px' }}>Display</label>
+        <div className="flex bg-muted rounded-[7px] p-0.5 gap-0.5">
+          {(['block', 'flex', 'grid'] as const).map((mode) => {
+            const isActive = display === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setStyleValue('display', mode)}
+                className={`flex-1 flex items-center justify-center rounded-[5px] transition-all text-muted-foreground capitalize ${
+                  isActive ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground'
+                }`}
+                style={{ height: '26px', fontSize: '12px', fontWeight: 500 }}
+              >
+                {mode.charAt(0).toUpperCase() + mode.slice(1)}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {display === 'flex' && (
         <>
@@ -57,10 +68,10 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
             value={getStyleValue('justifyContent') || 'flex-start'}
             onChange={(v) => setStyleValue('justifyContent', v)}
             options={[
-              { value: 'flex-start', icon: <span className="text-[9px]">Start</span>, tooltip: 'Start' },
-              { value: 'center', icon: <span className="text-[9px]">Center</span>, tooltip: 'Center' },
-              { value: 'flex-end', icon: <span className="text-[9px]">End</span>, tooltip: 'End' },
-              { value: 'space-between', icon: <span className="text-[9px]">Between</span>, tooltip: 'Space Between' },
+              { value: 'flex-start', icon: <span style={{ fontSize: '9px' }}>Start</span>, tooltip: 'Start' },
+              { value: 'center', icon: <span style={{ fontSize: '9px' }}>Center</span>, tooltip: 'Center' },
+              { value: 'flex-end', icon: <span style={{ fontSize: '9px' }}>End</span>, tooltip: 'End' },
+              { value: 'space-between', icon: <span style={{ fontSize: '9px' }}>Between</span>, tooltip: 'Space Between' },
             ]}
           />
 
@@ -70,16 +81,16 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
             value={getStyleValue('alignItems') || 'stretch'}
             onChange={(v) => setStyleValue('alignItems', v)}
             options={[
-              { value: 'flex-start', icon: <span className="text-[9px]">Start</span>, tooltip: 'Start' },
-              { value: 'center', icon: <span className="text-[9px]">Center</span>, tooltip: 'Center' },
-              { value: 'flex-end', icon: <span className="text-[9px]">End</span>, tooltip: 'End' },
-              { value: 'stretch', icon: <span className="text-[9px]">Stretch</span>, tooltip: 'Stretch' },
+              { value: 'flex-start', icon: <span style={{ fontSize: '9px' }}>Start</span>, tooltip: 'Start' },
+              { value: 'center', icon: <span style={{ fontSize: '9px' }}>Center</span>, tooltip: 'Center' },
+              { value: 'flex-end', icon: <span style={{ fontSize: '9px' }}>End</span>, tooltip: 'End' },
+              { value: 'stretch', icon: <span style={{ fontSize: '9px' }}>Stretch</span>, tooltip: 'Stretch' },
             ]}
           />
 
           {/* Flex Wrap */}
           <div className="flex items-center justify-between">
-            <label className="text-[11px] text-gray-500">Wrap</label>
+            <label className="text-muted-foreground" style={{ fontSize: '11.5px' }}>Wrap</label>
             <Switch
               checked={getStyleValue('flexWrap') === 'wrap'}
               onCheckedChange={(checked) => setStyleValue('flexWrap', checked ? 'wrap' : 'nowrap')}
@@ -90,30 +101,37 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
 
       {/* Gap (flex/grid only) */}
       {isFlexOrGrid && (
-        <DimensionInput
-          label="Gap"
-          value={getStyleValue('gap')}
-          onChange={(v) => setStyleValue('gap', v)}
-          units={['px', 'rem']}
-          placeholder="0"
-        />
+        <div className="grid grid-cols-[64px_1fr] items-center gap-2">
+          <label className="text-muted-foreground" style={{ fontSize: '11.5px' }}>Gap</label>
+          <DimensionInput
+            label=""
+            value={getStyleValue('gap')}
+            onChange={(v) => setStyleValue('gap', v)}
+            units={['px', 'rem']}
+            placeholder="0"
+          />
+        </div>
       )}
 
       {/* Padding */}
-      <DimensionInput
-        label="Padding"
-        value={getStyleValue('padding')}
-        onChange={(v) => setStyleValue('padding', v)}
-        units={['px', 'rem', '%']}
-        placeholder="0"
-      />
+      <div className="grid grid-cols-[64px_1fr] items-center gap-2">
+        <label className="text-muted-foreground" style={{ fontSize: '11.5px' }}>Padding</label>
+        <DimensionInput
+          label=""
+          value={getStyleValue('padding')}
+          onChange={(v) => setStyleValue('padding', v)}
+          units={['px', 'rem', '%']}
+          placeholder="0"
+        />
+      </div>
 
-      {/* Individual padding sides */}
+      {/* Individual padding sides disclosure */}
       <button
         onClick={() => setShowPaddingSides(!showPaddingSides)}
-        className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600"
+        className="flex items-center gap-1 text-muted-foreground hover:text-muted-foreground"
+        style={{ fontSize: '11.5px' }}
       >
-        {showPaddingSides ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+        {showPaddingSides ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         Individual sides
       </button>
       {showPaddingSides && (

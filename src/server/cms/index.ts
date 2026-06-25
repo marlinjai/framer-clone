@@ -12,8 +12,6 @@ export {
   getCmsWriteRepository,
   type CmsReadRepository,
   type CmsWriteRepository,
-  type NewField,
-  type RowValues,
 } from './repository';
 export {
   CmsWriteError,

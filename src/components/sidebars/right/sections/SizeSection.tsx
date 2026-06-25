@@ -1,8 +1,7 @@
 'use client';
 import React, { useState } from 'react';
 import { observer } from 'mobx-react-lite';
-import { Maximize2, ChevronDown, ChevronRight } from 'lucide-react';
-import { Input } from '@/components/ui/input';
+import { MoveDiagonal, ChevronDown, ChevronRight } from 'lucide-react';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { CollapsibleSection, DimensionInput } from '../primitives';
 
@@ -20,52 +19,70 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
   return (
     <CollapsibleSection
       title="Size"
-      icon={<Maximize2 size={12} />}
+      icon={<MoveDiagonal size={14} />}
       badge={breakpointId ? component.label || undefined : undefined}
     >
       {/* Viewport-specific controls */}
       {component.isViewportNode && (
-        <div className="space-y-2 mb-2">
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <label className="text-[11px] text-gray-500">Min Width (BP)</label>
-              <Input
-                value={component.breakpointMinWidth || 320}
-                onChange={(e) => {
-                  component.setViewportProperties({ breakpointMinWidth: parseInt(e.target.value) || 320 });
-                }}
-                className="h-7 text-xs"
-                placeholder="320"
-              />
+        <div className="flex flex-col gap-2.5 pb-1">
+          {/* Two-up: Min Width (BP) + Viewport Height */}
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <div className="flex flex-col gap-1">
+                <label className="text-muted-foreground" style={{ fontSize: '11px' }}>Min Width (BP)</label>
+                <input
+                  type="number"
+                  value={component.breakpointMinWidth || 320}
+                  onChange={(e) => {
+                    component.setViewportProperties({ breakpointMinWidth: parseInt(e.target.value) || 320 });
+                  }}
+                  className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
+                  style={{ fontSize: '12.5px' }}
+                  placeholder="320"
+                />
+              </div>
             </div>
-            <div className="space-y-1">
-              <label className="text-[11px] text-gray-500">Viewport Height</label>
-              <Input
-                value={component.viewportHeight || 600}
-                onChange={(e) => {
-                  component.setViewportProperties({ viewportHeight: parseInt(e.target.value) || 600 });
-                }}
-                className="h-7 text-xs"
-                placeholder="600"
-              />
+            <div className="flex-1">
+              <div className="flex flex-col gap-1">
+                <label className="text-muted-foreground" style={{ fontSize: '11px' }}>Viewport Height</label>
+                <input
+                  type="number"
+                  value={component.viewportHeight || 600}
+                  onChange={(e) => {
+                    component.setViewportProperties({ viewportHeight: parseInt(e.target.value) || 600 });
+                  }}
+                  className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
+                  style={{ fontSize: '12.5px' }}
+                  placeholder="600"
+                />
+              </div>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <label className="text-[11px] text-gray-500">Canvas X</label>
-              <Input
-                value={component.canvasX || 0}
-                onChange={(e) => component.updateCanvasTransform({ x: parseInt(e.target.value) || 0 })}
-                className="h-7 text-xs"
-              />
+          {/* Two-up: Canvas X + Canvas Y */}
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <div className="flex flex-col gap-1">
+                <label className="text-muted-foreground" style={{ fontSize: '11px' }}>Canvas X</label>
+                <input
+                  type="number"
+                  value={component.canvasX || 0}
+                  onChange={(e) => component.updateCanvasTransform({ x: parseInt(e.target.value) || 0 })}
+                  className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
+                  style={{ fontSize: '12.5px' }}
+                />
+              </div>
             </div>
-            <div className="space-y-1">
-              <label className="text-[11px] text-gray-500">Canvas Y</label>
-              <Input
-                value={component.canvasY || 0}
-                onChange={(e) => component.updateCanvasTransform({ y: parseInt(e.target.value) || 0 })}
-                className="h-7 text-xs"
-              />
+            <div className="flex-1">
+              <div className="flex flex-col gap-1">
+                <label className="text-muted-foreground" style={{ fontSize: '11px' }}>Canvas Y</label>
+                <input
+                  type="number"
+                  value={component.canvasY || 0}
+                  onChange={(e) => component.updateCanvasTransform({ y: parseInt(e.target.value) || 0 })}
+                  className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
+                  style={{ fontSize: '12.5px' }}
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -73,46 +90,65 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
 
       {/* Floating element position */}
       {component.isFloatingElement && (
-        <div className="grid grid-cols-2 gap-2 mb-2">
-          <div className="space-y-1">
-            <label className="text-[11px] text-gray-500">Canvas X</label>
-            <Input
-              value={component.canvasX || 0}
-              onChange={(e) => component.updateCanvasTransform({ x: parseInt(e.target.value) || 0 })}
-              className="h-7 text-xs"
-            />
+        <div className="flex gap-2 pb-1">
+          <div className="flex-1">
+            <div className="flex flex-col gap-1">
+              <label className="text-muted-foreground" style={{ fontSize: '11px' }}>Canvas X</label>
+              <input
+                type="number"
+                value={component.canvasX || 0}
+                onChange={(e) => component.updateCanvasTransform({ x: parseInt(e.target.value) || 0 })}
+                className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
+                style={{ fontSize: '12.5px' }}
+              />
+            </div>
           </div>
-          <div className="space-y-1">
-            <label className="text-[11px] text-gray-500">Canvas Y</label>
-            <Input
-              value={component.canvasY || 0}
-              onChange={(e) => component.updateCanvasTransform({ y: parseInt(e.target.value) || 0 })}
-              className="h-7 text-xs"
-            />
+          <div className="flex-1">
+            <div className="flex flex-col gap-1">
+              <label className="text-muted-foreground" style={{ fontSize: '11px' }}>Canvas Y</label>
+              <input
+                type="number"
+                value={component.canvasY || 0}
+                onChange={(e) => component.updateCanvasTransform({ y: parseInt(e.target.value) || 0 })}
+                className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
+                style={{ fontSize: '12.5px' }}
+              />
+            </div>
           </div>
         </div>
       )}
 
-      {/* Width / Height */}
-      <div className="grid grid-cols-2 gap-2">
-        <DimensionInput
-          label="Width"
-          value={getStyleValue('width')}
-          onChange={(v) => setStyleValue('width', v)}
-        />
-        <DimensionInput
-          label="Height"
-          value={getStyleValue('height')}
-          onChange={(v) => setStyleValue('height', v)}
-        />
+      {/* Two-up: Width + Height on field grid */}
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <div className="grid grid-cols-[auto_1fr] items-start gap-1">
+            <label className="text-muted-foreground pt-[9px]" style={{ fontSize: '11.5px' }}>W</label>
+            <DimensionInput
+              label=""
+              value={getStyleValue('width')}
+              onChange={(v) => setStyleValue('width', v)}
+            />
+          </div>
+        </div>
+        <div className="flex-1">
+          <div className="grid grid-cols-[auto_1fr] items-start gap-1">
+            <label className="text-muted-foreground pt-[9px]" style={{ fontSize: '11.5px' }}>H</label>
+            <DimensionInput
+              label=""
+              value={getStyleValue('height')}
+              onChange={(v) => setStyleValue('height', v)}
+            />
+          </div>
+        </div>
       </div>
 
-      {/* Min/Max toggle */}
+      {/* Min / Max disclosure */}
       <button
         onClick={() => setShowMinMax(!showMinMax)}
-        className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600 mt-1"
+        className="flex items-center gap-1 text-muted-foreground hover:text-muted-foreground"
+        style={{ fontSize: '11.5px' }}
       >
-        {showMinMax ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+        {showMinMax ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         Min / Max
       </button>
       {showMinMax && (
@@ -142,15 +178,17 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
 
       {/* Image URL for img elements */}
       {component.type === 'img' && (
-        <div className="space-y-1 mt-2">
-          <label className="text-[11px] text-gray-500">Image URL</label>
-          <Input
-            value={component.props?.src || ''}
+        <div className="flex flex-col gap-1 pt-1">
+          <label className="text-muted-foreground" style={{ fontSize: '11px' }}>Image URL</label>
+          <input
+            type="text"
+            value={component.props?.src as string || ''}
             onChange={(e) => {
               const currentProps = component.props || {};
               component.props = { ...currentProps, src: e.target.value } as Record<string, unknown>;
             }}
-            className="h-7 text-xs"
+            className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
+            style={{ fontSize: '12.5px' }}
             placeholder="https://example.com/image.jpg"
           />
         </div>

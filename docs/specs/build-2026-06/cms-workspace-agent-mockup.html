@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CMS workspace + content agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  :root{
+    --bg:#EEF0F3; --panel:#FFFFFF; --sunken:#F5F6F8; --rail:#FAFBFC;
+    --bd:#E7E8EC; --bd-strong:#DCDEE3;
+    --t1:#1A1B1F; --t2:#5A5E66; --t3:#8A8F99;
+    --accent:#5B5BD6; --accent-12:rgba(91,91,214,.12); --accent-10:rgba(91,91,214,.10); --accent-06:rgba(91,91,214,.06);
+    --green:#16A34A; --green-bg:#DCFCE7; --green-tx:#166534;
+    --amber:#D97706; --amber-bg:#FFEDD5; --amber-tx:#9A3412;
+    --blue:#2563EB; --blue-bg:#DBEAFE; --blue-tx:#1E40AF;
+    --red:#DC2626;
+    --hover:#F2F3F5;
+    --e1:0 1px 2px rgba(16,18,29,.06),0 1px 1px rgba(16,18,29,.04);
+    --e2:0 6px 16px rgba(16,18,29,.12),0 1px 3px rgba(16,18,29,.07);
+    --r:8px; --r-sm:6px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);font-family:Inter,system-ui,sans-serif;color:var(--t1);-webkit-font-smoothing:antialiased;padding:36px}
+  .mono{font-family:'JetBrains Mono',ui-monospace;font-variant-numeric:tabular-nums}
+  .wrap{max-width:1400px;margin:0 auto;display:flex;flex-direction:column;gap:24px}
+  h1{font-size:20px;font-weight:700;margin:0;letter-spacing:-.01em}
+  .sub{margin:4px 0 0;color:var(--t2);font-size:13px}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:3px 8px;border-radius:999px;background:var(--accent-12);color:var(--accent)}
+  .lbl{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--t3)}
+  .ib{width:28px;height:28px;border-radius:var(--r-sm);display:inline-flex;align-items:center;justify-content:center;color:var(--t3);cursor:pointer;border:0;background:transparent}
+  .ib:hover{background:var(--hover);color:var(--t1)} .ib svg{width:15px;height:15px}
+
+  .ws{display:grid;grid-template-columns:248px 1fr 348px;height:760px;border:1px solid var(--bd);border-radius:12px;overflow:hidden;box-shadow:var(--e2);background:var(--panel)}
+  .top{grid-column:1/-1;height:48px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;padding:0 14px}
+  .top .brand{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600}
+  .top .brand .tile{width:22px;height:22px;border-radius:6px;background:var(--accent-12);color:var(--accent);display:flex;align-items:center;justify-content:center}
+  .top .brand .tile svg{width:13px;height:13px}
+  .top .brand .cv{display:flex;align-items:center;gap:4px;color:var(--t2);font-weight:500} .top .brand .cv svg{width:13px;height:13px;color:var(--t3)}
+  .btn{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 12px;border-radius:8px;font-size:12.5px;font-weight:600;border:1px solid transparent;cursor:pointer}
+  .btn svg{width:15px;height:15px}
+  .btn.pri{background:var(--accent);color:#fff;box-shadow:var(--e1)}
+  .btn.ghost{background:transparent;color:var(--t2);border-color:var(--bd)} .btn.ghost:hover{background:var(--hover);color:var(--t1)}
+
+  /* collections rail */
+  .rail{background:var(--rail);border-right:1px solid var(--bd);display:flex;flex-direction:column;min-height:0}
+  .rtabs{display:flex;gap:2px;padding:8px;border-bottom:1px solid var(--bd)}
+  .rtab{flex:1;text-align:center;height:28px;line-height:28px;border-radius:var(--r-sm);font-size:12px;font-weight:500;color:var(--t3);cursor:pointer}
+  .rtab.on{background:var(--panel);color:var(--t1);box-shadow:var(--e1)} .rtab:not(.on):hover{color:var(--t1)}
+  .rtools{display:flex;align-items:center;gap:2px;padding:6px 8px}
+  .rtools .ib{width:26px;height:26px} .rtools .grow{flex:1}
+  .ctree{flex:1;overflow:auto;padding:2px 8px 10px}
+  .cgroup{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--t3);padding:10px 8px 4px}
+  .crow{display:flex;align-items:center;gap:9px;height:32px;padding:0 8px;border-radius:var(--r-sm);cursor:pointer;position:relative}
+  .crow:hover{background:var(--hover)}
+  .crow.on{background:var(--accent-10)} .crow.on::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:2px;border-radius:2px;background:var(--accent)}
+  .crow .tile{width:22px;height:22px;border-radius:6px;background:var(--panel);border:1px solid var(--bd);display:flex;align-items:center;justify-content:center;color:var(--t2);flex:none}
+  .crow.on .tile{background:var(--accent-12);border-color:transparent;color:var(--accent)}
+  .crow .tile svg{width:13px;height:13px}
+  .crow .nm{font-size:13px;font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .crow.on .nm{color:var(--accent)}
+  .crow .ct{font-size:11px;color:var(--t3)}
+  .crow.sub{padding-left:22px}
+  .newc{display:flex;align-items:center;gap:9px;height:32px;padding:0 8px;border-radius:var(--r-sm);color:var(--t3);font-size:13px;cursor:pointer;margin-top:4px} .newc:hover{background:var(--hover);color:var(--t1)} .newc svg{width:15px;height:15px}
+
+  /* items table */
+  .items{display:flex;flex-direction:column;min-height:0}
+  .itop{display:flex;align-items:center;gap:10px;height:48px;padding:0 14px;border-bottom:1px solid var(--bd)}
+  .itop .nm{font-size:14px;font-weight:600}
+  .seg{display:flex;background:var(--sunken);border-radius:8px;padding:2px;gap:2px}
+  .seg span{font-size:12px;font-weight:500;color:var(--t3);padding:4px 10px;border-radius:6px;cursor:pointer}
+  .seg span.on{background:var(--panel);color:var(--t1);box-shadow:var(--e1)}
+  .grid{flex:1;overflow:auto}
+  .gh{display:grid;grid-template-columns:30px 26px 1.6fr 0.9fr 0.8fr 0.7fr;height:40px;align-items:center;border-bottom:1px solid var(--bd);background:var(--sunken);font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--t3)}
+  .gh>div,.gr>div{padding:0 12px;display:flex;align-items:center;gap:8px;overflow:hidden}
+  .gr{display:grid;grid-template-columns:30px 26px 1.6fr 0.9fr 0.8fr 0.7fr;height:46px;align-items:center;border-bottom:1px solid var(--bd);font-size:13px}
+  .gr:hover{background:var(--accent-06)} .gr.sel{background:var(--accent-10)}
+  .gr .drag{color:var(--bd-strong);opacity:0;cursor:grab} .gr:hover .drag{opacity:1}
+  .ck{width:15px;height:15px;border:1.5px solid var(--bd-strong);border-radius:4px}
+  .logo{width:24px;height:24px;border-radius:6px;background:var(--sunken);border:1px solid var(--bd);display:flex;align-items:center;justify-content:center;color:var(--t2);font-size:10px;font-weight:700}
+  .selpill{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--t2);background:var(--sunken);border:1px solid var(--bd);border-radius:6px;padding:3px 8px;cursor:pointer} .selpill svg{width:12px;height:12px;color:var(--t3)}
+  .stat{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px}
+  .dot{width:7px;height:7px;border-radius:999px}
+  .tog{width:32px;height:18px;border-radius:999px;position:relative;cursor:pointer}
+  .tog i{position:absolute;top:2px;width:14px;height:14px;border-radius:999px;background:#fff;box-shadow:var(--e1)}
+  .tog.on{background:var(--accent)} .tog.on i{right:2px} .tog.off{background:var(--bd-strong)} .tog.off i{left:2px}
+  .addagent{margin-left:auto;font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-12);border-radius:6px;padding:3px 8px;opacity:0;display:flex;align-items:center;gap:5px} .gr:hover .addagent{opacity:1} .addagent svg{width:12px;height:12px}
+  .ifoot{height:40px;border-top:1px solid var(--bd);display:flex;align-items:center;gap:14px;padding:0 14px;font-size:12px;color:var(--t2)}
+
+  /* agent panel */
+  .agent{border-left:1px solid var(--bd);background:var(--rail);display:flex;flex-direction:column;min-height:0}
+  .ahead{display:flex;align-items:center;justify-content:space-between;height:48px;padding:0 12px;border-bottom:1px solid var(--bd)}
+  .ahead .l{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600}
+  .ahead .l .tile{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,#7C7CF0,#5B5BD6);color:#fff;display:flex;align-items:center;justify-content:center} .ahead .l .tile svg{width:13px;height:13px}
+  .achat{flex:1;overflow:auto;padding:14px 12px;display:flex;flex-direction:column;gap:14px}
+  .umsg{align-self:flex-end;max-width:88%;background:var(--accent);color:#fff;font-size:12.5px;line-height:1.5;border-radius:12px 12px 4px 12px;padding:9px 11px}
+  .umsg .chip{display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,.18);border-radius:5px;padding:1px 6px;font-size:11px;margin-top:6px} .umsg .chip svg{width:12px;height:12px}
+  .think{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--t3)} .think svg{width:13px;height:13px}
+  .amsg{font-size:12.5px;line-height:1.55;color:var(--t1)}
+  .amsg .step{display:flex;gap:8px;margin-top:6px} .amsg .step .d{width:16px;height:16px;border-radius:999px;background:var(--green-bg);color:var(--green-tx);display:flex;align-items:center;justify-content:center;flex:none;margin-top:1px} .amsg .step .d svg{width:11px;height:11px}
+  .changes{background:var(--panel);border:1px solid var(--bd);border-radius:10px;padding:10px;box-shadow:var(--e1)}
+  .changes .ch{display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--t3);margin-bottom:8px}
+  .changes .ch a{color:var(--accent);text-transform:none;letter-spacing:0;font-size:12px;cursor:pointer}
+  .chrow{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:5px 0}
+  .chrow .ico{width:16px;height:16px;color:var(--t2)} .chrow .cnt{margin-left:auto;font-size:11px;color:var(--green-tx);background:var(--green-bg);border-radius:5px;padding:1px 7px;font-weight:600}
+  .sugg{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 8px}
+  .sugg span{font-size:11.5px;color:var(--t2);background:var(--panel);border:1px solid var(--bd);border-radius:999px;padding:5px 10px;cursor:pointer} .sugg span:hover{border-color:var(--accent);color:var(--accent)}
+  .ainput{margin:0 12px 12px;border:1px solid var(--bd);border-radius:12px;background:var(--panel);box-shadow:var(--e1)}
+  .ainput .ta{padding:10px 11px;font-size:12.5px;color:var(--t3)}
+  .ainput .bar{display:flex;align-items:center;gap:8px;padding:6px 8px;border-top:1px solid var(--bd)}
+  .ainput .model{font-size:11.5px;color:var(--t2);display:flex;align-items:center;gap:4px} .ainput .model svg{width:12px;height:12px;color:var(--t3)}
+  .ainput .send{margin-left:auto;width:28px;height:28px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center} .ainput .send svg{width:15px;height:15px}
+
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+  .callout{display:flex;gap:10px;align-items:flex-start;background:var(--panel);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;box-shadow:var(--e1)}
+  .callout .n{width:22px;height:22px;border-radius:999px;background:var(--accent-12);color:var(--accent);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none}
+  .callout b{font-size:13px} .callout p{margin:2px 0 0;font-size:12.5px;color:var(--t2);line-height:1.5}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div style="display:flex;align-items:baseline;justify-content:space-between;gap:16px">
+    <div>
+      <h1>CMS workspace + content agent</h1>
+      <p class="sub">A full content workspace: navigate collections, edit items inline, and drive it all with an AI content agent. Light / iris, matching the editor.</p>
+    </div>
+    <span class="pill">Mockup &middot; for direction</span>
+  </div>
+
+  <div class="ws">
+    <div class="top">
+      <div class="brand"><span class="tile"><i data-lucide="database"></i></span>Content<span style="margin:0 6px;color:var(--t3)">/</span><span class="cv">Events <i data-lucide="chevron-down"></i></span></div>
+      <div style="flex:1"></div>
+      <button class="btn ghost"><i data-lucide="upload"></i>Import CSV</button>
+      <button class="btn ghost"><i data-lucide="x"></i>Close</button>
+    </div>
+
+    <!-- COLLECTIONS RAIL -->
+    <div class="rail">
+      <div class="rtabs"><span class="rtab on">Collections</span><span class="rtab">Fields</span><span class="rtab">Bindings</span></div>
+      <div class="rtools">
+        <button class="ib" title="New collection"><i data-lucide="plus"></i></button>
+        <button class="ib" title="Sort"><i data-lucide="arrow-up-down"></i></button>
+        <button class="ib" title="Filter"><i data-lucide="list-filter"></i></button>
+        <button class="ib" title="Search"><i data-lucide="search"></i></button>
+        <div class="grow"></div>
+        <button class="ib"><i data-lucide="more-horizontal"></i></button>
+      </div>
+      <div class="ctree">
+        <div class="crow on"><span class="tile"><i data-lucide="calendar-days"></i></span><span class="nm">Events</span><span class="ct mono">12</span></div>
+        <div class="crow"><span class="tile"><i data-lucide="users"></i></span><span class="nm">Team</span><span class="ct mono">4</span></div>
+        <div class="crow"><span class="tile"><i data-lucide="package"></i></span><span class="nm">Products</span><span class="ct mono">38</span></div>
+
+        <div class="cgroup">Marketing</div>
+        <div class="crow"><span class="tile"><i data-lucide="newspaper"></i></span><span class="nm">Blog posts</span><span class="ct mono">26</span></div>
+        <div class="crow"><span class="tile"><i data-lucide="book-open"></i></span><span class="nm">Guides</span><span class="ct mono">9</span></div>
+        <div class="crow"><span class="tile"><i data-lucide="quote"></i></span><span class="nm">Testimonials</span><span class="ct mono">7</span></div>
+        <div class="crow sub"><span class="tile"><i data-lucide="tag"></i></span><span class="nm">Categories</span><span class="ct mono">10</span></div>
+
+        <div class="newc"><i data-lucide="plus"></i>New collection</div>
+      </div>
+    </div>
+
+    <!-- ITEMS -->
+    <div class="items">
+      <div class="itop">
+        <span class="nm">Events</span>
+        <span class="ct mono" style="font-size:12px;color:var(--t3)">12 items</span>
+        <div style="flex:1"></div>
+        <div class="seg"><span class="on">Table</span><span>Board</span><span>Calendar</span></div>
+        <button class="btn ghost" style="height:30px"><i data-lucide="list-filter"></i>Filter</button>
+        <button class="btn pri" style="height:30px"><i data-lucide="plus"></i>New item</button>
+      </div>
+      <div class="grid">
+        <div class="gh"><div></div><div><span class="ck"></span></div><div>Title</div><div>Cover</div><div>Status</div><div>Featured</div></div>
+        <div class="gr sel"><div><i data-lucide="grip-vertical" class="drag" style="width:14px;height:14px"></i></div><div><span class="ck" style="background:var(--accent);border-color:var(--accent)"></span></div><div style="font-weight:500">Summer Launch Party</div><div><span class="logo">IMG</span>cover.jpg</div><div><span class="stat" style="background:var(--green-bg);color:var(--green-tx)"><span class="dot" style="background:var(--green)"></span>Published</span></div><div><span class="tog on"><i></i></span></div></div>
+        <div class="gr"><div><i data-lucide="grip-vertical" class="drag" style="width:14px;height:14px"></i></div><div><span class="ck"></span></div><div style="font-weight:500">Autumn Workshop <span class="addagent"><i data-lucide="sparkles"></i>Add to agent</span></div><div><span class="logo" style="color:var(--t3)">—</span></div><div><span class="stat" style="background:var(--amber-bg);color:var(--amber-tx)"><span class="dot" style="background:var(--amber)"></span>Draft</span></div><div><span class="tog off"><i></i></span></div></div>
+        <div class="gr"><div><i data-lucide="grip-vertical" class="drag" style="width:14px;height:14px"></i></div><div><span class="ck"></span></div><div style="font-weight:500">Founders Dinner</div><div><span class="logo">IMG</span>hero.png</div><div><span class="stat" style="background:var(--green-bg);color:var(--green-tx)"><span class="dot" style="background:var(--green)"></span>Published</span></div><div><span class="tog on"><i></i></span></div></div>
+        <div class="gr"><div><i data-lucide="grip-vertical" class="drag" style="width:14px;height:14px"></i></div><div><span class="ck"></span></div><div style="font-weight:500">New Year Keynote</div><div><span class="logo" style="color:var(--t3)">—</span></div><div><span class="stat" style="background:var(--blue-bg);color:var(--blue-tx)"><span class="dot" style="background:var(--blue)"></span>Scheduled</span></div><div><span class="tog off"><i></i></span></div></div>
+        <div class="gr"><div><i data-lucide="grip-vertical" class="drag" style="width:14px;height:14px"></i></div><div><span class="ck"></span></div><div style="font-weight:500">Spring Meetup</div><div><span class="logo">IMG</span>spring.jpg</div><div><span class="stat" style="background:var(--amber-bg);color:var(--amber-tx)"><span class="dot" style="background:var(--amber)"></span>Draft</span></div><div><span class="tog off"><i></i></span></div></div>
+      </div>
+      <div class="ifoot"><span><b class="mono" style="color:var(--t1)">12</b> items</span><span style="color:var(--accent);font-weight:600">1 selected</span><div style="flex:1"></div><button class="btn ghost" style="height:26px"><i data-lucide="check-circle-2"></i>Publish</button></div>
+    </div>
+
+    <!-- AGENT -->
+    <div class="agent">
+      <div class="ahead"><div class="l"><span class="tile"><i data-lucide="sparkles"></i></span>Content agent</div><div style="display:flex;gap:2px"><button class="ib"><i data-lucide="history"></i></button><button class="ib"><i data-lucide="plus"></i></button></div></div>
+      <div class="achat">
+        <div class="umsg">Import <b>events.csv</b> into the Events collection, set cover images, and publish the past events.<span class="chip"><i data-lucide="file-spreadsheet"></i>events.csv &middot; 12 rows</span></div>
+        <div class="think"><i data-lucide="loader"></i>Thought for 8s</div>
+        <div class="amsg">
+          Done &mdash; here&rsquo;s what I changed:
+          <div class="step"><span class="d"><i data-lucide="check"></i></span><span>Created <b>12 items</b> in Events, mapping Title / Date / Cover / Status from the CSV.</span></div>
+          <div class="step"><span class="d"><i data-lucide="check"></i></span><span>Matched cover images by filename and uploaded 8.</span></div>
+          <div class="step"><span class="d"><i data-lucide="check"></i></span><span>Set the 7 past events to <b>Published</b>; future ones stay Draft.</span></div>
+        </div>
+        <div class="changes">
+          <div class="ch"><span>Changes</span><a>Undo all</a></div>
+          <div class="chrow"><i data-lucide="calendar-days" class="ico"></i>Events<span class="cnt">+12 items</span></div>
+          <div class="chrow"><i data-lucide="image" class="ico"></i>Covers<span class="cnt">+8 files</span></div>
+          <div class="chrow"><i data-lucide="circle-check" class="ico"></i>Status<span class="cnt">7 published</span></div>
+        </div>
+      </div>
+      <div class="sugg"><span>Generate 5 blog posts</span><span>Translate to German</span><span>Bulk publish drafts</span><span>Fill missing covers</span></div>
+      <div class="ainput">
+        <div class="ta">Ask the content agent to create, import, or edit content&hellip;</div>
+        <div class="bar"><span class="model">Claude Opus 4.8 <i data-lucide="chevron-down"></i></span><button class="ib" style="width:26px;height:26px"><i data-lucide="paperclip"></i></button><span class="send"><i data-lucide="arrow-up"></i></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid3">
+    <div class="callout"><span class="n">1</span><div><b>Collections navigator</b><p>A real left rail: Collections / Fields / Bindings tabs, item counts, groups (e.g. Marketing) and sub-collections (Categories), plus +/sort/filter/search. You actually see and switch between all your content types.</p></div></div>
+    <div class="callout"><span class="n">2</span><div><b>Rich items table</b><p>Drag-reorder handles, checkboxes, inline cover thumbnails, colored status pills, and a Featured toggle. Hover any row to &ldquo;Add to agent&rdquo; so you can act on specific items.</p></div></div>
+    <div class="callout"><span class="n">3</span><div><b>Content agent</b><p>The differentiator: import a CSV, generate posts, translate, bulk-publish, or edit fields in natural language. Shows its plan, applies real changes, and every change is reversible (Undo). Your agent-first thesis, in the CMS.</p></div></div>
+  </div>
+</div>
+<script>lucide.createIcons();</script>
+</body>
+</html>

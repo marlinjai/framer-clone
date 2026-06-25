@@ -30,8 +30,8 @@ const FILTER_OPS: { value: FilterOp; label: string }[] = [
   { value: 'contains', label: 'contains' },
 ];
 
-const SELECT_CLASS = 'h-7 rounded border border-gray-200 px-1 text-xs outline-none focus:border-blue-400';
-const INPUT_CLASS = 'h-7 rounded border border-gray-200 px-2 text-xs outline-none focus:border-blue-400';
+const SELECT_CLASS = 'h-7 rounded border border-border px-1 text-xs outline-none focus:border-brand';
+const INPUT_CLASS = 'h-7 rounded border border-border px-2 text-xs outline-none focus:border-brand';
 
 /** Read the literal source collection id off the node's `collection` binding. */
 function sourceCollectionId(node: ComponentInstance): string | null {
@@ -134,7 +134,7 @@ const QueryBuilder = observer(({ node }: QueryBuilderProps) => {
 
   if (!collectionId) {
     return (
-      <div className="px-1 py-1 text-[11px] text-gray-400">
+      <div className="px-1 py-1 text-[11px] text-muted-foreground">
         Bind a source collection to configure the query.
       </div>
     );
@@ -147,18 +147,18 @@ const QueryBuilder = observer(({ node }: QueryBuilderProps) => {
       {/* Filters */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
-          <span className="text-[11px] font-medium text-gray-500">Filters</span>
+          <span className="text-[11px] font-medium text-muted-foreground">Filters</span>
           <button
             type="button"
             aria-label="Add filter"
             onClick={addFilter}
-            className="flex h-6 w-6 items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-50"
+            className="flex h-6 w-6 items-center justify-center rounded border border-border text-muted-foreground hover:bg-accent"
           >
             <Plus size={12} />
           </button>
         </div>
         {filters.length === 0 && (
-          <div className="px-1 text-[11px] text-gray-400">No filters</div>
+          <div className="px-1 text-[11px] text-muted-foreground">No filters</div>
         )}
         {filters.map((clause, idx) => (
           <div key={idx} className="flex items-center gap-1" data-testid="filter-row">
@@ -196,7 +196,7 @@ const QueryBuilder = observer(({ node }: QueryBuilderProps) => {
               type="button"
               aria-label="Remove filter"
               onClick={() => removeFilter(idx)}
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-gray-400 hover:text-red-500"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-destructive"
             >
               <Trash2 size={12} />
             </button>
@@ -207,18 +207,18 @@ const QueryBuilder = observer(({ node }: QueryBuilderProps) => {
       {/* Sorts */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
-          <span className="text-[11px] font-medium text-gray-500">Sort</span>
+          <span className="text-[11px] font-medium text-muted-foreground">Sort</span>
           <button
             type="button"
             aria-label="Add sort"
             onClick={addSort}
-            className="flex h-6 w-6 items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-50"
+            className="flex h-6 w-6 items-center justify-center rounded border border-border text-muted-foreground hover:bg-accent"
           >
             <Plus size={12} />
           </button>
         </div>
         {sorts.length === 0 && (
-          <div className="px-1 text-[11px] text-gray-400">No sort</div>
+          <div className="px-1 text-[11px] text-muted-foreground">No sort</div>
         )}
         {sorts.map((clause, idx) => (
           <div key={idx} className="flex items-center gap-1" data-testid="sort-row">
@@ -249,7 +249,7 @@ const QueryBuilder = observer(({ node }: QueryBuilderProps) => {
               type="button"
               aria-label="Remove sort"
               onClick={() => removeSort(idx)}
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-gray-400 hover:text-red-500"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-destructive"
             >
               <Trash2 size={12} />
             </button>
@@ -259,7 +259,7 @@ const QueryBuilder = observer(({ node }: QueryBuilderProps) => {
 
       {/* Limit */}
       <div className="space-y-1">
-        <label className="block px-1 text-[11px] font-medium text-gray-500">Limit</label>
+        <label className="block px-1 text-[11px] font-medium text-muted-foreground">Limit</label>
         <input
           type="number"
           min={0}

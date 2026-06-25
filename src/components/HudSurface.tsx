@@ -750,7 +750,7 @@ const HudSurface = observer(() => {
             data-resize-direction={dir}
             data-testid={`resize-handle-${dir}`}
             onMouseDown={onHandleMouseDown}
-            className={`absolute w-2 h-2 bg-blue-500 rounded-full ${className}`}
+            className={`absolute w-2 h-2 bg-brand rounded-full ${className}`}
             style={{ cursor, pointerEvents: 'auto' }}
           />
         ))}
@@ -770,7 +770,7 @@ const HudSurface = observer(() => {
               data-testid={`radius-handle-${id}`}
               onMouseDown={onRadiusHandleMouseDown}
               title="Drag to round corners. Hold Alt to round just this corner."
-              className={`absolute w-2 h-2 bg-white border border-blue-500 rounded-full opacity-70 hover:opacity-100 transition-opacity ${className}`}
+              className={`absolute w-2 h-2 bg-white border border-brand rounded-full opacity-70 hover:opacity-100 transition-opacity ${className}`}
               style={{ cursor, pointerEvents: 'auto' }}
             />
           ))}

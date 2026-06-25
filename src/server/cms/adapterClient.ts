@@ -23,6 +23,11 @@ import 'server-only';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 import { getPrismaClient } from '@/server/db';
 
+// The single-tenant workspace id is shared with the client editing grid, so it
+// is defined in the client-safe `@/lib/cms/constants` module and re-exported
+// here for server consumers (the read/write repository). ONE source of truth.
+export { CMS_WORKSPACE_ID } from '@/lib/cms/constants';
+
 /**
  * The single-tenant Postgres schema the CMS engine is pinned to in Phase 1.
  * Every CMS query runs against the default `public` schema. The E7
@@ -30,13 +35,6 @@ import { getPrismaClient } from '@/server/db';
  * schema via `SET LOCAL search_path`.
  */
 export const CMS_SCHEMA = 'public';
-
-/**
- * The single-tenant workspace id. adapter-prisma scopes tables by workspace;
- * Phase 1 has exactly one workspace, so `listCollections()` lists the tables
- * under this constant.
- */
-export const CMS_WORKSPACE_ID = 'framer-clone';
 
 let cachedAdapter: PrismaAdapter | null = null;
 

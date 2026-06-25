@@ -42,7 +42,7 @@ const RightSidebar = observer(() => {
 
   return (
     <div className={`
-      bg-white border-l border-gray-200 flex flex-col transition-all duration-300 ease-in-out h-[calc(100vh-4rem)]
+      bg-background border-l border-border flex flex-col transition-all duration-300 ease-in-out h-[calc(100vh-4rem)]
       ${isCollapsed ? 'w-12' : 'w-64'}
     `}>
       {/* Header with collapse toggle and dynamic title */}
@@ -70,7 +70,7 @@ const RightSidebar = observer(() => {
               </>
             ) : (
               <div className="flex items-center space-x-2 mb-3">
-                <span className="text-sm text-gray-500">Select an element to edit properties</span>
+                <span className="text-sm text-muted-foreground">Select an element to edit properties</span>
               </div>
             )}
           </div>

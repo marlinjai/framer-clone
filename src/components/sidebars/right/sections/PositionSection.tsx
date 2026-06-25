@@ -2,7 +2,6 @@
 import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { Move } from 'lucide-react';
-import { Input } from '@/components/ui/input';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { CollapsibleSection, PropertySelect, DimensionInput } from '../primitives';
 
@@ -28,18 +27,22 @@ export const PositionSection = observer(({ component, breakpointId }: PositionSe
   return (
     <CollapsibleSection
       title="Position"
-      icon={<Move size={12} />}
+      icon={<Move size={14} />}
       defaultOpen={position !== 'static'}
     >
-      <PropertySelect
-        label="Position"
-        value={position}
-        onChange={(v) => setStyleValue('position', v)}
-        options={POSITION_OPTIONS}
-      />
+      {/* Position type on field grid */}
+      <div className="grid grid-cols-[64px_1fr] items-center gap-2">
+        <label className="text-muted-foreground" style={{ fontSize: '11.5px' }}>Position</label>
+        <PropertySelect
+          label=""
+          value={position}
+          onChange={(v) => setStyleValue('position', v)}
+          options={POSITION_OPTIONS}
+        />
+      </div>
 
       {position !== 'static' && (
-        <div className="grid grid-cols-2 gap-2 mt-2">
+        <div className="grid grid-cols-2 gap-2">
           <DimensionInput
             label="Top"
             value={getStyleValue('top')}
@@ -67,16 +70,17 @@ export const PositionSection = observer(({ component, breakpointId }: PositionSe
         </div>
       )}
 
-      <div className="mt-2">
-        <div className="space-y-1">
-          <label className="text-[11px] text-gray-500">Z-Index</label>
-          <Input
-            value={getStyleValue('zIndex') || ''}
-            onChange={(e) => setStyleValue('zIndex', e.target.value)}
-            className="h-7 text-xs"
-            placeholder="auto"
-          />
-        </div>
+      {/* Z-Index on field grid */}
+      <div className="grid grid-cols-[64px_1fr] items-center gap-2">
+        <label className="text-muted-foreground" style={{ fontSize: '11.5px' }}>Z-Index</label>
+        <input
+          type="text"
+          value={getStyleValue('zIndex') || ''}
+          onChange={(e) => setStyleValue('zIndex', e.target.value)}
+          className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
+          style={{ fontSize: '12.5px' }}
+          placeholder="auto"
+        />
       </div>
     </CollapsibleSection>
   );

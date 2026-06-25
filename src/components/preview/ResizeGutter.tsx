@@ -72,7 +72,7 @@ export default function ResizeGutter({ side, onResize, getStartWidth }: ResizeGu
       aria-orientation="vertical"
       data-resize-gutter={side}
       onMouseDown={onMouseDown}
-      className="absolute top-0 bottom-0 w-1 bg-gray-700 hover:bg-blue-500 transition-colors cursor-ew-resize"
+      className="absolute top-0 bottom-0 w-1 bg-gray-700 hover:bg-brand transition-colors cursor-ew-resize"
       style={{
         [side === 'left' ? 'right' : 'left']: '100%',
       }}

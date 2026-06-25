@@ -91,8 +91,8 @@ const BindingControl = observer(({ node, slot, meta, children }: BindingControlP
           <div
             className={`flex h-7 flex-1 items-center gap-1.5 rounded border px-2 text-xs ${
               broken
-                ? 'border-amber-400 bg-amber-50 text-amber-700'
-                : 'border-blue-200 bg-blue-50 text-blue-700'
+                ? 'border-warning bg-warning/10 text-warning'
+                : 'border-brand/20 bg-brand/10 text-brand'
             }`}
             title={readBinding.expression}
           >
@@ -114,7 +114,7 @@ const BindingControl = observer(({ node, slot, meta, children }: BindingControlP
             aria-label={`Unbind ${meta.label}`}
             title="Unlink"
             onClick={handleUnlink}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-50"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border text-muted-foreground hover:bg-accent"
           >
             <Unlink size={13} />
           </button>
@@ -124,8 +124,8 @@ const BindingControl = observer(({ node, slot, meta, children }: BindingControlP
             aria-label={`Bind ${meta.label}`}
             title="Bind to data"
             onClick={() => setPickerOpen((v) => !v)}
-            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded border text-gray-500 hover:bg-gray-50 ${
-              pickerOpen ? 'border-blue-400 text-blue-600' : 'border-gray-200'
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded border text-muted-foreground hover:bg-accent ${
+              pickerOpen ? 'border-brand text-brand' : 'border-border'
             }`}
           >
             <Link2 size={13} />

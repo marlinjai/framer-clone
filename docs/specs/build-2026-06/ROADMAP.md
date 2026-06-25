@@ -11,6 +11,26 @@ projects: [framer-clone]
 
 > SUPERSEDES the prior P0-P6 ROADMAP (which sequenced lumitra-web offers as Slice 1 and a `@marlinjai/doc-tier-core` package in the Slice 2 chain). Per the 2026-06-16 re-scope, this workstream is framer-clone-ONLY. The four tracks below all land in `projects/framer-clone`. The 8 lumitra-web offers/CRM specs (`slice-1-offers-doc-tier/`) plus the dropped `slice2-doc-tier-shared-package` are PARKED to a separate lumitra-web workstream (banners added in-place); they are NOT dispatched from the framer-clone orchestrator. lumitra-web independently consumes the already-published `@marlinjai/data-table-adapter-prisma` if/when that workstream is picked up; the two never need a shared package (different data, confirmed by the re-scope).
 
+## Post-build wave: Studio design refresh + CMS workspace (2026-06-19/20)
+
+The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main. A follow-on design + UX
+wave then landed on branch `feat/cms-grid-studio-refresh` (PR #30):
+
+- `cms-content-tier/slice2b-cms-datatable-grid-ui.md` (completed): the CMS editing UI rebuilt onto
+  the full `@marlinjai/data-table-react` grid via an admin-guarded server-actions adapter.
+- the "Studio" design system: iris `--brand` + `--status-*` + `--warning` tokens on the shadcn
+  Tailwind-v4 theme; whole-editor accent migration + chrome token-polish.
+- item detail panel + reserved Draft/Published "Status" field; collection settings (icon + slug).
+- `editor-chrome/editor-chrome-redesign.md` (completed): Layers tree + Properties panel to the
+  Studio mockup, MST preserved, with an accessible right-sidebar collapse toggle.
+- `cms-content-tier/slice3-cms-workspace-phase1.md` (completed): the full-screen `[rail | grid]`
+  content workspace (collections navigator + reused `CmsGrid` + per-collection item counts).
+
+NEXT (queued, not yet built): the phase-2 content agent (right-rail NL CMS agent, spec to be
+written) and a hosted-page demo (publish a page to a real subdomain: persist a publish snapshot,
+a public SSR route wiring the existing `hydrateBindings`, host-based routing, prod infra + wildcard
+DNS, plus basic analytics). See the demo plan when written.
+
 ## The single most important pre-dispatch decision
 
 The published `@marlinjai/data-table-adapter-prisma@0.2.1` (the latest/only version) leaks unrewritten `workspace:*` specifiers in its dependencies, so `pnpm add @marlinjai/data-table-adapter-prisma@0.2.1` fails hard with `ERR_PNPM_WORKSPACE_PKG_NOT_FOUND`. This is verified against the live npm registry. Track A's entire CMS chain cannot install until this is resolved. Two paths (Marlin decides BEFORE the orchestrator is fed): (A) republish `0.2.2` from the data-table monorepo via `pnpm publish` (rewrites `workspace:*` to real semver, ~30-minute one-PR task, fixes the defect at source, also unblocks the parked lumitra-web offers workstream), or (B) vendor `adapter.ts`/`ddl.ts` into `src/server/cms/vendor/` (in-scope, immediate, manual-sync cost). RECOMMEND path A. `@marlinjai/data-table-react@0.3.1` is published correctly and is NOT affected (the TableView spec installs cleanly).

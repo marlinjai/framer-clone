@@ -2,11 +2,14 @@
 //
 // src/app/api/cms/__tests__/write-routes.test.ts
 //
-// Unit tests for the admin-guarded /api/cms WRITE routes. The write repository
-// is mocked (no database); the REAL requireAdmin, cmsWriteErrorResponse, and
-// typed error classes are kept so we exercise the actual guard + typed-envelope
+// Unit tests for the admin-guarded /api/cms COLLECTION write routes. The write
+// repository is mocked (no database); the REAL requireAdmin, cmsWriteErrorResponse,
+// and typed error classes are kept so we exercise the actual guard + typed-envelope
 // contract: a missing/wrong secret is 401/403, a duplicate collection is a 409
 // `collection_exists` envelope (the specific-error path, not a generic 500).
+//
+// Column/row writes are no longer HTTP routes (the editor grid persists them via
+// the data-table server-actions adapter), so only collection routes remain here.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
@@ -15,30 +18,22 @@ vi.mock('@/server/cms', async (importActual) => {
   return {
     ...actual,
     getCmsWriteRepository: vi.fn(),
-    getCmsRepository: vi.fn(),
   };
 });
 
 import {
   getCmsWriteRepository,
-  getCmsRepository,
   CollectionExistsError,
   type CmsWriteRepository,
-  type CmsReadRepository,
 } from '@/server/cms';
 import { POST as collectionsPOST } from '../collections/route';
-import { POST as columnsPOST } from '../collections/[id]/columns/route';
 
 const writeMock = vi.mocked(getCmsWriteRepository);
-const readMock = vi.mocked(getCmsRepository);
 
 const SECRET = 'test-admin-secret';
 
 function installWrite(repo: Partial<CmsWriteRepository>): void {
   writeMock.mockReturnValue(repo as CmsWriteRepository);
-}
-function installRead(repo: Partial<CmsReadRepository>): void {
-  readMock.mockReturnValue(repo as CmsReadRepository);
 }
 
 function postReq(
@@ -115,41 +110,5 @@ describe('POST /api/cms/collections (authorized)', () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error.code).toBe('bad_body');
     expect(create).not.toHaveBeenCalled();
-  });
-});
-
-describe('POST /api/cms/collections/[id]/columns', () => {
-  it('adds a column and returns 201 with the entity when authorized', async () => {
-    const column = { id: 'fld_title', name: 'title', type: 'text' as const };
-    installWrite({ addColumn: vi.fn().mockResolvedValue(column) });
-    const res = await columnsPOST(
-      postReq('http://t/c/col_events/columns', { name: 'title', type: 'text' }, { secret: SECRET }),
-      { params: Promise.resolve({ id: 'col_events' }) },
-    );
-    expect(res.status).toBe(201);
-    expect(await res.json()).toEqual(column);
-  });
-
-  it('rejects an unguarded add-column with 401', async () => {
-    const add = vi.fn();
-    installWrite({ addColumn: add });
-    installRead({});
-    const res = await columnsPOST(
-      postReq('http://t/c/col_events/columns', { name: 'title', type: 'text' }),
-      { params: Promise.resolve({ id: 'col_events' }) },
-    );
-    expect(res.status).toBe(401);
-    expect(add).not.toHaveBeenCalled();
-  });
-
-  it('returns 400 on an invalid column type', async () => {
-    const add = vi.fn();
-    installWrite({ addColumn: add });
-    const res = await columnsPOST(
-      postReq('http://t/c/col_events/columns', { name: 'x', type: 'url' }, { secret: SECRET }),
-      { params: Promise.resolve({ id: 'col_events' }) },
-    );
-    expect(res.status).toBe(400);
-    expect(add).not.toHaveBeenCalled();
   });
 });

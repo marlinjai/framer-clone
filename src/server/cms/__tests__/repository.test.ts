@@ -193,7 +193,7 @@ describe('CmsReadRepository.getRow collection guard', () => {
 });
 
 describe('CmsReadRepository.listCollections / getCollection mapping', () => {
-  it('maps tables to collections with derived slugs and mapped columns', async () => {
+  it('maps tables to collections with derived slugs, mapped columns, and itemCount', async () => {
     listTables.mockResolvedValue([
       { id: 'collection-1', name: 'Blog Posts', workspaceId: 'test-workspace' },
     ]);
@@ -202,6 +202,8 @@ describe('CmsReadRepository.listCollections / getCollection mapping', () => {
       { id: 'c2', tableId: 'collection-1', name: 'Tags', type: 'multi_select', position: 1 },
       { id: 'c3', tableId: 'collection-1', name: 'Link', type: 'url', position: 2 },
     ]);
+    // listCollections now fetches a count per table via getRows (limit:1).
+    getRows.mockResolvedValue({ items: [], total: 5, hasMore: false });
 
     const collections = await getCmsRepository().listCollections();
     expect(listTables).toHaveBeenCalledWith('test-workspace');
@@ -210,6 +212,7 @@ describe('CmsReadRepository.listCollections / getCollection mapping', () => {
         id: 'collection-1',
         slug: 'blog-posts',
         name: 'Blog Posts',
+        itemCount: 5,
         columns: [
           { id: 'c1', name: 'Title', type: 'text' },
           { id: 'c2', name: 'Tags', type: 'multi-select' },

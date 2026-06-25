@@ -66,7 +66,7 @@ const CanvasDebugPanel = observer(() => {
         </button>
         <button
           onClick={handleAddImage}
-          className="w-full px-3 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600"
+          className="w-full px-3 py-1 bg-brand text-white rounded text-xs hover:bg-brand"
         >
           Add Image
         </button>

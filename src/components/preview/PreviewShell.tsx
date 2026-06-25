@@ -85,7 +85,7 @@ const PreviewShell = observer(() => {
     return (
       <div className="w-screen h-screen flex flex-col items-center justify-center bg-gray-900 text-gray-300 gap-3">
         <div className="text-sm">No project is loaded.</div>
-        <Link href="/" className="text-xs text-blue-400 hover:underline">
+        <Link href="/" className="text-xs text-brand hover:underline">
           Open the editor →
         </Link>
       </div>
