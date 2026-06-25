@@ -6,6 +6,7 @@ import {
   resolvePublishedSite,
   matchPageBySlug,
   resolvePublicIngestionKey,
+  HOME_REWRITE_SENTINEL,
   type PublishedPageRow,
 } from '../publicResolver';
 
@@ -119,6 +120,26 @@ describe('matchPageBySlug', () => {
   it('resolves the home page for an empty request path', () => {
     const m = matchPageBySlug(pages(['', 'about']), []);
     expect(m?.page.slug).toBe('');
+  });
+
+  it('resolves the SAME home page for the home rewrite sentinel as for empty segments', () => {
+    const ps = pages(['', 'about']);
+    const fromEmpty = matchPageBySlug(ps, []);
+    const fromSentinel = matchPageBySlug(ps, [HOME_REWRITE_SENTINEL]);
+    expect(fromSentinel?.page.slug).toBe('');
+    expect(fromSentinel?.page.slug).toBe(fromEmpty?.page.slug);
+    expect(fromSentinel?.params).toEqual({});
+  });
+
+  it('resolves a "home" alias slug via the sentinel', () => {
+    const m = matchPageBySlug(pages(['home', 'about']), [HOME_REWRITE_SENTINEL]);
+    expect(m?.page.slug).toBe('home');
+  });
+
+  it('does NOT match a page literally slugged like the sentinel (sentinel means home)', () => {
+    // A site with no home page but a page slugged `__home`: the sentinel resolves
+    // HOME (none here -> null), it never matches the literal `__home` slug.
+    expect(matchPageBySlug(pages([HOME_REWRITE_SENTINEL, 'about']), [HOME_REWRITE_SENTINEL])).toBeNull();
   });
 
   it('captures a :handle dynamic segment', () => {

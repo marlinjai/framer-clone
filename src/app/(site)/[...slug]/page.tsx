@@ -20,9 +20,10 @@
 // storefront serves every published page at its slug (`/about`,
 // `/products/classic-tee`, ...). `(site)` is a route group (no URL segment), so
 // the specific routes (`/`, `/preview`, `/api/*`) keep precedence. Serving the
-// storefront HOME at the host root (`/`) needs host-aware root routing or a
-// middleware rewrite, both out of scope here (the root page is the editor and the
-// middleware is the locked auth gate); the home page is reachable at its slug.
+// storefront HOME at the host root (`/`) is handled by host-aware root routing in
+// `src/middleware.ts`: on a non-editor host it rewrites `/` to the reserved
+// `HOME_REWRITE_SENTINEL` segment, which reaches THIS route as
+// `params.slug = ['__home']` and `matchPageBySlug` resolves as the home request.
 
 import React, { cache } from 'react';
 import type { Metadata } from 'next';

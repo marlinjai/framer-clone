@@ -18,6 +18,12 @@ import 'server-only';
 import type { PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
 import type { PageSnapshotOut } from '@/models/PageModel';
+import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
+
+// Re-exported so resolver consumers can import the sentinel from one barrel; the
+// canonical, dependency-free source is `homeSentinel.ts` (edge-safe for the
+// middleware, which must NOT pull this server-only module).
+export { HOME_REWRITE_SENTINEL };
 
 /** A published page row: the MST page id, its slug, and the full page snapshot. */
 export interface PublishedPageRow {
@@ -177,7 +183,14 @@ export function matchPageBySlug(
 ): MatchedPage | null {
   const request = requestSegments.map((s) => s.trim()).filter((s) => s.length > 0);
 
-  // Home: empty request path resolves a page whose slug is empty or a home alias.
+  // Home: an empty request path OR the reserved home sentinel (the middleware
+  // rewrites a published-site root `/` to `/<sentinel>`) resolves a page whose
+  // slug is empty or a home alias. The sentinel resolves HOME, never a page
+  // literally slugged `__home`.
+  if (request.length === 1 && request[0] === HOME_REWRITE_SENTINEL) {
+    request.length = 0;
+  }
+
   if (request.length === 0) {
     const home = pages.find((p) => {
       const segs = slugSegments(p.slug);
