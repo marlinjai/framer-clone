@@ -29,9 +29,25 @@ wave then landed on branch `feat/cms-grid-studio-refresh` (PR #30):
   content agent (Anthropic tool-use loop over the CMS adapter, SSE streaming, per-mutation
   AgentRun/AgentChange inverses, one-click Undo all).
 
-NEXT (queued, not yet built): a hosted-page demo (publish a page to a real subdomain: persist a publish snapshot,
-a public SSR route wiring the existing `hydrateBindings`, host-based routing, prod infra + wildcard
-DNS, plus basic analytics). See the demo plan when written.
+The hosted-page demo (publish a page to a real subdomain) is specced in
+`build-2026-06/hosted-demo/hosted-page-demo.md` and its RENDER half SHIPPED as an autonomous
+orchestrator wave on 2026-06-25 (PRs #36-#41): the CI test gate, the commerce read repo, the content
+agent, publish-write, the SSR render layer, and host-aware root routing. See the reality update in
+`docs/plans/2026-06-23-framer-hosting-platform-foundation.md` for the full PR map and the locked
+decisions (Option A subdomain for the demo, SSR-on-request, checkout stops at order-created).
+
+## Post-demo roadmap (2026-06-25)
+
+Filed from the hosted-demo build wave. Sequenced after the demo goes live.
+
+| Item | What | Plan / source | Status |
+|------|------|---------------|--------|
+| `framer-prod-provision` | Deploy + wildcard DNS + wildcard cert + analytics-key wiring for the Option A demo. irreversible_ops: needs Marlin's domain/subdomain + analytics project/key + his DNS/Coolify/Infisical hands. | `hosted-demo/hosted-page-demo.md` item #7 + [[framer-clone-runtime-infra-provisioning]] | PARKED (flash session) |
+| Custom domains (B) | Connect a customer-owned domain to a published site: `customHostname` resolution + per-domain TLS (Coolify LE or Cloudflare for SaaS) + in-editor DCV onboarding. | `docs/plans/2026-06-25-framer-custom-domains.md` | draft (background, post-demo) |
+| Multi-site editor | Editor at `/projects/<id>` (load-by-siteId + site picker + new-site flow + the P1c site->workspace provisioning the single-site demo skipped). Multi-SITE UX on the already-shipped tenant layer, NOT new tenancy. | custom-domains plan (folded) | draft (background) |
+| Auto subdomain slug | Generate a unique default `SiteDomain.subdomain` per site on first publish (Framer's `fuzzy-flows-876416` pattern). | custom-domains plan (folded) | draft (small) |
+| CMS/commerce-write auth migration | Migrate the interim `requireAdmin` + stub `can()` (`src/server/auth/guard.ts`) on the CMS/commerce write routes to real auth-brain authorization (the publish path already uses it). Filed as an open_thread on PR #39. | this row | draft (security follow-up) |
+| variant-selector scope refinement | A `variant-selector` nested-scope contract test is coupled to `hydrateBindings`' `toEqual` shape; refine the scope threading. Filed as an open_thread on PR #40. | this row | draft (minor) |
 
 ## The single most important pre-dispatch decision
 
