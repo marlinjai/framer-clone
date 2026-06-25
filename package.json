@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
@@ -22,6 +23,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
     "@hookform/resolvers": "^5.2.1",
+    "@marlinjai/auth-brain-sdk": "^1.1.0",
     "@marlinjai/data-table-adapter-prisma": "^0.2.2",
     "@marlinjai/data-table-core": "^0.3.0",
     "@marlinjai/data-table-react": "^0.3.1",
