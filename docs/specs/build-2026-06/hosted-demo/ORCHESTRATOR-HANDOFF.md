@@ -15,6 +15,29 @@ tags: [orchestrator, handoff, framer-clone, hosted-demo, content-agent]
 > merge) to land the build DAG below, ultracode-thorough (adversarially review each Worker diff
 > before merge). Two things are BLOCKED on Marlin (see section 6): do NOT do them autonomously.
 
+## CRITICAL UPDATE (2026-06-25): an unmerged static-publish pipeline already exists
+
+A PRIOR orchestrator run (`task-id framer-p2-publish`, state `completed`, tamper-clean) already built
+a **static-HTML publish pipeline** and it is sitting UNMERGED on branch `orchestrator/framer-p2-publish`
+(commit `f0903ee`, 14 files, based on the P1 foundation that is now main). It contains:
+`projectPublisher` + per-page static HTML emitter (inline) + `assetCollector` + `manifest` +
+`experiments` (A/B) + `trackerSnippet` (analytics injection, injects only the public `ap_live_` key) +
+a local/memory `diskSink` seam (NO real R2/Cloudflare call). Worktree at `../framer-clone-orch-p2`.
+
+This MATERIALLY changes section 4. Two consequences, reconcile BEFORE writing render-layer goal files:
+1. **Architecture fork (needs a decision, likely Marlin's):** `f0903ee` took the **static-HTML-emit**
+   path. The demo plan + Marlin's verbal decision were **SSR-on-request**. The static path is now
+   ~80% built. Options: (a) ADOPT the static pipeline (mostly done, finish + wire it), (b) keep its
+   reusable parts (`trackerSnippet`, `experiments`, `assetCollector`, `manifest`, the sink seam) and
+   build the renderer as SSR, (c) do pure SSR and shelve the static work. Read `f0903ee`'s diff
+   (`git show f0903ee` / check out `../framer-clone-orch-p2`) AND `docs/plans/2026-06-23-framer-hosting-platform-foundation.md`
+   first, then either proceed with strong justification or escalate the fork to Marlin. Do NOT
+   silently pick; this reshapes tasks #1 and #3 and folds in #8 (analytics).
+2. **Do NOT auto-merge `f0903ee` blind.** It is a completed run, but it predates the SSR decision and
+   is unreviewed. Reconcile the architecture first. The `framer-server-renderer` / `framer-publish-write`
+   tasks below must be rewritten against whatever architecture is chosen (and against the P1
+   `Site`/`SitePage` models), not built greenfield.
+
 ## 0. First moves
 1. Invoke the `autonomous-orchestration` skill (it is the operator playbook; read it before dispatching).
 2. Read, in this order: `docs/plans/2026-06-23-framer-hosting-platform-foundation.md` (the P1 hosting
