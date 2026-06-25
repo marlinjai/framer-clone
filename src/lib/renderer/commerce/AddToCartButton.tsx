@@ -26,7 +26,7 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import type { Row } from '@/lib/bindings/dataSource/types';
 import { useCommerceDataSource } from '@/lib/commerce/context';
-import { useSelectedVariant } from '@/lib/commerce/selection';
+import { useOptionalSelectedVariant } from '@/lib/commerce/selection';
 import { useCart } from '@/lib/commerce/cart';
 import {
   resolveDataState,
@@ -86,7 +86,11 @@ function AddToCartButton({
   mode = 'preview',
 }: AddToCartButtonProps) {
   const dataSource = useCommerceDataSource();
-  const { variant } = useSelectedVariant();
+  // Optional read: outside a VariantSelector (a misconfigured tree, or a
+  // server-side render where no variant is selected yet) this is null and the
+  // control degrades to its disabled no-selection state instead of throwing and
+  // 500-ing the published page.
+  const variant = useOptionalSelectedVariant()?.variant ?? null;
   const cart = useCart();
 
   const selectedVariantId = variant?.id ?? null;

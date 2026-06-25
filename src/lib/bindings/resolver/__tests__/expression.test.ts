@@ -55,6 +55,18 @@ describe('parseExpression', () => {
     ]);
   });
 
+  it('parses a row binding whose column id is a uuid (hyphens + leading digit)', () => {
+    // A CMS column id is a `uuid()` and the binding picker emits
+    // `{{row.<columnId>}}` verbatim. The path grammar MUST accept a hyphenated,
+    // possibly digit-leading segment, or every real CMS row-field binding would
+    // resolve to nothing (a regression the unit fixtures, using clean ids like
+    // `title`, could not surface).
+    expect(parseExpression('{{row.8f3a9c2e-1b4d-4abc-9e21-0a1b2c3d4e5f}}')).toEqual({
+      raw: '{{row.8f3a9c2e-1b4d-4abc-9e21-0a1b2c3d4e5f}}',
+      path: ['row', '8f3a9c2e-1b4d-4abc-9e21-0a1b2c3d4e5f'],
+    });
+  });
+
   it('returns null for an arithmetic expression', () => {
     expect(parseExpression('{{a + b}}')).toBeNull();
   });
