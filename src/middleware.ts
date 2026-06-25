@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+// Import the sentinel from the dependency-free module, NOT from publicResolver:
+// that pulls `server-only` + Prisma, which cannot run in the edge middleware.
+import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
 
 /**
  * The coarse edge auth gate for framer-clone.
@@ -26,6 +29,37 @@ import type { NextRequest } from 'next/server';
  * and is rejected by that verify -- it never reaches data.
  */
 export async function middleware(request: NextRequest) {
+  // Host-aware root routing. Next is host-agnostic, so without this `/` is the
+  // editor (`app/page.tsx`) on EVERY host. The discriminator is the request Host:
+  // the editor is ALWAYS served on the fixed lumitra-owned EDITOR_HOST; any other
+  // host is a published site and its root `/` must serve the storefront home.
+  const editorHost = process.env.EDITOR_HOST;
+  const host = (request.headers.get('host') ?? '').split(':')[0].toLowerCase();
+  // Dev / unconfigured safety: with no EDITOR_HOST, or on localhost, treat
+  // EVERYTHING as the editor host so `/` stays the editor and local dev is
+  // unchanged. The rewrite only activates in prod where EDITOR_HOST is set and
+  // the request Host differs.
+  const isEditorHost =
+    !editorHost ||
+    host === editorHost.toLowerCase() ||
+    host === 'localhost' ||
+    host === '127.0.0.1';
+
+  if (request.nextUrl.pathname === '/') {
+    if (!isEditorHost) {
+      // Published-site root -> storefront home. This returns BEFORE the cookie
+      // check below, so an anonymous site visitor is served (NOT bounced to the
+      // auth-brain login). A rewrite (NOT redirect): the visitor's URL stays `/`,
+      // the required catch-all `(site)/[...slug]` route receives the sentinel
+      // segment and resolves it as the home request.
+      return NextResponse.rewrite(new URL(`/${HOME_REWRITE_SENTINEL}`, request.url));
+    }
+    // Editor host root: preserve EXACTLY today's behavior. The editor `/` is NOT
+    // auth-bounced here; it loads client-only and owns its own auth. Do NOT start
+    // gating `/`.
+    return NextResponse.next();
+  }
+
   const sessionCookie = request.cookies.get('lumitra_session')?.value;
 
   if (!sessionCookie) {
@@ -57,6 +91,10 @@ export const config = {
   //     their writes carry their own guard; do not bounce them to a login page
   //   - _next static assets, favicon, robots are never gated
   matcher: [
+    // Root: host-aware routing (editor host -> editor; published-site host ->
+    // storefront-home rewrite). Returns before the auth gate, so anonymous
+    // site-root traffic is served, never bounced to login.
+    '/',
     '/editor/:path*',
     '/api/sites/:path*',
     '/api/admin/:path*',
