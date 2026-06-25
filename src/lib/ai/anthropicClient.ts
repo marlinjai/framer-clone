@@ -22,9 +22,9 @@ import Anthropic from '@anthropic-ai/sdk';
 export const AI_MODELS = {
   HAIKU: 'claude-haiku-4-5',
   SONNET: 'claude-sonnet-4-6',
-  // Reserved for Phase 2 (Pattern B planning pass). Not used by any
-  // route today; kept here so consumers escalate via a stable key.
-  OPUS: 'claude-opus-4-7',
+  // Drives the CMS content agent's tool-use loop (Pattern B). Bumped from
+  // claude-opus-4-7; Opus 4.8 is a drop-in upgrade, no behavior change.
+  OPUS: 'claude-opus-4-8',
 } as const;
 
 export type AiModelKey = keyof typeof AI_MODELS;

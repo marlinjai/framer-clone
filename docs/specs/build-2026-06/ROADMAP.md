@@ -25,9 +25,11 @@ wave then landed on branch `feat/cms-grid-studio-refresh` (PR #30):
   Studio mockup, MST preserved, with an accessible right-sidebar collapse toggle.
 - `cms-content-tier/slice3-cms-workspace-phase1.md` (completed): the full-screen `[rail | grid]`
   content workspace (collections navigator + reused `CmsGrid` + per-collection item counts).
+- `cms-content-tier/slice4-content-agent-phase2.md` (completed): the right-rail natural-language
+  content agent (Anthropic tool-use loop over the CMS adapter, SSE streaming, per-mutation
+  AgentRun/AgentChange inverses, one-click Undo all).
 
-NEXT (queued, not yet built): the phase-2 content agent (right-rail NL CMS agent, spec to be
-written) and a hosted-page demo (publish a page to a real subdomain: persist a publish snapshot,
+NEXT (queued, not yet built): a hosted-page demo (publish a page to a real subdomain: persist a publish snapshot,
 a public SSR route wiring the existing `hydrateBindings`, host-based routing, prod infra + wildcard
 DNS, plus basic analytics). See the demo plan when written.
 
