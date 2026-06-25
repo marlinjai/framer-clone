@@ -61,6 +61,24 @@ export function useSelectedVariant(): SelectionState {
 }
 
 /**
+ * Read the active SelectionState if one is provided, returning null when rendered
+ * OUTSIDE a SelectedVariantContext.Provider instead of throwing.
+ *
+ * The published storefront renderer mounts the interactive islands on a
+ * 'preview' surface whose contract is to DEGRADE GRACEFULLY: an island must
+ * never throw and take the whole server-rendered page down (a 500). An
+ * add-to-cart that is not nested inside a VariantSelector (a misconfigured tree),
+ * or one whose VariantSelector ancestor has not yet resolved a product server
+ * side, therefore reads `null` here and renders its disabled no-selection state,
+ * exactly as an in-context empty selection already does. The throwing
+ * `useSelectedVariant` stays available for callers that genuinely want to fail
+ * loudly.
+ */
+export function useOptionalSelectedVariant(): SelectionState | null {
+  return useContext(SelectedVariantContext);
+}
+
+/**
  * The matrix walk: resolve the single variant that matches `selection` on every
  * option axis of `product`.
  *

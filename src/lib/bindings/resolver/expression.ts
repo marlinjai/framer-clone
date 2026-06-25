@@ -21,10 +21,16 @@ export interface ParsedExpression {
 // `[^{}]` class forbids nested/extra braces.
 const MUSTACHE = /^\{\{\s*([^{}]+?)\s*\}\}$/;
 
-// A dotted path of JS-identifier segments and nothing else. Spaces,
-// operators, parentheses and pipes all fail this test, which is how
-// non-path expressions get rejected.
-const PATH = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
+// A dotted path of field segments and nothing else. A segment is one or more of
+// the characters that appear in a binding key: JS-identifier characters PLUS the
+// hyphen and a leading digit, because a CMS column id is a `uuid()` (e.g.
+// `8f3a9c2e-1b4d-...`) and the binding picker emits `{{row.<columnId>}}`
+// verbatim (BindingPicker.tsx). A grammar that rejected hyphens/leading digits
+// would silently fail EVERY real CMS row-field binding (the unit-test fixtures
+// only ever used clean ids like `title`, so they never exercised a real id).
+// Spaces, operators, parentheses and pipes are still absent from the class, so
+// `{{a + b}}` / `{{a | upper}}` / `{{a.b()}}` continue to be rejected.
+const PATH = /^[A-Za-z0-9_$-]+(?:\.[A-Za-z0-9_$-]+)*$/;
 
 /**
  * Parse a binding expression string. Returns a ParsedExpression for a valid
