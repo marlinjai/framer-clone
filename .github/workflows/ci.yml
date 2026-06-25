@@ -1,0 +1,68 @@
+name: CI
+
+# First real correctness gate for framer-clone. Runs the full local verify
+# suite on every push and PR to main: typecheck, lint, unit tests, build, and
+# the Dockerized Postgres integration tests (which run nowhere today). The
+# integration globalSetup boots its own throwaway Postgres via testcontainers,
+# so the runner only needs a working Docker daemon (ubuntu-latest ships one).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs for the same ref so a fresh push does not queue behind
+# a stale one.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    env:
+      # Dummy connection string for the steps that only need the generated
+      # Prisma client or the Next build; none of these connect. The integration
+      # globalSetup (vitest.integration.setup.ts) owns the real test database and
+      # overrides DATABASE_URL at run time, exactly as it does locally.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/framer_clone_ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Reads the pnpm version from package.json "packageManager" (pnpm@9.15.0).
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # postinstall already runs prisma generate, but keep it explicit so the
+      # client is guaranteed present before typecheck and build.
+      - name: Generate Prisma client
+        run: pnpm exec prisma generate
+
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      # Boots a throwaway Postgres via testcontainers and runs prisma migrate
+      # deploy before the suite. Docker is preinstalled on ubuntu-latest.
+      - name: Integration tests
+        run: pnpm test:integration
