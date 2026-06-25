@@ -20,6 +20,11 @@ import 'server-only';
 // module: its `transaction()` is a verified no-op, so it cannot be the system
 // of record for stock or money. Commerce uses the purpose-built PrismaClient
 // singleton (src/server/db.ts) exclusively.
+//
+// The READ-ONLY, RSC-callable commerce repository (getCommerceServerRepository)
+// is also re-exported here: it is the build-time catalog READ surface the
+// publish hydrator consumes. It is display-read only (no write / reserve /
+// checkout); the server stays authoritative for money and stock.
 
 export { COMMERCE_SCHEMA, withTenant } from './withTenant';
 export type {
@@ -28,3 +33,9 @@ export type {
   OrderRepository,
   PricingRepository,
 } from './repository/types';
+export {
+  commerceReadRepository,
+  getCommerceServerRepository,
+  type CommerceReadRepository,
+} from './repository/read';
+export type { CommerceServerRepository } from '@/lib/renderer/publish/hydrateBindings';
