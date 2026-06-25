@@ -20,6 +20,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { useStore } from '@/hooks/useStore';
 import { getHistoryStore } from '@/stores/RootStore';
+import PublishButton from '@/components/PublishButton';
 
 function relativeTime(ts: number, now: number): string {
   const s = Math.max(0, Math.round((now - ts) / 1000));
@@ -178,6 +179,10 @@ const TopBar = observer(() => {
           Vector / CMS) in a future iteration. Left empty rather than with
           placeholder boxes so the bar reads as intentional, not unfinished. */}
       <div className="flex-1" />
+
+      {/* Publish: the primary rightward action. Serializes the live project
+          and pushes it live via the admin-guarded publish endpoint. */}
+      <PublishButton />
 
       {/* Preview entry — sits just before the undo/redo cluster so it's
           visually grouped with the other rightward actions. */}

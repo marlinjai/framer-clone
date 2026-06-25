@@ -14,6 +14,7 @@
  * depending on `next/headers`.
  */
 
+import type { SessionVerifyResponse } from '@marlinjai/auth-brain-sdk';
 import { authBrainClient } from './auth-brain';
 import { checkWorkspaceAccess } from './auth-check';
 import type { FramerAction } from './permissions';
@@ -57,6 +58,24 @@ async function getSessionUserId(req: Request): Promise<string | null> {
   if (!cookie) return null;
   const session = await authBrainClient.verifySession(cookie);
   return session?.user?.id ?? null;
+}
+
+/**
+ * Resolve the FULL verified session from the `lumitra_session` cookie, or null
+ * when there is no cookie or the session is invalid/expired (fail-closed).
+ *
+ * `authenticateRequest` only needs the user id, but a route that must derive the
+ * tenant scope (workspace_id + tenant_group_id) needs the whole session graph
+ * (workspaces + tenants + active_workspace). This exposes it from the single
+ * place that already owns cookie parsing, so the scope is ALWAYS derived from
+ * the server-verified session and never from anything the client sends.
+ */
+export async function getVerifiedSession(
+  req: Request,
+): Promise<SessionVerifyResponse | null> {
+  const cookie = readCookie(req, SESSION_COOKIE);
+  if (!cookie) return null;
+  return authBrainClient.verifySession(cookie);
 }
 
 /**
