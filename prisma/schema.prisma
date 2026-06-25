@@ -351,6 +351,55 @@ model SiteExperiment {
 }
 
 // ===========================================================================
+// CMS content agent (slice4-content-agent-phase2). Records every natural-language
+// agent run and its per-mutation inverses so the user can "Undo all" in one click.
+// Each AgentChange stores the EXACT inverse call (`inverseTool` + `inversePayload`)
+// captured read-before-write; undo replays them in reverse `position` order.
+// ===========================================================================
+
+enum AgentRunStatus {
+  pending
+  running
+  done
+  failed
+
+  @@schema("public")
+}
+
+model AgentRun {
+  id           String         @id @default(uuid())
+  collectionId String         @map("collection_id")
+  workspaceId  String         @map("workspace_id")
+  prompt       String
+  model        String
+  status       AgentRunStatus @default(pending)
+  errorMessage String?        @map("error_message")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+  changes      AgentChange[]
+
+  @@map("agent_runs")
+  @@schema("public")
+}
+
+model AgentChange {
+  id             String   @id @default(uuid())
+  runId          String   @map("run_id")
+  position       Int
+  tool           String
+  entityType     String   @map("entity_type")
+  entityId       String?  @map("entity_id")
+  inverseTool    String   @map("inverse_tool")
+  inversePayload Json     @map("inverse_payload")
+  createdAt      DateTime @default(now()) @map("created_at")
+  run            AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@map("agent_changes")
+  @@schema("public")
+}
+
+// ===========================================================================
 // Commerce engine: owned inventory ledger (b2). FIRST commerce schema writer.
 //
 // The event-sourced inventory ledger, purpose-built Prisma (NOT data-table).

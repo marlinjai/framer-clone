@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import React from 'react';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 
 // CmsWorkspaceOverlay renders into a portal (document.body) and pulls in
 // CmsGrid (server-only + Prisma). Stub both so the test stays headless.
@@ -11,6 +11,12 @@ vi.mock('../CmsGrid', () => ({
 
 vi.mock('../../CollectionRail', () => ({
   default: () => React.createElement('div', { 'data-testid': 'collection-rail-stub' }),
+}));
+
+// The agent column pulls in the fetch-based SSE client + many child components;
+// stub it so this overlay test stays focused on the grid/header layout.
+vi.mock('../../agent/ContentAgentPanel', () => ({
+  default: () => React.createElement('div', { 'data-testid': 'content-agent-panel-stub' }),
 }));
 
 // createPortal normally needs a live document.body. In JSDOM the body exists,
@@ -31,6 +37,8 @@ vi.mock('lucide-react', () => {
     Upload: Icon,
     Database: Icon,
     ChevronDown: Icon,
+    PanelRightClose: Icon,
+    PanelRightOpen: Icon,
   };
 });
 
@@ -97,5 +105,21 @@ describe('CmsWorkspaceOverlay header item count', () => {
     const col = makeCollection(); // no itemCount
     render(<CmsWorkspaceOverlay {...makeProps({ collections: [col] })} />);
     expect(screen.queryByTestId('workspace-item-count')).toBeNull();
+  });
+});
+
+describe('CmsWorkspaceOverlay agent column', () => {
+  it('shows the content agent panel by default', () => {
+    render(<CmsWorkspaceOverlay {...makeProps()} />);
+    expect(screen.getByTestId('content-agent-panel-stub')).toBeTruthy();
+  });
+
+  it('collapses and restores the agent panel via the toggle', () => {
+    render(<CmsWorkspaceOverlay {...makeProps()} />);
+    fireEvent.click(screen.getByTestId('workspace-agent-toggle'));
+    expect(screen.queryByTestId('content-agent-panel-stub')).toBeNull();
+    expect(screen.getByTestId('workspace-agent-expand')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('workspace-agent-expand'));
+    expect(screen.getByTestId('content-agent-panel-stub')).toBeTruthy();
   });
 });

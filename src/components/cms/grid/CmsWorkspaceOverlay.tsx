@@ -19,10 +19,19 @@
 
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { X, Upload, Database, ChevronDown } from 'lucide-react';
+import {
+  X,
+  Upload,
+  Database,
+  ChevronDown,
+  PanelRightClose,
+  PanelRightOpen,
+} from 'lucide-react';
 import type { Collection } from '@/lib/bindings/dataSource/types';
+import { CMS_WORKSPACE_ID } from '@/lib/cms/constants';
 import CollectionRail from '../CollectionRail';
 import CmsGrid from './CmsGrid';
+import ContentAgentPanel from '../agent/ContentAgentPanel';
 import { resolveCollectionIcon } from '../collectionIcon';
 
 export interface CmsWorkspaceOverlayProps {
@@ -49,9 +58,17 @@ export default function CmsWorkspaceOverlay({
   onClose,
 }: CmsWorkspaceOverlayProps) {
   const [mounted, setMounted] = React.useState(false);
+  // The agent column is visible by default; collapse is local-only (not persisted).
+  const [agentOpen, setAgentOpen] = React.useState(true);
+  // Bumped on agent:done so the grid re-mounts and re-fetches the new rows.
+  const [gridNonce, setGridNonce] = React.useState(0);
 
   React.useEffect(() => {
     setMounted(true);
+  }, []);
+
+  const onRunComplete = React.useCallback(() => {
+    setGridNonce((n) => n + 1);
   }, []);
 
   // Escape closes the overlay unless a cell editor (input/textarea/contentEditable)
@@ -198,13 +215,53 @@ export default function CmsWorkspaceOverlay({
                 Calendar
               </button>
             </div>
+
+            {/* Agent column collapse toggle (local-only) */}
+            <button
+              type="button"
+              onClick={() => setAgentOpen((v) => !v)}
+              aria-label={agentOpen ? 'Collapse content agent' : 'Expand content agent'}
+              aria-pressed={agentOpen}
+              data-testid="workspace-agent-toggle"
+              className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              {agentOpen ? (
+                <PanelRightClose className="size-[16px]" />
+              ) : (
+                <PanelRightOpen className="size-[16px]" />
+              )}
+            </button>
           </div>
 
-          {/* The data-table-react grid: key=activeId so it re-mounts on collection switch */}
+          {/* The data-table-react grid: key bumps on collection switch AND on
+              agent:done (gridNonce) so it re-mounts and re-fetches. */}
           <div className="min-h-0 flex-1">
-            <CmsGrid key={activeId} tableId={activeId} />
+            <CmsGrid key={`${activeId}:${gridNonce}`} tableId={activeId} />
           </div>
         </div>
+
+        {/* Right column: the natural-language content agent (collapsible). */}
+        {agentOpen ? (
+          <ContentAgentPanel
+            key={activeId}
+            collectionId={activeId}
+            workspaceId={CMS_WORKSPACE_ID}
+            collectionName={activeCollection?.name ?? 'collection'}
+            onRunComplete={onRunComplete}
+          />
+        ) : (
+          <div className="flex w-10 shrink-0 flex-col items-center border-l border-border bg-muted/30 py-2">
+            <button
+              type="button"
+              onClick={() => setAgentOpen(true)}
+              aria-label="Expand content agent"
+              data-testid="workspace-agent-expand"
+              className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <PanelRightOpen className="size-[16px]" />
+            </button>
+          </div>
+        )}
       </div>
     </div>,
     document.body,
