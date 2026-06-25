@@ -244,6 +244,26 @@ export class SiteRepository {
   }
 
   /**
+   * Transition a site to the `published` status, scoped to the caller's
+   * workspace. saveProject deliberately PRESERVES `Site.status` on update
+   * ("publish/archive own it"), so the publish path flips the status here as a
+   * separate, scoped step after the snapshot has been persisted.
+   *
+   * The update is scoped by BOTH id AND workspace_id (via updateMany, since a
+   * by-unique-id update cannot carry an extra where clause), so a publish of a
+   * site id owned by another workspace matches zero rows and throws
+   * SiteNotFoundError rather than silently flipping a foreign tenant's row.
+   */
+  async publishProject(scope: TenantScope, siteId: string): Promise<void> {
+    assertScope(scope);
+    const result = await this.prisma.site.updateMany({
+      where: { id: siteId, workspaceId: scope.workspaceId },
+      data: { status: 'published' },
+    });
+    if (result.count === 0) throw new SiteNotFoundError(siteId);
+  }
+
+  /**
    * Delete a site (and, by FK cascade, its pages/domains/experiments), scoped
    * to the caller's workspace. A delete for a site in another workspace affects
    * zero rows and throws SiteNotFoundError rather than silently succeeding.

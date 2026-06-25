@@ -28,6 +28,7 @@ function makeFakePrisma() {
     findFirst: vi.fn(),
     findUnique: vi.fn(),
     upsert: vi.fn(),
+    updateMany: vi.fn(),
     deleteMany: vi.fn(),
   };
   const sitePage = {
@@ -157,6 +158,51 @@ describe('SiteRepository.saveProject', () => {
       SiteNotFoundError,
     );
     expect(prisma.site.upsert).not.toHaveBeenCalled();
+  });
+
+  it('upserts by id (a re-save of an existing same-workspace site updates, not duplicates)', async () => {
+    // The id already exists IN the caller's workspace: the save proceeds and
+    // upserts by id, so a second publish updates the one row rather than
+    // creating a duplicate.
+    prisma.site.findUnique.mockResolvedValue({
+      id: 'site_save',
+      workspaceId: 'ws_marlin',
+    });
+    prisma.site.upsert.mockResolvedValue({});
+    prisma.sitePage.upsert.mockResolvedValue({});
+    prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
+
+    await repo.saveProject(SCOPE, makeProject());
+
+    const upsertArg = prisma.site.upsert.mock.calls[0][0];
+    expect(upsertArg.where).toEqual({ id: 'site_save' });
+  });
+});
+
+describe('SiteRepository.publishProject', () => {
+  it('flips status to published scoped by id AND workspace_id', async () => {
+    prisma.site.updateMany.mockResolvedValue({ count: 1 });
+    await repo.publishProject(SCOPE, 'site_1');
+    expect(prisma.site.updateMany).toHaveBeenCalledWith({
+      where: { id: 'site_1', workspaceId: 'ws_marlin' },
+      data: { status: 'published' },
+    });
+  });
+
+  it('throws SiteNotFoundError when no row in the workspace matched', async () => {
+    // A site id owned by another workspace matches zero rows: refuse, do not
+    // flip a foreign tenant's status.
+    prisma.site.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      repo.publishProject(SCOPE, 'site_other_ws'),
+    ).rejects.toBeInstanceOf(SiteNotFoundError);
+  });
+
+  it('rejects an empty scope', async () => {
+    await expect(
+      repo.publishProject({ workspaceId: '', tenantGroupId: 'tg' }, 'site_1'),
+    ).rejects.toBeInstanceOf(InvalidTenantScopeError);
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
   });
 });
 
