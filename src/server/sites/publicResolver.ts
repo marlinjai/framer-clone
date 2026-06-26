@@ -233,3 +233,33 @@ export function resolvePublicIngestionKey(apiKeyRef: string | null): string | nu
   if (apiKeyRef && process.env[apiKeyRef]) return process.env[apiKeyRef] ?? null;
   return process.env.ANALYTICS_PUBLIC_INGESTION_KEY ?? null;
 }
+
+/**
+ * Resolve the analytics tracker LOADER script URL. This is the `<script async
+ * src>` that actually READS `window.__AP_CONFIG` and emits events; without it the
+ * snippet only publishes the config and the site emits nothing. It is a platform
+ * constant (one tracker build for all sites), so it comes from the deploy env,
+ * not the per-site row. Returns null when unset, so the snippet degrades to
+ * config-only rather than emitting a broken `<script src>`.
+ */
+export function resolveTrackerScriptSrc(): string | null {
+  return process.env.ANALYTICS_TRACKER_SCRIPT_URL ?? null;
+}
+
+/**
+ * Resolve the ingestion endpoint: the per-site value when set, else the deploy
+ * env fallback (`ANALYTICS_INGESTION_ENDPOINT`). The env fallback lets the single
+ * demo site be configured without hand-editing its row. Returns null when neither
+ * is set, so injection (gated on a non-null endpoint) simply does not happen.
+ */
+export function resolveIngestionEndpoint(siteEndpoint: string | null): string | null {
+  return siteEndpoint ?? process.env.ANALYTICS_INGESTION_ENDPOINT ?? null;
+}
+
+/**
+ * Resolve the analytics project id: the per-site value when set, else the deploy
+ * env fallback (`ANALYTICS_PROJECT_ID`). Optional in the snippet; null is fine.
+ */
+export function resolveAnalyticsProjectId(siteProjectId: string | null): string | null {
+  return siteProjectId ?? process.env.ANALYTICS_PROJECT_ID ?? null;
+}
