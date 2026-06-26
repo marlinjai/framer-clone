@@ -1,7 +1,7 @@
 // src/stores/ProjectStore.ts  
 // Domain store for managing projects collection
 import { types, Instance } from 'mobx-state-tree';
-import ProjectModel, { ProjectModelType } from '../models/ProjectModel';
+import ProjectModel, { ProjectModelType, ProjectSnapshotIn } from '../models/ProjectModel';
 import { v4 as uuidv4 } from 'uuid';
 import { createIntrinsicComponent, createFloatingCanvasComponent, createViewportNode } from '@/models/ComponentModel';
 
@@ -237,6 +237,15 @@ const ProjectStore = types.model('ProjectStore', {
     });
   },
   
+  // Ingest a server-loaded project snapshot into the collection (MT-08).
+  // MST accepts a snapshot as a map value inside an action; this keys it by the
+  // snapshot's id and returns that id so callers can select it. Replaces any
+  // existing project with the same id (pre-MVP: no merge semantics needed).
+  ingestProjectSnapshot(snapshot: ProjectSnapshotIn): string {
+    self.projects.set(snapshot.id, snapshot);
+    return snapshot.id;
+  },
+
   // Remove a project
   removeProject(projectId: string) {
     self.projects.delete(projectId);

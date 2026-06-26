@@ -17,6 +17,7 @@ import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
 import { CommerceDataSourceContext } from '@/lib/commerce/context';
 import { getSharedHttpCommerceDataSource } from '@/lib/commerce/httpCommerceDataSource';
+import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 
 import { useStore } from "@/hooks/useStore";
 
@@ -41,7 +42,7 @@ const DragManagerBinding: React.FC = () => {
   return null;
 };
 
-export default function EditorApp() {
+export default function EditorApp({ projectSnapshot }: { projectSnapshot?: ProjectSnapshotOut } = {}) {
   const rootStore = useStore();
   const initRef = React.useRef(false);
   makeInspectable(rootStore);
@@ -50,18 +51,31 @@ export default function EditorApp() {
   }
 
   if (!initRef.current) {
-rootStore.projectStore.createProject(
-      'Framer Clone Demo',
-      'Sample project with component tree'
-    );
-
-  // Set this project as current in the editor
-    rootStore.editorUI.setCurrentProject(rootStore.projectStore.findProjectByTitle('Framer Clone Demo'));
-    rootStore.editorUI.setCurrentPage(rootStore.editorUI.currentProject?.findPageBySlug(''));
+    if (projectSnapshot) {
+      // Hydration path (MT-08 / MT-10): apply a server-loaded snapshot instead
+      // of fabricating the demo project. The snapshot's own id keys the store.
+      const projectId = rootStore.projectStore.ingestProjectSnapshot(projectSnapshot);
+      const project = rootStore.projectStore.getProject(projectId);
+      rootStore.editorUI.setCurrentProject(project);
+      // Home page by slug; fall back to the first page if no '' slug exists.
+      rootStore.editorUI.setCurrentPage(
+        project?.findPageBySlug('') ?? project?.pagesArray[0]
+      );
+    } else {
+      // Standalone dev mount (e.g. `/`): seed the demo project so local dev is
+      // unchanged.
+      rootStore.projectStore.createProject(
+        'Framer Clone Demo',
+        'Sample project with component tree'
+      );
+      // Set this project as current in the editor
+      rootStore.editorUI.setCurrentProject(rootStore.projectStore.findProjectByTitle('Framer Clone Demo'));
+      rootStore.editorUI.setCurrentPage(rootStore.editorUI.currentProject?.findPageBySlug(''));
+    }
     initRef.current = true;
-    // Drop the seed/demo actions from history so "Initial state" = seeded project,
-    // not literally-empty. Undoing past project creation would destroy the page
-    // that selection / UI references point at.
+    // Drop the seed/hydration actions from history so "Initial state" = the
+    // loaded project, not literally-empty. Undoing past project creation would
+    // destroy the page that selection / UI references point at.
     getHistoryStore()?.clear();
   }
 
