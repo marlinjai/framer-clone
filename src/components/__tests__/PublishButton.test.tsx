@@ -74,6 +74,51 @@ describe('PublishButton', () => {
     );
   });
 
+  it('surfaces the live URL as a clickable link after a successful publish', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        siteId: 'site_1',
+        status: 'published',
+        publishedPages: [''],
+        subdomain: 'demo',
+        liveUrl: 'https://demo.sites.lumitra.co',
+      }),
+    });
+
+    render(<PublishButton />);
+    fireEvent.click(screen.getByRole('button', { name: /publish/i }));
+
+    const link = (await screen.findByRole('link', {
+      name: /live at/i,
+    })) as HTMLAnchorElement;
+    expect(link.getAttribute('href')).toBe('https://demo.sites.lumitra.co');
+    expect(link.textContent).toContain('demo.sites.lumitra.co');
+  });
+
+  it('shows the bare subdomain (no link) when liveUrl is null in local dev', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        siteId: 'site_1',
+        status: 'published',
+        publishedPages: [''],
+        subdomain: 'demo',
+        liveUrl: null,
+      }),
+    });
+
+    render(<PublishButton />);
+    fireEvent.click(screen.getByRole('button', { name: /publish/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toContain('live at demo'),
+    );
+    expect(screen.queryByRole('link', { name: /live at/i })).toBeNull();
+  });
+
   it('surfaces a structured server error (403) instead of silently succeeding', async () => {
     fetchMock.mockResolvedValue({
       ok: false,

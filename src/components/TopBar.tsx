@@ -16,7 +16,9 @@ import {
   History as HistoryIcon,
   RotateCcw,
   Play,
+  ChevronLeft,
 } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useStore } from '@/hooks/useStore';
 import { getHistoryStore } from '@/stores/RootStore';
@@ -143,8 +145,55 @@ const HistoryMenu = observer(() => {
 });
 HistoryMenu.displayName = 'HistoryMenu';
 
+// --- WorkspaceSelector -----------------------------------------------------
+// A minimal workspace switcher. Rendered ONLY when the session has more than
+// one workspace — the common D1 case (one personal workspace per user) hides
+// it entirely. Choosing a workspace re-scopes the dashboard: the chosen id is
+// carried to /projects, where the server resolves it via
+// resolveScopeForWorkspace (membership-checked, never a client-trusted scope).
+// The workspaces arrive as a prop; we deliberately do NOT plumb the live
+// session into this client component for the single-workspace common path.
+export type WorkspaceOption = { id: string; name: string };
+
+function WorkspaceSelector({
+  workspaces,
+  activeWorkspaceId,
+}: {
+  workspaces: WorkspaceOption[];
+  activeWorkspaceId?: string;
+}) {
+  const router = useRouter();
+  if (workspaces.length <= 1) return null;
+  return (
+    <label className="flex items-center gap-1.5 text-sm">
+      <span className="sr-only">Workspace</span>
+      <select
+        aria-label="Workspace"
+        value={activeWorkspaceId ?? workspaces[0]?.id}
+        onChange={(e) =>
+          router.push(`/projects?workspace=${encodeURIComponent(e.target.value)}`)
+        }
+        className="h-8 rounded border border-border bg-background px-2 text-sm text-foreground hover:bg-accent"
+      >
+        {workspaces.map((w) => (
+          <option key={w.id} value={w.id}>
+            {w.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 // --- TopBar ----------------------------------------------------------------
-const TopBar = observer(() => {
+const TopBar = observer(
+  ({
+    workspaces = [],
+    activeWorkspaceId,
+  }: {
+    workspaces?: WorkspaceOption[];
+    activeWorkspaceId?: string;
+  } = {}) => {
   const rootStore = useStore();
   const { editorUI } = rootStore;
   const project = editorUI.currentProject;
@@ -152,14 +201,32 @@ const TopBar = observer(() => {
   const history = getHistoryStore();
   const router = useRouter();
 
+  // Point Preview at the id-aware route when a project is loaded (MT-11). The
+  // legacy /preview redirect still works, so fall back to it pre-hydration.
+  const previewHref = project
+    ? `/projects/${project.id}/preview`
+    : '/preview';
+
   return (
     <header
       data-editor-ui="true"
       className="fixed top-0 left-0 right-0 h-16 bg-background border-b border-border flex items-center z-90"
     >
-      {/* Left: project title + current page (Framer-style breadcrumb, since
-          the page tabs moved to the sidebar). */}
+      {/* Left: back-to-projects + project title + current page (Framer-style
+          breadcrumb, since the page tabs moved to the sidebar). */}
       <div className="flex items-center gap-2 px-6 min-w-[200px] shrink-0">
+        <Link
+          href="/projects"
+          title="Back to projects"
+          aria-label="Back to projects"
+          className="flex items-center justify-center w-8 h-8 -ml-1 rounded text-muted-foreground hover:bg-accent hover:text-foreground shrink-0"
+        >
+          <ChevronLeft size={18} />
+        </Link>
+        <WorkspaceSelector
+          workspaces={workspaces}
+          activeWorkspaceId={activeWorkspaceId}
+        />
         <div className="text-sm font-semibold text-foreground truncate max-w-[180px]">
           {project?.metadata.title ?? 'Untitled Project'}
         </div>
@@ -193,7 +260,7 @@ const TopBar = observer(() => {
           visually grouped with the other rightward actions. */}
       <button
         type="button"
-        onClick={() => router.push('/preview')}
+        onClick={() => router.push(previewHref)}
         title="Preview"
         className="flex items-center justify-center w-8 h-8 rounded text-foreground hover:bg-accent mr-2"
       >

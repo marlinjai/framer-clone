@@ -21,7 +21,16 @@ import { useStore } from '@/hooks/useStore';
 type PublishState =
   | { kind: 'idle' }
   | { kind: 'publishing' }
-  | { kind: 'success'; message: string }
+  | {
+      kind: 'success';
+      message: string;
+      // The live URL (absolute) when the server could compose one, else null
+      // (local dev with no PUBLIC_SITE_BASE_HOST). `liveLabel` is the
+      // human-readable destination shown regardless (the bare subdomain when
+      // there is no absolute URL).
+      liveUrl: string | null;
+      liveLabel: string | null;
+    }
   | { kind: 'error'; message: string };
 
 const PublishButton = observer(() => {
@@ -50,12 +59,23 @@ const PublishButton = observer(() => {
         setState({ kind: 'error', message });
         return;
       }
-      const published = (payload as { publishedPages?: unknown } | null)
-        ?.publishedPages;
+      const ok = payload as
+        | { publishedPages?: unknown; liveUrl?: unknown; subdomain?: unknown }
+        | null;
+      const published = ok?.publishedPages;
       const count = Array.isArray(published) ? published.length : 0;
+      // Prefer the absolute liveUrl; in local dev (no base host) the server
+      // returns liveUrl:null but STILL carries the allocated subdomain — show
+      // that as the destination label so publish never reads as "done, nowhere".
+      const liveUrl = typeof ok?.liveUrl === 'string' ? ok.liveUrl : null;
+      const subdomain = typeof ok?.subdomain === 'string' ? ok.subdomain : null;
+      const liveLabel =
+        liveUrl?.replace(/^https?:\/\//, '') ?? subdomain ?? null;
       setState({
         kind: 'success',
         message: `Published ${count} ${count === 1 ? 'page' : 'pages'}.`,
+        liveUrl,
+        liveLabel,
       });
     } catch (err) {
       setState({
@@ -74,10 +94,30 @@ const PublishButton = observer(() => {
         <span
           role="status"
           aria-live="polite"
-          className="text-xs text-brand max-w-[200px] truncate"
+          className="flex items-center gap-1 text-xs text-brand max-w-[280px] truncate"
           title={state.message}
         >
-          {state.message}
+          <span className="truncate">{state.message}</span>
+          {state.liveLabel && (
+            <>
+              <span className="text-muted-foreground">·</span>
+              {state.liveUrl ? (
+                <a
+                  href={state.liveUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline truncate hover:text-brand/80"
+                  title={`live at ${state.liveLabel}`}
+                >
+                  live at {state.liveLabel}
+                </a>
+              ) : (
+                <span className="truncate" title={`live at ${state.liveLabel}`}>
+                  live at {state.liveLabel}
+                </span>
+              )}
+            </>
+          )}
         </span>
       )}
       {state.kind === 'error' && (
