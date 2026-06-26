@@ -36,6 +36,8 @@ export interface PublishedPageRow {
  *  every page snapshot, ready to hydrate per request. */
 export interface PublishedSite {
   siteId: string;
+  workspaceId: string;
+  tenantGroupId: string;
   name: string;
   analyticsProjectId: string | null;
   ingestionEndpoint: string | null;
@@ -109,6 +111,8 @@ export async function resolvePublishedSite(
     where: { id: domain.siteId, status: 'published' },
     select: {
       id: true,
+      workspaceId: true,
+      tenantGroupId: true,
       name: true,
       analyticsProjectId: true,
       ingestionEndpoint: true,
@@ -121,6 +125,8 @@ export async function resolvePublishedSite(
 
   return {
     siteId: site.id,
+    workspaceId: site.workspaceId,
+    tenantGroupId: site.tenantGroupId,
     name: site.name,
     analyticsProjectId: site.analyticsProjectId,
     ingestionEndpoint: site.ingestionEndpoint,
