@@ -21,6 +21,7 @@ import { useRouter } from 'next/navigation';
 import { useStore } from '@/hooks/useStore';
 import { getHistoryStore } from '@/stores/RootStore';
 import PublishButton from '@/components/PublishButton';
+import SaveButton from '@/components/SaveButton';
 
 function relativeTime(ts: number, now: number): string {
   const s = Math.max(0, Math.round((now - ts) / 1000));
@@ -179,6 +180,10 @@ const TopBar = observer(() => {
           Vector / CMS) in a future iteration. Left empty rather than with
           placeholder boxes so the bar reads as intentional, not unfinished. */}
       <div className="flex-1" />
+
+      {/* Save: persist the working copy WITHOUT publishing (MT-10). Sits just
+          before Publish so the non-destructive action reads first. */}
+      <SaveButton />
 
       {/* Publish: the primary rightward action. Serializes the live project
           and pushes it live via the admin-guarded publish endpoint. */}
