@@ -192,11 +192,14 @@ describe('POST /api/commerce/orders (Dockerized Postgres)', () => {
 });
 
 describe('source contract', () => {
-  it('carries the can()-shaped guard seam and STOPS at order-created (no payment)', () => {
+  it('gates on the request host -> published site and STOPS at order-created (no payment)', () => {
     const src = readFileSync(path.resolve(__dirname, '../route.ts'), 'utf8');
-    // The mutation route imports + calls the can()-shaped guard seam.
-    expect(src).toMatch(/from\s+['"]@\/server\/auth\/guard['"]/);
-    expect(src).toMatch(/\bcan\(/);
+    // The anonymous-storefront write gates on the host resolving to a published
+    // site (the D4 contract), NOT an interim super-admin secret.
+    expect(src).toMatch(/from\s+['"]@\/server\/sites\/publicResolver['"]/);
+    expect(src).toMatch(/resolvePublishedSite\(/);
+    // The removed interim super-principal seam must be gone.
+    expect(src).not.toMatch(/from\s+['"]@\/server\/auth\/guard['"]/);
     // checkout STOPS at order-created: no payment integration code.
     expect(src).toMatch(/STOPS at order-created/);
     expect(src).not.toMatch(/from\s+['"][^'"]*stripe[^'"]*['"]/i);

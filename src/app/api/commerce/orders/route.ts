@@ -29,15 +29,21 @@
 // idempotent on request_id) instead of creating a duplicate. When omitted, the
 // server generates a fresh per-request key (the prior behavior).
 //
-// The mutation is wrapped by the slice2-admin-guard-stub can()-shaped guard
-// seam (one constant tenant), so the later auth-brain swap is an ADAPTER change
-// (replace the principal resolution + can() policy), not a rewrite of this
-// route.
+// This is an ANONYMOUS storefront write: the published storefront has no session
+// (a visitor is not logged in). So instead of an interim super-admin principal,
+// the gate is the request HOST: it must resolve to a PUBLISHED site via the same
+// public host -> site resolver the SSR render path uses (resolvePublishedSite).
+// A host that does not resolve to a published site is not a valid storefront and
+// is rejected (403), never served. The full D4 guest-customer DB model +
+// per-tenant commerce schema is MT-18 (it needs prisma schema changes); commerce
+// stays single-schema here, so createOrder + withTenant('commerce', ...) are
+// unchanged — MT-14's job is ONLY to remove the super-principal and gate on a
+// valid host.
 //
-// Errors surface, never swallowed: a guarded-reserve rejection becomes the
-// typed 409 the visitor sees (per-line shortages), a misconfigured catalog
-// (variant with no inventory item) is a loud 500, and a server fault is a 500
-// envelope, never a false 201.
+// Errors surface, never swallowed: an unresolvable host is a 403, a
+// guarded-reserve rejection becomes the typed 409 the visitor sees (per-line
+// shortages), a misconfigured catalog (variant with no inventory item) is a loud
+// 500, and a server fault is a 500 envelope, never a false 201.
 
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
@@ -45,7 +51,7 @@ import type { Prisma } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
 import { withTenant } from '@/server/commerce';
 import { createOrder, type Cart } from '@/server/commerce/order/createOrder';
-import { can, INTERIM_WORKSPACE_ID, type Principal } from '@/server/auth/guard';
+import { resolvePublishedSite } from '@/server/sites/publicResolver';
 import { jsonError, parseBody } from '@/lib/api/respond';
 import { DEFAULT_CURRENCY } from '@/lib/commerce/dto';
 
@@ -56,21 +62,6 @@ export const dynamic = 'force-dynamic';
 // tax region are server constants for v1 (one storefront, one region), and the
 // idempotency key is generated per request. E7/E8 thread real values here.
 const ORDER_TAX_REGION = 'DE';
-
-// The can()-shaped guard seam. v1 models the storefront order-create capability
-// as the one constant-tenant principal that policy permits; the auth-brain swap
-// later replaces BOTH this principal resolution and can()'s policy with the real
-// brain, leaving this route's call site unchanged.
-const ORDER_CREATE_ACTION = 'commerce:order:create';
-const ORDER_CREATE_RESOURCE = 'commerce/order';
-const STOREFRONT_PRINCIPAL: Principal = {
-  userId: 'storefront-visitor',
-  workspaceId: INTERIM_WORKSPACE_ID,
-  // v1 interim policy: the storefront write seam is permitted for the one
-  // constant tenant. can() grants only an isAdmin principal today, so the seam
-  // is modeled this way until the auth-brain lands.
-  isAdmin: true,
-};
 
 // Intentions ONLY. `.strict()` makes an unknown key (a client-sent price, stock,
 // or total) a 400 bad_body, so the server stays the sole author of money + stock.
@@ -150,10 +141,13 @@ async function resolveLines(
 }
 
 export async function POST(req: Request): Promise<Response> {
-  // The can()-shaped guard seam gates the mutation. A denied decision is a real
-  // 403, never a silent pass.
-  if (!can(STOREFRONT_PRINCIPAL, ORDER_CREATE_ACTION, ORDER_CREATE_RESOURCE)) {
-    return jsonError('forbidden', 'not permitted to create orders', 403);
+  // The gate for this anonymous storefront write is the request HOST: it must
+  // resolve to a PUBLISHED site (the same public resolver the SSR render path
+  // uses). A host that does not resolve to a published site is not a valid
+  // storefront — a real 403, never a silent pass.
+  const site = await resolvePublishedSite(req.headers.get('host'));
+  if (!site) {
+    return jsonError('forbidden', 'not a published storefront', 403);
   }
 
   const parsed = await parseBody(req, orderBodySchema);

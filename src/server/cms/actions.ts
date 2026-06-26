@@ -8,12 +8,24 @@
 // action delegates to the single CMS `PrismaAdapter` via getCmsAdapter().
 //
 // This is the editor grid's WRITE path. It mirrors receipt-OCR's
-// server-actions-adapter pattern but adds an authorization gate the receipt app
-// does not need: framer-clone admin-guards CMS writes, so every MUTATING action
-// calls requireAdminAction() first (same `admin_secret` cookie +
-// FRAMER_CLONE_ADMIN_SECRET contract as the /api/cms write routes). Read actions
-// stay unauthenticated, matching the public read-route policy. The panel never
-// touches MST; this path adds no new HTTP routes.
+// server-actions-adapter pattern but adds a TWO-layer authorization gate the
+// receipt app does not need:
+//   1. requireWorkspaceScope('editSite') proves the caller is an admin of some
+//      workspace and yields that workspace's TenantScope, derived ENTIRELY from
+//      the SERVER-verified auth-brain session (next/headers cookie -> verify ->
+//      active workspace) — never the client. No interim secret, no fallback to a
+//      constant workspace.
+//   2. the workspaceGuard asserts the ENTITY being mutated belongs to
+//      scope.workspaceId. The data-table adapter is keyed purely by entity id
+//      and performs no workspace check, so without this a workspace-A admin who
+//      knows a workspace-B id could mutate it. createTable instead STAMPS the new
+//      collection with scope.workspaceId (nothing to own yet).
+// Physical per-tenant schema isolation (so this check becomes a search_path
+// instead of an app-layer resolve) is MT-18; the CMS engine is single-schema in
+// Phase 2, so the ownership resolve is the only correct isolation today.
+//
+// Read actions stay unauthenticated, matching the public read-route policy. The
+// panel never touches MST; this path adds no new HTTP routes.
 
 import type {
   Table,
@@ -38,14 +50,31 @@ import type {
   UpdateViewInput,
 } from '@marlinjai/data-table-core';
 import { getCmsAdapter } from './adapterClient';
-import { requireAdminAction } from '@/server/auth/adminAction';
+import { requireWorkspaceScope } from '@/server/auth/requireWorkspaceScope';
+import {
+  assertTableInWorkspace,
+  assertColumnInWorkspace,
+  assertRowInWorkspace,
+  assertRowsInWorkspace,
+  assertViewInWorkspace,
+  assertSelectOptionInWorkspace,
+  assertFileReferenceInWorkspace,
+} from './workspaceGuard';
 import type { CmsStatusField } from '@/lib/cms/constants';
+
+// Distinct table ids from a batch of row-create inputs, so bulkCreateRows
+// asserts each target table once rather than per row.
+function distinctTableIds(inputs: CreateRowInput[]): string[] {
+  return [...new Set(inputs.map((i) => i.tableId))];
+}
 
 // --- Tables ---
 
 export async function createTable(input: CreateTableInput): Promise<Table> {
-  await requireAdminAction();
-  return getCmsAdapter().createTable(input);
+  const scope = await requireWorkspaceScope('editSite');
+  // The new collection lands in the SESSION's active workspace, never a client-
+  // supplied or constant workspace id. Nothing exists yet to own-check.
+  return getCmsAdapter().createTable({ ...input, workspaceId: scope.workspaceId });
 }
 
 export async function getTable(tableId: string): Promise<Table | null> {
@@ -53,12 +82,14 @@ export async function getTable(tableId: string): Promise<Table | null> {
 }
 
 export async function updateTable(tableId: string, updates: UpdateTableInput): Promise<Table> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertTableInWorkspace(tableId, scope.workspaceId);
   return getCmsAdapter().updateTable(tableId, updates);
 }
 
 export async function deleteTable(tableId: string): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertTableInWorkspace(tableId, scope.workspaceId);
   return getCmsAdapter().deleteTable(tableId);
 }
 
@@ -69,7 +100,8 @@ export async function listTables(workspaceId: string): Promise<Table[]> {
 // --- Columns ---
 
 export async function createColumn(input: CreateColumnInput): Promise<Column> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertTableInWorkspace(input.tableId, scope.workspaceId);
   return getCmsAdapter().createColumn(input);
 }
 
@@ -82,24 +114,28 @@ export async function getColumn(columnId: string): Promise<Column | null> {
 }
 
 export async function updateColumn(columnId: string, updates: UpdateColumnInput): Promise<Column> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertColumnInWorkspace(columnId, scope.workspaceId);
   return getCmsAdapter().updateColumn(columnId, updates);
 }
 
 export async function deleteColumn(columnId: string): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertColumnInWorkspace(columnId, scope.workspaceId);
   return getCmsAdapter().deleteColumn(columnId);
 }
 
 export async function reorderColumns(tableId: string, columnIds: string[]): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertTableInWorkspace(tableId, scope.workspaceId);
   return getCmsAdapter().reorderColumns(tableId, columnIds);
 }
 
 // --- Select options ---
 
 export async function createSelectOption(input: CreateSelectOptionInput): Promise<SelectOption> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertColumnInWorkspace(input.columnId, scope.workspaceId);
   return getCmsAdapter().createSelectOption(input);
 }
 
@@ -111,24 +147,28 @@ export async function updateSelectOption(
   optionId: string,
   updates: UpdateSelectOptionInput,
 ): Promise<SelectOption> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertSelectOptionInWorkspace(optionId, scope.workspaceId);
   return getCmsAdapter().updateSelectOption(optionId, updates);
 }
 
 export async function deleteSelectOption(optionId: string): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertSelectOptionInWorkspace(optionId, scope.workspaceId);
   return getCmsAdapter().deleteSelectOption(optionId);
 }
 
 export async function reorderSelectOptions(columnId: string, optionIds: string[]): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertColumnInWorkspace(columnId, scope.workspaceId);
   return getCmsAdapter().reorderSelectOptions(columnId, optionIds);
 }
 
 // --- Rows ---
 
 export async function createRow(input: CreateRowInput): Promise<Row> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertTableInWorkspace(input.tableId, scope.workspaceId);
   return getCmsAdapter().createRow(input);
 }
 
@@ -141,44 +181,56 @@ export async function getRows(tableId: string, query?: QueryOptions): Promise<Qu
 }
 
 export async function updateRow(rowId: string, cells: Record<string, CellValue>): Promise<Row> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertRowInWorkspace(rowId, scope.workspaceId);
   return getCmsAdapter().updateRow(rowId, cells);
 }
 
 export async function deleteRow(rowId: string): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertRowInWorkspace(rowId, scope.workspaceId);
   return getCmsAdapter().deleteRow(rowId);
 }
 
 export async function archiveRow(rowId: string): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertRowInWorkspace(rowId, scope.workspaceId);
   return getCmsAdapter().archiveRow(rowId);
 }
 
 export async function unarchiveRow(rowId: string): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertRowInWorkspace(rowId, scope.workspaceId);
   return getCmsAdapter().unarchiveRow(rowId);
 }
 
 export async function bulkCreateRows(inputs: CreateRowInput[]): Promise<Row[]> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await Promise.all(
+    distinctTableIds(inputs).map((id) => assertTableInWorkspace(id, scope.workspaceId)),
+  );
   return getCmsAdapter().bulkCreateRows(inputs);
 }
 
 export async function bulkDeleteRows(rowIds: string[]): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertRowsInWorkspace(rowIds, scope.workspaceId);
   return getCmsAdapter().bulkDeleteRows(rowIds);
 }
 
 export async function bulkArchiveRows(rowIds: string[]): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertRowsInWorkspace(rowIds, scope.workspaceId);
   return getCmsAdapter().bulkArchiveRows(rowIds);
 }
 
 // --- Relations ---
 
 export async function createRelation(input: CreateRelationInput): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  // Both endpoints must live in the active workspace, so a relation can never
+  // bridge across the isolation boundary.
+  await assertRowsInWorkspace([input.sourceRowId, input.targetRowId], scope.workspaceId);
   return getCmsAdapter().createRelation(input);
 }
 
@@ -187,7 +239,8 @@ export async function deleteRelation(
   columnId: string,
   targetRowId: string,
 ): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertRowsInWorkspace([sourceRowId, targetRowId], scope.workspaceId);
   return getCmsAdapter().deleteRelation(sourceRowId, columnId, targetRowId);
 }
 
@@ -204,12 +257,14 @@ export async function getRelationsForRow(
 // --- File references ---
 
 export async function addFileReference(input: CreateFileRefInput): Promise<FileReference> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertRowInWorkspace(input.rowId, scope.workspaceId);
   return getCmsAdapter().addFileReference(input);
 }
 
 export async function removeFileReference(fileRefId: string): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertFileReferenceInWorkspace(fileRefId, scope.workspaceId);
   return getCmsAdapter().removeFileReference(fileRefId);
 }
 
@@ -222,14 +277,16 @@ export async function reorderFileReferences(
   columnId: string,
   fileRefIds: string[],
 ): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertRowInWorkspace(rowId, scope.workspaceId);
   return getCmsAdapter().reorderFileReferences(rowId, columnId, fileRefIds);
 }
 
 // --- Views ---
 
 export async function createView(input: CreateViewInput): Promise<View> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertTableInWorkspace(input.tableId, scope.workspaceId);
   return getCmsAdapter().createView(input);
 }
 
@@ -242,17 +299,20 @@ export async function getView(viewId: string): Promise<View | null> {
 }
 
 export async function updateView(viewId: string, updates: UpdateViewInput): Promise<View> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertViewInWorkspace(viewId, scope.workspaceId);
   return getCmsAdapter().updateView(viewId, updates);
 }
 
 export async function deleteView(viewId: string): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertViewInWorkspace(viewId, scope.workspaceId);
   return getCmsAdapter().deleteView(viewId);
 }
 
 export async function reorderViews(tableId: string, viewIds: string[]): Promise<void> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertTableInWorkspace(tableId, scope.workspaceId);
   return getCmsAdapter().reorderViews(tableId, viewIds);
 }
 
@@ -272,11 +332,13 @@ const STATUS_OPTIONS = [
 /**
  * Idempotently ensure a collection has the reserved "Status" select field with
  * Draft / Published / Scheduled options, returning the column + option ids so the
- * grid can default new items to Draft. Admin-guarded (it may create a column);
- * safe to call on every grid open (a no-op once the field exists).
+ * grid can default new items to Draft. Admin-guarded AND workspace-owned (it may
+ * create a column on `tableId`); safe to call on every grid open (a no-op once
+ * the field exists).
  */
 export async function ensureStatusField(tableId: string): Promise<CmsStatusField> {
-  await requireAdminAction();
+  const scope = await requireWorkspaceScope('editSite');
+  await assertTableInWorkspace(tableId, scope.workspaceId);
   const adapter = getCmsAdapter();
 
   const columns = await adapter.getColumns(tableId);
