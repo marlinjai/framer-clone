@@ -60,9 +60,36 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // D2 (resolved 2026-06-26): the `.lumitra.co` apex `lumitra_session` cookie is
+  // INTENTIONAL suite-wide SSO and is NOT made host-only -- so the browser still
+  // sends it to `*.sites.lumitra.co`. But the published-site plane derives
+  // tenancy from the HOST and must NEVER be AUTHORIZED by that apex session. So
+  // on a NON-editor (published) host the middleware does NOT apply the editor
+  // cookie gate: storefront reads and anonymous order POSTs flow straight
+  // through, and their route handlers do host-based tenant resolution. The apex
+  // session is simply irrelevant to published-host authorization here. (No
+  // auth-brain cookie-domain change is made; this is an authz decision, not a
+  // cookie-transport one.)
+  if (!isEditorHost) {
+    return NextResponse.next();
+  }
+
+  // Editor host, gated authoring surface (`/projects/*`, `/api/projects/*`,
+  // `/api/ai/*` per the matcher below): coarse cookie-PRESENCE gate.
   const sessionCookie = request.cookies.get('lumitra_session')?.value;
 
   if (!sessionCookie) {
+    // API requests get a JSON 401 -- a fetch client (PublishButton/SaveButton,
+    // the cms-agent) must NOT be 302-redirected to an HTML login page, or its
+    // error handling breaks (e.g. an expired session mid-edit). Page requests
+    // bounce to the auth-brain login. (Matched routes ALSO self-guard via
+    // getVerifiedSession; this edge bounce is defense in depth.)
+    if (request.nextUrl.pathname.startsWith('/api/')) {
+      return NextResponse.json(
+        { error: { code: 'unauthorized', message: 'authentication required' } },
+        { status: 401 },
+      );
+    }
     // Rebuild the public URL the user hit (behind the proxy) so the post-login
     // bounce returns them to the same place. x-forwarded-* are set by the edge
     // proxy in prod; fall back to the request host for local/dev.
@@ -83,20 +110,34 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Gate the authoring surface only. Published/preview routes and public reads
-  // stay open (visitors are not logged-in users):
-  //   - /preview/* and the storefront render paths serve anonymous traffic
+  // Reconciled to the REAL routes on disk. Gate the authoring surface only;
+  // everything a logged-out visitor legitimately hits stays OPEN (unmatched ->
+  // middleware never runs -> no login bounce):
+  //   - the `(site)/[...slug]` storefront catch-all + the published-site root
+  //     serve anonymous traffic
+  //   - /preview/* (and /projects/<id>/preview, reached via the gated dashboard)
+  //     render anonymous previews
   //   - /api/health/* is the liveness probe
-  //   - /api/cms, /api/commerce reads are public (v1 read-open contract) and
-  //     their writes carry their own guard; do not bounce them to a login page
+  //   - /api/cms + /api/commerce are LEFT OPEN: their reads are public (v1
+  //     read-open contract) and their writes (incl. anonymous order POSTs to
+  //     /api/commerce/orders) carry their OWN per-resource guard in the route
+  //     handler -- bouncing them to a login page would break public reads and
+  //     anonymous checkout. Defense in depth lives in the handlers, not here.
   //   - _next static assets, favicon, robots are never gated
+  //
+  // The removed `/editor`, `/api/sites`, `/api/admin` patterns matched NO route
+  // on disk (dead-matcher drift); the live authoring surfaces are `/projects`,
+  // `/api/projects`, `/api/ai`.
   matcher: [
     // Root: host-aware routing (editor host -> editor; published-site host ->
     // storefront-home rewrite). Returns before the auth gate, so anonymous
     // site-root traffic is served, never bounced to login.
     '/',
-    '/editor/:path*',
-    '/api/sites/:path*',
-    '/api/admin/:path*',
+    // Editor authoring dashboard (MT-09/MT-10) + its per-project sub-routes.
+    '/projects/:path*',
+    // Editor authoring API: save / publish / unpublish / list project data.
+    '/api/projects/:path*',
+    // Editor AI API: cms-agent + edit. Editor-only, never anonymous traffic.
+    '/api/ai/:path*',
   ],
 };
