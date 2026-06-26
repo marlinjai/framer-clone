@@ -267,6 +267,7 @@ All app-side waves are deployed first. This wave is irreversible-ops (DNS + cert
 ### MT-20 - Wildcard TLS for `*.sites.lumitra.co` (ONE approach, recommended)
 
 - Goal: issue a wildcard certificate. The current HTTP-01 path (`proxied=false`) CANNOT mint wildcards.
+- SUPERSEDED for the chosen path by "Decisions resolved with Marlin (2026-06-26)": the perf decision selects `proxied=true` + Cloudflare ACM (~$10/mo) for global CDN edge caching, with this DNS-01 wildcard demoted to the ORIGIN cert behind Cloudflare (Full-strict). The `proxied=false` variant below is the free, no-CDN fallback.
 - Recommended approach (Option B from the gap analysis): Let's Encrypt DNS-01 wildcard via Coolify/Traefik using a SCOPED Cloudflare API token (Zone:DNS:Edit on `lumitra.co`), record stays `proxied=false` (true origin TLS). Rationale: free, matches the existing self-hosted-cert philosophy, arbitrary subdomain depth, no Cloudflare Advanced Certificate Manager cost. Reserve Option A (Cloudflare-proxied edge TLS / Cloudflare for SaaS) for the later `customHostname` phase. The depth `*.sites.lumitra.co` is exactly why DNS-01 is needed (free Universal SSL covers `*.lumitra.co` only, not the second level).
 - Files/areas: Coolify proxy/Traefik DNS-01 config (manual); an Infisical PLACEHOLDER secret for the scoped Cloudflare token (scaffold `CF_DNS_API_TOKEN=PLACEHOLDER_REPLACE_IN_UI` via the proxy-write pattern; Marlin fills the real value, never committed, never in Claude's context); runbook in `deploy/README.md`.
 - Dependencies: MT-19.
@@ -319,12 +320,32 @@ All app-side waves are deployed first. This wave is irreversible-ops (DNS + cert
 
 ---
 
-## Open decisions for Marlin
+## Decisions resolved with Marlin (2026-06-26)
 
-- D0 (working assumption to confirm): the published-sites zone is `sites.lumitra.co` (so `PUBLIC_SITE_BASE_HOST=sites.lumitra.co`, wildcard `*.sites.lumitra.co`). Confirm or substitute. Everything in Wave 5 keys off this.
-- D1 (per-user vs per-workspace ownership): "each user sees only their own projects" is satisfiable two ways - (a) auth-brain gives each user a PERSONAL workspace (zero schema change; the model and `resolveActiveScope`/`listSites` are ready), or (b) add `Site.ownerUserId` + filtered `listSites` for finer per-user isolation INSIDE a shared workspace. Recommend (a) unless shared-workspace multi-user is a near-term requirement. This choice shapes MT-09/MT-12.
-- D2 (cookie domain across editor vs `*.sites`, the security decision the target hinges on): `lumitra_session` is set by auth-brain (`auth.lumitra.co`). For the editor at `app.lumitra.co` to read it, the cookie needs `Domain=.lumitra.co` - but that scope ALSO transmits the editor session to every anonymous tenant storefront at `*.sites.lumitra.co` (session-leakage risk). Decide: host-only cookie on the editor host, OR a distinct cookie domain for the sites zone, OR published sites on a different registrable domain. This is an auth-brain cookie-config decision EXTERNAL to framer-clone and MUST be resolved before MT-16/MT-22.
-- D3 (unpublish keeps the SiteDomain row): recommended yes (re-publish reuses the slug for a stable public URL). Confirm; the alternative (free the slug on unpublish) makes re-publish URLs non-deterministic.
-- D4 (anonymous storefront order creation): MT-14 removes the hard-coded storefront super-principal on `/api/commerce/orders`. Decide how an anonymous buyer creates an order under the right tenant (resolve the tenant from the storefront host, not a session) - this is the commerce-facing half of the auth-hardening and pairs with MT-18.
-- D5 (wildcard TLS approach): the plan RECOMMENDS Option B (Let's Encrypt DNS-01 via Coolify + a scoped Cloudflare token) for `*.sites.lumitra.co`, reserving Cloudflare-for-SaaS (Option A) for the later `customHostname` phase. Confirm before MT-20 (a scoped CF token placeholder gets scaffolded into Infisical for you to fill).
-- D6 (commerce tenancy approach): the plan RECOMMENDS the per-tenant-schema registry (reusing the existing `withTenant` `SET LOCAL search_path` seam) over adding `workspace_id` columns to ~14 tables. Confirm before MT-18; this is the largest single spec and the only one gating multi-tenant commerce.
+These SUPERSEDE the body where they conflict (notably MT-20 TLS and the old D2 framing). The orchestrator builds to these; do not relitigate.
+
+### Hosting architecture: interim now, edge north-star
+- BUILD NOW (Option A): published sites served by the EXISTING Coolify Next app, SSR by host, on the `*.sites.lumitra.co` wildcard. Reuses the live, proven deploy; fits the dynamic commerce/CMS render; fastest path to first tenants.
+- NORTH-STAR (Option B, NOT now): Cloudflare-for-SaaS + edge Worker + R2/KV pre-built hosting (the 2026-06-23 hosting-foundation plan, P3). Trigger to migrate: per-site traffic / tenant count strains the single origin, custom domains at volume, or Framer-grade global static perf.
+- KEEP THE SERVING-LAYER SEAM CLEAN so B is a later swap of only the serving layer: publish writes a portable site snapshot + `SiteDomain`; render resolves by host. Do not couple the editor/publish/data model to the Coolify-SSR serving layer.
+
+### Performance approach (the "SSR is slower than pre-built" answer): two cache layers, no Option B needed
+- Origin page cache: MT-17 (host-keyed render cache, invalidated on publish). Build once, serve the saved page to all later visitors until re-publish.
+- Edge cache: FRONT `*.sites.lumitra.co` WITH CLOUDFLARE'S CDN (`proxied=true`) so cached pages serve from the Cloudflare data center nearest each visitor (global speed without building Option B). Dynamic commerce islands (cart/checkout) stay client-side and call the origin, so they never block first paint.
+- TLS reconciliation (SUPERSEDES MT-20): `proxied=true` for a SECOND-LEVEL wildcard (`*.sites.lumitra.co`) needs Cloudflare Advanced Certificate Manager (ACM, ~$10/mo) for the EDGE cert (free Universal SSL covers `*.lumitra.co` only, not `*.sites.lumitra.co`), PLUS an origin cert for Full-strict (the Let's Encrypt DNS-01 wildcard from MT-20 becomes the ORIGIN cert behind Cloudflare, or use a Cloudflare Origin CA cert). The free `proxied=false` DNS-01-only path remains available but gives NO global CDN (origin-only, single-region). RECOMMENDED: `proxied=true` + ACM for the global perf. CONFIRM the ~$10/mo ACM line item.
+
+### Resolved D0-D6
+- D0 domain: CONFIRMED `sites.lumitra.co`.
+- D1 ownership: PERSONAL workspace per user (Option a; zero schema change).
+- D2 cookie / session isolation: CORRECTED. The `.lumitra.co` apex `lumitra_session` cookie is INTENTIONAL for suite-wide SSO (studio, analytics, email-editor depend on it); do NOT make the editor cookie host-only (that breaks suite SSO). Instead: the published-site plane derives tenancy from the HOST and NEVER trusts the apex session as authorization for published-site/shopper actions (the cookie is httpOnly, so untrusted-site JS cannot read it; the server simply ignores it for authz). Consumer/shopper (CIAM) auth is a SEPARATE plane, NOT bolted into auth-brain (on custom domains the central cookie is third-party / broken on Safari/Brave anyway; future BUY/embed per the hosting-foundation red-team). Net: MT-16 makes published-site requests ignore the apex session for authz; NO auth-brain cookie-domain change is required.
+- D3 unpublish: KEEP the `SiteDomain` row (stable re-publish URL).
+- D4 anonymous orders: resolve the tenant from the storefront HOST (not a session); the anonymous buyer attaches to a lightweight per-order guest customer (email), upgradeable to accounts later. Pairs with MT-14 + MT-18.
+- D5 wildcard TLS: see the perf reconciliation above (`proxied=true` + ACM recommended for the CDN; the DNS-01 wildcard is the Full-strict origin cert).
+- D6 commerce tenancy: CONFIRMED per-tenant schema (reuse the `withTenant` `SET LOCAL search_path` seam).
+
+### Upstream plans this sits under (do not contradict)
+- `docs/plans/2026-06-23-framer-hosting-platform-foundation.md` , tenant isolation, the `site_*` tables, on-publish tracker injection, the P3 edge north-star.
+- `docs/plans/2026-06-25-framer-custom-domains.md` , custom domains: Coolify per-host cert now / Cloudflare-for-SaaS later, DCV verification, `SiteDomain.customHostname`.
+
+### Analytics cross-origin (add to acceptance)
+The analytics ingest endpoint must accept events (CORS) from `*.sites.lumitra.co` AND future custom domains, since published sites POST events cross-origin. The on-publish tracker injection (foundation plan; wired in framer #45) already injects the public `ap_live_` key.
