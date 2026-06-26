@@ -44,7 +44,7 @@ import { hydrateBindings } from '@/lib/renderer/publish/hydrateBindings';
 import { renderComponentNode } from '../renderComponentNode';
 import CommercePageProviders from '../CommercePageProviders';
 import { createScope, pushPageFrame } from '@/lib/bindings/resolver/scope';
-import { seedDemoSite, type SeededDemo } from './seedDemoSite';
+import { seedDemoSite, type SeededDemo } from '../seedDemoSite';
 
 let prisma: PrismaClient;
 let seeded: SeededDemo;

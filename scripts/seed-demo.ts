@@ -17,7 +17,7 @@
 // seeds, it does not reconcile or upsert.
 
 import { PrismaClient } from '@prisma/client';
-import { seedDemoSite } from '@/lib/renderer/server/__tests__/seedDemoSite';
+import { seedDemoSite } from '@/lib/renderer/server/seedDemoSite';
 
 async function main(): Promise<void> {
   if (!process.env.DATABASE_URL) {
