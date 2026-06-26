@@ -69,6 +69,8 @@ function fakePrisma(): PrismaClient {
         if (where.id === 's1' && where.status === 'published') {
           return {
             id: 's1',
+            workspaceId: 'framer-clone',
+            tenantGroupId: 'demo-tenant-group',
             name: 'Demo',
             analyticsProjectId: 'proj_1',
             ingestionEndpoint: 'https://ingest',
@@ -90,6 +92,13 @@ describe('resolvePublishedSite', () => {
     expect(site!.siteId).toBe('s1');
     expect(site!.lumitraEnabled).toBe(true);
     expect(site!.pages).toHaveLength(1);
+  });
+
+  it('carries the tenant (workspaceId + tenantGroupId) on the resolved site', async () => {
+    const site = await resolvePublishedSite('demo.lumitra.site', fakePrisma(), 'lumitra.site');
+    expect(site).not.toBeNull();
+    expect(site!.workspaceId).toBe('framer-clone');
+    expect(site!.tenantGroupId).toBe('demo-tenant-group');
   });
 
   it('returns null for an unknown subdomain', async () => {
