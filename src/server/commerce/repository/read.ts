@@ -325,31 +325,40 @@ export const commerceReadRepository: CommerceReadRepository = {
 /**
  * Build the read-only, Prisma-backed commerce repository the publish hydrator
  * consumes. Each method opens a `withTenant` block (search_path pinned to
- * COMMERCE_SCHEMA on the connection BEFORE any query runs) and delegates to the
+ * `schema` on the connection BEFORE any query runs) and delegates to the
  * tx-first `commerceReadRepository`. READS ONLY: no write / reserve / checkout.
+ *
+ * `schema` defaults to `COMMERCE_SCHEMA` so existing single-tenant callers are
+ * unchanged. The render path (MT-13) derives the schema from the resolved site
+ * (`resolveCommerceSchemaForSite`) and threads it here, so each published site's
+ * commerce reads run under the schema mapped to ITS tenant rather than a pinned
+ * constant. This explicit param is the SEAM the per-tenant commerce schema
+ * registry (MT-18) fills; the registry/provisioning is intentionally NOT built
+ * here.
  */
 export function getCommerceServerRepository(
   prisma: PrismaClient = getPrismaClient(),
+  schema: string = COMMERCE_SCHEMA,
 ): CommerceServerRepository {
   return {
     listProducts: (query) =>
-      withTenant(prisma, COMMERCE_SCHEMA, (tx) =>
+      withTenant(prisma, schema, (tx) =>
         commerceReadRepository.listProducts(tx, query),
       ),
     getProductByHandle: (handle) =>
-      withTenant(prisma, COMMERCE_SCHEMA, (tx) =>
+      withTenant(prisma, schema, (tx) =>
         commerceReadRepository.getProductByHandle(tx, handle),
       ),
     listVariants: (productId) =>
-      withTenant(prisma, COMMERCE_SCHEMA, (tx) =>
+      withTenant(prisma, schema, (tx) =>
         commerceReadRepository.listVariants(tx, productId),
       ),
     getPrices: (variantId) =>
-      withTenant(prisma, COMMERCE_SCHEMA, (tx) =>
+      withTenant(prisma, schema, (tx) =>
         commerceReadRepository.getPrices(tx, variantId),
       ),
     getAvailability: (variantId, locationId) =>
-      withTenant(prisma, COMMERCE_SCHEMA, (tx) =>
+      withTenant(prisma, schema, (tx) =>
         commerceReadRepository.getAvailability(tx, variantId, locationId),
       ),
   };

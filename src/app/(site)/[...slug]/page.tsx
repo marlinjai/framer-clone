@@ -42,6 +42,7 @@ import {
 } from '@/server/sites/publicResolver';
 import { getCmsRepository } from '@/server/cms';
 import { getCommerceServerRepository } from '@/server/commerce/repository/read';
+import { resolveCommerceSchemaForSite } from '@/server/commerce/tenant';
 import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToComponentNode';
 import {
   renderPublishedPage,
@@ -111,11 +112,26 @@ export default async function SitePage({ params }: SitePageProps) {
     trackerScriptSrc: resolveTrackerScriptSrc(),
   };
 
+  // Per-site tenancy (MT-13): BOTH engines must isolate by the RESOLVED site,
+  // never a module constant. The two engines use DIFFERENT mechanisms, so each
+  // carries its own value off the one Site row:
+  //   - CMS isolates by a `workspace_id` COLUMN -> pass `site.workspaceId` so
+  //     `listCollections`/reads see ONLY this site's workspace. Without this, N
+  //     published sites on the wildcard would all render ONE global workspace's
+  //     CMS collections (a hard cross-tenant isolation bug).
+  //   - Commerce isolates by Postgres SCHEMA (`SET LOCAL search_path`) -> pass a
+  //     schema DERIVED FROM THE SITE. Until MT-18 this maps every site to the
+  //     single shared `commerce` schema (see resolveCommerceSchemaForSite):
+  //     multi-tenant commerce is blocked to one tenant, but CMS-only sites are
+  //     fully isolated and may ship now.
   const { body, headSnippet } = await renderPublishedPage({
     root: adapted.root,
     pageParams: matched.params,
-    cmsRepo: getCmsRepository(),
-    commerceRepo: getCommerceServerRepository(),
+    cmsRepo: getCmsRepository(site.workspaceId),
+    commerceRepo: getCommerceServerRepository(
+      undefined,
+      resolveCommerceSchemaForSite(site),
+    ),
     analytics,
   });
 
