@@ -249,62 +249,77 @@ function mapQuery(query?: Query): DataTableQueryOptions {
 // repository
 // =============================================================================
 
-const repository: CmsReadRepository = {
-  async listCollections(): Promise<Collection[]> {
-    const adapter = getCmsAdapter();
-    const tables = await adapter.listTables(CMS_WORKSPACE_ID);
-    // N+1 over collections: fetch columns + count per table. Acceptable for
-    // phase 1 (single-tenant, few collections). A batched count is a later
-    // optimization once the adapter exposes a bulk method.
-    return Promise.all(
-      tables.map(async (table) => {
-        const [columns, itemCount] = await Promise.all([
-          adapter.getColumns(table.id),
-          adapter.getRows(table.id, { limit: 1 }).then((r) => r.total ?? 0).catch(() => 0),
-        ]);
-        return mapCollection(table, columns, itemCount);
-      }),
-    );
-  },
+// The read repository is constructed PER workspace: each returned object closes
+// over the `workspaceId` it was built for and threads it into the
+// workspace-scoped adapter calls (currently `listTables`). The by-id reads
+// (getCollection / listRows / getRow) are not workspace-scoped here (MT-14
+// handles read-isolation), but they live on the same bound object so a single
+// `getCmsRepository(workspaceId)` call yields one cohesive repo.
+function createReadRepository(workspaceId: string): CmsReadRepository {
+  return {
+    async listCollections(): Promise<Collection[]> {
+      const adapter = getCmsAdapter();
+      const tables = await adapter.listTables(workspaceId);
+      // N+1 over collections: fetch columns + count per table. Acceptable for
+      // phase 1 (single-tenant, few collections). A batched count is a later
+      // optimization once the adapter exposes a bulk method.
+      return Promise.all(
+        tables.map(async (table) => {
+          const [columns, itemCount] = await Promise.all([
+            adapter.getColumns(table.id),
+            adapter.getRows(table.id, { limit: 1 }).then((r) => r.total ?? 0).catch(() => 0),
+          ]);
+          return mapCollection(table, columns, itemCount);
+        }),
+      );
+    },
 
-  async getCollection(id: string): Promise<Collection | null> {
-    const adapter = getCmsAdapter();
-    const table = await adapter.getTable(id);
-    if (!table) {
-      return null;
-    }
-    const columns = await adapter.getColumns(id);
-    return mapCollection(table, columns);
-  },
+    async getCollection(id: string): Promise<Collection | null> {
+      const adapter = getCmsAdapter();
+      const table = await adapter.getTable(id);
+      if (!table) {
+        return null;
+      }
+      const columns = await adapter.getColumns(id);
+      return mapCollection(table, columns);
+    },
 
-  async listRows(id: string, query?: Query): Promise<RowsPage> {
-    const adapter = getCmsAdapter();
-    const result = await adapter.getRows(id, mapQuery(query));
-    return {
-      rows: result.items.map(mapRow),
-      nextCursor: result.cursor,
-      total: result.total,
-    };
-  },
+    async listRows(id: string, query?: Query): Promise<RowsPage> {
+      const adapter = getCmsAdapter();
+      const result = await adapter.getRows(id, mapQuery(query));
+      return {
+        rows: result.items.map(mapRow),
+        nextCursor: result.cursor,
+        total: result.total,
+      };
+    },
 
-  async getRow(id: string, rowId: string): Promise<BindingRow | null> {
-    const adapter = getCmsAdapter();
-    const row = await adapter.getRow(rowId);
-    if (!row) {
-      return null;
-    }
-    // Guard: the adapter `getRow` searches every table by row id; only return a
-    // hit that actually belongs to the requested collection.
-    if (row.tableId !== id) {
-      return null;
-    }
-    return mapRow(row);
-  },
-};
+    async getRow(id: string, rowId: string): Promise<BindingRow | null> {
+      const adapter = getCmsAdapter();
+      const row = await adapter.getRow(rowId);
+      if (!row) {
+        return null;
+      }
+      // Guard: the adapter `getRow` searches every table by row id; only return a
+      // hit that actually belongs to the requested collection.
+      if (row.tableId !== id) {
+        return null;
+      }
+      return mapRow(row);
+    },
+  };
+}
 
-/** Return the server-only CMS read repository. */
-export function getCmsRepository(): CmsReadRepository {
-  return repository;
+/**
+ * Return the server-only CMS read repository bound to `workspaceId`. Defaults to
+ * the single-tenant `CMS_WORKSPACE_ID` so existing single-tenant callers behave
+ * identically; MT-13 passes the per-request session workspace instead. A fresh
+ * bound object is constructed per call (no shared mutable state across tenants).
+ */
+export function getCmsRepository(
+  workspaceId: string = CMS_WORKSPACE_ID,
+): CmsReadRepository {
+  return createReadRepository(workspaceId);
 }
 
 // =============================================================================
@@ -337,65 +352,79 @@ async function requireTable(id: string): Promise<DataTableTable> {
   return table;
 }
 
-const writeRepository: CmsWriteRepository = {
-  ...repository,
+// The write repository is likewise constructed PER workspace: the name-
+// uniqueness checks (`listTables`) and the create (`createTable`) thread the
+// bound `workspaceId` instead of the module constant, so MT-14 can pass the
+// per-request session workspace. It extends the read repo bound to the SAME
+// workspace.
+function createWriteRepository(workspaceId: string): CmsWriteRepository {
+  return {
+    ...createReadRepository(workspaceId),
 
-  async createCollection(name: string): Promise<Collection> {
-    const adapter = getCmsAdapter();
-    // Enforce name-uniqueness the adapter does NOT: a duplicate name is the
-    // specific collision contract surfaced as CollectionExistsError (409).
-    const existing = await adapter.listTables(CMS_WORKSPACE_ID);
-    const collision = existing.find(
-      (t) => t.name.trim().toLowerCase() === name.trim().toLowerCase(),
-    );
-    if (collision) {
-      throw new CollectionExistsError(name);
-    }
-    const table = await ddl(() =>
-      adapter.createTable({ workspaceId: CMS_WORKSPACE_ID, name }),
-    );
-    // A fresh collection has no user columns yet.
-    return mapCollection(table, []);
-  },
-
-  async renameCollection(id: string, name: string): Promise<void> {
-    await this.updateCollection(id, { name });
-  },
-
-  async updateCollection(
-    id: string,
-    updates: { name?: string; icon?: string },
-  ): Promise<void> {
-    const adapter = getCmsAdapter();
-    await requireTable(id);
-    const patch: { name?: string; icon?: string } = {};
-    if (updates.name !== undefined) {
-      const name = updates.name;
-      const others = (await adapter.listTables(CMS_WORKSPACE_ID)).filter(
-        (t) => t.id !== id,
-      );
-      const collision = others.find(
+    async createCollection(name: string): Promise<Collection> {
+      const adapter = getCmsAdapter();
+      // Enforce name-uniqueness the adapter does NOT: a duplicate name is the
+      // specific collision contract surfaced as CollectionExistsError (409).
+      const existing = await adapter.listTables(workspaceId);
+      const collision = existing.find(
         (t) => t.name.trim().toLowerCase() === name.trim().toLowerCase(),
       );
       if (collision) {
         throw new CollectionExistsError(name);
       }
-      patch.name = name;
-    }
-    if (updates.icon !== undefined) {
-      patch.icon = updates.icon;
-    }
-    await ddl(() => adapter.updateTable(id, patch));
-  },
+      const table = await ddl(() =>
+        adapter.createTable({ workspaceId, name }),
+      );
+      // A fresh collection has no user columns yet.
+      return mapCollection(table, []);
+    },
 
-  async deleteCollection(id: string): Promise<void> {
-    const adapter = getCmsAdapter();
-    await requireTable(id);
-    await ddl(() => adapter.deleteTable(id));
-  },
-};
+    async renameCollection(id: string, name: string): Promise<void> {
+      await this.updateCollection(id, { name });
+    },
 
-/** Return the server-only CMS write repository (read methods + write tier). */
-export function getCmsWriteRepository(): CmsWriteRepository {
-  return writeRepository;
+    async updateCollection(
+      id: string,
+      updates: { name?: string; icon?: string },
+    ): Promise<void> {
+      const adapter = getCmsAdapter();
+      await requireTable(id);
+      const patch: { name?: string; icon?: string } = {};
+      if (updates.name !== undefined) {
+        const name = updates.name;
+        const others = (await adapter.listTables(workspaceId)).filter(
+          (t) => t.id !== id,
+        );
+        const collision = others.find(
+          (t) => t.name.trim().toLowerCase() === name.trim().toLowerCase(),
+        );
+        if (collision) {
+          throw new CollectionExistsError(name);
+        }
+        patch.name = name;
+      }
+      if (updates.icon !== undefined) {
+        patch.icon = updates.icon;
+      }
+      await ddl(() => adapter.updateTable(id, patch));
+    },
+
+    async deleteCollection(id: string): Promise<void> {
+      const adapter = getCmsAdapter();
+      await requireTable(id);
+      await ddl(() => adapter.deleteTable(id));
+    },
+  };
+}
+
+/**
+ * Return the server-only CMS write repository (read methods + write tier) bound
+ * to `workspaceId`. Defaults to the single-tenant `CMS_WORKSPACE_ID` so existing
+ * callers behave identically; MT-14 passes the per-request session workspace
+ * instead. A fresh bound object is constructed per call (no shared state).
+ */
+export function getCmsWriteRepository(
+  workspaceId: string = CMS_WORKSPACE_ID,
+): CmsWriteRepository {
+  return createWriteRepository(workspaceId);
 }
