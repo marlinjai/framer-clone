@@ -34,6 +34,9 @@ import {
   resolvePublishedSite,
   matchPageBySlug,
   resolvePublicIngestionKey,
+  resolveTrackerScriptSrc,
+  resolveIngestionEndpoint,
+  resolveAnalyticsProjectId,
   type PublishedSite,
   type MatchedPage,
 } from '@/server/sites/publicResolver';
@@ -93,14 +96,19 @@ export default async function SitePage({ params }: SitePageProps) {
   // A published page with no app component tree is malformed -> 404.
   if (!adapted.root) notFound();
 
-  // Analytics: resolve the PUBLIC ingestion key server-side from the server-side
-  // apiKeyRef. The ref literal never reaches the artifact; injection is gated on
-  // lumitraEnabled inside renderPublishedPage.
+  // Analytics: resolve the PUBLIC ingestion key + endpoint + project + the
+  // tracker loader URL server-side. The key comes from the server-side apiKeyRef
+  // (the ref literal never reaches the artifact); the endpoint/project fall back
+  // to the deploy env so the single demo site is env-configurable; the loader URL
+  // is a platform constant from the env. Injection is gated on lumitraEnabled +
+  // a public key + an endpoint inside renderPublishedPage. The loader is what
+  // actually makes the page EMIT events (config alone does nothing).
   const analytics: ResolvedAnalytics = {
     enabled: site.lumitraEnabled,
     ingestionKey: resolvePublicIngestionKey(site.apiKeyRef),
-    ingestionEndpoint: site.ingestionEndpoint,
-    projectId: site.analyticsProjectId,
+    ingestionEndpoint: resolveIngestionEndpoint(site.ingestionEndpoint),
+    projectId: resolveAnalyticsProjectId(site.analyticsProjectId),
+    trackerScriptSrc: resolveTrackerScriptSrc(),
   };
 
   const { body, headSnippet } = await renderPublishedPage({

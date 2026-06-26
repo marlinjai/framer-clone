@@ -102,6 +102,39 @@ describe('renderPublishedPage', () => {
     expect(headSnippet).toContain('window.__AP_VARIANTS={}');
   });
 
+  it('injects the tracker LOADER script when a tracker URL is configured (so the page EMITS)', async () => {
+    const { headSnippet } = await renderPublishedPage({
+      root: { type: 'div', id: 'r' },
+      pageParams: {},
+      cmsRepo: fakeCmsRepo(),
+      commerceRepo: fakeCommerceRepo(),
+      analytics: {
+        enabled: true,
+        ingestionKey: 'ap_live_abc',
+        ingestionEndpoint: 'https://ingest.lumitra.co',
+        trackerScriptSrc: 'https://cdn.lumitra.co/tracker.js',
+      },
+    });
+    expect(headSnippet).toContain('<script async src="https://cdn.lumitra.co/tracker.js">');
+  });
+
+  it('emits config-only (no loader script) when the tracker URL is not configured', async () => {
+    const { headSnippet } = await renderPublishedPage({
+      root: { type: 'div', id: 'r' },
+      pageParams: {},
+      cmsRepo: fakeCmsRepo(),
+      commerceRepo: fakeCommerceRepo(),
+      analytics: {
+        enabled: true,
+        ingestionKey: 'ap_live_abc',
+        ingestionEndpoint: 'https://ingest.lumitra.co',
+        // no trackerScriptSrc
+      },
+    });
+    expect(headSnippet).toContain('window.__AP_CONFIG');
+    expect(headSnippet).not.toContain('<script async src');
+  });
+
   it('injects nothing when analytics is disabled', async () => {
     const { headSnippet } = await renderPublishedPage({
       root: { type: 'div', id: 'r' },

@@ -32,6 +32,13 @@ export interface ResolvedAnalytics {
   ingestionKey: string | null;
   ingestionEndpoint: string | null;
   projectId?: string | null;
+  /**
+   * The tracker LOADER script URL (`<script async src>`). This is what actually
+   * reads `window.__AP_CONFIG` and emits events; without it the snippet publishes
+   * the config but the site emits nothing. Resolved from the deploy env by the
+   * caller; null when unset (snippet degrades to config-only).
+   */
+  trackerScriptSrc?: string | null;
 }
 
 export interface RenderPublishedPageInput {
@@ -67,6 +74,9 @@ function buildHeadSnippet(analytics: ResolvedAnalytics | undefined): string | nu
       ingestionKey: analytics.ingestionKey,
       ingestionEndpoint: analytics.ingestionEndpoint,
       ...(analytics.projectId ? { projectId: analytics.projectId } : {}),
+      // The loader script is what actually emits events; pass it through when the
+      // deploy configured it, else the snippet is config-only (no emission).
+      ...(analytics.trackerScriptSrc ? { trackerScriptSrc: analytics.trackerScriptSrc } : {}),
       variants: {},
     });
   } catch (err) {

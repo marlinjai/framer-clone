@@ -6,6 +6,9 @@ import {
   resolvePublishedSite,
   matchPageBySlug,
   resolvePublicIngestionKey,
+  resolveTrackerScriptSrc,
+  resolveIngestionEndpoint,
+  resolveAnalyticsProjectId,
   HOME_REWRITE_SENTINEL,
   type PublishedPageRow,
 } from '../publicResolver';
@@ -14,6 +17,9 @@ afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.ANALYTICS_PUBLIC_INGESTION_KEY;
   delete process.env.AP_KEY_REF_X;
+  delete process.env.ANALYTICS_TRACKER_SCRIPT_URL;
+  delete process.env.ANALYTICS_INGESTION_ENDPOINT;
+  delete process.env.ANALYTICS_PROJECT_ID;
 });
 
 describe('parseSubdomain', () => {
@@ -179,5 +185,42 @@ describe('resolvePublicIngestionKey', () => {
 
   it('returns null when no key is configured', () => {
     expect(resolvePublicIngestionKey(null)).toBeNull();
+  });
+});
+
+describe('resolveTrackerScriptSrc', () => {
+  it('returns the configured loader URL', () => {
+    process.env.ANALYTICS_TRACKER_SCRIPT_URL = 'https://cdn.lumitra.co/tracker.js';
+    expect(resolveTrackerScriptSrc()).toBe('https://cdn.lumitra.co/tracker.js');
+  });
+
+  it('returns null when unset (snippet degrades to config-only)', () => {
+    expect(resolveTrackerScriptSrc()).toBeNull();
+  });
+});
+
+describe('resolveIngestionEndpoint', () => {
+  it('prefers the per-site endpoint when set', () => {
+    process.env.ANALYTICS_INGESTION_ENDPOINT = 'https://env-ingest';
+    expect(resolveIngestionEndpoint('https://site-ingest')).toBe('https://site-ingest');
+  });
+
+  it('falls back to the env endpoint when the site has none', () => {
+    process.env.ANALYTICS_INGESTION_ENDPOINT = 'https://env-ingest';
+    expect(resolveIngestionEndpoint(null)).toBe('https://env-ingest');
+  });
+
+  it('returns null when neither is set', () => {
+    expect(resolveIngestionEndpoint(null)).toBeNull();
+  });
+});
+
+describe('resolveAnalyticsProjectId', () => {
+  it('prefers the per-site project id, falls back to env, else null', () => {
+    process.env.ANALYTICS_PROJECT_ID = 'proj_env';
+    expect(resolveAnalyticsProjectId('proj_site')).toBe('proj_site');
+    expect(resolveAnalyticsProjectId(null)).toBe('proj_env');
+    delete process.env.ANALYTICS_PROJECT_ID;
+    expect(resolveAnalyticsProjectId(null)).toBeNull();
   });
 });
