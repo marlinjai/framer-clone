@@ -89,7 +89,10 @@ jobs:
       deployments: write
     uses: marlinjai/actions-shared/.github/workflows/coolify-deploy-verify.yml@v1
     with:
-      health_url: https://app.lumitra.co/api/health
+      # Readiness, not liveness: /api/health is DB-independent and would go green
+      # over a broken database (it did, masking a Prisma engine mismatch). /api/health/db
+      # actually runs a query, so a DB/engine problem fails the deploy loudly.
+      health_url: https://app.lumitra.co/api/health/db
       environment: production
       max_wait_seconds: 180
     secrets:

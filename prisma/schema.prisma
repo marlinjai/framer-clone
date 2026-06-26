@@ -17,6 +17,11 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Runtime is node:20-bookworm-slim (Debian 12, openssl 3.0.x) on linux/arm64.
+  // Pin the engine target explicitly so the generated client always carries the
+  // matching query engine, even if the builder mis-detects openssl. "native"
+  // keeps local dev working.
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x"]
 }
 
 // Two named schemas in ONE Postgres database (multiSchema, GA in Prisma 6):
