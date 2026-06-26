@@ -8,17 +8,21 @@
 // mutation is recorded with an exact inverse (AgentChange) so the run is
 // reversible via POST /api/ai/cms-agent/undo.
 //
-// Admin auth is the route boundary: verifyAdminCookie(request) runs ONCE in the
-// synchronous handler (reading the cookie off the Request, NOT next/headers),
-// and the already-authorized adapter is passed into the detached async loop. No
-// cookie is read after the Response is returned, because next/headers is not
-// reliably in scope in that continuation.
+// Auth is the route boundary, using the REAL auth-brain path (the same shape as
+// /api/projects/publish): getVerifiedSession -> resolveActiveScope ->
+// authenticateRequest. It runs ONCE in the synchronous handler (reading the
+// session cookie off the Request, NOT next/headers) BEFORE the detached SSE loop,
+// and the resolved workspace scope + already-authorized adapter are passed into
+// that loop. No cookie is read after the Response is returned, because
+// next/headers is not reliably in scope in that continuation. The run is recorded
+// under the SESSION's active workspace, never a constant.
 //
 // Status codes:
 //   200 -> SSE stream (errors after the loop starts are encoded as
 //           `event: agent:error` inside the stream)
 //   400 -> bad JSON / failed validation / CSV over the size cap
-//   401 -> missing/invalid admin secret, or missing ANTHROPIC_API_KEY
+//   401 -> no session / missing ANTHROPIC_API_KEY
+//   403 -> no active workspace / not permitted to edit this workspace
 
 import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
@@ -30,7 +34,8 @@ import {
 } from '@/lib/ai/anthropicClient';
 import { buildSystemPrompt } from '@/lib/ai/promptCache';
 import { createSseStream, SSE_HEADERS } from '@/lib/ai/sse';
-import { verifyAdminCookie } from '@/server/auth/adminAction';
+import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
+import { resolveActiveScope } from '@/server/sites';
 import { getCmsAdapter } from '@/server/cms/adapterClient';
 import { getPrismaClient } from '@/server/db';
 import {
@@ -91,6 +96,7 @@ const STATIC_INSTRUCTIONS = [
 
 function dynamicContext(
   body: Body,
+  workspaceId: string,
   collectionName: string,
   columns: { id: string; name: string; type: string }[],
   rowCount: number,
@@ -99,7 +105,7 @@ function dynamicContext(
   return [
     'Current request context:',
     `- collectionId: ${body.collectionId}`,
-    `- workspaceId: ${body.workspaceId}`,
+    `- workspaceId: ${workspaceId}`,
     `- active collection: ${collectionName}`,
     `- row count: ${rowCount}`,
     columns.length > 0 ? `- columns:\n${columnLines}` : '- columns: (none yet)',
@@ -134,11 +140,35 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  // ---- 2. Admin auth at the boundary (reads Request, not next/headers) ----
-  if (!verifyAdminCookie(request)) {
+  // ---- 2. Auth at the boundary (reads Request, not next/headers) ----------
+  // The verified session is the ONLY source of the workspace scope below; the
+  // client-sent workspaceId is NOT trusted. This resolves at the SYNC point,
+  // before the detached SSE loop.
+  const session = await getVerifiedSession(request);
+  if (!session) {
     return Response.json(
-      { error: { message: 'admin secret required or invalid', code: 'unauthorized' } },
+      { error: { message: 'authentication required', code: 'unauthorized' } },
       { status: 401 },
+    );
+  }
+  const scopeResult = resolveActiveScope(session);
+  if (!scopeResult.ok) {
+    return Response.json(
+      { error: { message: 'no active workspace', code: 'no_active_workspace' } },
+      { status: 403 },
+    );
+  }
+  const { scope } = scopeResult;
+  const auth = await authenticateRequest(request, scope.workspaceId, 'editSite');
+  if (!auth.authenticated) {
+    return Response.json(
+      {
+        error: {
+          message: auth.error,
+          code: auth.status === 401 ? 'unauthorized' : 'forbidden',
+        },
+      },
+      { status: auth.status },
     );
   }
 
@@ -157,11 +187,14 @@ export async function POST(request: Request): Promise<Response> {
   const prisma = getPrismaClient();
   const runId = body.runId ?? crypto.randomUUID();
   const modelId = resolveModelId(body.model);
+  // The run is recorded under the SESSION's active workspace (scope.workspaceId),
+  // never the client-sent body.workspaceId.
+  const workspaceId = scope.workspaceId;
   await prisma.agentRun.create({
     data: {
       id: runId,
       collectionId: body.collectionId,
-      workspaceId: body.workspaceId,
+      workspaceId,
       prompt: body.prompt,
       model: modelId,
       status: 'running',
@@ -172,7 +205,7 @@ export async function POST(request: Request): Promise<Response> {
   const sse = createSseStream();
   const adapter = getCmsAdapter() as unknown as CmsAdapter;
 
-  void runAgentLoop({ adapter, anthropic, prisma, body, modelId, runId, sse });
+  void runAgentLoop({ adapter, anthropic, prisma, body, workspaceId, modelId, runId, sse });
 
   return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
 }
@@ -182,13 +215,14 @@ interface LoopArgs {
   anthropic: Anthropic;
   prisma: ReturnType<typeof getPrismaClient>;
   body: Body;
+  workspaceId: string;
   modelId: string;
   runId: string;
   sse: ReturnType<typeof createSseStream>;
 }
 
 async function runAgentLoop(args: LoopArgs): Promise<void> {
-  const { adapter, anthropic, prisma, body, modelId, runId, sse } = args;
+  const { adapter, anthropic, prisma, body, workspaceId, modelId, runId, sse } = args;
   const heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
 
   const changeSummaries: AgentChangeSummary[] = [];
@@ -226,6 +260,7 @@ async function runAgentLoop(args: LoopArgs): Promise<void> {
         type: 'text',
         text: dynamicContext(
           body,
+          workspaceId,
           collectionName,
           columns.map((c) => ({ id: c.id, name: c.name, type: c.type })),
           rowsResult.total,

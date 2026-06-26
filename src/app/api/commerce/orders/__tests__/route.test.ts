@@ -1,8 +1,11 @@
 // @vitest-environment node
 //
 // Headless UNIT tests for POST /api/commerce/orders. The Prisma singleton, the
-// withTenant seam, createOrder (Track B), and the can() guard are all mocked, so
-// NO database is touched. These prove the route:
+// withTenant seam, createOrder (Track B), and the host -> published-site resolver
+// (resolvePublishedSite) are all mocked, so NO database is touched. These prove
+// the route:
+//   - gates on the request HOST resolving to a published site (an unresolvable
+//     host is a 403, never served — the anonymous-storefront D4 contract),
 //   - threads a CLIENT-sent idempotency key into the order request_id (so a
 //     re-submit dedupes to the same order), and generates a server key otherwise,
 //   - keeps the body INTENTIONS-ONLY (a client-sent price/stock is a 400),
@@ -35,17 +38,16 @@ vi.mock('@/server/commerce/order/createOrder', () => ({
   createOrder: vi.fn(),
 }));
 
-vi.mock('@/server/auth/guard', () => ({
-  can: vi.fn(() => true),
-  INTERIM_WORKSPACE_ID: 'ws_interim',
+vi.mock('@/server/sites/publicResolver', () => ({
+  resolvePublishedSite: vi.fn(),
 }));
 
 import { createOrder } from '@/server/commerce/order/createOrder';
-import { can } from '@/server/auth/guard';
+import { resolvePublishedSite } from '@/server/sites/publicResolver';
 import { POST } from '../route';
 
 const createOrderMock = vi.mocked(createOrder);
-const canMock = vi.mocked(can);
+const resolveSiteMock = vi.mocked(resolvePublishedSite);
 
 function postReq(body: unknown): Request {
   return new Request('http://t/api/commerce/orders', {
@@ -60,8 +62,12 @@ beforeEach(() => {
   fakeTx.inventoryItem.findFirst.mockReset();
   fakeTx.order.findUnique.mockReset();
   createOrderMock.mockReset();
-  canMock.mockReset();
-  canMock.mockReturnValue(true);
+  resolveSiteMock.mockReset();
+  // Default: the request host resolves to a published storefront site.
+  resolveSiteMock.mockResolvedValue({
+    siteId: 'site_a',
+    workspaceId: 'ws_a',
+  } as unknown as Awaited<ReturnType<typeof resolvePublishedSite>>);
 
   // Default happy wiring: variant -> inventory item resolves, the order commits,
   // and the read-back returns the server total.
@@ -104,10 +110,11 @@ describe('POST /api/commerce/orders body contract', () => {
     expect(createOrderMock).not.toHaveBeenCalled();
   });
 
-  it('returns 403 when the guard denies', async () => {
-    canMock.mockReturnValue(false);
+  it('returns 403 when the host does not resolve to a published site', async () => {
+    resolveSiteMock.mockResolvedValue(null);
     const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }] }));
     expect(res.status).toBe(403);
+    expect((await res.json()).error.code).toBe('forbidden');
     expect(createOrderMock).not.toHaveBeenCalled();
   });
 

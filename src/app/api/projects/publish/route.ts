@@ -11,8 +11,8 @@
 // workspace -> its tenant -> tenant_group), NEVER from anything the client
 // sends. The client supplies only the project snapshot; which workspace/tenant
 // it lands in is the server's decision. Authorization is the real auth-brain
-// `publishSite` permission (workspace.admin), not the interim admin-secret stub
-// in src/server/auth/guard.ts (that stub cannot produce a valid TenantScope).
+// `publishSite` permission (workspace.admin) — the same real-auth path every
+// write now uses since the interim admin-secret stub was removed (MT-14).
 //
 // Failures surface loudly as the Track-0 `{ error: { code, message } }`
 // envelope: 401 unauthenticated, 403 not a workspace admin / no resolvable

@@ -13,9 +13,9 @@
 // narrow column/row write routes this client used to call were removed with the
 // hand-rolled FieldEditor/RowEditor they served.
 //
-// Admin auth: writes are same-origin requests; the interim admin secret rides the
-// `admin_secret` cookie (see src/server/auth/guard.ts), which the browser
-// attaches automatically. The client therefore sends no secret itself.
+// Auth: writes are same-origin requests; the `lumitra_session` cookie rides
+// along automatically (the browser attaches it), and the server resolves the
+// caller's workspace from that verified session. The client sends no secret.
 
 import type { Collection } from '@/lib/bindings/dataSource/types';
 

@@ -1,17 +1,20 @@
 // src/app/api/cms/collections/[id]/route.ts
 //
 // GET    /api/cms/collections/:id  (READ, unauthenticated)
-// PATCH  /api/cms/collections/:id  (WRITE, admin-guarded: rename / set icon)
-// DELETE /api/cms/collections/:id  (WRITE, admin-guarded: delete)
+// PATCH  /api/cms/collections/:id  (WRITE, auth-brain-guarded: rename / set icon)
+// DELETE /api/cms/collections/:id  (WRITE, auth-brain-guarded: delete)
 //
-// The GET stays UNAUTHENTICATED. PATCH/DELETE are mutations, guarded by
-// requireAdmin, surfacing the typed write-error contract (404 not_found, 409
-// collection_exists on a rename collision). A repository throw SURFACES as an
-// envelope, never a swallowed empty 200.
+// The GET stays UNAUTHENTICATED. PATCH/DELETE are mutations, guarded by the real
+// auth-brain path (getVerifiedSession -> resolveActiveScope ->
+// authenticateRequest) and scoped to the SESSION's active workspace, surfacing
+// the typed write-error contract (404 not_found, 409 collection_exists on a
+// rename collision). A repository throw SURFACES as an envelope, never a
+// swallowed empty 200.
 
 import { z } from 'zod';
 import { getCmsRepository, getCmsWriteRepository, cmsWriteErrorResponse } from '@/server/cms';
-import { requireAdmin } from '@/server/auth/guard';
+import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
+import { resolveActiveScope, type TenantScope } from '@/server/sites';
 import { jsonError, parseBody } from '@/lib/api/respond';
 
 export const runtime = 'nodejs';
@@ -25,6 +28,35 @@ const updateSchema = z
   .refine((d) => d.name !== undefined || d.icon !== undefined, {
     message: 'name or icon required',
   });
+
+// The shared auth-brain write guard for PATCH/DELETE: the same flow as
+// /api/projects/publish (verified session -> active scope -> action permission),
+// returning the resolved scope or the Track-0 error envelope to short-circuit.
+async function guardWrite(
+  req: Request,
+): Promise<{ ok: true; scope: TenantScope } | { ok: false; response: Response }> {
+  const session = await getVerifiedSession(req);
+  if (!session) {
+    return { ok: false, response: jsonError('unauthorized', 'authentication required', 401) };
+  }
+  const scopeResult = resolveActiveScope(session);
+  if (!scopeResult.ok) {
+    return { ok: false, response: jsonError('no_active_workspace', 'no active workspace', 403) };
+  }
+  const { scope } = scopeResult;
+  const auth = await authenticateRequest(req, scope.workspaceId, 'editSite');
+  if (!auth.authenticated) {
+    return {
+      ok: false,
+      response: jsonError(
+        auth.status === 401 ? 'unauthorized' : 'forbidden',
+        auth.error,
+        auth.status,
+      ),
+    };
+  }
+  return { ok: true, scope };
+}
 
 export async function GET(
   _req: Request,
@@ -50,21 +82,22 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const auth = requireAdmin(req);
-  if (!auth.ok) {
-    return auth.response;
+  const guard = await guardWrite(req);
+  if (!guard.ok) {
+    return guard.response;
   }
+  const { scope } = guard;
   const { id } = await params;
   const body = await parseBody(req, updateSchema);
   if (!body.ok) {
     return body.response;
   }
   try {
-    await getCmsWriteRepository().updateCollection(id, {
+    await getCmsWriteRepository(scope.workspaceId).updateCollection(id, {
       name: body.data.name,
       icon: body.data.icon,
     });
-    const collection = await getCmsRepository().getCollection(id);
+    const collection = await getCmsRepository(scope.workspaceId).getCollection(id);
     return Response.json(collection);
   } catch (err) {
     return (
@@ -82,13 +115,14 @@ export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const auth = requireAdmin(req);
-  if (!auth.ok) {
-    return auth.response;
+  const guard = await guardWrite(req);
+  if (!guard.ok) {
+    return guard.response;
   }
+  const { scope } = guard;
   const { id } = await params;
   try {
-    await getCmsWriteRepository().deleteCollection(id);
+    await getCmsWriteRepository(scope.workspaceId).deleteCollection(id);
     return Response.json({ ok: true });
   } catch (err) {
     return (

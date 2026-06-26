@@ -4,12 +4,11 @@
 //
 // Headless tests for POST /api/ai/cms-agent. The Anthropic client, the CMS
 // adapter, and the Prisma singleton are all mocked (msw is not installed; direct
-// vi.mock is the repo pattern). verifyAdminCookie is exercised for real against a
-// synthetic Request cookie + the FRAMER_CLONE_ADMIN_SECRET env.
+// vi.mock is the repo pattern). The real auth-brain path is exercised: the
+// auth-brain client (verifySession + can) is mocked while resolveActiveScope is
+// kept REAL, so the session -> scope -> permission contract runs for real.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-
-const ADMIN_SECRET = 'test-secret';
 
 // --- Scriptable Anthropic client -------------------------------------------
 const anthropicState = vi.hoisted(() => ({
@@ -80,6 +79,29 @@ const prisma = vi.hoisted(() => ({
 
 vi.mock('@/server/db', () => ({ getPrismaClient: () => prisma }));
 
+// --- auth-brain mock (verifySession + can); resolveActiveScope stays real -----
+const mockVerifySession = vi.fn();
+const mockCan = vi.fn();
+vi.mock('@/lib/auth-brain', () => ({
+  authBrainClient: {
+    verifySession: (...args: unknown[]) => mockVerifySession(...args),
+    can: (...args: unknown[]) => mockCan(...args),
+    verifyApiKey: vi.fn(),
+    getCurrentUser: vi.fn(),
+  },
+}));
+
+function sessionA() {
+  return {
+    user: { id: 'user-a' },
+    session: {},
+    tenants: [{ id: 'tenant-a', group_id: 'tg_a' }],
+    workspaces: [{ id: 'ws_a', tenant_id: 'tenant-a' }],
+    active_tenant: { id: 'tenant-a' },
+    active_workspace: { id: 'ws_a' },
+  };
+}
+
 import { POST } from '../cms-agent/route';
 
 // --- Helpers ---------------------------------------------------------------
@@ -93,7 +115,7 @@ function makeRequest(body: unknown, opts: { cookie?: string } = {}): Request {
   });
 }
 
-const authCookie = `admin_secret=${ADMIN_SECRET}`;
+const authCookie = 'lumitra_session=good';
 
 async function readStream(res: Response): Promise<string> {
   const reader = res.body!.getReader();
@@ -114,7 +136,8 @@ function baseBody(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  process.env.FRAMER_CLONE_ADMIN_SECRET = ADMIN_SECRET;
+  mockVerifySession.mockResolvedValue(sessionA());
+  mockCan.mockResolvedValue(true);
   anthropicState.turns = [{ content: [], stop_reason: 'end_turn' }];
   anthropicState.innerJson = '[]';
   adapter.getTable.mockResolvedValue({ id: 't1', name: 'Events' });
@@ -126,14 +149,21 @@ beforeEach(() => {
 });
 
 describe('POST /api/ai/cms-agent auth + validation', () => {
-  it('returns 401 without an admin cookie', async () => {
+  it('returns 401 without a session cookie', async () => {
     const res = await POST(makeRequest(baseBody()));
     expect(res.status).toBe(401);
   });
 
-  it('returns 401 with a wrong secret', async () => {
-    const res = await POST(makeRequest(baseBody(), { cookie: 'admin_secret=nope' }));
+  it('returns 401 when the session fails to verify', async () => {
+    mockVerifySession.mockResolvedValue(null);
+    const res = await POST(makeRequest(baseBody(), { cookie: authCookie }));
     expect(res.status).toBe(401);
+  });
+
+  it('returns 403 when the user is not a workspace admin', async () => {
+    mockCan.mockResolvedValue(false);
+    const res = await POST(makeRequest(baseBody(), { cookie: authCookie }));
+    expect(res.status).toBe(403);
   });
 
   it('returns 400 when collectionId is missing', async () => {

@@ -3,12 +3,11 @@
 // src/app/api/ai/__tests__/cms-agent-undo.route.test.ts
 //
 // Headless tests for POST /api/ai/cms-agent/undo. Replays recorded inverses in
-// reverse `position` order against a mocked adapter; verifyAdminCookie runs for
-// real. Prisma + adapter are mocked.
+// reverse `position` order against a mocked adapter; the real auth-brain path
+// runs (verifySession + can mocked, resolveActiveScope real). Prisma + adapter
+// are mocked.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-
-const ADMIN_SECRET = 'test-secret';
 
 const adapter = vi.hoisted(() => ({
   deleteRow: vi.fn(),
@@ -27,6 +26,28 @@ const prisma = vi.hoisted(() => ({
 
 vi.mock('@/server/db', () => ({ getPrismaClient: () => prisma }));
 
+const mockVerifySession = vi.fn();
+const mockCan = vi.fn();
+vi.mock('@/lib/auth-brain', () => ({
+  authBrainClient: {
+    verifySession: (...args: unknown[]) => mockVerifySession(...args),
+    can: (...args: unknown[]) => mockCan(...args),
+    verifyApiKey: vi.fn(),
+    getCurrentUser: vi.fn(),
+  },
+}));
+
+function sessionA() {
+  return {
+    user: { id: 'user-a' },
+    session: {},
+    tenants: [{ id: 'tenant-a', group_id: 'tg_a' }],
+    workspaces: [{ id: 'ws_a', tenant_id: 'tenant-a' }],
+    active_tenant: { id: 'tenant-a' },
+    active_workspace: { id: 'ws_a' },
+  };
+}
+
 import { POST } from '../cms-agent/undo/route';
 
 function makeRequest(body: unknown, opts: { cookie?: string } = {}): Request {
@@ -39,18 +60,26 @@ function makeRequest(body: unknown, opts: { cookie?: string } = {}): Request {
   });
 }
 
-const authCookie = `admin_secret=${ADMIN_SECRET}`;
+const authCookie = 'lumitra_session=good';
 
 beforeEach(() => {
   vi.clearAllMocks();
-  process.env.FRAMER_CLONE_ADMIN_SECRET = ADMIN_SECRET;
+  mockVerifySession.mockResolvedValue(sessionA());
+  mockCan.mockResolvedValue(true);
 });
 
 describe('POST /api/ai/cms-agent/undo', () => {
-  it('returns 401 without an admin cookie', async () => {
+  it('returns 401 without a session cookie', async () => {
     prisma.agentChange.findMany.mockResolvedValue([]);
     const res = await POST(makeRequest({ runId: 'run1' }));
     expect(res.status).toBe(401);
+  });
+
+  it('returns 403 when the user is not a workspace admin', async () => {
+    mockCan.mockResolvedValue(false);
+    prisma.agentChange.findMany.mockResolvedValue([]);
+    const res = await POST(makeRequest({ runId: 'run1' }, { cookie: authCookie }));
+    expect(res.status).toBe(403);
   });
 
   it('replays inverses (already DESC) and returns the undone count', async () => {

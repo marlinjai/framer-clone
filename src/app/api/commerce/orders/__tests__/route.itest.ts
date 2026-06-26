@@ -33,6 +33,15 @@ let prisma: PrismaClient | undefined;
 // the route's getPrismaClient() (lazy singleton) connects to the test database.
 let POST: (req: Request) => Promise<Response>;
 
+// D4: anonymous orders resolve their tenant from the storefront HOST. Order
+// requests carry this published storefront's Host header so the route's
+// resolvePublishedSite() gate lets them through (a host that does not resolve to
+// a published site is a 403). `teststore.example.com` -> subdomain `teststore`
+// (parseSubdomain's no-baseHost rule needs >= 3 labels), which beforeAll seeds
+// as a PUBLISHED site + SiteDomain.
+const STOREFRONT_SUBDOMAIN = 'teststore';
+const STOREFRONT_HOST = `${STOREFRONT_SUBDOMAIN}.example.com`;
+
 function makeUrl(host: string, port: number): string {
   return `postgresql://test:test@${host}:${port}/framer_clone_test`;
 }
@@ -60,6 +69,33 @@ beforeAll(async () => {
   ({ POST } = await import('../route'));
 
   prisma = new PrismaClient({ datasourceUrl: url });
+
+  // D4: the order-create route gates on the request Host resolving to a
+  // PUBLISHED site (resolvePublishedSite, public schema). Seed one published
+  // site whose subdomain the order requests carry as their Host, so the gate
+  // passes and the order logic under test runs.
+  const site = await prisma.site.create({
+    data: {
+      workspaceId: 'test-ws',
+      tenantGroupId: 'test-tg',
+      name: 'Test Store',
+      status: 'published',
+      // app-meaningful timestamps have no DB default (distinct from the row
+      // createdAt/updatedAt), so they must be set explicitly on create.
+      projectCreatedAt: new Date(),
+      projectUpdatedAt: new Date(),
+    },
+  });
+  await prisma.siteDomain.create({
+    data: {
+      siteId: site.id,
+      workspaceId: 'test-ws',
+      tenantGroupId: 'test-tg',
+      subdomain: STOREFRONT_SUBDOMAIN,
+      verificationStatus: 'active',
+      isPrimary: true,
+    },
+  });
 }, 180_000);
 
 afterAll(async () => {
@@ -122,9 +158,11 @@ async function seedBuyableVariant(
 
 function postOrder(body: unknown): Promise<Response> {
   return POST(
-    new Request('http://localhost/api/commerce/orders', {
+    new Request(`http://${STOREFRONT_HOST}/api/commerce/orders`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      // The Host header is what the route reads (req.headers.get('host')) to
+      // resolve the storefront tenant (D4). undici permits setting it here.
+      headers: { 'content-type': 'application/json', host: STOREFRONT_HOST },
       body: JSON.stringify(body),
     }),
   );
@@ -192,11 +230,14 @@ describe('POST /api/commerce/orders (Dockerized Postgres)', () => {
 });
 
 describe('source contract', () => {
-  it('carries the can()-shaped guard seam and STOPS at order-created (no payment)', () => {
+  it('gates on the request host -> published site and STOPS at order-created (no payment)', () => {
     const src = readFileSync(path.resolve(__dirname, '../route.ts'), 'utf8');
-    // The mutation route imports + calls the can()-shaped guard seam.
-    expect(src).toMatch(/from\s+['"]@\/server\/auth\/guard['"]/);
-    expect(src).toMatch(/\bcan\(/);
+    // The anonymous-storefront write gates on the host resolving to a published
+    // site (the D4 contract), NOT an interim super-admin secret.
+    expect(src).toMatch(/from\s+['"]@\/server\/sites\/publicResolver['"]/);
+    expect(src).toMatch(/resolvePublishedSite\(/);
+    // The removed interim super-principal seam must be gone.
+    expect(src).not.toMatch(/from\s+['"]@\/server\/auth\/guard['"]/);
     // checkout STOPS at order-created: no payment integration code.
     expect(src).toMatch(/STOPS at order-created/);
     expect(src).not.toMatch(/from\s+['"][^'"]*stripe[^'"]*['"]/i);

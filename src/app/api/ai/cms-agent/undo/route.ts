@@ -5,7 +5,8 @@
 // Reverses a content-agent run: it loads every AgentChange for the run, sorted
 // by `position` DESC (reverse order of application), and replays each recorded
 // inverse against the CMS adapter directly. Same trust boundary as the agent
-// route: verifyAdminCookie(request) once, then getCmsAdapter() for dispatch.
+// route: the REAL auth-brain path (getVerifiedSession -> resolveActiveScope ->
+// authenticateRequest) once, then getCmsAdapter() for dispatch.
 //
 // Undo is NOT a single transaction. Each inverse is applied independently; if
 // one fails (e.g. a column was manually changed after the run), undo STOPS and
@@ -15,10 +16,12 @@
 //
 //   200 -> { undone, skipped, warnings }
 //   400 -> bad JSON / missing runId
-//   401 -> missing/invalid admin secret
+//   401 -> no session
+//   403 -> no active workspace / not permitted to edit this workspace
 
 import { z } from 'zod';
-import { verifyAdminCookie } from '@/server/auth/adminAction';
+import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
+import { resolveActiveScope } from '@/server/sites';
 import { getCmsAdapter } from '@/server/cms/adapterClient';
 import { getPrismaClient } from '@/server/db';
 import { applyInverse, type CmsAdapter } from '../executor';
@@ -46,10 +49,30 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  if (!verifyAdminCookie(request)) {
+  const session = await getVerifiedSession(request);
+  if (!session) {
     return Response.json(
-      { error: { message: 'admin secret required or invalid', code: 'unauthorized' } },
+      { error: { message: 'authentication required', code: 'unauthorized' } },
       { status: 401 },
+    );
+  }
+  const scopeResult = resolveActiveScope(session);
+  if (!scopeResult.ok) {
+    return Response.json(
+      { error: { message: 'no active workspace', code: 'no_active_workspace' } },
+      { status: 403 },
+    );
+  }
+  const auth = await authenticateRequest(request, scopeResult.scope.workspaceId, 'editSite');
+  if (!auth.authenticated) {
+    return Response.json(
+      {
+        error: {
+          message: auth.error,
+          code: auth.status === 401 ? 'unauthorized' : 'forbidden',
+        },
+      },
+      { status: auth.status },
     );
   }
 

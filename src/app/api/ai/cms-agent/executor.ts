@@ -3,8 +3,9 @@
 // The CMS content agent's tool dispatcher. Each tool call from the route's
 // Anthropic tool-use loop lands here: the input is Zod-validated, then executed
 // DIRECTLY against the CMS data layer (`getCmsAdapter()`, passed in via context)
-// rather than through `actions.ts`. Admin auth was already verified ONCE at the
-// route boundary (verifyAdminCookie), so the executor never reads cookies.
+// rather than through `actions.ts`. Auth (the real auth-brain session + workspace
+// permission) was already verified ONCE at the route boundary, so the executor
+// never reads cookies.
 //
 // Every mutating tool records its EXACT inverse via `ctx.recordChange` so the
 // run is reversible: update/archive/status ops read the previous state BEFORE

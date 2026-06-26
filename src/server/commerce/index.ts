@@ -9,12 +9,12 @@ import 'server-only';
 //   - withTenant + COMMERCE_SCHEMA: the constant-schema SET LOCAL seam.
 //   - the four transport-agnostic repository interfaces.
 //
-// Auth is NOT re-exported and NOT re-created here. Commerce mutation routes
-// REUSE the admin-guard seam owned by Track A's `slice2-admin-guard-stub`
-// (the `requireAdmin` / `can()` shape documented in src/server/README.md).
-// There is one constant workspace in v1, so there is no commerce-specific
-// guard: a mutation route calls the shared guard, then opens `withTenant`,
-// then drives a repository with the tx. Do not add a guard module here.
+// Auth is NOT re-exported and NOT re-created here. Commerce routes own their own
+// boundary: the storefront order-create route gates on the request HOST
+// resolving to a published site (resolvePublishedSite), while authenticated
+// commerce mutations use the real auth-brain path. A route authorizes, then opens
+// `withTenant`, then drives a repository with the tx. Do not add a guard module
+// here.
 //
 // data-table's adapter-prisma is deliberately NOT imported anywhere in this
 // module: its `transaction()` is a verified no-op, so it cannot be the system
