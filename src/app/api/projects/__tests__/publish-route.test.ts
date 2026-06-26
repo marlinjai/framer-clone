@@ -13,7 +13,7 @@
 // resolveActiveScope and the typed error mapping are kept REAL (only
 // getSiteRepository is mocked) so the actual scope/error wiring is exercised.
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const mockVerifySession = vi.fn();
 const mockCan = vi.fn();
@@ -32,6 +32,10 @@ vi.mock('@/server/sites', async (importActual) => {
 });
 
 import { getSiteRepository, SiteNotFoundError } from '@/server/sites';
+// SubdomainAllocationError is not re-exported from the @/server/sites barrel
+// (MT-06 owns that file); import it from the typed-errors module directly so the
+// exhausted-allocation 500 path can be exercised without editing a shared file.
+import { SubdomainAllocationError } from '@/server/sites/errors';
 import { POST } from '../publish/route';
 
 const getRepoMock = vi.mocked(getSiteRepository);
@@ -71,14 +75,39 @@ function publishReq(body: unknown, opts?: { cookie?: string | null }): Request {
   });
 }
 
-function installRepo(repo: { saveProject?: unknown; publishProject?: unknown }) {
-  getRepoMock.mockReturnValue(repo as ReturnType<typeof getSiteRepository>);
+function installRepo(repo: {
+  saveProject?: unknown;
+  publishProject?: unknown;
+  ensureSiteDomain?: unknown;
+  unpublishProject?: unknown;
+}) {
+  // ensureSiteDomain defaults to a STABLE slug so the route's idempotent
+  // contract (re-publish -> same URL) is exercised by default.
+  const withDefaults = {
+    ensureSiteDomain: vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' }),
+    ...repo,
+  };
+  getRepoMock.mockReturnValue(
+    withDefaults as ReturnType<typeof getSiteRepository>,
+  );
 }
+
+const ORIGINAL_BASE_HOST = process.env.PUBLIC_SITE_BASE_HOST;
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockVerifySession.mockReset();
   mockCan.mockReset();
+  // Default to UNSET so a test must opt in to the base host explicitly.
+  delete process.env.PUBLIC_SITE_BASE_HOST;
+});
+
+afterEach(() => {
+  if (ORIGINAL_BASE_HOST === undefined) {
+    delete process.env.PUBLIC_SITE_BASE_HOST;
+  } else {
+    process.env.PUBLIC_SITE_BASE_HOST = ORIGINAL_BASE_HOST;
+  }
 });
 
 describe('POST /api/projects/publish guard', () => {
@@ -120,18 +149,27 @@ describe('POST /api/projects/publish (authorized)', () => {
     mockCan.mockResolvedValue(true);
   });
 
-  it('round-trips the snapshot through saveProject then publishProject under the session scope', async () => {
+  it('round-trips the snapshot through saveProject then publishProject then ensureSiteDomain under the session scope', async () => {
     const save = vi.fn().mockResolvedValue(undefined);
     const publish = vi.fn().mockResolvedValue(undefined);
-    installRepo({ saveProject: save, publishProject: publish });
+    const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
+    installRepo({
+      saveProject: save,
+      publishProject: publish,
+      ensureSiteDomain: ensure,
+    });
 
     const res = await POST(publishReq({ project: PROJECT }));
 
     expect(res.status).toBe(200);
+    // PUBLIC_SITE_BASE_HOST is unset here -> liveUrl is null but the subdomain
+    // is still surfaced.
     expect(await res.json()).toEqual({
       siteId: 'site_1',
       status: 'published',
       publishedPages: ['', 'about'],
+      subdomain: 'demo-abc123',
+      liveUrl: null,
     });
     // Scope comes from the SERVER session, not the body.
     expect(save).toHaveBeenCalledWith(
@@ -139,10 +177,84 @@ describe('POST /api/projects/publish (authorized)', () => {
       expect.objectContaining({ id: 'site_1' }),
     );
     expect(publish).toHaveBeenCalledWith(SCOPE, 'site_1');
-    // publish runs AFTER the snapshot is persisted.
+    expect(ensure).toHaveBeenCalledWith(SCOPE, 'site_1');
+    // The pipeline runs in order: save -> publish -> ensureSiteDomain.
     expect(save.mock.invocationCallOrder[0]).toBeLessThan(
       publish.mock.invocationCallOrder[0],
     );
+    expect(publish.mock.invocationCallOrder[0]).toBeLessThan(
+      ensure.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('composes liveUrl from PUBLIC_SITE_BASE_HOST when it is set', async () => {
+    process.env.PUBLIC_SITE_BASE_HOST = 'sites.lumitra.co';
+    const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
+    installRepo({
+      saveProject: vi.fn().mockResolvedValue(undefined),
+      publishProject: vi.fn().mockResolvedValue(undefined),
+      ensureSiteDomain: ensure,
+    });
+
+    const res = await POST(publishReq({ project: PROJECT }));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.subdomain).toBe('demo-abc123');
+    expect(json.liveUrl).toBe('https://demo-abc123.sites.lumitra.co');
+  });
+
+  it('returns liveUrl: null (but still the subdomain) when PUBLIC_SITE_BASE_HOST is unset (local dev)', async () => {
+    delete process.env.PUBLIC_SITE_BASE_HOST;
+    const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
+    installRepo({
+      saveProject: vi.fn().mockResolvedValue(undefined),
+      publishProject: vi.fn().mockResolvedValue(undefined),
+      ensureSiteDomain: ensure,
+    });
+
+    const res = await POST(publishReq({ project: PROJECT }));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.subdomain).toBe('demo-abc123');
+    expect(json.liveUrl).toBeNull();
+  });
+
+  it('is idempotent: re-publishing the same site returns the same subdomain/liveUrl', async () => {
+    process.env.PUBLIC_SITE_BASE_HOST = 'sites.lumitra.co';
+    // ensureSiteDomain models MT-06 idempotency: it always returns the stable
+    // already-allocated slug for this site.
+    const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
+    installRepo({
+      saveProject: vi.fn().mockResolvedValue(undefined),
+      publishProject: vi.fn().mockResolvedValue(undefined),
+      ensureSiteDomain: ensure,
+    });
+
+    const first = await (await POST(publishReq({ project: PROJECT }))).json();
+    const second = await (await POST(publishReq({ project: PROJECT }))).json();
+
+    expect(first.subdomain).toBe('demo-abc123');
+    expect(first.liveUrl).toBe('https://demo-abc123.sites.lumitra.co');
+    expect(second.subdomain).toBe(first.subdomain);
+    expect(second.liveUrl).toBe(first.liveUrl);
+  });
+
+  it('surfaces an exhausted-collision allocation as a loud 500 (never a silent success)', async () => {
+    const ensure = vi
+      .fn()
+      .mockRejectedValue(new SubdomainAllocationError('site_1', 5));
+    installRepo({
+      saveProject: vi.fn().mockResolvedValue(undefined),
+      publishProject: vi.fn().mockResolvedValue(undefined),
+      ensureSiteDomain: ensure,
+    });
+
+    const res = await POST(publishReq({ project: PROJECT }));
+
+    expect(res.status).toBe(500);
+    expect((await res.json()).error.code).toBe('subdomain_allocation_failed');
   });
 
   it('preserves the full opaque page snapshot when saving (no field stripping)', async () => {
