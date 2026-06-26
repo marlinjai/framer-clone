@@ -17,9 +17,17 @@
 //      decrement (the 3 stacked guards). The server computes the authoritative
 //      integer-cents totals/tax; any client-sent total would be ignored.
 //
-// checkout STOPS at order-created: there is NO payment provider, NO Stripe, and
-// NO redirect to pay anywhere in this route (E8, deferred). A successful order
-// is the end of this seam.
+// checkout STOPS at order-created on the SERVER: there is NO payment provider, NO
+// Stripe, and NO redirect to pay anywhere in this route. The storefront's
+// fake-pay demo step runs CLIENT-side after this seam (it never calls this
+// route), and a real provider would plug in behind its own payment route, not
+// here. A successful order is the end of THIS seam.
+//
+// IDEMPOTENCY: the client MAY send its own `idempotencyKey` (one per checkout
+// attempt). It becomes the order's request_id, so a double-submit or a
+// back-then-resubmit of the SAME cart returns the SAME order (createOrder is
+// idempotent on request_id) instead of creating a duplicate. When omitted, the
+// server generates a fresh per-request key (the prior behavior).
 //
 // The mutation is wrapped by the slice2-admin-guard-stub can()-shaped guard
 // seam (one constant tenant), so the later auth-brain swap is an ADAPTER change
@@ -76,6 +84,10 @@ const orderLineSchema = z
 const orderBodySchema = z
   .object({
     lines: z.array(orderLineSchema).min(1),
+    // Optional client-owned idempotency key for one checkout attempt. Bounded so
+    // a malformed/oversized value is a 400, never trusted as a request_id. Stays
+    // `.strict()`-compatible: a price/stock/total key is still rejected.
+    idempotencyKey: z.string().min(8).max(200).optional(),
   })
   .strict();
 
@@ -146,7 +158,7 @@ export async function POST(req: Request): Promise<Response> {
 
   const parsed = await parseBody(req, orderBodySchema);
   if (!parsed.ok) return parsed.response;
-  const { lines } = parsed.data;
+  const { lines, idempotencyKey } = parsed.data;
 
   try {
     const prisma = getPrismaClient();
@@ -159,7 +171,9 @@ export async function POST(req: Request): Promise<Response> {
     // the inventory identity. createOrder ignores any client total; here the
     // client never sends one at all.
     const cart: Cart = {
-      requestId: newRequestId(),
+      // The client-owned idempotency key when present (so a re-submit dedupes to
+      // the same order), else a fresh server-owned key.
+      requestId: idempotencyKey ?? newRequestId(),
       currency: DEFAULT_CURRENCY,
       taxRegion: ORDER_TAX_REGION,
       lines: resolved.map((line) => ({
