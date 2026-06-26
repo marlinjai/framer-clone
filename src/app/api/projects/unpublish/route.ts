@@ -32,6 +32,10 @@ import {
   SiteRepositoryError,
 } from '@/server/sites';
 import { jsonError, parseBody } from '@/lib/api/respond';
+import {
+  resolveSubdomainForSiteId,
+  revalidateSiteCache,
+} from '@/server/sites/cachedResolver';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -82,6 +86,13 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const repo = getSiteRepository();
     await repo.unpublishProject(scope, siteId);
+    // Invalidate the origin render cache (MT-17) so the now-draft site stops
+    // being served from cache on the next request. The SiteDomain row survives
+    // an unpublish (MT-06 D3), so its subdomain is still readable here — that is
+    // the same `site:<subdomain>` tag the resolver cached under. A site with no
+    // allocated subdomain has nothing cached, so there is nothing to revalidate.
+    const subdomain = await resolveSubdomainForSiteId(siteId);
+    if (subdomain) revalidateSiteCache(subdomain);
   } catch (err) {
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
     return jsonError(
