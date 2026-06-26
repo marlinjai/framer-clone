@@ -41,11 +41,14 @@ const DEMO_TENANT_GROUP_ID = 'demo-tenant-group';
 
 /** The hostname base the published storefront is served under (the smoke uses a
  *  three-label host `demo.<base>` so parseSubdomain yields `demo`). */
-export const DEMO_BASE_HOST = 'lumitra.site';
+// Env-overridable so the prod hosted-demo seed can target the real host/subdomain
+// (e.g. DEMO_BASE_HOST=lumitra.co DEMO_PUBLISHED_SUBDOMAIN=app). Defaults keep the
+// integration test (which asserts on these constants) on demo.lumitra.site.
+export const DEMO_BASE_HOST = process.env.DEMO_BASE_HOST ?? 'lumitra.site';
 /** The subdomain label that resolves the PUBLISHED demo site. */
-export const DEMO_PUBLISHED_SUBDOMAIN = 'demo';
+export const DEMO_PUBLISHED_SUBDOMAIN = process.env.DEMO_PUBLISHED_SUBDOMAIN ?? 'demo';
 /** The subdomain label that resolves the DRAFT site (must NOT publish). */
-export const DEMO_DRAFT_SUBDOMAIN = 'draftdemo';
+export const DEMO_DRAFT_SUBDOMAIN = process.env.DEMO_DRAFT_SUBDOMAIN ?? 'draftdemo';
 
 /** The 3 assertable Events row titles (proves CMS Collection hydration). */
 export const DEMO_EVENT_TITLES = [
