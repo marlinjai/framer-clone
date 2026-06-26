@@ -135,10 +135,13 @@ canonical Terraform HCL and the known boot-failure table).
    deploy-verify job calls `curl ""` and fails.)
 
 7. **Switch the Coolify build pack** from "dockerfile" to "docker image",
-   image `ghcr.io/marlinjai/framer-clone:latest`. Then trigger the first deploy:
-   `gh workflow run deploy --ref main` (or push to main). Watch the Deployments
-   tab go green within ~90s; if the container is unhealthy, pull logs via the
-   Coolify MCP and consult the skill's boot-failure table.
+   image `ghcr.io/marlinjai/framer-clone:latest`. `deploy.yml` ships as
+   `workflow_dispatch`-only (so it does not auto-run before the infra exists);
+   trigger the first deploy by hand: `gh workflow run deploy --ref main`. Watch
+   the Deployments tab go green within ~90s; if the container is unhealthy, pull
+   logs via the Coolify MCP and consult the skill's boot-failure table. For
+   continuous deploy, add the `push: [main]` trigger back to `deploy.yml` (the
+   commented block at the top of the file) once the first manual deploy is green.
 
 8. **Analytics key (BLOCKED dependency).** The real PUBLIC `ap_live_` ingestion
    key is minted via the auth-brain machine API, which is NOT yet merged/deployed

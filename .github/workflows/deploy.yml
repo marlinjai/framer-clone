@@ -14,15 +14,22 @@
 # PREREQUISITES (one-time, see deploy/README.md): the Coolify app must exist and
 # be switched to the "docker image" build pack pointing at
 # ghcr.io/marlinjai/framer-clone:latest, and the repo must carry the
-# COOLIFY_WEBHOOK + COOLIFY_TOKEN secrets. Until then this workflow's
-# deploy-verify job will fail loudly (by design), never deploy silently.
+# COOLIFY_WEBHOOK + COOLIFY_TOKEN secrets. Until then the deploy-verify job fails
+# loudly (by design), never deploys silently.
+#
+# TRIGGER: manual (`workflow_dispatch`) for now, so committing this config does
+# NOT start pushing GHCR images / failing deploys on every unrelated merge before
+# the infra exists. Run it by hand to validate the Docker build / first deploy
+# (`gh workflow run deploy --ref main`). At go-live, add the push trigger for
+# continuous deploy:
+#   on:
+#     push:
+#       branches: [main]
+#     workflow_dispatch:
 
 name: deploy
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 concurrency:
