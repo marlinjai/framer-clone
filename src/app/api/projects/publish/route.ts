@@ -71,14 +71,21 @@ export async function POST(req: Request): Promise<Response> {
   const body = await parseBody(req, publishBodySchema);
   if (!body.ok) return body.response;
 
-  // 5. Persist the snapshot, then transition the site to published. A
-  //    cross-workspace site id is rejected (SiteNotFoundError -> 404) inside the
-  //    repository; any other failure is a loud 500.
+  // 5. Persist the snapshot, transition the site to published, then allocate
+  //    (or return the already-allocated) subdomain. A cross-workspace site id is
+  //    rejected (SiteNotFoundError -> 404) inside the repository; an exhausted
+  //    subdomain allocation surfaces the typed SubdomainAllocationError (-> 500
+  //    via siteRepositoryErrorResponse); any other failure is a loud 500. A
+  //    publish is NEVER swallowed into a silent success-with-no-URL.
   const project = body.data.project as unknown as ProjectSnapshotOut;
+  let subdomain: string;
   try {
     const repo = getSiteRepository();
     await repo.saveProject(scope, project);
     await repo.publishProject(scope, project.id);
+    // ensureSiteDomain is idempotent: a re-publish returns the SAME slug, so the
+    // live URL is stable across publish/unpublish/re-publish cycles.
+    ({ subdomain } = await repo.ensureSiteDomain(scope, project.id));
   } catch (err) {
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
     return jsonError(
@@ -88,6 +95,12 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
+  // Compose the live URL from the server-read base host. Unset (local dev)
+  // returns liveUrl: null but STILL surfaces the allocated subdomain — the route
+  // never hardcodes the base host.
+  const baseHost = process.env.PUBLIC_SITE_BASE_HOST;
+  const liveUrl = baseHost ? `https://${subdomain}.${baseHost}` : null;
+
   const publishedPages = Object.values(body.data.project.pages).map(
     (page) => page.slug ?? '',
   );
@@ -95,5 +108,7 @@ export async function POST(req: Request): Promise<Response> {
     siteId: project.id,
     status: 'published',
     publishedPages,
+    subdomain,
+    liveUrl,
   });
 }
