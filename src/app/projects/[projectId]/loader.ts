@@ -47,11 +47,14 @@ export type ProjectLoadResult =
  * bounce contract (proto + forwarded host + path), and matching the MT-09
  * dashboard loader's shape.
  */
-async function buildLoginUrl(projectId: string): Promise<string> {
+async function buildLoginUrl(
+  projectId: string,
+  returnPathSuffix: string,
+): Promise<string> {
   const h = await headers();
   const proto = h.get('x-forwarded-proto') || 'https';
   const host = h.get('x-forwarded-host') || h.get('host') || '';
-  const returnTo = `${proto}://${host}/projects/${projectId}`;
+  const returnTo = `${proto}://${host}/projects/${projectId}${returnPathSuffix}`;
 
   const loginUrl = new URL('/login', AUTH_BRAIN_URL);
   loginUrl.searchParams.set('return_to', returnTo);
@@ -63,9 +66,14 @@ async function buildLoginUrl(projectId: string): Promise<string> {
  * project serialized to a snapshot the client editor hydrates, OR a fail-closed
  * `unauthenticated`/`not_found` result. The page is the only thing that
  * performs the redirect / `notFound()`.
+ *
+ * `returnPathSuffix` is appended to the `return_to` so a consumer route deeper
+ * than the editor (e.g. the MT-11 preview at `/projects/<id>/preview`) bounces
+ * the user back to ITSELF after login, not the editor. Defaults to '' (editor).
  */
 export async function loadProjectSnapshot(
   projectId: string,
+  returnPathSuffix = '',
 ): Promise<ProjectLoadResult> {
   const jar = await cookies();
   const cookie = jar.get(SESSION_COOKIE)?.value;
@@ -80,14 +88,14 @@ export async function loadProjectSnapshot(
     }
   }
   if (!session) {
-    return { status: 'unauthenticated', loginUrl: await buildLoginUrl(projectId) };
+    return { status: 'unauthenticated', loginUrl: await buildLoginUrl(projectId, returnPathSuffix) };
   }
 
   // Scope is derived from the SERVER session only. No active workspace ->
   // treat as unauthenticated (bounce to login), never guess a workspace.
   const scopeResult = resolveActiveScope(session);
   if (!scopeResult.ok) {
-    return { status: 'unauthenticated', loginUrl: await buildLoginUrl(projectId) };
+    return { status: 'unauthenticated', loginUrl: await buildLoginUrl(projectId, returnPathSuffix) };
   }
 
   try {
