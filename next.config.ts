@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Emit `.next/standalone` (a self-contained server.js + a curated node_modules
+  // subset) so the production Docker image runs `node server.js` without shipping
+  // the full dependency tree. Required by the Coolify/Hetzner Dockerfile.
+  output: 'standalone',
   turbopack: {
     root: __dirname,
   },

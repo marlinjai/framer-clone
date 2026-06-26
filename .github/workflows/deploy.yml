@@ -1,0 +1,90 @@
+# Build + push the framer-clone Docker image to GHCR, then trigger the Coolify
+# deploy via the shared reusable workflow that polls the health endpoint until
+# green (or fails the run).
+#
+# Runner: ubuntu-24.04-arm (aarch64). The shared Hetzner Coolify host is aarch64
+# (Ampere); a linux/amd64 image fails to pull there with "no matching manifest
+# for linux/arm64/v8". Building on the ARM runner is faster than amd64
+# cross-compile and matches the runtime exactly.
+#
+# The verify gate (typecheck / lint / unit + integration tests / build) is owned
+# by ci.yml, which runs on every push + PR to main; main is protected so it is
+# always green when this deploy runs.
+#
+# PREREQUISITES (one-time, see deploy/README.md): the Coolify app must exist and
+# be switched to the "docker image" build pack pointing at
+# ghcr.io/marlinjai/framer-clone:latest, and the repo must carry the
+# COOLIFY_WEBHOOK + COOLIFY_TOKEN secrets. Until then this workflow's
+# deploy-verify job will fail loudly (by design), never deploy silently.
+
+name: deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/framer-clone
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase image name
+        id: image
+        run: echo "name=$(echo '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:latest
+            ${{ steps.image.outputs.name }}:${{ github.sha }}
+          build-args: |
+            COMMIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-verify:
+    needs: build-and-push
+    permissions:
+      contents: read
+      deployments: write
+    uses: marlinjai/actions-shared/.github/workflows/coolify-deploy-verify.yml@v1
+    with:
+      health_url: https://app.lumitra.co/api/health
+      environment: production
+      max_wait_seconds: 180
+    secrets:
+      coolify_webhook: ${{ secrets.COOLIFY_WEBHOOK }}
+      coolify_token: ${{ secrets.COOLIFY_TOKEN }}
