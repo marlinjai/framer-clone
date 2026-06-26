@@ -22,7 +22,7 @@ import 'server-only';
 // (can the caller act in this workspace) is the route's `can()` boundary; this
 // layer is the data-scoping boundary.
 
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
 import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
 import {
@@ -31,7 +31,22 @@ import {
   type PersistedSite,
   type SiteRowData,
 } from './snapshot';
-import { InvalidTenantScopeError, SiteNotFoundError } from './errors';
+import {
+  InvalidTenantScopeError,
+  SiteNotFoundError,
+  SubdomainAllocationError,
+} from './errors';
+import { generateSubdomain } from './subdomain';
+
+/**
+ * Bounded retries for the DB-enforced subdomain allocation. Each attempt
+ * generates a fresh random label and tries to INSERT it; a `P2002` against the
+ * `@@unique([subdomain])` index means another site already holds that label, so
+ * we regenerate and retry. At length-12 over a 36-char alphabet a single
+ * collision is ~nil, so 5 attempts is a generous ceiling whose only purpose is
+ * to never loop forever — exhaustion throws a loud 500 rather than spinning.
+ */
+const SUBDOMAIN_ALLOCATION_ATTEMPTS = 5;
 
 /**
  * The tenant scope every repository call is bound to. Resolved by the caller
@@ -259,6 +274,108 @@ export class SiteRepository {
     const result = await this.prisma.site.updateMany({
       where: { id: siteId, workspaceId: scope.workspaceId },
       data: { status: 'published' },
+    });
+    if (result.count === 0) throw new SiteNotFoundError(siteId);
+  }
+
+  /**
+   * Allocate (or return the already-allocated) `*.sites.lumitra.co` subdomain
+   * for a site, scoped to the caller's workspace. This is the first-publish
+   * door MT-07's publish route calls AFTER `publishProject`.
+   *
+   * IDEMPOTENT: if the site already has a `SiteDomain` row carrying a non-null
+   * `subdomain`, that label is returned UNCHANGED — re-publishing a site never
+   * moves its URL. Only the first publish allocates.
+   *
+   * The site is verified to live in the caller's workspace first; a site id in
+   * another workspace throws SiteNotFoundError and NEVER reaches the allocator,
+   * so a subdomain is never minted across the isolation boundary.
+   *
+   * Collision-avoidance is DB-ENFORCED, not check-then-insert: the allocator
+   * generates a label and INSERTs it, relying on the `@@unique([subdomain])`
+   * index to reject a clash with a Prisma `P2002`. On `P2002` it regenerates and
+   * retries, bounded by {@link SUBDOMAIN_ALLOCATION_ATTEMPTS}; exhausting the
+   * retries throws a loud {@link SubdomainAllocationError} (500) rather than a
+   * silent success. The written label is ALWAYS non-null (a NULL subdomain does
+   * not participate in the partial-unique index and would defeat enforcement).
+   */
+  async ensureSiteDomain(
+    scope: TenantScope,
+    siteId: string,
+  ): Promise<{ subdomain: string }> {
+    assertScope(scope);
+
+    // Verify the site is in THIS workspace before allocating. A site in another
+    // workspace returns null (workspace_id is in the where-clause) and is
+    // indistinguishable from a missing site — existence never leaks, and a
+    // subdomain is never minted across the boundary.
+    const site = await this.prisma.site.findFirst({
+      where: { id: siteId, workspaceId: scope.workspaceId },
+      select: { id: true },
+    });
+    if (!site) throw new SiteNotFoundError(siteId);
+
+    // Idempotency: a re-publish must keep the SAME URL. If any domain row for
+    // this site already carries a non-null subdomain, return it untouched.
+    const existing = await this.prisma.siteDomain.findFirst({
+      where: { siteId, subdomain: { not: null } },
+      select: { subdomain: true },
+    });
+    if (existing?.subdomain) {
+      return { subdomain: existing.subdomain };
+    }
+
+    // First publish: allocate. Generate a fresh label and INSERT it, letting the
+    // unique index referee uniqueness. On a P2002 clash, regenerate and retry.
+    for (let attempt = 1; attempt <= SUBDOMAIN_ALLOCATION_ATTEMPTS; attempt++) {
+      const subdomain = generateSubdomain();
+      try {
+        await this.prisma.siteDomain.create({
+          data: {
+            siteId,
+            workspaceId: scope.workspaceId,
+            tenantGroupId: scope.tenantGroupId,
+            subdomain,
+            verificationStatus: 'active',
+            isPrimary: true,
+          },
+        });
+        return { subdomain };
+      } catch (err) {
+        // P2002 = unique-constraint violation. Only the subdomain index can
+        // realistically clash here; regenerate and retry within the bound. Any
+        // other error (or exhaustion) is not swallowed.
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002'
+        ) {
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    // Every attempt collided — astronomically unlikely, so a real occurrence is
+    // a loud signal, never a silent publish-with-no-URL.
+    throw new SubdomainAllocationError(siteId, SUBDOMAIN_ALLOCATION_ATTEMPTS);
+  }
+
+  /**
+   * Transition a site back to `draft`, scoped to the caller's workspace — the
+   * inverse of {@link publishProject}. Like publish, the status flip is scoped
+   * by BOTH id AND workspace_id (via updateMany), so an unpublish of a site
+   * owned by another workspace matches zero rows and throws SiteNotFoundError
+   * rather than silently un-publishing a foreign tenant's row.
+   *
+   * The `SiteDomain` row is deliberately PRESERVED (decision D3): re-publishing
+   * the site reuses its existing slug so the URL is stable across a
+   * publish/unpublish/re-publish cycle.
+   */
+  async unpublishProject(scope: TenantScope, siteId: string): Promise<void> {
+    assertScope(scope);
+    const result = await this.prisma.site.updateMany({
+      where: { id: siteId, workspaceId: scope.workspaceId },
+      data: { status: 'draft' },
     });
     if (result.count === 0) throw new SiteNotFoundError(siteId);
   }

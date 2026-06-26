@@ -9,9 +9,23 @@
 // repository passes down.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
 import ProjectModel from '@/models/ProjectModel';
 import { SiteRepository, type TenantScope } from '../repository';
-import { SiteNotFoundError, InvalidTenantScopeError } from '../errors';
+import {
+  SiteNotFoundError,
+  InvalidTenantScopeError,
+  SubdomainAllocationError,
+} from '../errors';
+
+/** A Prisma unique-constraint violation against the subdomain index. */
+function p2002(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+    code: 'P2002',
+    clientVersion: 'test',
+    meta: { target: ['subdomain'] },
+  });
+}
 
 const SCOPE: TenantScope = {
   workspaceId: 'ws_marlin',
@@ -35,9 +49,15 @@ function makeFakePrisma() {
     upsert: vi.fn(),
     deleteMany: vi.fn(),
   };
+  const siteDomain = {
+    findFirst: vi.fn(),
+    create: vi.fn(),
+    deleteMany: vi.fn(),
+  };
   const prisma = {
     site,
     sitePage,
+    siteDomain,
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn(prisma),
     ),
@@ -201,6 +221,136 @@ describe('SiteRepository.publishProject', () => {
   it('rejects an empty scope', async () => {
     await expect(
       repo.publishProject({ workspaceId: '', tenantGroupId: 'tg' }, 'site_1'),
+    ).rejects.toBeInstanceOf(InvalidTenantScopeError);
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('SiteRepository.ensureSiteDomain', () => {
+  it('returns an existing non-null subdomain UNCHANGED (re-publish is a no-op)', async () => {
+    prisma.site.findFirst.mockResolvedValue({ id: 'site_1' });
+    prisma.siteDomain.findFirst.mockResolvedValue({ subdomain: 'coolteal42abc' });
+
+    const result = await repo.ensureSiteDomain(SCOPE, 'site_1');
+
+    expect(result).toEqual({ subdomain: 'coolteal42abc' });
+    // Idempotent: it must NOT allocate a second row.
+    expect(prisma.siteDomain.create).not.toHaveBeenCalled();
+  });
+
+  it('allocates a non-null subdomain row stamped with scope, active + primary', async () => {
+    prisma.site.findFirst.mockResolvedValue({ id: 'site_1' });
+    prisma.siteDomain.findFirst.mockResolvedValue(null);
+    prisma.siteDomain.create.mockResolvedValue({});
+
+    const result = await repo.ensureSiteDomain(SCOPE, 'site_1');
+
+    expect(typeof result.subdomain).toBe('string');
+    expect(result.subdomain.length).toBeGreaterThan(0);
+
+    const createArg = prisma.siteDomain.create.mock.calls[0][0];
+    expect(createArg.data.subdomain).toBe(result.subdomain);
+    expect(createArg.data.subdomain).not.toBeNull();
+    expect(createArg.data.workspaceId).toBe('ws_marlin');
+    expect(createArg.data.tenantGroupId).toBe('tg_lumitra');
+    expect(createArg.data.siteId).toBe('site_1');
+    expect(createArg.data.verificationStatus).toBe('active');
+    expect(createArg.data.isPrimary).toBe(true);
+  });
+
+  it('retries on a P2002 collision and RESOLVES to a label', async () => {
+    prisma.site.findFirst.mockResolvedValue({ id: 'site_1' });
+    prisma.siteDomain.findFirst.mockResolvedValue(null);
+    // First insert collides, second succeeds — DB-enforced, not check-then-insert.
+    prisma.siteDomain.create
+      .mockRejectedValueOnce(p2002())
+      .mockResolvedValueOnce({});
+
+    const result = await repo.ensureSiteDomain(SCOPE, 'site_1');
+
+    expect(typeof result.subdomain).toBe('string');
+    expect(prisma.siteDomain.create).toHaveBeenCalledTimes(2);
+    // The retry regenerated a fresh label rather than reusing the colliding one.
+    const first = prisma.siteDomain.create.mock.calls[0][0].data.subdomain;
+    const second = prisma.siteDomain.create.mock.calls[1][0].data.subdomain;
+    expect(second).toBe(result.subdomain);
+    expect(first).not.toBe(second);
+  });
+
+  it('throws a LOUD SubdomainAllocationError (500) when retries are exhausted', async () => {
+    prisma.site.findFirst.mockResolvedValue({ id: 'site_1' });
+    prisma.siteDomain.findFirst.mockResolvedValue(null);
+    // Every attempt collides.
+    prisma.siteDomain.create.mockRejectedValue(p2002());
+
+    let err: SubdomainAllocationError | undefined;
+    try {
+      await repo.ensureSiteDomain(SCOPE, 'site_1');
+    } catch (e) {
+      err = e as SubdomainAllocationError;
+    }
+    expect(err).toBeInstanceOf(SubdomainAllocationError);
+    expect(err?.status).toBe(500);
+    expect(err?.code).toBe('subdomain_allocation_failed');
+  });
+
+  it('does NOT swallow a non-P2002 error from the insert', async () => {
+    prisma.site.findFirst.mockResolvedValue({ id: 'site_1' });
+    prisma.siteDomain.findFirst.mockResolvedValue(null);
+    const boom = new Error('connection reset');
+    prisma.siteDomain.create.mockRejectedValue(boom);
+
+    await expect(repo.ensureSiteDomain(SCOPE, 'site_1')).rejects.toBe(boom);
+  });
+
+  it('throws SiteNotFoundError for a site id in ANOTHER workspace (never allocates across the boundary)', async () => {
+    // workspace_id is in the where-clause, so a foreign site returns null.
+    prisma.site.findFirst.mockResolvedValue(null);
+
+    await expect(
+      repo.ensureSiteDomain(SCOPE, 'site_other_ws'),
+    ).rejects.toBeInstanceOf(SiteNotFoundError);
+    expect(prisma.siteDomain.create).not.toHaveBeenCalled();
+
+    expect(prisma.site.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'site_other_ws', workspaceId: 'ws_marlin' },
+      }),
+    );
+  });
+
+  it('rejects an empty scope', async () => {
+    await expect(
+      repo.ensureSiteDomain({ workspaceId: '', tenantGroupId: 'tg' }, 'site_1'),
+    ).rejects.toBeInstanceOf(InvalidTenantScopeError);
+    expect(prisma.site.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe('SiteRepository.unpublishProject', () => {
+  it('flips status to draft scoped by id AND workspace_id, and does NOT delete the SiteDomain', async () => {
+    prisma.site.updateMany.mockResolvedValue({ count: 1 });
+
+    await repo.unpublishProject(SCOPE, 'site_1');
+
+    expect(prisma.site.updateMany).toHaveBeenCalledWith({
+      where: { id: 'site_1', workspaceId: 'ws_marlin' },
+      data: { status: 'draft' },
+    });
+    // D3: the slug is preserved for a stable URL on re-publish.
+    expect(prisma.siteDomain.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('throws SiteNotFoundError when no row in the workspace matched', async () => {
+    prisma.site.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      repo.unpublishProject(SCOPE, 'site_other_ws'),
+    ).rejects.toBeInstanceOf(SiteNotFoundError);
+  });
+
+  it('rejects an empty scope', async () => {
+    await expect(
+      repo.unpublishProject({ workspaceId: '', tenantGroupId: 'tg' }, 'site_1'),
     ).rejects.toBeInstanceOf(InvalidTenantScopeError);
     expect(prisma.site.updateMany).not.toHaveBeenCalled();
   });

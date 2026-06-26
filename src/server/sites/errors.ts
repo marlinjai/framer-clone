@@ -53,6 +53,23 @@ export class InvalidTenantScopeError extends SiteRepositoryError {
 }
 
 /**
+ * Subdomain allocation exhausted its bounded P2002 retries — every generated
+ * label collided with an existing one. At length-12 over a 36-char alphabet
+ * this is astronomically unlikely, so a real occurrence is a LOUD signal (a
+ * broken generator, a poisoned index, or an attack) and must surface as a 500,
+ * NEVER a silent success that publishes a site with no URL. 500.
+ */
+export class SubdomainAllocationError extends SiteRepositoryError {
+  constructor(siteId: string, attempts: number) {
+    super(
+      'subdomain_allocation_failed',
+      `could not allocate a unique subdomain for site "${siteId}" after ${attempts} attempts`,
+      500,
+    );
+  }
+}
+
+/**
  * Map any {@link SiteRepositoryError} to its Track-0 error envelope. A route
  * matches `instanceof SiteRepositoryError` once and returns this.
  */
