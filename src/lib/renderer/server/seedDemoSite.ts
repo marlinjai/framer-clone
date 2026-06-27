@@ -21,23 +21,41 @@
 // so the thin `scripts/seed-demo.ts` wrapper can run it against a live database
 // for the prod demo. It is the ONE source of truth for the demo shape.
 //
-// This module deliberately uses the REAL write seams (catalogRepository /
-// pricingRepository under withTenant, the CMS PrismaAdapter) so the seeded rows
-// are exactly what the read path expects: a mocked seed could not catch a real
-// schema/mapping mismatch, which is the whole point of the smoke.
+// This module deliberately uses the REAL write seams (the NEW Kysely catalog /
+// pricing repos over a scoped `commerceTenantDb(tgId)` handle, the CMS
+// PrismaAdapter) so the seeded rows are exactly what the read path expects: a
+// mocked seed could not catch a real schema/mapping mismatch, which is the whole
+// point of the smoke.
+//
+// CM-12 — every COMMERCE write routes through ONE scoped `commerceTenantDb(tgId)`
+// Kysely handle (each bare table resolves to `tg_<id>.<table>`): the catalog /
+// pricing writes via `catalogRepositoryKysely` / `pricingRepositoryKysely`, and
+// the 3 ex-direct inventory creates (stock_location / inventory_item /
+// inventory_level — the only commerce writes that used to bypass `withTenant`)
+// are now schema-qualified inserts on the SAME handle. No commerce write bypasses
+// it. The non-commerce CMS writes (site / sitePage / siteDomain, the CMS
+// collection adapter) stay on Prisma — they are NOT part of this migration. This
+// removed the last `withTenant` importer (CM-13 then deletes withTenant.ts).
 
+import { randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
+import type { Kysely } from 'kysely';
 import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 
 import { CMS_WORKSPACE_ID } from '@/lib/cms/constants';
-import { withTenant } from '@/server/commerce/withTenant';
-import { catalogRepository } from '@/server/commerce/repository/catalog';
-import { pricingRepository } from '@/server/commerce/repository/pricing';
+import { commerceTenantDb, type CommerceDB } from '@/server/commerce/db';
+import { catalogRepositoryKysely } from '@/server/commerce/repository/catalog';
+import { pricingRepositoryKysely } from '@/server/commerce/repository/pricing';
 
-// The demo's isolation boundary. v1 is single-tenant; these are opaque ids that
-// stamp every seeded Site / SitePage / SiteDomain row.
+// The demo's isolation boundary. The CMS rows isolate by `workspace_id`; the
+// commerce rows isolate by the `tg_<id>` schema DERIVED from this tenant-group id
+// (so it MUST be a strict UUID — the tenant-db chokepoint validates it). Exported
+// so the backfill (provisioning/backfill-demo.ts) + `pnpm db:backfill-demo` derive
+// the SAME `tg_<demo>` schema this seed writes into. Env-overridable so a prod
+// seed can target a specific provisioned tenant-group.
 const DEMO_WORKSPACE_ID = CMS_WORKSPACE_ID;
-const DEMO_TENANT_GROUP_ID = 'demo-tenant-group';
+export const DEMO_TENANT_GROUP_ID =
+  process.env.DEMO_TENANT_GROUP_ID ?? '018f9c10-0000-7000-8000-0000000000de';
 
 /** The hostname base the published storefront is served under (the smoke uses a
  *  three-label host `demo.<base>` so parseSubdomain yields `demo`). */
@@ -112,61 +130,75 @@ export interface SeededDemo {
  * advisory-availability read (variant.sku -> inventory_item.sku) resolves real
  * stock. Returns nothing; the ProductList lists the whole catalog by title.
  */
-async function seedProduct(prisma: PrismaClient, spec: ProductSpec): Promise<void> {
-  const product = await withTenant(prisma, (tx) =>
-    catalogRepository.createProduct(tx, { title: spec.title, handle: spec.handle }),
-  );
-  const option = await withTenant(prisma, (tx) =>
-    catalogRepository.addOption(tx, { productId: product.id, title: spec.optionTitle }),
-  );
+async function seedProduct(db: Kysely<CommerceDB>, spec: ProductSpec): Promise<void> {
+  const product = await catalogRepositoryKysely.createProduct(db, {
+    title: spec.title,
+    handle: spec.handle,
+  });
+  const option = await catalogRepositoryKysely.addOption(db, {
+    productId: product.id,
+    title: spec.optionTitle,
+  });
 
   for (const entry of spec.values) {
-    const optionValue = await withTenant(prisma, (tx) =>
-      catalogRepository.addOptionValue(tx, { optionId: option.id, value: entry.value }),
-    );
-    const variant = await withTenant(prisma, (tx) =>
-      catalogRepository.addVariant(tx, {
-        productId: product.id,
-        title: `${spec.title} / ${entry.value}`,
-        sku: entry.sku,
-      }),
-    );
+    const optionValue = await catalogRepositoryKysely.addOptionValue(db, {
+      optionId: option.id,
+      value: entry.value,
+    });
+    const variant = await catalogRepositoryKysely.addVariant(db, {
+      productId: product.id,
+      title: `${spec.title} / ${entry.value}`,
+      sku: entry.sku,
+    });
     // Assign the variant its single option value (the AFTER-trigger recompute
     // makes the combination unique per product at the database level).
-    await withTenant(prisma, (tx) =>
-      catalogRepository.setVariantOptions(tx, variant.id, [
-        { optionId: option.id, optionValueId: optionValue.id },
-      ]),
-    );
+    await catalogRepositoryKysely.setVariantOptions(db, variant.id, [
+      { optionId: option.id, optionValueId: optionValue.id },
+    ]);
 
     // Price: a base price in integer minor units (cents).
-    const priceSet = await withTenant(prisma, (tx) =>
-      pricingRepository.createPriceSet(tx, { variantId: variant.id }),
-    );
-    await withTenant(prisma, (tx) =>
-      pricingRepository.addPrice(tx, {
-        priceSetId: priceSet.id,
-        currency: 'EUR',
-        amount: entry.amountCents,
-      }),
-    );
+    const priceSet = await pricingRepositoryKysely.createPriceSet(db, {
+      variantId: variant.id,
+    });
+    await pricingRepositoryKysely.addPrice(db, {
+      priceSetId: priceSet.id,
+      currency: 'EUR',
+      amount: entry.amountCents,
+    });
 
-    // Inventory: an item keyed by the SAME sku the variant carries, plus a level
-    // with real stock at a location (advisory availability reads stocked-reserved).
-    const location = await prisma.stockLocation.create({
-      data: { name: `Demo Warehouse (${entry.sku})` },
-    });
-    const item = await prisma.inventoryItem.create({
-      data: { sku: entry.sku, title: `${spec.title} ${entry.value}` },
-    });
-    await prisma.inventoryLevel.create({
-      data: {
-        inventoryItemId: item.id,
-        locationId: location.id,
-        stockedQuantity: entry.stock,
-        reservedQuantity: 0,
-      },
-    });
+    // Inventory: the 3 ex-direct `prisma.stockLocation/inventoryItem/inventoryLevel
+    // .create` calls (the ONLY commerce writes that used to bypass `withTenant`)
+    // are now schema-qualified inserts on the SAME scoped handle. An item keyed by
+    // the SAME sku the variant carries, plus a level with real stock at a location
+    // (advisory availability reads the GENERATED stocked-reserved column). id /
+    // updated_at are supplied app-side (no DB default; see catalog.ts header).
+    const locationId = randomUUID();
+    await db
+      .insertInto('stock_location')
+      .values({ id: locationId, name: `Demo Warehouse (${entry.sku})`, updated_at: new Date() })
+      .execute();
+    const inventoryItemId = randomUUID();
+    await db
+      .insertInto('inventory_item')
+      .values({
+        id: inventoryItemId,
+        sku: entry.sku,
+        title: `${spec.title} ${entry.value}`,
+        updated_at: new Date(),
+      })
+      .execute();
+    // available_quantity is GENERATED (stocked - reserved): OMITTED, never written.
+    await db
+      .insertInto('inventory_level')
+      .values({
+        id: randomUUID(),
+        inventory_item_id: inventoryItemId,
+        location_id: locationId,
+        stocked_quantity: entry.stock,
+        reserved_quantity: 0,
+        updated_at: new Date(),
+      })
+      .execute();
   }
 }
 
@@ -325,15 +357,43 @@ function buildHomeSnapshot(args: {
   };
 }
 
+/** Options for {@link seedDemoSite}. */
+export interface SeedDemoOptions {
+  /**
+   * The scoped commerce handle EVERY commerce write routes through. Defaults to
+   * `commerceTenantDb(tenantGroupId)` (built from COMMERCE_APP_DATABASE_URL).
+   * Tests inject a handle scoped to a provisioned `tg_<id>` schema on the test
+   * container (so the seed never needs the app-role env).
+   */
+  commerceDb?: Kysely<CommerceDB>;
+  /**
+   * The demo tenant-group id stamped on the Site / SitePage / SiteDomain rows AND
+   * used to derive the default commerce handle's `tg_<id>` schema. Defaults to
+   * {@link DEMO_TENANT_GROUP_ID}. MUST be a strict UUID (the tenant-db chokepoint
+   * validates it when deriving the schema).
+   */
+  tenantGroupId?: string;
+}
+
 /**
- * Seed the full coherent demo against `prisma` and return the ids + assertable
- * strings. Idempotency is NOT a goal: it expects a fresh (migrated, empty)
+ * Seed the full coherent demo and return the ids + assertable strings. The
+ * COMMERCE catalog is written through the scoped `commerceTenantDb(tgId)` handle
+ * (into `tg_<demo>`); the CMS + Site rows are written through `prisma`.
+ * Idempotency is NOT a goal: it expects a fresh (migrated/provisioned, empty)
  * database, exactly as the integration harness and a first prod-demo seed give.
  */
-export async function seedDemoSite(prisma: PrismaClient): Promise<SeededDemo> {
-  // 1) Commerce catalog (products + variants + prices + inventory).
+export async function seedDemoSite(
+  prisma: PrismaClient,
+  opts: SeedDemoOptions = {},
+): Promise<SeededDemo> {
+  const tenantGroupId = opts.tenantGroupId ?? DEMO_TENANT_GROUP_ID;
+  // The ONE scoped commerce handle. EVERY commerce write below routes through it
+  // (each bare table resolves to `tg_<id>.<table>`); nothing bypasses it.
+  const db = opts.commerceDb ?? commerceTenantDb(tenantGroupId);
+
+  // 1) Commerce catalog (products + variants + prices + inventory) -> tg_<demo>.
   for (const spec of PRODUCT_SPECS) {
-    await seedProduct(prisma, spec);
+    await seedProduct(db, spec);
   }
 
   // 2) CMS Events collection (through the adapter the read path uses).
@@ -349,7 +409,7 @@ export async function seedDemoSite(prisma: PrismaClient): Promise<SeededDemo> {
       description: 'Render smoke demo site',
       status: 'published',
       workspaceId: DEMO_WORKSPACE_ID,
-      tenantGroupId: DEMO_TENANT_GROUP_ID,
+      tenantGroupId,
       lumitraEnabled: false,
       projectCreatedAt: now,
       projectUpdatedAt: now,
@@ -359,7 +419,7 @@ export async function seedDemoSite(prisma: PrismaClient): Promise<SeededDemo> {
     data: {
       siteId: site.id,
       workspaceId: DEMO_WORKSPACE_ID,
-      tenantGroupId: DEMO_TENANT_GROUP_ID,
+      tenantGroupId,
       pageId: homePageId,
       slug: homeSlug,
       // Stored as JSON; read back as PageSnapshotOut by the resolver.
@@ -375,7 +435,7 @@ export async function seedDemoSite(prisma: PrismaClient): Promise<SeededDemo> {
     data: {
       siteId: site.id,
       workspaceId: DEMO_WORKSPACE_ID,
-      tenantGroupId: DEMO_TENANT_GROUP_ID,
+      tenantGroupId,
       subdomain: DEMO_PUBLISHED_SUBDOMAIN,
       verificationStatus: 'active',
       isPrimary: true,
@@ -389,7 +449,7 @@ export async function seedDemoSite(prisma: PrismaClient): Promise<SeededDemo> {
       description: 'Unpublished site',
       status: 'draft',
       workspaceId: DEMO_WORKSPACE_ID,
-      tenantGroupId: DEMO_TENANT_GROUP_ID,
+      tenantGroupId,
       lumitraEnabled: false,
       projectCreatedAt: now,
       projectUpdatedAt: now,
@@ -399,7 +459,7 @@ export async function seedDemoSite(prisma: PrismaClient): Promise<SeededDemo> {
     data: {
       siteId: draftSite.id,
       workspaceId: DEMO_WORKSPACE_ID,
-      tenantGroupId: DEMO_TENANT_GROUP_ID,
+      tenantGroupId,
       subdomain: DEMO_DRAFT_SUBDOMAIN,
       verificationStatus: 'pending',
       isPrimary: true,
