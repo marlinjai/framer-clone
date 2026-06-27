@@ -31,6 +31,7 @@ import {
 } from '@/server/sites';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 import { jsonError, parseBody } from '@/lib/api/respond';
+import { revalidateSiteCache } from '@/server/sites/cachedResolver';
 import { projectBodySchema as publishBodySchema } from '../_schema';
 
 export const runtime = 'nodejs';
@@ -86,6 +87,10 @@ export async function POST(req: Request): Promise<Response> {
     // ensureSiteDomain is idempotent: a re-publish returns the SAME slug, so the
     // live URL is stable across publish/unpublish/re-publish cycles.
     ({ subdomain } = await repo.ensureSiteDomain(scope, project.id));
+    // Invalidate the origin render cache (MT-17) for THIS host so the next
+    // storefront request re-reads and serves the freshly-published content. The
+    // tag matches the subdomain the resolver keys on (`site:<subdomain>`).
+    revalidateSiteCache(subdomain);
   } catch (err) {
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
     return jsonError(

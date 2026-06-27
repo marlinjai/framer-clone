@@ -31,7 +31,6 @@ import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 
 import {
-  resolvePublishedSite,
   matchPageBySlug,
   resolvePublicIngestionKey,
   resolveTrackerScriptSrc,
@@ -40,6 +39,7 @@ import {
   type PublishedSite,
   type MatchedPage,
 } from '@/server/sites/publicResolver';
+import { getCachedPublishedSite } from '@/server/sites/cachedResolver';
 import { getCmsRepository } from '@/server/cms';
 import { getCommerceServerRepository } from '@/server/commerce/repository/read';
 import { resolveCommerceSchemaForSite } from '@/server/commerce/tenant';
@@ -60,12 +60,18 @@ interface SitePageProps {
 }
 
 /**
- * Resolve the published site for the current request Host, deduped within a
- * single request so `generateMetadata` and the page body share one DB read.
+ * Resolve the published site for the current request Host. Two layers of
+ * caching, complementary:
+ *   - React `cache()` dedupes within ONE request so `generateMetadata` and the
+ *     page body share a single resolution call.
+ *   - `getCachedPublishedSite` (MT-17) caches CROSS-request, keyed by the host's
+ *     subdomain and tagged `site:<subdomain>`, so the O(pages) DB read happens
+ *     once per publish instead of on every storefront hit. Publish/unpublish
+ *     invalidate that tag.
  */
 const resolveSiteForRequest = cache(async (): Promise<PublishedSite | null> => {
   const host = (await headers()).get('host');
-  return resolvePublishedSite(host);
+  return getCachedPublishedSite(host);
 });
 
 /** Match the published site + the requested slug to a single page (with params). */

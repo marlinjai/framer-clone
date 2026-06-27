@@ -31,7 +31,16 @@ vi.mock('@/server/sites', async (importActual) => {
   return { ...actual, getSiteRepository: vi.fn() };
 });
 
+// MT-17: the route invalidates the origin render cache after a successful
+// publish. The cache module is mocked so the assertion is DB- and
+// Next-runtime-free; the real caching contract is covered in cachedResolver.test.
+vi.mock('@/server/sites/cachedResolver', () => ({
+  revalidateSiteCache: vi.fn(),
+  resolveSubdomainForSiteId: vi.fn(),
+}));
+
 import { getSiteRepository, SiteNotFoundError } from '@/server/sites';
+import { revalidateSiteCache } from '@/server/sites/cachedResolver';
 // SubdomainAllocationError is not re-exported from the @/server/sites barrel
 // (MT-06 owns that file); import it from the typed-errors module directly so the
 // exhausted-allocation 500 path can be exercised without editing a shared file.
@@ -185,6 +194,21 @@ describe('POST /api/projects/publish (authorized)', () => {
     expect(publish.mock.invocationCallOrder[0]).toBeLessThan(
       ensure.mock.invocationCallOrder[0],
     );
+  });
+
+  it('invalidates the origin render cache for the published subdomain (MT-17)', async () => {
+    const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
+    installRepo({
+      saveProject: vi.fn().mockResolvedValue(undefined),
+      publishProject: vi.fn().mockResolvedValue(undefined),
+      ensureSiteDomain: ensure,
+    });
+
+    const res = await POST(publishReq({ project: PROJECT }));
+
+    expect(res.status).toBe(200);
+    // The tag the resolver caches under is keyed by the subdomain.
+    expect(revalidateSiteCache).toHaveBeenCalledWith('demo-abc123');
   });
 
   it('composes liveUrl from PUBLIC_SITE_BASE_HOST when it is set', async () => {

@@ -35,11 +35,26 @@ vi.mock('@/server/sites', async (importActual) => {
   return { ...actual, getSiteRepository: vi.fn() };
 });
 
+// MT-17: unpublish invalidates the origin render cache. The cache module is
+// mocked — resolveSubdomainForSiteId stands in for the surviving SiteDomain
+// lookup, and revalidateSiteCache is asserted. The real caching contract is
+// covered in cachedResolver.test.
+vi.mock('@/server/sites/cachedResolver', () => ({
+  revalidateSiteCache: vi.fn(),
+  resolveSubdomainForSiteId: vi.fn(),
+}));
+
 import { getSiteRepository, SiteNotFoundError } from '@/server/sites';
+import {
+  revalidateSiteCache,
+  resolveSubdomainForSiteId,
+} from '@/server/sites/cachedResolver';
 import { POST } from '../unpublish/route';
 import { POST as PUBLISH } from '../publish/route';
 
 const getRepoMock = vi.mocked(getSiteRepository);
+const resolveSubdomainMock = vi.mocked(resolveSubdomainForSiteId);
+const revalidateMock = vi.mocked(revalidateSiteCache);
 
 const SCOPE = { workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra' };
 
@@ -159,6 +174,29 @@ describe('POST /api/projects/unpublish (authorized)', () => {
     expect(await res.json()).toEqual({ siteId: 'site_1', status: 'draft' });
     // Scope comes from the SERVER session, not the body.
     expect(unpublish).toHaveBeenCalledWith(SCOPE, 'site_1');
+  });
+
+  it('invalidates the origin render cache for the site\'s surviving subdomain (MT-17)', async () => {
+    installRepo({ unpublishProject: vi.fn().mockResolvedValue(undefined) });
+    // The SiteDomain row survives an unpublish, so the subdomain is still
+    // resolvable and is the tag the resolver cached under.
+    resolveSubdomainMock.mockResolvedValue('demo-abc123');
+
+    const res = await POST(unpublishReq({ siteId: 'site_1' }));
+
+    expect(res.status).toBe(200);
+    expect(resolveSubdomainMock).toHaveBeenCalledWith('site_1');
+    expect(revalidateMock).toHaveBeenCalledWith('demo-abc123');
+  });
+
+  it('does not revalidate when the site has no allocated subdomain', async () => {
+    installRepo({ unpublishProject: vi.fn().mockResolvedValue(undefined) });
+    resolveSubdomainMock.mockResolvedValue(null);
+
+    const res = await POST(unpublishReq({ siteId: 'site_1' }));
+
+    expect(res.status).toBe(200);
+    expect(revalidateMock).not.toHaveBeenCalled();
   });
 
   it('400s on a malformed body (no siteId)', async () => {
