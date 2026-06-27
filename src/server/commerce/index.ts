@@ -37,5 +37,11 @@ export {
   commerceReadRepository,
   getCommerceServerRepository,
   type CommerceReadRepository,
+  // CM-07 EXPAND — the NEW Kysely read path, re-exported ALONGSIDE the Prisma
+  // path above. CM-10 wires the render path/routes to getCommerceServerRepositoryDb;
+  // CM-13 deletes the Prisma path and renames these to canonical.
+  commerceReadRepositoryKysely,
+  getCommerceServerRepositoryDb,
+  type CommerceReadRepositoryKysely,
 } from './repository/read';
 export type { CommerceServerRepository } from '@/lib/renderer/publish/hydrateBindings';
