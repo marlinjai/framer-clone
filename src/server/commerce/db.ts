@@ -37,15 +37,14 @@ import { assertBackstop, tenantDb } from '@marlinjai/tenant-db';
 export { tenantDb } from '@marlinjai/tenant-db';
 
 /**
- * The typed commerce Database shape. CM-05 (kysely-codegen) replaces this
- * placeholder with the real generated interface in db-types.ts (global tables
- * under a `public.<name>` key, commerce tables under bare keys, Generated<> on
- * the GENERATED/trigger columns). Until then it is an empty interface so the
- * base singleton + backstop can stand up without the table types: CM-02 never
- * issues a structured query, it only opens the connection and checks the path.
+ * The typed commerce Database shape (CM-05). The real generated interface lives
+ * in db-types.ts: global tables under a `public.<name>` key, the 19 commerce
+ * tables under bare keys, Generated<> on the GENERATED/trigger/defaulted
+ * columns. Re-exported here so every repo imports `CommerceDB` from the data-
+ * layer entrypoint, and `createNodeDb<CommerceDB>` below is typed against it.
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface CommerceDB {}
+import type { CommerceDB } from './db-types';
+export type { CommerceDB } from './db-types';
 
 /**
  * Build the base (un-scoped) commerce Kysely instance from the low-privilege
