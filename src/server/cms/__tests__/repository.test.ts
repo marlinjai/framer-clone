@@ -38,6 +38,15 @@ const FIXED_DATE = new Date('2026-06-16T12:00:00.000Z');
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The by-id reads (getCollection / listRows / getRow) resolve the target table
+  // up to its owning workspace and refuse any table outside the bound workspace
+  // (default 'test-workspace'). Provide a same-workspace table by default so the
+  // mapping tests exercise the happy path; cross-workspace tests override this.
+  getTable.mockResolvedValue({
+    id: 'collection-1',
+    name: 'Blog Posts',
+    workspaceId: 'test-workspace',
+  });
 });
 
 describe('CmsReadRepository.listRows -> RowsPage mapping', () => {
@@ -226,5 +235,89 @@ describe('CmsReadRepository.listCollections / getCollection mapping', () => {
     getTable.mockResolvedValue(null);
     const collection = await getCmsRepository().getCollection('nope');
     expect(collection).toBeNull();
+  });
+});
+
+// MT-14 read-isolation: a repo bound to workspace A must refuse a by-id read of
+// a table owned by workspace B. Cross-workspace and missing are INDISTINGUISHABLE
+// (same not-found result), so a known foreign uuid never leaks existence.
+describe('CmsReadRepository by-id reads are scoped to the bound workspace', () => {
+  // The ws-b table, addressable only by a known id; getRows/getColumns would
+  // happily return its data if the workspace boundary were not enforced.
+  const WS_B_TABLE = { id: 'tbl-ws-b', name: 'Foreign', workspaceId: 'ws-b' };
+
+  it('getCollection(<ws-b table>) from a ws-a repo returns null', async () => {
+    getTable.mockResolvedValue(WS_B_TABLE);
+    getColumns.mockResolvedValue([
+      { id: 'c1', tableId: 'tbl-ws-b', name: 'Secret', type: 'text', position: 0 },
+    ]);
+
+    const collection = await getCmsRepository('ws-a').getCollection('tbl-ws-b');
+    expect(collection).toBeNull();
+  });
+
+  it('listRows(<ws-b table>) from a ws-a repo returns an empty page (no rows leaked)', async () => {
+    getTable.mockResolvedValue(WS_B_TABLE);
+    getRows.mockResolvedValue({
+      items: [
+        {
+          id: 'row-secret',
+          tableId: 'tbl-ws-b',
+          cells: { title: 'Should never surface' },
+          archived: false,
+          createdAt: FIXED_DATE,
+          updatedAt: FIXED_DATE,
+        },
+      ],
+      total: 1,
+      hasMore: false,
+    });
+
+    const page = await getCmsRepository('ws-a').listRows('tbl-ws-b');
+    expect(page).toEqual({ rows: [], nextCursor: undefined, total: 0 });
+    // The foreign table's rows are never even queried.
+    expect(getRows).not.toHaveBeenCalled();
+  });
+
+  it('getRow(<ws-b table>, rowId) from a ws-a repo returns null', async () => {
+    getTable.mockResolvedValue(WS_B_TABLE);
+    getRow.mockResolvedValue({
+      id: 'row-secret',
+      tableId: 'tbl-ws-b',
+      cells: { title: 'Should never surface' },
+      archived: false,
+      createdAt: FIXED_DATE,
+      updatedAt: FIXED_DATE,
+    });
+
+    const row = await getCmsRepository('ws-a').getRow('tbl-ws-b', 'row-secret');
+    expect(row).toBeNull();
+  });
+
+  it('same-workspace by-id reads still work', async () => {
+    const WS_A_TABLE = { id: 'tbl-ws-a', name: 'Mine', workspaceId: 'ws-a' };
+    getTable.mockResolvedValue(WS_A_TABLE);
+    getColumns.mockResolvedValue([
+      { id: 'c1', tableId: 'tbl-ws-a', name: 'Title', type: 'text', position: 0 },
+    ]);
+    getRows.mockResolvedValue({ items: [], total: 0, hasMore: false, cursor: undefined });
+    getRow.mockResolvedValue({
+      id: 'row-mine',
+      tableId: 'tbl-ws-a',
+      cells: { title: 'Mine' },
+      archived: false,
+      createdAt: FIXED_DATE,
+      updatedAt: FIXED_DATE,
+    });
+
+    const repo = getCmsRepository('ws-a');
+    expect(await repo.getCollection('tbl-ws-a')).not.toBeNull();
+    expect(await repo.listRows('tbl-ws-a')).toEqual({
+      rows: [],
+      nextCursor: undefined,
+      total: 0,
+    });
+    const row = await repo.getRow('tbl-ws-a', 'row-mine');
+    expect(row?.values.title).toBe('Mine');
   });
 });
