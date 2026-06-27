@@ -239,6 +239,12 @@ export interface ProductVariantTable {
   option_signature: Generated<string | null>;
   // Added in 004_pricing_and_tax (per-variant override of product.tax_class).
   tax_class: string | null;
+  // Added in 006_inventory_policy — the Medusa-style purchasability flags.
+  // `Generated<>` because each carries a DB DEFAULT (so inserts may omit them).
+  // manage_inventory default TRUE (our SKU-bridge tracks; diverges from Medusa);
+  // allow_backorder default FALSE (matches Medusa).
+  manage_inventory: Generated<boolean>;
+  allow_backorder: Generated<boolean>;
 }
 
 /** 003_catalog — the variant<->option-value matrix (composite PK). */

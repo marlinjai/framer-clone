@@ -43,6 +43,7 @@ const EXPECTED_MIGRATION_IDS = [
   '003_catalog',
   '004_pricing_and_tax',
   '005_minimal_orders',
+  '006_inventory_policy',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {
@@ -168,7 +169,7 @@ afterAll(async () => {
 
 describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe', () => {
   // --- provisioning result ------------------------------------------------
-  it('provisions tg_<id>, applies all 6 migrations in order, marks active', async () => {
+  it('provisions tg_<id>, applies all 7 migrations in order, marks active', async () => {
     expect(provisionResult?.schema).toBe(SCHEMA);
     expect(provisionResult?.applied).toEqual(EXPECTED_MIGRATION_IDS);
 
@@ -214,7 +215,9 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
   // --- catalog presence of every named CHECK + the composite FK ----------
   it('every named CHECK constraint and the composite FK exist in the schema', async () => {
     const EXPECTED_CHECKS = [
-      'inventory_level_reserved_lte_stocked_check',
+      // NOTE: inventory_level_reserved_lte_stocked_check is intentionally ABSENT
+      // here — 006_inventory_policy DROPs it so backorder can reserve beyond
+      // stock (asserted gone in the dedicated inventory-policy probe below).
       'inventory_level_stocked_nonneg_check',
       'inventory_level_reserved_nonneg_check',
       'price_amount_nonneg_check',
@@ -315,25 +318,69 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
   });
 
   // --- CHECK constraints (each out-of-range insert RAISES) -----------------
-  it('inventory CHECKs reject oversell and negative stock', async () => {
+  // CM-08a — POST-006 reality: the reserved<=stocked oversell CHECK is GONE so a
+  // backorder can reserve beyond stock (available_quantity goes negative = the
+  // backorder depth), while the non-negativity floors stay INTACT.
+  it('backorder allowed (reserved > stocked → available negative); non-neg floors still bite', async () => {
     await inSchema(async (tx) => {
       await tx`INSERT INTO inventory_item (id, sku, updated_at) VALUES ('chk_ii', 'CHK-SKU', now())`;
       await tx`INSERT INTO stock_location (id, name, updated_at) VALUES ('chk_sl', 'Chk Loc', now())`;
     });
-    // reserved > stocked
-    await expect(
-      inSchema((tx) => tx`INSERT INTO inventory_level (id, inventory_item_id, location_id, stocked_quantity, reserved_quantity, updated_at) VALUES ('chk_il1', 'chk_ii', 'chk_sl', 5, 6, now())`),
-    ).rejects.toThrow(/inventory_level_reserved_lte_stocked_check/);
-    // stocked < 0 is rejected. (stocked_nonneg can never be the SOLE violation:
-    // with reserved >= 0, reserved <= stocked < 0 is impossible, so reserved <=
-    // stocked fires first here. Its existence is proven by the catalog probe.)
+
+    // (b) reserved > stocked now SUCCEEDS (the dropped CHECK no longer blocks it)
+    // and the GENERATED available_quantity reads NEGATIVE (= backorder depth).
+    await inSchema(
+      (tx) => tx`INSERT INTO inventory_level (id, inventory_item_id, location_id, stocked_quantity, reserved_quantity, updated_at) VALUES ('chk_il1', 'chk_ii', 'chk_sl', 5, 6, now())`,
+    );
+    const backordered = await inSchema(
+      (tx) => tx`SELECT available_quantity FROM inventory_level WHERE id = 'chk_il1'`,
+    );
+    expect(backordered[0]!.available_quantity).toBe(-1);
+
+    // Pushing reserved even further above stocked via UPDATE also SUCCEEDS and
+    // drives available_quantity more negative (deeper backorder).
+    await inSchema((tx) => tx`UPDATE inventory_level SET reserved_quantity = 9 WHERE id = 'chk_il1'`);
+    const deeper = await inSchema(
+      (tx) => tx`SELECT available_quantity FROM inventory_level WHERE id = 'chk_il1'`,
+    );
+    expect(deeper[0]!.available_quantity).toBe(-4);
+
+    // (c) stocked < 0 still RAISES — only the reserved<=stocked relation is
+    // relaxed; the stocked non-negativity floor remains (and is now the SOLE
+    // violation, since the reserved<=stocked CHECK is gone).
     await expect(
       inSchema((tx) => tx`INSERT INTO inventory_level (id, inventory_item_id, location_id, stocked_quantity, reserved_quantity, updated_at) VALUES ('chk_il2', 'chk_ii', 'chk_sl', -1, 0, now())`),
-    ).rejects.toThrow(/inventory_level_stocked_nonneg_check|inventory_level_reserved_lte_stocked_check/);
-    // reserved < 0
+    ).rejects.toThrow(/inventory_level_stocked_nonneg_check/);
+    // reserved < 0 still RAISES.
     await expect(
       inSchema((tx) => tx`INSERT INTO inventory_level (id, inventory_item_id, location_id, stocked_quantity, reserved_quantity, updated_at) VALUES ('chk_il3', 'chk_ii', 'chk_sl', 0, -1, now())`),
     ).rejects.toThrow(/inventory_level_reserved_nonneg_check/);
+  });
+
+  // CM-08a — the two per-variant purchasability flags exist with the right
+  // defaults (manage_inventory TRUE — our SKU-bridge divergence; allow_backorder
+  // FALSE — Medusa parity).
+  it('product_variant.manage_inventory / allow_backorder exist with defaults true / false', async () => {
+    await inSchema(async (tx) => {
+      await tx`INSERT INTO product (id, title, handle, updated_at) VALUES ('pol_p', 'PolProd', 'pol-handle', now())`;
+      await tx`INSERT INTO product_variant (id, product_id, updated_at) VALUES ('pol_va', 'pol_p', now())`;
+    });
+    const row = await inSchema(
+      (tx) => tx`SELECT manage_inventory, allow_backorder FROM product_variant WHERE id = 'pol_va'`,
+    );
+    expect(row[0]!.manage_inventory).toBe(true);
+    expect(row[0]!.allow_backorder).toBe(false);
+
+    // Both are explicitly overridable (digital/unlimited opts out of tracking;
+    // pre-order opts into backorder).
+    await inSchema(
+      (tx) => tx`INSERT INTO product_variant (id, product_id, manage_inventory, allow_backorder, updated_at) VALUES ('pol_va2', 'pol_p', false, true, now())`,
+    );
+    const overridden = await inSchema(
+      (tx) => tx`SELECT manage_inventory, allow_backorder FROM product_variant WHERE id = 'pol_va2'`,
+    );
+    expect(overridden[0]!.manage_inventory).toBe(false);
+    expect(overridden[0]!.allow_backorder).toBe(true);
   });
 
   it('pricing CHECKs reject negative money, inverted band, mis-cased currency', async () => {
