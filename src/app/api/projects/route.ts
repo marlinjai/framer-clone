@@ -40,9 +40,60 @@ import {
 import ProjectModel, { type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { createIntrinsicComponent } from '@/models/ComponentModel';
 import { jsonError } from '@/lib/api/respond';
+import { provisionCommerceTenant } from '@/server/commerce/provisioning/provision';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+/**
+ * CM-11 — the commerce-tenant ONBOARD HOOK.
+ *
+ * framer-clone does NOT mint tenant-groups: the workspace -> tenant -> tenant_group
+ * hierarchy is owned by auth-brain and arrives on the verified session (scope.ts).
+ * So provisioning is hooked at the first framer-clone path that (a) has a
+ * server-verified `tenantGroupId` AND (b) owns commerce DDL: the project/site
+ * create path. The first time a tenant-group creates a project here, its
+ * `tg_<id>` commerce schema is stood up (migrations + `commerce_app` grants +
+ * the `ext`-locked backstop) on the OWNER connection, out-of-band from the
+ * request's app-role pool.
+ *
+ * Best-effort + non-fatal by design:
+ *  - It runs on the OWNER connection (`provisionCommerceTenant` opens its own),
+ *    NEVER the low-privilege `commerce_app` base handle (no DDL privilege).
+ *  - It is idempotent + advisory-locked in the runner, so calling it on every
+ *    project create is safe: the first call runs the DDL, every later call sees
+ *    the schema already `active` and no-ops in a few ms.
+ *  - It is SKIPPED when `COMMERCE_OWNER_DATABASE_URL` is unset (a CMS-only
+ *    deploy with no commerce engine), so it adds no noise there.
+ *  - A provisioning failure is LOGGED but does NOT fail the CMS project create:
+ *    commerce provisioning is orthogonal to creating a site, and the next create
+ *    (or the explicit CM-12 provision / `pnpm db:migrate-tenants`) retries it.
+ *
+ * FLAG (deferral): there is no job/outbox seam in framer-clone to defer the DDL
+ * to, so the first provision runs inline in this request. Pre-MVP there is one
+ * demo tenant-group, so this fires its full DDL exactly once; thereafter it is a
+ * near-instant no-op. If a background-job seam lands later, move this off the
+ * request path.
+ */
+async function provisionCommerceForScopeBestEffort(
+  tenantGroupId: string,
+  slug: string,
+): Promise<void> {
+  // Skip entirely when the commerce OWNER url is not configured (CMS-only
+  // deploy): no commerce engine to provision, and no error to log.
+  if (!process.env.COMMERCE_OWNER_DATABASE_URL) return;
+  try {
+    await provisionCommerceTenant({ tenantGroupId, slug });
+  } catch (err) {
+    // Non-fatal: the site was created; commerce provisioning will retry on the
+    // next create or via the explicit operator path. Surface it loudly so a
+    // real misconfiguration is visible in logs.
+    console.error(
+      `[commerce] provisionCommerceTenant failed for tenant_group ${tenantGroupId}:`,
+      err,
+    );
+  }
+}
 
 // The only thing the client may influence: a display name. Everything else
 // (id, workspace scope, status, page structure) is server-derived. The body is
@@ -153,6 +204,15 @@ export async function POST(req: Request): Promise<Response> {
       500,
     );
   }
+
+  // 6. CM-11 onboard hook: ensure this tenant-group's `tg_<id>` commerce schema
+  //    exists (idempotent, OWNER connection, best-effort / non-fatal). The
+  //    tenant slug comes from the SERVER-verified session, never the client;
+  //    fall back to the tenant_group id if the tenant isn't on the session.
+  const tenantSlug =
+    session.tenants.find((t) => t.group_id === scope.tenantGroupId)?.slug ??
+    scope.tenantGroupId;
+  await provisionCommerceForScopeBestEffort(scope.tenantGroupId, tenantSlug);
 
   return Response.json({ siteId });
 }
