@@ -49,6 +49,19 @@ import { orderRepository } from '../repository/order';
 import { COMMERCE_SCHEMA } from '../withTenant';
 import type { CreateOrderLineItemInput } from '../repository/types';
 
+// CM-09 EXPAND imports — the NEW Kysely createOrder path lives ALONGSIDE the
+// Prisma one below (parallel-change / expand-contract). It consumes the NEW
+// Kysely pricing (CM-06) + the NEW INNER Kysely reserve (CM-08) + the NEW Kysely
+// order repo (this spec); the old Prisma `createOrder` + `resolvePriorOrder` +
+// `isOrderRequestIdConflict` stay byte-for-byte intact so the orders route keeps
+// compiling. The pure tax functions, `validateCart`, `OrderShortageError`, and
+// `isReserveDuplicate` are SHARED verbatim (DB-free), never duplicated.
+import type { Kysely } from 'kysely';
+import { reserveKysely } from '../inventory/reserve';
+import { pricingRepositoryKysely } from '../repository/pricing';
+import { orderRepositoryKysely } from '../repository/order';
+import type { CommerceDB } from '../db-types';
+
 // German VAT default rates in integer BASIS POINTS (1900 = 19.00%, 700 = 7.00%,
 // 0 = zero-rated). b5 owns only the catalog-side tax_class CLASSIFICATION, not a
 // rate (the bought tax engine is E8), so v1 maps a class to one of these defaults;
@@ -477,4 +490,268 @@ export function validateCart(cart: Cart): void {
     if (!line.variantId) throw new Error('createOrder: line.variantId is required');
     assertPositiveInt(line.quantity, 'line.quantity');
   }
+}
+
+// =============================================================================
+// CM-09 EXPAND — the NEW Kysely cart -> order WRITE, ADDED ALONGSIDE the Prisma
+// `createOrder` above (parallel-change / expand-contract). Everything below is
+// ADDITIVE: the old `createOrder`/`runOrderTransaction`/`resolvePriorOrder`/
+// `isOrderRequestIdConflict` and the pure tax/validation helpers are untouched,
+// so the orders route (CM-10) keeps compiling on the Prisma path and the verify
+// gate stays green. This Kysely path is "dark" until CM-10 flips the route to it;
+// CM-13 deletes the Prisma path and renames `createOrderKysely` -> `createOrder`.
+//
+// It mirrors the Prisma transaction STEP-FOR-STEP, but:
+//   - opens a Kysely transaction at READ COMMITTED (the only isolation the b3
+//     guarded decrement is proven against) with NO `SET LOCAL search_path`: the
+//     scoped `trx` is already schema-qualified (it inherits `withSchema` from
+//     `commerceTenantDb(tgId)`), so structured queries resolve to `tg_<id>` and
+//     the only raw fragment (the order_number_seq read) qualifies via
+//     `tenantSchema(tgId)` inside the repo;
+//   - resolves each line's price through the NEW Kysely pricing (CM-06) and
+//     reserves through the NEW INNER `reserveKysely(trx, tgId, ...)` (CM-08) — NOT
+//     the *WithRetry entrypoint — so a shortage on ANY line throws and rolls back
+//     the WHOLE order (zero reservations, zero order);
+//   - re-detects the order-level UNIQUE(request_id) race on the postgres.js
+//     SQLSTATE `23505` + `constraint_name` (the Prisma error classes are gone on
+//     this path), via `isOrderRequestIdConflictPg`.
+//
+// Money stays server-authoritative integer cents (any cart.clientTotal ignored);
+// the accounting identity total = subtotal + tax_amount holds structurally (each
+// line's gross == net + tax in computeLineTax, and the order sums net->subtotal,
+// tax->tax_amount, gross->total), so the DB `order_total_sum_check` never trips on
+// a real order.
+// =============================================================================
+
+/**
+ * True iff `error` is a postgres.js unique-violation (SQLSTATE 23505) on the
+ * order's UNIQUE(request_id) index (`order_request_id_key`). kysely-postgres-js
+ * rethrows the raw postgres.js `PostgresError`, which carries `.code` ('23505')
+ * and `.constraint_name` (the violated index). Matching the EXACT constraint name
+ * is load-bearing: a miss would treat a duplicate order as a fresh failure (a
+ * CRITICAL risk per the plan), and ANY OTHER 23505 (e.g. the order_number unique,
+ * a real bug) MUST propagate unchanged — it is never swallowed. (Lives alongside
+ * the Prisma `isOrderRequestIdConflict`; that one is untouched.)
+ */
+export function isOrderRequestIdConflictPg(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const e = error as { code?: unknown; constraint_name?: unknown };
+  if (e.code !== '23505') return false;
+  const name = e.constraint_name;
+  if (typeof name !== 'string') return false;
+  return name === 'order_request_id_key' || name.includes('request_id');
+}
+
+/**
+ * cart -> order in ONE Kysely transaction on the scoped `db` (NEW path). Mirrors
+ * {@link createOrder}: returns { ok:true, orderId } on success, the explicit
+ * { ok:false, shortages } when any line short-stocks (the whole order rolls back),
+ * and is idempotent on the order's request_id (a duplicate returns the prior
+ * order). `tgId` is threaded through for the per-tenant order_number_seq read and
+ * the inner reserve's raw guarded UPDATE.
+ */
+export async function createOrderKysely(
+  db: Kysely<CommerceDB>,
+  tgId: string,
+  cart: Cart,
+): Promise<CreateOrderResult> {
+  validateCart(cart);
+
+  try {
+    return await runOrderTransactionKysely(db, tgId, cart);
+  } catch (error) {
+    if (error instanceof OrderShortageError) {
+      // The transaction already rolled back (the throw aborted it); surface the
+      // explicit shortage contract, never a silent success.
+      return { ok: false, shortages: error.shortages };
+    }
+    if (isReserveDuplicate(error) || isOrderRequestIdConflictPg(error)) {
+      // A CONCURRENT duplicate request_id lost the UNIQUE race (on the order row,
+      // or on a per-line reservation via the inner reserve's name-tagged
+      // DuplicateRequestError). The loser rolled back; the winner committed. Re-read
+      // the winner in a FRESH transaction (the aborted one cannot be queried).
+      return resolvePriorOrderKysely(db, cart.requestId);
+    }
+    throw error;
+  }
+}
+
+/** Open the ONE READ COMMITTED Kysely transaction (the isolation b3 proves). */
+function runOrderTransactionKysely(
+  db: Kysely<CommerceDB>,
+  tgId: string,
+  cart: Cart,
+): Promise<CreateOrderResult> {
+  return db
+    .transaction()
+    .setIsolationLevel('read committed')
+    .execute(async (trx) => {
+      // NO `SET LOCAL search_path`: `trx` is already schema-qualified (it inherits
+      // withSchema from commerceTenantDb(tgId)).
+
+      // (1) Sequential idempotency: a prior order with this request_id wins.
+      const prior = await orderRepositoryKysely.findByRequestId(trx, cart.requestId);
+      if (prior) return { ok: true, orderId: prior.id };
+
+      const reverseCharge = cart.reverseCharge ?? false;
+      const kleinunternehmer = cart.kleinunternehmer ?? false;
+      const netOrGross = cart.netOrGross ?? 'net';
+
+      // (2) + (3): resolve prices, snapshot the variant, compute per-line tax.
+      // Reads only; no writes yet, so the totals are known before the order exists.
+      const lines: CreateOrderLineItemInput[] = [];
+      let subtotal = 0;
+      let taxAmount = 0;
+      let total = 0;
+
+      for (const line of cart.lines) {
+        const unitPrice = await pricingRepositoryKysely.resolvePrice(trx, line.variantId, {
+          currency: cart.currency,
+          priceListIds: line.priceListIds ?? [],
+          quantity: line.quantity,
+          now: cart.now,
+        });
+        if (unitPrice == null) {
+          // No applicable price is an error, not a shortage: surface loudly.
+          throw new Error(
+            `createOrderKysely: no price resolved for variant ${line.variantId} in ${cart.currency}`,
+          );
+        }
+        assertNonNegativeIntCents(unitPrice, 'resolved unit price');
+
+        // Snapshot the variant title/sku/tax_class via an INLINE tx read (variant
+        // row + product.tax_class fallback). This is a transaction-scoped read, NOT
+        // routed through the CM-07 read repo. No deleted_at filter: the snapshot is
+        // what a reprint reads, mirroring the Prisma findUnique exactly.
+        const variant = await trx
+          .selectFrom('product_variant')
+          .leftJoin('product', 'product.id', 'product_variant.product_id')
+          .select([
+            'product_variant.title as title',
+            'product_variant.sku as sku',
+            'product_variant.tax_class as variantTaxClass',
+            'product.tax_class as productTaxClass',
+          ])
+          .where('product_variant.id', '=', line.variantId)
+          .executeTakeFirst();
+        const taxClass =
+          line.taxClass ?? variant?.variantTaxClass ?? variant?.productTaxClass ?? null;
+
+        const base = unitPrice * line.quantity;
+        assertNonNegativeIntCents(base, 'line base amount');
+
+        const lineTax = computeLineTax(base, {
+          taxClass,
+          explicitRate: line.taxRate,
+          netOrGross,
+          reverseCharge,
+          kleinunternehmer,
+        });
+
+        lines.push({
+          orderId: '', // filled after the order row is created
+          variantTitle: line.variantTitle ?? variant?.title ?? null,
+          variantSku: line.variantSku ?? variant?.sku ?? null,
+          unitPrice,
+          quantity: line.quantity,
+          subtotal: lineTax.net,
+          taxClass,
+          taxRate: lineTax.rate,
+          taxAmount: lineTax.tax,
+          taxTreatment: lineTax.treatment,
+          variantRef: line.variantRef ?? null,
+          variantRefSource: line.variantRefSource ?? 'none',
+        });
+
+        subtotal += lineTax.net;
+        taxAmount += lineTax.tax;
+        total += lineTax.gross;
+      }
+
+      // (4) server-computed totals (any cart.clientTotal is ignored entirely).
+      assertNonNegativeIntCents(subtotal, 'order subtotal');
+      assertNonNegativeIntCents(taxAmount, 'order tax amount');
+      assertNonNegativeIntCents(total, 'order total');
+
+      const taxNote = kleinunternehmer
+        ? KLEINUNTERNEHMER_NOTICE
+        : reverseCharge
+          ? REVERSE_CHARGE_NOTICE
+          : null;
+
+      // (5) insert the order, then its snapshot line items.
+      const orderNumber = await orderRepositoryKysely.nextOrderNumber(trx, tgId);
+      const order = await orderRepositoryKysely.insertOrder(trx, {
+        orderNumber,
+        requestId: cart.requestId,
+        status: 'confirmed',
+        currency: cart.currency,
+        taxRegion: cart.taxRegion,
+        vatId: cart.vatId ?? null,
+        customerType: cart.customerType ?? 'b2c',
+        reverseCharge,
+        netOrGross,
+        kleinunternehmer,
+        taxNote,
+        subtotal,
+        taxAmount,
+        total,
+      });
+
+      // (6) insert each line, then reserve its stock via the INNER Kysely reserve
+      // so a short-stock on ANY line aborts (and rolls back) the WHOLE transaction.
+      // A backorder line (manage_inventory=true, allow_backorder=true) returns ok
+      // even at negative availability, so it does NOT roll the order back.
+      for (let i = 0; i < lines.length; i += 1) {
+        const lineItem = await orderRepositoryKysely.insertLineItem(trx, {
+          ...lines[i],
+          orderId: order.id,
+        });
+
+        const cartLine = cart.lines[i];
+        const result = await reserveKysely(trx, tgId, {
+          inventoryItemId: cartLine.inventoryItemId,
+          variantId: cartLine.variantId,
+          locationId: cartLine.locationId,
+          needed: cartLine.quantity,
+          // Per-line request_id derived from the order key: stable across retries
+          // (so a re-run is idempotent) and unique per line within the order.
+          requestId: `${cart.requestId}:${i}`,
+          refType: 'order_line',
+          refId: lineItem.id,
+        });
+
+        if (!result.ok) {
+          // Abort: throwing rolls back the order, every line, and every prior
+          // reservation atomically (zero reservations on a shortage).
+          throw new OrderShortageError(result.shortages);
+        }
+      }
+
+      return { ok: true, orderId: order.id };
+    });
+}
+
+/**
+ * Re-read the prior committed order for `requestId` in a FRESH READ COMMITTED
+ * Kysely transaction (NO `SET LOCAL`) and return it as the idempotent success.
+ * If it is somehow absent, surface loudly (never a silent 500). Mirrors the Prisma
+ * {@link resolvePriorOrder}.
+ */
+function resolvePriorOrderKysely(
+  db: Kysely<CommerceDB>,
+  requestId: string,
+): Promise<CreateOrderResult> {
+  return db
+    .transaction()
+    .setIsolationLevel('read committed')
+    .execute(async (trx) => {
+      const prior = await orderRepositoryKysely.findByRequestId(trx, requestId);
+      if (!prior) {
+        throw new Error(
+          `createOrderKysely: request_id ${requestId} hit a UNIQUE violation but no prior order was found`,
+        );
+      }
+      return { ok: true, orderId: prior.id };
+    });
 }
