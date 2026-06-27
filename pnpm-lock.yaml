@@ -26,6 +26,9 @@ importers:
       '@marlinjai/data-table-react':
         specifier: ^0.3.1
         version: 0.3.1(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@marlinjai/tenant-db':
+        specifier: ^0.1.0
+        version: 0.1.0(postgres@3.4.9)
       '@prisma/client':
         specifier: ^6.9.0
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
@@ -155,6 +158,9 @@ importers:
       next-themes:
         specifier: ^0.4.6
         version: 0.4.6(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      postgres:
+        specifier: ^3.4.5
+        version: 3.4.9
       react:
         specifier: 19.1.0
         version: 19.1.0
@@ -995,6 +1001,11 @@ packages:
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
+
+  '@marlinjai/tenant-db@0.1.0':
+    resolution: {integrity: sha512-PFJOHoX9xHupI3l8KSyXSiJwmdJNfsypv0QpEnw0rhBLprNI+x9V5OzXWmMJAgfeVaRRoFWoGGuqvsNWWwu0Eg==}
+    peerDependencies:
+      postgres: '>=3.4.5'
 
   '@mdx-js/mdx@3.1.1':
     resolution: {integrity: sha512-f6ZO2ifpwAQIpzGWaBQT2TXxPv6z3RBzQKpVftEWN78Vl/YweF1uwussDx8ECAXVtr3Rs89fKyG9YlzUs9DyGQ==}
@@ -4082,6 +4093,16 @@ packages:
     resolution: {integrity: sha512-dcS1ul+9tmeD95T+x28/ehLgd9mENa3LsvDTtzm3vyBEO7RPptvAD+t44WVXaUjTBRcrpFeFlC8WCruUR456hw==}
     engines: {node: '>=0.10.0'}
 
+  kysely-postgres-js@2.0.0:
+    resolution: {integrity: sha512-R1tWx6/x3tSatWvsmbHJxpBZYhNNxcnMw52QzZaHKg7ZOWtHib4iZyEaw4gb2hNKVctWQ3jfMxZT/ZaEMK6kBQ==}
+    peerDependencies:
+      kysely: '>= 0.24.0 < 1'
+      postgres: '>= 3.4.0 < 4'
+
+  kysely@0.27.6:
+    resolution: {integrity: sha512-FIyV/64EkKhJmjgC0g2hygpBv5RNWVPyNCqSAD7eTCv6eFWNIi4PN1UvdSJGicN/o35bnevgis4Y0UDC0qi8jQ==}
+    engines: {node: '>=14.0.0'}
+
   langium@4.2.1:
     resolution: {integrity: sha512-zu9QWmjpzJcomzdJQAHgDVhLGq5bLosVak1KVa40NzQHXfqr4eAHupvnPOVXEoLkg6Ocefvf/93d//SB7du4YQ==}
     engines: {node: '>=20.10.0', npm: '>=10.2.3'}
@@ -4719,6 +4740,10 @@ packages:
   postcss@8.5.6:
     resolution: {integrity: sha512-3Ybi1tAuwAP9s0r1UQ2J4n5Y0G05bJkpUIO0/bI9MhwmD70S5aTWbXGBwxHrelT+XM1k6dM0pk+SwNkpTRN7Pg==}
     engines: {node: ^10 || ^12 || >=14}
+
+  postgres@3.4.9:
+    resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
+    engines: {node: '>=12'}
 
   prelude-ls@1.2.1:
     resolution: {integrity: sha512-vkcDPrRZo1QZLbn5RLGPpg/WmIQ65qoWWhcGKf/b5eplkkarX0m9z8ppCat4mlOqUsWpyNuYgO3VRyrYHSzX5g==}
@@ -6457,6 +6482,12 @@ snapshots:
       '@marlinjai/data-table-core': 0.3.0
       react: 19.1.0
       react-dom: 19.1.0(react@19.1.0)
+
+  '@marlinjai/tenant-db@0.1.0(postgres@3.4.9)':
+    dependencies:
+      kysely: 0.27.6
+      kysely-postgres-js: 2.0.0(kysely@0.27.6)(postgres@3.4.9)
+      postgres: 3.4.9
 
   '@mdx-js/mdx@3.1.1':
     dependencies:
@@ -9838,6 +9869,13 @@ snapshots:
 
   kind-of@6.0.3: {}
 
+  kysely-postgres-js@2.0.0(kysely@0.27.6)(postgres@3.4.9):
+    dependencies:
+      kysely: 0.27.6
+      postgres: 3.4.9
+
+  kysely@0.27.6: {}
+
   langium@4.2.1:
     dependencies:
       chevrotain: 11.1.2
@@ -10733,6 +10771,8 @@ snapshots:
       nanoid: 3.3.11
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  postgres@3.4.9: {}
 
   prelude-ls@1.2.1: {}
 
