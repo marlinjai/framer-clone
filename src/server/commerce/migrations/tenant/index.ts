@@ -5,6 +5,7 @@ import { guardedReservation } from './002_guarded_reservation';
 import { catalog } from './003_catalog';
 import { pricingAndTax } from './004_pricing_and_tax';
 import { minimalOrders } from './005_minimal_orders';
+import { inventoryPolicy } from './006_inventory_policy';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -29,6 +30,8 @@ import { minimalOrders } from './005_minimal_orders';
  *   004_pricing_and_tax    — pricing graph, credit_note(_ref), money/currency CHECKs
  *   005_minimal_orders     — order, order_line_item, order_number_seq, the
  *                            accounting-identity CHECK, the credit_note->order FK
+ *   006_inventory_policy   — product_variant.manage_inventory / allow_backorder
+ *                            flags; DROP the reserved<=stocked CHECK (backorder)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -37,4 +40,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   catalog,
   pricingAndTax,
   minimalOrders,
+  inventoryPolicy,
 ];
