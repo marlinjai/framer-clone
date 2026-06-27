@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "db:public": "tsx scripts/db-public.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
@@ -107,6 +108,7 @@
     "prisma": "^6.9.0",
     "tailwindcss": "^4",
     "testcontainers": "^12.0.2",
+    "tsx": "^4.19.0",
     "tw-animate-css": "^1.3.7",
     "typescript": "^5",
     "vitest": "^4.1.4"
