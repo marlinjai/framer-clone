@@ -33,6 +33,11 @@ import type {
 } from './types';
 import type { Price, PriceSet, Prisma } from '@prisma/client';
 
+// CM-06 EXPAND imports — the Kysely path lives ALONGSIDE the Prisma path below.
+import { randomUUID } from 'node:crypto';
+import type { Kysely, Selectable } from 'kysely';
+import type { CommerceDB, PriceSetTable, PriceTable } from '../db-types';
+
 // A price row joined with its (optional) price_list, the shape resolvePrice reads.
 type PriceWithList = Prisma.PriceGetPayload<{ include: { priceList: true } }>;
 
@@ -151,6 +156,179 @@ export const pricingRepository: PricingRepository = {
     // amount wins (sale semantics). This is integer comparison only: the returned
     // value is a stored Int (cents), never a computed float.
     const listPrices = applicable.filter((price) => price.priceListId != null);
+    const tier = listPrices.length > 0 ? listPrices : applicable;
+
+    let best = tier[0].amount;
+    for (const price of tier) {
+      if (price.amount < best) best = price.amount;
+    }
+    return best;
+  },
+};
+
+// =============================================================================
+// CM-06 EXPAND — the Kysely pricing repository (NEW), added ALONGSIDE the Prisma
+// `pricingRepository` above. Both paths COEXIST through CM-12 (plan §10): the old
+// Prisma object keeps every current caller compiling and serving the demo; this
+// Kysely object is "dark" until CM-10 wires it; CM-13 then deletes the Prisma
+// path. This is a pure ADDITION — no existing signature changes (expand-contract).
+//
+// Each method takes a `db: Kysely<CommerceDB>` first — the per-request scoped
+// handle whose bare table identifiers already resolve to `tg_<id>.<table>`.
+//
+// MONEY STAYS INTEGER CENTS. addPrice re-uses the SAME `assertIntegerCents`
+// boundary guard as the Prisma path (it is not duplicated or weakened), and
+// resolvePrice performs the IDENTICAL three-step resolution (quantity band ->
+// active-list window -> lowest-amount tie-break) with INTEGER comparisons only:
+// it returns the stored Int amount unchanged and does NO float math. The winning
+// price is byte-for-byte the same row the Prisma `resolvePrice` would pick.
+//
+// id / updated_at are SUPPLIED by app code: the CM-04 DDL declares them NOT NULL
+// with no DB default (CM-05 types them as required), so we mint a uuid and stamp
+// the time, exactly as the Prisma client did implicitly.
+// =============================================================================
+
+/** RETURNING projections returned by the Kysely pricing repo. */
+export type PricingPriceSetRow = Selectable<PriceSetTable>;
+export type PricingPriceRow = Selectable<PriceTable>;
+
+/**
+ * The Kysely mirror of {@link PricingRepository}, generic over the scoped
+ * `Kysely<CommerceDB>` handle. Co-located here (NOT in `repository/types.ts`) so
+ * this spec never touches the file CM-08/CM-09 edit.
+ */
+export interface PricingRepositoryKysely {
+  /** Create a price_set (optionally attached to a variant). */
+  createPriceSet(
+    db: Kysely<CommerceDB>,
+    input: CreatePriceSetInput,
+  ): Promise<PricingPriceSetRow>;
+
+  /** Add a price (integer cents) to a price_set, optionally on a price_list. */
+  addPrice(db: Kysely<CommerceDB>, input: AddPriceInput): Promise<PricingPriceRow>;
+
+  /**
+   * Resolve the unit price for a variant in integer minor units (cents), or null
+   * when no price applies. Behavior is identical to the Prisma `resolvePrice`: a
+   * price-list price (active, in-window, quantity-band-matching, named in
+   * priceListIds) wins over the base price; within a tier the LOWEST integer
+   * amount wins. Returns the stored Int unchanged — no float math.
+   */
+  resolvePrice(
+    db: Kysely<CommerceDB>,
+    variantId: string,
+    options: ResolvePriceOptions,
+  ): Promise<number | null>;
+}
+
+export const pricingRepositoryKysely: PricingRepositoryKysely = {
+  createPriceSet(
+    db: Kysely<CommerceDB>,
+    input: CreatePriceSetInput,
+  ): Promise<PricingPriceSetRow> {
+    return db
+      .insertInto('price_set')
+      .values({
+        id: randomUUID(),
+        variant_id: input.variantId ?? null,
+        updated_at: new Date(),
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  },
+
+  addPrice(db: Kysely<CommerceDB>, input: AddPriceInput): Promise<PricingPriceRow> {
+    // The SAME boundary guard as the Prisma path: reject floats and negatives at
+    // the edge, before any insert (the DB `>= 0` CHECK is the mirror backstop).
+    assertIntegerCents(input.amount, 'amount');
+    if (input.minQuantity != null) assertIntegerCents(input.minQuantity, 'minQuantity');
+    if (input.maxQuantity != null) assertIntegerCents(input.maxQuantity, 'maxQuantity');
+
+    return db
+      .insertInto('price')
+      .values({
+        id: randomUUID(),
+        price_set_id: input.priceSetId,
+        price_list_id: input.priceListId ?? null,
+        currency_code: input.currency,
+        amount: input.amount,
+        min_quantity: input.minQuantity ?? null,
+        max_quantity: input.maxQuantity ?? null,
+        updated_at: new Date(),
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  },
+
+  async resolvePrice(
+    db: Kysely<CommerceDB>,
+    variantId: string,
+    options: ResolvePriceOptions,
+  ): Promise<number | null> {
+    const quantity = options.quantity ?? 1;
+    const now = options.now ?? new Date();
+    const priceListIds = options.priceListIds ?? [];
+
+    // variant -> price_set -> price. No price_set for the variant means no price.
+    const priceSet = await db
+      .selectFrom('price_set')
+      .select('id')
+      .where('variant_id', '=', variantId)
+      .executeTakeFirst();
+    if (!priceSet) return null;
+
+    // price LEFT JOIN price_list: one row per price, carrying its (optional)
+    // list's status + window. The base price has a NULL price_list_id (and the
+    // joined list columns are NULL).
+    const prices = await db
+      .selectFrom('price')
+      .leftJoin('price_list', 'price_list.id', 'price.price_list_id')
+      .where('price.price_set_id', '=', priceSet.id)
+      .where('price.currency_code', '=', options.currency)
+      .select([
+        'price.id as id',
+        'price.price_list_id as price_list_id',
+        'price.amount as amount',
+        'price.min_quantity as min_quantity',
+        'price.max_quantity as max_quantity',
+        'price_list.status as list_status',
+        'price_list.starts_at as list_starts_at',
+        'price_list.ends_at as list_ends_at',
+      ])
+      .execute();
+
+    // A price is applicable when it matches the quantity band AND is either the
+    // base price (no list) or a price-list price whose list was requested, is
+    // active, and is inside its optional date window. (Identical to Prisma path.)
+    const applicable = prices.filter((price) => {
+      if (price.min_quantity != null && quantity < price.min_quantity) return false;
+      if (price.max_quantity != null && quantity > price.max_quantity) return false;
+
+      if (price.price_list_id == null) return true; // base price
+
+      if (!priceListIds.includes(price.price_list_id)) return false;
+      if (price.list_status !== 'active') return false;
+      if (
+        price.list_starts_at != null &&
+        new Date(price.list_starts_at).getTime() > now.getTime()
+      ) {
+        return false;
+      }
+      if (
+        price.list_ends_at != null &&
+        new Date(price.list_ends_at).getTime() < now.getTime()
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+    if (applicable.length === 0) return null;
+
+    // A price-list price wins over the base price; among one tier the lowest
+    // amount wins (sale semantics). INTEGER comparison only: the returned value is
+    // a stored Int (cents), never a computed float.
+    const listPrices = applicable.filter((price) => price.price_list_id != null);
     const tier = listPrices.length > 0 ? listPrices : applicable;
 
     let best = tier[0].amount;
