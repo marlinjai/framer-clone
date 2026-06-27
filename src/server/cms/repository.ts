@@ -250,12 +250,33 @@ function mapQuery(query?: Query): DataTableQueryOptions {
 // =============================================================================
 
 // The read repository is constructed PER workspace: each returned object closes
-// over the `workspaceId` it was built for and threads it into the
-// workspace-scoped adapter calls (currently `listTables`). The by-id reads
-// (getCollection / listRows / getRow) are not workspace-scoped here (MT-14
-// handles read-isolation), but they live on the same bound object so a single
-// `getCmsRepository(workspaceId)` call yields one cohesive repo.
+// over the `workspaceId` it was built for and threads it into EVERY adapter
+// read. `listTables` is workspace-scoped at the adapter; the by-id reads
+// (getCollection / listRows / getRow) are scoped HERE by resolving the target
+// table up to its owning `workspaceId` and refusing any table outside the bound
+// workspace. The data-table adapter is keyed purely by entity id and performs
+// no workspace check of its own, so without this a workspace-A repo holding a
+// known workspace-B table/row id could read it — a cross-tenant read gap.
+//
+// Fail-closed and existence-preserving: a table that does not exist and a table
+// in another workspace BOTH resolve to "not found" (null table) and yield the
+// same not-found result, so the boundary never leaks whether a foreign id
+// exists. This mirrors the SiteRepository / workspaceGuard convention.
 function createReadRepository(workspaceId: string): CmsReadRepository {
+  // Resolve a table by id ONLY when it belongs to the bound workspace; return
+  // null both when the table is missing and when it lives in another workspace
+  // (indistinguishable — never leak cross-tenant existence).
+  async function resolveTableInWorkspace(
+    id: string,
+  ): Promise<DataTableTable | null> {
+    const adapter = getCmsAdapter();
+    const table = await adapter.getTable(id);
+    if (!table || table.workspaceId !== workspaceId) {
+      return null;
+    }
+    return table;
+  }
+
   return {
     async listCollections(): Promise<Collection[]> {
       const adapter = getCmsAdapter();
@@ -275,18 +296,23 @@ function createReadRepository(workspaceId: string): CmsReadRepository {
     },
 
     async getCollection(id: string): Promise<Collection | null> {
-      const adapter = getCmsAdapter();
-      const table = await adapter.getTable(id);
+      const table = await resolveTableInWorkspace(id);
       if (!table) {
         return null;
       }
-      const columns = await adapter.getColumns(id);
+      const columns = await getCmsAdapter().getColumns(id);
       return mapCollection(table, columns);
     },
 
     async listRows(id: string, query?: Query): Promise<RowsPage> {
-      const adapter = getCmsAdapter();
-      const result = await adapter.getRows(id, mapQuery(query));
+      // Refuse a table outside the bound workspace: an empty page is the same
+      // result the adapter yields for a non-existent table, so a foreign id is
+      // indistinguishable from a missing one.
+      const table = await resolveTableInWorkspace(id);
+      if (!table) {
+        return { rows: [], nextCursor: undefined, total: 0 };
+      }
+      const result = await getCmsAdapter().getRows(id, mapQuery(query));
       return {
         rows: result.items.map(mapRow),
         nextCursor: result.cursor,
@@ -300,9 +326,14 @@ function createReadRepository(workspaceId: string): CmsReadRepository {
       if (!row) {
         return null;
       }
-      // Guard: the adapter `getRow` searches every table by row id; only return a
-      // hit that actually belongs to the requested collection.
+      // Guard 1: the adapter `getRow` searches every table by row id; only return
+      // a hit that actually belongs to the requested collection.
       if (row.tableId !== id) {
+        return null;
+      }
+      // Guard 2: and only when that collection belongs to the bound workspace —
+      // otherwise a known cross-tenant (table id, row id) pair would read through.
+      if (!(await resolveTableInWorkspace(id))) {
         return null;
       }
       return mapRow(row);
