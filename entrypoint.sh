@@ -42,6 +42,11 @@ INFISICAL_TOKEN=$(infisical login \
   --domain "$DOMAIN" \
   --silent --plain)
 
+# Pass the token via the environment, NOT --token: argv is visible to every
+# process in the container (ps, /proc/*/cmdline). `env -u` strips it from the
+# app process again so it lives only in the infisical wrapper.
+export INFISICAL_TOKEN
+
 # 2 + 3. Pull all secrets into the inner shell, run pending Prisma migrations,
 # then exec the Next.js standalone server. `exec` so the server is PID 1 and
 # receives signals directly.
@@ -50,8 +55,7 @@ exec infisical run \
   --projectId="$INFISICAL_PROJECT_ID" \
   --path="$SECRETS_PATH" \
   --domain "$DOMAIN" \
-  --token "$INFISICAL_TOKEN" \
-  -- sh -c '
+  -- env -u INFISICAL_TOKEN sh -c '
     set -e
     prisma migrate deploy --schema=./prisma/schema.prisma
     exec node server.js
