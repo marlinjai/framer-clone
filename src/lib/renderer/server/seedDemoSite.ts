@@ -27,15 +27,17 @@
 // mocked seed could not catch a real schema/mapping mismatch, which is the whole
 // point of the smoke.
 //
-// CM-12 — every COMMERCE write routes through ONE scoped `commerceTenantDb(tgId)`
+// CM-12: every COMMERCE write routes through ONE scoped `commerceTenantDb(tgId)`
 // Kysely handle (each bare table resolves to `tg_<id>.<table>`): the catalog /
 // pricing writes via `catalogRepositoryKysely` / `pricingRepositoryKysely`, and
 // the 3 ex-direct inventory creates (stock_location / inventory_item /
-// inventory_level — the only commerce writes that used to bypass `withTenant`)
+// inventory_level, the only commerce writes that used to bypass `withTenant`)
 // are now schema-qualified inserts on the SAME handle. No commerce write bypasses
 // it. The non-commerce CMS writes (site / sitePage / siteDomain, the CMS
-// collection adapter) stay on Prisma — they are NOT part of this migration. This
-// removed the last `withTenant` importer (CM-13 then deletes withTenant.ts).
+// collection adapter) stay on Prisma; they are NOT part of this migration. The
+// SEED no longer imports `withTenant`; the API routes, read.ts and
+// createOrder.ts still do until CM-10 flips them, and CM-13 then deletes
+// withTenant.ts.
 
 import { randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
@@ -49,7 +51,7 @@ import { pricingRepositoryKysely } from '@/server/commerce/repository/pricing';
 
 // The demo's isolation boundary. The CMS rows isolate by `workspace_id`; the
 // commerce rows isolate by the `tg_<id>` schema DERIVED from this tenant-group id
-// (so it MUST be a strict UUID — the tenant-db chokepoint validates it). Exported
+// (so it MUST be a strict UUID, the tenant-db chokepoint validates it). Exported
 // so the backfill (provisioning/backfill-demo.ts) + `pnpm db:backfill-demo` derive
 // the SAME `tg_<demo>` schema this seed writes into. Env-overridable so a prod
 // seed can target a specific provisioned tenant-group.

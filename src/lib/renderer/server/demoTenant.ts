@@ -11,7 +11,7 @@
 //   - seedDemoSite.ts (server-only repos) stamps it on the demo Site rows and
 //     derives the scoped commerce write handle from it;
 //   - scripts/db-backfill-demo.ts targets its `tg_<demo>` schema;
-//   - vitest.integration.setup.ts (globalSetup, plain Node — NO `@`/server-only
+//   - vitest.integration.setup.ts (globalSetup, plain Node, NO `@`/server-only
 //     aliases) provisions its `tg_<demo>` schema on the shared test container.
 //
 // Env-overridable so a prod seed/backfill can target a specific provisioned

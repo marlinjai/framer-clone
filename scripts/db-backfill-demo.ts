@@ -12,19 +12,21 @@
 // provisions nothing new and copies nothing already present.
 //
 // HOW TO RUN. It reads COMMERCE_OWNER_DATABASE_URL from the environment (the OWNER
-// role `commerce_ddl`, injected by the deploy's Infisical wrapper — never
+// role `commerce_ddl`, injected by the deploy's Infisical wrapper, never
 // hardcoded). The demo tenant-group id comes from DEMO_TENANT_GROUP_ID (the same
 // constant seedDemoSite stamps on the demo Site rows; env-overridable). NO app
 // role / DATABASE_URL is involved.
 //
 //   COMMERCE_OWNER_DATABASE_URL=postgresql://... pnpm db:backfill-demo
 //
-// `backfill-demo.ts` imports `server-only`-free modules; no special
-// module-resolution condition is needed. `seedDemoSite.ts` (where
-// DEMO_TENANT_GROUP_ID lives) does pull in server-only repos, but importing only
-// the exported id constant from it does not execute a write path.
+// Every import here is `server-only`-free, so plain `tsx` (no
+// `--conditions=react-server`) works: `backfill-demo.ts` pulls no server-only
+// module, and DEMO_TENANT_GROUP_ID comes from the dependency-free
+// `demoTenant.ts` (NOT from `seedDemoSite.ts`, whose module graph executes
+// `import 'server-only'` via the commerce repos and would CRASH at import time
+// under the default Node condition).
 
-import { DEMO_TENANT_GROUP_ID } from '@/lib/renderer/server/seedDemoSite';
+import { DEMO_TENANT_GROUP_ID } from '@/lib/renderer/server/demoTenant';
 import { backfillDemoTenant } from '@/server/commerce/provisioning/backfill-demo';
 
 async function main(): Promise<void> {

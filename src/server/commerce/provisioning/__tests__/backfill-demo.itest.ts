@@ -1,27 +1,34 @@
 // src/server/commerce/provisioning/__tests__/backfill-demo.itest.ts
 //
-// CM-12 — the integration proof for the FLIPPED seed + the demo BACK-COMPAT
-// backfill, against a REAL Postgres (these are Postgres semantics — the schema
+// CM-12: the integration proof for the FLIPPED seed + the demo BACK-COMPAT
+// backfill, against a REAL Postgres (these are Postgres semantics: the schema
 // wall, the GENERATED column, the recompute triggers, the per-tenant
-// order_number_seq — not mockable). It boots its OWN throwaway container (TRUST
-// auth, NO password literals — mirrors createOrder.isolation.itest.ts /
+// order_number_seq, none of it mockable). It boots its OWN throwaway container
+// (TRUST auth, NO password literals, mirroring createOrder.isolation.itest.ts /
 // reserve.isolation.itest.ts), runs `prisma migrate deploy` to stand up the
 // Prisma `public` (sites / dt_*) + the legacy `commerce` schemas, then
 // `migratePublic` + `provisionTenant` to stand up `tg_<demo>`.
 //
-// Four proofs:
-//   1. SEED-THROUGH-HANDLE — running the real `seedDemoSite` with an injected
+// Proofs:
+//   1. SEED-THROUGH-HANDLE: running the real `seedDemoSite` with an injected
 //      `commerceTenantDb`-equivalent handle writes the WHOLE commerce catalog into
 //      `tg_<demo>`; the legacy `commerce` schema stays EMPTY (no commerce write
 //      bypasses the scoped handle into the old schema).
-//   2. READ PATH — `getCommerceServerRepositoryDb(tenantDb(base, tg_demo))` returns
+//   2. READ PATH: `getCommerceServerRepositoryDb(tenantDb(base, tg_demo))` returns
 //      the seeded catalog (2 products), proving the demo renders on the new path.
-//   3. PLACE-ORDER — a `createOrderKysely` order against `tg_<demo>` succeeds on a
+//   3. PLACE-ORDER: a `createOrderKysely` order against `tg_<demo>` succeeds on a
 //      seeded variant (price + SKU-bridged inventory), proving checkout works.
-//   4. BACKFILL — copying a representative `commerce` dataset into a fresh
-//      `tg_<backfill>` regenerates the GENERATED `available_quantity` (= stocked -
-//      reserved) and the trigger-maintained `option_signature` in the target; a
-//      RE-RUN is a no-op (idempotent).
+//   4. BACKFILL: copying a representative `commerce` dataset (including the FULL
+//      FK graph: a price_list-attached price, an order with a line item, and an
+//      order-referencing credit_note with a ref) into a fresh `tg_<backfill>`
+//      regenerates the GENERATED `available_quantity` (= stocked - reserved) and
+//      the trigger-maintained `option_signature` in the target; a RE-RUN is a
+//      no-op (idempotent).
+//   5. SEQUENCE: the target's `order_number_seq` is advanced past the highest
+//      copied ORD-%06d number, so the first sequence-drawn order after the flip
+//      does not collide with a copied order_number (UNIQUE).
+//   6. RESTAMP: public sites-family rows still stamped with the legacy string
+//      'demo-tenant-group' are restamped to the backfilled tenant-group UUID.
 //
 // The `.itest.ts` suffix keeps this OUT of the headless `pnpm test` unit gate
 // (vitest.config.ts matches only *.{test,spec}.{ts,tsx}); it runs ONLY under
@@ -60,6 +67,8 @@ const TG_DEMO = assertTenantGroupId(DEMO_TENANT_GROUP_ID);
 const TG_BACKFILL = assertTenantGroupId('018f9c10-0000-7000-8000-0000000000bf');
 const SCHEMA_DEMO = tenantSchema(TG_DEMO);
 const SCHEMA_BACKFILL = tenantSchema(TG_BACKFILL);
+/** The pre-CM-12 string sentinel old deployments stamped on the sites family. */
+const LEGACY_DEMO_TENANT_GROUP_ID = 'demo-tenant-group';
 
 let container: StartedTestContainer | undefined;
 let owner: postgres.Sql | undefined;
@@ -119,7 +128,7 @@ afterAll(async () => {
   await container?.stop();
 });
 
-describe('CM-12 seed FLIP — every commerce write routes through commerceTenantDb', () => {
+describe('CM-12 seed FLIP: every commerce write routes through commerceTenantDb', () => {
   it('provisioned tg_<demo>', async () => {
     const groups = await owner!`SELECT schema_name FROM public.tenant_groups WHERE slug = 'demo'`;
     expect(groups.map((g) => g.schema_name)).toEqual([SCHEMA_DEMO]);
@@ -140,7 +149,7 @@ describe('CM-12 seed FLIP — every commerce write routes through commerceTenant
     expect(await countRows(SCHEMA_DEMO, 'inventory_level')).toBe(4);
     expect(await countRows(SCHEMA_DEMO, 'stock_location')).toBe(4);
 
-    // THE PROOF: NO commerce write hit the legacy `commerce` schema — every write
+    // THE PROOF: NO commerce write hit the legacy `commerce` schema; every write
     // went through the scoped handle into tg_<demo>, none bypassed it.
     expect(await countRows('commerce', 'product')).toBe(0);
     expect(await countRows('commerce', 'product_variant')).toBe(0);
@@ -209,10 +218,14 @@ describe('CM-12 seed FLIP — every commerce write routes through commerceTenant
   });
 });
 
-describe('CM-12 backfill — copy commerce -> tg_<backfill>, regenerate generated/trigger cols', () => {
-  // A representative source dataset in the legacy `commerce` schema: one product
-  // with an option + option value + a variant (matrix -> option_signature), a
-  // price, and inventory with stocked 10 / reserved 3 (-> available 7).
+describe('CM-12 backfill: copy commerce -> tg_<backfill>, regenerate generated/trigger cols', () => {
+  // A representative source dataset in the legacy `commerce` schema covering the
+  // FULL FK graph the copy order must respect: one product with an option +
+  // option value + a variant (matrix -> option_signature), a base price PLUS a
+  // price_list-attached price (price.price_list_id -> price_list), inventory
+  // with stocked 10 / reserved 3 (-> available 7), an order with a line item,
+  // and a credit_note referencing the order (credit_note.order_id -> "order")
+  // with a credit_note_ref.
   const ids = {
     product: randomUUID(),
     option: randomUUID(),
@@ -220,10 +233,20 @@ describe('CM-12 backfill — copy commerce -> tg_<backfill>, regenerate generate
     variant: randomUUID(),
     priceSet: randomUUID(),
     price: randomUUID(),
+    priceList: randomUUID(),
+    priceOnList: randomUUID(),
     item: randomUUID(),
     location: randomUUID(),
     level: randomUUID(),
+    order: randomUUID(),
+    orderLine: randomUUID(),
+    creditNote: randomUUID(),
+    creditNoteRef: randomUUID(),
+    legacySite: randomUUID(),
   };
+  // The copied order carries the HIGHEST pre-existing order number; the
+  // sequence proof below expects the next drawn number to follow it.
+  const COPIED_ORDER_NUMBER = 'ORD-000007';
 
   beforeAll(async () => {
     const sql = owner!;
@@ -257,6 +280,17 @@ describe('CM-12 backfill — copy commerce -> tg_<backfill>, regenerate generate
       `INSERT INTO commerce.price (id, price_set_id, currency_code, amount, updated_at)
        VALUES ('${ids.price}', '${ids.priceSet}', 'EUR', 4200, now())`,
     );
+    // A price_list + a price ATTACHED to it: proves price_list copies BEFORE
+    // price (price.price_list_id -> price_list FK). Stays 'draft' so it never
+    // wins pricing resolution in the sequence proof below.
+    await sql.unsafe(
+      `INSERT INTO commerce.price_list (id, title, updated_at)
+       VALUES ('${ids.priceList}', 'BF List', now())`,
+    );
+    await sql.unsafe(
+      `INSERT INTO commerce.price (id, price_set_id, price_list_id, currency_code, amount, updated_at)
+       VALUES ('${ids.priceOnList}', '${ids.priceSet}', '${ids.priceList}', 'EUR', 3999, now())`,
+    );
     await sql.unsafe(
       `INSERT INTO commerce.inventory_item (id, sku, title, updated_at)
        VALUES ('${ids.item}', 'BF-L', 'BF Widget Large', now())`,
@@ -270,6 +304,40 @@ describe('CM-12 backfill — copy commerce -> tg_<backfill>, regenerate generate
          (id, inventory_item_id, location_id, stocked_quantity, reserved_quantity, updated_at)
        VALUES ('${ids.level}', '${ids.item}', '${ids.location}', 10, 3, now())`,
     );
+    // An order + line item + order-referencing credit note + ref: proves "order"
+    // copies BEFORE credit_note (credit_note.order_id -> "order" FK) and BEFORE
+    // order_line_item, and feeds the order_number_seq advance proof.
+    await sql.unsafe(
+      `INSERT INTO commerce."order"
+         (id, order_number, request_id, currency_code, tax_region, subtotal, tax_amount, total, updated_at)
+       VALUES ('${ids.order}', '${COPIED_ORDER_NUMBER}', 'bf-req-${ids.order}', 'EUR', 'DE', 4200, 798, 4998, now())`,
+    );
+    await sql.unsafe(
+      `INSERT INTO commerce.order_line_item
+         (id, order_id, variant_title, variant_sku, unit_price, quantity, subtotal, tax_rate, tax_amount, tax_treatment)
+       VALUES ('${ids.orderLine}', '${ids.order}', 'BF Widget / Large', 'BF-L', 4200, 1, 4200, 1900, 798, 'standard')`,
+    );
+    await sql.unsafe(
+      `INSERT INTO commerce.credit_note (id, order_id, reason, currency_code, amount)
+       VALUES ('${ids.creditNote}', '${ids.order}', 'partial refund', 'EUR', 1000)`,
+    );
+    await sql.unsafe(
+      `INSERT INTO commerce.credit_note_ref (id, credit_note_id, ref_type, ref_id)
+       VALUES ('${ids.creditNoteRef}', '${ids.creditNote}', 'order', '${ids.order}')`,
+    );
+    // A legacy-stamped public Site row (pre-CM-12 deployments carry the string
+    // sentinel, not a UUID): the backfill must RESTAMP it.
+    await prisma!.site.create({
+      data: {
+        id: ids.legacySite,
+        name: 'Legacy Demo Storefront',
+        status: 'published',
+        workspaceId: 'legacy-demo-ws',
+        tenantGroupId: LEGACY_DEMO_TENANT_GROUP_ID,
+        projectCreatedAt: new Date(),
+        projectUpdatedAt: new Date(),
+      },
+    });
   }, 60_000);
 
   it('copies the commerce dataset into tg_<backfill> and REGENERATES the generated/trigger columns', async () => {
@@ -289,14 +357,19 @@ describe('CM-12 backfill — copy commerce -> tg_<backfill>, regenerate generate
 
     const dbBackfill = tenantDb(ownerBase!, TG_BACKFILL);
 
-    // The rows landed (counts match the source).
+    // The rows landed (counts match the source), across the WHOLE FK graph.
     expect(await countRows(SCHEMA_BACKFILL, 'product')).toBe(1);
     expect(await countRows(SCHEMA_BACKFILL, 'product_variant')).toBe(1);
-    expect(await countRows(SCHEMA_BACKFILL, 'price')).toBe(1);
+    expect(await countRows(SCHEMA_BACKFILL, 'price')).toBe(2);
+    expect(await countRows(SCHEMA_BACKFILL, 'price_list')).toBe(1);
     expect(await countRows(SCHEMA_BACKFILL, 'inventory_level')).toBe(1);
+    expect(await countRows(SCHEMA_BACKFILL, 'order')).toBe(1);
+    expect(await countRows(SCHEMA_BACKFILL, 'order_line_item')).toBe(1);
+    expect(await countRows(SCHEMA_BACKFILL, 'credit_note')).toBe(1);
+    expect(await countRows(SCHEMA_BACKFILL, 'credit_note_ref')).toBe(1);
 
     // GENERATED available_quantity = stocked - reserved = 10 - 3 = 7, RECOMPUTED in
-    // the target (it was NOT copied — it cannot be, it is GENERATED ALWAYS).
+    // the target (it was NOT copied; it cannot be, it is GENERATED ALWAYS).
     const level = await dbBackfill
       .selectFrom('inventory_level')
       .select(['stocked_quantity', 'reserved_quantity', 'available_quantity'])
@@ -314,6 +387,47 @@ describe('CM-12 backfill — copy commerce -> tg_<backfill>, regenerate generate
     expect(variant.option_signature).not.toBeNull();
   });
 
+  it('advances order_number_seq past the copied orders: the next sequence-drawn order does not collide', async () => {
+    // The REAL post-flip write path draws from the target's order_number_seq.
+    // Without the setval, the fresh sequence would deal ORD-000001..7 straight
+    // into the UNIQUE order_number of the copied ORD-000007.
+    const dbBackfill = tenantDb(ownerBase!, TG_BACKFILL);
+    const cart: Cart = {
+      requestId: `cm12-backfill-order-${randomUUID()}`,
+      currency: 'EUR',
+      taxRegion: 'DE',
+      lines: [
+        {
+          inventoryItemId: ids.item,
+          variantId: ids.variant,
+          quantity: 1,
+          locationId: ids.location,
+        },
+      ],
+    };
+    const result = await createOrderKysely(dbBackfill, TG_BACKFILL, cart);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+
+    const order = await dbBackfill
+      .selectFrom('order')
+      .select('order_number')
+      .where('id', '=', result.orderId)
+      .executeTakeFirstOrThrow();
+    // ORD-000007 was copied, so the sequence hands out 8 next.
+    expect(order.order_number).toBe('ORD-000008');
+  });
+
+  it('restamps legacy demo-tenant-group public rows to the backfilled tenant-group id', async () => {
+    const site = await prisma!.site.findUniqueOrThrow({ where: { id: ids.legacySite } });
+    expect(site.tenantGroupId).toBe(TG_BACKFILL);
+    // No row anywhere in the sites family still carries the legacy sentinel.
+    const stale = await owner!`
+      SELECT count(*)::int AS n FROM public.sites WHERE tenant_group_id = ${LEGACY_DEMO_TENANT_GROUP_ID}
+    `;
+    expect(stale[0].n).toBe(0);
+  });
+
   it('re-running the backfill is a no-op (idempotent)', async () => {
     // Same (id, slug) pair as the first run: the registry upsert no-ops.
     await backfillDemoTenant({
@@ -321,11 +435,21 @@ describe('CM-12 backfill — copy commerce -> tg_<backfill>, regenerate generate
       slug: 'demo-backfill',
       connectionString: ownerUrl,
     });
-    // Still exactly one of each — ON CONFLICT DO NOTHING skipped the already-copied
-    // rows rather than double-inserting.
+    // Still exactly one of each copied row: ON CONFLICT DO NOTHING skipped the
+    // already-copied rows rather than double-inserting. (order is 2: the copied
+    // one + the sequence-drawn one from the proof above.)
     expect(await countRows(SCHEMA_BACKFILL, 'product')).toBe(1);
     expect(await countRows(SCHEMA_BACKFILL, 'product_variant')).toBe(1);
-    expect(await countRows(SCHEMA_BACKFILL, 'price')).toBe(1);
+    expect(await countRows(SCHEMA_BACKFILL, 'price')).toBe(2);
     expect(await countRows(SCHEMA_BACKFILL, 'inventory_level')).toBe(1);
+    expect(await countRows(SCHEMA_BACKFILL, 'order')).toBe(2);
+    expect(await countRows(SCHEMA_BACKFILL, 'credit_note')).toBe(1);
+
+    // And the re-run did not REWIND the sequence below the latest drawn number:
+    // another draw still advances (9), never re-dealing a taken number.
+    const next = await owner!.unsafe<{ n: string }[]>(
+      `SELECT nextval('"${SCHEMA_BACKFILL}"."order_number_seq"')::text AS n`,
+    );
+    expect(Number(next[0].n)).toBe(9);
   });
 });

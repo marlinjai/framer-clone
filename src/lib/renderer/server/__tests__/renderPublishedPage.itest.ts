@@ -77,8 +77,8 @@ async function renderHomeToHtml(site: PublishedSite): Promise<string> {
   // CM-12: the seed writes the commerce catalog through the scoped
   // `commerceTenantDb(DEMO_TENANT_GROUP_ID)` handle into `tg_<demo>` (the shared
   // globalSetup provisions the schema + exports COMMERCE_APP_DATABASE_URL), so
-  // the smoke reads through the SAME real app-role handle — the exact wiring
-  // CM-10 puts behind resolveCommerceSchemaForSite in the route. The legacy
+  // the smoke reads through the SAME real app-role handle (the exact wiring
+  // CM-10 puts behind resolveCommerceSchemaForSite in the route). The legacy
   // Prisma repo (getCommerceServerRepository) would read the now-empty
   // `commerce` schema: on a fresh database that path is intentionally dead, and
   // existing deployments bridge it via the CM-12 backfill until CM-10 flips.

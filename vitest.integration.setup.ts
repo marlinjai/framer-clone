@@ -129,19 +129,19 @@ export async function setup(): Promise<void> {
   // Commerce tier (CM-12): the shared container also carries the
   // schema-per-tenant-group commerce stack, because seedDemoSite now writes the
   // demo catalog through the scoped `commerceTenantDb(DEMO_TENANT_GROUP_ID)`
-  // handle (COMMERCE_APP_DATABASE_URL) into `tg_<demo>` — never the legacy
+  // handle (COMMERCE_APP_DATABASE_URL) into `tg_<demo>`, never the legacy
   // `commerce` schema. So, exactly as this file owns DATABASE_URL, it owns
   // COMMERCE_APP_DATABASE_URL: stand up the role + registry + demo schema, then
   // export the app-role URL for the forked test workers.
   //
-  //   1. `commerce_app` — the LOW-PRIVILEGE login role db.ts connects as.
+  //   1. `commerce_app`: the LOW-PRIVILEGE login role db.ts connects as.
   //      Password-less (TRUST auth above), so no password literal is needed.
-  //   2. `migratePublic` — the `ext` schema + the `public.tenant_groups`
+  //   2. `migratePublic`: the `ext` schema + the `public.tenant_groups`
   //      registry (the global tier, CM-03).
-  //   3. USAGE on `ext` for commerce_app — mirrors prisma/sql/commerce-roles.sql
+  //   3. USAGE on `ext` for commerce_app: mirrors prisma/sql/commerce-roles.sql
   //      §3 (the runner's per-schema grants do not cover `ext`, and the
   //      ext-resident defaults/triggers must resolve under the ext-locked path).
-  //   4. `provisionTenant` — the demo tenant-group's `tg_<demo>` schema with the
+  //   4. `provisionTenant`: the demo tenant-group's `tg_<demo>` schema with the
   //      commerce migration set, per-schema grants, and the ext-locked
   //      search_path backstop on commerce_app.
   const owner = postgres(url, { max: 1, prepare: false });
