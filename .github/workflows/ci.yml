@@ -26,7 +26,10 @@ jobs:
       # Dummy connection string for the steps that only need the generated
       # Prisma client or the Next build; none of these connect. The integration
       # globalSetup (vitest.integration.setup.ts) owns the real test database and
-      # overrides DATABASE_URL at run time, exactly as it does locally.
+      # overrides DATABASE_URL at run time, exactly as it does locally. The same
+      # globalSetup also owns COMMERCE_APP_DATABASE_URL (it provisions the
+      # commerce_app role + the demo tg_<demo> schema on its container and
+      # exports the URL), so do NOT add a static commerce URL here.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/framer_clone_ci
     steps:
       - name: Checkout

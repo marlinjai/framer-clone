@@ -14,6 +14,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "db:public": "tsx scripts/db-public.ts",
     "db:migrate-tenants": "tsx scripts/db-migrate-tenants.ts",
+    "db:backfill-demo": "tsx scripts/db-backfill-demo.ts",
     "db:codegen-commerce": "tsx scripts/commerce-codegen.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
