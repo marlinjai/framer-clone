@@ -101,6 +101,23 @@ function requireOwnerUrl(connectionString?: string): string {
   return ownerUrl;
 }
 
+/** One copyable column: its name plus the SELECT-side expression to read it. */
+interface CopyColumn {
+  /** Bare column name (quoted at the SQL site) — the INSERT target list. */
+  column: string;
+  /**
+   * The SELECT-side expression. Plain `"col"` for ordinary columns; for a
+   * USER-DEFINED (enum) column it is `"col"::text::"<udt_schema>"."<udt_name>"`
+   * — the TARGET schema's type. Each `tg_<id>` schema owns its OWN enum types
+   * (000_enums runs per schema), and Postgres does not cast between two
+   * distinct enum types implicitly, so a bare cross-schema `INSERT ... SELECT`
+   * fails with e.g. `column "movement_type" is of type tg_x."StockMovementType"
+   * but expression is of type commerce."StockMovementType"`. Round-tripping
+   * through text is lossless for enums (same label set).
+   */
+  select: string;
+}
+
 /**
  * Compute the EXPLICIT, writable column list to copy for one table: the target
  * schema's columns that are NOT `GENERATED ALWAYS` and not in {@link NEVER_COPY},
@@ -114,9 +131,11 @@ async function copyableColumns(
   sql: postgres.Sql,
   targetSchema: string,
   table: string,
-): Promise<string[]> {
-  const targetRows = await sql<{ column_name: string }[]>`
-    SELECT column_name
+): Promise<CopyColumn[]> {
+  const targetRows = await sql<
+    { column_name: string; data_type: string; udt_schema: string; udt_name: string }[]
+  >`
+    SELECT column_name, data_type, udt_schema, udt_name
     FROM information_schema.columns
     WHERE table_schema = ${targetSchema}
       AND table_name = ${table}
@@ -131,8 +150,14 @@ async function copyableColumns(
   `;
   const sourceSet = new Set(sourceRows.map((row) => row.column_name));
   return targetRows
-    .map((row) => row.column_name)
-    .filter((column) => !NEVER_COPY.has(column) && sourceSet.has(column));
+    .filter((row) => !NEVER_COPY.has(row.column_name) && sourceSet.has(row.column_name))
+    .map((row) => ({
+      column: row.column_name,
+      select:
+        row.data_type === 'USER-DEFINED'
+          ? `"${row.column_name}"::text::"${row.udt_schema}"."${row.udt_name}"`
+          : `"${row.column_name}"`,
+    }));
 }
 
 /**
@@ -144,6 +169,13 @@ async function copyableColumns(
  * @param opts.tenantGroupId The demo tenant-group id (a strict UUID; the
  *   `tg_<hex32>` schema name is DERIVED via the tenant-db chokepoint, never built
  *   by hand). Use {@link DEMO_TENANT_GROUP_ID} from seedDemoSite.
+ * @param opts.slug Registry slug recorded on the `public.tenant_groups` row.
+ *   Defaults to `'demo'` (the demo tenant-group's slug). The slug TRAVELS WITH
+ *   the tenant-group id: `tenant_groups.slug` is UNIQUE, and the runner's
+ *   registry upsert conflicts only on `id`, so provisioning a DIFFERENT
+ *   tenant-group under an already-taken slug fails loudly on
+ *   `tenant_groups_slug_key` (correctly — a slug names exactly one group).
+ *   Re-running with the SAME (id, slug) pair stays a no-op.
  * @param opts.connectionString Optional OWNER url override (tests). Defaults to
  *   `COMMERCE_OWNER_DATABASE_URL`, read at call time.
  *
@@ -151,6 +183,7 @@ async function copyableColumns(
  */
 export async function backfillDemoTenant(opts: {
   tenantGroupId: string;
+  slug?: string;
   connectionString?: string;
 }): Promise<void> {
   const ownerUrl = requireOwnerUrl(opts.connectionString);
@@ -162,7 +195,11 @@ export async function backfillDemoTenant(opts: {
   // Advisory-locked + idempotent: a no-op if it is already provisioned.
   await provisionCommerceTenant({
     tenantGroupId: opts.tenantGroupId,
-    slug: 'demo',
+    // The slug follows the caller's tenant-group, defaulting to the demo's own.
+    // Hardcoding 'demo' here regardless of tenantGroupId was a real bug: any
+    // SECOND tenant-group backfilled while the demo group exists collided on
+    // the UNIQUE tenant_groups.slug (tenant_groups_slug_key).
+    slug: opts.slug ?? 'demo',
     connectionString: ownerUrl,
   });
 
@@ -173,13 +210,16 @@ export async function backfillDemoTenant(opts: {
       const columns = await copyableColumns(sql, targetSchema, table);
       if (columns.length === 0) continue; // table absent in source or target
 
-      const columnList = columns.map((column) => `"${column}"`).join(', ');
+      const insertList = columns.map((c) => `"${c.column}"`).join(', ');
+      const selectList = columns.map((c) => c.select).join(', ');
       // EXPLICIT column list on both sides so the GENERATED / trigger columns are
-      // never copied. ON CONFLICT DO NOTHING makes the whole backfill idempotent:
-      // a re-run skips rows that already exist (on any unique / PK conflict).
+      // never copied; enum columns cast source-type -> text -> TARGET-schema type
+      // (see CopyColumn). ON CONFLICT DO NOTHING makes the whole backfill
+      // idempotent: a re-run skips rows that already exist (on any unique / PK
+      // conflict).
       await sql.unsafe(
-        `INSERT INTO "${targetSchema}"."${table}" (${columnList}) ` +
-          `SELECT ${columnList} FROM "${SOURCE_SCHEMA}"."${table}" ` +
+        `INSERT INTO "${targetSchema}"."${table}" (${insertList}) ` +
+          `SELECT ${selectList} FROM "${SOURCE_SCHEMA}"."${table}" ` +
           `ON CONFLICT DO NOTHING`,
       );
     }

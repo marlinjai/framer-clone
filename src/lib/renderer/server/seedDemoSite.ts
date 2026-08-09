@@ -54,8 +54,12 @@ import { pricingRepositoryKysely } from '@/server/commerce/repository/pricing';
 // the SAME `tg_<demo>` schema this seed writes into. Env-overridable so a prod
 // seed can target a specific provisioned tenant-group.
 const DEMO_WORKSPACE_ID = CMS_WORKSPACE_ID;
-export const DEMO_TENANT_GROUP_ID =
-  process.env.DEMO_TENANT_GROUP_ID ?? '018f9c10-0000-7000-8000-0000000000de';
+// The id itself lives in the dependency-free demoTenant.ts so the integration
+// globalSetup (plain Node, no server-only/@ aliases) can import it without
+// pulling this module's server-only repo graph. Re-exported here so existing
+// importers (backfill, tests, scripts) keep one canonical import site.
+export { DEMO_TENANT_GROUP_ID } from './demoTenant';
+import { DEMO_TENANT_GROUP_ID } from './demoTenant';
 
 /** The hostname base the published storefront is served under (the smoke uses a
  *  three-label host `demo.<base>` so parseSubdomain yields `demo`). */

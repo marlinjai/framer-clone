@@ -274,8 +274,14 @@ describe('CM-12 backfill — copy commerce -> tg_<backfill>, regenerate generate
 
   it('copies the commerce dataset into tg_<backfill> and REGENERATES the generated/trigger columns', async () => {
     // backfillDemoTenant provisions tg_<backfill> ITSELF (no pre-provision) and
-    // copies, all on the owner connection.
-    await backfillDemoTenant({ tenantGroupId: TG_BACKFILL, connectionString: ownerUrl });
+    // copies, all on the owner connection. The slug travels with the tenant-group:
+    // 'demo' is already taken by TG_DEMO (beforeAll), and tenant_groups.slug is
+    // UNIQUE, so this second group carries its own slug.
+    await backfillDemoTenant({
+      tenantGroupId: TG_BACKFILL,
+      slug: 'demo-backfill',
+      connectionString: ownerUrl,
+    });
 
     // tg_<backfill> was provisioned by the backfill.
     const groups = await owner!`SELECT schema_name FROM public.tenant_groups WHERE schema_name = ${SCHEMA_BACKFILL}`;
@@ -309,7 +315,12 @@ describe('CM-12 backfill — copy commerce -> tg_<backfill>, regenerate generate
   });
 
   it('re-running the backfill is a no-op (idempotent)', async () => {
-    await backfillDemoTenant({ tenantGroupId: TG_BACKFILL, connectionString: ownerUrl });
+    // Same (id, slug) pair as the first run: the registry upsert no-ops.
+    await backfillDemoTenant({
+      tenantGroupId: TG_BACKFILL,
+      slug: 'demo-backfill',
+      connectionString: ownerUrl,
+    });
     // Still exactly one of each — ON CONFLICT DO NOTHING skipped the already-copied
     // rows rather than double-inserting.
     expect(await countRows(SCHEMA_BACKFILL, 'product')).toBe(1);

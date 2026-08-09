@@ -10,8 +10,8 @@
 //   resolvePublishedSite (real Prisma read)
 //     -> matchPageBySlug (home + the HOME_REWRITE_SENTINEL)
 //     -> snapshotToComponentNode (snapshot adapt)
-//     -> hydrateBindings (REAL getCmsRepository() + getCommerceServerRepository()
-//        hitting the seeded DB)
+//     -> hydrateBindings (REAL getCmsRepository() + the scoped tg_<demo> commerce
+//        read repo hitting the seeded DB)
 //     -> renderComponentNode -> renderToStaticMarkup (HTML string)
 //
 // and asserts the high-signal proofs: the published-only resolver contract, the
@@ -32,7 +32,8 @@ import type { PrismaClient } from '@prisma/client';
 
 import { getPrismaClient } from '@/server/db';
 import { getCmsRepository } from '@/server/cms';
-import { getCommerceServerRepository } from '@/server/commerce/repository/read';
+import { getCommerceServerRepositoryDb } from '@/server/commerce/repository/read';
+import { commerceTenantDb } from '@/server/commerce/db';
 import {
   resolvePublishedSite,
   matchPageBySlug,
@@ -44,7 +45,7 @@ import { hydrateBindings } from '@/lib/renderer/publish/hydrateBindings';
 import { renderComponentNode } from '../renderComponentNode';
 import CommercePageProviders from '../CommercePageProviders';
 import { createScope, pushPageFrame } from '@/lib/bindings/resolver/scope';
-import { seedDemoSite, type SeededDemo } from '../seedDemoSite';
+import { seedDemoSite, DEMO_TENANT_GROUP_ID, type SeededDemo } from '../seedDemoSite';
 
 let prisma: PrismaClient;
 let seeded: SeededDemo;
@@ -73,9 +74,17 @@ async function renderHomeToHtml(site: PublishedSite): Promise<string> {
   const adapted = snapshotToComponentNode(matched!.page.snapshot);
   expect(adapted.root, 'adapted snapshot must yield a renderable root').not.toBeNull();
 
+  // CM-12: the seed writes the commerce catalog through the scoped
+  // `commerceTenantDb(DEMO_TENANT_GROUP_ID)` handle into `tg_<demo>` (the shared
+  // globalSetup provisions the schema + exports COMMERCE_APP_DATABASE_URL), so
+  // the smoke reads through the SAME real app-role handle — the exact wiring
+  // CM-10 puts behind resolveCommerceSchemaForSite in the route. The legacy
+  // Prisma repo (getCommerceServerRepository) would read the now-empty
+  // `commerce` schema: on a fresh database that path is intentionally dead, and
+  // existing deployments bridge it via the CM-12 backfill until CM-10 flips.
   const hydrated = await hydrateBindings(adapted.root!, matched!.params, {
     cmsRepo: getCmsRepository(),
-    commerceRepo: getCommerceServerRepository(),
+    commerceRepo: getCommerceServerRepositoryDb(commerceTenantDb(DEMO_TENANT_GROUP_ID)),
   });
 
   const scope = pushPageFrame(createScope(), matched!.params);
