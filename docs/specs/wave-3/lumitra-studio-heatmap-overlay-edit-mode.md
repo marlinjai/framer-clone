@@ -3,11 +3,12 @@ name: lumitra-studio-heatmap-overlay-edit-mode
 track: lumitra-studio
 wave: 3
 priority: P1
-status: draft
+status: archived
 depends_on: [lumitra-studio-component-id-attribution, lumitra-studio-project-binding, lumitra-studio-snippet-injection, lumitra-studio-settings-panel]
 estimated_value: 8
 estimated_cost: 6
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Heatmap overlay rendered on the framer-clone canvas
@@ -134,3 +135,7 @@ export interface HeatmapOverlayProps {
 - Memory: `memory/project_strategic_thesis_bubble_killer.md` (Lumitra Studio integration, "moat")
 - Code touchpoints: `src/components/Canvas.tsx`, `src/components/ResponsivePageRenderer.tsx`, `src/components/ComponentRenderer.tsx`
 - External: `analytics-platform/packages/dashboard/src/app/api/heatmap/` (heatmap query API to coordinate against)
+
+## Reality update (2026-09-10)
+
+Dead draft: part of the April-May 2026 wave-1/2/3 design exploration, never executed (draft status, no linked code, no activity since). The pieces of this exploration that did ship are marked completed separately (wave-1's ai-pattern-a-anthropic-sdk-bootstrap, ai-pattern-a-mst-snapshot-serializer, the three data-bindings specs, lumitra-studio-project-binding, multiplayer-yjs-doc-shape, static-html-data-component-id-fix); the CMS and data-bindings functionality this file describes was instead re-designed and shipped as the build-2026-06 Track 0/A sequence. Archived during work-down session 9b; framer-clone has had no commits since 2026-08-16.

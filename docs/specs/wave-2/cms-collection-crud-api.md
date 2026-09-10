@@ -3,11 +3,12 @@ name: cms-collection-crud-api
 track: cms
 wave: 2
 priority: P0
-status: draft
+status: archived
 depends_on: [cms-service-scaffold, cms-tenant-schema-bootstrap, cms-auth-middleware-dual-principal]
 estimated_value: 10
 estimated_cost: 6
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Collection and column CRUD API
@@ -163,3 +164,7 @@ export function getAdapterForTenant(
 - Spec dependencies: `cms-service-scaffold`, `cms-tenant-schema-bootstrap`, `cms-auth-middleware-dual-principal`
 - Adapter docs: `projects/data-table/docs/architecture.md`
 - Adapter source: `projects/data-table/packages/adapter-prisma/src/adapter.ts:91`, `:181`, `src/ddl.ts:21`, `:61`
+
+## Reality update (2026-09-10)
+
+Dead draft: part of the April-May 2026 wave-1/2/3 design exploration, never executed (draft status, no linked code, no activity since). The pieces of this exploration that did ship are marked completed separately (wave-1's ai-pattern-a-anthropic-sdk-bootstrap, ai-pattern-a-mst-snapshot-serializer, the three data-bindings specs, lumitra-studio-project-binding, multiplayer-yjs-doc-shape, static-html-data-component-id-fix); the CMS and data-bindings functionality this file describes was instead re-designed and shipped as the build-2026-06 Track 0/A sequence. Archived during work-down session 9b; framer-clone has had no commits since 2026-08-16.

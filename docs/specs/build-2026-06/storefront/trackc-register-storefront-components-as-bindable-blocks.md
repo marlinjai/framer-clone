@@ -3,7 +3,7 @@ name: trackc-register-storefront-components-as-bindable-blocks
 track: storefront
 wave: 2
 priority: P1
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [trackc-storefront-product-list-and-detail-renderers, trackc-variant-selector-component, trackc-client-cart-state-and-cart-view, trackc-order-create-checkout-stop]
 touchesSharedState: true
@@ -11,6 +11,7 @@ sharedState: [component-registry]
 estimateDays: 3
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Register storefront components as bindable canvas blocks (componentRegistry + dataComponentKind dispatch)
@@ -79,3 +80,7 @@ export type ComponentCategory = 'basic' | 'layout' | 'data' | 'commerce'; // EXT
 - Critique (minor, fixed): ComponentCategory closed union at componentRegistry.ts:31 + hard-coded panel literals at ComponentsPanel.tsx:36-38 must both be edited.
 - Code touchpoints: `src/lib/componentRegistry.ts:31` (ComponentCategory), `src/components/sidebars/left/ComponentsPanel.tsx:36-38`, `createComponentElement.tsx` (dataComponentKind dispatch), `EditorApp.tsx:114` / `preview/PreviewShell.tsx:97` (provider mounts)
 - Depends on: the four renderer/component specs.
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

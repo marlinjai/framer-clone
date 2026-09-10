@@ -4,7 +4,8 @@ description: Plan for enabling AI agents to generate complete web pages by writi
 order: 0
 summary: AI agents generate pages by producing ComponentSnapshotIn JSON — no API layer needed. Pages are instantly editable in the visual editor and deployable. Outperforms tools like Sleek Design because output is not static mockups but fully editable, responsive, deployable pages.
 type: plan
-status: planned
+status: draft
+date: 2026-03-22
 tags: [framer-clone, ai, plan, mst, page-generation, snapshot]
 projects: [framer-clone]
 ---
@@ -179,3 +180,7 @@ The user loads AI-generated JSON into the editor. Implementation options (simple
 | Open format | Proprietary | JSON snapshots, version-controllable |
 
 The key differentiator: other tools treat AI generation as the end product. Here, AI generation is the starting point — the output lives in a full visual editor where it can be refined, extended, and deployed.
+
+## Reality update (2026-09-10)
+
+Status word "planned" was not one of the six shared values; reconciled to draft (no code evidence of full AI page generation via MST snapshots on main; the related wave-2 `ai-pattern-a-canvas-mutation-tools` spec was archived as an unbuilt draft in the same reconciliation). Kept live and linked from the root ROADMAP.md during work-down session 9b.

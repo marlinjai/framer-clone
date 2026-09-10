@@ -3,7 +3,7 @@ name: trackc-commerce-binding-preview-and-publish-hydration
 track: storefront
 wave: 3
 priority: P1
-status: done
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [trackc-register-storefront-components-as-bindable-blocks, slice2-publish-read-binding-hydration]
 touchesSharedState: true
@@ -11,6 +11,7 @@ sharedState: [hydrate-bindings]
 estimateDays: 4
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Commerce binding preview parity + (gated) static-publish hydration of commerce bindings
@@ -83,3 +84,7 @@ export async function hydrateBindings(
 - Critique (minors, fixed): real Track A dep id; touchesSharedState flagged on the hydrateBindings extend; additive options object.
 - Code touchpoints: `src/lib/renderer/publish/hydrateBindings.ts` (the CMS-spec-owned helper), `HeadlessPageRenderer.tsx`, `src/server/commerce` repo
 - Depends on: `trackc-register-storefront-components-as-bindable-blocks`, `slice2-publish-read-binding-hydration`
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

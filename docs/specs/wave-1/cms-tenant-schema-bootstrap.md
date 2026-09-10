@@ -3,11 +3,12 @@ name: cms-tenant-schema-bootstrap
 track: cms
 wave: 1
 priority: P0
-status: draft
+status: archived
 depends_on: [cms-service-scaffold]
 estimated_value: 10
 estimated_cost: 7
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Tenant schema-per-tenant bootstrap
@@ -136,3 +137,7 @@ SET search_path TO "tenant_a3f9b2c1";
 - Plan: `docs/plans/2026-05-05-cms-data-layer-research.md` (Revision B, F.1)
 - Code touchpoints: `projects/data-table/packages/adapter-prisma/prisma/schema.prisma`, `projects/data-table/packages/adapter-prisma/src/ddl.ts`
 - External: https://www.postgresql.org/docs/current/ddl-schemas.html, https://www.prisma.io/docs/orm/prisma-client/queries/raw-database-access#using-set-local
+
+## Reality update (2026-09-10)
+
+Dead draft: part of the April-May 2026 wave-1/2/3 design exploration, never executed (draft status, no linked code, no activity since). The pieces of this exploration that did ship are marked completed separately (wave-1's ai-pattern-a-anthropic-sdk-bootstrap, ai-pattern-a-mst-snapshot-serializer, the three data-bindings specs, lumitra-studio-project-binding, multiplayer-yjs-doc-shape, static-html-data-component-id-fix); the CMS and data-bindings functionality this file describes was instead re-designed and shipped as the build-2026-06 Track 0/A sequence. Archived during work-down session 9b; framer-clone has had no commits since 2026-08-16.

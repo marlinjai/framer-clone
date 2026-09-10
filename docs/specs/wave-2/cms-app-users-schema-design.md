@@ -3,11 +3,12 @@ name: cms-app-users-schema-design
 track: cms
 wave: 2
 priority: P1
-status: draft
+status: archived
 depends_on: [cms-tenant-schema-bootstrap]
 estimated_value: 6
 estimated_cost: 2
 owner: unassigned
+date: 2026-05-09
 ---
 
 # `app_users` schema design (documented, not built)
@@ -173,3 +174,7 @@ CREATE TABLE app_user_password_resets (
 - Auth-brain spec: `projects/lumitra-infra/auth-brain/docs/superpowers/specs/2026-05-06-auth-brain-design.md` (enterprise seam #3, section 6.1 Phase 3.5 OIDC)
 - Open architectural decision: build-vs-buy on end-user auth (handover)
 - Memory: `memory/project_strategic_thesis_bubble_killer.md`
+
+## Reality update (2026-09-10)
+
+Dead draft: part of the April-May 2026 wave-1/2/3 design exploration, never executed (draft status, no linked code, no activity since). The pieces of this exploration that did ship are marked completed separately (wave-1's ai-pattern-a-anthropic-sdk-bootstrap, ai-pattern-a-mst-snapshot-serializer, the three data-bindings specs, lumitra-studio-project-binding, multiplayer-yjs-doc-shape, static-html-data-component-id-fix); the CMS and data-bindings functionality this file describes was instead re-designed and shipped as the build-2026-06 Track 0/A sequence. Archived during work-down session 9b; framer-clone has had no commits since 2026-08-16.

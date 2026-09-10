@@ -3,7 +3,7 @@ name: b4-catalog-schema
 track: commerce-engine
 wave: 2
 priority: P0
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [b3-guarded-reservation]
 touchesSharedState: true
@@ -11,6 +11,7 @@ sharedState: [prisma, migrations]
 estimateDays: 5
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Owned catalog schema: product / option / option_value / variant + the variant<->option_value matrix with composite FK + option_signature trigger + partial-unique
@@ -68,3 +69,7 @@ Add the typed catalog to `prisma/schema.prisma` (TOUCHES SHARED SCHEMA) with the
 - Cross-check doc sections 3.1, 3.3 (the two must-fixes: composite FK + option_signature trigger).
 - Critique (major, fixed): serialized as b3 -> b4 so schema.prisma writers are a chain, not a fork.
 - Depends on: `b3-guarded-reservation` (serialization edge on the shared schema)
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

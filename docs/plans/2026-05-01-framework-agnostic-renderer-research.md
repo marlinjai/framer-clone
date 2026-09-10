@@ -1,7 +1,7 @@
 ---
 title: Framework-Agnostic Renderer Research
 type: plan
-status: draft
+status: archived
 date: 2026-05-01
 tags: [research, mitosis, multi-framework, lumitra-integration, mst]
 projects: [framer-clone, analytics-platform]
@@ -299,3 +299,7 @@ The reasoning, condensed: the Lumitra Studio moat does NOT require multi-framewo
 - Cross-product context: `projects/analytics-platform/docs/superpowers/plans/2026-04-28-framework-agnostic-analytics-architecture.md`
 - Obsidian companion: `Computer Science & Software Development/Framer-Clone Framework-Agnostic Renderer Research.md`
 - Framer-clone source touched during research: `src/components/ComponentRenderer.tsx`, `src/lib/renderer/HeadlessComponentRenderer.tsx`, `src/lib/renderer/createComponentElement.tsx`, `src/models/ComponentModel.ts`, `src/lib/componentRegistry.ts`
+
+## Reality update (2026-09-10)
+
+Research concluded with a decision, not a build: stay React-only at publish, defer Mitosis (or any IR-based multi-framework strategy) by roughly 12 months (to around 2027-05). No open work remains; archived as a closed decision record during work-down session 9b.

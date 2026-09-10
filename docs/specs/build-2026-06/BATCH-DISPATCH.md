@@ -1,6 +1,6 @@
 ---
 type: plan
-status: decided
+status: completed
 title: Batch dispatch order, build-2026-06 (CMS content tier + commerce engine + storefront)
 summary: Wave-by-wave launch order for the 27-goal build-2026-06 batch, the strictly-serial Prisma schema chain, and the human merge gate (Gate B) that every dependent waits on.
 tags: [orchestration, dispatch, framer-clone, prisma, dag]
@@ -126,3 +126,7 @@ Every goal's verify is `pnpm test && pnpm build && pnpm exec tsc --noEmit && pnp
 ## Hard constraints carried by every goal
 
 Every goal forbids `git push`, `gh pr create`, `gh pr merge`, and any merge: "Do NOT push to main, do NOT open a PR, do NOT merge." Workers commit to their worktree branch only. The human drives every Gate B merge. Secrets via Infisical only, never `.env`, never a literal. No em-dashes or en-dashes in any file.
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

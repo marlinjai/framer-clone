@@ -3,7 +3,7 @@ name: followon-wire-commerce-hydratebindings-publish
 track: storefront
 wave: static-html
 priority: P1
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [trackc-commerce-binding-preview-and-publish-hydration, static-html-spike, static-html-publish-pipeline]
 touchesSharedState: false
@@ -11,6 +11,7 @@ sharedState: []
 estimateDays: 1
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Follow-on stub: wire the commerce bake of hydrateBindings into the static-publish pipeline
@@ -70,3 +71,7 @@ The TODO that points here lives at the top of
 - Helper + parity tests: `trackc-commerce-binding-preview-and-publish-hydration` (status: done).
 - CMS sibling stub: `followon-wire-hydratebindings-into-publish.md`.
 - Gated on: `static-html-spike`, `static-html-publish-pipeline`.
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

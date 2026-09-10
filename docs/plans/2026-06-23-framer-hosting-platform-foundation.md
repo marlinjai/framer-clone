@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: completed
 date: 2026-06-23
 title: Framer-Clone Hosting Platform Foundation (P1 Multi-Tenant Data Layer + P2 Publish Pipeline)
 summary: Turn framer-clone from a single-user in-memory editor into a multi-tenant publishing platform, by becoming the 4th auth-brain consuming app (no own identity) and building the static publish pipeline that emits per-variant bundles. This is the substrate for end-user server-side no-flicker A/B/C (P3+ edge hosting). Near-term scope is Marlin's own sites on the shared lumitra auth-brain, architected so external-customer SaaS and a B2B2C "site owners offer auth to their end users" North Star stay open.
@@ -118,3 +118,7 @@ analytics project/key + his DNS/Coolify/Infisical hands.
 auth-brain migration; the multi-site editor at `/projects/<id>` (multi-site UX on the already-shipped
 tenant layer, NOT new tenancy); auto-generated per-site subdomain slug; a `variant-selector`
 nested-scope contract-test refinement.
+
+## Reality update (2026-09-10)
+
+Status corrected from draft to completed; the plan's own "## Reality update (2026-06-25)" section above already documents the shipped pull requests (#36 to #41). Corrected during work-down session 9b.

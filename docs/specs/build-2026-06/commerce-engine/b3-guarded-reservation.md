@@ -3,7 +3,7 @@ name: b3-guarded-reservation
 track: commerce-engine
 wave: 1
 priority: P0
-status: done
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [b2-inventory-ledger-schema]
 touchesSharedState: true
@@ -11,6 +11,7 @@ sharedState: [prisma, migrations]
 estimateDays: 4
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Guarded conditional decrement with the 3 stacked guards + location-selection + kit lock-ordering + transfer-balance, inside a real prisma.$transaction
@@ -82,3 +83,7 @@ export async function resolveLocation(tx, lineLocationId?: string): Promise<stri
 - Cross-check doc section 4.3 (guarded decrement, scenario 1), 3.5 (location/kit/transfer must-fixes).
 - Critique (minor, fixed): isolation level stated explicitly as READ COMMITTED; the proof is tied to it.
 - Depends on: `b2-inventory-ledger-schema`
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

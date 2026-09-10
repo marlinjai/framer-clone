@@ -3,7 +3,7 @@ name: trackc-variant-selector-component
 track: storefront
 wave: 2
 priority: P1
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [trackc-storefront-product-list-and-detail-renderers]
 touchesSharedState: false
@@ -11,6 +11,7 @@ sharedState: []
 estimateDays: 4
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # VariantSelector component (option-matrix driven, advisory availability, selects active variant frame)
@@ -73,3 +74,7 @@ export function resolveVariantFromSelection(product: ProductDTO, variants: Produ
 
 - Cross-check doc section 4.4 (advisory availability), 3.3 (the option matrix).
 - Depends on: `trackc-storefront-product-list-and-detail-renderers`
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

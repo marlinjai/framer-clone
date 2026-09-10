@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: completed
 date: 2026-04-20
 title: Preview mode (Framer-style)
 summary: Headless responsive renderer + /preview route + viewport-resize toolbar, reusing the existing MST tree. Direct render (no iframe) for v1; full Framer parity is the long-term goal.
@@ -181,3 +181,7 @@ Phase 2:
 - DevTools Network/Console: no errors, no warnings about MobX-State-Tree mutation outside actions
 
 Phase 3+ verifications added when those phases are picked up.
+
+## Reality update (2026-09-10)
+
+Shipped: `src/app/preview/page.tsx` plus `src/components/preview/{PreviewFrame,PreviewShell,PreviewToolbar,ResizeGutter}.tsx` implement the /preview route and viewport-resize toolbar. Reconciled during work-down session 9b.

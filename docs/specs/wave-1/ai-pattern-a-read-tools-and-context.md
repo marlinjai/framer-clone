@@ -3,11 +3,12 @@ name: ai-pattern-a-read-tools-and-context
 track: ai-pattern-a
 wave: 1
 priority: P1
-status: draft
+status: archived
 depends_on: [ai-pattern-a-anthropic-sdk-bootstrap, ai-pattern-a-tool-schema-registry, ai-pattern-a-mst-snapshot-serializer]
 estimated_value: 7
 estimated_cost: 4
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Read tools and assistant question-answer panel
@@ -136,3 +137,7 @@ type SseEvent =
 - Plan: `docs/plans/2026-05-05-ai-agent-layer-research.md` sections 3a, 7b, 7c
 - Code touchpoints: `src/components/EditorApp.tsx`, `src/stores/EditorUIStore.ts`, `src/lib/keyBindings.ts`
 - External: https://platform.claude.com/docs/en/build-with-claude/tool-use
+
+## Reality update (2026-09-10)
+
+Dead draft: part of the April-May 2026 wave-1/2/3 design exploration, never executed (draft status, no linked code, no activity since). The pieces of this exploration that did ship are marked completed separately (wave-1's ai-pattern-a-anthropic-sdk-bootstrap, ai-pattern-a-mst-snapshot-serializer, the three data-bindings specs, lumitra-studio-project-binding, multiplayer-yjs-doc-shape, static-html-data-component-id-fix); the CMS and data-bindings functionality this file describes was instead re-designed and shipped as the build-2026-06 Track 0/A sequence. Archived during work-down session 9b; framer-clone has had no commits since 2026-08-16.

@@ -3,7 +3,7 @@ name: slice4-content-agent-phase2
 track: cms-content-tier
 wave: 4
 priority: P0
-status: done
+status: completed
 type: plan
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [slice3-cms-workspace-phase1]
@@ -671,3 +671,7 @@ Setup: `docker start fc-dev-pg`; `DATABASE_URL=... FRAMER_CLONE_ADMIN_SECRET=dev
 - [ ] Prisma migration runs cleanly (`prisma migrate dev`).
 - [ ] `pnpm exec tsc --noEmit && pnpm lint && pnpm test` green.
 - [ ] Lead manual verification (section 10) complete.
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

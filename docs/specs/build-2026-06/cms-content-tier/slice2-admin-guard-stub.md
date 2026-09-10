@@ -3,7 +3,7 @@ name: slice2-admin-guard-stub
 track: cms-content-tier
 wave: 1
 priority: P1
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [track0-backend-foundation]
 touchesSharedState: false
@@ -11,6 +11,7 @@ sharedState: []
 estimateDays: 1
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Interim admin guard stub for CMS mutation routes (auth.can-shaped, swappable)
@@ -73,3 +74,7 @@ export const INTERIM_WORKSPACE_ID: string;
 - Re-scope brief (2026-06-16): single hard-coded admin guard, `can()`-shaped, reads unauthenticated for v1.
 - Standard: `~/.claude/CLAUDE.md` secrets section (no literals; Infisical-injected env).
 - Depends on: `track0-backend-foundation` (envelope helpers, server-only boundary).
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

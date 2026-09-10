@@ -3,7 +3,7 @@ name: b7-commerce-rest-reads
 track: commerce-engine
 wave: 2
 priority: P1
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [b4-catalog-schema, b3-guarded-reservation, b5-pricing-and-tax]
 touchesSharedState: false
@@ -11,6 +11,7 @@ sharedState: []
 estimateDays: 4
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Commerce REST read surface: /api/commerce catalog + inventory available_quantity (advisory-only), polling-friendly, for the Track C storefront
@@ -77,3 +78,7 @@ export interface AvailabilityDTO { variantId; locationId; availableQuantity: num
 - Cross-check doc section 4.4 (available_quantity advisory-only), 7-8 (v1 reads via plain REST).
 - Critique (minor, fixed): b5 added to dependsOn because the DTO carries resolvedPriceCents.
 - Depends on: `b4-catalog-schema`, `b3-guarded-reservation` (transitive b2 inventory), `b5-pricing-and-tax` (resolvePrice)
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

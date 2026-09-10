@@ -3,11 +3,12 @@ name: multiplayer-yjs-doc-shape
 track: multiplayer
 wave: 1
 priority: P0
-status: done
+status: completed
 depends_on: []
 estimated_value: 9
 estimated_cost: 4
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Yjs document shape mirroring the MST tree
@@ -137,3 +138,7 @@ export function getChildrenArray(doc: Y.Doc, nodeId: string): Y.Array<string> | 
 - Code touchpoints: `src/models/ComponentModel.ts`, `src/models/PageModel.ts`, `src/models/ProjectModel.ts`
 - External: https://docs.yjs.dev/api/shared-types
 - External: https://docs.yjs.dev/api/document-updates (encoding format used for persistence)
+
+## Reality update (2026-09-10)
+
+Status was the non-standard word "done"; reconciled to the shared six-value vocabulary. Code confirmed present on main (`src/lib/ai/`, `src/lib/bindings/`, `src/lib/multiplayer/yjsDocShape.ts`), matching this spec's scope.

@@ -3,7 +3,7 @@ name: trackc-commerce-http-provider-and-read-routes
 track: storefront
 wave: 2
 priority: P1
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [trackc-commerce-data-source-seam-and-dtos, b7-commerce-rest-reads]
 touchesSharedState: false
@@ -11,6 +11,7 @@ sharedState: []
 estimateDays: 4
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # HTTP CommerceDataSource provider over the Track B /api/commerce/* read routes
@@ -69,3 +70,7 @@ export class HttpCommerceDataSource implements CommerceDataSource {
 - Re-scope open decision: storefront reads are public for v1.
 - Cross-check doc section 4.4 (advisory-only availability).
 - Depends on: `trackc-commerce-data-source-seam-and-dtos` (the interface + DTOs), `b7-commerce-rest-reads` (the routes)
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

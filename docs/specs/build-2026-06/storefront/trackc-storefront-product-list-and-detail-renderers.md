@@ -3,7 +3,7 @@ name: trackc-storefront-product-list-and-detail-renderers
 track: storefront
 wave: 2
 priority: P1
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [trackc-commerce-binding-scope-frame-and-resolver, trackc-commerce-http-provider-and-read-routes, slice2-read-only-data-components, slice2-data-loading-empty-error-states]
 touchesSharedState: false
@@ -11,6 +11,7 @@ sharedState: []
 estimateDays: 5
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # ProductList/Grid + ProductDetail renderers (bound to CommerceDataSource, repeating template + record)
@@ -73,3 +74,7 @@ function ProductDetailRenderer(props: { node; scope }): ReactNode; // single pro
 
 - Code touchpoints: the CMS `CollectionRenderer`/`RecordViewRenderer` (the model), `resolveDataState`, `useCommerceDataSource()`, `createComponentElement` dataComponentKind branch
 - Depends on: `trackc-commerce-binding-scope-frame-and-resolver`, `trackc-commerce-http-provider-and-read-routes`, `slice2-read-only-data-components`, `slice2-data-loading-empty-error-states`
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

@@ -3,11 +3,12 @@ name: lumitra-studio-component-id-attribution
 track: lumitra-studio
 wave: 1
 priority: P0
-status: draft
+status: archived
 depends_on: []
 estimated_value: 9
 estimated_cost: 3
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Headless renderer emits stable component IDs to published DOM
@@ -90,3 +91,7 @@ interface PublishedDomAttributionContract {
 - Plan: `analytics-platform/docs/superpowers/plans/2026-04-28-framework-agnostic-analytics-architecture.md` (Phase A, line 178)
 - Memory: `memory/project_strategic_thesis_bubble_killer.md` ("`data-component-id` headless-path bug remains a must-fix regardless")
 - Code touchpoints: `src/lib/renderer/HeadlessComponentRenderer.tsx`, `src/lib/renderer/createComponentElement.tsx`, `src/components/ComponentRenderer.tsx` (for the editor-side reference behavior)
+
+## Reality update (2026-09-10)
+
+Dead draft: part of the April-May 2026 wave-1/2/3 design exploration, never executed (draft status, no linked code, no activity since). The pieces of this exploration that did ship are marked completed separately (wave-1's ai-pattern-a-anthropic-sdk-bootstrap, ai-pattern-a-mst-snapshot-serializer, the three data-bindings specs, lumitra-studio-project-binding, multiplayer-yjs-doc-shape, static-html-data-component-id-fix); the CMS and data-bindings functionality this file describes was instead re-designed and shipped as the build-2026-06 Track 0/A sequence. Archived during work-down session 9b; framer-clone has had no commits since 2026-08-16.

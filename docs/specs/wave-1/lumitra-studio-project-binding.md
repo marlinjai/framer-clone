@@ -3,11 +3,12 @@ name: lumitra-studio-project-binding
 track: lumitra-studio
 wave: 1
 priority: P1
-status: done
+status: completed
 depends_on: []
 estimated_value: 7
 estimated_cost: 2
 owner: unassigned
+date: 2026-05-24
 ---
 
 # Lumitra project binding on the framer-clone project model
@@ -100,3 +101,7 @@ export const LumitraBindingModel = types.model('LumitraBinding', {
 - Plan: `analytics-platform/docs/superpowers/plans/2026-04-28-framework-agnostic-analytics-architecture.md` (Phase A, lines 174 to 180)
 - Memory: `memory/project_strategic_thesis_bubble_killer.md` ("Lumitra Studio integration: apps built on framer-clone are instrumented for growth from day zero")
 - Code touchpoints: `src/models/ProjectModel.ts`, `src/stores/RootStore.ts`
+
+## Reality update (2026-09-10)
+
+Status was the non-standard word "done"; reconciled to the shared six-value vocabulary. Code confirmed present on main (`src/lib/ai/`, `src/lib/bindings/`, `src/lib/multiplayer/yjsDocShape.ts`), matching this spec's scope.

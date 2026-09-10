@@ -3,7 +3,7 @@ name: trackc-commerce-binding-scope-frame-and-resolver
 track: storefront
 wave: 2
 priority: P1
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [trackc-commerce-data-source-seam-and-dtos, slice2-read-binding-resolver-runtime]
 touchesSharedState: true
@@ -11,6 +11,7 @@ sharedState: [binding-types]
 estimateDays: 3
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Commerce scope frames + resolver extension (productId/variantId scope, advisory availability binding)
@@ -74,3 +75,7 @@ export function pushAvailabilityFrame(scope: BindingScope, availability: Availab
 - Critique (minors, fixed): no standalone price root (resolve as variant.price); types.ts edit flagged touchesSharedState; picker tolerates unknown scopeHint.
 - Code touchpoints: `src/lib/bindings/resolver/scope.ts`, `src/lib/bindings/types.ts` (BindableSlotMeta)
 - Depends on: `trackc-commerce-data-source-seam-and-dtos` (DTOs), `slice2-read-binding-resolver-runtime` (the resolver to extend)
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

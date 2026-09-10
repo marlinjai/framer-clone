@@ -1,4 +1,5 @@
 ---
+type: documentation
 name: <slug-matching-filename>
 track: <cms|multiplayer|data-bindings|static-html|ai-pattern-a|lumitra-studio>
 wave: <1|2|3>

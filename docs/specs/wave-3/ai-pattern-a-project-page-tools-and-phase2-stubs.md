@@ -3,11 +3,12 @@ name: ai-pattern-a-project-page-tools-and-phase2-stubs
 track: ai-pattern-a
 wave: 3
 priority: P2
-status: draft
+status: archived
 depends_on: [ai-pattern-a-canvas-mutation-tools]
 estimated_value: 6
 estimated_cost: 4
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Project / page tools and Phase 2 stub scaffold (MST-WRITE)
@@ -125,3 +126,7 @@ type NavigationConfig = {
 - Plan (multiplayer): `docs/plans/2026-05-05-editor-multiplayer-research.md`
 - Plan (CMS, future read-side): `docs/plans/2026-05-05-cms-data-layer-research.md`
 - Code touchpoints: `src/models/ProjectModel.ts`, `src/models/PageModel.ts`, `src/stores/HistoryStore.ts`
+
+## Reality update (2026-09-10)
+
+Dead draft: part of the April-May 2026 wave-1/2/3 design exploration, never executed (draft status, no linked code, no activity since). The pieces of this exploration that did ship are marked completed separately (wave-1's ai-pattern-a-anthropic-sdk-bootstrap, ai-pattern-a-mst-snapshot-serializer, the three data-bindings specs, lumitra-studio-project-binding, multiplayer-yjs-doc-shape, static-html-data-component-id-fix); the CMS and data-bindings functionality this file describes was instead re-designed and shipped as the build-2026-06 Track 0/A sequence. Archived during work-down session 9b; framer-clone has had no commits since 2026-08-16.

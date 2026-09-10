@@ -3,7 +3,7 @@ name: hosted-page-demo
 track: hosted-demo
 wave: 4
 priority: P1
-status: draft
+status: completed
 type: plan
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [slice2b-cms-datatable-grid-ui]
@@ -115,3 +115,7 @@ read repo (#3) and the infra (#7).
 2. Which analytics project/key to bind for the demo.
 3. Whether to do a tiny "fake pay" confirmation step or leave checkout at the plain order-created
    confirmation (current plan: plain confirmation).
+
+## Reality update (2026-09-10)
+
+The render half shipped as an autonomous orchestrator wave on 2026-06-25 (pull requests #36 to #41: CI integration-test gate, commerce read repo, the content agent, publish-write, the SSR render layer, host-aware root routing). See the reality update in `docs/plans/2026-06-23-framer-hosting-platform-foundation.md` for the full pull request map. Item #7 (production wildcard DNS, certificate and analytics-key wiring) is PARKED and needs Marlin's hands; tracked as its own dated roadmap line, not this plan.

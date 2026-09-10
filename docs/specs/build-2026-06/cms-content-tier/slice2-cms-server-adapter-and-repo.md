@@ -3,7 +3,7 @@ name: slice2-cms-server-adapter-and-repo
 track: cms-content-tier
 wave: 1
 priority: P0
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [track0-backend-foundation]
 touchesSharedState: true
@@ -11,6 +11,7 @@ sharedState: [lockfile]
 estimateDays: 3
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # CMS server tier: adapterClient + read repository + 13->8 column-type map (replaces doc-tier-core)
@@ -109,3 +110,7 @@ export function withTenant<T>(prisma: PrismaClient, schema: string, fn: (tx: Pri
 - Critique (RESOLVED): the earlier adapter-prisma@0.2.1 + adapter-shared@0.2.1 `workspace:*` leak is fixed; `0.2.2` is republished with real semver deps (`^0.3.0` / `^0.2.2`) and installs cleanly.
 - Code touchpoints: `src/lib/bindings/dataSource/types.ts` (binding Collection/Column/Row/Query/RowsPage), `data-table/packages/core/src/types.ts` (13-value ColumnType), `data-table/packages/adapter-prisma/src/adapter.ts:894` (no-op transaction), `data-table/packages/adapter-prisma/src/ddl.ts` (atomicDDL)
 - Depends on: `track0-backend-foundation` (PrismaClient singleton + DATABASE_URL + the 8 dt_* models + test substrate)
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

@@ -3,7 +3,7 @@ name: b2-inventory-ledger-schema
 track: commerce-engine
 wave: 1
 priority: P0
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [b1-commerce-module-skeleton]
 touchesSharedState: true
@@ -11,6 +11,7 @@ sharedState: [prisma, migrations]
 estimateDays: 4
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Owned inventory ledger schema: inventory_item / inventory_level (generated available_quantity) / stock_movement (append-only) / reservation / stock_location
@@ -79,3 +80,7 @@ Add the five inventory models to `prisma/schema.prisma` (TOUCHES SHARED SCHEMA) 
 - Cross-check doc sections 3.1 (GoBD immutable correction-only ledger), 4.3 (ledger as source of truth, level as projection), 4.4.
 - Critique (major, fixed): serialized after b1; b4 now depends on b2 (not parallel) so concurrent schema.prisma edits are impossible.
 - Depends on: `b1-commerce-module-skeleton` (role topology, withTenant, repo interfaces)
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

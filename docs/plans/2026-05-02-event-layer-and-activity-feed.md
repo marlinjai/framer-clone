@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: archived
 title: Event Layer & Activity Feed
 summary: Add a semantic event layer between MST actions and patches, so the project gains an activity feed and audit trail without disturbing the existing patch-based undo/redo.
 tags: [mst, history, events, activity-feed, audit, persistence]
@@ -190,3 +190,7 @@ A reasonable order if/when this gets picked up:
 6. Defer: persistence, backend, real activity feed UX.
 
 Steps 1 to 4 are the meaningful foundation. Steps 5 and 6 are downstream once the layer exists.
+
+## Reality update (2026-09-10)
+
+Dead draft: no `ActivityFeed` or semantic event-layer code found on main, no activity since 2026-05-02, framer-clone dormant since 2026-08-16. Archived during work-down session 9b; revive as a new dated roadmap line if this becomes wanted again.

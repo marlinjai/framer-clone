@@ -3,7 +3,7 @@ name: slice2-data-loading-empty-error-states
 track: cms-content-tier
 wave: 2
 priority: P1
-status: done
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [slice2-read-only-data-components]
 touchesSharedState: false
@@ -11,6 +11,7 @@ sharedState: []
 estimateDays: 2
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Loading / empty / error states for data-bound components
@@ -75,3 +76,7 @@ export function resolveDataState(input: {
 
 - Code touchpoints: the three CMS data renderers (`slice2-read-only-data-components`), `HeadlessComponentRenderer.tsx`
 - Depends on: `slice2-read-only-data-components`
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

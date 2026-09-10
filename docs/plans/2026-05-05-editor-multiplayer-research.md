@@ -1,7 +1,7 @@
 ---
 title: Editor Multiplayer Research for Framer-Clone
 type: plan
-status: draft
+status: archived
 date: 2026-05-05
 tags: [research, multiplayer, crdt, yjs, liveblocks, framer-clone, phase-1]
 projects: [framer-clone, auth-brain]
@@ -368,3 +368,7 @@ The reasoning, condensed: Yjs is the only CRDT with the ecosystem density and Re
 - Strategic thesis (Phase 1 parity): `~/.claude/projects/-Users-marlinjai-software-dev-ERP-suite-projects-framer-clone/memory/project_strategic_thesis_bubble_killer.md`
 - Stylistic precedent: `projects/framer-clone/docs/plans/2026-05-01-framework-agnostic-renderer-research.md`
 - Framer-clone source touched during research: `src/models/ComponentModel.ts`, `src/stores/HistoryStore.ts`, `src/stores/RootStore.ts`, `src/lib/drag/DragManager.ts`
+
+## Reality update (2026-09-10)
+
+Dead draft: the self-hosted Hocuspocus + Yjs recommendation was never built past the scaffolding (`src/lib/multiplayer/yjsDocShape.ts` only; no Hocuspocus server, no auth-brain websocket seam, no MST binding). No activity since 2026-05-05, framer-clone dormant since 2026-08-16. Archived during work-down session 9b.

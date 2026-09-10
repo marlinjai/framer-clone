@@ -3,7 +3,7 @@ name: slice2-content-type-management-ui
 track: cms-content-tier
 wave: 2
 priority: P0
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [slice2-cms-server-adapter-and-repo, slice2-prisma-datasource-provider, slice2-admin-guard-stub]
 touchesSharedState: false
@@ -11,6 +11,7 @@ sharedState: []
 estimateDays: 5
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-25
 ---
 
 # Content-type + custom-field management UI (define an Events collection with fields)
@@ -104,3 +105,7 @@ export interface CmsWriteRepository extends CmsReadRepository {
 - Re-scope brief (2026-06-16): write repo extension lands in `src/server/cms/repository.ts`, not lumitra-web; keep adapter DDL + specific-error contract.
 - Code touchpoints: `data-table/packages/adapter-prisma/src/adapter.ts` (createTable/createColumn/createRow/updateRow), `.../src/ddl.ts` (atomicDDL), `src/server/cms/repository.ts`, `src/server/auth/guard.ts` (requireAdmin)
 - Depends on: `slice2-cms-server-adapter-and-repo` (read repo + adapterClient), `slice2-prisma-datasource-provider` (route conventions), `slice2-admin-guard-stub` (requireAdmin)
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).
