@@ -3,11 +3,12 @@ name: data-bindings-read-only-data-components
 track: data-bindings
 wave: 2
 priority: P0
-status: draft
+status: archived
 depends_on: [data-bindings-component-registry-bindable-slots, data-bindings-data-source-provider-interface, data-bindings-read-binding-resolver-runtime]
 estimated_value: 9
 estimated_cost: 7
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Read-only data-bound components: Collection, RecordView, TableView
@@ -147,3 +148,7 @@ export const CollectionRenderer: React.FC<CollectionRendererProps>;
 - Spec: `data-bindings-data-source-provider-interface` (provides useDataSource)
 - Code: `src/lib/renderer/createComponentElement.tsx` (dispatch site)
 - External: data-table package `projects/data-table/packages/react/`
+
+## Reality update (2026-09-10)
+
+Dead draft: part of the April-May 2026 wave-1/2/3 design exploration, never executed (draft status, no linked code, no activity since). The pieces of this exploration that did ship are marked completed separately (wave-1's ai-pattern-a-anthropic-sdk-bootstrap, ai-pattern-a-mst-snapshot-serializer, the three data-bindings specs, lumitra-studio-project-binding, multiplayer-yjs-doc-shape, static-html-data-component-id-fix); the CMS and data-bindings functionality this file describes was instead re-designed and shipped as the build-2026-06 Track 0/A sequence. Archived during work-down session 9b; framer-clone has had no commits since 2026-08-16.

@@ -3,7 +3,7 @@ name: track0-backend-foundation
 track: cms-content-tier
 wave: 1
 priority: P0
-status: done
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: []
 touchesSharedState: true
@@ -11,6 +11,7 @@ sharedState: [prisma, lockfile, next-config, vitest-config]
 estimateDays: 4
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Backend foundation: Prisma + Postgres + server-only boundary + api conventions + test substrate
@@ -130,3 +131,7 @@ generator client { provider = "prisma-client-js" }
 - Code touchpoints: `src/app/api/ai/edit/route.ts:94-110` (error-envelope precedent), `data-table/packages/adapter-prisma/prisma/schema.prisma` (the 8 `dt_*` models), `data-table/packages/adapter-prisma/package.json` (`@prisma/client: ^6.9.0` dep), `.gitignore:48` (`.infisical.json` ignored), `vitest.config.ts` (single jsdom env to migrate)
 - Standard: `~/.claude/CLAUDE.md` secrets section (`DATABASE_URL` via Infisical/Coolify, never `.env`)
 - Orchestration: `docs/specs/build-2026-06/ORCHESTRATION-LOOP.md` section 7 (`prisma` shared-state -> `framer-clone/prisma/schema.prisma`, owned serially by THIS spec)
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

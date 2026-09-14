@@ -1,6 +1,6 @@
 ---
 type: plan
-status: decided
+status: completed
 date: 2026-04-19
 summary: Architectural plan for collapsing the editor's three overlapping drag systems into one pointer-based drag manager. Keeps MST. Fixes the floating-to-tree gap as a side-effect of the rewrite, not as a point fix.
 tags: [drag-drop, architecture, mst, editor, pointer-events]
@@ -613,3 +613,7 @@ If you approve this plan:
 4. Phase C is polish, merged separately, no rush.
 
 If you disagree on any of the numbered decisions in the TL;DR table, say which one and why. The easiest to revisit is #4 (DOM vs canvas-space hit test); the hardest to revisit without a bigger rewrite is #3 (dropping HTML5 entirely). Everything else is local to the design.
+
+## Reality update (2026-09-10)
+
+Shipped: `src/lib/drag/` (DragManager.ts, useDragSource.ts, resolveDropTarget.ts, zoneClassify.ts, markers.ts, DragGhostLayer.tsx) implements the unified pointer-based drag manager this plan specified. Last touched 2026-05-09. Reconciled during work-down session 9b.

@@ -3,11 +3,12 @@ name: data-bindings-component-registry-bindable-slots
 track: data-bindings
 wave: 1
 priority: P0
-status: done
+status: completed
 depends_on: [data-bindings-binding-shape-on-component-model]
 estimated_value: 8
 estimated_cost: 3
 owner: unassigned
+date: 2026-05-24
 ---
 
 # Component registry: bindable-slot metadata and data-component placeholders
@@ -158,3 +159,7 @@ export function getBindableSlotsFor(
 - Spec: `data-bindings-binding-shape-on-component-model` (depends on)
 - Code: `src/lib/componentRegistry.ts` (target)
 - Code: `src/components/sidebars/left/ComponentsPanel.tsx` (consumer)
+
+## Reality update (2026-09-10)
+
+Status was the non-standard word "done"; reconciled to the shared six-value vocabulary. Code confirmed present on main (`src/lib/ai/`, `src/lib/bindings/`, `src/lib/multiplayer/yjsDocShape.ts`), matching this spec's scope.

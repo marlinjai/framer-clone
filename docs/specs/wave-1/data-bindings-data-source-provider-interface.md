@@ -3,11 +3,12 @@ name: data-bindings-data-source-provider-interface
 track: data-bindings
 wave: 1
 priority: P0
-status: done
+status: completed
 depends_on: []
 estimated_value: 8
 estimated_cost: 4
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Data source provider interface and in-memory mock
@@ -185,3 +186,7 @@ const seed: { collections: Collection[]; rows: Record<string, Row[]> } = {
 - Spec: `data-bindings-binding-shape-on-component-model` (parallel, no hard dep)
 - Code: `src/components/EditorApp.tsx` and `src/components/preview/PreviewShell.tsx` (provider mount points)
 - Cross-track: `cms` track HTTP client (sibling spec, not yet written)
+
+## Reality update (2026-09-10)
+
+Status was the non-standard word "done"; reconciled to the shared six-value vocabulary. Code confirmed present on main (`src/lib/ai/`, `src/lib/bindings/`, `src/lib/multiplayer/yjsDocShape.ts`), matching this spec's scope.

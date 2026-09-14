@@ -3,7 +3,7 @@ name: slice2-prisma-datasource-provider
 track: cms-content-tier
 wave: 1
 priority: P0
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [slice2-cms-server-adapter-and-repo]
 touchesSharedState: false
@@ -11,6 +11,7 @@ sharedState: []
 estimateDays: 2
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # PrismaDataSourceProvider over /api/cms read routes, swapped in at the two root mounts
@@ -90,3 +91,7 @@ export class PrismaDataSourceProvider implements DataSourceProvider {
 - Re-scope brief (2026-06-16): keep the client DataSourceProvider seam; back PrismaDataSourceProvider with `/api/cms/*` read routes; reads unauthenticated for v1.
 - Code touchpoints: `src/lib/bindings/dataSource/provider.ts`, `inMemoryProvider.ts` (`getSharedInMemoryDataSourceProvider` symbol, confirmed mounted at `EditorApp.tsx:114` and `preview/PreviewShell.tsx:97`, one site per file), `context.tsx`, `src/lib/api/respond.ts` (Track-0 envelope)
 - Depends on: `slice2-cms-server-adapter-and-repo` (getCmsRepository)
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

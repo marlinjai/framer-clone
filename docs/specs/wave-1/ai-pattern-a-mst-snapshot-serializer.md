@@ -3,11 +3,12 @@ name: ai-pattern-a-mst-snapshot-serializer
 track: ai-pattern-a
 wave: 1
 priority: P0
-status: done
+status: completed
 depends_on: []
 estimated_value: 7
 estimated_cost: 3
 owner: unassigned
+date: 2026-05-24
 ---
 
 # MST snapshot serializer for AI prompts
@@ -160,3 +161,7 @@ type AiEditRequest = {
 - Plan: `docs/plans/2026-05-05-ai-agent-layer-research.md` sections 4d, 7b
 - Code touchpoints: `src/models/ComponentModel.ts:7-22, 77-114, 375-409`, `src/models/PageModel.ts`, `src/models/ProjectModel.ts`, `src/lib/componentRegistry.ts:33-217`, `src/stores/EditorUIStore.ts`
 - External: https://platform.claude.com/docs/en/build-with-claude/prompt-caching (cache breakpoint placement)
+
+## Reality update (2026-09-10)
+
+Status was the non-standard word "done"; reconciled to the shared six-value vocabulary. Code confirmed present on main (`src/lib/ai/`, `src/lib/bindings/`, `src/lib/multiplayer/yjsDocShape.ts`), matching this spec's scope.

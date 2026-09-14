@@ -3,7 +3,7 @@ name: slice2-editor-binding-picker
 track: cms-content-tier
 wave: 3
 priority: P0
-status: done
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [slice2-read-only-data-components, slice2-content-type-management-ui]
 touchesSharedState: true
@@ -11,6 +11,7 @@ sharedState: [mst-tree]
 estimateDays: 6
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Editor binding picker UX (bind a component slot to a collection field)
@@ -85,3 +86,7 @@ export function getAvailableScopeFrames(node: ComponentModel): ScopeFrameInfo[];
 
 - Code touchpoints: `ComponentModel.ts` (setBinding/clearBinding already MST-WRITE; updateResponsiveStyle / setTextContent are the only existing props writers), `componentRegistry.ts` (getBindableSlotsFor, `bindableSlots`), `useDataSource()`
 - Depends on: `slice2-read-only-data-components`, `slice2-content-type-management-ui`
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

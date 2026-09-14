@@ -3,7 +3,7 @@ name: trackc-commerce-data-source-seam-and-dtos
 track: storefront
 wave: 2
 priority: P1
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [b4-catalog-schema, b2-inventory-ledger-schema, track0-backend-foundation]
 touchesSharedState: false
@@ -11,6 +11,7 @@ sharedState: []
 estimateDays: 4
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # CommerceDataSource read seam + typed commerce DTOs (parallel to DataSourceProvider)
@@ -90,3 +91,7 @@ export function getSharedInMemoryCommerceDataSource(): CommerceDataSource;
 - Re-scope open decision: a parallel CommerceDataSource seam alongside DataSourceProvider, sharing the resolver + scope-frame infra.
 - Code touchpoints: `src/lib/bindings/dataSource/context.tsx` (the seam this mirrors), `useDataSource()` (the throw-loudly contract)
 - Depends on: `b4-catalog-schema`, `b2-inventory-ledger-schema`, `track0-backend-foundation`
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

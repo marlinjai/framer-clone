@@ -2,12 +2,13 @@
 name: slice1-crm-boardview-wiring
 track: slice-1-offers-doc-tier
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/lumitra-web
-status: draft
+status: archived
 dependsOn: [slice1-doc-tier-provisioning, slice1-admin-http-routes]
 touchesSharedState: true
 sharedState: [lockfile]
 estimateDays: 1
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit
+date: 2026-06-17
 ---
 
 > **PARKED 2026-06-16:** separate lumitra-web workstream, NOT part of the framer-clone build loop. See `/Users/marlinjai/software-dev/ERP-suite/projects/framer-clone/docs/specs/build-2026-06/ROADMAP.md`. Content preserved for the lumitra-web offers/CRM workstream pickup; do NOT dispatch from the framer-clone orchestrator.
@@ -63,3 +64,7 @@ The CRM pipeline kanban is FREE: a data-table BoardView grouped by the `Offer.st
 
 - Plan: holistic plan 5.1, 5.3
 - Code touchpoints: data-table `architecture.md` (BoardView), ViewType 'board' + BoardViewConfig.groupByColumnId
+
+## Reality update (2026-09-10)
+
+superseded-by: docs/plans/2026-08-15-books-receipts-invoices-integration.md, which re-homes the offers and invoicing work into framer-clone with a new Customer + SalesDocument + DocumentTemplate schema instead of the `@marlinjai/doc-tier-core` approach these slice-1 specs assumed. Confirmed unbuilt: the 2026-08-15 plan's own audit found no `src/server/offers/`, no `src/app/api/offers/`, no `src/app/o/`.

@@ -3,11 +3,12 @@ name: data-bindings-editor-binding-picker
 track: data-bindings
 wave: 2
 priority: P0
-status: draft
+status: archived
 depends_on: [data-bindings-binding-shape-on-component-model, data-bindings-component-registry-bindable-slots, data-bindings-data-source-provider-interface]
 estimated_value: 9
 estimated_cost: 6
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Editor binding picker UX
@@ -143,3 +144,7 @@ export function getAvailableScopeFrames(
 - Spec: `data-bindings-data-source-provider-interface` (consumed via `useDataSource().getCollection`)
 - Code: existing right-sidebar property primitives (recent commits, section-based)
 - Code: `src/stores/HistoryStore.ts` (binding mutations should land in undo history same as other MST writes)
+
+## Reality update (2026-09-10)
+
+Dead draft: part of the April-May 2026 wave-1/2/3 design exploration, never executed (draft status, no linked code, no activity since). The pieces of this exploration that did ship are marked completed separately (wave-1's ai-pattern-a-anthropic-sdk-bootstrap, ai-pattern-a-mst-snapshot-serializer, the three data-bindings specs, lumitra-studio-project-binding, multiplayer-yjs-doc-shape, static-html-data-component-id-fix); the CMS and data-bindings functionality this file describes was instead re-designed and shipped as the build-2026-06 Track 0/A sequence. Archived during work-down session 9b; framer-clone has had no commits since 2026-08-16.

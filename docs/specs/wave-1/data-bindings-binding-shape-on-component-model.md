@@ -3,11 +3,12 @@ name: data-bindings-binding-shape-on-component-model
 track: data-bindings
 wave: 1
 priority: P0
-status: done
+status: completed
 depends_on: []
 estimated_value: 9
 estimated_cost: 4
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Binding shape on ComponentModel
@@ -159,3 +160,7 @@ export type BindingsRecord = Record<string, BindingEntry>;
 - Memory: `memory/feedback_pre_mvp_no_backcompat.md` (no migration shims pre-launch)
 - Code: `src/models/ComponentModel.ts` (target file)
 - Code: `src/lib/componentRegistry.ts` (consumer of binding-slot metadata, see `data-bindings-component-registry-bindable-slots`)
+
+## Reality update (2026-09-10)
+
+Status was the non-standard word "done"; reconciled to the shared six-value vocabulary. Code confirmed present on main (`src/lib/ai/`, `src/lib/bindings/`, `src/lib/multiplayer/yjsDocShape.ts`), matching this spec's scope.

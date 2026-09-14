@@ -3,7 +3,7 @@ name: b6-minimal-orders
 track: commerce-engine
 wave: 2
 priority: P0
-status: done
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [b5-pricing-and-tax]
 touchesSharedState: true
@@ -11,6 +11,7 @@ sharedState: [prisma, migrations]
 estimateDays: 4
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Minimal orders: cart -> order, snapshot line items, atomic $transaction reserving stock via the guarded decrement, OWNING the Order model + its German tax fields
@@ -87,3 +88,7 @@ export async function createOrder(prisma, cart):
 - Cross-check doc sections 3.4 (German tax model), 4.5 (orders Layer-B atomic, snapshot not reference), 8.2 (atomic rollback).
 - Critique (major, fixed): b6 OWNS Order + order-level tax fields; reverse_charge/Kleinunternehmer order tests moved here; CreditNote FK finalized here.
 - Depends on: `b5-pricing-and-tax` (resolvePrice, CreditNote) and transitively `b3-guarded-reservation` (reserve).
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

@@ -2,12 +2,13 @@
 name: slice1-doc-tier-provisioning
 track: slice-1-offers-doc-tier
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/lumitra-web
-status: draft
+status: archived
 dependsOn: []
 touchesSharedState: true
 sharedState: [lockfile, prisma]
 estimateDays: 3
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit
+date: 2026-06-17
 ---
 
 > **PARKED 2026-06-16:** separate lumitra-web workstream, NOT part of the framer-clone build loop. See `/Users/marlinjai/software-dev/ERP-suite/projects/framer-clone/docs/specs/build-2026-06/ROADMAP.md`. Content preserved for the lumitra-web offers/CRM workstream pickup; do NOT dispatch from the framer-clone orchestrator.
@@ -140,3 +141,7 @@ Column manifest (section 5.1 verbatim). Money columns are `number` type but stor
 
 - Plan: `knowledge-base/research/2026-05-31-holistic-lumitra-platform-plan.md` section 5.1
 - Code touchpoints: data-table `packages/adapter-prisma/src/adapter.ts` createTable:91, createColumn:193, createSelectOption:282, createRelation:670 (row-time only); `prisma/schema.prisma` (8 models); `src/ddl.ts:30,69` (TEXT storage), `:91` (expression index)
+
+## Reality update (2026-09-10)
+
+superseded-by: docs/plans/2026-08-15-books-receipts-invoices-integration.md, which re-homes the offers and invoicing work into framer-clone with a new Customer + SalesDocument + DocumentTemplate schema instead of the `@marlinjai/doc-tier-core` approach these slice-1 specs assumed. Confirmed unbuilt: the 2026-08-15 plan's own audit found no `src/server/offers/`, no `src/app/api/offers/`, no `src/app/o/`.

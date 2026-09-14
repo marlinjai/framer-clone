@@ -3,7 +3,7 @@ name: b1-commerce-module-skeleton
 track: commerce-engine
 wave: 1
 priority: P0
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [track0-backend-foundation]
 touchesSharedState: false
@@ -11,6 +11,7 @@ sharedState: []
 estimateDays: 2
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Commerce bounded-module skeleton: withTenant constant-schema seam, commerce_app/commerce_ddl role topology, transport-agnostic repository interface
@@ -82,3 +83,7 @@ export interface OrderRepository     { /* ... */ }
 - Cross-check doc: `knowledge-base/research/2026-06-01-owned-realtime-commerce-architecture.md` sections 3.5, 5.1, 5.5, 6.
 - Code touchpoints: `data-table/packages/adapter-prisma/src/adapter.ts:894` (no-op transaction proving stock cannot live in the grid), `src/server/auth/guard.ts` (reused guard from the CMS track)
 - Depends on: `track0-backend-foundation` (PrismaClient + schema.prisma + Postgres + test substrate)
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

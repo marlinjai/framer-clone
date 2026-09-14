@@ -3,11 +3,12 @@ name: ai-pattern-a-anthropic-sdk-bootstrap
 track: ai-pattern-a
 wave: 1
 priority: P0
-status: done
+status: completed
 depends_on: []
 estimated_value: 8
 estimated_cost: 3
 owner: unassigned
+date: 2026-05-24
 ---
 
 # Anthropic SDK bootstrap and AI route scaffold
@@ -151,3 +152,7 @@ type AiEnv = {
 - Code touchpoints: `src/app/api/` (Next.js route conventions), `src/stores/RootStore.ts` (server has no MST access; reads come from client snapshots)
 - External: https://platform.claude.com/docs/en/build-with-claude/prompt-caching, https://github.com/anthropics/anthropic-sdk-typescript
 - Skill: `~/.claude/skills/claude-api/SKILL.md` (prompt caching pattern)
+
+## Reality update (2026-09-10)
+
+Status was the non-standard word "done"; reconciled to the shared six-value vocabulary. Code confirmed present on main (`src/lib/ai/`, `src/lib/bindings/`, `src/lib/multiplayer/yjsDocShape.ts`), matching this spec's scope.

@@ -1,7 +1,7 @@
 ---
 title: CMS and Data Layer Research for Framer-Clone-Built Apps
 type: plan
-status: draft
+status: archived
 date: 2026-05-05
 tags: [research, cms, data-table, data-layer, multi-tenancy, framer-clone, bubble-killer]
 projects: [framer-clone, data-table, storage-brain, auth-brain]
@@ -484,3 +484,7 @@ The reasoning, condensed: Bubble, Glide, and Adalo all win their market with a h
 - Framer-clone component registry: `projects/framer-clone/src/lib/componentRegistry.ts`
 - Renderer-research stylistic precedent: `projects/framer-clone/docs/plans/2026-05-01-framework-agnostic-renderer-research.md`
 - Adjacent plans (sequencing context): `projects/framer-clone/docs/plans/ai-driven-page-generation.md`, `2026-04-19-drag-drop-unification.md`, `2026-04-20-preview-mode.md`, `2026-05-02-event-layer-and-activity-feed.md`
+
+## Reality update (2026-09-10)
+
+superseded-by: `docs/specs/build-2026-06/ROADMAP.md` (Track 0 backend foundation + Track A CMS content tier, both completed), which shipped a self-contained Prisma-backed CMS directly importing `@marlinjai/data-table-adapter-prisma`, a different final design than this research's Shape A recommendation. Archived during work-down session 9b.

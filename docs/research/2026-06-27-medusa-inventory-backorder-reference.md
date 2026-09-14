@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: archived
 title: "MedusaJS Inventory / Reservation / Backorder Model: Implementation-Grade Reference"
 summary: "Authoritative, docs-grounded reference on how Medusa models inventory items, levels, reservations, and the manage_inventory / allow_backorder policy flags, plus the exact schema and reserve-path changes our custom Postgres commerce engine needs to support backorder."
 date: 2026-06-27
@@ -280,3 +280,7 @@ High-level map only, to later scope "how much Medusa parity" we want. The invent
 - Manage Product Variants (Admin): https://docs.medusajs.com/user-guide/products/variants
 - Manage Reservations (Admin): https://docs.medusajs.com/user-guide/inventory/reservations
 - Commerce Modules index: https://docs.medusajs.com/resources/commerce-modules
+
+## Reality update (2026-09-10)
+
+Reference research folded into the shipped commerce engine (build-2026-06 Track B, b2 inventory-ledger through b7 commerce-rest-reads, all completed on main).

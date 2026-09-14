@@ -3,11 +3,12 @@ name: multiplayer-reconnect-and-persistence-hardening
 track: multiplayer
 wave: 3
 priority: P1
-status: draft
+status: archived
 depends_on: [multiplayer-yjs-mst-binding-full, multiplayer-auth-brain-seam]
 estimated_value: 6
 estimated_cost: 6
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Reconnect, offline edits, and persistence hardening
@@ -116,3 +117,7 @@ Backup file format: `<bucket>/snapshots/<YYYY-MM-DD>/<documentName>.bin.gz` (raw
 - External: https://github.com/yjs/y-indexeddb
 - External: https://tiptap.dev/docs/hocuspocus/server/configuration (storeDocumentDebounce options)
 - Memory (Infisical for prod env vars): `~/.claude/CLAUDE.md`
+
+## Reality update (2026-09-10)
+
+Dead draft: part of the April-May 2026 wave-1/2/3 design exploration, never executed (draft status, no linked code, no activity since). The pieces of this exploration that did ship are marked completed separately (wave-1's ai-pattern-a-anthropic-sdk-bootstrap, ai-pattern-a-mst-snapshot-serializer, the three data-bindings specs, lumitra-studio-project-binding, multiplayer-yjs-doc-shape, static-html-data-component-id-fix); the CMS and data-bindings functionality this file describes was instead re-designed and shipped as the build-2026-06 Track 0/A sequence. Archived during work-down session 9b; framer-clone has had no commits since 2026-08-16.

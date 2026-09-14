@@ -3,11 +3,12 @@ name: lumitra-studio-dashboard-link
 track: lumitra-studio
 wave: 2
 priority: P2
-status: draft
+status: archived
 depends_on: [lumitra-studio-project-binding, lumitra-studio-settings-panel]
 estimated_value: 5
 estimated_cost: 1
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Deep-link from framer-clone editor to the Lumitra dashboard
@@ -88,3 +89,7 @@ export function buildLumitraDashboardUrl(
 - Plan: `analytics-platform/docs/superpowers/plans/2026-04-28-framework-agnostic-analytics-architecture.md` (Phase A and Phase D)
 - External: `analytics-platform/packages/dashboard/` (URL shape)
 - Code touchpoints: `src/components/TopBar.tsx`
+
+## Reality update (2026-09-10)
+
+Dead draft: part of the April-May 2026 wave-1/2/3 design exploration, never executed (draft status, no linked code, no activity since). The pieces of this exploration that did ship are marked completed separately (wave-1's ai-pattern-a-anthropic-sdk-bootstrap, ai-pattern-a-mst-snapshot-serializer, the three data-bindings specs, lumitra-studio-project-binding, multiplayer-yjs-doc-shape, static-html-data-component-id-fix); the CMS and data-bindings functionality this file describes was instead re-designed and shipped as the build-2026-06 Track 0/A sequence. Archived during work-down session 9b; framer-clone has had no commits since 2026-08-16.

@@ -3,7 +3,7 @@ name: slice2-read-only-data-components
 track: cms-content-tier
 wave: 2
 priority: P0
-status: draft
+status: completed
 targetRepo: /Users/marlinjai/software-dev/ERP-suite/projects/framer-clone
 dependsOn: [slice2-read-binding-resolver-runtime, slice2-prisma-datasource-provider]
 touchesSharedState: false
@@ -11,6 +11,7 @@ sharedState: []
 estimateDays: 5
 verify: pnpm test && pnpm build && pnpm exec tsc --noEmit && pnpm lint
 owner: unassigned
+date: 2026-06-17
 ---
 
 # Read-only data components: Collection + RecordView renderers + scope threading
@@ -80,3 +81,7 @@ function RecordViewRenderer(props: { node, scope }): ReactNode;
 - Critique (minor): the original 7-day spec bundled four deliverables; TableView (data-table-react) split into its own leaf.
 - Code touchpoints: `createComponentElement.tsx`, `ComponentRenderer.tsx`, `HeadlessComponentRenderer.tsx`, `ResponsivePageRenderer.tsx`, `componentRegistry.ts` (dataComponentKind on the 3 entries)
 - Consumes: resolver (`applyBindings`/`pushRowFrame`), `useDataSource()`
+
+## Reality update (2026-09-10)
+
+Shipped as part of the build-2026-06 Track 0/A/B/C sequence, confirmed complete on main by `docs/specs/build-2026-06/ROADMAP.md` ("The original 27-spec build (Tracks 0/A/B/C below) is COMPLETE on main"). Reconciled during work-down session 9b (framer-clone plan pile).

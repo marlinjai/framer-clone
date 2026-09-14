@@ -1,7 +1,7 @@
 ---
 title: AI Agent Layer Research for Framer-Clone
 type: plan
-status: draft
+status: archived
 date: 2026-05-05
 tags: [research, ai, llm, agent, framer-clone, bubble-killer, anthropic]
 projects: [framer-clone]
@@ -412,3 +412,7 @@ The reasoning, condensed: the MST tree is already structured data and a determin
 - Builder.io Visual Copilot pipeline (initial model + Mitosis + fine-tuned LLM): https://www.builder.io/blog/figma-to-code-visual-copilot
 - Lovable vs Bubble schema generation: https://lovable.dev/guides/bubble-vs-lovable-no-code-platform-comparison
 - claude-api skill (prompt caching guidance): `~/.claude/skills/claude-api/SKILL.md`
+
+## Reality update (2026-09-10)
+
+superseded-by: the actual AI agent that shipped is the CMS content agent (`docs/specs/build-2026-06/cms-content-tier/slice4-content-agent-phase2.md`, completed), a right-rail natural-language content agent over the CMS adapter rather than the inline canvas-assistant pattern this research recommended. Archived during work-down session 9b.

@@ -21,6 +21,7 @@
     "db:deploy": "prisma migrate deploy",
     "docs:dev": "clearify dev",
     "docs:build": "clearify build",
+    "check:roadmap": "npx --yes github:marlinjai/actions-shared#roadmap-check-v1 --root .",
     "postinstall": "prisma generate",
     "prepare": "husky"
   },

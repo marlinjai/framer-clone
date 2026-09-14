@@ -3,11 +3,12 @@ name: static-html-data-component-id-fix
 track: static-html
 wave: 1
 priority: P0
-status: done
+status: completed
 depends_on: []
 estimated_value: 9
 estimated_cost: 2
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Fix data-component-id emission on the headless render path
@@ -100,3 +101,7 @@ The renderer touches MST in read-only mode: `component.getResolvedProps`, `compo
 - Memory: `memory/project_strategic_thesis_bubble_killer.md` ("data-component-id headless-path bug remains a must-fix regardless")
 - Code touchpoints: `src/lib/renderer/createComponentElement.tsx`, `src/lib/renderer/HeadlessComponentRenderer.tsx`, `src/components/ComponentRenderer.tsx`, `src/utils/crossViewportHighlighting.ts`, `src/components/HudSurface.tsx`
 - Cross-track: lumitra-studio (consumer of these attributes once integration starts)
+
+## Reality update (2026-09-10)
+
+Status was the non-standard word "done"; reconciled to the shared six-value vocabulary. Code confirmed present on main (`src/lib/ai/`, `src/lib/bindings/`, `src/lib/multiplayer/yjsDocShape.ts`), matching this spec's scope.

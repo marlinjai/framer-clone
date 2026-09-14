@@ -3,11 +3,12 @@ name: static-html-runtime-island
 track: static-html
 wave: 2
 priority: P1
-status: draft
+status: archived
 depends_on: [static-html-spike]
 estimated_value: 7
 estimated_cost: 4
 owner: unassigned
+date: 2026-05-09
 ---
 
 # Vanilla-JS runtime island for published sites
@@ -124,3 +125,7 @@ The runtime touches the DOM, never MST (MST does not exist in published-site con
 - Plan: `docs/plans/2026-05-01-framework-agnostic-renderer-research.md` (recommendation 3: "Define `window.__framerRuntime.applyExperimentVariant` as a tiny vanilla-JS module independent of React")
 - Cross-track: lumitra-studio (consumer), data-bindings (Wave 3 hydration plug-in)
 - Code touchpoints: `src/lib/renderer/publish/projectPublisher.ts`
+
+## Reality update (2026-09-10)
+
+Dead draft: part of the April-May 2026 wave-1/2/3 design exploration, never executed (draft status, no linked code, no activity since). The pieces of this exploration that did ship are marked completed separately (wave-1's ai-pattern-a-anthropic-sdk-bootstrap, ai-pattern-a-mst-snapshot-serializer, the three data-bindings specs, lumitra-studio-project-binding, multiplayer-yjs-doc-shape, static-html-data-component-id-fix); the CMS and data-bindings functionality this file describes was instead re-designed and shipped as the build-2026-06 Track 0/A sequence. Archived during work-down session 9b; framer-clone has had no commits since 2026-08-16.
