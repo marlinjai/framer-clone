@@ -31,7 +31,7 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   offers document tier for Marlin's own accounting (joins with receipt-ocr-app's expense side).
   Roughly 85 percent of the new code lands in this repo. Decided 2026-08-15, not yet started. See
   [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md). (2026-09-10)
-- [ ] Restart the framer-clone Coolify Postgres database to close the published port 5439 mapping
+- [x] The Framer database is private and port 5439 is no longer published. Production verification on 10 October found no host listener and no Docker published-port mapping for 5439 on the shared server. The old restart request is already satisfied; no production restart is needed. (2026-10-10)
   left over from a one-off production seed; the database was re-privated (`is_public=false`)
   already but the port mapping persists until the next restart. Production/machine change, needs
   Marlin's hands. (2026-09-10)
