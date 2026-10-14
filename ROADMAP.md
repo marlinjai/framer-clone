@@ -29,8 +29,15 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   (2026-09-10)
 - [ ] The Books: build the Customer + SalesDocument + DocumentTemplate schema and the invoices/
   offers document tier for Marlin's own accounting (joins with receipt-ocr-app's expense side).
-  Roughly 85 percent of the new code lands in this repo. Decided 2026-08-15, not yet started. See
-  [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md). (2026-09-10)
+  Roughly 85 percent of the new code lands in this repo. Decided 2026-08-15, not yet started.
+  Re-confirmed by Marlin on 2026-10-14 as the place invoices are written (offers, use by other
+  businesses, products and services shared with commerce), with these settings from
+  receipt-ocr-app's plan "Invoicing and income" of 2026-10-14: company Whiz-Art Media, documents
+  default to the small-business treatment (section 19 of the value-added tax act, section 34a
+  invoice fields), invoice numbers continue the plain integer series at 62 (not
+  `RE-{YYYY}-{####}`), and `Customer` points to the shared contacts database for name and address
+  instead of holding its own copy. receipt-ocr-app mirrors issued invoices read-only. See
+  [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md). (2026-10-14)
 - [ ] Restart the framer-clone Coolify Postgres database to close the published port 5439 mapping
   left over from a one-off production seed; the database was re-privated (`is_public=false`)
   already but the port mapping persists until the next restart. Production/machine change, needs
