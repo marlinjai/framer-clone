@@ -18,6 +18,36 @@ Homed in framer-clone because roughly 85 percent of the new code lands here: the
 
 ---
 
+## Amendment 2026-10-15: build order, storage tier, historical import
+
+Decided with Marlin on 2026-10-15; supersedes the body where they conflict.
+
+1. **Storage tier.** Section 3 put the document tables in the shared `commerce` schema with a
+   row-level `tenantId`, because the per-company schemas were blocked (MT-18). They are no longer
+   blocked: the commerce tenant plan (`2026-06-27-commerce-tenant-db-migration-plan.md`) has
+   shipped CM-01 to CM-12. The Books tables are therefore written as per-tenant Kysely migrations
+   in each tenant group's `tg_<hex32>` schema, beside the commerce tables, and not as Prisma
+   models. They keep a `tenant_id` column (the auth-brain company), because one tenant group can
+   hold more than one company. The repository code takes the scoped handle like the commerce
+   repos; no `withTenant`, no Prisma.
+2. **Order.** Books phase 1 starts after CM-10 and CM-13 (the per-company switch and the guard
+   checks) and after the app runs again (roadmap lines 1 and 2). Phase 0 (receipts tenant
+   awareness) is largely there: receipt-ocr-app's finance tables carry `auth_tenant_id`.
+3. **Settings** (from receipt-ocr-app's plan "Invoicing and income" of 2026-10-14): company
+   Whiz-Art Media, small-business default (section 19, section 34a fields), invoice numbers
+   continue the plain integer series at 62, `Customer` points to the shared contacts database.
+4. **Services as products.** Lines for services reference the commerce catalog (`variantRef`,
+   already in the schema), so offers, invoices and the shop share one product and service list.
+5. **Historical import** (new, after phase 3): invoices 28 to 61 are imported as issued documents
+   with `source = import`, their original PDF attached as the document of record and never
+   re-rendered, numbers kept as printed (58 under 58, with the corrected copy). The list to
+   import from (number, date, amount, payment day; no client names) is in the owner's tax folder,
+   `Finanzen/Steuern/2026/ausgangsrechnungen-2024-2026.md`. The numbering counter starts after
+   the highest imported number.
+6. **Connections** (after the import): the read-only machine endpoint receipt-ocr-app pulls
+   issued documents from (section 3's pull model, service-account key, company-scoped),
+   storage-brain for PDFs, the shared contacts database for recipients.
+
 ## 1. Audit: what actually exists today
 
 Verified by reading the repos on 2026-08-15, not inferred from docs.
