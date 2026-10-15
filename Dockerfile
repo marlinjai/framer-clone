@@ -104,10 +104,9 @@ RUN apt-get update \
          openssl \
     && rm -rf /var/lib/apt/lists/*
 
-# Infisical CLI (Cloudsmith Debian repo). The CLI prints a deprecation notice at
-# runtime; the binary still functions. Switch install channels in a follow-up
-# when artifacts-cli.infisical.com returns a non-403 response.
-RUN curl -1sLfS 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.deb.sh' \
+# Infisical CLI (Debian repo). The old Cloudsmith channel now returns 404, so the
+# install script comes from Infisical's own artifacts host.
+RUN curl -1sLfS 'https://artifacts-cli.infisical.com/setup.deb.sh' \
       | bash \
     && apt-get install -y --no-install-recommends infisical \
     && rm -rf /var/lib/apt/lists/* \

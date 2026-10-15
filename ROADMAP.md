@@ -26,7 +26,11 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   DNS/TLS. See [gap analysis](docs/plans/2026-06-26-multi-tenancy-gap-analysis.md) and
   [implementation plan](docs/plans/2026-06-26-multi-tenancy-phase2-plan.md) (23 specs across 5
   waves; the last wave is a hands-on infra cutover that needs Marlin's DNS/TLS/Coolify hands).
-  (2026-10-14)
+  Commerce isolation is schema-per-tenant-group on auth-brain tenant groups (confirmed by Marlin
+  on 2026-10-15, not a database per company); its migration is done up to CM-12, open are CM-10
+  (flip the render path off the shared schema) and CM-13 (guards, Prisma teardown), see
+  [commerce tenant plan](docs/plans/2026-06-27-commerce-tenant-db-migration-plan.md). Identity and
+  membership come from auth-brain. (2026-10-15)
 - [ ] The Books: build the Customer + SalesDocument + DocumentTemplate schema and the invoices/
   offers document tier for Marlin's own accounting (joins with receipt-ocr-app's expense side).
   Roughly 85 percent of the new code lands in this repo. Decided 2026-08-15, not yet started.
@@ -38,14 +42,14 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   `RE-{YYYY}-{####}`), and `Customer` points to the shared contacts database for name and address
   instead of holding its own copy. receipt-ocr-app mirrors issued invoices read-only. See
   [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md). (2026-10-14)
-- [ ] Restart the framer-clone Coolify Postgres database to close the published port 5439 mapping
-  left over from a one-off production seed; the database was re-privated (`is_public=false`)
-  already but the port mapping persists until the next restart. Production/machine change, needs
-  Marlin's hands. (2026-10-14)
-- [ ] Commit or drop the two files untracked in the main checkout (not this worktree, which built
-  from a clean origin/main): an undated commerce-tenant database migration plan draft dated
-  2026-06-27, and a `build-2026-06-arbosano` specs directory. Left alone per this session's rule
-  against touching the main checkout. (2026-10-14)
+- [x] The framer-clone Coolify Postgres database with the published port 5439: checked on
+  2026-10-15, there is no framer-clone database or app in Coolify any more and port 5439 is closed
+  on both servers, so nothing is left to restart. Done 2026-10-15.
+- [ ] Re-evaluate the untracked `docs/specs/build-2026-06-arbosano/` in the main checkout: a draft
+  plan of 2026-06-26 to mature the builder UX with the ArboSano site as the forcing spec. ArboSano
+  has since been built on WordPress, so the forcing spec is gone; the builder-UX gaps it lists
+  (typed property controls, navbar, theme) are still real. Marlin's call: re-scope, keep as
+  reference, or drop. The commerce tenant plan that sat next to it is committed. (2026-10-15)
 
 ## Completed
 
