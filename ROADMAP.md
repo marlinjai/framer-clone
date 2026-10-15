@@ -17,21 +17,28 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   (domain-control validation, per-domain TLS, in-editor onboarding), on top of the default
   subdomain hosting that already shipped. Background work, still wanted, not started. See
   [plan](docs/plans/2026-06-25-framer-custom-domains.md). (2026-10-14)
-- [ ] Multi-tenancy: finish the migration from the deployed single-tenant storefront slice to the
-  full multi-tenant Framer model (authenticated multi-user editor at
-  app.lumitra.co/projects/<id>, per-site subdomains on a wildcard). The data, scope and
-  auth-scoping layers are already multi-tenant-correct; the gaps are routing surfaces, the editor
-  shell, the publish-side subdomain allocator, an interim admin-secret removal, commerce tenancy
-  (`src/server/commerce/tenant.ts` is still hardcoded to one shared schema), and wildcard
-  DNS/TLS. See [gap analysis](docs/plans/2026-06-26-multi-tenancy-gap-analysis.md) and
-  [implementation plan](docs/plans/2026-06-26-multi-tenancy-phase2-plan.md) (23 specs across 5
-  waves; the last wave is a hands-on infra cutover that needs Marlin's DNS/TLS/Coolify hands).
-  Commerce isolation is schema-per-tenant-group on auth-brain tenant groups (confirmed by Marlin
-  on 2026-10-15, not a database per company); its migration is done up to CM-12, open are CM-10
-  (flip the render path off the shared schema) and CM-13 (guards, Prisma teardown), see
-  [commerce tenant plan](docs/plans/2026-06-27-commerce-tenant-db-migration-plan.md). Identity and
-  membership come from auth-brain. (2026-10-15)
-- [ ] The Books: build the Customer + SalesDocument + DocumentTemplate schema and the invoices/
+Build order decided by Marlin on 2026-10-15: finish the per-company schemas, get the app running
+again, then the invoicing tier on top, then the import of the existing invoices and the
+connections to the suite. The four lines below are in that order.
+
+- [ ] 1. Commerce per company (step MT-18 of the multi-tenancy plan, carried out as the commerce
+  tenant plan): CM-01 to CM-12 are merged. Open: CM-10, every shop page and the four shop routes
+  read the schema of the site's own company instead of the shared `commerce` schema, failing
+  closed for a site without one, with a two-company isolation test through the real routes
+  (in progress on `feat/commerce-cm10-tenant-routes`); then CM-13, the guard checks in CI and
+  Prisma out of the commerce module. Isolation stays schema-per-tenant-group on auth-brain tenant
+  groups (confirmed 2026-10-15, not a database per company). See
+  [commerce tenant plan](docs/plans/2026-06-27-commerce-tenant-db-migration-plan.md). (2026-10-15)
+- [ ] 2. Running again: production was retired on 2026-09-10 (the app had been down since 27
+  July; app, database without backups and the app.lumitra.co record were removed, infra commit
+  d15a07d). Redeploy as a new Coolify app and database declared in Terraform, this time with a
+  backup schedule, then the cutover of the multi-tenancy plan's wave 5 (MT-19 to MT-23: wildcard
+  DNS for the published sites, certificates, the Coolify host, the configuration switch).
+  Recommended start without Cloudflare's paid certificate manager (about 10 dollars a month,
+  global edge caching); Marlin decides that at this step. MT-01 to MT-17 are merged. See
+  [multi-tenancy plan](docs/plans/2026-06-26-multi-tenancy-phase2-plan.md) and
+  [gap analysis](docs/plans/2026-06-26-multi-tenancy-gap-analysis.md). (2026-10-15)
+- [ ] 3. The Books: build the Customer + SalesDocument + DocumentTemplate schema and the invoices/
   offers document tier for Marlin's own accounting (joins with receipt-ocr-app's expense side).
   Roughly 85 percent of the new code lands in this repo. Decided 2026-08-15, not yet started.
   Re-confirmed by Marlin on 2026-10-14 as the place invoices are written (offers, use by other
@@ -40,8 +47,16 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   default to the small-business treatment (section 19 of the value-added tax act, section 34a
   invoice fields), invoice numbers continue the plain integer series at 62 (not
   `RE-{YYYY}-{####}`), and `Customer` points to the shared contacts database for name and address
-  instead of holding its own copy. receipt-ocr-app mirrors issued invoices read-only. See
-  [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md). (2026-10-14)
+  instead of holding its own copy. receipt-ocr-app mirrors issued invoices read-only. Amended
+  2026-10-15: the invoice tables live in each company's schema as per-tenant Kysely migrations,
+  not in Prisma with a company column, so they are built after line 1 and never migrated later.
+  See [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md). (2026-10-15)
+- [ ] 4. Existing invoices and the suite: import invoices 28 to 61 as historical documents
+  with their original PDFs attached (never re-rendered), then connect: the read-only endpoint
+  receipt-ocr-app pulls issued invoices from (service-account key from auth-brain; the receipts
+  session gets the contract when it exists), storage-brain for the PDFs, the shared contacts
+  database for recipients. After the import the receipts app's register rows map to the mirror
+  by invoice number. See the Books plan's amendment of 2026-10-15. (2026-10-15)
 - [x] The framer-clone Coolify Postgres database with the published port 5439: checked on
   2026-10-15, there is no framer-clone database or app in Coolify any more and port 5439 is closed
   on both servers, so nothing is left to restart. Done 2026-10-15.
