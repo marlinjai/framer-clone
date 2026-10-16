@@ -27,6 +27,8 @@ vi.mock('@/server/sites/publicResolver', () => ({
 
 vi.mock('@/server/commerce/db', () => ({
   commerceTenantDbChecked: vi.fn(async (tgId: string) => ({ __scopedHandleFor: tgId })),
+  isCommerceTenantNotProvisioned: (err: unknown) =>
+    (err as { code?: string } | null)?.code === 'COMMERCE_TENANT_NOT_PROVISIONED',
 }));
 
 vi.mock('@/server/commerce/repository/storefront', () => ({
@@ -224,6 +226,25 @@ describe('GET /api/commerce/products (list)', () => {
     });
     const res = await productsGET(req('/api/commerce/products'));
     expect(res.status).toBe(500);
+  });
+});
+
+describe('500s never leak internals to the anonymous buyer', () => {
+  const secretish =
+    'Commerce backstop: could not verify the commerce connection (COMMERCE_APP_DATABASE_URL must point at the low-privilege commerce_app role, search_path = ext): connect ECONNREFUSED 10.0.0.5:5432';
+
+  it.each(ROUTES)('$name: a backstop failure answers a generic 500, the detail only in the log', async ({ call }) => {
+    tenantDbMock.mockRejectedValueOnce(new Error(secretish));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await call(HOST_A);
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    expect(JSON.parse(text).error.code).toBe('commerce_read_failed');
+    for (const fragment of ['COMMERCE_APP_DATABASE_URL', 'commerce_app', 'search_path', 'ECONNREFUSED', '10.0.0.5']) {
+      expect(text).not.toContain(fragment);
+    }
+    expect(errorSpy.mock.calls.flat().some((a) => a instanceof Error && a.message === secretish)).toBe(true);
+    errorSpy.mockRestore();
   });
 });
 

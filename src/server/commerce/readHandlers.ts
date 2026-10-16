@@ -19,11 +19,13 @@ import 'server-only';
 //
 // Errors surface, never swallowed: bad query input is a `bad_request` 400, an
 // unknown product or level row a `not_found` 404, and any read or resolution
-// failure a `commerce_read_failed` 500 envelope.
+// failure a `commerce_read_failed` 500 envelope whose message is GENERIC; the
+// full error goes to the server log only (faults.ts), never to the client.
 
 import type { Kysely } from 'kysely';
 
 import { jsonError } from '@/lib/api/respond';
+import { commerceServerFault } from './faults';
 import {
   availabilityDTOSchema,
   DEFAULT_CURRENCY,
@@ -86,10 +88,11 @@ export async function handleListProducts(
     // is a server bug, surfaced as a 500 rather than shipped malformed.
     return Response.json(productListResponseSchema.parse(result));
   } catch (err) {
-    return jsonError(
+    return commerceServerFault(
       'commerce_read_failed',
-      err instanceof Error ? err.message : 'failed to list products',
-      500,
+      'the catalog could not be read',
+      'list products',
+      err,
     );
   }
 }
@@ -111,10 +114,11 @@ export async function handleProductByHandle(
     }
     return Response.json(productDTOSchema.parse(dto));
   } catch (err) {
-    return jsonError(
+    return commerceServerFault(
       'commerce_read_failed',
-      err instanceof Error ? err.message : 'failed to read product',
-      500,
+      'the catalog could not be read',
+      'read product',
+      err,
     );
   }
 }
@@ -150,10 +154,11 @@ export async function handleInventory(
     const dto = toAvailabilityDTO({ variantId, locationId, availableQuantity });
     return Response.json(availabilityDTOSchema.parse(dto));
   } catch (err) {
-    return jsonError(
+    return commerceServerFault(
       'commerce_read_failed',
-      err instanceof Error ? err.message : 'failed to read availability',
-      500,
+      'the catalog could not be read',
+      'read availability',
+      err,
     );
   }
 }

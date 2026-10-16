@@ -19,7 +19,8 @@ import 'server-only';
 //     storefront at all (unchanged from the pre-CM-10 orders gate).
 //   - 404 `commerce_not_provisioned`: the host IS a published site, but the
 //     site carries no valid tenant group id (null, empty, or a legacy non-UUID
-//     sentinel), so there is no commerce schema to read or write. 404 because,
+//     sentinel), or a valid one whose tg_<id> schema was never created, so
+//     there is no commerce schema to read or write. 404 because,
 //     from the buyer's side, this storefront's catalog/cart simply does not
 //     exist. NOT 409: the storefront checkout client treats every 409 from
 //     POST /api/commerce/orders as a stock shortage (CheckoutButton.tsx) and
@@ -38,7 +39,11 @@ import {
   type ComponentNode,
 } from '@/lib/renderer/publish/hydrateBindings';
 import { resolvePublishedSite, type PublishedSite } from '@/server/sites/publicResolver';
-import { commerceTenantDbChecked, type CommerceDB } from './db';
+import {
+  commerceTenantDbChecked,
+  isCommerceTenantNotProvisioned,
+  type CommerceDB,
+} from './db';
 import { getCommerceServerRepositoryDb } from './repository/read';
 import { isTenantSchemaError, resolveTenantGroupForSite } from './tenant';
 
@@ -69,24 +74,34 @@ export async function resolveStorefrontCommerce(
     return { ok: false, response: jsonError('forbidden', 'not a published storefront', 403) };
   }
 
+  const notProvisioned: StorefrontCommerce = {
+    ok: false,
+    response: jsonError(
+      COMMERCE_NOT_PROVISIONED,
+      'commerce is not provisioned for this storefront',
+      404,
+    ),
+  };
+
   let tenantGroupId: TenantGroupId;
   try {
     tenantGroupId = resolveTenantGroupForSite(site);
   } catch (err) {
-    if (isTenantSchemaError(err)) {
-      return {
-        ok: false,
-        response: jsonError(
-          COMMERCE_NOT_PROVISIONED,
-          'commerce is not provisioned for this storefront',
-          404,
-        ),
-      };
-    }
+    if (isTenantSchemaError(err)) return notProvisioned;
     throw err;
   }
 
-  return { ok: true, site, tenantGroupId, db: await commerceTenantDbChecked(tenantGroupId) };
+  try {
+    return { ok: true, site, tenantGroupId, db: await commerceTenantDbChecked(tenantGroupId) };
+  } catch (err) {
+    // A valid tenant group UUID whose tg_<id> schema does not exist: the SAME
+    // not-provisioned answer as an invalid id (never a 500 with internals).
+    if (isCommerceTenantNotProvisioned(err)) {
+      console.error(`[commerce] site ${site.siteId}: ${(err as Error).message}`);
+      return notProvisioned;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -127,5 +142,18 @@ export async function commerceRepoForSite(
     }
     throw err;
   }
-  return build(tenantGroupId);
+  try {
+    return await build(tenantGroupId);
+  } catch (err) {
+    // A valid tenant group UUID whose tg_<id> schema does not exist: render
+    // WITHOUT commerce data (logged), exactly like an invalid tenant group,
+    // instead of silently empty shop slots.
+    if (isCommerceTenantNotProvisioned(err)) {
+      console.error(
+        `[commerce] site ${site.siteId}: ${(err as Error).message}; rendering without commerce data`,
+      );
+      return undefined;
+    }
+    throw err;
+  }
 }

@@ -18,11 +18,13 @@
 //   3. a project whose site has no valid tenant group gets 404
 //      commerce_not_provisioned,
 //   4. two tenants: project A in the editor never sees tenant B's products, even
-//      when asked for B's handle or B's stock pair.
+//      when asked for B's handle or B's stock pair,
+//   5. on a published storefront host the editor route is refused (404) even
+//      with a valid session (D2), while the editor host still works.
 //
 // The `.itest.ts` suffix keeps this file OUT of the headless `pnpm test` gate.
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import type { SessionVerifyResponse } from '@marlinjai/auth-brain-sdk';
 
@@ -107,6 +109,10 @@ afterAll(async () => {
   await fx?.close();
 });
 
+afterEach(() => {
+  delete process.env.EDITOR_HOST;
+});
+
 beforeEach(() => {
   sessionMock.mockReset();
   accessMock.mockReset();
@@ -187,4 +193,28 @@ describe('editor commerce reads: /api/projects/<id>/commerce/*', () => {
     sessionMock.mockResolvedValue(memberOf(projectB.workspaceId, tgB.tgId));
     expect(await listHandles(projectB.siteId)).toEqual({ status: 200, handles: [productB.handle] });
   });
+
+  it('is refused (404) on a published storefront host even with a valid session; the editor host still works', async () => {
+    process.env.EDITOR_HOST = 'app.lumitra.co';
+    sessionMock.mockResolvedValue(memberOf(projectA.workspaceId, tgA.tgId));
+
+    const onStorefront = await productsGET(
+      new Request(`https://acme.sites.lumitra.co/api/projects/${projectA.siteId}/commerce/products`, {
+        headers: { host: 'acme.sites.lumitra.co', cookie: 'lumitra_session=valid' },
+      }),
+      { params: Promise.resolve({ projectId: projectA.siteId }) },
+    );
+    expect(onStorefront.status).toBe(404);
+    expect((await onStorefront.json()).error.code).toBe('not_found');
+    expect(sessionMock).not.toHaveBeenCalled();
+
+    const onEditor = await productsGET(
+      new Request(`https://app.lumitra.co/api/projects/${projectA.siteId}/commerce/products`, {
+        headers: { host: 'app.lumitra.co', cookie: 'lumitra_session=valid' },
+      }),
+      { params: Promise.resolve({ projectId: projectA.siteId }) },
+    );
+    expect(onEditor.status).toBe(200);
+  });
 });
+

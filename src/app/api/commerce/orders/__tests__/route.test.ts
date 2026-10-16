@@ -29,9 +29,13 @@ vi.mock('@/server/sites/publicResolver', () => ({
 
 vi.mock('@/server/commerce/db', () => ({
   commerceTenantDbChecked: vi.fn(async (tgId: string) => ({ __scopedHandleFor: tgId })),
+  isCommerceTenantNotProvisioned: (err: unknown) =>
+    (err as { code?: string } | null)?.code === 'COMMERCE_TENANT_NOT_PROVISIONED',
 }));
 
-vi.mock('@/server/commerce/repository/storefront', () => ({
+vi.mock('@/server/commerce/repository/storefront', async (importOriginal) => ({
+  // Keep the real UnknownVariantError class (the route branches on it).
+  ...(await importOriginal<typeof import('@/server/commerce/repository/storefront')>()),
   resolveOrderLines: vi.fn(),
   readOrderTotal: vi.fn(),
 }));
@@ -42,7 +46,11 @@ vi.mock('@/server/commerce/order/createOrder', () => ({
 
 import { createOrderKysely } from '@/server/commerce/order/createOrder';
 import { commerceTenantDbChecked } from '@/server/commerce/db';
-import { readOrderTotal, resolveOrderLines } from '@/server/commerce/repository/storefront';
+import {
+  readOrderTotal,
+  resolveOrderLines,
+  UnknownVariantError,
+} from '@/server/commerce/repository/storefront';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
 import { POST } from '../route';
 
@@ -194,12 +202,45 @@ describe('POST /api/commerce/orders body contract', () => {
     expect(body.shortages[0]).toEqual({ variantId: 'var_a', needed: 5, available: 1 });
   });
 
-  it('surfaces an unresolvable variant (catalog misconfiguration) as a loud 500', async () => {
-    resolveLinesMock.mockRejectedValue(new Error('unknown variant var_x'));
+  it('answers an unknown (or other-shop) variant with a typed 422 unknown_variant, never a 409 or 500', async () => {
+    resolveLinesMock.mockRejectedValue(new UnknownVariantError('var_x'));
     const res = await POST(postReq({ lines: [{ variantId: 'var_x', quantity: 1 }] }));
-    expect(res.status).toBe(500);
-    expect((await res.json()).error.code).toBe('commerce_order_failed');
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({
+      error: { code: 'unknown_variant', message: 'an item in the cart is not available', variantId: 'var_x' },
+    });
     expect(createOrderMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps a real catalog misconfiguration (no SKU) a 500, with a GENERIC message and the detail only in the log', async () => {
+    resolveLinesMock.mockRejectedValue(new Error('variant var_a has no sku; cannot resolve inventory'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }] }));
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    expect(JSON.parse(text).error.code).toBe('commerce_order_failed');
+    expect(text).not.toContain('no sku');
+    expect(text).not.toContain('var_a');
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+    expect(createOrderMock).not.toHaveBeenCalled();
+  });
+
+  it('never leaks a backstop / connection failure message to the anonymous buyer', async () => {
+    const secretish =
+      'Commerce backstop: could not verify the commerce connection (COMMERCE_APP_DATABASE_URL must point at the low-privilege commerce_app role, search_path = ext): getaddrinfo ENOTFOUND db.internal.example';
+    tenantDbMock.mockRejectedValueOnce(new Error(secretish));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }] }));
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    expect(JSON.parse(text).error.code).toBe('commerce_order_failed');
+    for (const fragment of ['COMMERCE_APP_DATABASE_URL', 'commerce_app', 'search_path', 'ENOTFOUND', 'db.internal']) {
+      expect(text).not.toContain(fragment);
+    }
+    // The full error IS logged server-side.
+    expect(errorSpy.mock.calls.flat().some((a) => a instanceof Error && a.message === secretish)).toBe(true);
+    errorSpy.mockRestore();
   });
 
   it('surfaces an order that vanished on read-back as a 500, never a false 201', async () => {

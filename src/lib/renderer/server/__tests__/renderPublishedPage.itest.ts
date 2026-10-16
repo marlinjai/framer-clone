@@ -218,6 +218,14 @@ describe('published-site render smoke (real Postgres, real seeded data)', () => 
       // tenant group is what makes the helper refuse.
       expect(treeNeedsCommerceRepo(home.root!)).toBe(true);
       expect(await commerceRepoForSite(unprovisioned, home.root!)).toBeUndefined();
+      // Same for a VALID tenant group UUID whose tg_<id> schema was never
+      // created: no commerce data (logged), never silently empty slots.
+      expect(
+        await commerceRepoForSite(
+          { ...site!, tenantGroupId: '018f9c10-0000-7000-8000-00000000dead' },
+          home.root!,
+        ),
+      ).toBeUndefined();
       html = await renderHomeToHtml(unprovisioned);
     }, 60_000);
 

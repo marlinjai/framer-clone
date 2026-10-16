@@ -9,7 +9,7 @@
 //   own tenant group for that workspace -> 403; otherwise the handle for THAT
 //   project's tenant group.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import type { SessionVerifyResponse } from '@marlinjai/auth-brain-sdk';
 
@@ -18,6 +18,8 @@ vi.mock('@/lib/auth-check', () => ({ checkWorkspaceAccess: vi.fn() }));
 vi.mock('@/server/db', () => ({ getPrismaClient: vi.fn(() => ({})) }));
 vi.mock('../db', () => ({
   commerceTenantDbChecked: vi.fn(async (tgId: string) => ({ __scopedHandleFor: tgId })),
+  isCommerceTenantNotProvisioned: (err: unknown) =>
+    (err as { code?: string } | null)?.code === 'COMMERCE_TENANT_NOT_PROVISIONED',
 }));
 
 import { getVerifiedSession } from '@/lib/auth-api';
@@ -53,6 +55,10 @@ async function statusOf(result: Awaited<ReturnType<typeof resolveEditorCommerce>
   if (result.ok) return { status: 200, code: 'ok' };
   return { status: result.response.status, code: (await result.response.json()).error.code };
 }
+
+afterEach(() => {
+  delete process.env.EDITOR_HOST;
+});
 
 beforeEach(() => {
   sessionMock.mockReset();
@@ -114,5 +120,46 @@ describe('resolveEditorCommerce', () => {
     if (!r.ok) return;
     expect(r.db).toEqual({ __scopedHandleFor: TG_A });
     expect(tenantDbMock).toHaveBeenCalledWith(TG_A);
+  });
+
+  it('404s on a published storefront host EVEN WITH a valid session, without reading the session', async () => {
+    process.env.EDITOR_HOST = 'app.lumitra.co';
+    const onStorefront = new Request('https://acme.sites.lumitra.co/api/projects/p1/commerce/products', {
+      headers: { host: 'acme.sites.lumitra.co', cookie: 'lumitra_session=valid' },
+    });
+    const r = await resolveEditorCommerce(onStorefront, 'p1', prismaWith({ workspaceId: 'ws_a', tenantGroupId: TG_A }));
+    expect(await statusOf(r)).toEqual({ status: 404, code: 'not_found' });
+    expect(sessionMock).not.toHaveBeenCalled();
+    expect(tenantDbMock).not.toHaveBeenCalled();
+
+    // The editor host (and localhost) still work.
+    for (const host of ['app.lumitra.co', 'localhost:3000']) {
+      const onEditor = new Request(`https://${host}/api/projects/p1/commerce/products`, {
+        headers: { host },
+      });
+      const ok = await resolveEditorCommerce(onEditor, 'p1', prismaWith({ workspaceId: 'ws_a', tenantGroupId: TG_A }));
+      expect(ok.ok).toBe(true);
+    }
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['null', null],
+    ['malformed', 'not-a-uuid'],
+  ])('403s (never a TypeError 500) when the session tenant group id is %s', async (_l, groupId) => {
+    sessionMock.mockResolvedValue(session('ws_a', groupId as unknown as string));
+    const r = await resolveEditorCommerce(req, 'p1', prismaWith({ workspaceId: 'ws_a', tenantGroupId: TG_A }));
+    expect(await statusOf(r)).toEqual({ status: 403, code: 'forbidden' });
+    expect(tenantDbMock).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 commerce_not_provisioned when the tenant schema does not exist', async () => {
+    tenantDbMock.mockRejectedValueOnce(
+      Object.assign(new Error('schema missing'), { code: 'COMMERCE_TENANT_NOT_PROVISIONED' }),
+    );
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const r = await resolveEditorCommerce(req, 'p1', prismaWith({ workspaceId: 'ws_a', tenantGroupId: TG_A }));
+    expect(await statusOf(r)).toEqual({ status: 404, code: 'commerce_not_provisioned' });
+    errorSpy.mockRestore();
   });
 });

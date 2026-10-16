@@ -47,8 +47,11 @@
 // Errors surface, never swallowed: an unresolvable host is a 403, a published
 // site without a valid tenant group is a 404 `commerce_not_provisioned`, a
 // guarded-reserve rejection becomes the typed 409 the visitor sees (per-line
-// shortages), a misconfigured catalog (variant with no inventory item) is a loud
-// 500, and a server fault is a 500 envelope, never a false 201.
+// shortages), a variant this storefront does not sell is a typed 422
+// `unknown_variant`, a misconfigured catalog (variant with no SKU or inventory
+// item) is a 500, and every 500 carries a GENERIC message while the full error
+// is logged server-side (faults.ts): no internals ever reach an anonymous buyer.
+// Never a false 201.
 
 import { z } from 'zod';
 
@@ -56,8 +59,10 @@ import { createOrderKysely, type Cart } from '@/server/commerce/order/createOrde
 import {
   readOrderTotal,
   resolveOrderLines,
+  UnknownVariantError,
 } from '@/server/commerce/repository/storefront';
 import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
+import { commerceServerFault } from '@/server/commerce/faults';
 import { jsonError, parseBody } from '@/lib/api/respond';
 import { DEFAULT_CURRENCY } from '@/lib/commerce/dto';
 
@@ -68,6 +73,9 @@ export const dynamic = 'force-dynamic';
 // tax region are server constants for v1 (one storefront, one region), and the
 // idempotency key is generated per request. E7/E8 thread real values here.
 const ORDER_TAX_REGION = 'DE';
+
+/** The generic, buyer-safe message every order 500 carries (details are logged). */
+const ORDER_FAILED_MESSAGE = 'the order could not be placed, please try again later';
 
 // Intentions ONLY. `.strict()` makes an unknown key (a client-sent price, stock,
 // or total) a 400 bad_body, so the server stays the sole author of money + stock.
@@ -106,10 +114,11 @@ export async function POST(req: Request): Promise<Response> {
   try {
     commerce = await resolveStorefrontCommerce(req.headers.get('host'));
   } catch (err) {
-    return jsonError(
+    return commerceServerFault(
       'commerce_order_failed',
-      err instanceof Error ? err.message : 'failed to resolve the storefront',
-      500,
+      ORDER_FAILED_MESSAGE,
+      'resolve storefront for order',
+      err,
     );
   }
   if (!commerce.ok) return commerce.response;
@@ -122,7 +131,21 @@ export async function POST(req: Request): Promise<Response> {
   try {
     // Server-side identity resolution: variant -> inventory item (the client
     // never sends stock identity). Read-only, in THIS tenant group's schema.
-    const resolved = await resolveOrderLines(db, lines);
+    let resolved: Awaited<ReturnType<typeof resolveOrderLines>>;
+    try {
+      resolved = await resolveOrderLines(db, lines);
+    } catch (err) {
+      if (err instanceof UnknownVariantError) {
+        // The cart names an item this storefront does not sell (a stale cart, or
+        // another shop's id). The CLIENT's problem, so a typed 422, NOT a 500
+        // and NOT a 409 (the checkout reads every 409 as a stock shortage). The
+        // id echoed is the client's own input, nothing server-side.
+        return jsonError('unknown_variant', 'an item in the cart is not available', 422, {
+          variantId: err.variantId,
+        });
+      }
+      throw err;
+    }
 
     // The server authors the cart: idempotency key, currency, tax region, and
     // the inventory identity. createOrderKysely ignores any client total; here
@@ -165,11 +188,12 @@ export async function POST(req: Request): Promise<Response> {
     const order = await readOrderTotal(db, result.orderId);
     if (!order) {
       // The order committed but vanished on read back: a server fault, surfaced
-      // loudly rather than returned as a false success.
-      return jsonError(
+      // loudly (logged in full) rather than returned as a false success.
+      return commerceServerFault(
         'commerce_order_failed',
-        `order ${result.orderId} not found after create`,
-        500,
+        ORDER_FAILED_MESSAGE,
+        'read back order total',
+        new Error(`order ${result.orderId} not found after create`),
       );
     }
 
@@ -178,10 +202,9 @@ export async function POST(req: Request): Promise<Response> {
       { status: 201 },
     );
   } catch (err) {
-    return jsonError(
-      'commerce_order_failed',
-      err instanceof Error ? err.message : 'failed to create order',
-      500,
-    );
+    // A real server fault (including a known variant with no SKU / inventory
+    // item, a catalog misconfiguration). The full error goes to the server log;
+    // the anonymous buyer gets a generic message, never internals.
+    return commerceServerFault('commerce_order_failed', ORDER_FAILED_MESSAGE, 'create order', err);
   }
 }

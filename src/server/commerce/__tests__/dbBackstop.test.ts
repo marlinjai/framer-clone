@@ -7,7 +7,10 @@
 //     success is cached across calls,
 //   - an owner-role connection (BackstopError) is re-thrown as is,
 //   - any other connection failure is re-thrown with a clear, named message and
-//     is NOT cached (the next commerce request checks again).
+//     is NOT cached (the next commerce request checks again),
+//   - the tenant schema's existence is checked once per tenant group (success
+//     cached, a missing schema not), and a missing schema raises
+//     CommerceTenantNotProvisionedError.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -24,17 +27,29 @@ vi.mock('@marlinjai/tenant-db', async (importOriginal) => {
   };
 });
 
-import { assertBackstop, BackstopError } from '@marlinjai/tenant-db';
-import { commerceTenantDbChecked, ensureCommerceBackstop } from '../db';
+vi.mock('../schemaProbe', () => ({ tenantSchemaExists: vi.fn() }));
+
+import { assertBackstop, BackstopError, tenantSchema } from '@marlinjai/tenant-db';
+import {
+  CommerceTenantNotProvisionedError,
+  commerceTenantDbChecked,
+  ensureCommerceBackstop,
+  isCommerceTenantNotProvisioned,
+} from '../db';
+import { tenantSchemaExists } from '../schemaProbe';
 
 const assertMock = vi.mocked(assertBackstop);
+const probeMock = vi.mocked(tenantSchemaExists);
 const TG = '018f9c10-0000-7000-8000-0000000015aa';
 
 beforeEach(() => {
   const g = globalThis as Record<string, unknown>;
   delete g.__framerCloneCommerceBase;
   delete g.__framerCloneCommerceBackstop;
+  delete g.__framerCloneCommerceSchemas;
   assertMock.mockReset();
+  probeMock.mockReset();
+  probeMock.mockResolvedValue(true);
   process.env.COMMERCE_APP_DATABASE_URL = 'postgresql://commerce_app@localhost:5432/unit';
 });
 
@@ -69,3 +84,27 @@ describe('ensureCommerceBackstop', () => {
     expect(assertMock).not.toHaveBeenCalled();
   });
 });
+
+describe('tenant schema existence check', () => {
+  it('checks the schema once per tenant group and caches the success', async () => {
+    assertMock.mockResolvedValue(undefined);
+    await commerceTenantDbChecked(TG);
+    await commerceTenantDbChecked(TG);
+    expect(probeMock).toHaveBeenCalledTimes(1);
+    expect(probeMock).toHaveBeenCalledWith({ __base: true }, tenantSchema(TG));
+  });
+
+  it('raises CommerceTenantNotProvisionedError for a missing schema, and does not cache it', async () => {
+    assertMock.mockResolvedValue(undefined);
+    probeMock.mockResolvedValueOnce(false);
+    const failure = await commerceTenantDbChecked(TG).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(CommerceTenantNotProvisionedError);
+    expect(isCommerceTenantNotProvisioned(failure)).toBe(true);
+
+    // Provisioned later: the next request sees it without a restart.
+    probeMock.mockResolvedValueOnce(true);
+    expect(await commerceTenantDbChecked(TG)).toEqual({ __scopedHandleFor: TG });
+    expect(probeMock).toHaveBeenCalledTimes(2);
+  });
+});
+

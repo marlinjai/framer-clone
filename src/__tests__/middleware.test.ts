@@ -145,6 +145,45 @@ describe('middleware: D2 published-host requests are never gated on the apex ses
   });
 });
 
+describe('middleware: the authoring API is refused on a published host (D2)', () => {
+  it.each([
+    '/api/projects/p1/commerce/products',
+    '/api/projects/p1/commerce/inventory?variantId=a&locationId=b',
+    '/api/projects/save',
+    '/api/projects',
+  ])('404s %s on a published host EVEN WITH a session cookie', async (path) => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(
+      req(`https://${PUBLISHED}${path}`, { host: PUBLISHED, cookie: 'lumitra_session=valid' }),
+    );
+    expect(res.status).toBe(404);
+    expect(isNext(res)).toBe(false);
+    expect((await res.json()).error.code).toBe('not_found');
+  });
+
+  it('still lets the same request through on the editor host (signed in)', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(
+      req(`https://${EDITOR}/api/projects/p1/commerce/products`, {
+        host: EDITOR,
+        cookie: 'lumitra_session=valid',
+      }),
+    );
+    expect(isNext(res)).toBe(true);
+  });
+
+  it('keeps localhost (dev) on the editor plane', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(
+      req('http://localhost:3000/api/projects/p1/commerce/products', {
+        host: 'localhost:3000',
+        cookie: 'lumitra_session=valid',
+      }),
+    );
+    expect(isNext(res)).toBe(true);
+  });
+});
+
 describe('middleware: matcher reconciled to real routes (MT-16)', () => {
   it('gates `/`, `/projects/*`, and the authoring `/api/*` families', () => {
     expect(config.matcher).toEqual([

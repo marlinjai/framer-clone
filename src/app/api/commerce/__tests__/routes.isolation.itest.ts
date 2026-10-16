@@ -25,7 +25,8 @@
 //   - inventory: B's (item, location) pair on host A is a 404 (and vice versa).
 //   - orders: an order posted on host A lands ONLY in tg_A (tg_B's order and
 //     reservation counts do not move); B's variant id posted on host A cannot be
-//     resolved (A's schema cannot see it) and writes nothing anywhere; reusing
+//     resolved (A's schema cannot see it): a 422 unknown_variant that writes
+//     nothing anywhere; reusing
 //     B's idempotency key on host A creates A's OWN order, never returns B's.
 //   - fail closed: the unprovisioned site answers 404 commerce_not_provisioned
 //     on all four routes and writes nothing.
@@ -57,6 +58,7 @@ let tgB: ProvisionedTenant;
 let hostA = '';
 let hostB = '';
 let hostUnprovisioned = '';
+let hostNoSchema = '';
 let productA: SeededProduct;
 let productB: SeededProduct;
 let orderBId = '';
@@ -112,6 +114,8 @@ beforeAll(async () => {
   ({ host: hostA } = await createPublishedSite(fx, tgA.tgId, 'cm10-iso-a'));
   ({ host: hostB } = await createPublishedSite(fx, tgB.tgId, 'cm10-iso-b'));
   ({ host: hostUnprovisioned } = await createPublishedSite(fx, 'legacy-tenant-group', 'cm10-iso-x'));
+  // A VALID tenant group UUID that was never provisioned: no tg_<id> schema.
+  ({ host: hostNoSchema } = await createPublishedSite(fx, randomUUID(), 'cm10-iso-n'));
 
   // The DECOY: a live product in the legacy shared `commerce` schema, the
   // pre-CM-10 target every site used to read. No route may fall back to it.
@@ -220,7 +224,7 @@ describe('route-level two-tenant isolation (host decides the tenant group)', () 
     expect(inB).toBeUndefined();
   });
 
-  it("orders: B's variant posted on host A cannot be resolved and writes nothing anywhere", async () => {
+  it("orders: B's variant posted on host A is a 422 unknown_variant and writes nothing anywhere", async () => {
     const beforeA = await countOrdersAndReservations(tgA);
     const beforeB = await countOrdersAndReservations(tgB);
     const levelBBefore = await tgB.db
@@ -230,10 +234,12 @@ describe('route-level two-tenant isolation (host decides the tenant group)', () 
       .executeTakeFirstOrThrow();
 
     const res = await post({ lines: [{ variantId: productB.variantId, quantity: 1 }] }, hostA);
-    expect(res.status).toBe(500);
-    const body = (await res.json()) as { error: { code: string; message: string } };
-    expect(body.error.code).toBe('commerce_order_failed');
-    expect(body.error.message).toContain(`unknown variant ${productB.variantId}`);
+    // A's schema cannot see B's variant: the typed client error, NOT a 500 and
+    // NOT a 409 (the checkout reads 409 as a stock shortage).
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: { code: string; variantId: string } };
+    expect(body.error.code).toBe('unknown_variant');
+    expect(body.error.variantId).toBe(productB.variantId);
 
     expect(await countOrdersAndReservations(tgA)).toEqual(beforeA);
     expect(await countOrdersAndReservations(tgB)).toEqual(beforeB);
@@ -262,8 +268,12 @@ describe('route-level two-tenant isolation (host decides the tenant group)', () 
   });
 });
 
-describe('FAIL CLOSED: a published site with no valid tenant group', () => {
-  it('answers 404 commerce_not_provisioned on all four routes and writes nothing', async () => {
+describe('FAIL CLOSED: a published site with no valid tenant group, or no schema', () => {
+  it.each([
+    ['a legacy non-UUID tenant group', () => hostUnprovisioned],
+    ['a valid tenant group UUID whose schema was never created', () => hostNoSchema],
+  ])('%s answers 404 commerce_not_provisioned on all four routes and writes nothing', async (_label, hostOf) => {
+    const hostUnprovisioned = hostOf();
     const beforeA = await countOrdersAndReservations(tgA);
     const beforeB = await countOrdersAndReservations(tgB);
 

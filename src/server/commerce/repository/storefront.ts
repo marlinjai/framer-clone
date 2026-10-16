@@ -175,6 +175,19 @@ export async function readInventoryAvailable(
   return row ? Number(row.available_quantity) : null;
 }
 
+/**
+ * A cart line names a variant that does not exist (or is soft-deleted) in THIS
+ * tenant group: a client-side problem (a stale cart, or another shop's id), not
+ * a server fault. The orders route answers it with 422 `unknown_variant`.
+ */
+export class UnknownVariantError extends Error {
+  readonly code = 'UNKNOWN_VARIANT';
+  constructor(readonly variantId: string) {
+    super(`unknown variant ${variantId}`);
+    this.name = 'UnknownVariantError';
+  }
+}
+
 /** A client order line after the server resolved its inventory identity. */
 export interface ResolvedOrderLine {
   variantId: string;
@@ -185,9 +198,11 @@ export interface ResolvedOrderLine {
 /**
  * Resolve each client { variantId, quantity } to the inventory item the server
  * reserves against. The SKU is the v1 bridge between the catalog variant and the
- * inventory ledger (there is no FK, by design). A variant that is unknown, has
- * no SKU, or has no live inventory item is a catalog misconfiguration and THROWS
- * (surfaced loudly by the route), never a silent zero-stock success.
+ * inventory ledger (there is no FK, by design). A variant unknown to THIS tenant
+ * group throws UnknownVariantError (the client's problem, a 422). A known
+ * variant with no SKU or no live inventory item is a catalog misconfiguration
+ * and throws a plain Error (a server fault, a logged 500), never a silent
+ * zero-stock success.
  */
 export async function resolveOrderLines(
   db: Kysely<CommerceDB>,
@@ -202,7 +217,7 @@ export async function resolveOrderLines(
       .where('deleted_at', 'is', null)
       .executeTakeFirst();
     if (!variant) {
-      throw new Error(`unknown variant ${line.variantId}`);
+      throw new UnknownVariantError(line.variantId);
     }
     if (!variant.sku) {
       throw new Error(`variant ${line.variantId} has no sku; cannot resolve inventory`);

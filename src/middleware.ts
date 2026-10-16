@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server';
 // Import the sentinel from the dependency-free module, NOT from publicResolver:
 // that pulls `server-only` + Prisma, which cannot run in the edge middleware.
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
+import { isEditorHost as isEditorHostname } from '@/lib/editorHost';
 
 /**
  * The coarse edge auth gate for framer-clone.
@@ -33,17 +34,11 @@ export async function middleware(request: NextRequest) {
   // editor (`app/page.tsx`) on EVERY host. The discriminator is the request Host:
   // the editor is ALWAYS served on the fixed lumitra-owned EDITOR_HOST; any other
   // host is a published site and its root `/` must serve the storefront home.
-  const editorHost = process.env.EDITOR_HOST;
-  const host = (request.headers.get('host') ?? '').split(':')[0].toLowerCase();
-  // Dev / unconfigured safety: with no EDITOR_HOST, or on localhost, treat
-  // EVERYTHING as the editor host so `/` stays the editor and local dev is
-  // unchanged. The rewrite only activates in prod where EDITOR_HOST is set and
-  // the request Host differs.
-  const isEditorHost =
-    !editorHost ||
-    host === editorHost.toLowerCase() ||
-    host === 'localhost' ||
-    host === '127.0.0.1';
+  // The shared editor-host test (src/lib/editorHost.ts): with no EDITOR_HOST,
+  // or on localhost, EVERYTHING counts as the editor host so `/` stays the
+  // editor and local dev is unchanged. The rewrite only activates in prod where
+  // EDITOR_HOST is set and the request Host differs.
+  const isEditorHost = isEditorHostname(request.headers.get('host'));
 
   if (request.nextUrl.pathname === '/') {
     if (!isEditorHost) {
@@ -71,6 +66,22 @@ export async function middleware(request: NextRequest) {
   // auth-brain cookie-domain change is made; this is an authz decision, not a
   // cookie-transport one.)
   if (!isEditorHost) {
+    // The authoring API (`/api/projects/*`) belongs to the EDITOR plane only. On
+    // a published host it must not run at all: its handlers authorize with the
+    // apex session the browser still sends here, which D2 forbids on the
+    // published plane. So it is refused with a JSON 404 (as if the route did not
+    // exist on this host, so nothing about the editor API is revealed), BEFORE
+    // any handler runs and regardless of any cookie. The handlers keep their own
+    // host check as defense in depth (src/server/commerce/editorTenant.ts).
+    if (
+      request.nextUrl.pathname === '/api/projects' ||
+      request.nextUrl.pathname.startsWith('/api/projects/')
+    ) {
+      return NextResponse.json(
+        { error: { code: 'not_found', message: 'not found' } },
+        { status: 404 },
+      );
+    }
     return NextResponse.next();
   }
 

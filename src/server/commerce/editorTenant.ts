@@ -8,6 +8,8 @@ import 'server-only';
 // They read through /api/projects/<projectId>/commerce/*, and this module
 // decides the tenant for those requests:
 //
+//   0. the request must be on the EDITOR host (src/lib/editorHost.ts)
+//                                                          -> else 404 not_found
 //   1. a verified auth-brain session is required          -> else 401 unauthorized
 //   2. the project (site row) is looked up by id
 //   3. the session must contain the project's workspace AND hold `viewSite`
@@ -15,10 +17,12 @@ import 'server-only';
 //                                                          -> else 403 forbidden
 //      An unknown project id answers the SAME 403, so a project's existence
 //      never leaks to someone who cannot see it.
-//   4. the project's site must carry a valid tenant group  -> else 404
+//   4. the project's site must carry a valid tenant group whose tg_<id> schema
+//      exists                                              -> else 404
 //      commerce_not_provisioned (fail closed, no shared-schema fallback)
 //   5. that tenant group must be the one the session itself says the workspace
-//      belongs to                                          -> else 403 forbidden
+//      belongs to (a missing / malformed session group id is also a deny)
+//                                                          -> else 403 forbidden
 //      (a site row stamped with a foreign tenant group is never read on the
 //      strength of a workspace membership alone)
 //   6. reads run on commerceTenantDbChecked(site.tenantGroupId), THAT project's
@@ -27,7 +31,7 @@ import 'server-only';
 // This plane is separate from the storefront plane on purpose: the storefront
 // routes never read a session (D2), and these routes never trust a host.
 
-import type { TenantGroupId } from '@marlinjai/tenant-db';
+import { assertTenantGroupId, type TenantGroupId } from '@marlinjai/tenant-db';
 import type { PrismaClient } from '@prisma/client';
 
 import { jsonError } from '@/lib/api/respond';
@@ -35,7 +39,8 @@ import { getVerifiedSession } from '@/lib/auth-api';
 import { checkWorkspaceAccess } from '@/lib/auth-check';
 import { getPrismaClient } from '@/server/db';
 import { resolveScopeForWorkspace } from '@/server/sites/scope';
-import { commerceTenantDbChecked } from './db';
+import { commerceTenantDbChecked, isCommerceTenantNotProvisioned } from './db';
+import { isEditorHost } from '@/lib/editorHost';
 import type { CommerceReadContext } from './readHandlers';
 import { COMMERCE_NOT_PROVISIONED } from './storefrontTenant';
 import { isTenantSchemaError, resolveTenantGroupForSite } from './tenant';
@@ -55,6 +60,15 @@ export async function resolveEditorCommerce(
   projectId: string,
   prisma: PrismaClient = getPrismaClient(),
 ): Promise<CommerceReadContext> {
+  // Editor plane ONLY. On a published storefront host this route must not run
+  // at all (the middleware already refuses /api/projects/* there; this is the
+  // defense in depth): the apex session the browser sends to a storefront host
+  // must never authorize anything on the published plane (D2). 404, as if the
+  // route did not exist on that host, BEFORE the session is even read.
+  if (!isEditorHost(req.headers.get('host'))) {
+    return { ok: false, response: jsonError('not_found', 'not found', 404) };
+  }
+
   let session: Awaited<ReturnType<typeof getVerifiedSession>> = null;
   try {
     session = await getVerifiedSession(req);
@@ -80,24 +94,38 @@ export async function resolveEditorCommerce(
   const allowed = await checkWorkspaceAccess(session.user.id, site.workspaceId, 'viewSite');
   if (!allowed) return forbidden();
 
+  const notProvisioned: CommerceReadContext = {
+    ok: false,
+    response: jsonError(COMMERCE_NOT_PROVISIONED, 'commerce is not provisioned for this project', 404),
+  };
+
   let tenantGroupId: TenantGroupId;
   try {
     tenantGroupId = resolveTenantGroupForSite(site);
   } catch (err) {
-    if (isTenantSchemaError(err)) {
-      return {
-        ok: false,
-        response: jsonError(
-          COMMERCE_NOT_PROVISIONED,
-          'commerce is not provisioned for this project',
-          404,
-        ),
-      };
-    }
+    if (isTenantSchemaError(err)) return notProvisioned;
     throw err;
   }
 
-  if (tenantGroupId !== scope.scope.tenantGroupId.toLowerCase()) return forbidden();
+  // The session's own tenant group for this workspace must be a valid id AND
+  // the site's group. A missing or malformed group_id on the session is a deny
+  // (403), never a crash.
+  let sessionGroup: TenantGroupId;
+  try {
+    sessionGroup = assertTenantGroupId(scope.scope.tenantGroupId);
+  } catch {
+    return forbidden();
+  }
+  if (tenantGroupId !== sessionGroup) return forbidden();
 
-  return { ok: true, db: await commerceTenantDbChecked(tenantGroupId) };
+  try {
+    return { ok: true, db: await commerceTenantDbChecked(tenantGroupId) };
+  } catch (err) {
+    // A valid tenant group whose tg_<id> schema does not exist.
+    if (isCommerceTenantNotProvisioned(err)) {
+      console.error(`[commerce] project ${projectId}: ${(err as Error).message}`);
+      return notProvisioned;
+    }
+    throw err;
+  }
 }

@@ -24,6 +24,8 @@ vi.mock('@/server/sites/publicResolver', () => ({
 
 vi.mock('../db', () => ({
   commerceTenantDbChecked: vi.fn(async (tgId: string) => ({ __scopedHandleFor: tgId })),
+  isCommerceTenantNotProvisioned: (err: unknown) =>
+    (err as { code?: string } | null)?.code === 'COMMERCE_TENANT_NOT_PROVISIONED',
 }));
 
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
@@ -107,6 +109,23 @@ describe('resolveStorefrontCommerce (route edge)', () => {
     expect(result.db).toEqual({ __scopedHandleFor: TG_A });
   });
 
+  it('answers 404 commerce_not_provisioned for a valid tenant group whose schema does not exist', async () => {
+    resolveSiteMock.mockResolvedValue(publishedSite(TG_A));
+    tenantDbMock.mockRejectedValueOnce(
+      Object.assign(new Error('commerce schema tg_x does not exist'), {
+        code: 'COMMERCE_TENANT_NOT_PROVISIONED',
+      }),
+    );
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await resolveStorefrontCommerce('store.example.com');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.response.status).toBe(404);
+    expect((await result.response.json()).error.code).toBe(COMMERCE_NOT_PROVISIONED);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it('lets a non-tenant failure (e.g. the resolver throwing) propagate to the route', async () => {
     resolveSiteMock.mockRejectedValue(new Error('db down'));
     await expect(resolveStorefrontCommerce('store.example.com')).rejects.toThrow('db down');
@@ -169,6 +188,18 @@ describe('commerceRepoForSite (SSR render edge)', () => {
     const build = vi.fn(async () => fakeRepo);
     expect(await commerceRepoForSite({ siteId: 's1', tenantGroupId: TG_A }, COMMERCE_PAGE, build)).toBe(fakeRepo);
     expect(build).toHaveBeenCalledWith(TG_A);
+  });
+
+  it('renders without commerce data (and logs) when the tenant schema does not exist', async () => {
+    const build = vi.fn(async () => {
+      throw Object.assign(new Error('commerce schema tg_x does not exist'), {
+        code: 'COMMERCE_TENANT_NOT_PROVISIONED',
+      });
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await commerceRepoForSite({ siteId: 's1', tenantGroupId: TG_A }, COMMERCE_PAGE, build)).toBeUndefined();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('rendering without commerce data'));
+    errorSpy.mockRestore();
   });
 
   it('propagates a non-tenant failure (misconfigured deploy) instead of hiding the shop', async () => {
