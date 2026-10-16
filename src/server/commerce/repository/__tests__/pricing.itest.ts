@@ -31,7 +31,10 @@ import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainer
 import { execSync } from 'node:child_process';
 import { PrismaClient } from '@prisma/client';
 
-import { withTenant } from '../../withTenant';
+// LEGACY Prisma-path suite (CM-13 deletes it with the Prisma repos). CM-10
+// removed the commerce `withTenant` seam; its SET LOCAL was a no-op under Prisma
+// multiSchema (`@@schema` already qualifies every table), so each block now opens
+// a plain `db.$transaction`, which is behavior-identical.
 import { catalogRepository } from '../catalog';
 import { pricingRepository } from '../pricing';
 
@@ -139,10 +142,10 @@ async function expectRejectionMatching(
 
 /** Create a product + a single variant, returning the variant id. */
 async function makeVariant(db: PrismaClient, handle: string, sku: string): Promise<string> {
-  const product = await withTenant(db, (tx) =>
+  const product = await db.$transaction((tx) =>
     catalogRepository.createProduct(tx, { title: handle, handle }),
   );
-  const variant = await withTenant(db, (tx) =>
+  const variant = await db.$transaction((tx) =>
     catalogRepository.addVariant(tx, { productId: product.id, sku }),
   );
   return variant.id;
@@ -153,12 +156,12 @@ describe('b5 pricing graph + tax_class + CreditNote (Dockerized Postgres)', () =
     const db = prisma!;
     const variantId = await makeVariant(db, 'tee-cents', 'TEE-CENTS-1');
 
-    const priceSet = await withTenant(db, (tx) =>
+    const priceSet = await db.$transaction((tx) =>
       pricingRepository.createPriceSet(tx, { variantId }),
     );
 
     // 1999 cents (19.99 EUR) written as an integer.
-    const created = await withTenant(db, (tx) =>
+    const created = await db.$transaction((tx) =>
       pricingRepository.addPrice(tx, { priceSetId: priceSet.id, currency: 'EUR', amount: 1999 }),
     );
     expect(created.amount).toBe(1999);
@@ -173,7 +176,7 @@ describe('b5 pricing graph + tax_class + CreditNote (Dockerized Postgres)', () =
     // rounding bug can never be persisted.
     await expectRejectionMatching(
       () =>
-        withTenant(db, (tx) =>
+        db.$transaction((tx) =>
           pricingRepository.addPrice(tx, {
             priceSetId: priceSet.id,
             currency: 'EUR',
@@ -188,12 +191,12 @@ describe('b5 pricing graph + tax_class + CreditNote (Dockerized Postgres)', () =
     const db = prisma!;
     const variantId = await makeVariant(db, 'hoodie-resolve', 'HOOD-RES-1');
 
-    const priceSet = await withTenant(db, (tx) =>
+    const priceSet = await db.$transaction((tx) =>
       pricingRepository.createPriceSet(tx, { variantId }),
     );
 
     // Base price: 2000 cents.
-    await withTenant(db, (tx) =>
+    await db.$transaction((tx) =>
       pricingRepository.addPrice(tx, { priceSetId: priceSet.id, currency: 'EUR', amount: 2000 }),
     );
 
@@ -201,7 +204,7 @@ describe('b5 pricing graph + tax_class + CreditNote (Dockerized Postgres)', () =
     const list = await db.priceList.create({
       data: { title: 'Summer Sale', status: 'active', type: 'sale' },
     });
-    await withTenant(db, (tx) =>
+    await db.$transaction((tx) =>
       pricingRepository.addPrice(tx, {
         priceSetId: priceSet.id,
         currency: 'EUR',
@@ -211,7 +214,7 @@ describe('b5 pricing graph + tax_class + CreditNote (Dockerized Postgres)', () =
     );
 
     // With the list requested, the price-list price wins: 1500 cents (integer).
-    const withList = await withTenant(db, (tx) =>
+    const withList = await db.$transaction((tx) =>
       pricingRepository.resolvePrice(tx, variantId, {
         currency: 'EUR',
         priceListIds: [list.id],
@@ -221,7 +224,7 @@ describe('b5 pricing graph + tax_class + CreditNote (Dockerized Postgres)', () =
     expect(Number.isInteger(withList)).toBe(true);
 
     // Without the list, only the base price applies: 2000 cents.
-    const baseOnly = await withTenant(db, (tx) =>
+    const baseOnly = await db.$transaction((tx) =>
       pricingRepository.resolvePrice(tx, variantId, { currency: 'EUR' }),
     );
     expect(baseOnly).toBe(2000);
@@ -231,7 +234,7 @@ describe('b5 pricing graph + tax_class + CreditNote (Dockerized Postgres)', () =
     const draft = await db.priceList.create({
       data: { title: 'Unpublished', status: 'draft', type: 'override' },
     });
-    await withTenant(db, (tx) =>
+    await db.$transaction((tx) =>
       pricingRepository.addPrice(tx, {
         priceSetId: priceSet.id,
         currency: 'EUR',
@@ -239,7 +242,7 @@ describe('b5 pricing graph + tax_class + CreditNote (Dockerized Postgres)', () =
         priceListId: draft.id,
       }),
     );
-    const draftIgnored = await withTenant(db, (tx) =>
+    const draftIgnored = await db.$transaction((tx) =>
       pricingRepository.resolvePrice(tx, variantId, {
         currency: 'EUR',
         priceListIds: [draft.id],
@@ -249,7 +252,7 @@ describe('b5 pricing graph + tax_class + CreditNote (Dockerized Postgres)', () =
 
     // A variant with no price_set resolves to null (no price, surfaced honestly).
     const orphanVariantId = await makeVariant(db, 'orphan-resolve', 'ORPH-RES-1');
-    const none = await withTenant(db, (tx) =>
+    const none = await db.$transaction((tx) =>
       pricingRepository.resolvePrice(tx, orphanVariantId, { currency: 'EUR' }),
     );
     expect(none).toBeNull();
@@ -258,7 +261,7 @@ describe('b5 pricing graph + tax_class + CreditNote (Dockerized Postgres)', () =
   it('the database CHECK constraints bite: negative amount, inverted/negative band, mis-cased currency are all rejected', async () => {
     const db = prisma!;
     const variantId = await makeVariant(db, 'tee-checks', 'TEE-CHECKS-1');
-    const priceSet = await withTenant(db, (tx) =>
+    const priceSet = await db.$transaction((tx) =>
       pricingRepository.createPriceSet(tx, { variantId }),
     );
 
@@ -324,7 +327,7 @@ describe('b5 pricing graph + tax_class + CreditNote (Dockerized Postgres)', () =
     );
 
     // A well-formed row still inserts cleanly: the CHECKs reject only the bad shapes.
-    const ok = await withTenant(db, (tx) =>
+    const ok = await db.$transaction((tx) =>
       pricingRepository.addPrice(tx, {
         priceSetId: priceSet.id,
         currency: 'EUR',
@@ -338,10 +341,10 @@ describe('b5 pricing graph + tax_class + CreditNote (Dockerized Postgres)', () =
 
   it('tax_class is set and read on product and variant', async () => {
     const db = prisma!;
-    const product = await withTenant(db, (tx) =>
+    const product = await db.$transaction((tx) =>
       catalogRepository.createProduct(tx, { title: 'Book', handle: 'book-tax' }),
     );
-    const variant = await withTenant(db, (tx) =>
+    const variant = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'BOOK-TAX-1' }),
     );
 
@@ -363,7 +366,7 @@ describe('b5 pricing graph + tax_class + CreditNote (Dockerized Postgres)', () =
     expect(reReadVariant.taxClass).toBe('de_standard_19');
 
     // tax_class is nullable: an unset variant reads back null (inherits at E8).
-    const bare = await withTenant(db, (tx) =>
+    const bare = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'BOOK-TAX-2' }),
     );
     const reReadBare = await db.productVariant.findUniqueOrThrow({ where: { id: bare.id } });

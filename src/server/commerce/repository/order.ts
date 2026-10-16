@@ -27,7 +27,12 @@ import type {
 } from './types';
 import type { Order, OrderLineItem, Prisma } from '@prisma/client';
 
-import { COMMERCE_SCHEMA } from '../withTenant';
+// LEGACY Prisma path only (deleted with the rest of it in CM-13). The commerce
+// `withTenant` seam and its exported COMMERCE_SCHEMA constant are gone (CM-10):
+// the live storefront path runs on the scoped Kysely handle. This file-private
+// constant only keeps the old raw `"commerce"."<table>"` fragments below
+// compiling until CM-13 removes them.
+const COMMERCE_SCHEMA = 'commerce';
 
 // CM-09 EXPAND imports — the NEW Kysely order repository lives ALONGSIDE the
 // Prisma `orderRepository` below (parallel-change / expand-contract).

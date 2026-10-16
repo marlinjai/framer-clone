@@ -7,10 +7,10 @@
 // method's QUERY SHAPE and its row->DTO mapping, not Postgres semantics.
 //
 // Each of the five CommerceServerRepository methods is covered against the
-// tx-first `commerceReadRepository` (the public getCommerceServerRepository()
-// just wraps these in withTenant). The DB-booting proof (a real Prisma read
-// against Dockerized Postgres) belongs in a `.itest.ts` and is out of scope for
-// this headless gate by design.
+// LEGACY tx-first Prisma `commerceReadRepository`. Since CM-10 it has no
+// production caller (the render path reads through the Kysely
+// `getCommerceServerRepositoryDb`, proven in read.isolation.itest.ts); CM-13
+// deletes it together with this file.
 
 import { describe, expect, it, vi } from 'vitest';
 

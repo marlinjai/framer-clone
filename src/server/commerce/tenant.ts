@@ -2,46 +2,54 @@ import 'server-only';
 
 // src/server/commerce/tenant.ts
 //
-// The render-path SEAM that maps a RESOLVED published site to the Postgres
-// schema its commerce reads run under (`SET LOCAL search_path`, via
-// `withTenant`). The render route (src/app/(site)/[...slug]/page.tsx) calls this
-// with the site resolved from the request Host and threads the result into
-// `getCommerceServerRepository`, so the commerce catalog is read under the
-// schema mapped to that site's tenant rather than a module constant.
+// The ONE place a RESOLVED published site becomes the commerce tenant-group id
+// its reads and writes run under (CM-10). Commerce isolates by Postgres SCHEMA:
+// one `tg_<hex32>` schema per auth-brain tenant group, reached through the
+// immutable scoped Kysely handle `commerceTenantDb(tgId)` (src/server/commerce/
+// db.ts). Every storefront entry point (the four /api/commerce routes and the
+// SSR render route) derives its handle from the value this function returns, so
+// the site -> tenant mapping cannot drift between them.
 //
-// LIMITATION (UNTIL MT-18): multi-tenant commerce is BLOCKED to one tenant.
-// Commerce isolates by Postgres SCHEMA (one shared `commerce` schema today),
-// and the per-tenant schema registry + provisioning + N-schema migration runner
-// are NOT built yet — that is MT-18 (Wave 4). So this resolver maps EVERY site
-// to the single shared `COMMERCE_SCHEMA`. CMS-only multi-tenant sites are FULLY
-// isolated (CMS isolates by a `workspace_id` COLUMN threaded as
-// `getCmsRepository(site.workspaceId)`) and MAY ship now; only sites that ENABLE
-// commerce share one global catalog/order ledger until MT-18 lands.
+// Where the site comes from: the storefront request HOST, resolved to a
+// PUBLISHED site by resolvePublishedSite / getCachedPublishedSite. Never a
+// session cookie: the published-site plane derives tenancy from the host and
+// ignores the apex editor session for authorization (multi-tenancy phase 2
+// plan, decisions D2 and D4).
 //
-// This file is deliberately the ONE place that decision lives, so MT-18 swaps a
-// constant return for a tenant-registry lookup WITHOUT touching the render route
-// or the repository factory: the signature already takes the resolved site and
-// returns a schema string.
+// FAIL CLOSED: a site whose tenant group id is missing, empty, or not a strict
+// UUID (for example a legacy string sentinel such as 'demo-tenant-group' that
+// was never restamped) throws a TenantSchemaError from assertTenantGroupId. No
+// schema name is produced, so no query can run, and there is deliberately NO
+// fallback to a shared schema. Callers turn that throw into a clear "commerce is
+// not provisioned for this storefront" answer (see storefrontTenant.ts).
+
+import { assertTenantGroupId, TenantSchemaError, type TenantGroupId } from '@marlinjai/tenant-db';
 
 import type { PublishedSite } from '@/server/sites/publicResolver';
-import { COMMERCE_SCHEMA } from './withTenant';
 
 /**
- * Resolve the commerce Postgres schema for a resolved published site.
+ * Resolve the commerce tenant-group id for a resolved published site.
  *
- * UNTIL MT-18: every site maps to the single shared `COMMERCE_SCHEMA`
- * ('commerce'). The `site` is taken (and named) now so MT-18 can replace the
- * body with a per-tenant registry lookup keyed on `site.tenantGroupId` /
- * `site.workspaceId` with no caller change.
+ * Returns the validated, branded TenantGroupId. Throws TenantSchemaError (from
+ * `@marlinjai/tenant-db`) when the site carries no usable tenant group id
+ * (null, undefined, empty, or not a UUID). There is no shared-schema fallback.
  */
-export function resolveCommerceSchemaForSite(
-  site: Pick<PublishedSite, 'workspaceId' | 'tenantGroupId'>,
-): string {
-  // MT-18 keys the per-tenant schema registry on the resolved site's tenant;
-  // reference `site` now so the seam's input is real and cannot silently drift
-  // before that lookup replaces this constant return.
-  void site;
-  // Single shared commerce schema for all tenants until the MT-18 registry
-  // exists. See the file-header LIMITATION note.
-  return COMMERCE_SCHEMA;
+export function resolveTenantGroupForSite(
+  site: { tenantGroupId?: PublishedSite['tenantGroupId'] | null },
+): TenantGroupId {
+  return assertTenantGroupId(site.tenantGroupId);
+}
+
+/**
+ * True when `err` is the tenant-db chokepoint's "not a valid tenant group id"
+ * rejection. Checks the class AND the stable `code`, so a second copy of the
+ * package (ESM vs CJS build loaded side by side) is still recognized.
+ */
+export function isTenantSchemaError(err: unknown): err is TenantSchemaError {
+  return (
+    err instanceof TenantSchemaError ||
+    (typeof err === 'object' &&
+      err !== null &&
+      (err as { code?: unknown }).code === 'TENANT_SCHEMA_INVALID')
+  );
 }

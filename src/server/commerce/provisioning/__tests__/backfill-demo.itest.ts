@@ -141,13 +141,16 @@ describe('CM-12 seed FLIP: every commerce write routes through commerceTenantDb'
     await seedDemoSite(prisma!, { commerceDb: dbDemo, tenantGroupId: TG_DEMO });
 
     // The catalog landed in tg_<demo>: 2 products, 4 variants, 4 inventory items +
-    // levels + locations (PRODUCT_SPECS = 2 products x 2 values).
+    // levels (PRODUCT_SPECS = 2 products x 2 values), all stocked in ONE demo
+    // warehouse that is the workspace's default fulfillment location (the
+    // location the storefront order path reserves at).
     expect(await countRows(SCHEMA_DEMO, 'product')).toBe(2);
     expect(await countRows(SCHEMA_DEMO, 'product_variant')).toBe(4);
     expect(await countRows(SCHEMA_DEMO, 'price')).toBe(4);
     expect(await countRows(SCHEMA_DEMO, 'inventory_item')).toBe(4);
     expect(await countRows(SCHEMA_DEMO, 'inventory_level')).toBe(4);
-    expect(await countRows(SCHEMA_DEMO, 'stock_location')).toBe(4);
+    expect(await countRows(SCHEMA_DEMO, 'stock_location')).toBe(1);
+    expect(await countRows(SCHEMA_DEMO, 'fulfillment_location_default')).toBe(1);
 
     // THE PROOF: NO commerce write hit the legacy `commerce` schema; every write
     // went through the scoped handle into tg_<demo>, none bypassed it.

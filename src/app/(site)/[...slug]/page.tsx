@@ -41,8 +41,7 @@ import {
 } from '@/server/sites/publicResolver';
 import { getCachedPublishedSite } from '@/server/sites/cachedResolver';
 import { getCmsRepository } from '@/server/cms';
-import { getCommerceServerRepository } from '@/server/commerce/repository/read';
-import { resolveCommerceSchemaForSite } from '@/server/commerce/tenant';
+import { commerceRepoForSite } from '@/server/commerce/storefrontTenant';
 import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToComponentNode';
 import {
   renderPublishedPage,
@@ -118,26 +117,26 @@ export default async function SitePage({ params }: SitePageProps) {
     trackerScriptSrc: resolveTrackerScriptSrc(),
   };
 
-  // Per-site tenancy (MT-13): BOTH engines must isolate by the RESOLVED site,
-  // never a module constant. The two engines use DIFFERENT mechanisms, so each
-  // carries its own value off the one Site row:
+  // Per-site tenancy: BOTH engines must isolate by the RESOLVED site (resolved
+  // from the request HOST, never a session), never a module constant. The two
+  // engines use DIFFERENT mechanisms, so each carries its own value off the one
+  // Site row:
   //   - CMS isolates by a `workspace_id` COLUMN -> pass `site.workspaceId` so
-  //     `listCollections`/reads see ONLY this site's workspace. Without this, N
-  //     published sites on the wildcard would all render ONE global workspace's
-  //     CMS collections (a hard cross-tenant isolation bug).
-  //   - Commerce isolates by Postgres SCHEMA (`SET LOCAL search_path`) -> pass a
-  //     schema DERIVED FROM THE SITE. Until MT-18 this maps every site to the
-  //     single shared `commerce` schema (see resolveCommerceSchemaForSite):
-  //     multi-tenant commerce is blocked to one tenant, but CMS-only sites are
-  //     fully isolated and may ship now.
+  //     `listCollections`/reads see ONLY this site's workspace.
+  //   - Commerce isolates by a Postgres SCHEMA per tenant group (CM-10): the
+  //     scoped Kysely handle `commerceTenantDb(resolveTenantGroupForSite(site))`
+  //     reaches only this site's `tg_<id>` schema. A site with no valid tenant
+  //     group fails CLOSED: `commerceRepoForSite` returns undefined, so the page
+  //     still renders its CMS content and every commerce slot renders the
+  //     unbound placeholder (no shared-schema fallback, no foreign catalog).
+  //     A page with NO bound commerce source never touches the commerce
+  //     connection at all; one that has them runs the startup backstop first and
+  //     fails loudly on a misconfigured COMMERCE_APP_DATABASE_URL.
   const { body, headSnippet } = await renderPublishedPage({
     root: adapted.root,
     pageParams: matched.params,
     cmsRepo: getCmsRepository(site.workspaceId),
-    commerceRepo: getCommerceServerRepository(
-      undefined,
-      resolveCommerceSchemaForSite(site),
-    ),
+    commerceRepo: await commerceRepoForSite(site, adapted.root),
     analytics,
   });
 

@@ -3,154 +3,247 @@
 // src/app/api/commerce/__tests__/routes.test.ts
 //
 // Headless UNIT tests for the three thin /api/commerce GET route handlers. The
-// Prisma singleton, the `withTenant` seam, and the b5 pricing repo are all mocked,
-// so NO database is touched: we assert the routes run the typed graph -> DTO
-// projection (NOT a flat CMS Row), resolve `resolvedPriceCents` via b5, carry the
-// advisory-only marker on availability, page with a nextCursor, and SURFACE every
-// failure as a real error envelope (400 bad input, 404 not-found, 5xx on throw),
-// never a swallowed empty 200.
+// host -> published-site resolver, the scoped commerce handle factory and the
+// Kysely storefront reads are all mocked, so NO database is touched. The REAL
+// tenancy edge (src/server/commerce/storefrontTenant.ts + tenant.ts) runs, so
+// these assert, per route:
+//   - the tenant comes from the request HOST: an unpublished host is a 403 and
+//     the scoped handle is derived for the resolved site's OWN tenant group,
+//   - FAIL CLOSED: a published site with no valid tenant group id is a 404
+//     `commerce_not_provisioned` and NO read runs (no shared-schema fallback),
+//   - the typed DTO is returned and validated, every failure surfaces as a real
+//     error envelope (400 bad input, 404 not-found, 500 on throw), never a
+//     swallowed empty 200.
 //
-// These run under `pnpm test`; the Dockerized `.itest.ts` suite (which proves the
-// reads against live Postgres + the b2 generated column) is EXCLUDED from this gate
-// by its suffix, so this file is what makes the gate prove the route behavior.
+// The DTO projection is covered by dto.test.ts; the SQL against live Postgres
+// (and the two-tenant isolation) by routes.itest.ts and
+// routes.isolation.itest.ts, which run under `pnpm test:integration`.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-// Mock the server collaborators BEFORE importing the route modules (vi.mock is
-// hoisted). getPrismaClient returns an inert object (withTenant is mocked too, so
-// the client is never really used); withTenant invokes its callback with a fake tx
-// the test wires per-scenario; pricingRepository.resolvePrice is a vi.fn().
-const fakeTx = {
-  product: { findMany: vi.fn(), findFirst: vi.fn() },
-  $queryRaw: vi.fn(),
-};
-
-vi.mock('@/server/db', () => ({
-  getPrismaClient: vi.fn(() => ({}) as never),
+vi.mock('@/server/sites/publicResolver', () => ({
+  resolvePublishedSite: vi.fn(),
 }));
 
-vi.mock('@/server/commerce', () => ({
-  COMMERCE_SCHEMA: 'commerce',
-  // Mirror the real two-overload signature: withTenant(prisma, fn) or
-  // withTenant(prisma, schema, fn). Either way, call the callback with the fake tx.
-  withTenant: vi.fn((_prisma: unknown, a: unknown, b: unknown) => {
-    const fn = (typeof a === 'function' ? a : b) as (tx: typeof fakeTx) => Promise<unknown>;
-    return fn(fakeTx);
-  }),
+vi.mock('@/server/commerce/db', () => ({
+  commerceTenantDbChecked: vi.fn(async (tgId: string) => ({ __scopedHandleFor: tgId })),
 }));
 
-vi.mock('@/server/commerce/repository/pricing', () => ({
-  pricingRepository: { resolvePrice: vi.fn() },
+vi.mock('@/server/commerce/repository/storefront', () => ({
+  listStorefrontProducts: vi.fn(),
+  getStorefrontProductByHandle: vi.fn(),
+  readInventoryAvailable: vi.fn(),
 }));
 
-import { pricingRepository } from '@/server/commerce/repository/pricing';
+import { resolvePublishedSite } from '@/server/sites/publicResolver';
+import { commerceTenantDbChecked } from '@/server/commerce/db';
+import {
+  getStorefrontProductByHandle,
+  listStorefrontProducts,
+  readInventoryAvailable,
+} from '@/server/commerce/repository/storefront';
+import type { ProductDTO } from '@/lib/commerce/dto';
 import { GET as productsGET } from '../products/route';
 import { GET as productGET } from '../products/[handle]/route';
 import { GET as inventoryGET } from '../inventory/route';
 
-const resolvePriceMock = vi.mocked(pricingRepository.resolvePrice);
+const resolveSiteMock = vi.mocked(resolvePublishedSite);
+const tenantDbMock = vi.mocked(commerceTenantDbChecked);
+const listMock = vi.mocked(listStorefrontProducts);
+const byHandleMock = vi.mocked(getStorefrontProductByHandle);
+const availableMock = vi.mocked(readInventoryAvailable);
 
-// A product graph row in the shape Prisma returns with productGraphInclude.
-function graphRow(over: Partial<{ id: string; handle: string; variants: unknown[] }> = {}) {
+const TG_A = '018f9c10-0000-7000-8000-0000000012aa';
+const HOST_A = 'store-a.example.com';
+const SCOPED_A = { __scopedHandleFor: TG_A };
+
+function site(tenantGroupId: unknown) {
   return {
-    id: over.id ?? 'prod-1',
-    handle: over.handle ?? 'tee',
+    siteId: 'site_a',
+    workspaceId: 'ws_a',
+    tenantGroupId,
+    pages: [],
+  } as unknown as Awaited<ReturnType<typeof resolvePublishedSite>>;
+}
+
+function req(path: string, host: string | null = HOST_A): Request {
+  return new Request(`http://t${path}`, host ? { headers: { host } } : undefined);
+}
+
+function productDTO(over: Partial<ProductDTO> = {}): ProductDTO {
+  return {
+    id: 'prod-1',
+    handle: 'tee',
     title: 'Tee',
     description: 'A nice tee',
     options: [{ id: 'opt-color', title: 'Color', values: [{ id: 'val-red', value: 'Red' }] }],
-    variants: over.variants ?? [
-      { id: 'var-1', title: 'Red', sku: 'TEE-RED', barcode: null, options: [{ optionId: 'opt-color', optionValueId: 'val-red' }] },
+    variants: [
+      {
+        id: 'var-1',
+        title: 'Red',
+        sku: 'TEE-RED',
+        barcode: null,
+        resolvedPriceCents: 1999,
+        options: [{ optionId: 'opt-color', optionValueId: 'val-red' }],
+      },
     ],
+    resolvedPriceCents: 1999,
+    ...over,
   };
 }
 
 beforeEach(() => {
-  fakeTx.product.findMany.mockReset();
-  fakeTx.product.findFirst.mockReset();
-  fakeTx.$queryRaw.mockReset();
-  resolvePriceMock.mockReset();
+  resolveSiteMock.mockReset();
+  tenantDbMock.mockClear();
+  listMock.mockReset();
+  byHandleMock.mockReset();
+  availableMock.mockReset();
+  // Default: the request host resolves to a published site with a valid group.
+  resolveSiteMock.mockResolvedValue(site(TG_A));
+});
+
+/** The three routes driven through one table for the shared tenancy contract. */
+const ROUTES: Array<{ name: string; call: (host: string | null) => Promise<Response> }> = [
+  { name: 'products (list)', call: (host) => productsGET(req('/api/commerce/products', host)) },
+  {
+    name: 'products/[handle] (detail)',
+    call: (host) =>
+      productGET(req('/api/commerce/products/tee', host), {
+        params: Promise.resolve({ handle: 'tee' }),
+      }),
+  },
+  {
+    name: 'inventory',
+    call: (host) =>
+      inventoryGET(req('/api/commerce/inventory?variantId=var-1&locationId=loc-1', host)),
+  },
+];
+
+describe.each(ROUTES)('GET /api/commerce/$name tenancy edge', ({ call }) => {
+  it('403s a host that does not resolve to a published site, and reads nothing', async () => {
+    resolveSiteMock.mockResolvedValue(null);
+    const res = await call('unknown.example.com');
+    expect(res.status).toBe(403);
+    expect((await res.json()).error.code).toBe('forbidden');
+    expect(tenantDbMock).not.toHaveBeenCalled();
+    expect(listMock).not.toHaveBeenCalled();
+    expect(byHandleMock).not.toHaveBeenCalled();
+    expect(availableMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['null', null],
+    ['empty', ''],
+    ['a legacy non-UUID sentinel', 'demo-tenant-group'],
+  ])(
+    'FAILS CLOSED (404 commerce_not_provisioned, no read) when the site tenant group is %s',
+    async (_label, tenantGroupId) => {
+      resolveSiteMock.mockResolvedValue(site(tenantGroupId));
+      const res = await call(HOST_A);
+      expect(res.status).toBe(404);
+      expect((await res.json()).error.code).toBe('commerce_not_provisioned');
+      expect(tenantDbMock).not.toHaveBeenCalled();
+      expect(listMock).not.toHaveBeenCalled();
+      expect(byHandleMock).not.toHaveBeenCalled();
+      expect(availableMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("resolves the tenant from the HOST and scopes the handle to that site's group", async () => {
+    listMock.mockResolvedValue({ products: [] });
+    byHandleMock.mockResolvedValue(productDTO());
+    availableMock.mockResolvedValue(3);
+
+    const res = await call(HOST_A);
+    expect(res.status).toBe(200);
+    expect(resolveSiteMock).toHaveBeenCalledWith(HOST_A);
+    expect(tenantDbMock).toHaveBeenCalledTimes(1);
+    expect(tenantDbMock).toHaveBeenCalledWith(TG_A);
+  });
 });
 
 describe('GET /api/commerce/products (list)', () => {
-  it('returns the typed commerce graph with resolvedPriceCents (NOT a flat CMS Row)', async () => {
-    fakeTx.product.findMany.mockResolvedValue([graphRow()]);
-    resolvePriceMock.mockResolvedValue(1999);
+  it('returns the typed commerce graph read through the scoped handle', async () => {
+    listMock.mockResolvedValue({ products: [productDTO()] });
 
-    const res = await productsGET(new Request('http://t/api/commerce/products'));
+    const res = await productsGET(req('/api/commerce/products'));
     expect(res.status).toBe(200);
     const body = await res.json();
 
     expect(body.nextCursor).toBeUndefined();
     expect(body.products).toHaveLength(1);
     const product = body.products[0];
-    // Typed graph: nested options/values + variant matrix + integer-cents price.
     expect(product.options[0].values[0]).toEqual({ id: 'val-red', value: 'Red' });
     expect(product.variants[0].resolvedPriceCents).toBe(1999);
-    expect(product.variants[0].options[0]).toEqual({ optionId: 'opt-color', optionValueId: 'val-red' });
-    expect(product.resolvedPriceCents).toBe(1999);
-    // It is emphatically not the flat CMS Row shape.
     expect(product).not.toHaveProperty('values.title');
-    // The b5 resolver was consulted per variant with the (defaulted) currency.
-    expect(resolvePriceMock).toHaveBeenCalledWith(fakeTx, 'var-1', { currency: 'EUR' });
+    expect(listMock).toHaveBeenCalledWith(SCOPED_A, {
+      limit: 50,
+      cursor: undefined,
+      currency: 'EUR',
+    });
   });
 
-  it('honors ?currency= when resolving prices', async () => {
-    fakeTx.product.findMany.mockResolvedValue([graphRow()]);
-    resolvePriceMock.mockResolvedValue(1500);
-    await productsGET(new Request('http://t/api/commerce/products?currency=usd'));
-    expect(resolvePriceMock).toHaveBeenCalledWith(fakeTx, 'var-1', { currency: 'USD' });
-  });
-
-  it('sets nextCursor when another page exists (take limit+1)', async () => {
-    // limit=1 -> the route takes 2 rows; the extra row signals a next page and its
-    // predecessor's id becomes the cursor.
-    fakeTx.product.findMany.mockResolvedValue([graphRow({ id: 'prod-1' }), graphRow({ id: 'prod-2' })]);
-    resolvePriceMock.mockResolvedValue(1000);
-
-    const res = await productsGET(new Request('http://t/api/commerce/products?limit=1'));
-    const body = await res.json();
+  it('honors ?currency=, ?limit= and ?cursor=, and passes nextCursor through', async () => {
+    listMock.mockResolvedValue({ products: [productDTO()], nextCursor: 'prod-1' });
+    const res = await productsGET(
+      req('/api/commerce/products?currency=usd&limit=1&cursor=prod-0'),
+    );
     expect(res.status).toBe(200);
-    expect(body.products).toHaveLength(1);
-    expect(body.products[0].id).toBe('prod-1');
-    expect(body.nextCursor).toBe('prod-1');
+    expect((await res.json()).nextCursor).toBe('prod-1');
+    expect(listMock).toHaveBeenCalledWith(SCOPED_A, {
+      limit: 1,
+      cursor: 'prod-0',
+      currency: 'USD',
+    });
   });
 
   it('returns a 400 bad_request envelope on a malformed limit (never silently clamped)', async () => {
-    const res = await productsGET(new Request('http://t/api/commerce/products?limit=abc'));
+    const res = await productsGET(req('/api/commerce/products?limit=abc'));
     expect(res.status).toBe(400);
     expect((await res.json()).error.code).toBe('bad_request');
-    expect(fakeTx.product.findMany).not.toHaveBeenCalled();
+    expect(listMock).not.toHaveBeenCalled();
   });
 
   it('surfaces a read failure as a 500 commerce_read_failed envelope (never an empty 200)', async () => {
-    fakeTx.product.findMany.mockRejectedValue(new Error('db down'));
-    const res = await productsGET(new Request('http://t/api/commerce/products'));
+    listMock.mockRejectedValue(new Error('db down'));
+    const res = await productsGET(req('/api/commerce/products'));
     expect(res.status).toBe(500);
     expect((await res.json()).error.code).toBe('commerce_read_failed');
+  });
+
+  it('surfaces a resolver failure (database down) as a 500 envelope, not a crash', async () => {
+    resolveSiteMock.mockRejectedValue(new Error('db down'));
+    const res = await productsGET(req('/api/commerce/products'));
+    expect(res.status).toBe(500);
+    expect((await res.json()).error.code).toBe('commerce_read_failed');
+  });
+
+  it('rejects a malformed DTO from the reader as a 500 (validated before shipping)', async () => {
+    listMock.mockResolvedValue({
+      products: [{ ...productDTO(), resolvedPriceCents: 19.99 }],
+    });
+    const res = await productsGET(req('/api/commerce/products'));
+    expect(res.status).toBe(500);
   });
 });
 
 describe('GET /api/commerce/products/[handle] (detail)', () => {
-  it('resolves a product by handle as 200 ProductDTO', async () => {
-    fakeTx.product.findFirst.mockResolvedValue(graphRow({ handle: 'tee' }));
-    resolvePriceMock.mockResolvedValue(1999);
+  it('resolves a product by handle as 200 ProductDTO through the scoped handle', async () => {
+    byHandleMock.mockResolvedValue(productDTO({ handle: 'tee' }));
 
-    const res = await productGET(new Request('http://t/api/commerce/products/tee'), {
+    const res = await productGET(req('/api/commerce/products/tee?currency=usd'), {
       params: Promise.resolve({ handle: 'tee' }),
     });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.handle).toBe('tee');
     expect(body.variants[0].resolvedPriceCents).toBe(1999);
-    // The lookup filtered to LIVE rows by handle.
-    expect(fakeTx.product.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { handle: 'tee', deletedAt: null } }),
-    );
+    expect(byHandleMock).toHaveBeenCalledWith(SCOPED_A, 'tee', 'USD');
   });
 
   it('returns a 404 not_found envelope when the handle resolves to no live product', async () => {
-    fakeTx.product.findFirst.mockResolvedValue(null);
-    const res = await productGET(new Request('http://t/api/commerce/products/ghost'), {
+    byHandleMock.mockResolvedValue(null);
+    const res = await productGET(req('/api/commerce/products/ghost'), {
       params: Promise.resolve({ handle: 'ghost' }),
     });
     expect(res.status).toBe(404);
@@ -158,8 +251,8 @@ describe('GET /api/commerce/products/[handle] (detail)', () => {
   });
 
   it('surfaces a read failure as a 500 commerce_read_failed envelope', async () => {
-    fakeTx.product.findFirst.mockRejectedValue(new Error('boom'));
-    const res = await productGET(new Request('http://t/api/commerce/products/tee'), {
+    byHandleMock.mockRejectedValue(new Error('boom'));
+    const res = await productGET(req('/api/commerce/products/tee'), {
       params: Promise.resolve({ handle: 'tee' }),
     });
     expect(res.status).toBe(500);
@@ -168,10 +261,10 @@ describe('GET /api/commerce/products/[handle] (detail)', () => {
 });
 
 describe('GET /api/commerce/inventory (advisory availability)', () => {
-  it('returns the advisory-only availability matching the generated column', async () => {
-    fakeTx.$queryRaw.mockResolvedValue([{ available_quantity: 7 }]);
+  it('returns the advisory-only availability read through the scoped handle', async () => {
+    availableMock.mockResolvedValue(7);
     const res = await inventoryGET(
-      new Request('http://t/api/commerce/inventory?variantId=var-1&locationId=loc-1'),
+      req('/api/commerce/inventory?variantId=var-1&locationId=loc-1'),
     );
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -181,32 +274,56 @@ describe('GET /api/commerce/inventory (advisory availability)', () => {
       availableQuantity: 7,
       advisoryOnly: true,
     });
-    // The advisory-only marker is present and true (no client may treat it as a sale guarantee).
-    expect(body.advisoryOnly).toBe(true);
+    expect(availableMock).toHaveBeenCalledWith(SCOPED_A, 'var-1', 'loc-1');
   });
 
   it('returns a 400 bad_request envelope when a query param is missing', async () => {
-    const res = await inventoryGET(new Request('http://t/api/commerce/inventory?variantId=var-1'));
+    const res = await inventoryGET(req('/api/commerce/inventory?variantId=var-1'));
     expect(res.status).toBe(400);
     expect((await res.json()).error.code).toBe('bad_request');
-    expect(fakeTx.$queryRaw).not.toHaveBeenCalled();
+    expect(availableMock).not.toHaveBeenCalled();
+    expect(resolveSiteMock).not.toHaveBeenCalled();
   });
 
   it('returns a 404 not_found envelope for an (item, location) pair with no level row', async () => {
-    fakeTx.$queryRaw.mockResolvedValue([]);
+    availableMock.mockResolvedValue(null);
     const res = await inventoryGET(
-      new Request('http://t/api/commerce/inventory?variantId=var-x&locationId=loc-1'),
+      req('/api/commerce/inventory?variantId=var-x&locationId=loc-1'),
     );
     expect(res.status).toBe(404);
     expect((await res.json()).error.code).toBe('not_found');
   });
 
   it('surfaces a read failure as a 500 commerce_read_failed envelope', async () => {
-    fakeTx.$queryRaw.mockRejectedValue(new Error('select failed'));
+    availableMock.mockRejectedValue(new Error('select failed'));
     const res = await inventoryGET(
-      new Request('http://t/api/commerce/inventory?variantId=var-1&locationId=loc-1'),
+      req('/api/commerce/inventory?variantId=var-1&locationId=loc-1'),
     );
     expect(res.status).toBe(500);
     expect((await res.json()).error.code).toBe('commerce_read_failed');
+  });
+});
+
+describe('D2 source contract: the storefront plane never reads a session', () => {
+  it('no storefront route, nor its tenancy edge or shared read handlers, touches a session or cookie', async () => {
+    const { readFileSync } = await import('node:fs');
+    const path = await import('node:path');
+    const root = path.resolve(__dirname, '../../../../..');
+    const files = [
+      'src/app/api/commerce/products/route.ts',
+      'src/app/api/commerce/products/[handle]/route.ts',
+      'src/app/api/commerce/inventory/route.ts',
+      'src/app/api/commerce/orders/route.ts',
+      'src/server/commerce/storefrontTenant.ts',
+      'src/server/commerce/readHandlers.ts',
+    ];
+    for (const file of files) {
+      // Code only: comments may name the editor plane to explain the split.
+      const src = readFileSync(path.join(root, file), 'utf8')
+        .split('\n')
+        .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+        .join('\n');
+      expect(src, file).not.toMatch(/getVerifiedSession|authenticateRequest|lumitra_session|cookies\(|editorTenant/);
+    }
   });
 });

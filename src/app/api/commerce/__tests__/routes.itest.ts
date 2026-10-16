@@ -1,178 +1,193 @@
 // src/app/api/commerce/__tests__/routes.itest.ts
 //
-// Integration test (Dockerized Postgres) for the b7 commerce REST read routes. It
-// boots its OWN throwaway Postgres in beforeAll (testcontainers), applies every
-// migration (dt_* init + b2 ledger + b3 guarded reservation + b4 catalog + b5
-// pricing + b6 orders), and drives the REAL GET route handlers against a LIVE
-// database. It binds the route's Prisma singleton (getPrismaClient, which reads
-// DATABASE_URL) to the container by setting DATABASE_URL BEFORE the first call, so
-// the same client seeds the catalog/pricing/inventory and serves the routes.
+// Integration test (Dockerized Postgres) for the b7 commerce REST read routes,
+// after CM-10 rewired them onto the per-tenant-group schema. It runs on the
+// SHARED integration database (vitest.integration.setup.ts: Prisma public tier,
+// the `commerce_app` role, the tenant registry), provisions its OWN tenant group
+// `tg_<id>`, seeds a catalog into it, publishes a site stamped with that tenant
+// group, and drives the REAL GET route handlers with that site's Host header.
+// The routes resolve host -> published site -> tenant group and read through
+// `commerceTenantDb(tgId)` as the low-privilege `commerce_app` role, exactly as
+// in production. Fixtures: src/server/commerce/__tests__/storefrontFixtures.ts.
 //
-// What it proves (the b7 test plan):
+// What it proves (the b7 test plan, now per tenant):
 //   1. the list route returns the TYPED commerce graph (options + values + variant
-//      matrix + resolvedPriceCents), NOT a flat CMS Collection/Row.
-//   2. the detail route resolves a product BY HANDLE.
-//   3. the inventory route returns available_quantity MATCHING the b2 GENERATED
+//      matrix + resolvedPriceCents), NOT a flat CMS Collection/Row, and pages
+//      with a cursor.
+//   2. the detail route resolves a product BY HANDLE (404 for an unknown one).
+//   3. the inventory route returns available_quantity MATCHING the GENERATED
 //      column inventory_level.available_quantity, carrying the advisory-only marker.
-//   4. reads are UNAUTHENTICATED (every call below passes no auth header).
+//   4. reads are UNAUTHENTICATED (no auth header or cookie, only the Host).
+//   5. an unpublished host is a 403 on every read route.
+// Cross-tenant isolation is proven separately in routes.isolation.itest.ts.
 //
 // The `.itest.ts` suffix keeps this file OUT of the headless `pnpm test` gate
 // (vitest.config.ts matches only *.{test,spec}.{ts,tsx}); it runs only under
 // `pnpm test:integration` against Docker. It requires a running Docker daemon.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
-import { execSync } from 'node:child_process';
-import type { PrismaClient } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 
-import { getPrismaClient } from '@/server/db';
-import { withTenant, COMMERCE_SCHEMA } from '@/server/commerce';
-import { catalogRepository } from '@/server/commerce/repository/catalog';
-import { pricingRepository } from '@/server/commerce/repository/pricing';
+import {
+  createPublishedSite,
+  openStorefrontFixtures,
+  provisionCommerceTenant,
+  seedBuyableProduct,
+  type ProvisionedTenant,
+  type StorefrontFixtures,
+} from '@/server/commerce/__tests__/storefrontFixtures';
 import { GET as productsGET } from '../products/route';
 import { GET as productGET } from '../products/[handle]/route';
 import { GET as inventoryGET } from '../inventory/route';
 
-let container: StartedTestContainer | undefined;
-let prisma: PrismaClient | undefined;
+let fx: StorefrontFixtures;
+let tenant: ProvisionedTenant;
+let host = '';
 
 beforeAll(async () => {
-  container = await new GenericContainer('postgres:16-alpine')
-    .withEnvironment({
-      POSTGRES_USER: 'test',
-      POSTGRES_PASSWORD: 'test',
-      POSTGRES_DB: 'framer_clone_test',
-    })
-    .withExposedPorts(5432)
-    .withWaitStrategy(Wait.forLogMessage(/database system is ready to accept connections/, 2))
-    .start();
-
-  const url = `postgresql://test:test@${container.getHost()}:${container.getMappedPort(5432)}/framer_clone_test`;
-
-  // Apply every migration to the throwaway DB.
-  execSync('pnpm exec prisma migrate deploy', {
-    stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL: url },
-  });
-
-  // Bind the route's lazy Prisma singleton to THIS container: getPrismaClient()
-  // (called inside the route handlers) constructs new PrismaClient() reading
-  // DATABASE_URL, so setting it BEFORE the first call points both the seed and the
-  // routes at the same database.
-  process.env.DATABASE_URL = url;
-  prisma = getPrismaClient();
-}, 180_000);
+  fx = openStorefrontFixtures();
+  tenant = await provisionCommerceTenant(fx, 'cm10-routes');
+  ({ host } = await createPublishedSite(fx, tenant.tgId, 'cm10-routes'));
+}, 120_000);
 
 afterAll(async () => {
-  await prisma?.$disconnect();
-  await container?.stop();
+  await fx?.close();
 });
 
-/** Read the b2 GENERATED available_quantity column directly (absent from the model). */
-async function readGeneratedAvailable(itemId: string, locationId: string): Promise<number> {
-  const rows = await prisma!.$queryRawUnsafe<Array<{ available_quantity: number }>>(
-    `SELECT "available_quantity" FROM "${COMMERCE_SCHEMA}"."inventory_level"
-      WHERE "inventory_item_id" = $1 AND "location_id" = $2`,
-    itemId,
-    locationId,
-  );
-  return rows[0].available_quantity;
+/** An anonymous storefront request: only a Host header, no auth, no cookie. */
+function get(path: string, requestHost = host): Request {
+  return new Request(`http://t${path}`, { headers: { host: requestHost } });
 }
 
-describe('b7 commerce REST read routes (Dockerized Postgres)', () => {
+describe('b7 commerce REST read routes on the tenant schema (Dockerized Postgres)', () => {
   it('the list route returns the typed commerce graph with resolvedPriceCents (NOT a flat CMS Row)', async () => {
-    const db = prisma!;
-    // Seed a product with one option/value, one variant, and a base price.
-    const { variantId } = await withTenant(db, async (tx) => {
-      const product = await catalogRepository.createProduct(tx, { title: 'List Tee', handle: 'list-tee' });
-      const color = await catalogRepository.addOption(tx, { productId: product.id, title: 'Color' });
-      const red = await catalogRepository.addOptionValue(tx, { optionId: color.id, value: 'Red' });
-      const variant = await catalogRepository.addVariant(tx, { productId: product.id, sku: 'LIST-TEE-RED' });
-      await catalogRepository.setVariantOptions(tx, variant.id, [
-        { optionId: color.id, optionValueId: red.id },
-      ]);
-      const priceSet = await pricingRepository.createPriceSet(tx, { variantId: variant.id });
-      await pricingRepository.addPrice(tx, { priceSetId: priceSet.id, currency: 'EUR', amount: 1999 });
-      return { variantId: variant.id };
+    const seeded = await seedBuyableProduct(tenant.db, {
+      title: 'List Tee',
+      handle: `list-tee-${randomUUID().slice(0, 6)}`,
+      amountCents: 1999,
+      stocked: 5,
     });
 
-    // UNAUTHENTICATED read: no auth header.
-    const res = await productsGET(new Request('http://t/api/commerce/products?limit=100'));
+    const res = await productsGET(get('/api/commerce/products?limit=100'));
     expect(res.status).toBe(200);
     const body = await res.json();
 
-    const product = body.products.find((p: { handle: string }) => p.handle === 'list-tee');
+    const product = body.products.find((p: { handle: string }) => p.handle === seeded.handle);
     expect(product).toBeDefined();
     // Typed graph, not a flat CMS Row: nested options/values + variant matrix + price.
     expect(product).not.toHaveProperty('values');
+    expect(product.options[0].title).toBe('Color');
     expect(product.options[0].values[0].value).toBe('Red');
-    const variant = product.variants.find((v: { id: string }) => v.id === variantId);
+    const variant = product.variants.find((v: { id: string }) => v.id === seeded.variantId);
     expect(variant.resolvedPriceCents).toBe(1999);
-    expect(variant.options[0].optionValueId).toBeTruthy();
+    expect(variant.options[0].optionValueId).toBe(product.options[0].values[0].id);
     // Product-level "from" price equals the single variant's price.
     expect(product.resolvedPriceCents).toBe(1999);
   });
 
+  it('the list route pages by cursor without skipping or repeating a product', async () => {
+    for (let i = 0; i < 3; i += 1) {
+      await seedBuyableProduct(tenant.db, {
+        title: `Page ${i}`,
+        handle: `page-${i}-${randomUUID().slice(0, 6)}`,
+        amountCents: 100 + i,
+        stocked: 1,
+      });
+    }
+    const all = await (await productsGET(get('/api/commerce/products?limit=100'))).json();
+    const allIds: string[] = all.products.map((p: { id: string }) => p.id);
+    expect(allIds.length).toBeGreaterThanOrEqual(3);
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const qs = cursor ? `limit=1&cursor=${cursor}` : 'limit=1';
+      const page = await (await productsGET(get(`/api/commerce/products?${qs}`))).json();
+      seen.push(...page.products.map((p: { id: string }) => p.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+    expect(seen).toEqual(allIds);
+  });
+
   it('the detail route resolves a product by handle', async () => {
-    const db = prisma!;
-    await withTenant(db, async (tx) => {
-      const product = await catalogRepository.createProduct(tx, { title: 'Detail Cap', handle: 'detail-cap' });
-      const variant = await catalogRepository.addVariant(tx, { productId: product.id, sku: 'DETAIL-CAP-1' });
-      const priceSet = await pricingRepository.createPriceSet(tx, { variantId: variant.id });
-      await pricingRepository.addPrice(tx, { priceSetId: priceSet.id, currency: 'EUR', amount: 2500 });
+    const seeded = await seedBuyableProduct(tenant.db, {
+      title: 'Detail Cap',
+      handle: `detail-cap-${randomUUID().slice(0, 6)}`,
+      amountCents: 2500,
+      stocked: 2,
     });
 
-    const res = await productGET(new Request('http://t/api/commerce/products/detail-cap'), {
-      params: Promise.resolve({ handle: 'detail-cap' }),
+    const res = await productGET(get(`/api/commerce/products/${seeded.handle}`), {
+      params: Promise.resolve({ handle: seeded.handle }),
     });
     expect(res.status).toBe(200);
     const dto = await res.json();
-    expect(dto.handle).toBe('detail-cap');
+    expect(dto.handle).toBe(seeded.handle);
     expect(dto.title).toBe('Detail Cap');
     expect(dto.variants[0].resolvedPriceCents).toBe(2500);
 
     // A handle with no live product is a real 404 envelope.
-    const missing = await productGET(new Request('http://t/api/commerce/products/ghost-handle'), {
+    const missing = await productGET(get('/api/commerce/products/ghost-handle'), {
       params: Promise.resolve({ handle: 'ghost-handle' }),
     });
     expect(missing.status).toBe(404);
     expect((await missing.json()).error.code).toBe('not_found');
   });
 
-  it('the inventory route returns available_quantity matching the b2 generated column (advisory-only)', async () => {
-    const db = prisma!;
-    const item = await db.inventoryItem.create({ data: { sku: 'INV-SKU-1' } });
-    const location = await db.stockLocation.create({ data: { name: 'INV-WH-1' } });
-    await db.inventoryLevel.create({
-      data: {
-        inventoryItemId: item.id,
-        locationId: location.id,
-        stockedQuantity: 10,
-        reservedQuantity: 3,
-      },
+  it('the inventory route returns available_quantity matching the generated column (advisory-only)', async () => {
+    const seeded = await seedBuyableProduct(tenant.db, {
+      title: 'Inv',
+      handle: `inv-${randomUUID().slice(0, 6)}`,
+      amountCents: 500,
+      stocked: 10,
     });
+    await tenant.db
+      .updateTable('inventory_level')
+      .set({ reserved_quantity: 3 })
+      .where('inventory_item_id', '=', seeded.inventoryItemId)
+      .execute();
 
     // The DB-computed generated column is the authority we compare against.
-    const generated = await readGeneratedAvailable(item.id, location.id);
-    expect(generated).toBe(7); // 10 stocked - 3 reserved
+    const level = await tenant.db
+      .selectFrom('inventory_level')
+      .select('available_quantity')
+      .where('inventory_item_id', '=', seeded.inventoryItemId)
+      .executeTakeFirstOrThrow();
+    expect(level.available_quantity).toBe(7); // 10 stocked - 3 reserved
 
     // UNAUTHENTICATED read; variantId is the inventory_item_id at the v1 boundary.
     const res = await inventoryGET(
-      new Request(`http://t/api/commerce/inventory?variantId=${item.id}&locationId=${location.id}`),
+      get(
+        `/api/commerce/inventory?variantId=${seeded.inventoryItemId}&locationId=${seeded.locationId}`,
+      ),
     );
     expect(res.status).toBe(200);
     const dto = await res.json();
-    expect(dto.availableQuantity).toBe(generated);
-    expect(dto.variantId).toBe(item.id);
-    expect(dto.locationId).toBe(location.id);
-    // The advisory-only marker is on the payload (no client may treat it as sale authority).
+    expect(dto.availableQuantity).toBe(level.available_quantity);
+    expect(dto.variantId).toBe(seeded.inventoryItemId);
+    expect(dto.locationId).toBe(seeded.locationId);
     expect(dto.advisoryOnly).toBe(true);
 
     // An (item, location) pair with no level row is a real 404 envelope.
     const missing = await inventoryGET(
-      new Request(`http://t/api/commerce/inventory?variantId=${item.id}&locationId=does-not-exist`),
+      get(`/api/commerce/inventory?variantId=${seeded.inventoryItemId}&locationId=does-not-exist`),
     );
     expect(missing.status).toBe(404);
     expect((await missing.json()).error.code).toBe('not_found');
+  });
+
+  it('an unpublished host is a 403 on every read route', async () => {
+    const stranger = 'not-a-store.example.com';
+    const list = await productsGET(get('/api/commerce/products', stranger));
+    const detail = await productGET(get('/api/commerce/products/x', stranger), {
+      params: Promise.resolve({ handle: 'x' }),
+    });
+    const inventory = await inventoryGET(
+      get('/api/commerce/inventory?variantId=a&locationId=b', stranger),
+    );
+    for (const res of [list, detail, inventory]) {
+      expect(res.status).toBe(403);
+      expect((await res.json()).error.code).toBe('forbidden');
+    }
   });
 });

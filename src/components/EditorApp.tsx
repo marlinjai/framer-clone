@@ -15,8 +15,7 @@ import { getUndoManager, getHistoryStore, getDragManager } from '@/stores/RootSt
 import { resolveAction } from '@/lib/keyBindings';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
-import { CommerceDataSourceContext } from '@/lib/commerce/context';
-import { getSharedHttpCommerceDataSource } from '@/lib/commerce/httpCommerceDataSource';
+import EditorCommerceProvider from '@/components/EditorCommerceProvider';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 
 import { useStore } from "@/hooks/useStore";
@@ -128,7 +127,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
 
   return (
     <DataSourceProviderContext.Provider value={getSharedPrismaDataSourceProvider()}>
-    <CommerceDataSourceContext.Provider value={getSharedHttpCommerceDataSource()}>
+    <EditorCommerceProvider>
     <TransformProvider>
       <DragManagerBinding />
 
@@ -155,7 +154,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
       </div>
     </div>
     </TransformProvider>
-    </CommerceDataSourceContext.Provider>
+    </EditorCommerceProvider>
     </DataSourceProviderContext.Provider>
   );
 }

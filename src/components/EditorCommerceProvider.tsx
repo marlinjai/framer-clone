@@ -1,0 +1,38 @@
+'use client';
+
+// src/components/EditorCommerceProvider.tsx
+//
+// Mounts the commerce data source for the EDITOR and its preview. The editor is
+// not a published storefront, so it must not use the host-resolved storefront
+// routes (its host is the editor host, or localhost in dev, and those routes
+// would answer 403). Instead it reads through the per-project editor routes
+// (/api/projects/<projectId>/commerce/*), which authorize the signed-in
+// auth-brain session against that project's workspace and read ONLY the
+// project's own tenant schema (never a shared one).
+//
+// The project id comes from the editor store's current project (the MT-10
+// route /projects/<id> hydrates it from the server-loaded snapshot). A project
+// that does not exist server-side (the unsaved demo project of the standalone
+// `/` dev mount) is answered with a 403 by the server, which the commerce
+// components surface as an error rather than as data.
+
+import React from 'react';
+import { observer } from 'mobx-react-lite';
+
+import { CommerceDataSourceContext } from '@/lib/commerce/context';
+import { getEditorCommerceDataSource } from '@/lib/commerce/httpCommerceDataSource';
+import { useStore } from '@/hooks/useStore';
+
+const NO_PROJECT_ID = '__no_project__';
+
+const EditorCommerceProvider = observer(({ children }: { children: React.ReactNode }) => {
+  const rootStore = useStore();
+  const projectId = rootStore.editorUI.currentProject?.id ?? NO_PROJECT_ID;
+  return (
+    <CommerceDataSourceContext.Provider value={getEditorCommerceDataSource(projectId)}>
+      {children}
+    </CommerceDataSourceContext.Provider>
+  );
+});
+
+export default EditorCommerceProvider;

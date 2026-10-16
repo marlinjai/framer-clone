@@ -30,7 +30,7 @@ import 'server-only';
 // pool instead of opening a new pool on every edit.
 
 import { createNodeDb } from '@marlinjai/tenant-db/node';
-import { assertBackstop, tenantDb } from '@marlinjai/tenant-db';
+import { assertBackstop, BackstopError, tenantDb } from '@marlinjai/tenant-db';
 
 // Re-export the per-request scoping factory so every repo imports the scoping
 // primitive from the commerce data-layer entrypoint, not the raw package.
@@ -71,6 +71,7 @@ export type CommerceBase = ReturnType<typeof buildCommerceBase>;
 
 const globalForCommerceDb = globalThis as unknown as {
   __framerCloneCommerceBase?: CommerceBase;
+  __framerCloneCommerceBackstop?: Promise<void>;
 };
 
 /**
@@ -113,4 +114,55 @@ export function commerceTenantDb(tgId: string) {
  */
 export async function assertCommerceBackstop(): Promise<void> {
   await assertBackstop(getCommerceBase());
+}
+
+/**
+ * Run the startup backstop ONCE per process, before the first commerce query.
+ *
+ * Every storefront / editor / render entry point derives its handle through
+ * {@link commerceTenantDbChecked}, which awaits this. The check runs lazily on
+ * first commerce use (not at import and not in `next build`, which has no
+ * database URL), and its success is cached on globalThis, so it costs one round
+ * trip per process. It turns every misconfiguration into a loud, named error
+ * instead of empty shop slots:
+ *   - COMMERCE_APP_DATABASE_URL unset         -> the "is not set" error
+ *   - unreachable / placeholder connection    -> "could not verify" with the cause
+ *   - the OWNER role (public on its path)     -> BackstopError (re-thrown as is)
+ * A FAILED check is not cached, so a transient outage does not wedge the
+ * process: the next commerce request checks again.
+ */
+export function ensureCommerceBackstop(): Promise<void> {
+  if (!globalForCommerceDb.__framerCloneCommerceBackstop) {
+    const check = (async () => {
+      const base = getCommerceBase();
+      try {
+        await assertBackstop(base);
+      } catch (err) {
+        if (err instanceof BackstopError) throw err;
+        const cause = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          'Commerce backstop: could not verify the commerce connection ' +
+            '(COMMERCE_APP_DATABASE_URL must point at the low-privilege ' +
+            `commerce_app role, search_path = ext): ${cause}`,
+          { cause: err },
+        );
+      }
+    })();
+    globalForCommerceDb.__framerCloneCommerceBackstop = check;
+    check.catch(() => {
+      if (globalForCommerceDb.__framerCloneCommerceBackstop === check) {
+        globalForCommerceDb.__framerCloneCommerceBackstop = undefined;
+      }
+    });
+  }
+  return globalForCommerceDb.__framerCloneCommerceBackstop;
+}
+
+/**
+ * {@link commerceTenantDb}, but only after {@link ensureCommerceBackstop} has
+ * passed. This is the entry point the request edges use.
+ */
+export async function commerceTenantDbChecked(tgId: string) {
+  await ensureCommerceBackstop();
+  return commerceTenantDb(tgId);
 }

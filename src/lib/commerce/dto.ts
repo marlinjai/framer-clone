@@ -5,12 +5,13 @@
 // mappers from the owned commerce graph (b4 catalog + b5 resolved price + b2/b3
 // inventory) onto those DTOs.
 //
-// This file is deliberately React-free AND server-free: it imports only zod and
-// Prisma TYPES (erased at compile), so it is safe to import from the Track C
-// storefront client as well as from the server route handlers. The tx-reading
-// and price resolution live in the route handlers (they need a Prisma tx); what
-// lives here is the pure graph -> DTO projection and the response validation,
-// which is what the headless `*.test.ts` unit suite exercises without a database.
+// This file is deliberately React-free AND server-free: it imports only zod, so
+// it is safe to import from the Track C storefront client as well as from the
+// server route handlers. The database reads and price resolution live in the
+// server (src/server/commerce/repository/storefront.ts, over the scoped tenant
+// handle); what lives here is the pure graph -> DTO projection and the response
+// validation, which is what the headless `*.test.ts` unit suite exercises
+// without a database.
 //
 // PARALLEL READ SURFACE (not the CMS shape): these DTOs carry the rich, typed
 // commerce graph (product -> options -> values, product -> variants -> matrix,
@@ -24,7 +25,6 @@
 // honestly rather than fabricated as 0.
 
 import { z } from 'zod';
-import type { Prisma } from '@prisma/client';
 
 /**
  * The default ISO-4217 currency used to resolve a product's prices when a request
@@ -34,24 +34,30 @@ import type { Prisma } from '@prisma/client';
 export const DEFAULT_CURRENCY = 'EUR';
 
 // ---------------------------------------------------------------------------
-// The Prisma include shape for a full product read. Exported so both the list and
-// detail routes read the SAME typed graph. It is pure data (an include literal),
-// so it lives here, not in a server-only module. Soft-deleted options / values /
-// variants are filtered out at read time (the catalog uses soft-delete).
+// The product graph a full product read yields: the product, its LIVE options
+// with their LIVE values, and its LIVE variants with each variant's
+// (option, value) matrix rows. Structural on purpose (no ORM row type), so the
+// server reader can be any data layer; soft-deleted rows are filtered out by the
+// reader before they reach this shape.
 // ---------------------------------------------------------------------------
-export const productGraphInclude = {
-  options: {
-    where: { deletedAt: null },
-    include: { values: { where: { deletedAt: null } } },
-  },
-  variants: {
-    where: { deletedAt: null },
-    include: { options: true },
-  },
-} satisfies Prisma.ProductInclude;
-
-/** A product row read with the full owned graph (options + values + variants + matrix). */
-export type ProductGraph = Prisma.ProductGetPayload<{ include: typeof productGraphInclude }>;
+export interface ProductGraph {
+  id: string;
+  handle: string;
+  title: string;
+  description: string | null;
+  options: Array<{
+    id: string;
+    title: string;
+    values: Array<{ id: string; value: string }>;
+  }>;
+  variants: Array<{
+    id: string;
+    title: string | null;
+    sku: string | null;
+    barcode: string | null;
+    options: Array<{ optionId: string; optionValueId: string }>;
+  }>;
+}
 
 // ---------------------------------------------------------------------------
 // Response DTO zod schemas. The exported TS types are inferred from these so the

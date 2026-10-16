@@ -164,6 +164,29 @@ const COMMERCE_KIND_LABELS: Record<string, string> = {
 };
 
 /**
+ * True when hydrating `pageTree` would READ commerce data: some node outside an
+ * interactive island is a BOUND commerce source (product-list / product-detail).
+ * Unbound sources render a placeholder and islands are never baked, so neither
+ * needs a repository. The render route asks this BEFORE deriving the commerce
+ * handle, so a page without commerce bindings never touches the commerce
+ * connection (and never fails because it is unconfigured).
+ */
+export function treeNeedsCommerceRepo(pageTree: ComponentNode): boolean {
+  const stack: ComponentNode[] = [pageTree];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    const dataKind = node.props?.['data-component-kind'];
+    if (typeof dataKind === 'string' && INTERACTIVE_COMMERCE_KINDS.has(dataKind)) continue;
+    const hasBindings = !!node.bindings && Object.keys(node.bindings).length > 0;
+    if (typeof dataKind === 'string' && COMMERCE_SOURCE_KINDS.has(dataKind) && hasBindings) {
+      return true;
+    }
+    for (const child of node.children ?? []) stack.push(child);
+  }
+  return false;
+}
+
+/**
  * Expand a data-bound tree into concrete prop values.
  *
  * Collection / ProductList nodes expand to one hydrated block per row/product;

@@ -1,0 +1,71 @@
+// src/server/commerce/__tests__/dbBackstop.test.ts
+//
+// Unit cover for the lazily-run, cached startup backstop in db.ts
+// (ensureCommerceBackstop / commerceTenantDbChecked). The postgres.js base and
+// tenant-db's assertBackstop are mocked, so no database is touched:
+//   - the check runs ONCE per process before the first scoped handle, and its
+//     success is cached across calls,
+//   - an owner-role connection (BackstopError) is re-thrown as is,
+//   - any other connection failure is re-thrown with a clear, named message and
+//     is NOT cached (the next commerce request checks again).
+
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@marlinjai/tenant-db/node', () => ({
+  createNodeDb: vi.fn(() => ({ __base: true })),
+}));
+
+vi.mock('@marlinjai/tenant-db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@marlinjai/tenant-db')>();
+  return {
+    ...actual,
+    assertBackstop: vi.fn(),
+    tenantDb: vi.fn((_base: unknown, tg: string) => ({ __scopedHandleFor: tg })),
+  };
+});
+
+import { assertBackstop, BackstopError } from '@marlinjai/tenant-db';
+import { commerceTenantDbChecked, ensureCommerceBackstop } from '../db';
+
+const assertMock = vi.mocked(assertBackstop);
+const TG = '018f9c10-0000-7000-8000-0000000015aa';
+
+beforeEach(() => {
+  const g = globalThis as Record<string, unknown>;
+  delete g.__framerCloneCommerceBase;
+  delete g.__framerCloneCommerceBackstop;
+  assertMock.mockReset();
+  process.env.COMMERCE_APP_DATABASE_URL = 'postgresql://commerce_app@localhost:5432/unit';
+});
+
+describe('ensureCommerceBackstop', () => {
+  it('runs once before the first handle and caches the success', async () => {
+    assertMock.mockResolvedValue(undefined);
+    expect(await commerceTenantDbChecked(TG)).toEqual({ __scopedHandleFor: TG });
+    await commerceTenantDbChecked(TG);
+    await ensureCommerceBackstop();
+    expect(assertMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-throws BackstopError for an owner-role connection and hands out no handle', async () => {
+    assertMock.mockRejectedValue(new BackstopError('"$user", public'));
+    await expect(commerceTenantDbChecked(TG)).rejects.toBeInstanceOf(BackstopError);
+  });
+
+  it('names the variable and role on any other failure, and does not cache it', async () => {
+    assertMock.mockRejectedValueOnce(new Error('getaddrinfo ENOTFOUND placeholder'));
+    await expect(ensureCommerceBackstop()).rejects.toThrow(
+      /COMMERCE_APP_DATABASE_URL must point at the low-privilege commerce_app role.*ENOTFOUND/,
+    );
+    // Not cached: the next request checks again (and here it passes).
+    assertMock.mockResolvedValueOnce(undefined);
+    await expect(ensureCommerceBackstop()).resolves.toBeUndefined();
+    expect(assertMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails with the named error when COMMERCE_APP_DATABASE_URL is unset', async () => {
+    delete process.env.COMMERCE_APP_DATABASE_URL;
+    await expect(ensureCommerceBackstop()).rejects.toThrow(/COMMERCE_APP_DATABASE_URL is not set/);
+    expect(assertMock).not.toHaveBeenCalled();
+  });
+});

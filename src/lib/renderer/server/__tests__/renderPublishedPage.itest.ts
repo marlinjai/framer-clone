@@ -10,8 +10,9 @@
 //   resolvePublishedSite (real Prisma read)
 //     -> matchPageBySlug (home + the HOME_REWRITE_SENTINEL)
 //     -> snapshotToComponentNode (snapshot adapt)
-//     -> hydrateBindings (REAL getCmsRepository() + the scoped tg_<demo> commerce
-//        read repo hitting the seeded DB)
+//     -> hydrateBindings (REAL getCmsRepository() + the render route's REAL
+//        commerceRepoForSite(site), the scoped tg_<demo> read repo hitting the
+//        seeded DB)
 //     -> renderComponentNode -> renderToStaticMarkup (HTML string)
 //
 // and asserts the high-signal proofs: the published-only resolver contract, the
@@ -32,8 +33,10 @@ import type { PrismaClient } from '@prisma/client';
 
 import { getPrismaClient } from '@/server/db';
 import { getCmsRepository } from '@/server/cms';
+import { commerceRepoForSite } from '@/server/commerce/storefrontTenant';
+import { commerceTenantDbChecked } from '@/server/commerce/db';
 import { getCommerceServerRepositoryDb } from '@/server/commerce/repository/read';
-import { commerceTenantDb } from '@/server/commerce/db';
+import { POST as ordersPOST } from '@/app/api/commerce/orders/route';
 import {
   resolvePublishedSite,
   matchPageBySlug,
@@ -41,11 +44,12 @@ import {
   type PublishedSite,
 } from '@/server/sites/publicResolver';
 import { snapshotToComponentNode } from '../snapshotToComponentNode';
-import { hydrateBindings } from '@/lib/renderer/publish/hydrateBindings';
+import { hydrateBindings, treeNeedsCommerceRepo } from '@/lib/renderer/publish/hydrateBindings';
 import { renderComponentNode } from '../renderComponentNode';
 import CommercePageProviders from '../CommercePageProviders';
 import { createScope, pushPageFrame } from '@/lib/bindings/resolver/scope';
-import { seedDemoSite, DEMO_TENANT_GROUP_ID, type SeededDemo } from '../seedDemoSite';
+import { seedDemoSite, type SeededDemo } from '../seedDemoSite';
+import { DEMO_TENANT_GROUP_ID } from '../demoTenant';
 
 let prisma: PrismaClient;
 let seeded: SeededDemo;
@@ -53,8 +57,9 @@ let seeded: SeededDemo;
 beforeAll(async () => {
   // getPrismaClient() reads process.env.DATABASE_URL (set by the shared
   // globalSetup) at construction, so this is the SAME container DB that
-  // getCmsRepository() / getCommerceServerRepository() default to. One client,
-  // one pool: the seed writes and the render-path reads share it.
+  // getCmsRepository() defaults to. One client, one pool: the seed writes and
+  // the CMS render-path reads share it. Commerce reads go through
+  // COMMERCE_APP_DATABASE_URL (the commerce_app role), also set by globalSetup.
   prisma = getPrismaClient();
   seeded = await seedDemoSite(prisma);
 }, 120_000);
@@ -74,17 +79,14 @@ async function renderHomeToHtml(site: PublishedSite): Promise<string> {
   const adapted = snapshotToComponentNode(matched!.page.snapshot);
   expect(adapted.root, 'adapted snapshot must yield a renderable root').not.toBeNull();
 
-  // CM-12: the seed writes the commerce catalog through the scoped
-  // `commerceTenantDb(DEMO_TENANT_GROUP_ID)` handle into `tg_<demo>` (the shared
-  // globalSetup provisions the schema + exports COMMERCE_APP_DATABASE_URL), so
-  // the smoke reads through the SAME real app-role handle (the exact wiring
-  // CM-10 puts behind resolveCommerceSchemaForSite in the route). The legacy
-  // Prisma repo (getCommerceServerRepository) would read the now-empty
-  // `commerce` schema: on a fresh database that path is intentionally dead, and
-  // existing deployments bridge it via the CM-12 backfill until CM-10 flips.
+  // CM-10: the commerce repo comes from the render route's OWN helper,
+  // commerceRepoForSite(site), which maps the resolved site to its tenant group
+  // and reads through the scoped `commerceTenantDb(tgId)` handle (the seed wrote
+  // the catalog into `tg_<demo>` through the same handle). A site with no valid
+  // tenant group yields undefined (fail closed, see the last describe block).
   const hydrated = await hydrateBindings(adapted.root!, matched!.params, {
     cmsRepo: getCmsRepository(),
-    commerceRepo: getCommerceServerRepositoryDb(commerceTenantDb(DEMO_TENANT_GROUP_ID)),
+    commerceRepo: await commerceRepoForSite(site, adapted.root!),
   });
 
   const scope = pushPageFrame(createScope(), matched!.params);
@@ -194,6 +196,76 @@ describe('published-site render smoke (real Postgres, real seeded data)', () => 
       // ...and the ProductDetail with no {{page.params.handle}} renders its
       // configuration note rather than throwing.
       expect(html).toContain('Product detail: no product selected');
+    });
+  });
+
+  describe('FAIL CLOSED: a published site with no valid tenant group (CM-10)', () => {
+    let html: string;
+
+    beforeAll(async () => {
+      const site = await resolvePublishedSite(
+        seeded.publishedHost,
+        prisma,
+        seeded.baseHost,
+      );
+      expect(site).not.toBeNull();
+      // The same site, but carrying a legacy non-UUID tenant group sentinel (a
+      // row that was never restamped). The render helper must refuse it: no
+      // shared-schema fallback, so the page renders WITHOUT any commerce data.
+      const unprovisioned: PublishedSite = { ...site!, tenantGroupId: 'demo-tenant-group' };
+      const home = snapshotToComponentNode(matchPageBySlug(site!.pages, [])!.page.snapshot);
+      // The home page DOES have bound commerce sources, so only the invalid
+      // tenant group is what makes the helper refuse.
+      expect(treeNeedsCommerceRepo(home.root!)).toBe(true);
+      expect(await commerceRepoForSite(unprovisioned, home.root!)).toBeUndefined();
+      html = await renderHomeToHtml(unprovisioned);
+    }, 60_000);
+
+    it('still renders the CMS content', () => {
+      for (const title of seeded.eventTitles) {
+        expect(html).toContain(title);
+      }
+    });
+
+    it('renders NO commerce data from any schema (the bound ProductList is a placeholder)', () => {
+      for (const title of seeded.productTitles) {
+        expect(html, `HTML must not contain product "${title}"`).not.toContain(title);
+      }
+      expect(html).toContain('(no binding)');
+    });
+  });
+
+  describe('demo checkout end to end through the storefront orders route', () => {
+    it('places one order on the demo host: 201, the order lands in tg_<demo>, stock is reserved', async () => {
+      const db = await commerceTenantDbChecked(DEMO_TENANT_GROUP_ID);
+      const repo = getCommerceServerRepositoryDb(db);
+      const page = await repo.listProducts();
+      const variantId = page.products[0]!.variantIds[0]!;
+      const before = await repo.getAvailability(variantId);
+
+      // The real anonymous storefront write: only the demo host, no session.
+      const res = await ordersPOST(
+        new Request(`http://${seeded.publishedHost}/api/commerce/orders`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', host: seeded.publishedHost },
+          body: JSON.stringify({ lines: [{ variantId, quantity: 1 }] }),
+        }),
+      );
+      const body = (await res.json()) as { orderId: string; totalCents: number; currency: string };
+      expect(res.status, JSON.stringify(body)).toBe(201);
+      expect(body.currency).toBe('EUR');
+      expect(body.totalCents).toBeGreaterThan(0);
+
+      const order = await db
+        .selectFrom('order')
+        .select(['id', 'total'])
+        .where('id', '=', body.orderId)
+        .executeTakeFirstOrThrow();
+      expect(order.total).toBe(body.totalCents);
+
+      // One unit is now reserved against the demo warehouse level.
+      const after = await repo.getAvailability(variantId);
+      expect(after.availableQuantity).toBe(before.availableQuantity - 1);
     });
   });
 });

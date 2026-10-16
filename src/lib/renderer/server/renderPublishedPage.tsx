@@ -47,7 +47,12 @@ export interface RenderPublishedPageInput {
   /** Route params extracted from the slug ({{page.params.id}} / .handle). */
   pageParams: Record<string, string>;
   cmsRepo: CmsReadRepository;
-  commerceRepo: CommerceServerRepository;
+  /**
+   * The site's scoped commerce read repository, or undefined when the site has
+   * no commerce tenant (fail closed, CM-10): every commerce binding then renders
+   * the hydrator's unbound placeholder instead of any catalog data.
+   */
+  commerceRepo?: CommerceServerRepository;
   /** Resolved analytics binding; injection is gated on `enabled` + a public key. */
   analytics?: ResolvedAnalytics;
 }

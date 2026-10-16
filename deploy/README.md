@@ -64,6 +64,7 @@ placeholders where the real value is not yet available.
 | Key | Value for the demo | Notes |
 | --- | --- | --- |
 | `DATABASE_URL` | the Coolify Postgres INTERNAL url | from Terraform output / Coolify DB |
+| `COMMERCE_APP_DATABASE_URL` | the same Postgres, logged in as the `commerce_app` role | The commerce engine's connection (one `tg_<id>` schema per tenant group). MUST be the low-privilege `commerce_app` role, whose role default `search_path` is exactly `ext` (`prisma/sql/commerce-roles.sql`); NEVER the owner role. Checked once on the first commerce request: unset, unreachable, a placeholder, or the owner role fails that request loudly with a named error (pages without commerce bindings never touch it). |
 | `EDITOR_HOST` | `editor.lumitra.co` | NOT `app.lumitra.co` (see host routing above) |
 | `PUBLIC_SITE_BASE_HOST` | `lumitra.co` | so `app.lumitra.co` -> subdomain `app` |
 | `AUTH_BRAIN_URL` | `https://auth.lumitra.co` | default; only the editor surface is gated |

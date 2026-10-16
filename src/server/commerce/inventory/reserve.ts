@@ -33,7 +33,12 @@ import 'server-only';
 
 import { Prisma, type PrismaClient } from '@prisma/client';
 
-import { COMMERCE_SCHEMA } from '../withTenant';
+// LEGACY Prisma path only (deleted with the rest of it in CM-13). The commerce
+// `withTenant` seam and its exported COMMERCE_SCHEMA constant are gone (CM-10):
+// the live storefront path runs on the scoped Kysely handle. This file-private
+// constant only keeps the old raw `"commerce"."<table>"` fragments below
+// compiling until CM-13 removes them.
+const COMMERCE_SCHEMA = 'commerce';
 
 // CM-08 EXPAND imports — the NEW Kysely reserve path lives ALONGSIDE the Prisma
 // path below. It is "dark" (no production caller yet): CM-09 wires the inner
