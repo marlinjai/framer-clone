@@ -30,7 +30,8 @@ import 'server-only';
 // pool instead of opening a new pool on every edit.
 
 import { createNodeDb } from '@marlinjai/tenant-db/node';
-import { assertBackstop, tenantDb } from '@marlinjai/tenant-db';
+import { assertBackstop, BackstopError, tenantDb, tenantSchema } from '@marlinjai/tenant-db';
+import { tenantSchemaExists } from './schemaProbe';
 
 // Re-export the per-request scoping factory so every repo imports the scoping
 // primitive from the commerce data-layer entrypoint, not the raw package.
@@ -71,6 +72,8 @@ export type CommerceBase = ReturnType<typeof buildCommerceBase>;
 
 const globalForCommerceDb = globalThis as unknown as {
   __framerCloneCommerceBase?: CommerceBase;
+  __framerCloneCommerceBackstop?: Promise<void>;
+  __framerCloneCommerceSchemas?: Map<string, Promise<void>>;
 };
 
 /**
@@ -113,4 +116,107 @@ export function commerceTenantDb(tgId: string) {
  */
 export async function assertCommerceBackstop(): Promise<void> {
   await assertBackstop(getCommerceBase());
+}
+
+/**
+ * Run the startup backstop ONCE per process, before the first commerce query.
+ *
+ * Every storefront / editor / render entry point derives its handle through
+ * {@link commerceTenantDbChecked}, which awaits this. The check runs lazily on
+ * first commerce use (not at import and not in `next build`, which has no
+ * database URL), and its success is cached on globalThis, so it costs one round
+ * trip per process. It turns every misconfiguration into a loud, named error
+ * instead of empty shop slots:
+ *   - COMMERCE_APP_DATABASE_URL unset         -> the "is not set" error
+ *   - unreachable / placeholder connection    -> "could not verify" with the cause
+ *   - the OWNER role (public on its path)     -> BackstopError (re-thrown as is)
+ * A FAILED check is not cached, so a transient outage does not wedge the
+ * process: the next commerce request checks again.
+ */
+export function ensureCommerceBackstop(): Promise<void> {
+  if (!globalForCommerceDb.__framerCloneCommerceBackstop) {
+    const check = (async () => {
+      const base = getCommerceBase();
+      try {
+        await assertBackstop(base);
+      } catch (err) {
+        if (err instanceof BackstopError) throw err;
+        const cause = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          'Commerce backstop: could not verify the commerce connection ' +
+            '(COMMERCE_APP_DATABASE_URL must point at the low-privilege ' +
+            `commerce_app role, search_path = ext): ${cause}`,
+          { cause: err },
+        );
+      }
+    })();
+    globalForCommerceDb.__framerCloneCommerceBackstop = check;
+    check.catch(() => {
+      if (globalForCommerceDb.__framerCloneCommerceBackstop === check) {
+        globalForCommerceDb.__framerCloneCommerceBackstop = undefined;
+      }
+    });
+  }
+  return globalForCommerceDb.__framerCloneCommerceBackstop;
+}
+
+/**
+ * Thrown when a tenant group id is a valid UUID but its `tg_<id>` schema does
+ * not exist (the group was never provisioned for commerce). The request edges
+ * map it to the SAME not-provisioned answer as an invalid tenant group: 404
+ * `commerce_not_provisioned` on the routes, no commerce data on the render.
+ */
+export class CommerceTenantNotProvisionedError extends Error {
+  readonly code = 'COMMERCE_TENANT_NOT_PROVISIONED';
+  constructor(schemaName: string) {
+    super(`commerce schema ${schemaName} does not exist (tenant group not provisioned)`);
+    this.name = 'CommerceTenantNotProvisionedError';
+  }
+}
+
+/** True for {@link CommerceTenantNotProvisionedError}, also across module copies. */
+export function isCommerceTenantNotProvisioned(err: unknown): boolean {
+  return (
+    err instanceof CommerceTenantNotProvisionedError ||
+    (typeof err === 'object' &&
+      err !== null &&
+      (err as { code?: unknown }).code === 'COMMERCE_TENANT_NOT_PROVISIONED')
+  );
+}
+
+/**
+ * Check ONCE per process and tenant group that its `tg_<id>` schema exists.
+ * Success is cached next to the backstop; a failure (missing schema or a probe
+ * error) is NOT cached, so provisioning the group later, or a transient outage,
+ * heals on the next request without a restart.
+ */
+function ensureTenantSchema(tgId: string): Promise<void> {
+  const schemaName = tenantSchema(tgId);
+  const cache = (globalForCommerceDb.__framerCloneCommerceSchemas ??= new Map());
+  let check = cache.get(schemaName);
+  if (!check) {
+    const pending = (async () => {
+      if (!(await tenantSchemaExists(getCommerceBase(), schemaName))) {
+        throw new CommerceTenantNotProvisionedError(schemaName);
+      }
+    })();
+    cache.set(schemaName, pending);
+    pending.catch(() => {
+      if (cache.get(schemaName) === pending) cache.delete(schemaName);
+    });
+    check = pending;
+  }
+  return check;
+}
+
+/**
+ * {@link commerceTenantDb}, but only after {@link ensureCommerceBackstop} has
+ * passed and the tenant group's schema is known to exist. This is the entry
+ * point the request edges use. Throws CommerceTenantNotProvisionedError for an
+ * unprovisioned group.
+ */
+export async function commerceTenantDbChecked(tgId: string) {
+  await ensureCommerceBackstop();
+  await ensureTenantSchema(tgId);
+  return commerceTenantDb(tgId);
 }

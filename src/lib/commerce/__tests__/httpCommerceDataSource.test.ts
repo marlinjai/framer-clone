@@ -18,6 +18,7 @@ import {
   HttpCommerceDataSource,
   CommerceHttpError,
   getSharedHttpCommerceDataSource,
+  getEditorCommerceDataSource,
 } from '../httpCommerceDataSource';
 import { ALL_LOCATIONS } from '../types';
 
@@ -550,6 +551,29 @@ describe('HttpCommerceDataSource (contract parity over /api/commerce/*)', () => 
       expect(getSharedHttpCommerceDataSource()).toBe(
         getSharedHttpCommerceDataSource(),
       );
+    });
+  });
+
+  describe('getEditorCommerceDataSource (editor reads, CM-10)', () => {
+    it("reads through the project's authorized editor routes, never the storefront routes", async () => {
+      const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () =>
+        Response.json({ products: [] }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      try {
+        const source = getEditorCommerceDataSource('proj 1');
+        await source.listProducts();
+        const url = String(fetchMock.mock.calls[0]![0]);
+        expect(url.startsWith('/api/projects/proj%201/commerce/products?')).toBe(true);
+        expect(url).not.toContain('/api/commerce/');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('is stable per project and distinct across projects', () => {
+      expect(getEditorCommerceDataSource('a')).toBe(getEditorCommerceDataSource('a'));
+      expect(getEditorCommerceDataSource('a')).not.toBe(getEditorCommerceDataSource('b'));
     });
   });
 });

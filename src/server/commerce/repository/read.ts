@@ -5,7 +5,7 @@ import 'server-only';
 // The READ-ONLY, RSC-callable commerce repository. Today the commerce module
 // only has WRITE / transaction-bound repos (catalog.ts, pricing.ts, order.ts);
 // this file adds the missing READ surface the publish hydrator already expects.
-// `getCommerceServerRepository()` returns an object implementing the
+// `getCommerceServerRepositoryDb(db)` returns an object implementing the
 // `CommerceServerRepository` contract declared (type-only) in
 // src/lib/renderer/publish/hydrateBindings.ts, so the SSR render layer can bake
 // catalog reads in Node at build time.
@@ -15,13 +15,13 @@ import 'server-only';
 // is a pure read mapped INTO the client-facing DTOs (src/lib/commerce/types.ts);
 // no `@prisma/client` row type ever leaks past this boundary.
 //
-// Tenant scoping: every public method runs its reads inside a `withTenant` block
-// so the search_path is pinned to COMMERCE_SCHEMA on the connection BEFORE any
-// query touches a table, exactly like the write repos. The query logic lives in
-// the tx-first `commerceReadRepository` (the same tx-first shape catalog.ts /
-// pricing.ts use), so it is unit-testable with a programmable fake tx; the
-// public `getCommerceServerRepository()` just wraps each tx-first method in
-// `withTenant`.
+// Tenant scoping (CM-10): the LIVE read surface is the Kysely half of this file
+// (`commerceReadRepositoryKysely` + `getCommerceServerRepositoryDb`), which runs
+// on the per-request scoped handle `commerceTenantDb(tgId)`; isolation is baked
+// into that handle, so there is no search_path seam anywhere. The tx-first Prisma
+// `commerceReadRepository` below is LEGACY: it has no production caller since
+// CM-10 removed the Prisma `getCommerceServerRepository` wrapper and the
+// `withTenant` seam, and CM-13 deletes it together with its unit test.
 //
 // Mapping parity: the row->DTO mapping mirrors InMemoryCommerceDataSource (the
 // contract reference double) field-for-field, including the conditional spreads
@@ -32,7 +32,7 @@ import 'server-only';
 // `deletedAt: null` so a soft-deleted product / option / variant is invisible to
 // the published site (matching the live storefront).
 
-import type { Prisma, Price, PrismaClient } from '@prisma/client';
+import type { Prisma, Price } from '@prisma/client';
 
 // CM-07 EXPAND imports — the Kysely read path lives ALONGSIDE the Prisma path.
 import type { ExpressionBuilder, Kysely } from 'kysely';
@@ -54,9 +54,6 @@ import {
 // Type-only: the exact contract the publish hydrator expects. Imported (not
 // re-declared) so this repo is structurally pinned to the hydrator's shape.
 import type { CommerceServerRepository } from '@/lib/renderer/publish/hydrateBindings';
-
-import { getPrismaClient } from '@/server/db';
-import { COMMERCE_SCHEMA, withTenant } from '../withTenant';
 
 // --- Prisma payload types (internal; never returned) -----------------------
 // These describe the shape each query loads so the mappers are typed without an
@@ -194,8 +191,8 @@ function mapPrice(price: Price, variantId: string, taxClass: string | null): Pri
 /**
  * The read surface over a transaction client. Every method takes `tx` first (the
  * tx-first rule the write repos follow), is a PURE READ, and returns the
- * client-facing DTOs. `getCommerceServerRepository()` wraps each method in
- * `withTenant`; tests drive these directly with a programmable fake tx.
+ * client-facing DTOs. LEGACY (no production caller since CM-10, deleted in
+ * CM-13); tests drive these directly with a programmable fake tx.
  */
 export interface CommerceReadRepository {
   listProducts(tx: Prisma.TransactionClient, query?: CommerceQuery): Promise<ProductPage>;
@@ -325,60 +322,12 @@ export const commerceReadRepository: CommerceReadRepository = {
   },
 };
 
-// --- the RSC-callable, tenant-scoped public repository ----------------------
-
-/**
- * Build the read-only, Prisma-backed commerce repository the publish hydrator
- * consumes. Each method opens a `withTenant` block (search_path pinned to
- * `schema` on the connection BEFORE any query runs) and delegates to the
- * tx-first `commerceReadRepository`. READS ONLY: no write / reserve / checkout.
- *
- * `schema` defaults to `COMMERCE_SCHEMA` so existing single-tenant callers are
- * unchanged. The render path (MT-13) derives the schema from the resolved site
- * (`resolveCommerceSchemaForSite`) and threads it here, so each published site's
- * commerce reads run under the schema mapped to ITS tenant rather than a pinned
- * constant. This explicit param is the SEAM the per-tenant commerce schema
- * registry (MT-18) fills; the registry/provisioning is intentionally NOT built
- * here.
- */
-export function getCommerceServerRepository(
-  prisma: PrismaClient = getPrismaClient(),
-  schema: string = COMMERCE_SCHEMA,
-): CommerceServerRepository {
-  return {
-    listProducts: (query) =>
-      withTenant(prisma, schema, (tx) =>
-        commerceReadRepository.listProducts(tx, query),
-      ),
-    getProductByHandle: (handle) =>
-      withTenant(prisma, schema, (tx) =>
-        commerceReadRepository.getProductByHandle(tx, handle),
-      ),
-    listVariants: (productId) =>
-      withTenant(prisma, schema, (tx) =>
-        commerceReadRepository.listVariants(tx, productId),
-      ),
-    getPrices: (variantId) =>
-      withTenant(prisma, schema, (tx) =>
-        commerceReadRepository.getPrices(tx, variantId),
-      ),
-    getAvailability: (variantId, locationId) =>
-      withTenant(prisma, schema, (tx) =>
-        commerceReadRepository.getAvailability(tx, variantId, locationId),
-      ),
-  };
-}
-
 // =============================================================================
-// CM-07 EXPAND — the Kysely READ repository (NEW), added ALONGSIDE the Prisma
-// `commerceReadRepository` + `getCommerceServerRepository` above. The two paths
-// COEXIST through CM-12 (plan §10): the old Prisma path keeps every current
-// caller — the SSR render path (`src/app/(site)/[...slug]/page.tsx`), the publish
-// hydrator, the existing `read.test.ts` — compiling and serving the demo, while
-// this Kysely path is "dark": wired by no caller until CM-10 flips the render
-// path/routes to `getCommerceServerRepositoryDb`; CM-13 then deletes the Prisma
-// path and renames the suffixed symbols to canonical. So NOTHING below changes a
-// single existing signature: this is a pure ADDITION (expand-contract).
+// CM-07 EXPAND: the Kysely READ repository, added ALONGSIDE the legacy Prisma
+// `commerceReadRepository` above. Since CM-10 this is the LIVE path: the SSR
+// render route (`src/app/(site)/[...slug]/page.tsx`, via storefrontTenant.ts)
+// reads through `getCommerceServerRepositoryDb(commerceTenantDb(tgId))`. CM-13
+// deletes the Prisma path and renames the suffixed symbols to canonical.
 //
 // Each method takes a `db: Kysely<CommerceDB>` first — the per-request scoped
 // handle (`commerceTenantDb(tgId)`), whose every bare table identifier is already
@@ -757,15 +706,13 @@ export const commerceReadRepositoryKysely: CommerceReadRepositoryKysely = {
 
 /**
  * Build the read-only commerce repository the publish hydrator consumes, over a
- * Kysely handle. Unlike the Prisma `getCommerceServerRepository`, this receives
- * an ALREADY-scoped handle (`commerceTenantDb(tg)` / `tenantDb(getCommerceBase(),
+ * Kysely handle. It receives an ALREADY-scoped handle (`commerceTenantDb(tg)` / `tenantDb(getCommerceBase(),
  * tg)`): tenant isolation is baked into `db` by `withSchema`, so there is no
  * `withTenant` wrapping and no schema string. Each returned method delegates to
  * `commerceReadRepositoryKysely` with that `db`. READS ONLY.
  *
- * Carries a temporary `Db` suffix so it coexists with the Prisma
- * `getCommerceServerRepository` through CM-12. CM-10 flips the render path/routes
- * to this factory; CM-13 deletes the Prisma path and renames this to canonical.
+ * Carries a temporary `Db` suffix from the expand phase; the render path uses it
+ * since CM-10, and CM-13 renames it to canonical once the Prisma path is gone.
  */
 export function getCommerceServerRepositoryDb(
   db: Kysely<CommerceDB>,

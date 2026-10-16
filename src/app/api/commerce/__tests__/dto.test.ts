@@ -19,23 +19,9 @@ import {
   type ProductGraph,
 } from '@/lib/commerce/dto';
 
-// Build a minimal product graph in the shape Prisma returns with productGraphInclude.
-// Cast through unknown: the real payload type carries timestamps the mappers never
-// read, so the fake populates only the fields under test.
-function makeGraph(over: Partial<{
-  id: string;
-  handle: string;
-  title: string;
-  description: string | null;
-  options: Array<{ id: string; title: string; values: Array<{ id: string; value: string }> }>;
-  variants: Array<{
-    id: string;
-    title: string | null;
-    sku: string | null;
-    barcode: string | null;
-    options: Array<{ optionId: string; optionValueId: string }>;
-  }>;
-}> = {}): ProductGraph {
+// Build a minimal product graph in the structural ProductGraph shape the server
+// reader (repository/storefront.ts) produces.
+function makeGraph(over: Partial<ProductGraph> = {}): ProductGraph {
   return {
     id: over.id ?? 'prod-1',
     handle: over.handle ?? 'tee',
@@ -53,7 +39,7 @@ function makeGraph(over: Partial<{
         options: [{ optionId: 'opt-color', optionValueId: 'val-red' }],
       },
     ],
-  } as unknown as ProductGraph;
+  };
 }
 
 describe('toProductDTO (commerce graph -> ProductDTO)', () => {

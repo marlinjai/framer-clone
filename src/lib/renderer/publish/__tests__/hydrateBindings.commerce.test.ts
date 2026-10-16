@@ -8,7 +8,7 @@
 // under the same resolver-runtime node-env config the resolver tests use, and
 // asserts that environment explicitly. The commerce reads go through an
 // injected CommerceServerRepository called DIRECTLY in Node: no HTTP, no React.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   hydrateBindings,
   nodeTextContent,
@@ -268,18 +268,23 @@ describe('hydrateBindings commerce', () => {
     expect(nodeTextContent(tree)).toBe('Nothing in stock');
   });
 
-  it('renders nothing for the slot on a ProductList fetch error and NEVER throws the build', async () => {
+  it('renders nothing for the slot on a ProductList fetch error, NEVER throws the build, and LOGS the cause', async () => {
+    const cause = new Error('boom: commerce unreachable');
     const commerceRepo = makeCommerceRepo({
       listProductsImpl: async () => {
-        throw new Error('boom: commerce unreachable');
+        throw cause;
       },
     });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const tree = await hydrateBindings(productListNode(), {}, {
       cmsRepo: makeCmsRepo(),
       commerceRepo,
     });
     expect(tree.children).toEqual([]);
     expect(nodeTextContent(tree)).toBe('');
+    // Not a silent swallow: the cause reaches the server log.
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('[hydrate] product-list'), cause);
+    errorSpy.mockRestore();
   });
 
   it('resolves ProductDetail from pageParams.handle, baking product/variant price/advisory availability', async () => {
@@ -330,12 +335,14 @@ describe('hydrateBindings commerce', () => {
     expect(nodeTextContent(tree)).toBe('No such product');
   });
 
-  it('renders nothing for the slot on a ProductDetail fetch error and NEVER throws the build', async () => {
+  it('renders nothing for the slot on a ProductDetail fetch error, NEVER throws the build, and LOGS the cause', async () => {
+    const cause = new Error('boom: product fetch failed');
     const commerceRepo = makeCommerceRepo({
       getProductByHandleImpl: async () => {
-        throw new Error('boom: product fetch failed');
+        throw cause;
       },
     });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const tree = await hydrateBindings(
       productDetailNode(),
       { handle: 'classic-tee' },
@@ -343,6 +350,8 @@ describe('hydrateBindings commerce', () => {
     );
     expect(tree.children).toEqual([]);
     expect(nodeTextContent(tree)).toBe('');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('[hydrate] product-detail'), cause);
+    errorSpy.mockRestore();
   });
 
   it('renders a configuration note when ProductDetail has no handle in scope', async () => {

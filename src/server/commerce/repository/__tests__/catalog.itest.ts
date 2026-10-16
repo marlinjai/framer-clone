@@ -41,7 +41,10 @@ import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainer
 import { execSync } from 'node:child_process';
 import { PrismaClient } from '@prisma/client';
 
-import { withTenant } from '../../withTenant';
+// LEGACY Prisma-path suite (CM-13 deletes it with the Prisma repos). CM-10
+// removed the commerce `withTenant` seam; its SET LOCAL was a no-op under Prisma
+// multiSchema (`@@schema` already qualifies every table), so each block now opens
+// a plain `db.$transaction`, which is behavior-identical.
 import { catalogRepository } from '../catalog';
 
 let container: StartedTestContainer | undefined;
@@ -125,19 +128,19 @@ async function readSignature(client: PrismaClient, variantId: string): Promise<s
 describe('b4 catalog schema (Dockerized Postgres)', () => {
   it('the composite FK rejects a product_variant_option with a mismatched option_id', async () => {
     const db = prisma!;
-    const product = await withTenant(db, (tx) =>
+    const product = await db.$transaction((tx) =>
       catalogRepository.createProduct(tx, { title: 'Tee', handle: 'tee-fk' }),
     );
-    const color = await withTenant(db, (tx) =>
+    const color = await db.$transaction((tx) =>
       catalogRepository.addOption(tx, { productId: product.id, title: 'Color' }),
     );
-    const size = await withTenant(db, (tx) =>
+    const size = await db.$transaction((tx) =>
       catalogRepository.addOption(tx, { productId: product.id, title: 'Size' }),
     );
-    const red = await withTenant(db, (tx) =>
+    const red = await db.$transaction((tx) =>
       catalogRepository.addOptionValue(tx, { optionId: color.id, value: 'Red' }),
     );
-    const variant = await withTenant(db, (tx) =>
+    const variant = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'TEE-FK-1' }),
     );
 
@@ -163,24 +166,24 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
 
   it('two variants with the same option combination collide on option_signature', async () => {
     const db = prisma!;
-    const product = await withTenant(db, (tx) =>
+    const product = await db.$transaction((tx) =>
       catalogRepository.createProduct(tx, { title: 'Hoodie', handle: 'hoodie-sig' }),
     );
-    const color = await withTenant(db, (tx) =>
+    const color = await db.$transaction((tx) =>
       catalogRepository.addOption(tx, { productId: product.id, title: 'Color' }),
     );
-    const red = await withTenant(db, (tx) =>
+    const red = await db.$transaction((tx) =>
       catalogRepository.addOptionValue(tx, { optionId: color.id, value: 'Red' }),
     );
-    const v1 = await withTenant(db, (tx) =>
+    const v1 = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'HOOD-SIG-1' }),
     );
-    const v2 = await withTenant(db, (tx) =>
+    const v2 = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'HOOD-SIG-2' }),
     );
 
     // First variant claims {Red}: the trigger sets its signature to red.id.
-    await withTenant(db, (tx) =>
+    await db.$transaction((tx) =>
       catalogRepository.setVariantOptions(tx, v1.id, [{ optionId: color.id, optionValueId: red.id }]),
     );
     expect(await readSignature(db, v1.id)).toBe(red.id);
@@ -189,7 +192,7 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
     // signature and the option_signature partial-UNIQUE rejects the recompute.
     await expectRejectionMatching(
       () =>
-        withTenant(db, (tx) =>
+        db.$transaction((tx) =>
           catalogRepository.setVariantOptions(tx, v2.id, [
             { optionId: color.id, optionValueId: red.id },
           ]),
@@ -209,38 +212,38 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
 
   it('editing a variant options recomputes the signature and frees the old combination', async () => {
     const db = prisma!;
-    const product = await withTenant(db, (tx) =>
+    const product = await db.$transaction((tx) =>
       catalogRepository.createProduct(tx, { title: 'Cap', handle: 'cap-recompute' }),
     );
-    const color = await withTenant(db, (tx) =>
+    const color = await db.$transaction((tx) =>
       catalogRepository.addOption(tx, { productId: product.id, title: 'Color' }),
     );
-    const red = await withTenant(db, (tx) =>
+    const red = await db.$transaction((tx) =>
       catalogRepository.addOptionValue(tx, { optionId: color.id, value: 'Red' }),
     );
-    const blue = await withTenant(db, (tx) =>
+    const blue = await db.$transaction((tx) =>
       catalogRepository.addOptionValue(tx, { optionId: color.id, value: 'Blue' }),
     );
-    const v = await withTenant(db, (tx) =>
+    const v = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'CAP-RC-1' }),
     );
 
-    await withTenant(db, (tx) =>
+    await db.$transaction((tx) =>
       catalogRepository.setVariantOptions(tx, v.id, [{ optionId: color.id, optionValueId: red.id }]),
     );
     expect(await readSignature(db, v.id)).toBe(red.id);
 
     // Re-assign to {Blue}: the matrix changes and the trigger recomputes.
-    await withTenant(db, (tx) =>
+    await db.$transaction((tx) =>
       catalogRepository.setVariantOptions(tx, v.id, [{ optionId: color.id, optionValueId: blue.id }]),
     );
     expect(await readSignature(db, v.id)).toBe(blue.id);
 
     // The {Red} combination is now free: another variant can claim it.
-    const other = await withTenant(db, (tx) =>
+    const other = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'CAP-RC-2' }),
     );
-    await withTenant(db, (tx) =>
+    await db.$transaction((tx) =>
       catalogRepository.setVariantOptions(tx, other.id, [
         { optionId: color.id, optionValueId: red.id },
       ]),
@@ -250,7 +253,7 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
 
   it('a soft-deleted handle frees the partial-unique', async () => {
     const db = prisma!;
-    const first = await withTenant(db, (tx) =>
+    const first = await db.$transaction((tx) =>
       catalogRepository.createProduct(tx, { title: 'Shoes', handle: 'shoes' }),
     );
 
@@ -260,7 +263,7 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
     // ON handle.
     await expectRejectionMatching(
       () =>
-        withTenant(db, (tx) =>
+        db.$transaction((tx) =>
           catalogRepository.createProduct(tx, { title: 'Shoes 2', handle: 'shoes' }),
         ),
       /P2002|23505|handle/,
@@ -269,7 +272,7 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
     // Soft-delete the first product: the handle is now free.
     await db.product.update({ where: { id: first.id }, data: { deletedAt: new Date() } });
 
-    const reused = await withTenant(db, (tx) =>
+    const reused = await db.$transaction((tx) =>
       catalogRepository.createProduct(tx, { title: 'Shoes 3', handle: 'shoes' }),
     );
     expect(reused.id).toBeTruthy();
@@ -287,19 +290,19 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
     // enforces uniqueness. That makes no-duplicate-combination a DATABASE guarantee
     // regardless of which table is written.
     const db = prisma!;
-    const product = await withTenant(db, (tx) =>
+    const product = await db.$transaction((tx) =>
       catalogRepository.createProduct(tx, { title: 'Sock', handle: 'sock-pathindep' }),
     );
-    const color = await withTenant(db, (tx) =>
+    const color = await db.$transaction((tx) =>
       catalogRepository.addOption(tx, { productId: product.id, title: 'Color' }),
     );
-    const green = await withTenant(db, (tx) =>
+    const green = await db.$transaction((tx) =>
       catalogRepository.addOptionValue(tx, { optionId: color.id, value: 'Green' }),
     );
-    const v1 = await withTenant(db, (tx) =>
+    const v1 = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'SOCK-PI-1' }),
     );
-    const v2 = await withTenant(db, (tx) =>
+    const v2 = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'SOCK-PI-2' }),
     );
 
@@ -347,30 +350,30 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
     // must collide, and v1's stored signature must equal the SORTED comma-join of
     // both value ids (not the insertion order).
     const db = prisma!;
-    const product = await withTenant(db, (tx) =>
+    const product = await db.$transaction((tx) =>
       catalogRepository.createProduct(tx, { title: 'Shirt', handle: 'shirt-canon' }),
     );
-    const color = await withTenant(db, (tx) =>
+    const color = await db.$transaction((tx) =>
       catalogRepository.addOption(tx, { productId: product.id, title: 'Color' }),
     );
-    const size = await withTenant(db, (tx) =>
+    const size = await db.$transaction((tx) =>
       catalogRepository.addOption(tx, { productId: product.id, title: 'Size' }),
     );
-    const red = await withTenant(db, (tx) =>
+    const red = await db.$transaction((tx) =>
       catalogRepository.addOptionValue(tx, { optionId: color.id, value: 'Red' }),
     );
-    const small = await withTenant(db, (tx) =>
+    const small = await db.$transaction((tx) =>
       catalogRepository.addOptionValue(tx, { optionId: size.id, value: 'Small' }),
     );
-    const v1 = await withTenant(db, (tx) =>
+    const v1 = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'SHIRT-CN-1' }),
     );
-    const v2 = await withTenant(db, (tx) =>
+    const v2 = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'SHIRT-CN-2' }),
     );
 
     // v1: Color=Red, Size=Small (this insertion order).
-    await withTenant(db, (tx) =>
+    await db.$transaction((tx) =>
       catalogRepository.setVariantOptions(tx, v1.id, [
         { optionId: color.id, optionValueId: red.id },
         { optionId: size.id, optionValueId: small.id },
@@ -386,7 +389,7 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
     // identical, so the partial-UNIQUE rejects it.
     await expectRejectionMatching(
       () =>
-        withTenant(db, (tx) =>
+        db.$transaction((tx) =>
           catalogRepository.setVariantOptions(tx, v2.id, [
             { optionId: size.id, optionValueId: small.id },
             { optionId: color.id, optionValueId: red.id },
@@ -409,16 +412,16 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
     // frees the value for a third. Variants live across products, so the sku unique
     // is global among live variants, not per-product.
     const db = prisma!;
-    const product = await withTenant(db, (tx) =>
+    const product = await db.$transaction((tx) =>
       catalogRepository.createProduct(tx, { title: 'Mug', handle: 'mug-sku' }),
     );
-    const v1 = await withTenant(db, (tx) =>
+    const v1 = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'SKU-DUP' }),
     );
 
     await expectRejectionMatching(
       () =>
-        withTenant(db, (tx) =>
+        db.$transaction((tx) =>
           catalogRepository.addVariant(tx, { productId: product.id, sku: 'SKU-DUP' }),
         ),
       /P2002|23505|product_variant_sku_active_key|sku/,
@@ -427,7 +430,7 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
     // Soft-delete v1: the sku frees.
     await db.productVariant.update({ where: { id: v1.id }, data: { deletedAt: new Date() } });
 
-    const v3 = await withTenant(db, (tx) =>
+    const v3 = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'SKU-DUP' }),
     );
     expect(v3.id).toBeTruthy();
@@ -437,16 +440,16 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
   it('the barcode partial-unique rejects a duplicate live value and frees it on soft-delete', async () => {
     // TR-2 (barcode). Same shape as the sku test, on the barcode column.
     const db = prisma!;
-    const product = await withTenant(db, (tx) =>
+    const product = await db.$transaction((tx) =>
       catalogRepository.createProduct(tx, { title: 'Bottle', handle: 'bottle-barcode' }),
     );
-    const v1 = await withTenant(db, (tx) =>
+    const v1 = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, barcode: 'BC-DUP' }),
     );
 
     await expectRejectionMatching(
       () =>
-        withTenant(db, (tx) =>
+        db.$transaction((tx) =>
           catalogRepository.addVariant(tx, { productId: product.id, barcode: 'BC-DUP' }),
         ),
       /P2002|23505|product_variant_barcode_active_key|barcode/,
@@ -455,7 +458,7 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
     // Soft-delete v1: the barcode frees.
     await db.productVariant.update({ where: { id: v1.id }, data: { deletedAt: new Date() } });
 
-    const v3 = await withTenant(db, (tx) =>
+    const v3 = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, barcode: 'BC-DUP' }),
     );
     expect(v3.id).toBeTruthy();
@@ -467,19 +470,19 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
     // SUCCEED, because the option_signature partial-UNIQUE is WHERE deleted_at IS
     // NULL, so a soft-deleted variant no longer holds its combination.
     const db = prisma!;
-    const product = await withTenant(db, (tx) =>
+    const product = await db.$transaction((tx) =>
       catalogRepository.createProduct(tx, { title: 'Glove', handle: 'glove-sigfree' }),
     );
-    const color = await withTenant(db, (tx) =>
+    const color = await db.$transaction((tx) =>
       catalogRepository.addOption(tx, { productId: product.id, title: 'Color' }),
     );
-    const red = await withTenant(db, (tx) =>
+    const red = await db.$transaction((tx) =>
       catalogRepository.addOptionValue(tx, { optionId: color.id, value: 'Red' }),
     );
-    const v1 = await withTenant(db, (tx) =>
+    const v1 = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'GLOVE-SF-1' }),
     );
-    await withTenant(db, (tx) =>
+    await db.$transaction((tx) =>
       catalogRepository.setVariantOptions(tx, v1.id, [{ optionId: color.id, optionValueId: red.id }]),
     );
     expect(await readSignature(db, v1.id)).toBe(red.id);
@@ -488,10 +491,10 @@ describe('b4 catalog schema (Dockerized Postgres)', () => {
     await db.productVariant.update({ where: { id: v1.id }, data: { deletedAt: new Date() } });
 
     // v2 can now claim {Red}: the same signature is no longer taken by a live row.
-    const v2 = await withTenant(db, (tx) =>
+    const v2 = await db.$transaction((tx) =>
       catalogRepository.addVariant(tx, { productId: product.id, sku: 'GLOVE-SF-2' }),
     );
-    await withTenant(db, (tx) =>
+    await db.$transaction((tx) =>
       catalogRepository.setVariantOptions(tx, v2.id, [{ optionId: color.id, optionValueId: red.id }]),
     );
     expect(await readSignature(db, v2.id)).toBe(red.id);

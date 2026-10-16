@@ -2,27 +2,26 @@
 //
 // GET /api/commerce/products/[handle] -> ProductDTO | 404
 //
-// The b7 commerce catalog DETAIL read, resolved by `handle`. UNAUTHENTICATED for
-// the v1 cut. Runs through the b1 `withTenant` seam, reads the owned typed commerce
-// graph (b4) over the tx, resolves each variant's price via the b5 resolver, maps
-// to the typed ProductDTO, and validates with zod. A handle that resolves to no
-// LIVE product returns a real `not_found` 404 envelope, never an empty 200.
+// The b7 commerce catalog DETAIL read, resolved by `handle`, for an anonymous
+// storefront. The tenant is the storefront HOST (CM-10): the host must resolve to
+// a PUBLISHED site (else 403), that site's tenant group id must be valid (else
+// 404 `commerce_not_provisioned`, fail closed, never a shared schema), and the
+// read runs on the scoped Kysely handle `commerceTenantDb(tgId)`. Each variant's
+// price comes from the b5 resolver (integer cents); the DTO is validated with
+// zod. A handle that resolves to no LIVE product in THIS tenant group returns a
+// real `not_found` 404 envelope, never an empty 200.
 //
-// handle is unique only among LIVE rows (a partial-unique index in the b4
-// migration, which Prisma cannot express), so the lookup is a findFirst over
-// `{ handle, deletedAt: null }`, not a findUnique.
+// handle is unique only among LIVE rows (a partial-unique index), so the lookup
+// is a first-live-match (`handle = $1 AND deleted_at IS NULL`), see
+// src/server/commerce/repository/storefront.ts.
+//
+// The read itself (query validation, the scoped Kysely read, DTO validation and
+// the error envelopes) lives in src/server/commerce/readHandlers.ts, shared with
+// the editor's authorized per-project route; THIS route only decides the tenant,
+// from the request HOST and never from a session (D2 / D4).
 
-import { getPrismaClient } from '@/server/db';
-import { withTenant } from '@/server/commerce';
-import { pricingRepository } from '@/server/commerce/repository/pricing';
-import { jsonError } from '@/lib/api/respond';
-import {
-  DEFAULT_CURRENCY,
-  productDTOSchema,
-  productGraphInclude,
-  toProductDTO,
-  type ProductDTO,
-} from '@/lib/commerce/dto';
+import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
+import { handleProductByHandle } from '@/server/commerce/readHandlers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,38 +31,7 @@ export async function GET(
   { params }: { params: Promise<{ handle: string }> },
 ): Promise<Response> {
   const { handle } = await params;
-  const url = new URL(req.url);
-  const currency = (url.searchParams.get('currency') ?? DEFAULT_CURRENCY).toUpperCase();
-
-  try {
-    const prisma = getPrismaClient();
-    const dto = await withTenant(prisma, async (tx): Promise<ProductDTO | null> => {
-      const row = await tx.product.findFirst({
-        where: { handle, deletedAt: null },
-        include: productGraphInclude,
-      });
-      if (!row) return null;
-
-      const priceByVariant = new Map<string, number | null>();
-      for (const variant of row.variants) {
-        priceByVariant.set(
-          variant.id,
-          await pricingRepository.resolvePrice(tx, variant.id, { currency }),
-        );
-      }
-      return toProductDTO(row, priceByVariant);
-    });
-
-    if (!dto) {
-      return jsonError('not_found', `no product with handle ${handle}`, 404);
-    }
-
-    return Response.json(productDTOSchema.parse(dto));
-  } catch (err) {
-    return jsonError(
-      'commerce_read_failed',
-      err instanceof Error ? err.message : 'failed to read product',
-      500,
-    );
-  }
+  return handleProductByHandle(req, handle, () =>
+    resolveStorefrontCommerce(req.headers.get('host')),
+  );
 }

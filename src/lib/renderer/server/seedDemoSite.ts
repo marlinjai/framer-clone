@@ -34,10 +34,10 @@
 // inventory_level, the only commerce writes that used to bypass `withTenant`)
 // are now schema-qualified inserts on the SAME handle. No commerce write bypasses
 // it. The non-commerce CMS writes (site / sitePage / siteDomain, the CMS
-// collection adapter) stay on Prisma; they are NOT part of this migration. The
-// SEED no longer imports `withTenant`; the API routes, read.ts and
-// createOrder.ts still do until CM-10 flips them, and CM-13 then deletes
-// withTenant.ts.
+// collection adapter) stay on Prisma; they are NOT part of this migration.
+// (CM-10 deleted the `withTenant` seam entirely.) The demo stock sits in ONE
+// warehouse registered as the default fulfillment location, so an order placed
+// on the demo host through the storefront orders route can reserve it.
 
 import { randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
@@ -48,6 +48,7 @@ import { CMS_WORKSPACE_ID } from '@/lib/cms/constants';
 import { commerceTenantDb, type CommerceDB } from '@/server/commerce/db';
 import { catalogRepositoryKysely } from '@/server/commerce/repository/catalog';
 import { pricingRepositoryKysely } from '@/server/commerce/repository/pricing';
+import { DEFAULT_WORKSPACE_ID } from '@/server/commerce/inventory/reserve';
 
 // The demo's isolation boundary. The CMS rows isolate by `workspace_id`; the
 // commerce rows isolate by the `tg_<id>` schema DERIVED from this tenant-group id
@@ -136,7 +137,11 @@ export interface SeededDemo {
  * advisory-availability read (variant.sku -> inventory_item.sku) resolves real
  * stock. Returns nothing; the ProductList lists the whole catalog by title.
  */
-async function seedProduct(db: Kysely<CommerceDB>, spec: ProductSpec): Promise<void> {
+async function seedProduct(
+  db: Kysely<CommerceDB>,
+  spec: ProductSpec,
+  locationId: string,
+): Promise<void> {
   const product = await catalogRepositoryKysely.createProduct(db, {
     title: spec.title,
     handle: spec.handle,
@@ -172,17 +177,11 @@ async function seedProduct(db: Kysely<CommerceDB>, spec: ProductSpec): Promise<v
       amount: entry.amountCents,
     });
 
-    // Inventory: the 3 ex-direct `prisma.stockLocation/inventoryItem/inventoryLevel
-    // .create` calls (the ONLY commerce writes that used to bypass `withTenant`)
-    // are now schema-qualified inserts on the SAME scoped handle. An item keyed by
-    // the SAME sku the variant carries, plus a level with real stock at a location
-    // (advisory availability reads the GENERATED stocked-reserved column). id /
-    // updated_at are supplied app-side (no DB default; see catalog.ts header).
-    const locationId = randomUUID();
-    await db
-      .insertInto('stock_location')
-      .values({ id: locationId, name: `Demo Warehouse (${entry.sku})`, updated_at: new Date() })
-      .execute();
+    // Inventory: an item keyed by the SAME sku the variant carries, plus a level
+    // with real stock at the ONE demo warehouse (advisory availability reads the
+    // GENERATED stocked-reserved column). Schema-qualified inserts on the SAME
+    // scoped handle (no write bypasses it). id / updated_at are supplied app-side
+    // (no DB default; see catalog.ts header).
     const inventoryItemId = randomUUID();
     await db
       .insertInto('inventory_item')
@@ -206,6 +205,25 @@ async function seedProduct(db: Kysely<CommerceDB>, spec: ProductSpec): Promise<v
       })
       .execute();
   }
+}
+
+/**
+ * Create the single demo warehouse and register it as the default fulfillment
+ * location for DEFAULT_WORKSPACE_ID (the location the order path reserves at
+ * when a cart line names none). Returns the location id.
+ */
+async function seedDemoWarehouse(db: Kysely<CommerceDB>): Promise<string> {
+  const locationId = randomUUID();
+  const now = new Date();
+  await db
+    .insertInto('stock_location')
+    .values({ id: locationId, name: 'Demo Warehouse', updated_at: now })
+    .execute();
+  await db
+    .insertInto('fulfillment_location_default')
+    .values({ workspace_id: DEFAULT_WORKSPACE_ID, location_id: locationId, updated_at: now })
+    .execute();
+  return locationId;
 }
 
 /**
@@ -398,8 +416,17 @@ export async function seedDemoSite(
   const db = opts.commerceDb ?? commerceTenantDb(tenantGroupId);
 
   // 1) Commerce catalog (products + variants + prices + inventory) -> tg_<demo>.
+  //
+  // Stock lives in ONE demo warehouse that is registered as the workspace's
+  // default fulfillment location. That is the order path's real contract: the
+  // storefront orders route sends no location, so the reserve falls back to the
+  // `fulfillment_location_default` row for DEFAULT_WORKSPACE_ID and reserves
+  // against the level AT that location (reserve.ts resolveLocationKysely). A
+  // location per variant with no default (the earlier seed) made every demo
+  // checkout fail with "no default fulfillment location configured".
+  const warehouseId = await seedDemoWarehouse(db);
   for (const spec of PRODUCT_SPECS) {
-    await seedProduct(db, spec);
+    await seedProduct(db, spec, warehouseId);
   }
 
   // 2) CMS Events collection (through the adapter the read path uses).

@@ -1,18 +1,26 @@
 // src/app/api/commerce/orders/__tests__/route.itest.ts
 //
 // Integration test (Dockerized Postgres) for the storefront order-create WRITE
-// seam, POST /api/commerce/orders. It boots its OWN throwaway Postgres in
-// beforeAll (testcontainers), applies EVERY migration, seeds a priced + stocked
-// variant, and drives the REAL route handler against a LIVE database, proving:
+// seam, POST /api/commerce/orders, after CM-10 moved it onto the per-tenant-group
+// schema. It runs on the SHARED integration database (vitest.integration.setup.ts),
+// provisions its OWN tenant group `tg_<id>`, seeds a priced + stocked variant into
+// it, publishes a site stamped with that tenant group, and drives the REAL route
+// handler with that site's Host header, proving:
 //
 //   1. the server computes the order total AUTHORITATIVELY (integer cents,
-//      net + tax), returning 201 { orderId, totalCents, currency },
-//   2. the request body is INTENTIONS ONLY: a client-sent price/stock field is
-//      rejected (400), so the server stays the sole author of money + stock,
+//      net + tax), returning 201 { orderId, totalCents, currency }, and the order
+//      lands in THIS tenant group's schema,
+//   2. the request body is INTENTIONS ONLY: a client-sent price/stock/total field
+//      is rejected (400, `.strict()`), so the server stays the sole author of
+//      money + stock,
 //   3. a simulated oversell returns typed per-line shortages keyed by VARIANT id
-//      (409 { ok:false, shortages }), and
-//   4. the route carries the can()-shaped guard seam and NO payment/Stripe code
-//      (checkout STOPS at order-created).
+//      (409 { ok:false, shortages }) and the whole order rolls back,
+//   4. a host that does not resolve to a published site is a 403 (D4),
+//   5. the route carries the host gate and NO payment/Stripe code (checkout
+//      STOPS at order-created) and no session/withTenant seam.
+//
+// Cross-tenant isolation is proven separately in
+// src/app/api/commerce/__tests__/routes.isolation.itest.ts.
 //
 // The `.itest.ts` suffix keeps this file OUT of the headless `pnpm test` gate
 // (vitest.config.ts matches only *.{test,spec}.{ts,tsx}); it runs only under
@@ -21,154 +29,55 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
-import { execSync } from 'node:child_process';
-import { PrismaClient } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 
-import { DEFAULT_WORKSPACE_ID } from '@/server/commerce/inventory/reserve';
+import {
+  countInSchema,
+  createPublishedSite,
+  openStorefrontFixtures,
+  provisionCommerceTenant,
+  seedBuyableProduct,
+  type ProvisionedTenant,
+  type StorefrontFixtures,
+} from '@/server/commerce/__tests__/storefrontFixtures';
+import { POST } from '../route';
 
-let container: StartedTestContainer | undefined;
-let prisma: PrismaClient | undefined;
-// Imported lazily AFTER process.env.DATABASE_URL is pointed at the container, so
-// the route's getPrismaClient() (lazy singleton) connects to the test database.
-let POST: (req: Request) => Promise<Response>;
-
-// D4: anonymous orders resolve their tenant from the storefront HOST. Order
-// requests carry this published storefront's Host header so the route's
-// resolvePublishedSite() gate lets them through (a host that does not resolve to
-// a published site is a 403). `teststore.example.com` -> subdomain `teststore`
-// (parseSubdomain's no-baseHost rule needs >= 3 labels), which beforeAll seeds
-// as a PUBLISHED site + SiteDomain.
-const STOREFRONT_SUBDOMAIN = 'teststore';
-const STOREFRONT_HOST = `${STOREFRONT_SUBDOMAIN}.example.com`;
-
-function makeUrl(host: string, port: number): string {
-  return `postgresql://test:test@${host}:${port}/framer_clone_test`;
-}
+let fx: StorefrontFixtures;
+let tenant: ProvisionedTenant;
+let host = '';
 
 beforeAll(async () => {
-  container = await new GenericContainer('postgres:16-alpine')
-    .withEnvironment({
-      POSTGRES_USER: 'test',
-      POSTGRES_PASSWORD: 'test',
-      POSTGRES_DB: 'framer_clone_test',
-    })
-    .withExposedPorts(5432)
-    .withWaitStrategy(Wait.forLogMessage(/database system is ready to accept connections/, 2))
-    .start();
-
-  const url = makeUrl(container.getHost(), container.getMappedPort(5432));
-
-  execSync('pnpm exec prisma migrate deploy', {
-    stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL: url },
-  });
-
-  // Point the route's lazy PrismaClient at the container BEFORE importing it.
-  process.env.DATABASE_URL = url;
-  ({ POST } = await import('../route'));
-
-  prisma = new PrismaClient({ datasourceUrl: url });
-
-  // D4: the order-create route gates on the request Host resolving to a
-  // PUBLISHED site (resolvePublishedSite, public schema). Seed one published
-  // site whose subdomain the order requests carry as their Host, so the gate
-  // passes and the order logic under test runs.
-  const site = await prisma.site.create({
-    data: {
-      workspaceId: 'test-ws',
-      tenantGroupId: 'test-tg',
-      name: 'Test Store',
-      status: 'published',
-      // app-meaningful timestamps have no DB default (distinct from the row
-      // createdAt/updatedAt), so they must be set explicitly on create.
-      projectCreatedAt: new Date(),
-      projectUpdatedAt: new Date(),
-    },
-  });
-  await prisma.siteDomain.create({
-    data: {
-      siteId: site.id,
-      workspaceId: 'test-ws',
-      tenantGroupId: 'test-tg',
-      subdomain: STOREFRONT_SUBDOMAIN,
-      verificationStatus: 'active',
-      isPrimary: true,
-    },
-  });
-}, 180_000);
+  fx = openStorefrontFixtures();
+  tenant = await provisionCommerceTenant(fx, 'cm10-orders');
+  ({ host } = await createPublishedSite(fx, tenant.tgId, 'cm10-orders'));
+}, 120_000);
 
 afterAll(async () => {
-  await prisma?.$disconnect();
-  await container?.stop();
+  await fx?.close();
 });
 
-let suffixCounter = 0;
-function suffix(): string {
-  suffixCounter += 1;
-  return `${suffixCounter}`;
+async function seedBuyableVariant(amountCents: number, stocked: number) {
+  return seedBuyableProduct(tenant.db, {
+    title: `P-${randomUUID().slice(0, 6)}`,
+    handle: `p-${randomUUID()}`,
+    amountCents,
+    stocked,
+  });
 }
 
-/**
- * Seed a buyable variant: a product + variant + matching inventory item (the SKU
- * bridge), a location with the given on-hand stock, the default fulfillment
- * location, and a price (cents). Returns the variant id the client would post.
- */
-async function seedBuyableVariant(
-  amountCents: number,
-  stocked: number,
-  opts: { currency?: string } = {},
-): Promise<{ variantId: string }> {
-  const p = prisma!;
-  const sku = `SKU-${suffix()}`;
-
-  const product = await p.product.create({
-    data: { title: `P-${suffix()}`, handle: `p-${suffix()}` },
-  });
-  const variant = await p.productVariant.create({
-    data: { productId: product.id, title: `V-${suffix()}`, sku },
-  });
-  const priceSet = await p.priceSet.create({ data: { variantId: variant.id } });
-  await p.price.create({
-    data: { priceSetId: priceSet.id, currencyCode: opts.currency ?? 'EUR', amount: amountCents },
-  });
-
-  // The inventory item shares the variant's SKU (the v1 bridge the route uses).
-  const item = await p.inventoryItem.create({ data: { sku } });
-  const location = await p.stockLocation.create({ data: { name: `WH-${suffix()}` } });
-  await p.inventoryLevel.create({
-    data: {
-      inventoryItemId: item.id,
-      locationId: location.id,
-      stockedQuantity: stocked,
-      reservedQuantity: 0,
-    },
-  });
-  // The default fulfillment location for the workspace b3 resolves against when a
-  // reserve omits an explicit location (the route omits it). upsert so repeated
-  // seeds in one run do not collide on the single-row PK.
-  await p.fulfillmentLocationDefault.upsert({
-    where: { workspaceId: DEFAULT_WORKSPACE_ID },
-    create: { workspaceId: DEFAULT_WORKSPACE_ID, locationId: location.id },
-    update: { locationId: location.id },
-  });
-
-  return { variantId: variant.id };
-}
-
-function postOrder(body: unknown): Promise<Response> {
+function postOrder(body: unknown, requestHost = host): Promise<Response> {
   return POST(
-    new Request(`http://${STOREFRONT_HOST}/api/commerce/orders`, {
+    new Request(`http://${requestHost}/api/commerce/orders`, {
       method: 'POST',
       // The Host header is what the route reads (req.headers.get('host')) to
       // resolve the storefront tenant (D4). undici permits setting it here.
-      headers: { 'content-type': 'application/json', host: STOREFRONT_HOST },
+      headers: { 'content-type': 'application/json', host: requestHost },
       body: JSON.stringify(body),
     }),
   );
 }
 
-describe('POST /api/commerce/orders (Dockerized Postgres)', () => {
+describe('POST /api/commerce/orders on the tenant schema (Dockerized Postgres)', () => {
   it('computes the total server-side and returns 201 { orderId, totalCents, currency }', async () => {
     const { variantId } = await seedBuyableVariant(1000, 10);
 
@@ -182,62 +91,86 @@ describe('POST /api/commerce/orders (Dockerized Postgres)', () => {
     expect(body.currency).toBe('EUR');
     expect(typeof body.orderId).toBe('string');
 
-    // The order persisted with the same server-authoritative total.
-    const order = await prisma!.order.findUniqueOrThrow({ where: { id: body.orderId } });
+    // The order persisted IN THIS TENANT'S SCHEMA with the same total.
+    const order = await tenant.db
+      .selectFrom('order')
+      .select(['total', 'subtotal', 'tax_amount'])
+      .where('id', '=', body.orderId)
+      .executeTakeFirstOrThrow();
     expect(order.total).toBe(2380);
     expect(order.subtotal).toBe(2000);
-    expect(order.taxAmount).toBe(380);
+    expect(order.tax_amount).toBe(380);
   });
 
-  it('rejects a body carrying a client price/stock field (intentions only)', async () => {
+  it('rejects a body carrying a client price/stock/total field (intentions only)', async () => {
     const { variantId } = await seedBuyableVariant(1000, 10);
 
-    // A client that tries to author money/stock: the strict body rejects the
-    // extra key with a 400, never trusting it.
-    const ordersBefore = await prisma!.order.count();
-    const res = await postOrder({
-      lines: [{ variantId, quantity: 1, priceCents: 1, stock: 999 }],
-    });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe('bad_body');
-
-    // No order was created from the rejected request. Delta-based, not an
-    // absolute count(): this file shares one testcontainers DB with the other
-    // integration suites under `pnpm test:integration`, and this file's own
-    // first test creates an order, so an absolute `toBe(0)` is not isolated.
-    expect(await prisma!.order.count()).toBe(ordersBefore);
+    const ordersBefore = await countInSchema(fx, tenant.schema, 'order');
+    for (const body of [
+      { lines: [{ variantId, quantity: 1, priceCents: 1 }] },
+      { lines: [{ variantId, quantity: 1, stock: 999 }] },
+      { lines: [{ variantId, quantity: 1 }], total: 1 },
+    ]) {
+      const res = await postOrder(body);
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe('bad_body');
+    }
+    // No order was created from the rejected requests.
+    expect(await countInSchema(fx, tenant.schema, 'order')).toBe(ordersBefore);
   });
 
   it('returns 409 typed per-line shortages (keyed by variantId) on an oversell', async () => {
-    const { variantId } = await seedBuyableVariant(1000, 1); // only 1 in stock
+    const seeded = await seedBuyableVariant(1000, 1); // only 1 in stock
 
-    const ordersBefore = await prisma!.order.count();
-    const res = await postOrder({ lines: [{ variantId, quantity: 5 }] });
+    const ordersBefore = await countInSchema(fx, tenant.schema, 'order');
+    const res = await postOrder({ lines: [{ variantId: seeded.variantId, quantity: 5 }] });
     expect(res.status).toBe(409);
     const body = (await res.json()) as {
       ok: false;
       shortages: { variantId: string; needed: number; available: number }[];
     };
     expect(body.ok).toBe(false);
-    expect(body.shortages).toEqual([{ variantId, needed: 5, available: 1 }]);
+    expect(body.shortages).toEqual([{ variantId: seeded.variantId, needed: 5, available: 1 }]);
 
-    // The whole order rolled back: no NEW order persisted, no stock reserved.
-    // Delta-based for the shared-DB reason above (this variant was freshly
-    // seeded, so its own reservation count is the isolated signal if needed).
-    expect(await prisma!.order.count()).toBe(ordersBefore);
+    // The whole order rolled back: no new order, the stock is untouched.
+    expect(await countInSchema(fx, tenant.schema, 'order')).toBe(ordersBefore);
+    const level = await tenant.db
+      .selectFrom('inventory_level')
+      .select('reserved_quantity')
+      .where('inventory_item_id', '=', seeded.inventoryItemId)
+      .executeTakeFirstOrThrow();
+    expect(level.reserved_quantity).toBe(0);
+  });
+
+  it('returns 403 for a host that does not resolve to a published site', async () => {
+    const { variantId } = await seedBuyableVariant(1000, 10);
+    const ordersBefore = await countInSchema(fx, tenant.schema, 'order');
+    const res = await postOrder(
+      { lines: [{ variantId, quantity: 1 }] },
+      'not-a-store.example.com',
+    );
+    expect(res.status).toBe(403);
+    expect((await res.json()).error.code).toBe('forbidden');
+    expect(await countInSchema(fx, tenant.schema, 'order')).toBe(ordersBefore);
   });
 });
 
 describe('source contract', () => {
   it('gates on the request host -> published site and STOPS at order-created (no payment)', () => {
     const src = readFileSync(path.resolve(__dirname, '../route.ts'), 'utf8');
-    // The anonymous-storefront write gates on the host resolving to a published
-    // site (the D4 contract), NOT an interim super-admin secret.
-    expect(src).toMatch(/from\s+['"]@\/server\/sites\/publicResolver['"]/);
-    expect(src).toMatch(/resolvePublishedSite\(/);
-    // The removed interim super-principal seam must be gone.
+    const edge = readFileSync(
+      path.resolve(__dirname, '../../../../../server/commerce/storefrontTenant.ts'),
+      'utf8',
+    );
+    // The anonymous-storefront write gates on (and takes its tenant from) the
+    // HOST resolving to a published site (the D4 contract), via the shared
+    // storefront edge, NOT an interim super-admin secret or a session.
+    expect(src).toMatch(/resolveStorefrontCommerce\(req\.headers\.get\('host'\)\)/);
+    expect(edge).toMatch(/from\s+['"]@\/server\/sites\/publicResolver['"]/);
+    expect(edge).toMatch(/resolvePublishedSite\(/);
+    // The removed seams must be gone.
     expect(src).not.toMatch(/from\s+['"]@\/server\/auth\/guard['"]/);
+    expect(src).not.toMatch(/withTenant|getPrismaClient|cookies\(/);
     // checkout STOPS at order-created: no payment integration code.
     expect(src).toMatch(/STOPS at order-created/);
     expect(src).not.toMatch(/from\s+['"][^'"]*stripe[^'"]*['"]/i);

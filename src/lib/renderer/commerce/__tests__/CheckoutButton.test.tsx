@@ -318,3 +318,28 @@ describe('source contract', () => {
     expect(fetchTargets).toEqual(['/api/commerce/orders']);
   });
 });
+
+describe('CheckoutButton unknown variant (422)', () => {
+  it('tells the visitor which action to take and keeps the cart, never a shortage view', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      fakeResponse(422, {
+        error: { code: 'unknown_variant', message: 'an item in the cart is not available', variantId: 'v' },
+      }),
+    );
+    const { container, getByTestId } = renderCheckout();
+    await waitForHydratedCart(getByTestId);
+
+    clickCheckout(container);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-checkout-error]')?.textContent).toContain(
+        'no longer available',
+      );
+    });
+    expect(container.querySelector('[data-checkout-error]')?.textContent).not.toContain('{');
+    expect(container.querySelector('[data-checkout-shortage]')).toBeNull();
+    expect(container.querySelector('[data-checkout-payment]')).toBeNull();
+    expect(getByTestId('lines').textContent).toBe(JSON.stringify(SEEDED_LINES));
+  });
+});
+

@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server';
 // Import the sentinel from the dependency-free module, NOT from publicResolver:
 // that pulls `server-only` + Prisma, which cannot run in the edge middleware.
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
+import { isEditorHost as isEditorHostname } from '@/lib/editorHost';
 
 /**
  * The coarse edge auth gate for framer-clone.
@@ -28,22 +29,24 @@ import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
  * actually reads protected data. A forged-but-present cookie gets past this gate
  * and is rejected by that verify -- it never reaches data.
  */
+/** Which editor-plane surface a path belongs to, or null for any other path. */
+function isEditorPlanePath(pathname: string): 'api' | 'page' | null {
+  const under = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+  if (under('/api/projects') || under('/api/ai')) return 'api';
+  if (under('/projects')) return 'page';
+  return null;
+}
+
 export async function middleware(request: NextRequest) {
   // Host-aware root routing. Next is host-agnostic, so without this `/` is the
   // editor (`app/page.tsx`) on EVERY host. The discriminator is the request Host:
   // the editor is ALWAYS served on the fixed lumitra-owned EDITOR_HOST; any other
   // host is a published site and its root `/` must serve the storefront home.
-  const editorHost = process.env.EDITOR_HOST;
-  const host = (request.headers.get('host') ?? '').split(':')[0].toLowerCase();
-  // Dev / unconfigured safety: with no EDITOR_HOST, or on localhost, treat
-  // EVERYTHING as the editor host so `/` stays the editor and local dev is
-  // unchanged. The rewrite only activates in prod where EDITOR_HOST is set and
-  // the request Host differs.
-  const isEditorHost =
-    !editorHost ||
-    host === editorHost.toLowerCase() ||
-    host === 'localhost' ||
-    host === '127.0.0.1';
+  // The shared editor-host test (src/lib/editorHost.ts): with no EDITOR_HOST,
+  // or on localhost, EVERYTHING counts as the editor host so `/` stays the
+  // editor and local dev is unchanged. The rewrite only activates in prod where
+  // EDITOR_HOST is set and the request Host differs.
+  const isEditorHost = isEditorHostname(request.headers.get('host'));
 
   if (request.nextUrl.pathname === '/') {
     if (!isEditorHost) {
@@ -64,13 +67,37 @@ export async function middleware(request: NextRequest) {
   // INTENTIONAL suite-wide SSO and is NOT made host-only -- so the browser still
   // sends it to `*.sites.lumitra.co`. But the published-site plane derives
   // tenancy from the HOST and must NEVER be AUTHORIZED by that apex session. So
-  // on a NON-editor (published) host the middleware does NOT apply the editor
-  // cookie gate: storefront reads and anonymous order POSTs flow straight
-  // through, and their route handlers do host-based tenant resolution. The apex
-  // session is simply irrelevant to published-host authorization here. (No
+  // on a NON-editor (published) host the middleware never applies the editor
+  // cookie gate (no login bounce) and REFUSES the session-authorized editor
+  // surfaces outright (404); everything else (storefront pages, reads and
+  // anonymous order POSTs) flows through to host-based tenant resolution. (No
   // auth-brain cookie-domain change is made; this is an authz decision, not a
   // cookie-transport one.)
   if (!isEditorHost) {
+    // The editor plane (`/projects/*` pages, `/api/projects/*`, `/api/ai/*`)
+    // must not run AT ALL on a published host: every one of them authorizes
+    // with the apex session the browser still sends here, which D2 forbids on
+    // the published plane. So they are refused with a 404 (as if the surface did
+    // not exist on this host, revealing nothing about the editor), BEFORE any
+    // handler or page runs and regardless of any cookie. A 404, NOT a login
+    // bounce: anonymous published-site traffic is never sent to the login page.
+    // In the current (inverted) deploy the editor is reached on its own
+    // EDITOR_HOST, which this check recognizes, so no editor path relies on a
+    // storefront host. The editor commerce handlers keep their own host check as
+    // defense in depth (src/server/commerce/editorTenant.ts).
+    const editorPlane = isEditorPlanePath(request.nextUrl.pathname);
+    if (editorPlane === 'api') {
+      return NextResponse.json(
+        { error: { code: 'not_found', message: 'not found' } },
+        { status: 404 },
+      );
+    }
+    if (editorPlane === 'page') {
+      return new NextResponse('Not found', {
+        status: 404,
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+      });
+    }
     return NextResponse.next();
   }
 

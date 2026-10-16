@@ -12,8 +12,7 @@ import { useStore } from '@/hooks/useStore';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
-import { CommerceDataSourceContext } from '@/lib/commerce/context';
-import { getSharedHttpCommerceDataSource } from '@/lib/commerce/httpCommerceDataSource';
+import EditorCommerceProvider from '@/components/EditorCommerceProvider';
 import PreviewFrame from './PreviewFrame';
 import PreviewToolbar, { type PreviewMode } from './PreviewToolbar';
 import ResizeGutter from './ResizeGutter';
@@ -97,7 +96,7 @@ const PreviewShell = observer(() => {
 
   return (
     <DataSourceProviderContext.Provider value={getSharedPrismaDataSourceProvider()}>
-    <CommerceDataSourceContext.Provider value={getSharedHttpCommerceDataSource()}>
+    <EditorCommerceProvider>
     <div className="w-screen h-screen flex flex-col bg-gray-950">
       <PreviewToolbar
         viewportNodes={viewportNodes}
@@ -144,7 +143,7 @@ const PreviewShell = observer(() => {
         </div>
       )}
     </div>
-    </CommerceDataSourceContext.Provider>
+    </EditorCommerceProvider>
     </DataSourceProviderContext.Provider>
   );
 });

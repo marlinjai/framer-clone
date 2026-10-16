@@ -23,6 +23,8 @@
 //   - 409 shortage at PLACE: the cart is NOT cleared, the per-line shortages are
 //     surfaced, and the next action is shown. No payment is attempted (the
 //     out-of-stock path is handled BEFORE any charge).
+//   - 422 unknown_variant at PLACE (an item no longer sold here): the cart is NOT
+//     cleared and the visitor is told to remove the unavailable items.
 //   - an order-create fault (any other status / a network error): a loud error,
 //     never a false confirmation.
 //   - a declined / failed payment: surfaced in the payment step with a retry; the
@@ -216,6 +218,18 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
         // A shortage is NOT a success: keep the cart intact so the visitor can
         // adjust, and surface which lines fell short + the next action.
         setState({ status: 'shortage', shortages: data.shortages ?? [] });
+        return;
+      }
+
+      if (res.status === 422) {
+        // An item the storefront no longer sells (unknown_variant): NOT a stock
+        // shortage and NOT a server fault. Keep the cart and tell the visitor
+        // what to do next.
+        setState({
+          status: 'order_error',
+          message:
+            'some items in your cart are no longer available. Remove them and try again.',
+        });
         return;
       }
 

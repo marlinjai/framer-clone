@@ -199,15 +199,31 @@ function applyProductFilter(
   });
 }
 
+/** The anonymous storefront read routes (tenant resolved from the request HOST). */
+export const STOREFRONT_COMMERCE_API_PREFIX = '/api/commerce';
+
+/**
+ * The editor's authorized read routes for ONE project (CM-10 follow-up): the
+ * same three reads, but the tenant comes from the signed-in session's access to
+ * that project's workspace, never from the host and never a shared schema.
+ */
+export function editorCommerceApiPrefix(projectId: string): string {
+  return `/api/projects/${encodeURIComponent(projectId)}/commerce`;
+}
+
 export class HttpCommerceDataSource implements CommerceDataSource {
   private readonly baseUrl: string;
+  private readonly apiPrefix: string;
   private readonly pollMs: number;
   private readonly currency: string;
 
-  constructor(opts?: { baseUrl?: string; pollMs?: number }) {
+  constructor(opts?: { baseUrl?: string; apiPrefix?: string; pollMs?: number }) {
     // Default baseUrl is '' so requests are relative (same-origin) in the
     // browser. Tests inject an absolute baseUrl against a mocked fetch.
     this.baseUrl = opts?.baseUrl ?? '';
+    // Which route family serves the reads: the storefront routes by default, or
+    // the editor's per-project routes (editorCommerceApiPrefix).
+    this.apiPrefix = opts?.apiPrefix ?? STOREFRONT_COMMERCE_API_PREFIX;
     this.pollMs = opts?.pollMs ?? 5000;
     // b7 resolves prices in a currency given by ?currency= (default EUR) and
     // does not echo the currency back in its DTO, so the provider pins the
@@ -229,7 +245,7 @@ export class HttpCommerceDataSource implements CommerceDataSource {
   ): Promise<{ products: B7ProductDTO[]; nextCursor?: string }> {
     const params = new URLSearchParams({ currency: this.currency });
     if (cursor) params.set('cursor', cursor);
-    const res = await fetch(this._url(`/api/commerce/products?${params.toString()}`));
+    const res = await fetch(this._url(`${this.apiPrefix}/products?${params.toString()}`));
     if (!res.ok) {
       const { code, message } = await describeFailure(res);
       throw new CommerceHttpError(`listProducts failed: ${message}`, {
@@ -304,7 +320,7 @@ export class HttpCommerceDataSource implements CommerceDataSource {
     // b7 has a dedicated detail-by-handle route, so this read is a single fetch.
     const res = await fetch(
       this._url(
-        `/api/commerce/products/${encodeURIComponent(handle)}?currency=${this.currency}`,
+        `${this.apiPrefix}/products/${encodeURIComponent(handle)}?currency=${this.currency}`,
       ),
     );
     if (res.status === 404) {
@@ -381,7 +397,7 @@ export class HttpCommerceDataSource implements CommerceDataSource {
     if (locationId !== undefined) params.set('locationId', locationId);
 
     const res = await fetch(
-      this._url(`/api/commerce/inventory?${params.toString()}`),
+      this._url(`${this.apiPrefix}/inventory?${params.toString()}`),
     );
     if (!res.ok) {
       const { code, message } = await describeFailure(res);
@@ -442,4 +458,20 @@ export function getSharedHttpCommerceDataSource(): HttpCommerceDataSource {
     sharedInstance = new HttpCommerceDataSource();
   }
   return sharedInstance;
+}
+
+/**
+ * One data source per edited project for the editor and its preview, keyed by
+ * project id so the provider identity (and its poll subscription) stays stable
+ * across re-renders. Reads go to the project's authorized editor routes.
+ */
+const editorInstances = new Map<string, HttpCommerceDataSource>();
+
+export function getEditorCommerceDataSource(projectId: string): HttpCommerceDataSource {
+  let instance = editorInstances.get(projectId);
+  if (!instance) {
+    instance = new HttpCommerceDataSource({ apiPrefix: editorCommerceApiPrefix(projectId) });
+    editorInstances.set(projectId, instance);
+  }
+  return instance;
 }

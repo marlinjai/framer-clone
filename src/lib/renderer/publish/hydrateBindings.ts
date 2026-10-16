@@ -164,6 +164,37 @@ const COMMERCE_KIND_LABELS: Record<string, string> = {
 };
 
 /**
+ * Log a data-slot read failure. The slot still renders empty (hydration never
+ * throws the page), but the cause reaches the server log instead of vanishing.
+ */
+function logSlotReadError(slot: string, err: unknown): void {
+  console.error(`[hydrate] ${slot} read failed; rendering the slot empty`, err);
+}
+
+/**
+ * True when hydrating `pageTree` would READ commerce data: some node outside an
+ * interactive island is a BOUND commerce source (product-list / product-detail).
+ * Unbound sources render a placeholder and islands are never baked, so neither
+ * needs a repository. The render route asks this BEFORE deriving the commerce
+ * handle, so a page without commerce bindings never touches the commerce
+ * connection (and never fails because it is unconfigured).
+ */
+export function treeNeedsCommerceRepo(pageTree: ComponentNode): boolean {
+  const stack: ComponentNode[] = [pageTree];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    const dataKind = node.props?.['data-component-kind'];
+    if (typeof dataKind === 'string' && INTERACTIVE_COMMERCE_KINDS.has(dataKind)) continue;
+    const hasBindings = !!node.bindings && Object.keys(node.bindings).length > 0;
+    if (typeof dataKind === 'string' && COMMERCE_SOURCE_KINDS.has(dataKind) && hasBindings) {
+      return true;
+    }
+    for (const child of node.children ?? []) stack.push(child);
+  }
+  return false;
+}
+
+/**
  * Expand a data-bound tree into concrete prop values.
  *
  * Collection / ProductList nodes expand to one hydrated block per row/product;
@@ -268,10 +299,11 @@ async function hydrateCollection(
   try {
     const page = await repos.cmsRepo.listRows(collectionId, query);
     rows = page.rows;
-  } catch {
-    // Documented swallow: a fetch error during build-time hydration renders
-    // nothing for this slot and NEVER throws the build (preview-surface
-    // contract, resolveDataState's preview-mode error path).
+  } catch (err) {
+    // Documented degrade: a fetch error during hydration renders nothing for
+    // this slot and NEVER throws the build (preview-surface contract,
+    // resolveDataState's preview-mode error path). It is LOGGED, never silent.
+    logSlotReadError('collection', err);
     return emptyWrapper(node, scope);
   }
 
@@ -320,9 +352,10 @@ async function hydrateRecordView(
   let row: Row | null;
   try {
     row = await repos.cmsRepo.getRow(collectionId, rowId);
-  } catch {
-    // Documented swallow (see hydrateCollection): error renders nothing, never
-    // throws the build.
+  } catch (err) {
+    // Documented degrade (see hydrateCollection): error renders nothing, never
+    // throws the build, and is logged.
+    logSlotReadError('record-view', err);
     return emptyWrapper(node, scope);
   }
 
@@ -387,8 +420,10 @@ async function hydrateProductList(
   try {
     const page = await commerceRepo.listProducts(query);
     products = page.products;
-  } catch {
-    // Documented swallow: render nothing for the slot, never throw the build.
+  } catch (err) {
+    // Documented degrade: render nothing for the slot, never throw the build,
+    // and log the cause so an empty shop slot is never silent.
+    logSlotReadError('product-list', err);
     return emptyWrapper(node, scope);
   }
 
@@ -460,8 +495,10 @@ async function hydrateProductDetail(
         availability = await commerceRepo.getAvailability(variant.id);
       }
     }
-  } catch {
-    // Documented swallow: render nothing for the slot, never throw the build.
+  } catch (err) {
+    // Documented degrade: render nothing for the slot, never throw the build,
+    // and log the cause so an empty shop slot is never silent.
+    logSlotReadError('product-detail', err);
     return emptyWrapper(node, scope);
   }
 
