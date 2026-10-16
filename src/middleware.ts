@@ -29,6 +29,14 @@ import { isEditorHost as isEditorHostname } from '@/lib/editorHost';
  * actually reads protected data. A forged-but-present cookie gets past this gate
  * and is rejected by that verify -- it never reaches data.
  */
+/** Which editor-plane surface a path belongs to, or null for any other path. */
+function isEditorPlanePath(pathname: string): 'api' | 'page' | null {
+  const under = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+  if (under('/api/projects') || under('/api/ai')) return 'api';
+  if (under('/projects')) return 'page';
+  return null;
+}
+
 export async function middleware(request: NextRequest) {
   // Host-aware root routing. Next is host-agnostic, so without this `/` is the
   // editor (`app/page.tsx`) on EVERY host. The discriminator is the request Host:
@@ -59,28 +67,36 @@ export async function middleware(request: NextRequest) {
   // INTENTIONAL suite-wide SSO and is NOT made host-only -- so the browser still
   // sends it to `*.sites.lumitra.co`. But the published-site plane derives
   // tenancy from the HOST and must NEVER be AUTHORIZED by that apex session. So
-  // on a NON-editor (published) host the middleware does NOT apply the editor
-  // cookie gate: storefront reads and anonymous order POSTs flow straight
-  // through, and their route handlers do host-based tenant resolution. The apex
-  // session is simply irrelevant to published-host authorization here. (No
+  // on a NON-editor (published) host the middleware never applies the editor
+  // cookie gate (no login bounce) and REFUSES the session-authorized editor
+  // surfaces outright (404); everything else (storefront pages, reads and
+  // anonymous order POSTs) flows through to host-based tenant resolution. (No
   // auth-brain cookie-domain change is made; this is an authz decision, not a
   // cookie-transport one.)
   if (!isEditorHost) {
-    // The authoring API (`/api/projects/*`) belongs to the EDITOR plane only. On
-    // a published host it must not run at all: its handlers authorize with the
-    // apex session the browser still sends here, which D2 forbids on the
-    // published plane. So it is refused with a JSON 404 (as if the route did not
-    // exist on this host, so nothing about the editor API is revealed), BEFORE
-    // any handler runs and regardless of any cookie. The handlers keep their own
-    // host check as defense in depth (src/server/commerce/editorTenant.ts).
-    if (
-      request.nextUrl.pathname === '/api/projects' ||
-      request.nextUrl.pathname.startsWith('/api/projects/')
-    ) {
+    // The editor plane (`/projects/*` pages, `/api/projects/*`, `/api/ai/*`)
+    // must not run AT ALL on a published host: every one of them authorizes
+    // with the apex session the browser still sends here, which D2 forbids on
+    // the published plane. So they are refused with a 404 (as if the surface did
+    // not exist on this host, revealing nothing about the editor), BEFORE any
+    // handler or page runs and regardless of any cookie. A 404, NOT a login
+    // bounce: anonymous published-site traffic is never sent to the login page.
+    // In the current (inverted) deploy the editor is reached on its own
+    // EDITOR_HOST, which this check recognizes, so no editor path relies on a
+    // storefront host. The editor commerce handlers keep their own host check as
+    // defense in depth (src/server/commerce/editorTenant.ts).
+    const editorPlane = isEditorPlanePath(request.nextUrl.pathname);
+    if (editorPlane === 'api') {
       return NextResponse.json(
         { error: { code: 'not_found', message: 'not found' } },
         { status: 404 },
       );
+    }
+    if (editorPlane === 'page') {
+      return new NextResponse('Not found', {
+        status: 404,
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+      });
     }
     return NextResponse.next();
   }

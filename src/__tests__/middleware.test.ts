@@ -11,8 +11,10 @@
 //     un-gated `/` exemption does NOT leak to the dashboard;
 //   - an authenticated `/projects` passes through;
 //   - D2 (resolved): a PUBLISHED-host request is NEVER gated on the apex
-//     session -- with or without the `.lumitra.co` cookie it flows through to
-//     host-based resolution, never bounced;
+//     session (never bounced to login): storefront paths flow through to
+//     host-based resolution, and the session-authorized editor surfaces
+//     (`/projects/*`, `/api/projects/*`, `/api/ai/*`) are refused with a 404
+//     whether or not the `.lumitra.co` cookie is present;
 //   - the matcher gates only the real authoring surfaces and the dead
 //     `/editor`, `/api/sites`, `/api/admin` patterns are gone.
 import { describe, it, expect, afterEach } from 'vitest';
@@ -120,37 +122,49 @@ describe('middleware: editor-host auth gate (MT-16 reconciled surfaces)', () => 
 });
 
 describe('middleware: D2 published-host requests are never gated on the apex session', () => {
-  it('a published-host non-root request without a session passes through, NOT bounced', async () => {
+  it('a published-host storefront path without a session passes through, NOT bounced', async () => {
     process.env.EDITOR_HOST = EDITOR;
-    // Even a path that WOULD be gated on the editor host is open here: the
-    // published plane resolves tenancy from the HOST in the route handler.
-    const res = await middleware(req(`https://${PUBLISHED}/projects`, { host: PUBLISHED }));
+    const res = await middleware(req(`https://${PUBLISHED}/about`, { host: PUBLISHED }));
     expect(res.status).not.toBe(307);
     expect(res.headers.get('location')).toBeNull();
     expect(isNext(res)).toBe(true);
   });
 
-  it('a present apex cookie does NOT authorize a published-host request (same result either way)', async () => {
+  it('the editor dashboard (/projects/*) is REFUSED with a 404 on a published host, with or without the apex cookie, never bounced', async () => {
     process.env.EDITOR_HOST = EDITOR;
     // D2 is an authz decision: the `.lumitra.co` cookie is still SENT to the
-    // published host by the browser, but the middleware ignores it for authz.
-    const withCookie = await middleware(
-      req(`https://${PUBLISHED}/projects`, { host: PUBLISHED, cookie: 'lumitra_session=abc' }),
-    );
-    const withoutCookie = await middleware(
-      req(`https://${PUBLISHED}/projects`, { host: PUBLISHED }),
-    );
-    expect(isNext(withCookie)).toBe(true);
-    expect(isNext(withoutCookie)).toBe(true);
+    // published host by the browser, so a session-authorized editor page must
+    // not run there at all. Same answer either way, and never a login bounce.
+    for (const path of ['/projects', '/projects/p1', '/projects/p1/preview']) {
+      for (const cookie of [undefined, 'lumitra_session=valid']) {
+        const res = await middleware(req(`https://${PUBLISHED}${path}`, { host: PUBLISHED, cookie }));
+        expect(res.status, `${path} cookie=${cookie}`).toBe(404);
+        expect(res.headers.get('location')).toBeNull();
+        expect(isNext(res)).toBe(false);
+      }
+    }
+  });
+
+  it('the editor dashboard still works on the editor host and on localhost (signed in)', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    for (const host of [EDITOR, 'localhost:3000']) {
+      const res = await middleware(
+        req(`https://${host}/projects/p1`, { host, cookie: 'lumitra_session=valid' }),
+      );
+      expect(isNext(res)).toBe(true);
+    }
   });
 });
 
-describe('middleware: the authoring API is refused on a published host (D2)', () => {
+describe('middleware: the authoring and AI APIs are refused on a published host (D2)', () => {
   it.each([
     '/api/projects/p1/commerce/products',
     '/api/projects/p1/commerce/inventory?variantId=a&locationId=b',
     '/api/projects/save',
     '/api/projects',
+    '/api/ai/cms-agent',
+    '/api/ai/cms-agent/undo',
+    '/api/ai/edit',
   ])('404s %s on a published host EVEN WITH a session cookie', async (path) => {
     process.env.EDITOR_HOST = EDITOR;
     const res = await middleware(
@@ -161,16 +175,16 @@ describe('middleware: the authoring API is refused on a published host (D2)', ()
     expect((await res.json()).error.code).toBe('not_found');
   });
 
-  it('still lets the same request through on the editor host (signed in)', async () => {
-    process.env.EDITOR_HOST = EDITOR;
-    const res = await middleware(
-      req(`https://${EDITOR}/api/projects/p1/commerce/products`, {
-        host: EDITOR,
-        cookie: 'lumitra_session=valid',
-      }),
-    );
-    expect(isNext(res)).toBe(true);
-  });
+  it.each(['/api/projects/p1/commerce/products', '/api/ai/edit'])(
+    'still lets %s through on the editor host (signed in)',
+    async (path) => {
+      process.env.EDITOR_HOST = EDITOR;
+      const res = await middleware(
+        req(`https://${EDITOR}${path}`, { host: EDITOR, cookie: 'lumitra_session=valid' }),
+      );
+      expect(isNext(res)).toBe(true);
+    },
+  );
 
   it('keeps localhost (dev) on the editor plane', async () => {
     process.env.EDITOR_HOST = EDITOR;
