@@ -11,7 +11,10 @@
 #      role on COMMERCE_OWNER_DATABASE_URL (commerce_ddl). The script refuses to
 #      run as the app role commerce_app. Both are idempotent and advisory-locked,
 #      so a rolling deploy with an old container still up is safe.
-#   3. The Next.js standalone server, as PID 1 (exec) so it receives signals.
+#   3. The Next.js standalone server. `exec` replaces this shell with node, so
+#      no shell sits between node and its parent. PID 1 is tini (Dockerfile
+#      ENTRYPOINT), which reaps zombies and forwards SIGTERM to the process
+#      group, so node shuts down on `docker stop`.
 set -e
 
 echo "boot: prisma migrate deploy"

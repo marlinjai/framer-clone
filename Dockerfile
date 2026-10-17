@@ -107,12 +107,13 @@ ENV HOSTNAME=0.0.0.0
 ENV COMMIT_SHA=${COMMIT_SHA}
 
 # ca-certificates + openssl for HTTPS (auth-brain, analytics ingest) and Prisma;
-# curl for the Infisical install script.
+# curl for the Infisical install script; tini as PID 1 (see ENTRYPOINT).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
          ca-certificates \
          curl \
          openssl \
+         tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Infisical CLI (Debian repo). The old Cloudsmith channel now returns 404, so the
@@ -165,4 +166,11 @@ EXPOSE 3000
 # (HTTP GET /api/health, host 127.0.0.1). A Docker-level HEALTHCHECK conflicts
 # with Coolify's IPv6 localhost probe.
 
-ENTRYPOINT ["./entrypoint.sh"]
+# tini is PID 1. The process chain is tini -> infisical run -> node (boot.sh
+# execs node, entrypoint.sh execs infisical), so neither the shell scripts nor
+# node is PID 1. Without an init, PID 1 ignores signals it has no handler for
+# and never reaps zombies, so `docker stop` (SIGTERM) would wait out its grace
+# period and SIGKILL the app. tini reaps, and `-g` sends the signal to the whole
+# process group, so node receives SIGTERM directly whether or not infisical
+# relays it.
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "./entrypoint.sh"]

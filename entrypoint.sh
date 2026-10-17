@@ -50,8 +50,10 @@ INFISICAL_TOKEN=$(infisical login \
 export INFISICAL_TOKEN
 
 # 2. Pull all secrets into the environment and hand over to boot.sh, which
-# runs the migrations and then execs the Next.js standalone server. `exec` all
-# the way down so the server ends up as the process receiving signals.
+# runs the migrations and then execs the Next.js standalone server. `exec`
+# replaces this shell with `infisical run`, which stays the parent of node;
+# tini (PID 1, Dockerfile ENTRYPOINT) delivers SIGTERM to the whole process
+# group, node included.
 exec infisical run \
   --env="$ENVIRONMENT" \
   --projectId="$INFISICAL_PROJECT_ID" \
