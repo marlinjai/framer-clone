@@ -1,6 +1,6 @@
 // src/server/commerce/inventory/__tests__/reserve.policy.itest.ts
 //
-// CM-08 — pins the Medusa-style 3-way policy branch of the reserve
+// CM-08: pins the Medusa-style 3-way policy branch of the reserve
 // path (Marlin 2026-06-27). The flags live on product_variant (manage_inventory
 // default TRUE, allow_backorder default FALSE — CM-08a) and are resolved per line
 // BEFORE any inventory_level access:

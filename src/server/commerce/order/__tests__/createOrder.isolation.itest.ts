@@ -206,7 +206,7 @@ afterAll(async () => {
   await container?.stop();
 });
 
-describe('CM-09 createOrder isolation — atomic order WRITE (tenant schema)', () => {
+describe('CM-09 createOrder isolation: atomic order WRITE (tenant schema)', () => {
   it('provisioned both tenant schemas', async () => {
     const groups = await owner!`SELECT schema_name FROM public.tenant_groups ORDER BY slug`;
     expect(groups.map((g) => g.schema_name).sort()).toEqual([SCHEMA_A, SCHEMA_B].sort());

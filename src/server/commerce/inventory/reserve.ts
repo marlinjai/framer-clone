@@ -344,7 +344,7 @@ async function readAvailable(
  * The guarded conditional decrement, write-locking the level
  * row. For a MANAGED variant (allowBackorder false) it carries the availability
  * predicate `(stocked - reserved) >= needed` — the SOLE oversell guard now that
- * migration 006 dropped the DB CHECK — so the loser of a race re-evaluates against the
+ * migration 006 dropped the DB CHECK, so the loser of a race re-evaluates against the
  * winner's committed row and matches ZERO rows. For a BACKORDER variant
  * (allowBackorder true) the predicate is DROPPED, so reserved may exceed stocked
  * and available goes negative (this is the feature, not a bug). Raw fragment;
@@ -475,7 +475,7 @@ async function insertReservation(
  * duplicate request_id returns the prior reservation unchanged. A CONCURRENT
  * duplicate request_id throws the un-exported {@link DuplicateRequestError}
  * sentinel OUT of the transaction (so Postgres rolls back the loser's own guarded
- * decrement — no double-decrement); the *WithRetry entrypoints re-read the
+ * decrement, no double-decrement); the *WithRetry entrypoints re-read the
  * winner in a FRESH transaction. createOrder calls THIS inner function (not the
  * WithRetry entrypoint) so the sentinel propagates to its order-level mirror.
  */

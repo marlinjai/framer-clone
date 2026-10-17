@@ -168,7 +168,7 @@ afterAll(async () => {
   await container?.stop();
 });
 
-describe('CM-06 catalog isolation — schema-per-tenant wall (tenant schema)', () => {
+describe('CM-06 catalog isolation: schema-per-tenant wall (tenant schema)', () => {
   it('provisioned both tenant schemas and marked them active', async () => {
     const groups = await owner!`
       SELECT schema_name, status FROM public.tenant_groups ORDER BY slug

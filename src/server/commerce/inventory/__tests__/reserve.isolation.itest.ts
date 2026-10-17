@@ -1,6 +1,6 @@
 // src/server/commerce/inventory/__tests__/reserve.isolation.itest.ts
 //
-// CM-08 — the isolation crown-jewel for the reserve heart (compliance
+// CM-08: the isolation crown-jewel for the reserve heart (compliance
 // evidence). Provisions TWO real tenant-group schemas (tg_a, tg_b), seeds DISTINCT
 // managed inventory in each, plants a same-named `public.inventory_level` DECOY,
 // and proves the schema-per-tenant wall holds for the reserve path's RAW guarded
@@ -179,7 +179,7 @@ afterAll(async () => {
   await container?.stop();
 });
 
-describe('CM-08 reserve isolation — schema-per-tenant wall (tenant schema)', () => {
+describe('CM-08 reserve isolation: schema-per-tenant wall (tenant schema)', () => {
   it('provisioned both tenant schemas', async () => {
     const groups = await owner!`SELECT schema_name FROM public.tenant_groups ORDER BY slug`;
     expect(groups.map((g) => g.schema_name).sort()).toEqual([SCHEMA_A, SCHEMA_B].sort());

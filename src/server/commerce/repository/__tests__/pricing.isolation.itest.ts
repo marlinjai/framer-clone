@@ -21,7 +21,7 @@
 // float math; amounts are compared as integers and returned unchanged.
 //
 // End-to-end pricing behaviour is in pricing.itest.ts and the resolution rules
-// in pricing.test.ts. TRUST auth, `.itest.ts` (Docker-only) — see catalog
+// in pricing.test.ts. TRUST auth, `.itest.ts` (Docker-only), see catalog
 // isolation header for the rationale.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -174,7 +174,7 @@ afterAll(async () => {
   await container?.stop();
 });
 
-describe('CM-06 pricing isolation — schema-per-tenant wall (tenant schema)', () => {
+describe('CM-06 pricing isolation: schema-per-tenant wall (tenant schema)', () => {
   it('provisioned both tenant schemas and marked them active', async () => {
     const groups = await owner!`
       SELECT schema_name, status FROM public.tenant_groups ORDER BY slug

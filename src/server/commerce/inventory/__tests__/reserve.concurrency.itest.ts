@@ -1,6 +1,6 @@
 // src/server/commerce/inventory/__tests__/reserve.concurrency.itest.ts
 //
-// CM-08 — the concurrency crown-jewel for the reserve heart. Proves
+// CM-08: the concurrency crown-jewel for the reserve heart. Proves
 // the guarded-decrement guarantees against a REAL provisioned tenant schema,
 // because the correctness story is Postgres semantics, not mockable:
 //
