@@ -39,7 +39,7 @@ publish gets a live address.
 | File | Purpose |
 | --- | --- |
 | `Dockerfile` | Three stages: dependencies (frozen lockfile), builder (Prisma client, Next standalone build, and `pnpm build:boot`, which bundles the commerce start step into one file), runtime (node, the Infisical CLI, a Prisma CLI sidecar under `/opt/prisma`, the standalone server, `commerce-migrate.cjs`, `entrypoint.sh`, `boot.sh`). Built for `linux/arm64`. |
-| `entrypoint.sh` | Logs in to Infisical with the machine identity, then runs `boot.sh` inside `infisical run`, so every secret below is in the environment. Fails at once if the three Coolify variables are missing. |
+| `entrypoint.sh` | Logs in to Infisical with the machine identity, then runs `boot.sh` inside `infisical run`, so every secret below is in the environment. Fails at once if the three Coolify variables are missing. PID 1 is `tini -g` (Dockerfile `ENTRYPOINT`), which reaps zombies and passes `docker stop`'s SIGTERM to the whole process group, so node shuts down cleanly instead of being killed after the grace period. |
 | `boot.sh` | The start sequence, see below. Runnable on its own for tests: `docker run --entrypoint ./boot.sh -e ...`. |
 | `scripts/commerce-migrate.ts` | The commerce start step (source of `commerce-migrate.cjs`). Logic in `src/server/commerce/provisioning/deploy.ts`. |
 | `prisma/sql/commerce-roles.sql` | Creates the two commerce roles with all their privileges. Applied once per database, as the database superuser, before the first start. No passwords. |
@@ -60,20 +60,28 @@ app):
    default, the `public.tenant_groups` registry), then the tenant fleet migration
    (every company's `tg_<id>` schema gets the commerce migrations it lacks, and the
    append-only rules are re-asserted). It refuses to run when the owner URL is
-   unset, still a placeholder, equal to the app URL, or authenticates as
-   `commerce_app`. Both steps are idempotent and advisory-locked, so a rolling
-   deploy with the old container still serving is safe, and a start with nothing
-   new applies nothing.
+   unset, still a placeholder, equal to the app URL, authenticates as
+   `commerce_app`, or authenticates as a superuser. Both steps are idempotent and
+   run under one Postgres advisory lock, so two containers starting at once queue
+   instead of racing, and a start with nothing new applies nothing. Waits are
+   bounded: 30 seconds for the lock, 45 seconds per statement. A start that would
+   wait longer fails with `CommerceLockTimeoutError` naming the lock, inside
+   Coolify's health-check window rather than after it.
 3. `node server.js`, the Next standalone server on port 3000, bound to `0.0.0.0`.
 
 What the start does NOT do: seed the demo. `scripts/seed-demo.ts` creates the demo
 site and catalog and is not repeatable, so it is a one-off operator step (RUNBOOK,
 step 10). A company's own `tg_<id>` schema is created when it creates its first
 project in the editor (`src/app/api/projects/route.ts`, owner connection), before
-the site row is written. If that fails, project creation answers 500 with
-`commerce_not_configured` (owner URL unset) or `commerce_provision_failed` (cause
-in the server log) and writes nothing, so a retry is clean. Concurrent provisions
-and concurrent start steps are serialized by Postgres advisory locks.
+the site row is written. Every later project of that company costs one read of
+the registry and nothing else: no lock, no DDL. Only a company without a complete
+schema runs the full provision, under a provisioning lock that serializes
+companies provisioning at the same moment, with bounded waits of 10 seconds for
+the lock and 30 seconds per statement. If it fails, project creation answers 500
+with `commerce_not_configured` (owner URL unset) or `commerce_provision_failed`
+(cause in the server log only) and writes nothing, so a retry is clean. The
+registry slug is the company's display slug plus its tenant-group id, so two
+companies with the same display slug never block each other.
 
 ## Commerce database roles (required)
 
@@ -86,8 +94,38 @@ tables and is `DATABASE_URL`):
 | `commerce_app` | `COMMERCE_APP_DATABASE_URL` | Low privilege, used by every storefront and editor request. Reads and writes rows inside the company schemas, but may not change or delete a placed order, its lines, a credit note or a stock movement (insert and read only). Creates nothing. Its default `search_path` is exactly `ext`, which the app checks on first commerce use and refuses to run otherwise. |
 | `commerce_ddl` | `COMMERCE_OWNER_DATABASE_URL` | Owner, not a superuser. Owns `ext`, the registry and every company schema; runs the start step and the first-project provisioning. Holds `CREATE` on the database and on `public`, plus `CREATEROLE` with admin rights over `commerce_app` only, because provisioning resets `commerce_app`'s `search_path` (Postgres 16 allows that only with both). |
 
+**The owner URL lives in the running server, on purpose.** First-project
+provisioning runs inline in the project-create request, so
+`COMMERCE_OWNER_DATABASE_URL` is in the environment of the Next.js server process,
+not only of the start step. That is acceptable because the owner role is bounded:
+
+- It can: create schemas in this database, create and change tables in the
+  schemas it owns (`ext`, the commerce registry tables in `public`, every
+  `tg_<id>`), grant on those objects, set `commerce_app`'s session defaults, and
+  create new roles (the `CREATEROLE` side effect, which Postgres 16 limits to roles
+  it creates or administers; no new role gets anything on this database's objects
+  unless granted).
+- It cannot: read or change the Prisma tables (sites, CMS, data tables) owned by
+  the database's bootstrap user, alter or drop any role other than `commerce_app`,
+  become or inherit `commerce_app`, create temporary tables, create databases, read
+  server files, bypass row security, or act as a superuser. The start step refuses
+  an owner URL that authenticates as a superuser.
+
+A leaked owner URL therefore exposes the shop data of every company and the shop
+schema, not the rest of the database or the server. Moving provisioning off the
+request path (a job seam) would let the owner URL leave the server process; that
+is the deferral noted in the route.
+
+**No superuser fallback.** The infra RUNBOOK allowed `COMMERCE_OWNER_DATABASE_URL`
+to fall back to the database's bootstrap user if the non-superuser owner did not
+work. It works (`roles.itest.ts`), and `deploy.ts` now refuses a superuser owner
+URL at start (tested in `concurrency.itest.ts`), so that fallback is no longer
+accepted and is dropped from the RUNBOOK.
+
 `prisma/sql/commerce-roles.sql` sets all of this up on Postgres 16 or later and is
-safe to run again. It creates both roles without a login; the RUNBOOK's
+safe to run again. It also takes `CREATE` on `public` and `TEMPORARY` on the
+database away from every role (`PUBLIC`), which matters for databases restored from
+older dumps; nothing in the app needs either. It creates both roles without a login; the RUNBOOK's
 `07-commerce-roles.sh` then gives each a login with a freshly generated password and
 writes both URLs into Infisical without printing them. The integration test
 `src/server/commerce/provisioning/__tests__/roles.itest.ts` proves the whole chain
@@ -114,7 +152,7 @@ says where each comes from.
 | --- | --- | --- |
 | `DATABASE_URL` | yes | Postgres URL of the database's bootstrap user: Prisma migrations, sites, CMS |
 | `COMMERCE_APP_DATABASE_URL` | yes | Same database as `commerce_app`; every commerce read and write at runtime |
-| `COMMERCE_OWNER_DATABASE_URL` | yes | Same database as `commerce_ddl`; the start step and first-project provisioning. The start fails without it, and project creation answers 500 `commerce_not_configured`. |
+| `COMMERCE_OWNER_DATABASE_URL` | yes | Same database as `commerce_ddl` (never a superuser, refused at start); the start step and first-project provisioning, so it is in the server process environment. The start fails without it, and project creation answers 500 `commerce_not_configured`. |
 | `EDITOR_HOST` | yes | Host that serves the editor (`app.lumitra.co`); every other host is treated as a published site |
 | `PUBLIC_SITE_BASE_HOST` | yes | Parent domain of published sites (`sites.lumitra.co`); the label in front of it selects the site |
 | `AUTH_BRAIN_URL` | no | auth-brain base URL for session checks and the login redirect; defaults to `https://auth.lumitra.co` |
