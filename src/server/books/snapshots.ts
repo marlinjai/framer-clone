@@ -15,10 +15,13 @@
 //     event payload.
 //   - TaxSummary: one entry per (rate, treatment) group.
 //
-// Pure module (zod only), safe in unit tests and in the type module db-types.ts
-// (which imports these types with `import type`).
+// Pure module (zod and kysely's sql tag, no database), safe in unit tests and in
+// the type module db-types.ts (which imports these types with `import type`).
 
+import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
+
+import type { JsonbWrite } from '../commerce/db-types';
 
 const optionalText = z.string().nullable();
 
@@ -87,9 +90,15 @@ export type FooterBlocks = z.infer<typeof footerBlocksSchema>;
 /** An event payload. Never a recipient's name or address. */
 export type EventPayload = Record<string, unknown>;
 
-/** Serialize a value for a JSONB column (the one write path for every JSONB column). */
-export function toJsonb(value: unknown): string {
-  return JSON.stringify(value);
+/**
+ * The one write path for every JSONB column: the value serialized once and sent
+ * as a TEXT parameter cast to jsonb (the contacts-core pattern). Passing the
+ * serialized string straight to a jsonb column would not work: postgres.js
+ * JSON-serializes a parameter the server types as jsonb a second time, and the
+ * column would hold a JSON string scalar instead of the object.
+ */
+export function toJsonb(value: unknown): RawBuilder<JsonbWrite> {
+  return sql<JsonbWrite>`${JSON.stringify(value)}::text::jsonb`;
 }
 
 // --- validation at issue ------------------------------------------------------

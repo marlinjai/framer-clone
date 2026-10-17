@@ -28,7 +28,7 @@
 // unmapped case fails the run instead of guessing:
 //   - COLUMN_OVERRIDES: trigger-maintained columns and the registry's status;
 //   - JSON_COLUMNS: the TypeScript shape of every JSONB column (a JSONB column
-//     without an entry is an error);
+//     without an entry is an error), written through toJsonb;
 //   - TABLE_DOCS / COLUMN_NOTES: the documentation printed into the file.
 //
 // The earlier version piped kysely-codegen's output through a small fix-up and
@@ -71,7 +71,7 @@ const COLUMN_OVERRIDES: Record<string, string> = {
   'product_variant.option_signature': 'Generated<string | null>',
 };
 
-/** The TypeScript shape of every JSONB column (written through toJsonb). */
+/** The TypeScript shape of every JSONB column (read parsed, written through toJsonb). */
 const JSON_COLUMNS: Record<string, string> = {
   'books_company_settings.sender_block': 'SenderBlockV1',
   'document_template.footer_blocks': 'FooterBlocks',
@@ -301,8 +301,9 @@ const HEADER = `// src/server/commerce/db-types.ts
 //     handle carries no custom parser and postgres.js would parse DATE into a
 //     Date at UTC midnight, so the Books read helpers cast every DATE column to
 //     text);
-//   - JSONB is \`JsonColumn<T>\`: read as the parsed shape T, written as a JSON
-//     string (\`toJsonb\` in src/server/books/snapshots.ts).
+//   - JSONB is \`JsonColumn<T>\`: read as the parsed shape T, written only
+//     through \`toJsonb(value)\` (src/server/books/snapshots.ts), a text parameter
+//     cast to jsonb.
 //
 // Pure type module (no runtime), so it needs no \`server-only\` and adds nothing
 // to the build.
@@ -329,8 +330,17 @@ export type Int8 = ColumnType<string, string | number | bigint, string | number 
 /** A \`DATE\` column: a calendar day as \`YYYY-MM-DD\` text (select it cast to text). */
 export type DateString = ColumnType<string, string, string>;
 
-/** A \`JSONB\` column: read as the parsed shape T, written as a JSON string. */
-export type JsonColumn<T> = ColumnType<T, string, string>;
+/**
+ * What a \`JSONB\` column accepts on write: only the expression \`toJsonb(value)\`
+ * (src/server/books/snapshots.ts) produces, a text parameter cast to jsonb. A
+ * plain string would not do: postgres.js JSON-serializes a parameter the server
+ * types as jsonb, so a pre-serialized string would be stored as a JSON string
+ * scalar. The brand makes that mistake a compile error.
+ */
+export type JsonbWrite = { readonly __brand: 'JsonbWrite' };
+
+/** A \`JSONB\` column: read as the parsed shape T, written through toJsonb. */
+export type JsonColumn<T> = ColumnType<T, JsonbWrite, JsonbWrite>;
 `;
 
 function emitFile(enums: EnumType[], globals: Table[], tenants: Table[]): string {
