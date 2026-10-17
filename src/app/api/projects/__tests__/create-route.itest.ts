@@ -6,7 +6,7 @@
 // two distinct verified sessions for two distinct workspaces), so the FULL chain
 // executes against the container DB:
 //   getVerifiedSession -> resolveActiveScope -> authenticateRequest('editSite')
-//     -> getSiteRepository().saveProject(scope, <minimal draft snapshot>)
+//     -> provisionCommerceTenant(tenant group) -> getSiteRepository().saveProject(...)
 //
 // It asserts the hard-isolation contract MT-05 exists to guarantee: two
 // different sessions create rows in DIFFERENT workspaces, and neither scope can
@@ -27,7 +27,7 @@ import type { PrismaClient } from '@prisma/client';
 const SESSION_A = {
   user: { id: 'user-a' },
   session: {},
-  tenants: [{ id: 'tenant-a', group_id: 'tg_a' }],
+  tenants: [{ id: 'tenant-a', group_id: '018f9c10-0000-7000-8000-0000000000a1' }],
   workspaces: [{ id: 'ws_a', tenant_id: 'tenant-a' }],
   active_tenant: { id: 'tenant-a' },
   active_workspace: { id: 'ws_a' },
@@ -35,7 +35,7 @@ const SESSION_A = {
 const SESSION_B = {
   user: { id: 'user-b' },
   session: {},
-  tenants: [{ id: 'tenant-b', group_id: 'tg_b' }],
+  tenants: [{ id: 'tenant-b', group_id: '018f9c10-0000-7000-8000-0000000000b1' }],
   workspaces: [{ id: 'ws_b', tenant_id: 'tenant-b' }],
   active_tenant: { id: 'tenant-b' },
   active_workspace: { id: 'ws_b' },
@@ -65,8 +65,8 @@ import {
 } from '@/server/sites';
 import { POST } from '../route';
 
-const SCOPE_A: TenantScope = { workspaceId: 'ws_a', tenantGroupId: 'tg_a' };
-const SCOPE_B: TenantScope = { workspaceId: 'ws_b', tenantGroupId: 'tg_b' };
+const SCOPE_A: TenantScope = { workspaceId: 'ws_a', tenantGroupId: '018f9c10-0000-7000-8000-0000000000a1' };
+const SCOPE_B: TenantScope = { workspaceId: 'ws_b', tenantGroupId: '018f9c10-0000-7000-8000-0000000000b1' };
 
 let prisma: PrismaClient;
 
@@ -78,11 +78,20 @@ function createReq(cookie: string, name: string): Request {
   });
 }
 
+// The route provisions each company's commerce schema before writing its site
+// row, on the OWNER connection. In this harness DATABASE_URL is the container
+// superuser, which plays the owner here (roles.itest.ts covers the real
+// non-superuser owner).
+const savedOwnerUrl = process.env.COMMERCE_OWNER_DATABASE_URL;
+
 beforeAll(async () => {
   prisma = getPrismaClient();
+  process.env.COMMERCE_OWNER_DATABASE_URL = process.env.DATABASE_URL;
 }, 120_000);
 
 afterAll(async () => {
+  if (savedOwnerUrl === undefined) delete process.env.COMMERCE_OWNER_DATABASE_URL;
+  else process.env.COMMERCE_OWNER_DATABASE_URL = savedOwnerUrl;
   await prisma.$disconnect();
 });
 
@@ -116,7 +125,7 @@ describe('POST /api/projects (integration) — cross-workspace isolation', () =>
     expect(rowA).toMatchObject({
       status: 'draft',
       workspaceId: 'ws_a',
-      tenantGroupId: 'tg_a',
+      tenantGroupId: SCOPE_A.tenantGroupId,
     });
 
     // Cross-workspace loads are invisible: each is a SiteNotFoundError, never
@@ -127,5 +136,31 @@ describe('POST /api/projects (integration) — cross-workspace isolation', () =>
     await expect(repo.loadProject(SCOPE_A, siteB)).rejects.toBeInstanceOf(
       SiteNotFoundError,
     );
+
+    // Each company got its commerce schema, provisioned and active.
+    const groups = await prisma.$queryRaw<{ id: string; status: string }[]>`
+      SELECT id::text AS id, status FROM public.tenant_groups
+      WHERE id IN (${SCOPE_A.tenantGroupId}::uuid, ${SCOPE_B.tenantGroupId}::uuid)
+      ORDER BY id
+    `;
+    expect(groups).toEqual([
+      { id: SCOPE_A.tenantGroupId, status: 'active' },
+      { id: SCOPE_B.tenantGroupId, status: 'active' },
+    ]);
+  });
+
+  it('without the owner URL: 500 commerce_not_configured and no site row is written', async () => {
+    const before = await prisma.site.count({ where: { workspaceId: 'ws_a' } });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    delete process.env.COMMERCE_OWNER_DATABASE_URL;
+    try {
+      const res = await POST(createReq('sess_a', 'never written'));
+      expect(res.status).toBe(500);
+      expect((await res.json()).error.code).toBe('commerce_not_configured');
+    } finally {
+      process.env.COMMERCE_OWNER_DATABASE_URL = process.env.DATABASE_URL;
+      errorSpy.mockRestore();
+    }
+    expect(await prisma.site.count({ where: { workspaceId: 'ws_a' } })).toBe(before);
   });
 });

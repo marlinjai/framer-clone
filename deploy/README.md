@@ -69,7 +69,11 @@ app):
 What the start does NOT do: seed the demo. `scripts/seed-demo.ts` creates the demo
 site and catalog and is not repeatable, so it is a one-off operator step (RUNBOOK,
 step 10). A company's own `tg_<id>` schema is created when it creates its first
-project in the editor (`src/app/api/projects/route.ts`, owner connection).
+project in the editor (`src/app/api/projects/route.ts`, owner connection), before
+the site row is written. If that fails, project creation answers 500 with
+`commerce_not_configured` (owner URL unset) or `commerce_provision_failed` (cause
+in the server log) and writes nothing, so a retry is clean. Concurrent provisions
+and concurrent start steps are serialized by Postgres advisory locks.
 
 ## Commerce database roles (required)
 
@@ -110,7 +114,7 @@ says where each comes from.
 | --- | --- | --- |
 | `DATABASE_URL` | yes | Postgres URL of the database's bootstrap user: Prisma migrations, sites, CMS |
 | `COMMERCE_APP_DATABASE_URL` | yes | Same database as `commerce_app`; every commerce read and write at runtime |
-| `COMMERCE_OWNER_DATABASE_URL` | yes | Same database as `commerce_ddl`; the start step and first-project provisioning. The start fails without it. |
+| `COMMERCE_OWNER_DATABASE_URL` | yes | Same database as `commerce_ddl`; the start step and first-project provisioning. The start fails without it, and project creation answers 500 `commerce_not_configured`. |
 | `EDITOR_HOST` | yes | Host that serves the editor (`app.lumitra.co`); every other host is treated as a published site |
 | `PUBLIC_SITE_BASE_HOST` | yes | Parent domain of published sites (`sites.lumitra.co`); the label in front of it selects the site |
 | `AUTH_BRAIN_URL` | no | auth-brain base URL for session checks and the login redirect; defaults to `https://auth.lumitra.co` |
