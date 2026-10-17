@@ -44,7 +44,7 @@ import {
   isCommerceTenantNotProvisioned,
   type CommerceDB,
 } from './db';
-import { getCommerceServerRepositoryDb } from './repository/read';
+import { getCommerceServerRepository } from './repository/read';
 import { isTenantSchemaError, resolveTenantGroupForSite } from './tenant';
 
 /** The error code every storefront route answers with when commerce is not provisioned. */
@@ -126,7 +126,7 @@ export async function commerceRepoForSite(
   root: ComponentNode,
   build: (tenantGroupId: TenantGroupId) => Promise<CommerceServerRepository> = async (
     tenantGroupId,
-  ) => getCommerceServerRepositoryDb(await commerceTenantDbChecked(tenantGroupId)),
+  ) => getCommerceServerRepository(await commerceTenantDbChecked(tenantGroupId)),
 ): Promise<CommerceServerRepository | undefined> {
   if (!treeNeedsCommerceRepo(root)) return undefined;
 

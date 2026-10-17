@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: completed
 title: "Commerce data layer migration: Prisma → @marlinjai/tenant-db (schema-per-tenant-group, compliance-grade isolation)"
 summary: "Migrate the framer-clone commerce data layer off Prisma multiSchema onto @marlinjai/tenant-db (Kysely over postgres.js, tg_<hex32> schema-per-tenant-group). Delivers a DB-enforced tenant data-segregation control (SOC2 CC6.1/CC6.3, HIPAA 164.312(a), ISO A.8.3) with an isolation.spec crown-jewel test as audit evidence. Money/stock-critical: preserves READ COMMITTED guarded-decrement semantics throughout."
 date: 2026-06-27
@@ -10,13 +10,50 @@ projects: [framer-clone]
 
 # Commerce data layer migration: Prisma → `@marlinjai/tenant-db`
 
-> **Reality (2026-10-15):** CM-01 to CM-12 are merged (pull requests #71 to #83). Open: CM-10, the
-> render path and routes still resolve every site to the shared `commerce` schema
-> (`src/server/commerce/tenant.ts`), and CM-13, the CI guards and the Prisma teardown. Isolation
-> stays schema-per-tenant-group (one `tg_<hex32>` schema per auth-brain tenant group), not one
-> database per company; Marlin confirmed that choice on 2026-10-15. This file sat uncommitted in
-> the main checkout until then. Production is not running: there is no framer-clone app or
-> database in Coolify on 2026-10-15.
+> **Reality (2026-10-17): completed.** CM-01 to CM-13 are merged or on their final branch. CM-10
+> (pull request #92) moved every storefront route, the render path and the editor commerce routes
+> onto the company's own `tg_<hex32>` schema, failing closed for a site without a tenant group.
+> CM-13 (branch `feat/commerce-cm13-guards-prisma-teardown`) finished the plan:
+>
+> - **Guards in CI.** `pnpm lint:guards` runs `scripts/check-guards.mjs`, vendored from tenant-db
+>   (the npm package ships only `dist/`), over all of `src` and `scripts`, as a step of the CI
+>   verify job. KNOWN_TENANT_TABLES is read from the 19 `CREATE TABLE` statements of
+>   `src/server/commerce/migrations/tenant`. Deviations from upstream, all stricter or more
+>   precise: no core-package exemption for G1; `SET LOCAL search_path` and
+>   `set_config('search_path', ...)` banned too (G2); G3 covers every SQL tag (Kysely `sql` under
+>   any alias, postgres.js `tx` / `owner` / anything from `postgres()`), accepts a schema
+>   qualifier only when it is interpolated, catches a quoted bare `"order"`, skips `ORDER BY`
+>   and string values, and flags unreadable raw SQL (`sql.raw(`, `sql.table(`, `.unsafe(`). The
+>   tenant DDL itself is not scanned (bare names are the runner's contract, section 4.2). Two
+>   narrow allowances are listed in the script header (the backfill may use `.unsafe(` on the
+>   legacy schema; the CMS seam `src/server/cms/withTenant.ts` may use `SET LOCAL`), and the
+>   deliberate public / legacy decoy tables in the isolation suites carry a disable comment.
+> - **Prisma out of commerce.** The 19 commerce models and 9 enums are gone from
+>   `prisma/schema.prisma` (`schemas = ["public"]`), with every Prisma commerce repository, the
+>   Prisma reserve and createOrder paths and their hand-written `SET LOCAL search_path` lines. The
+>   Kysely code carries the canonical names (`createOrder`, `reserve`, `commerceReadRepository`,
+>   `getCommerceServerRepository`, ...). Every legacy suite was ported to the tenant schema, so
+>   money and stock coverage did not drop; the one guarantee not ported is the old
+>   `reserved <= stocked` CHECK, which migration 006 removed on purpose for backorder.
+> - **No Prisma migration, deliberately.** The historical migrations that created the shared
+>   `commerce` schema stay in `prisma/migrations`, and none drops it: a database that still holds
+>   commerce rows keeps them until `backfill-demo` has copied them into the company schema and the
+>   company verifies green (section 9, step 4), and a deploy must never drop that data blindly.
+>   With `commerce` no longer in `schemas`, Prisma does not diff it, so `prisma migrate dev` does
+>   not propose the drop either (checked with `prisma migrate diff`: no difference; with
+>   `commerce` still listed it would emit 19 `DROP TABLE` statements). Production holds no such
+>   database today (retired 2026-09-10 without backups), so section 9's demo verification has
+>   nothing left to verify; the one leftover is that a fresh database gets an EMPTY legacy
+>   `commerce` schema from those migrations, recorded on the "Running again" roadmap line.
+> - **Bug found and fixed on the way.** `provisionTenant` grants UPDATE and DELETE on all tables
+>   after the migrations ran, which silently undid the append-only REVOKEs (orders, order lines,
+>   credit notes, credit note refs, stock movements). `provisionCommerceTenant` now re-applies
+>   them in the same provisioning transaction (`commerceProvisionOptions` in
+>   `src/server/commerce/provisioning/provision.ts`); the ported `createOrder` and `pricing`
+>   suites caught it.
+>
+> Nothing in this plan remains open. Isolation stays schema-per-tenant-group on auth-brain tenant
+> groups (confirmed by Marlin 2026-10-15), not one database per company.
 
 ## 1. Goal + decision context
 

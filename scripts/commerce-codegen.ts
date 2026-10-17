@@ -101,7 +101,7 @@ async function main(): Promise<void> {
     owner = postgres(ownerUrl, { max: 1, prepare: false });
 
     // The app role must exist before migrating (REVOKEs are guarded on it).
-    await owner.unsafe(`CREATE ROLE ${APP_ROLE} LOGIN`);
+    await owner`CREATE ROLE ${owner(APP_ROLE)} LOGIN`;
 
     await migratePublic(owner);
     await provisionTenant(owner, {

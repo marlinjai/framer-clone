@@ -7,9 +7,10 @@
 // so the demo storefront renders + checks out identically once CM-10 flips the
 // render path / routes onto `tg_<demo>`.
 //
-// It is ADDITIVE and idempotent: the old `commerce` schema is untouched (CM-13
-// drops it, only after the demo verifies green on `tg_<demo>`), and a re-run
-// provisions nothing new and copies nothing already present.
+// It is ADDITIVE and idempotent: the old `commerce` schema is untouched (no
+// migration drops it; that is an explicit operator step once the demo verifies
+// green on `tg_<demo>`, plan section 9), and a re-run provisions nothing new and
+// copies nothing already present.
 //
 // HOW TO RUN. It reads COMMERCE_OWNER_DATABASE_URL from the environment (the OWNER
 // role `commerce_ddl`, injected by the deploy's Infisical wrapper, never

@@ -1,13 +1,13 @@
 // src/server/commerce/order/__tests__/createOrder.isolation.itest.ts
 //
-// CM-09 — the isolation crown-jewel for the NEW Kysely cart -> order WRITE
-// (`createOrderKysely`), the money/stock-critical EXPAND path. It provisions TWO
+// CM-09: the isolation crown-jewel for the cart -> order WRITE (`createOrder`),
+// the money/stock-critical path. It provisions TWO
 // real tenant-group schemas (tg_a, tg_b), seeds priced + managed inventory in
 // each, and proves the order WRITE's correctness story against a LIVE database
 // (it is Postgres semantics — atomic rollback, the DB accounting CHECK, the
 // schema-per-tenant wall — not mockable):
 //
-//   1. a full order placement on the NEW path reserves stock AND writes the order
+//   1. a full order placement reserves stock AND writes the order
 //      + line items atomically; the order row lives ONLY in tg_a (a tg_b handle
 //      reading the order id returns ZERO — the schema wall holds);
 //   2. a shortage on ANY line rolls back the WHOLE order: zero orders, zero
@@ -17,13 +17,13 @@
 //   4. the persisted order satisfies total = subtotal + tax_amount, and the DB
 //      CHECK (order_total_sum_check) rejects a hand-built violating row;
 //   5. a BACKORDER line (manage_inventory=true, allow_backorder=true) with
-//      INSUFFICIENT stock PLACES the order SUCCESSFULLY: reserveKysely returns ok,
+//      INSUFFICIENT stock PLACES the order SUCCESSFULLY: reserve returns ok,
 //      available_quantity goes NEGATIVE, NO OrderShortageError, and the order +
 //      line + reservation rows are written (a backorder line never rolls back the
 //      order).
 //
-// Exercises the NEW (CM-09 expand) Kysely path; the old Prisma `createOrder` is
-// untouched (its coverage stays in createOrder.itest.ts / createOrder.test.ts).
+// The end-to-end money paths (snapshots, tax treatments, idempotency, role
+// REVOKEs) are in createOrder.itest.ts; the control flow in createOrder.test.ts.
 // TRUST auth (no password literals — see CM-04 / reserve.isolation.itest.ts). The
 // `.itest.ts` suffix keeps this file OUT of the headless `pnpm test` unit gate
 // (vitest.config.ts matches only *.{test,spec}.{ts,tsx}); it runs ONLY under
@@ -44,8 +44,8 @@ import {
 import postgres from 'postgres';
 
 import type { CommerceDB } from '../../db-types';
-import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
-import { createOrderKysely, type Cart } from '../createOrder';
+import { commerceProvisionOptions } from '../../provisioning/provision';
+import { createOrder, type Cart } from '../createOrder';
 
 const DB_NAME = 'framer_clone_test';
 const APP_ROLE = 'commerce_app';
@@ -181,21 +181,11 @@ beforeAll(async () => {
   const ownerUrl = `postgresql://postgres@${host}:${port}/${DB_NAME}`;
 
   owner = postgres(ownerUrl, { max: 1, prepare: false, transform: { undefined: null } });
-  await owner.unsafe(`CREATE ROLE ${APP_ROLE} LOGIN`);
+  await owner`CREATE ROLE ${owner(APP_ROLE)} LOGIN`;
   await migratePublic(owner);
 
-  await provisionTenant(owner, {
-    tenantGroupId: TG_A,
-    slug: 'cm09-iso-a',
-    appRole: APP_ROLE,
-    tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
-  });
-  await provisionTenant(owner, {
-    tenantGroupId: TG_B,
-    slug: 'cm09-iso-b',
-    appRole: APP_ROLE,
-    tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
-  });
+  await provisionTenant(owner, commerceProvisionOptions(TG_A, 'cm09-iso-a'));
+  await provisionTenant(owner, commerceProvisionOptions(TG_B, 'cm09-iso-b'));
 
   ownerBase = createNodeDb<CommerceDB>({ connectionString: ownerUrl });
 }, 180_000);
@@ -206,7 +196,7 @@ afterAll(async () => {
   await container?.stop();
 });
 
-describe('CM-09 createOrderKysely isolation — atomic order WRITE (NEW Kysely path)', () => {
+describe('CM-09 createOrder isolation: atomic order WRITE (tenant schema)', () => {
   it('provisioned both tenant schemas', async () => {
     const groups = await owner!`SELECT schema_name FROM public.tenant_groups ORDER BY slug`;
     expect(groups.map((g) => g.schema_name).sort()).toEqual([SCHEMA_A, SCHEMA_B].sort());
@@ -226,7 +216,7 @@ describe('CM-09 createOrderKysely isolation — atomic order WRITE (NEW Kysely p
         { inventoryItemId: seed.inventoryItemId, variantId: seed.variantId, quantity: 2, locationId: seed.locationId },
       ],
     };
-    const result = await createOrderKysely(dbA, TG_A, cart);
+    const result = await createOrder(dbA, TG_A, cart);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('unreachable');
 
@@ -284,7 +274,7 @@ describe('CM-09 createOrderKysely isolation — atomic order WRITE (NEW Kysely p
         { inventoryItemId: short.inventoryItemId, variantId: short.variantId, quantity: 5, locationId: short.locationId },
       ],
     };
-    const result = await createOrderKysely(dbA, TG_A, cart);
+    const result = await createOrder(dbA, TG_A, cart);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
     expect(result.shortages).toEqual([
@@ -335,8 +325,8 @@ describe('CM-09 createOrderKysely isolation — atomic order WRITE (NEW Kysely p
     };
 
     const [a, b] = await Promise.all([
-      createOrderKysely(dbA, TG_A, cart),
-      createOrderKysely(dbA, TG_A, cart),
+      createOrder(dbA, TG_A, cart),
+      createOrder(dbA, TG_A, cart),
     ]);
     expect(a.ok).toBe(true);
     expect(b.ok).toBe(true);
@@ -379,7 +369,7 @@ describe('CM-09 createOrderKysely isolation — atomic order WRITE (NEW Kysely p
         { inventoryItemId: b.inventoryItemId, variantId: b.variantId, quantity: 3, locationId: b.locationId }, // net 6000, tax 420
       ],
     };
-    const result = await createOrderKysely(dbA, TG_A, cart);
+    const result = await createOrder(dbA, TG_A, cart);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('unreachable');
 
@@ -433,7 +423,7 @@ describe('CM-09 createOrderKysely isolation — atomic order WRITE (NEW Kysely p
         { inventoryItemId: seed.inventoryItemId, variantId: seed.variantId, quantity: 5, locationId: seed.locationId },
       ],
     };
-    const result = await createOrderKysely(dbA, TG_A, cart);
+    const result = await createOrder(dbA, TG_A, cart);
     // NO OrderShortageError: a backorder line never rolls the order back.
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('unreachable');

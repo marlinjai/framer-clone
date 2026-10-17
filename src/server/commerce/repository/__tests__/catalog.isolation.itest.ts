@@ -3,7 +3,7 @@
 // CM-06 — the catalog isolation crown-jewel (compliance evidence). Provisions
 // TWO real tenant-group schemas (tg_a, tg_b) against a Dockerized Postgres,
 // seeds DISTINCT catalog data in each, plants a same-named `public.product`
-// DECOY, and proves — by running the NEW `catalogRepositoryKysely` through scoped
+// DECOY, and proves, by running `catalogRepository` through scoped
 // `tenantDb(...)` handles — that the schema-per-tenant wall holds:
 //
 //   - a scoped read returns ONLY its own tenant's rows (zero other-tenant, zero
@@ -17,8 +17,8 @@
 //     reading a schema it was NOT granted (tg_b) raises `permission denied for
 //     schema` — the wall is enforced by Postgres GRANTs, not app discipline.
 //
-// This exercises the NEW (CM-06 expand) Kysely path; the old Prisma
-// `catalogRepository` is untouched and covered by catalog.itest.ts.
+// The catalog schema behaviour (composite FK, option_signature collisions and
+// recompute, partial-unique frees) is in catalog.itest.ts.
 //
 // TRUST auth (POSTGRES_HOST_AUTH_METHOD=trust + username-only URLs, no password
 // literals — hardcoded creds trip GitGuardian; see CM-04). The `.itest.ts`
@@ -41,7 +41,8 @@ import {
 
 import type { CommerceDB } from '../../db-types';
 import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
-import { catalogRepositoryKysely } from '../catalog';
+import { commerceProvisionOptions } from '../../provisioning/provision';
+import { catalogRepository } from '../catalog';
 
 const DB_NAME = 'framer_clone_test';
 const APP_ROLE = 'commerce_app';
@@ -84,18 +85,15 @@ beforeAll(async () => {
 
   // The low-privilege app role must exist before provisioning (the migration
   // REVOKEs are role-guarded; provisionTenant grants per-schema access to it).
-  await owner.unsafe(`CREATE ROLE ${APP_ROLE} LOGIN`);
+  await owner`CREATE ROLE ${owner(APP_ROLE)} LOGIN`;
 
   // Public control plane (ext schema + tenant_groups registry).
   await migratePublic(owner);
 
   // TG_A WITH grants; TG_B WITHOUT (so commerce_app is denied on tg_b).
-  await provisionTenant(owner, {
-    tenantGroupId: TG_A,
-    slug: 'cm06-cat-a',
-    appRole: APP_ROLE,
-    tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
-  });
+  await provisionTenant(owner, commerceProvisionOptions(TG_A, 'cm06-cat-a'));
+  // Deliberately NOT the production options: tg_b is the never-granted
+  // schema the GRANT PROOF needs (commerce_app holds no rights on it).
   await provisionTenant(owner, {
     tenantGroupId: TG_B,
     slug: 'cm06-cat-b',
@@ -109,40 +107,41 @@ beforeAll(async () => {
   const dbA = tenantDb(ownerBase, TG_A);
   const dbB = tenantDb(ownerBase, TG_B);
 
-  // Seed DISTINCT catalog data per schema THROUGH THE NEW Kysely repo (also
+  // Seed DISTINCT catalog data per schema THROUGH the catalog repo (also
   // proves the write path lands in the right schema).
-  const prodA = await catalogRepositoryKysely.createProduct(dbA, {
+  const prodA = await catalogRepository.createProduct(dbA, {
     title: 'Widget A',
     handle: 'widget-a',
   });
   productIdA = prodA.id;
-  const optA = await catalogRepositoryKysely.addOption(dbA, {
+  const optA = await catalogRepository.addOption(dbA, {
     productId: prodA.id,
     title: 'Size',
   });
-  const valA = await catalogRepositoryKysely.addOptionValue(dbA, {
+  const valA = await catalogRepository.addOptionValue(dbA, {
     optionId: optA.id,
     value: 'S',
   });
-  const varA = await catalogRepositoryKysely.addVariant(dbA, {
+  const varA = await catalogRepository.addVariant(dbA, {
     productId: prodA.id,
     sku: 'WIDGET-A-S',
   });
-  await catalogRepositoryKysely.setVariantOptions(dbA, varA.id, [
+  await catalogRepository.setVariantOptions(dbA, varA.id, [
     { optionId: optA.id, optionValueId: valA.id },
   ]);
 
-  const prodB = await catalogRepositoryKysely.createProduct(dbB, {
+  const prodB = await catalogRepository.createProduct(dbB, {
     title: 'Widget B',
     handle: 'widget-b',
   });
   productIdB = prodB.id;
-  await catalogRepositoryKysely.addVariant(dbB, { productId: prodB.id, sku: 'WIDGET-B-1' });
+  await catalogRepository.addVariant(dbB, { productId: prodB.id, sku: 'WIDGET-B-1' });
 
   // THE DECOY: a same-named `public.product` holding a DECOY row that reuses
   // tg_a's handle. Any unqualified query that fell back to the default path would
   // surface it; a correctly-qualified Kysely read must never see it.
   await owner`
+    -- tenant-db-guard-disable-next-line G3: deliberate DECOY fixture (the trap the isolation proof needs)
     CREATE TABLE IF NOT EXISTS public.product (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -156,6 +155,7 @@ beforeAll(async () => {
     )
   `;
   await owner`
+    -- tenant-db-guard-disable-next-line G3: deliberate DECOY fixture (the trap the isolation proof needs)
     INSERT INTO public.product (id, title, handle)
     VALUES ('decoy-1', 'DECOY_PUBLIC', 'widget-a'), ('decoy-2', 'DECOY_PUBLIC', 'widget-b')
   `;
@@ -168,7 +168,7 @@ afterAll(async () => {
   await container?.stop();
 });
 
-describe('CM-06 catalog isolation — schema-per-tenant wall (NEW Kysely path)', () => {
+describe('CM-06 catalog isolation: schema-per-tenant wall (tenant schema)', () => {
   it('provisioned both tenant schemas and marked them active', async () => {
     const groups = await owner!`
       SELECT schema_name, status FROM public.tenant_groups ORDER BY slug
@@ -179,7 +179,7 @@ describe('CM-06 catalog isolation — schema-per-tenant wall (NEW Kysely path)',
 
   it('count() scoped to tg_a sees ONLY tg_a products (zero tg_b, zero decoy)', async () => {
     const dbA = tenantDb(ownerBase!, TG_A);
-    expect(await catalogRepositoryKysely.count(dbA)).toBe(1);
+    expect(await catalogRepository.count(dbA)).toBe(1);
   });
 
   it('a scoped read returns ONLY tg_a rows, never tg_b or the public decoy', async () => {
@@ -204,7 +204,7 @@ describe('CM-06 catalog isolation — schema-per-tenant wall (NEW Kysely path)',
   it('symmetry: tg_b sees only tg_b, and the cross-schema total has zero decoys', async () => {
     const dbA = tenantDb(ownerBase!, TG_A);
     const dbB = tenantDb(ownerBase!, TG_B);
-    expect(await catalogRepositoryKysely.count(dbB)).toBe(1);
+    expect(await catalogRepository.count(dbB)).toBe(1);
 
     const a = await dbA.selectFrom('product').select(['title']).execute();
     const b = await dbB.selectFrom('product').select(['title']).execute();
@@ -219,12 +219,12 @@ describe('CM-06 catalog isolation — schema-per-tenant wall (NEW Kysely path)',
   it('GRANT PROOF: commerce_app may read its granted schema but is DENIED a non-granted one', async () => {
     // commerce_app WAS granted on tg_a -> the scoped read succeeds.
     const appDbA = tenantDb(appBase!, TG_A);
-    expect(await catalogRepositoryKysely.count(appDbA)).toBe(1);
+    expect(await catalogRepository.count(appDbA)).toBe(1);
 
     // commerce_app was NOT granted on tg_b -> Postgres refuses at the grant layer,
     // not the app layer: `permission denied for schema tg_<b>`.
     const appDbB = tenantDb(appBase!, TG_B);
-    await expect(catalogRepositoryKysely.count(appDbB)).rejects.toThrow(
+    await expect(catalogRepository.count(appDbB)).rejects.toThrow(
       /permission denied for schema/,
     );
   });

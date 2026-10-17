@@ -3,9 +3,9 @@ import 'server-only';
 // src/server/commerce/db.ts
 //
 // The commerce data layer's connection foundation (CM-02). This is the
-// @marlinjai/tenant-db Node base singleton — the schema-per-tenant-group
-// successor to the single PrismaClient in src/server/db.ts for the COMMERCE
-// engine only. Prisma stays for CMS/sites; only commerce moves here.
+// @marlinjai/tenant-db Node base singleton, the ONLY database entry point of the
+// commerce engine (schema per tenant group). Commerce does not use Prisma at
+// all; the PrismaClient in src/server/db.ts serves the CMS and sites only.
 //
 // Two things live here:
 //

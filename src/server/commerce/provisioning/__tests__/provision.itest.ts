@@ -11,6 +11,9 @@
 //      with `appRole: 'commerce_app'`.
 //   2. A second provision of the same tenant-group is a clean idempotent no-op
 //      (applied === []), the registry row stays active, and the schema is intact.
+//   2b. After a provision AND after a re-provision, commerce_app may INSERT and
+//      SELECT but NOT UPDATE or DELETE the append-only tables (the REVOKE seed
+//      survives the runner's grant-all; CM-13).
 //   3. `migrateAllCommerceTenants` over a fleet of >= 2 provisioned tenant-groups
 //      processes every schema cleanly and is RESUMABLE: a re-run applies nothing
 //      new.
@@ -32,7 +35,7 @@ import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainer
 import postgres from 'postgres';
 import { randomUUID } from 'node:crypto';
 import { migrateCommercePublic } from '../public';
-import { provisionCommerceTenant, migrateAllCommerceTenants } from '../provision';
+import { APPEND_ONLY_TABLES, provisionCommerceTenant, migrateAllCommerceTenants } from '../provision';
 
 const DB_NAME = 'framer_clone_test';
 
@@ -74,6 +77,27 @@ afterAll(async () => {
   await probe?.end();
   await container?.stop();
 });
+
+/** Assert commerce_app may INSERT/SELECT but not UPDATE/DELETE every append-only table. */
+async function expectAppendOnly(schema: string): Promise<void> {
+  for (const table of APPEND_ONLY_TABLES) {
+    const qualified = `${schema}."${table}"`;
+    const rows = await probe!`
+      SELECT
+        has_table_privilege('commerce_app', ${qualified}, 'INSERT') AS can_insert,
+        has_table_privilege('commerce_app', ${qualified}, 'SELECT') AS can_select,
+        has_table_privilege('commerce_app', ${qualified}, 'UPDATE') AS can_update,
+        has_table_privilege('commerce_app', ${qualified}, 'DELETE') AS can_delete
+    `;
+    expect({ table, ...rows[0] }).toEqual({
+      table,
+      can_insert: true,
+      can_select: true,
+      can_update: false,
+      can_delete: false,
+    });
+  }
+}
 
 describe('CM-11 commerce per-tenant provisioning (provisionCommerceTenant → provisionTenant)', () => {
   it('throws a clear OWNER-role error when no owner connection string is available', async () => {
@@ -147,6 +171,11 @@ describe('CM-11 commerce per-tenant provisioning (provisionCommerceTenant → pr
     `;
     expect(grants[0].schema_usage).toBe(true);
     expect(grants[0].table_select).toBe(true);
+
+    // ...and the append-only REVOKEs survived the runner's grant-all (CM-13: the
+    // seed re-applies them inside the provisioning transaction). INSERT and
+    // SELECT stay granted; UPDATE and DELETE do not.
+    await expectAppendOnly(schema);
   });
 
   it('is idempotent: re-provisioning the same tenant-group applies nothing new', async () => {
@@ -172,6 +201,9 @@ describe('CM-11 commerce per-tenant provisioning (provisionCommerceTenant → pr
       SELECT status FROM public.tenant_groups WHERE id = ${tenantGroupId}
     `;
     expect(reg[0].status).toBe('active');
+
+    // A re-provision re-runs the runner's grant-all; the REVOKEs must still hold.
+    await expectAppendOnly(second.schema);
   });
 });
 
@@ -189,6 +221,19 @@ describe('CM-11 commerce fleet migration (migrateAllCommerceTenants → migrateA
       slug: 'fleet-two',
       connectionString: ownerUrl,
     });
+
+    // Simulate privilege drift on one schema (a grant-all by hand or by a future
+    // runner version): the fleet sweep must take UPDATE / DELETE away again.
+    const drifted = await provisionCommerceTenant({
+      tenantGroupId: randomUUID(),
+      slug: 'fleet-drift',
+      connectionString: ownerUrl,
+    });
+    await probe!`GRANT UPDATE, DELETE ON ALL TABLES IN SCHEMA ${probe!(drifted.schema)} TO commerce_app`;
+    const driftedNow = await probe!`
+      SELECT has_table_privilege('commerce_app', ${drifted.schema + '."order"'}, 'UPDATE') AS can_update
+    `;
+    expect(driftedNow[0].can_update).toBe(true);
 
     const registryCount = await probe!`SELECT count(*)::int AS n FROM public.tenant_groups`;
     expect(registryCount[0].n).toBeGreaterThanOrEqual(2);
@@ -208,6 +253,11 @@ describe('CM-11 commerce fleet migration (migrateAllCommerceTenants → migrateA
     expect(second.processed).toBe(second.total);
     for (const s of second.schemas) {
       expect(s.applied).toEqual([]);
+    }
+
+    // Every schema of the fleet, the drifted one included, is append-only again.
+    for (const s of first.schemas) {
+      await expectAppendOnly(s.schema);
     }
   });
 });

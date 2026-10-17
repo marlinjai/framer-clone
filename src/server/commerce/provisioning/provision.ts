@@ -27,6 +27,21 @@
 // per-schema grants AND the `ext` role-default backstop, so it is forbidden in
 // prod (it would leave the new schema unreachable by the app role and the app
 // role's search_path unlocked).
+//
+// APPEND-ONLY REVOKES (found and fixed in CM-13). The runner runs the tenant
+// migrations, whose bodies REVOKE UPDATE, DELETE on the append-only tables from
+// commerce_app, and THEN `grantSchemaToAppRole` issues
+// `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES`, which silently undoes
+// those REVOKEs. Left alone, commerce_app could rewrite or delete a placed order
+// (a German invoice), its lines, a credit note or a stock movement. So every
+// provision re-applies the REVOKEs through the runner's `seed` hook, which runs
+// INSIDE the same owner transaction, after the grants and before the schema is
+// marked active: there is no moment in which the app role holds those rights.
+// The fleet runner re-applies them too: `migrateAllCommerceTenants` runs
+// `revokeAppendOnlyWrites` for every schema it processed, so the guarantee does
+// not rest on what `migrateAllTenants` happens to grant or not grant today. A
+// future migration that adds an append-only table must REVOKE in its own body
+// AND be added to APPEND_ONLY_TABLES (a unit test fails if the two disagree).
 
 import postgres from 'postgres';
 import {
@@ -37,12 +52,57 @@ import {
 import { COMMERCE_TENANT_MIGRATIONS } from '../migrations/tenant';
 
 /**
+ * The commerce tables commerce_app may only INSERT into and SELECT from: the
+ * stock ledger, the corrective documents, and the placed order (an immutable
+ * invoice) with its lines.
+ */
+export const APPEND_ONLY_TABLES = [
+  'stock_movement',
+  'credit_note',
+  'credit_note_ref',
+  'order',
+  'order_line_item',
+] as const;
+
+/**
  * The low-privilege app role granted per-schema USAGE + table access by the
  * runner, and whose default search_path the runner locks to `ext`. MUST match
  * the role `COMMERCE_APP_DATABASE_URL` connects as (see prisma/sql/commerce-roles.sql
  * + db.ts). Passing it is mandatory: the no-appRole path is forbidden in prod.
  */
-const COMMERCE_APP_ROLE = 'commerce_app';
+export const COMMERCE_APP_ROLE = 'commerce_app';
+
+/**
+ * REVOKE UPDATE, DELETE on every append-only table of `schema` from the app
+ * role. Idempotent. Pass it as `provisionTenant`'s `seed` (via
+ * {@link commerceProvisionOptions}) so it runs inside the provisioning
+ * transaction, after the runner's grant-all.
+ */
+export async function revokeAppendOnlyWrites(
+  tx: postgres.TransactionSql,
+  schema: string,
+  appRole: string = COMMERCE_APP_ROLE,
+): Promise<void> {
+  for (const table of APPEND_ONLY_TABLES) {
+    await tx`REVOKE UPDATE, DELETE ON ${tx(schema)}.${tx(table)} FROM ${tx(appRole)}`;
+  }
+}
+
+/**
+ * The full `provisionTenant` options for one commerce tenant group: the commerce
+ * migration set, the app role (grants + `ext` backstop) and the append-only
+ * REVOKE seed. Every caller that provisions a commerce schema (this module, the
+ * integration harness, the test fixtures) uses it, so none can forget a part.
+ */
+export function commerceProvisionOptions(tenantGroupId: string, slug: string) {
+  return {
+    tenantGroupId,
+    slug,
+    appRole: COMMERCE_APP_ROLE,
+    tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
+    seed: (tx: postgres.TransactionSql, ctx: { schema: string }) => revokeAppendOnlyWrites(tx, ctx.schema),
+  };
+}
 
 /**
  * Resolve the OWNER connection string at CALL TIME (not import) so `next build`
@@ -98,15 +158,9 @@ export async function provisionCommerceTenant(opts: {
 
   const sql = postgres(ownerUrl, { max: 1, prepare: false });
   try {
-    return await provisionTenant(sql, {
-      tenantGroupId: opts.tenantGroupId,
-      slug: opts.slug,
-      // ALWAYS pass the app role: it drives the per-schema grants + the
-      // `ext`-locked role default (the backstop). The no-appRole path is
-      // forbidden in prod.
-      appRole: COMMERCE_APP_ROLE,
-      tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
-    });
+    // The app role drives the per-schema grants + the `ext`-locked role default
+    // (the backstop); the seed re-applies the append-only REVOKEs after them.
+    return await provisionTenant(sql, commerceProvisionOptions(opts.tenantGroupId, opts.slug));
   } finally {
     await sql.end();
   }
@@ -147,11 +201,17 @@ export async function migrateAllCommerceTenants(opts?: {
 
   const sql = postgres(ownerUrl, { max: 1, prepare: false });
   try {
-    return await migrateAllTenants(sql, {
+    const result = await migrateAllTenants(sql, {
       tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
       batchSize: opts?.batchSize,
       onSchemaDone: opts?.onSchemaDone,
     });
+    // Re-assert the append-only REVOKEs on every processed schema (idempotent),
+    // independent of the runner's grant behaviour.
+    for (const { schema } of result.schemas) {
+      await sql.begin((tx) => revokeAppendOnlyWrites(tx, schema));
+    }
+    return result;
   } finally {
     await sql.end();
   }

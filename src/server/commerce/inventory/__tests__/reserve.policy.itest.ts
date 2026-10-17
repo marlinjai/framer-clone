@@ -1,12 +1,12 @@
 // src/server/commerce/inventory/__tests__/reserve.policy.itest.ts
 //
-// CM-08 — pins the Medusa-style 3-way policy branch of the NEW Kysely reserve
+// CM-08: pins the Medusa-style 3-way policy branch of the reserve
 // path (Marlin 2026-06-27). The flags live on product_variant (manage_inventory
 // default TRUE, allow_backorder default FALSE — CM-08a) and are resolved per line
 // BEFORE any inventory_level access:
 //
 //   A. untracked (manage_inventory=false, no inventory_level row at all):
-//      reserveKysely -> { ok:true, reservationId:null } with ZERO reservation and
+//      reserve -> { ok:true, reservationId:null } with ZERO reservation and
 //      ZERO stock_movement rows written. Always sellable.
 //   B. backorder (manage_inventory=true, allow_backorder=true): stocked=1,
 //      reserving 5 succeeds { ok:true }, leaving reserved_quantity=5 and the
@@ -19,8 +19,7 @@
 //      reserved_quantity. The guarded WHERE is the SOLE oversell guard now that
 //      the DB CHECK is gone, and it still bites.
 //
-// This exercises the NEW (CM-08 expand) Kysely path against a REAL provisioned
-// tenant schema; the old Prisma reserve path is untouched (reserve.itest.ts).
+// This runs against a REAL provisioned tenant schema.
 //
 // TRUST auth (POSTGRES_HOST_AUTH_METHOD=trust + username-only URLs, no password
 // literals — hardcoded creds trip GitGuardian; see CM-04). The `.itest.ts` suffix
@@ -42,8 +41,8 @@ import {
 import postgres from 'postgres';
 
 import type { CommerceDB } from '../../db-types';
-import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
-import { reserveWithRetryKysely } from '../reserve';
+import { commerceProvisionOptions } from '../../provisioning/provision';
+import { reserveWithRetry } from '../reserve';
 
 const DB_NAME = 'framer_clone_test';
 const TG = assertTenantGroupId('018f9c10-0000-7000-8000-0000000008c8');
@@ -68,12 +67,11 @@ beforeAll(async () => {
   const ownerUrl = `postgresql://postgres@${host}:${port}/${DB_NAME}`;
 
   owner = postgres(ownerUrl, { max: 1, prepare: false, transform: { undefined: null } });
+  // The production provisioning options grant to and lock the app role, so it
+  // must exist (TRUST auth: no password).
+  await owner`CREATE ROLE commerce_app LOGIN`;
   await migratePublic(owner);
-  await provisionTenant(owner, {
-    tenantGroupId: TG,
-    slug: 'cm08-policy',
-    tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
-  });
+  await provisionTenant(owner, commerceProvisionOptions(TG, 'cm08-policy'));
 
   ownerBase = createNodeDb<CommerceDB>({ connectionString: ownerUrl });
 }, 180_000);
@@ -171,14 +169,14 @@ async function countRows(
   return Number(row.c);
 }
 
-describe('CM-08 reserve policy branch (NEW Kysely path, Dockerized Postgres)', () => {
+describe('CM-08 reserve policy branch (Dockerized Postgres)', () => {
   it('Case A — untracked variant: ok:true, reservationId null, ZERO movement/reservation rows', async () => {
     const db = tenantDb(ownerBase!, TG);
     // Untracked variant; deliberately NO inventory_item / inventory_level row.
     const { variantId } = await seedVariant(db, { manageInventory: false, allowBackorder: false });
     const requestId = `untracked-${randomUUID()}`;
 
-    const result = await reserveWithRetryKysely(db, TG, {
+    const result = await reserveWithRetry(db, TG, {
       variantId,
       needed: 7,
       requestId,
@@ -200,7 +198,7 @@ describe('CM-08 reserve policy branch (NEW Kysely path, Dockerized Postgres)', (
     const { inventoryItemId, locationId } = await seedLevel(db, sku, 1);
     const requestId = `backorder-1-${randomUUID()}`;
 
-    const result = await reserveWithRetryKysely(db, TG, {
+    const result = await reserveWithRetry(db, TG, {
       inventoryItemId,
       variantId,
       locationId,
@@ -223,7 +221,7 @@ describe('CM-08 reserve policy branch (NEW Kysely path, Dockerized Postgres)', (
 
     // A SECOND backorder reserve drives it further negative, never a shortage.
     const requestId2 = `backorder-2-${randomUUID()}`;
-    const result2 = await reserveWithRetryKysely(db, TG, {
+    const result2 = await reserveWithRetry(db, TG, {
       inventoryItemId,
       variantId,
       locationId,
@@ -245,7 +243,7 @@ describe('CM-08 reserve policy branch (NEW Kysely path, Dockerized Postgres)', (
     const { inventoryItemId, locationId } = await seedLevel(db, sku, 1);
     const requestId = `managed-${randomUUID()}`;
 
-    const result = await reserveWithRetryKysely(db, TG, {
+    const result = await reserveWithRetry(db, TG, {
       inventoryItemId,
       variantId,
       locationId,
@@ -275,7 +273,7 @@ describe('CM-08 reserve policy branch (NEW Kysely path, Dockerized Postgres)', (
     });
     const { inventoryItemId, locationId } = await seedLevel(db, sku, 1);
 
-    const ok = await reserveWithRetryKysely(db, TG, {
+    const ok = await reserveWithRetry(db, TG, {
       inventoryItemId,
       variantId,
       locationId,
@@ -285,7 +283,7 @@ describe('CM-08 reserve policy branch (NEW Kysely path, Dockerized Postgres)', (
     expect(ok.ok).toBe(true);
     expect((await readLevel(db, inventoryItemId, locationId)).available).toBe(0);
 
-    const short = await reserveWithRetryKysely(db, TG, {
+    const short = await reserveWithRetry(db, TG, {
       inventoryItemId,
       variantId,
       locationId,

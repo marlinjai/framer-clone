@@ -2,39 +2,36 @@ import 'server-only';
 
 // src/server/commerce/repository/read.ts
 //
-// The READ-ONLY, RSC-callable commerce repository. Today the commerce module
-// only has WRITE / transaction-bound repos (catalog.ts, pricing.ts, order.ts);
-// this file adds the missing READ surface the publish hydrator already expects.
-// `getCommerceServerRepositoryDb(db)` returns an object implementing the
-// `CommerceServerRepository` contract declared (type-only) in
-// src/lib/renderer/publish/hydrateBindings.ts, so the SSR render layer can bake
-// catalog reads in Node at build time.
+// The READ-ONLY, RSC-callable commerce repository: the catalog READ surface the
+// publish hydrator and the storefront consume. `getCommerceServerRepository(db)`
+// returns an object implementing the `CommerceServerRepository` contract declared
+// (type-only) in src/lib/renderer/publish/hydrateBindings.ts, so the SSR render
+// layer can bake catalog reads in Node.
 //
 // READS ONLY by design. There is intentionally NO write / reserve / checkout
 // method here: the server stays authoritative for money and stock. Every method
 // is a pure read mapped INTO the client-facing DTOs (src/lib/commerce/types.ts);
-// no `@prisma/client` row type ever leaks past this boundary.
+// no database row type leaks past this boundary.
 //
-// Tenant scoping (CM-10): the LIVE read surface is the Kysely half of this file
-// (`commerceReadRepositoryKysely` + `getCommerceServerRepositoryDb`), which runs
-// on the per-request scoped handle `commerceTenantDb(tgId)`; isolation is baked
-// into that handle, so there is no search_path seam anywhere. The tx-first Prisma
-// `commerceReadRepository` below is LEGACY: it has no production caller since
-// CM-10 removed the Prisma `getCommerceServerRepository` wrapper and the
-// `withTenant` seam, and CM-13 deletes it together with its unit test.
+// Tenant scoping: every method takes the per-request scoped handle
+// `commerceTenantDb(tgId)`, whose table identifiers tenant-db's `withSchema`
+// already rewrote to `tg_<id>.<table>`. Isolation is baked into that handle, so
+// there is no schema string and no search_path anywhere here.
 //
 // Mapping parity: the row->DTO mapping mirrors InMemoryCommerceDataSource (the
 // contract reference double) field-for-field, including the conditional spreads
-// for optional fields and the variant taxClass fallback (variant.taxClass else
-// product.taxClass), so the SSR-baked output matches the client storefront.
+// for optional fields (omitted when null) and the variant taxClass fallback
+// (variant.tax_class else product.tax_class), so the SSR-baked output matches
+// the client storefront.
 //
-// Soft-deletes: catalog rows soft-delete via `deletedAt`; every read filters
-// `deletedAt: null` so a soft-deleted product / option / variant is invisible to
-// the published site (matching the live storefront).
+// Soft-deletes: catalog rows soft-delete via `deleted_at`; every read filters
+// `deleted_at IS NULL` so a soft-deleted product / option / variant is invisible
+// to the published site (matching the live storefront).
+//
+// `available_quantity` is read DIRECTLY: it is the GENERATED (stocked - reserved)
+// column, so `getAvailability` SUMs it in SQL rather than recomputing in JS. It
+// is NEVER written here.
 
-import type { Prisma, Price } from '@prisma/client';
-
-// CM-07 EXPAND imports — the Kysely read path lives ALONGSIDE the Prisma path.
 import type { ExpressionBuilder, Kysely } from 'kysely';
 import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/postgres';
 import type { CommerceDB } from '../db-types';
@@ -42,7 +39,6 @@ import type { CommerceDB } from '../db-types';
 import {
   ALL_LOCATIONS,
   type AvailabilityDTO,
-  type CommerceFilterClause,
   type CommerceQuery,
   type PriceDTO,
   type ProductDTO,
@@ -55,296 +51,6 @@ import {
 // re-declared) so this repo is structurally pinned to the hydrator's shape.
 import type { CommerceServerRepository } from '@/lib/renderer/publish/hydrateBindings';
 
-// --- Prisma payload types (internal; never returned) -----------------------
-// These describe the shape each query loads so the mappers are typed without an
-// `any`. They are confined to this module; the public surface is DTOs only.
-
-type ProductWithGraph = Prisma.ProductGetPayload<{
-  include: {
-    options: { include: { values: true } };
-    variants: { select: { id: true } };
-  };
-}>;
-
-type VariantWithGraph = Prisma.ProductVariantGetPayload<{
-  include: {
-    product: { select: { taxClass: true } };
-    options: { include: { optionValue: { select: { id: true; value: true } } } };
-  };
-}>;
-
-// --- include / where / orderBy builders ------------------------------------
-
-const PRODUCT_INCLUDE = {
-  options: {
-    where: { deletedAt: null },
-    include: { values: { where: { deletedAt: null } } },
-  },
-  variants: { where: { deletedAt: null }, select: { id: true } },
-} satisfies Prisma.ProductInclude;
-
-const VARIANT_INCLUDE = {
-  product: { select: { taxClass: true } },
-  options: { include: { optionValue: { select: { id: true, value: true } } } },
-} satisfies Prisma.ProductVariantInclude;
-
-/** Map one CommerceQuery filter clause to a Prisma StringFilter. Case-insensitive
- *  to mirror InMemoryCommerceDataSource's lowercase-both comparison. */
-function opFilter(clause: CommerceFilterClause): Prisma.StringFilter {
-  switch (clause.op) {
-    case 'eq':
-      return { equals: clause.value, mode: 'insensitive' };
-    case 'ne':
-      return { not: clause.value, mode: 'insensitive' };
-    case 'contains':
-      return { contains: clause.value, mode: 'insensitive' };
-    default:
-      return {};
-  }
-}
-
-/** Build the product WHERE: always `deletedAt: null`, plus one ANDed clause per
- *  filter (multiple clauses AND together, matching the in-memory sequential
- *  filter application). */
-function buildProductWhere(query?: CommerceQuery): Prisma.ProductWhereInput {
-  const clauses: Prisma.ProductWhereInput[] = (query?.filter ?? []).map((clause) => {
-    const filter = opFilter(clause);
-    return clause.field === 'handle' ? { handle: filter } : { title: filter };
-  });
-  return {
-    deletedAt: null,
-    ...(clauses.length > 0 ? { AND: clauses } : {}),
-  };
-}
-
-/** Build the product ORDER BY from the query sort clauses (in declared order). */
-function buildProductOrderBy(
-  query?: CommerceQuery,
-): Prisma.ProductOrderByWithRelationInput[] {
-  return (query?.sort ?? []).map((sort) =>
-    sort.field === 'handle' ? { handle: sort.direction } : { title: sort.direction },
-  );
-}
-
-// --- row -> DTO mappers (mirror InMemoryCommerceDataSource) -----------------
-
-function mapOption(option: ProductWithGraph['options'][number]): ProductOptionDTO {
-  return {
-    id: option.id,
-    productId: option.productId,
-    title: option.title,
-    values: option.values.map((value) => ({
-      id: value.id,
-      optionId: value.optionId,
-      label: value.value,
-    })),
-  };
-}
-
-function mapProduct(product: ProductWithGraph): ProductDTO {
-  return {
-    id: product.id,
-    handle: product.handle,
-    title: product.title,
-    description: product.description,
-    ...(product.taxClass !== null ? { taxClass: product.taxClass } : {}),
-    options: product.options.map(mapOption),
-    variantIds: product.variants.map((variant) => variant.id),
-  };
-}
-
-function mapVariant(variant: VariantWithGraph): ProductVariantDTO {
-  // Resolved catalog-side tax classification: the variant's own class, else the
-  // product's, else unset (resolution to a rate is a downstream engine's job).
-  const resolvedTaxClass = variant.taxClass ?? variant.product?.taxClass ?? null;
-  const optionValues: VariantOptionCoordinate[] = variant.options.map((vo) => ({
-    optionId: vo.optionId,
-    valueId: vo.optionValueId,
-    label: vo.optionValue?.value ?? '',
-  }));
-  return {
-    id: variant.id,
-    productId: variant.productId,
-    title: variant.title,
-    ...(variant.sku !== null ? { sku: variant.sku } : {}),
-    ...(variant.barcode !== null ? { barcode: variant.barcode } : {}),
-    ...(resolvedTaxClass !== null ? { taxClass: resolvedTaxClass } : {}),
-    optionValues,
-  };
-}
-
-function mapPrice(price: Price, variantId: string, taxClass: string | null): PriceDTO {
-  return {
-    variantId,
-    // amount is a DB Int (integer minor units). Returned unchanged: never coerced
-    // to a float.
-    amountCents: price.amount,
-    currency: price.currencyCode,
-    ...(taxClass !== null ? { taxClass } : {}),
-    ...(price.minQuantity !== null ? { minQuantity: price.minQuantity } : {}),
-    ...(price.maxQuantity !== null ? { maxQuantity: price.maxQuantity } : {}),
-  };
-}
-
-// --- the tx-first read repository (unit-testable with a fake tx) ------------
-
-/**
- * The read surface over a transaction client. Every method takes `tx` first (the
- * tx-first rule the write repos follow), is a PURE READ, and returns the
- * client-facing DTOs. LEGACY (no production caller since CM-10, deleted in
- * CM-13); tests drive these directly with a programmable fake tx.
- */
-export interface CommerceReadRepository {
-  listProducts(tx: Prisma.TransactionClient, query?: CommerceQuery): Promise<ProductPage>;
-  getProductByHandle(
-    tx: Prisma.TransactionClient,
-    handle: string,
-  ): Promise<ProductDTO | null>;
-  listVariants(
-    tx: Prisma.TransactionClient,
-    productId: string,
-  ): Promise<ProductVariantDTO[]>;
-  getPrices(tx: Prisma.TransactionClient, variantId: string): Promise<PriceDTO[]>;
-  getAvailability(
-    tx: Prisma.TransactionClient,
-    variantId: string,
-    locationId?: string,
-  ): Promise<AvailabilityDTO>;
-}
-
-export const commerceReadRepository: CommerceReadRepository = {
-  async listProducts(tx, query) {
-    const where = buildProductWhere(query);
-    const orderBy = buildProductOrderBy(query);
-
-    // total is the count matching the filter, IGNORING the limit.
-    const total = await tx.product.count({ where });
-
-    const rows = await tx.product.findMany({
-      where,
-      ...(orderBy.length > 0 ? { orderBy } : {}),
-      // limit caps the returned page; a negative limit floors at 0 (in-memory parity).
-      ...(typeof query?.limit === 'number'
-        ? { take: Math.max(0, query.limit) }
-        : {}),
-      include: PRODUCT_INCLUDE,
-    });
-
-    return { products: rows.map(mapProduct), total };
-  },
-
-  async getProductByHandle(tx, handle) {
-    // handle is partial-unique (UNIQUE WHERE deleted_at IS NULL), not a Prisma
-    // @@unique, so findFirst (not findUnique) with the live filter is correct.
-    const row = await tx.product.findFirst({
-      where: { handle, deletedAt: null },
-      include: PRODUCT_INCLUDE,
-    });
-    return row ? mapProduct(row) : null;
-  },
-
-  async listVariants(tx, productId) {
-    const rows = await tx.productVariant.findMany({
-      where: { productId, deletedAt: null },
-      include: VARIANT_INCLUDE,
-    });
-    return rows.map(mapVariant);
-  },
-
-  async getPrices(tx, variantId) {
-    // The variant (and its product) supply the resolved catalog tax classification
-    // folded onto each price row, mirroring the in-memory double.
-    const variant = await tx.productVariant.findUnique({
-      where: { id: variantId },
-      select: { taxClass: true, product: { select: { taxClass: true } } },
-    });
-    const resolvedTaxClass = variant?.taxClass ?? variant?.product?.taxClass ?? null;
-
-    // variant -> price_set -> price. A variant with no price_set has no prices.
-    const prices = await tx.price.findMany({
-      where: { priceSet: { variantId } },
-    });
-    return prices.map((price) => mapPrice(price, variantId, resolvedTaxClass));
-  },
-
-  async getAvailability(tx, variantId, locationId) {
-    // A missing (or soft-deleted) variant is an error, never a silent zero-stock
-    // success. The hydrator's documented per-slot swallow turns this throw into an
-    // empty slot, never a failed build.
-    const variant = await tx.productVariant.findUnique({
-      where: { id: variantId },
-      select: { id: true, sku: true, deletedAt: true },
-    });
-    if (!variant || variant.deletedAt !== null) {
-      throw new Error(`getAvailability: no variant with id "${variantId}"`);
-    }
-
-    const reportedLocationId = locationId === undefined ? ALL_LOCATIONS : locationId;
-
-    // Variant -> inventory linkage is by SKU: the inventory ledger (b2) keys an
-    // inventory_item on `sku`, and there is intentionally NO variant_id relation on
-    // inventory_item (the order path passes inventoryItemId explicitly). A variant
-    // with no SKU, or whose SKU has no live inventory_item, holds no tracked stock:
-    // advisory availability is 0 (display-only, never permission to sell).
-    if (!variant.sku) {
-      return { variantId, locationId: reportedLocationId, availableQuantity: 0, stale: false };
-    }
-
-    const item = await tx.inventoryItem.findFirst({
-      where: { sku: variant.sku, deletedAt: null },
-      select: { id: true },
-    });
-    if (!item) {
-      return { variantId, locationId: reportedLocationId, availableQuantity: 0, stale: false };
-    }
-
-    const levels = await tx.inventoryLevel.findMany({
-      where: {
-        inventoryItemId: item.id,
-        // No locationId -> aggregate across EVERY location; otherwise one location.
-        ...(locationId !== undefined ? { locationId } : {}),
-      },
-      select: { stockedQuantity: true, reservedQuantity: true },
-    });
-
-    // available_quantity is the GENERATED (stocked - reserved) column in Track B.
-    // It is INTENTIONALLY absent from the Prisma model (Prisma cannot represent a
-    // generated column; see the schema drift guard), so we compute the identical
-    // value from the two source columns. Aggregated across locations when no
-    // locationId is given; a specific location with no level row legitimately holds
-    // zero stock. ADVISORY only.
-    const availableQuantity = levels.reduce(
-      (sum, level) => sum + (level.stockedQuantity - level.reservedQuantity),
-      0,
-    );
-
-    return { variantId, locationId: reportedLocationId, availableQuantity, stale: false };
-  },
-};
-
-// =============================================================================
-// CM-07 EXPAND: the Kysely READ repository, added ALONGSIDE the legacy Prisma
-// `commerceReadRepository` above. Since CM-10 this is the LIVE path: the SSR
-// render route (`src/app/(site)/[...slug]/page.tsx`, via storefrontTenant.ts)
-// reads through `getCommerceServerRepositoryDb(commerceTenantDb(tgId))`. CM-13
-// deletes the Prisma path and renames the suffixed symbols to canonical.
-//
-// Each method takes a `db: Kysely<CommerceDB>` first — the per-request scoped
-// handle (`commerceTenantDb(tgId)`), whose every bare table identifier is already
-// rewritten to `tg_<id>.<table>` by `withSchema`. So there is no `tx`-first rule,
-// no `withTenant`, and no schema string: isolation is baked into the handle.
-//
-// READS ONLY, exactly like the Prisma path: pure reads mapped INTO the
-// client-facing DTOs. The row->DTO mappers below reproduce the Prisma mappers'
-// conditional spreads (optional fields omitted when null) and the variant
-// taxClass fallback (variant.taxClass else product.taxClass) field-for-field, so
-// the Kysely-baked output matches `InMemoryCommerceDataSource` exactly.
-//
-// `available_quantity` is read DIRECTLY: it is the GENERATED (stocked - reserved)
-// column (CM-05 types it `Generated<>`), so `getAvailability` SUMs it in SQL
-// rather than recomputing stocked-reserved in JS. It is NEVER written here.
-// =============================================================================
-
 /**
  * Escape the LIKE/ILIKE metacharacters (`\`, `%`, `_`) in a user-supplied filter
  * value so an `eq`/`ne`/`contains` clause matches the literal text, not a
@@ -355,12 +61,11 @@ function escapeLike(value: string): string {
 }
 
 /**
- * Build the product WHERE expression for the Kysely path: always
- * `deleted_at IS NULL`, plus one ANDed, case-insensitive clause per filter
- * (multiple clauses AND together). Case-insensitivity uses ILIKE on the escaped
- * value, mirroring the Prisma `mode: 'insensitive'` path and the in-memory
- * lowercase-both comparison: `eq` -> exact ILIKE, `ne` -> NOT ILIKE, `contains`
- * -> `%value%` ILIKE.
+ * Build the product WHERE expression: always `deleted_at IS NULL`, plus one
+ * ANDed, case-insensitive clause per filter (multiple clauses AND together).
+ * Case-insensitivity uses ILIKE on the escaped value, mirroring the in-memory
+ * lowercase-both comparison: `eq` -> exact ILIKE, `ne` -> NOT ILIKE,
+ * `contains` -> `%value%` ILIKE.
  */
 function buildProductConditions(
   eb: ExpressionBuilder<CommerceDB, 'product'>,
@@ -386,10 +91,9 @@ function buildProductConditions(
 }
 
 /**
- * The product graph SELECT reproducing `PRODUCT_INCLUDE` in ONE query via
- * `jsonArrayFrom`: live (`deleted_at IS NULL`) options with their live values,
- * plus the ids of live variants. The caller adds the WHERE (filter or handle),
- * ORDER BY, and LIMIT.
+ * The product graph SELECT in ONE query via `jsonArrayFrom`: live
+ * (`deleted_at IS NULL`) options with their live values, plus the ids of live
+ * variants. The caller adds the WHERE (filter or handle), ORDER BY, and LIMIT.
  */
 function selectProductGraph(db: Kysely<CommerceDB>) {
   return db.selectFrom('product').select((eb) => [
@@ -469,7 +173,7 @@ function mapProductGraph(row: ProductGraphRow): ProductDTO {
   };
 }
 
-/** The row shape the Kysely `listVariants` graph yields. */
+/** The row shape the `listVariants` graph yields. */
 type VariantGraphRow = {
   id: string;
   product_id: string;
@@ -523,12 +227,10 @@ function mapPriceRow(
 }
 
 /**
- * The Kysely mirror of {@link CommerceReadRepository}, generic over the scoped
- * `Kysely<CommerceDB>` handle instead of a Prisma `tx`. Co-located here (NOT in
- * `repository/types.ts`) so this spec never touches the file CM-09 edits. Each
- * method is a PURE READ returning the client-facing DTOs.
+ * The read surface over the scoped `Kysely<CommerceDB>` handle. Each method is a
+ * PURE READ returning the client-facing DTOs.
  */
-export interface CommerceReadRepositoryKysely {
+export interface CommerceReadRepository {
   listProducts(db: Kysely<CommerceDB>, query?: CommerceQuery): Promise<ProductPage>;
   getProductByHandle(db: Kysely<CommerceDB>, handle: string): Promise<ProductDTO | null>;
   listVariants(db: Kysely<CommerceDB>, productId: string): Promise<ProductVariantDTO[]>;
@@ -540,7 +242,7 @@ export interface CommerceReadRepositoryKysely {
   ): Promise<AvailabilityDTO>;
 }
 
-export const commerceReadRepositoryKysely: CommerceReadRepositoryKysely = {
+export const commerceReadRepository: CommerceReadRepository = {
   async listProducts(db, query) {
     // total is the count matching the filter, IGNORING the limit.
     const countRow = await db
@@ -702,28 +404,25 @@ export const commerceReadRepositoryKysely: CommerceReadRepositoryKysely = {
   },
 };
 
-// --- the RSC-callable, tenant-scoped public repository (Kysely, NEW) ---------
+// --- the RSC-callable, tenant-scoped public repository -----------------------
 
 /**
- * Build the read-only commerce repository the publish hydrator consumes, over a
- * Kysely handle. It receives an ALREADY-scoped handle (`commerceTenantDb(tg)` / `tenantDb(getCommerceBase(),
- * tg)`): tenant isolation is baked into `db` by `withSchema`, so there is no
- * `withTenant` wrapping and no schema string. Each returned method delegates to
- * `commerceReadRepositoryKysely` with that `db`. READS ONLY.
- *
- * Carries a temporary `Db` suffix from the expand phase; the render path uses it
- * since CM-10, and CM-13 renames it to canonical once the Prisma path is gone.
+ * Build the read-only commerce repository the publish hydrator consumes. It
+ * receives an ALREADY-scoped handle (`commerceTenantDb(tg)`, or
+ * `tenantDb(getCommerceBase(), tg)`): tenant isolation is baked into `db` by
+ * `withSchema`, so there is no schema string here. Each returned method
+ * delegates to `commerceReadRepository` with that `db`. READS ONLY.
  */
-export function getCommerceServerRepositoryDb(
+export function getCommerceServerRepository(
   db: Kysely<CommerceDB>,
 ): CommerceServerRepository {
   return {
-    listProducts: (query) => commerceReadRepositoryKysely.listProducts(db, query),
+    listProducts: (query) => commerceReadRepository.listProducts(db, query),
     getProductByHandle: (handle) =>
-      commerceReadRepositoryKysely.getProductByHandle(db, handle),
-    listVariants: (productId) => commerceReadRepositoryKysely.listVariants(db, productId),
-    getPrices: (variantId) => commerceReadRepositoryKysely.getPrices(db, variantId),
+      commerceReadRepository.getProductByHandle(db, handle),
+    listVariants: (productId) => commerceReadRepository.listVariants(db, productId),
+    getPrices: (variantId) => commerceReadRepository.getPrices(db, variantId),
     getAvailability: (variantId, locationId) =>
-      commerceReadRepositoryKysely.getAvailability(db, variantId, locationId),
+      commerceReadRepository.getAvailability(db, variantId, locationId),
   };
 }

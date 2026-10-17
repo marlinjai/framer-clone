@@ -1,43 +1,49 @@
 // src/server/commerce/inventory/__tests__/reserve.itest.ts
 //
-// Integration test (Dockerized Postgres) for the b3 guarded reservation. It
-// boots its OWN throwaway Postgres in beforeAll (testcontainers), applies every
-// migration (dt_* init + b2 ledger + b3 guarded reservation), and proves the
-// race/guard guarantees plus the isolation-level assertion against a LIVE
-// database, because the correctness story is Postgres semantics, not mockable:
+// Integration test (Dockerized Postgres) for the sequential guards of the reserve
+// heart and for the four inventory effects, run against a REAL provisioned
+// company schema (tg_<hex32>) through the scoped Kysely handle. It runs on the
+// SHARED integration database (vitest.integration.setup.ts) and provisions its
+// own tenant group, so it boots no container of its own.
 //
-//   1. two concurrent reserves of the last unit -> exactly one ok:true, one
-//      ok:false with shortages (the guarded decrement under READ COMMITTED), and
-//      the generated available_quantity column is 0 after the race,
-//   2. a forgotten-guard write path is caught by the b2 CHECK backstop,
-//   3. a SEQUENTIAL duplicate request_id is a no-op (idempotent),
-//   4. omitting locationId resolves the per-workspace default and never creates
-//      a NULL-location reservation,
-//   5. a kit reservation locks item rows in ASCENDING inventory_item_id order so
-//      two concurrent kit reserves are deadlock-free,
-//   6. a half-completed transfer fails to commit (the deferred trigger), while a
-//      balanced pair commits,
-//   7. the reserve transaction runs at READ COMMITTED (asserted live),
-//   8. two CONCURRENT reserves with the SAME request_id are idempotent: both
-//      return ok:true with the SAME reservationId, exactly one movement + one
-//      reservation, reserved bumped exactly once (the P2002 catch on the loser),
-//   9. an uncontended shortage returns ok:false with available == the generated
-//      column and writes nothing,
-//  10. applyInventoryEffect release/fulfill/adjust against real Postgres: over-
-//      release rejected (level unchanged), over-fulfill rejected (level
-//      unchanged), happy-path fulfill decrements BOTH stocked and reserved, a
-//      negative adjust that would strand reservations is rejected (zero rows),
-//      and the b2 stocked >= 0 floor CHECK is the database backstop.
+// Ported in CM-13 from the retired Prisma suite of the same name, so the money /
+// stock coverage did not drop when the Prisma path was deleted:
 //
-// The `.itest.ts` suffix keeps this file OUT of the headless `pnpm test` gate
-// (vitest.config.ts matches only *.{test,spec}.{ts,tsx}); it runs only under
-// `pnpm test:integration` against Docker. It requires a running Docker daemon.
+//   1. a SEQUENTIAL duplicate request_id is a no-op (same reservation, one
+//      movement, one reservation row, reserved bumped once),
+//   2. omitting locationId resolves the per-workspace default (never a NULL
+//      location); an unknown explicit location and a missing default both throw,
+//   3. an uncontended shortage returns ok:false with available == the GENERATED
+//      available_quantity and writes nothing; a kit with one short component
+//      writes nothing for ANY component; a non-positive quantity is rejected,
+//   4. applyInventoryEffect: over-release rejected (level unchanged), two
+//      CONCURRENT releases with one request_id apply exactly once, over-fulfill
+//      rejected, happy-path fulfill decrements BOTH stocked and reserved, a
+//      negative adjust that would strand reservations is rejected, a zero delta
+//      is rejected, a replayed request_id is a no-op, a managed reserve effect
+//      that is short raises InventoryShortageError, and the stocked >= 0 /
+//      reserved >= 0 floor CHECKs are the database backstop.
+//
+// Covered elsewhere (not repeated here): READ COMMITTED, the last-unit race, the
+// concurrent duplicate reserve and the ascending kit lock order
+// (reserve.concurrency.itest.ts); the untracked / backorder / managed policy
+// branch (reserve.policy.itest.ts); the deferred transfer-balance trigger and the
+// floor CHECKs at the DDL level (migrations/tenant/__tests__/provision.itest.ts).
+// The old `reserved <= stocked` CHECK is intentionally GONE (migration 006 drops
+// it so backorder can exist); for managed stock the guarded WHERE is the sole
+// oversell guard, and the race suite pins it.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
-import { execSync } from 'node:child_process';
-import { PrismaClient } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
+import { sql, type Kysely } from 'kysely';
 
+import type { CommerceDB } from '../../db-types';
+import {
+  openStorefrontFixtures,
+  provisionCommerceTenant,
+  type ProvisionedTenant,
+  type StorefrontFixtures,
+} from '../../__tests__/storefrontFixtures';
 import {
   applyInventoryEffect,
   applyInventoryEffectWithRetry,
@@ -46,447 +52,270 @@ import {
   reserve,
   reserveKit,
   reserveTransaction,
-  reserveWithRetry,
   resolveLocation,
 } from '../reserve';
 
-let container: StartedTestContainer | undefined;
-let prisma: PrismaClient | undefined;
-
-function makeUrl(user: string, password: string, host: string, port: number): string {
-  return `postgresql://${user}:${password}@${host}:${port}/framer_clone_test`;
-}
+let fx: StorefrontFixtures;
+let tenant: ProvisionedTenant;
+let db: Kysely<CommerceDB>;
+let tgId: string;
 
 beforeAll(async () => {
-  container = await new GenericContainer('postgres:16-alpine')
-    .withEnvironment({
-      POSTGRES_USER: 'test',
-      POSTGRES_PASSWORD: 'test',
-      POSTGRES_DB: 'framer_clone_test',
-    })
-    .withExposedPorts(5432)
-    .withWaitStrategy(Wait.forLogMessage(/database system is ready to accept connections/, 2))
-    .start();
-
-  const url = makeUrl('test', 'test', container.getHost(), container.getMappedPort(5432));
-
-  // Apply dt_* init + the b2 ledger + the b3 guarded-reservation migration.
-  execSync('pnpm exec prisma migrate deploy', {
-    stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL: url },
-  });
-
-  prisma = new PrismaClient({ datasourceUrl: url });
-}, 180_000);
+  fx = openStorefrontFixtures();
+  tenant = await provisionCommerceTenant(fx, 'cm13-reserve');
+  db = tenant.db;
+  tgId = tenant.tgId;
+}, 120_000);
 
 afterAll(async () => {
-  await prisma?.$disconnect();
-  await container?.stop();
+  await fx?.close();
 });
 
 /** Seed an item + location + level with the given on-hand stock. */
 async function seedLevel(
   stocked: number,
   reserved = 0,
-  opts: { itemId?: string; sku?: string; locationName?: string } = {},
-): Promise<{ itemId: string; locationId: string; levelId: string }> {
-  const p = prisma!;
-  const item = await p.inventoryItem.create({
-    data: { ...(opts.itemId ? { id: opts.itemId } : {}), sku: opts.sku ?? `SKU-${cryptoSuffix()}` },
-  });
-  const location = await p.stockLocation.create({
-    data: { name: opts.locationName ?? `WH-${cryptoSuffix()}` },
-  });
-  const level = await p.inventoryLevel.create({
-    data: {
-      inventoryItemId: item.id,
-      locationId: location.id,
-      stockedQuantity: stocked,
-      reservedQuantity: reserved,
-    },
-  });
-  return { itemId: item.id, locationId: location.id, levelId: level.id };
+  opts: { itemId?: string } = {},
+): Promise<{ itemId: string; locationId: string }> {
+  const itemId = opts.itemId ?? randomUUID();
+  await db
+    .insertInto('inventory_item')
+    .values({ id: itemId, sku: `SKU-${randomUUID()}`, updated_at: new Date() })
+    .execute();
+  const locationId = randomUUID();
+  await db
+    .insertInto('stock_location')
+    .values({ id: locationId, name: `WH-${randomUUID()}`, updated_at: new Date() })
+    .execute();
+  await db
+    .insertInto('inventory_level')
+    .values({
+      id: randomUUID(),
+      inventory_item_id: itemId,
+      location_id: locationId,
+      stocked_quantity: stocked,
+      reserved_quantity: reserved,
+      updated_at: new Date(),
+    })
+    .execute();
+  return { itemId, locationId };
 }
 
-let suffixCounter = 0;
-function cryptoSuffix(): string {
-  suffixCounter += 1;
-  return `${suffixCounter}`;
+async function readLevel(itemId: string, locationId: string) {
+  return db
+    .selectFrom('inventory_level')
+    .select(['stocked_quantity', 'reserved_quantity', 'available_quantity'])
+    .where('inventory_item_id', '=', itemId)
+    .where('location_id', '=', locationId)
+    .executeTakeFirstOrThrow();
 }
 
-/**
- * Read the DB-computed available_quantity GENERATED column for a level. It is
- * deliberately absent from the Prisma model (it is GENERATED ALWAYS STORED), so
- * it can only be read via raw SQL. This is the authoritative available value the
- * guarded WHERE evaluates against, so the race tests assert it directly.
- */
-async function readAvailableQuantity(itemId: string, locationId: string): Promise<number> {
-  const rows = await prisma!.$queryRawUnsafe<Array<{ available_quantity: number }>>(
-    `SELECT "available_quantity"
-       FROM "commerce"."inventory_level"
-      WHERE "inventory_item_id" = $1 AND "location_id" = $2`,
-    itemId,
-    locationId,
-  );
-  return rows[0].available_quantity;
+async function countMovements(requestId: string): Promise<number> {
+  const row = await db
+    .selectFrom('stock_movement')
+    .select((eb) => eb.fn.countAll().as('c'))
+    .where('request_id', '=', requestId)
+    .executeTakeFirstOrThrow();
+  return Number(row.c);
 }
 
-describe('b3 guarded reservation (Dockerized Postgres)', () => {
-  it('runs the reserve transaction at READ COMMITTED', async () => {
-    const isolation = await reserveTransaction(prisma!, async (tx) => {
-      const rows = await tx.$queryRawUnsafe<Array<{ transaction_isolation: string }>>(
-        'SHOW transaction_isolation',
-      );
-      return rows[0].transaction_isolation;
-    });
-    expect(isolation).toBe('read committed');
-  });
+async function countReservations(requestId: string): Promise<number> {
+  const row = await db
+    .selectFrom('reservation')
+    .select((eb) => eb.fn.countAll().as('c'))
+    .where('request_id', '=', requestId)
+    .executeTakeFirstOrThrow();
+  return Number(row.c);
+}
 
-  it('two concurrent reserves of the last unit: exactly one ok:true, one ok:false with shortages', async () => {
-    const { itemId, locationId } = await seedLevel(1);
-
-    // Both reservers race for the single available unit, each in its own real
-    // READ COMMITTED transaction. The row write-lock serializes them: the loser
-    // re-evaluates WHERE available >= 1 against the winner's committed row,
-    // matches zero rows, and returns ok:false (no throw, no oversell).
-    const [a, b] = await Promise.all([
-      reserveTransaction(prisma!, (tx) =>
-        reserve(tx, { inventoryItemId: itemId, locationId, needed: 1, requestId: 'race-a' }),
-      ),
-      reserveTransaction(prisma!, (tx) =>
-        reserve(tx, { inventoryItemId: itemId, locationId, needed: 1, requestId: 'race-b' }),
-      ),
-    ]);
-
-    const oks = [a, b].filter((r) => r.ok);
-    const fails = [a, b].filter((r) => !r.ok);
-    expect(oks).toHaveLength(1);
-    expect(fails).toHaveLength(1);
-    const failure = fails[0];
-    if (failure.ok) throw new Error('unreachable');
-    expect(failure.shortages).toEqual([
-      { inventoryItemId: itemId, locationId, needed: 1, available: 0 },
-    ]);
-
-    // The winner reserved exactly the one unit; the ledger has exactly one reserve.
-    const level = await prisma!.inventoryLevel.findUniqueOrThrow({
-      where: { inventoryItemId_locationId: { inventoryItemId: itemId, locationId } },
-    });
-    expect(level.reservedQuantity).toBe(1);
-    const movements = await prisma!.stockMovement.count({
-      where: { inventoryItemId: itemId, movementType: 'reserve' },
-    });
-    expect(movements).toBe(1);
-    // The DB-computed available is now exactly 0 (stocked 1 - reserved 1): the
-    // structural source of the loser's zero-row match.
-    expect(await readAvailableQuantity(itemId, locationId)).toBe(0);
-  });
-
-  it('a forgotten-guard write path is caught by the b2 CHECK backstop', async () => {
-    const { itemId, locationId } = await seedLevel(3);
-
-    // Simulate a path that forgot the WHERE available >= needed guard: push
-    // reserved past stocked with a bare UPDATE. The reserved <= stocked CHECK
-    // rejects it, so oversell is impossible even if the application guard is bypassed.
-    await expect(
-      prisma!.$executeRawUnsafe(
-        `UPDATE "commerce"."inventory_level"
-            SET "reserved_quantity" = "stocked_quantity" + 1
-          WHERE "inventory_item_id" = $1 AND "location_id" = $2`,
-        itemId,
-        locationId,
-      ),
-    ).rejects.toThrow(/inventory_level_reserved_lte_stocked_check/);
-  });
-
+describe('reserve: sequential guards (tenant schema, Dockerized Postgres)', () => {
   it('a duplicate request_id is a no-op (idempotent)', async () => {
     const { itemId, locationId } = await seedLevel(10);
 
-    const first = await reserveTransaction(prisma!, (tx) =>
-      reserve(tx, { inventoryItemId: itemId, locationId, needed: 2, requestId: 'idem-1' }),
+    const first = await reserveTransaction(db, (trx) =>
+      reserve(trx, tgId, { inventoryItemId: itemId, locationId, needed: 2, requestId: 'idem-1' }),
     );
-    const second = await reserveTransaction(prisma!, (tx) =>
-      reserve(tx, { inventoryItemId: itemId, locationId, needed: 2, requestId: 'idem-1' }),
+    const second = await reserveTransaction(db, (trx) =>
+      reserve(trx, tgId, { inventoryItemId: itemId, locationId, needed: 2, requestId: 'idem-1' }),
     );
 
     expect(first.ok).toBe(true);
-    expect(second).toEqual(first); // same reservation id returned, not a second reserve
-
-    // Reserved moved by 2 once, not twice; exactly one movement + one reservation.
-    const level = await prisma!.inventoryLevel.findUniqueOrThrow({
-      where: { inventoryItemId_locationId: { inventoryItemId: itemId, locationId } },
-    });
-    expect(level.reservedQuantity).toBe(2);
-    expect(await prisma!.stockMovement.count({ where: { requestId: 'idem-1' } })).toBe(1);
-    expect(await prisma!.reservation.count({ where: { requestId: 'idem-1' } })).toBe(1);
+    expect(second).toEqual(first); // same reservation id, not a second reserve
+    expect((await readLevel(itemId, locationId)).reserved_quantity).toBe(2);
+    expect(await countMovements('idem-1')).toBe(1);
+    expect(await countReservations('idem-1')).toBe(1);
   });
 
   it('omitting locationId resolves the per-workspace default and never creates a NULL-location reservation', async () => {
     const { itemId, locationId } = await seedLevel(5);
-    await prisma!.fulfillmentLocationDefault.create({
-      data: { workspaceId: DEFAULT_WORKSPACE_ID, locationId },
-    });
+    await db
+      .insertInto('fulfillment_location_default')
+      .values({ workspace_id: DEFAULT_WORKSPACE_ID, location_id: locationId, updated_at: new Date() })
+      .execute();
 
-    const result = await reserveTransaction(prisma!, async (tx) => {
-      const resolved = await resolveLocation(tx); // no explicit location
-      expect(resolved).toBe(locationId);
-      return reserve(tx, { inventoryItemId: itemId, needed: 1, requestId: 'default-loc-1' });
+    const result = await reserveTransaction(db, async (trx) => {
+      expect(await resolveLocation(trx)).toBe(locationId); // no explicit location
+      return reserve(trx, tgId, { inventoryItemId: itemId, needed: 1, requestId: 'default-loc-1' });
     });
 
     expect(result.ok).toBe(true);
-    const reservation = await prisma!.reservation.findUniqueOrThrow({
-      where: { requestId: 'default-loc-1' },
-    });
-    expect(reservation.locationId).toBe(locationId); // concrete, NOT NULL
+    const reservation = await db
+      .selectFrom('reservation')
+      .select('location_id')
+      .where('request_id', '=', 'default-loc-1')
+      .executeTakeFirstOrThrow();
+    expect(reservation.location_id).toBe(locationId); // concrete, NOT NULL
   });
 
-  it('a kit reservation locks item rows in ASCENDING inventory_item_id order (deadlock-free under concurrency)', async () => {
-    // Two items with deterministic ascending ids, same location, ample stock.
-    const location = await prisma!.stockLocation.create({ data: { name: 'kit-WH' } });
-    const itemA = await prisma!.inventoryItem.create({ data: { id: 'kit-item-aaaa', sku: `KIT-A-${cryptoSuffix()}` } });
-    const itemB = await prisma!.inventoryItem.create({ data: { id: 'kit-item-bbbb', sku: `KIT-B-${cryptoSuffix()}` } });
-    for (const item of [itemA, itemB]) {
-      await prisma!.inventoryLevel.create({
-        data: { inventoryItemId: item.id, locationId: location.id, stockedQuantity: 100, reservedQuantity: 0 },
-      });
-    }
-
-    // Two concurrent kits each need BOTH items, supplied in OPPOSITE input order.
-    // Unordered locking would let one grab A->B and the other B->A and deadlock;
-    // reserveKit sorts ascending, so both lock A then B and serialize cleanly.
-    const [k1, k2] = await Promise.all([
-      reserveTransaction(prisma!, (tx) =>
-        reserveKit(tx, {
-          components: [
-            { inventoryItemId: itemB.id, requiredQuantity: 1 },
-            { inventoryItemId: itemA.id, requiredQuantity: 1 },
-          ],
-          locationId: location.id,
-          requestId: 'kit-race-1',
-        }),
-      ),
-      reserveTransaction(prisma!, (tx) =>
-        reserveKit(tx, {
-          components: [
-            { inventoryItemId: itemA.id, requiredQuantity: 1 },
-            { inventoryItemId: itemB.id, requiredQuantity: 1 },
-          ],
-          locationId: location.id,
-          requestId: 'kit-race-2',
-        }),
-      ),
-    ]);
-
-    expect(k1.ok).toBe(true);
-    expect(k2.ok).toBe(true);
-    // Both kits reserved one of each item: reserved_quantity == 2 per item.
-    for (const item of [itemA, itemB]) {
-      const level = await prisma!.inventoryLevel.findUniqueOrThrow({
-        where: { inventoryItemId_locationId: { inventoryItemId: item.id, locationId: location.id } },
-      });
-      expect(level.reservedQuantity).toBe(2);
-    }
-  });
-
-  it('a half-completed transfer fails to commit; a balanced pair commits (deferred trigger)', async () => {
-    const item = await prisma!.inventoryItem.create({ data: { sku: `XFER-${cryptoSuffix()}` } });
-    const src = await prisma!.stockLocation.create({ data: { name: 'xfer-src' } });
-    const dst = await prisma!.stockLocation.create({ data: { name: 'xfer-dst' } });
-
-    // A lone transfer half: at COMMIT the deferred trigger sees one row (sum != 0,
-    // count != 2) and aborts. So a half-transfer can never persist.
+  it('resolveLocation throws for an unknown explicit location and for a workspace with no default', async () => {
+    await expect(reserveTransaction(db, (trx) => resolveLocation(trx, randomUUID()))).rejects.toThrow(
+      /does not exist/,
+    );
     await expect(
-      prisma!.stockMovement.create({
-        data: {
-          inventoryItemId: item.id,
-          locationId: src.id,
-          movementType: 'transfer',
-          quantity: -5,
-          requestId: `xfer-half-${cryptoSuffix()}`,
-          transferGroupId: 'tg-half',
-        },
-      }),
-    ).rejects.toThrow(/unbalanced|check_violation|transfer group/i);
-
-    // The balanced pair (-5 out of src, +5 into dst, same group) commits.
-    const groupId = 'tg-whole';
-    await prisma!.$transaction(async (tx) => {
-      await tx.stockMovement.create({
-        data: {
-          inventoryItemId: item.id,
-          locationId: src.id,
-          movementType: 'transfer',
-          quantity: -5,
-          requestId: `xfer-out-${cryptoSuffix()}`,
-          transferGroupId: groupId,
-        },
-      });
-      await tx.stockMovement.create({
-        data: {
-          inventoryItemId: item.id,
-          locationId: dst.id,
-          movementType: 'transfer',
-          quantity: 5,
-          requestId: `xfer-in-${cryptoSuffix()}`,
-          transferGroupId: groupId,
-        },
-      });
-    });
-
-    const count = await prisma!.stockMovement.count({ where: { transferGroupId: groupId } });
-    expect(count).toBe(2);
+      reserveTransaction(db, (trx) => resolveLocation(trx, undefined, 'workspace-without-default')),
+    ).rejects.toThrow(/no default fulfillment location/);
   });
 
-  it('two CONCURRENT reserves with the SAME request_id: both ok:true, same reservationId, single decrement (idempotent under the race)', async () => {
-    // Ample stock, so this is NOT a shortage race: it isolates the IDEMPOTENCY
-    // race. Two reserveWithRetry calls fire the SAME request_id via Promise.all.
-    // Both pass the read-then-write pre-check under READ COMMITTED (each sees null),
-    // both run the guarded decrement, and the LOSER trips the UNIQUE(request_id) on
-    // the winner's commit. The loser's transaction aborts (rolling back its own
-    // guarded decrement, so reserved bumps EXACTLY once) and reserveWithRetry
-    // re-reads the winner's committed reservation in a FRESH transaction, returning
-    // the idempotent { ok:true, reservationId } with the SAME id.
-    const { itemId, locationId } = await seedLevel(50);
-    const requestId = 'concurrent-dup-1';
-
-    const [a, b] = await Promise.all([
-      reserveWithRetry(prisma!, { inventoryItemId: itemId, locationId, needed: 3, requestId }),
-      reserveWithRetry(prisma!, { inventoryItemId: itemId, locationId, needed: 3, requestId }),
-    ]);
-
-    // BOTH resolve ok:true with the SAME reservationId (no unhandled 500-shaped throw).
-    expect(a.ok).toBe(true);
-    expect(b.ok).toBe(true);
-    if (!a.ok || !b.ok) throw new Error('unreachable');
-    expect(a.reservationId).toBe(b.reservationId);
-
-    // Exactly ONE stock_movement row and ONE reservation row for the request_id.
-    expect(await prisma!.stockMovement.count({ where: { requestId } })).toBe(1);
-    expect(await prisma!.reservation.count({ where: { requestId } })).toBe(1);
-
-    // reserved bumped EXACTLY once (by 3), not twice: no double-decrement.
-    const level = await prisma!.inventoryLevel.findUniqueOrThrow({
-      where: { inventoryItemId_locationId: { inventoryItemId: itemId, locationId } },
-    });
-    expect(level.reservedQuantity).toBe(3);
-    expect(await readAvailableQuantity(itemId, locationId)).toBe(47);
-  });
-
-  it('uncontended shortage: reserve needed > available returns ok:false with the generated-column available, and writes nothing', async () => {
-    // No concurrency: a single reserve for more than is available. The guarded
-    // WHERE matches zero rows, so the contract is { ok:false } with the shortage
-    // available == the DB-computed available_quantity, and NOTHING is written.
+  it('uncontended shortage: needed > available returns ok:false with the generated-column available, and writes nothing', async () => {
     const { itemId, locationId } = await seedLevel(3, 0);
 
-    const result = await reserveTransaction(prisma!, (tx) =>
-      reserve(tx, { inventoryItemId: itemId, locationId, needed: 5, requestId: 'shortage-uncontended-1' }),
+    const result = await reserveTransaction(db, (trx) =>
+      reserve(trx, tgId, { inventoryItemId: itemId, locationId, needed: 5, requestId: 'shortage-1' }),
     );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
-    const generatedAvailable = await readAvailableQuantity(itemId, locationId);
-    expect(generatedAvailable).toBe(3);
+    const level = await readLevel(itemId, locationId);
+    expect(level.available_quantity).toBe(3);
     expect(result.shortages).toEqual([
-      { inventoryItemId: itemId, locationId, needed: 5, available: generatedAvailable },
+      { inventoryItemId: itemId, locationId, needed: 5, available: level.available_quantity },
     ]);
-
-    // Nothing changed: reserved still 0, no movement, no reservation.
-    const level = await prisma!.inventoryLevel.findUniqueOrThrow({
-      where: { inventoryItemId_locationId: { inventoryItemId: itemId, locationId } },
-    });
-    expect(level.reservedQuantity).toBe(0);
-    expect(await prisma!.stockMovement.count({ where: { requestId: 'shortage-uncontended-1' } })).toBe(0);
-    expect(await prisma!.reservation.count({ where: { requestId: 'shortage-uncontended-1' } })).toBe(0);
+    expect(level.reserved_quantity).toBe(0);
+    expect(await countMovements('shortage-1')).toBe(0);
+    expect(await countReservations('shortage-1')).toBe(0);
   });
 
-  it('applyInventoryEffect(release): releasing more than reserved is rejected and the level is unchanged', async () => {
-    const { itemId, locationId } = await seedLevel(10, 2); // reserved 2
+  it('rejects a non-positive quantity before touching any row', async () => {
+    const { itemId, locationId } = await seedLevel(3);
+    for (const needed of [0, -1, 1.5]) {
+      await expect(
+        reserveTransaction(db, (trx) =>
+          reserve(trx, tgId, { inventoryItemId: itemId, locationId, needed, requestId: `bad-${needed}` }),
+        ),
+      ).rejects.toThrow(/must be a positive integer/);
+    }
+    expect((await readLevel(itemId, locationId)).reserved_quantity).toBe(0);
+  });
+
+  it('a kit with ONE short component fails whole: shortages listed, nothing written for any component', async () => {
+    const location = await seedLevel(10); // ample component
+    const shortItem = randomUUID();
+    await db
+      .insertInto('inventory_item')
+      .values({ id: shortItem, sku: `SKU-${randomUUID()}`, updated_at: new Date() })
+      .execute();
+    await db
+      .insertInto('inventory_level')
+      .values({
+        id: randomUUID(),
+        inventory_item_id: shortItem,
+        location_id: location.locationId,
+        stocked_quantity: 1,
+        reserved_quantity: 0,
+        updated_at: new Date(),
+      })
+      .execute();
+
+    const result = await reserveTransaction(db, (trx) =>
+      reserveKit(trx, tgId, {
+        components: [
+          { inventoryItemId: location.itemId, requiredQuantity: 1 },
+          { inventoryItemId: shortItem, requiredQuantity: 1 },
+        ],
+        multiplier: 2,
+        locationId: location.locationId,
+        requestId: 'kit-short-1',
+      }),
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      shortages: [{ inventoryItemId: shortItem, locationId: location.locationId, needed: 2, available: 1 }],
+    });
+    expect((await readLevel(location.itemId, location.locationId)).reserved_quantity).toBe(0);
+    expect((await readLevel(shortItem, location.locationId)).reserved_quantity).toBe(0);
+    const kitMovements = await db
+      .selectFrom('stock_movement')
+      .select((eb) => eb.fn.countAll().as('c'))
+      .where('request_id', 'like', 'kit-short-1:%')
+      .executeTakeFirstOrThrow();
+    expect(Number(kitMovements.c)).toBe(0);
+  });
+});
+
+describe('applyInventoryEffect (tenant schema, Dockerized Postgres)', () => {
+  it('release: releasing more than reserved is rejected and the level is unchanged', async () => {
+    const { itemId, locationId } = await seedLevel(10, 2);
 
     await expect(
-      reserveTransaction(prisma!, (tx) =>
-        applyInventoryEffect(tx, {
+      reserveTransaction(db, (trx) =>
+        applyInventoryEffect(trx, tgId, {
           type: 'release',
           inventoryItemId: itemId,
           locationId,
-          quantity: 5, // more than the 2 reserved
+          quantity: 5,
           requestId: 'release-over-1',
         }),
       ),
     ).rejects.toBeInstanceOf(InventoryShortageError);
 
-    // The aborted transaction left the level untouched and wrote no movement.
-    const level = await prisma!.inventoryLevel.findUniqueOrThrow({
-      where: { inventoryItemId_locationId: { inventoryItemId: itemId, locationId } },
-    });
-    expect(level.stockedQuantity).toBe(10);
-    expect(level.reservedQuantity).toBe(2);
-    expect(await prisma!.stockMovement.count({ where: { requestId: 'release-over-1' } })).toBe(0);
+    const level = await readLevel(itemId, locationId);
+    expect(level.stocked_quantity).toBe(10);
+    expect(level.reserved_quantity).toBe(2);
+    expect(await countMovements('release-over-1')).toBe(0);
   });
 
-  it('applyInventoryEffectWithRetry(release): two CONCURRENT releases with the SAME request_id apply EXACTLY once (idempotent under the race)', async () => {
-    // seed reserved 5; two concurrent releases of 2 with the SAME request_id. Both
-    // pass the pre-check, both run the guarded UPDATE, the loser trips
-    // UNIQUE(request_id) and its transaction rolls back (undoing its own decrement).
-    // applyInventoryEffectWithRetry absorbs the sentinel as the idempotent no-op,
-    // so BOTH calls resolve and reserved drops by EXACTLY 2 (to 3), not 4.
+  it('release (WithRetry): two CONCURRENT releases with the SAME request_id apply EXACTLY once', async () => {
     const { itemId, locationId } = await seedLevel(10, 5);
     const requestId = 'concurrent-release-1';
+    const effect = { type: 'release' as const, inventoryItemId: itemId, locationId, quantity: 2, requestId };
 
     const results = await Promise.allSettled([
-      applyInventoryEffectWithRetry(prisma!, {
-        type: 'release',
-        inventoryItemId: itemId,
-        locationId,
-        quantity: 2,
-        requestId,
-      }),
-      applyInventoryEffectWithRetry(prisma!, {
-        type: 'release',
-        inventoryItemId: itemId,
-        locationId,
-        quantity: 2,
-        requestId,
-      }),
+      applyInventoryEffectWithRetry(db, tgId, effect),
+      applyInventoryEffectWithRetry(db, tgId, effect),
     ]);
 
-    // Neither rejected: the loser recovered as an idempotent no-op.
     expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
-
-    const level = await prisma!.inventoryLevel.findUniqueOrThrow({
-      where: { inventoryItemId_locationId: { inventoryItemId: itemId, locationId } },
-    });
-    expect(level.reservedQuantity).toBe(3); // dropped by 2 once, not 4
-    expect(await prisma!.stockMovement.count({ where: { requestId } })).toBe(1);
+    expect((await readLevel(itemId, locationId)).reserved_quantity).toBe(3); // by 2 once, not 4
+    expect(await countMovements(requestId)).toBe(1);
   });
 
-  it('applyInventoryEffect(fulfill): fulfilling more than reserved/stocked is rejected and the level is unchanged', async () => {
-    const { itemId, locationId } = await seedLevel(4, 2); // stocked 4, reserved 2
+  it('fulfill: fulfilling more than reserved is rejected and the level is unchanged', async () => {
+    const { itemId, locationId } = await seedLevel(4, 2);
 
     await expect(
-      reserveTransaction(prisma!, (tx) =>
-        applyInventoryEffect(tx, {
+      reserveTransaction(db, (trx) =>
+        applyInventoryEffect(trx, tgId, {
           type: 'fulfill',
           inventoryItemId: itemId,
           locationId,
-          quantity: 3, // more than the 2 reserved
+          quantity: 3,
           requestId: 'fulfill-over-1',
         }),
       ),
     ).rejects.toBeInstanceOf(InventoryShortageError);
 
-    const level = await prisma!.inventoryLevel.findUniqueOrThrow({
-      where: { inventoryItemId_locationId: { inventoryItemId: itemId, locationId } },
-    });
-    expect(level.stockedQuantity).toBe(4);
-    expect(level.reservedQuantity).toBe(2);
-    expect(await prisma!.stockMovement.count({ where: { requestId: 'fulfill-over-1' } })).toBe(0);
+    const level = await readLevel(itemId, locationId);
+    expect(level.stocked_quantity).toBe(4);
+    expect(level.reserved_quantity).toBe(2);
+    expect(await countMovements('fulfill-over-1')).toBe(0);
   });
 
-  it('applyInventoryEffect(fulfill): happy path decrements BOTH stocked and reserved by qty and appends a fulfill movement', async () => {
-    const { itemId, locationId } = await seedLevel(10, 6); // stocked 10, reserved 6
+  it('fulfill: happy path decrements BOTH stocked and reserved and appends a fulfill movement', async () => {
+    const { itemId, locationId } = await seedLevel(10, 6);
 
-    await reserveTransaction(prisma!, (tx) =>
-      applyInventoryEffect(tx, {
+    await reserveTransaction(db, (trx) =>
+      applyInventoryEffect(trx, tgId, {
         type: 'fulfill',
         inventoryItemId: itemId,
         locationId,
@@ -495,30 +324,42 @@ describe('b3 guarded reservation (Dockerized Postgres)', () => {
       }),
     );
 
-    // Fulfilling 4 consumes BOTH: stocked 10 -> 6, reserved 6 -> 2.
-    const level = await prisma!.inventoryLevel.findUniqueOrThrow({
-      where: { inventoryItemId_locationId: { inventoryItemId: itemId, locationId } },
-    });
-    expect(level.stockedQuantity).toBe(6);
-    expect(level.reservedQuantity).toBe(2);
-    expect(await readAvailableQuantity(itemId, locationId)).toBe(4);
-
-    const movement = await prisma!.stockMovement.findUniqueOrThrow({
-      where: { requestId: 'fulfill-happy-1' },
-    });
-    expect(movement.movementType).toBe('fulfill');
-    expect(movement.quantity).toBe(4);
+    const level = await readLevel(itemId, locationId);
+    expect(level.stocked_quantity).toBe(6);
+    expect(level.reserved_quantity).toBe(2);
+    expect(level.available_quantity).toBe(4);
+    const movement = await db
+      .selectFrom('stock_movement')
+      .select(['movement_type', 'quantity'])
+      .where('request_id', '=', 'fulfill-happy-1')
+      .executeTakeFirstOrThrow();
+    expect(movement).toEqual({ movement_type: 'fulfill', quantity: 4 });
   });
 
-  it('applyInventoryEffect(adjust): a negative adjust that would strand reservations is rejected (zero rows), level unchanged', async () => {
-    const { itemId, locationId } = await seedLevel(10, 8); // reserved 8
+  it('a replayed request_id is a no-op for every effect type (the ledger already has it)', async () => {
+    const { itemId, locationId } = await seedLevel(10, 6);
+    const effect = {
+      type: 'fulfill' as const,
+      inventoryItemId: itemId,
+      locationId,
+      quantity: 1,
+      requestId: 'fulfill-replay-1',
+    };
+    await reserveTransaction(db, (trx) => applyInventoryEffect(trx, tgId, effect));
+    await reserveTransaction(db, (trx) => applyInventoryEffect(trx, tgId, effect));
 
-    // Removing 5 would drop stocked to 5 < reserved 8: the guard ((stocked+delta)
-    // >= reserved) matches zero rows and surfaces as a shortage error, NOT a CHECK
-    // violation (the guarded UPDATE simply never fires the write).
+    const level = await readLevel(itemId, locationId);
+    expect(level.stocked_quantity).toBe(9); // applied once
+    expect(level.reserved_quantity).toBe(5);
+    expect(await countMovements('fulfill-replay-1')).toBe(1);
+  });
+
+  it('adjust: a negative adjust that would strand reservations is rejected, level unchanged', async () => {
+    const { itemId, locationId } = await seedLevel(10, 8);
+
     await expect(
-      reserveTransaction(prisma!, (tx) =>
-        applyInventoryEffect(tx, {
+      reserveTransaction(db, (trx) =>
+        applyInventoryEffect(trx, tgId, {
           type: 'adjust',
           inventoryItemId: itemId,
           locationId,
@@ -528,24 +369,64 @@ describe('b3 guarded reservation (Dockerized Postgres)', () => {
       ),
     ).rejects.toBeInstanceOf(InventoryShortageError);
 
-    const level = await prisma!.inventoryLevel.findUniqueOrThrow({
-      where: { inventoryItemId_locationId: { inventoryItemId: itemId, locationId } },
-    });
-    expect(level.stockedQuantity).toBe(10);
-    expect(level.reservedQuantity).toBe(8);
-    expect(await prisma!.stockMovement.count({ where: { requestId: 'adjust-strand-1' } })).toBe(0);
+    const level = await readLevel(itemId, locationId);
+    expect(level.stocked_quantity).toBe(10);
+    expect(level.reserved_quantity).toBe(8);
+    expect(await countMovements('adjust-strand-1')).toBe(0);
   });
 
-  it('applyInventoryEffect(adjust): a non-negativity-violating adjust hits the b2 floor CHECK', async () => {
-    const { itemId, locationId } = await seedLevel(3, 0); // reserved 0
-
-    // Through the guarded path, removing 5 from stocked 3 (reserved 0): the strand
-    // guard ((stocked-5) >= reserved) is FALSE, so the guarded UPDATE matches zero
-    // rows and surfaces a shortage error: stocked can never go negative via the
-    // application path.
+  it('adjust: a zero delta is rejected; a positive delta restocks and appends an adjust movement', async () => {
+    const { itemId, locationId } = await seedLevel(2, 0);
     await expect(
-      reserveTransaction(prisma!, (tx) =>
-        applyInventoryEffect(tx, {
+      reserveTransaction(db, (trx) =>
+        applyInventoryEffect(trx, tgId, {
+          type: 'adjust',
+          inventoryItemId: itemId,
+          locationId,
+          delta: 0,
+          requestId: 'adjust-zero-1',
+        }),
+      ),
+    ).rejects.toThrow(/non-zero integer/);
+
+    await reserveTransaction(db, (trx) =>
+      applyInventoryEffect(trx, tgId, {
+        type: 'adjust',
+        inventoryItemId: itemId,
+        locationId,
+        delta: 5,
+        requestId: 'adjust-restock-1',
+      }),
+    );
+    expect((await readLevel(itemId, locationId)).stocked_quantity).toBe(7);
+    expect(await countMovements('adjust-zero-1')).toBe(0);
+    expect(await countMovements('adjust-restock-1')).toBe(1);
+  });
+
+  it('a managed reserve effect that is short raises InventoryShortageError and writes nothing', async () => {
+    const { itemId, locationId } = await seedLevel(1, 0);
+
+    await expect(
+      reserveTransaction(db, (trx) =>
+        applyInventoryEffect(trx, tgId, {
+          type: 'reserve',
+          inventoryItemId: itemId,
+          locationId,
+          quantity: 2,
+          requestId: 'effect-reserve-short-1',
+        }),
+      ),
+    ).rejects.toBeInstanceOf(InventoryShortageError);
+    expect((await readLevel(itemId, locationId)).reserved_quantity).toBe(0);
+    expect(await countMovements('effect-reserve-short-1')).toBe(0);
+  });
+
+  it('adjust below zero: the guarded path refuses, and the floor CHECKs are the database backstop', async () => {
+    const { itemId, locationId } = await seedLevel(3, 0);
+
+    await expect(
+      reserveTransaction(db, (trx) =>
+        applyInventoryEffect(trx, tgId, {
           type: 'adjust',
           inventoryItemId: itemId,
           locationId,
@@ -555,39 +436,19 @@ describe('b3 guarded reservation (Dockerized Postgres)', () => {
       ),
     ).rejects.toBeInstanceOf(InventoryShortageError);
 
-    // And the b2 floor is the database backstop: a bare UPDATE that bypasses the
-    // guard and drives stocked negative is rejected by Postgres directly. With a
-    // valid reserved (>= 0), a negative stocked is unreachable: it ALSO breaks
-    // reserved <= stocked, so Postgres may report either floor; both encode the
-    // same invariant (stocked can never go negative). The non-negativity floor is
-    // exercised in isolation just below.
+    // A bare UPDATE that bypasses the guard and drives stocked negative is
+    // rejected by Postgres directly (the stocked >= 0 floor).
     await expect(
-      prisma!.$executeRawUnsafe(
-        `UPDATE "commerce"."inventory_level"
-            SET "stocked_quantity" = -1
-          WHERE "inventory_item_id" = $1 AND "location_id" = $2`,
-        itemId,
-        locationId,
-      ),
-    ).rejects.toThrow(/inventory_level_(stocked_nonneg|reserved_lte_stocked)_check/);
-
-    // The stocked >= 0 floor CHECK in isolation: drop stocked to -1 while keeping
-    // reserved <= stocked satisfied (reserved also -1). This now trips ONLY the
-    // non-negativity floors, not the lte check, isolating the b2 floor backstop.
+      sql`UPDATE ${sql.id(tenant.schema)}.inventory_level SET stocked_quantity = -1
+          WHERE inventory_item_id = ${itemId} AND location_id = ${locationId}`.execute(db),
+    ).rejects.toThrow(/inventory_level_stocked_nonneg_check/);
     await expect(
-      prisma!.$executeRawUnsafe(
-        `UPDATE "commerce"."inventory_level"
-            SET "stocked_quantity" = -1, "reserved_quantity" = -1
-          WHERE "inventory_item_id" = $1 AND "location_id" = $2`,
-        itemId,
-        locationId,
-      ),
-    ).rejects.toThrow(/inventory_level_(stocked|reserved)_nonneg_check/);
+      sql`UPDATE ${sql.id(tenant.schema)}.inventory_level SET reserved_quantity = -1
+          WHERE inventory_item_id = ${itemId} AND location_id = ${locationId}`.execute(db),
+    ).rejects.toThrow(/inventory_level_reserved_nonneg_check/);
 
-    const level = await prisma!.inventoryLevel.findUniqueOrThrow({
-      where: { inventoryItemId_locationId: { inventoryItemId: itemId, locationId } },
-    });
-    expect(level.stockedQuantity).toBe(3);
-    expect(level.reservedQuantity).toBe(0);
+    const level = await readLevel(itemId, locationId);
+    expect(level.stocked_quantity).toBe(3);
+    expect(level.reserved_quantity).toBe(0);
   });
 });
