@@ -5,7 +5,11 @@
 #   Stage 1 (deps):    install deps with a frozen lockfile (single package, no
 #                      pnpm workspace).
 #   Stage 2 (builder): prisma generate + Next.js standalone build.
-#   Stage 3 (runtime): minimal node + Infisical CLI + the prisma CLI sidecar.
+#   Stage 3 (runtime): minimal node + Infisical CLI + the prisma CLI sidecar +
+#                      the bundled commerce migration step (commerce-migrate.cjs).
+#
+# Start: entrypoint.sh (Infisical login) -> boot.sh (prisma migrate deploy ->
+# commerce public + tenant migrations as the owner role -> node server.js).
 #
 # Secrets are NOT baked in. Infisical injects them at container start via
 # entrypoint.sh (only INFISICAL_UNIVERSAL_AUTH_CLIENT_ID/SECRET + INFISICAL_PROJECT_ID
@@ -81,6 +85,13 @@ RUN pnpm exec prisma generate
 # constructs the lazy Prisma client (which reads the var) but runs NO queries.
 RUN DATABASE_URL=postgresql://stub:stub@localhost:5432/stub pnpm build
 
+# The commerce start step (scripts/commerce-migrate.ts: public migrations + the
+# tenant fleet migration, as the owner role). The standalone output carries
+# neither the source nor tsx, so esbuild bundles the script and everything it
+# imports (postgres.js, @marlinjai/tenant-db, the tenant migrations) into one
+# plain-node file that boot.sh runs.
+RUN pnpm build:boot
+
 # ---------- Stage 3: runtime ----------
 FROM ${NODE_IMAGE} AS runtime
 ARG COMMIT_SHA=unknown
@@ -139,9 +150,12 @@ RUN set -e \
 ENV NODE_PATH=/opt/prisma/node_modules
 ENV PATH=/opt/prisma/node_modules/.bin:$PATH
 
-# The Infisical-aware boot wrapper.
-COPY --chown=node:node entrypoint.sh ./entrypoint.sh
-RUN chmod +x ./entrypoint.sh
+# The commerce start step, bundled in the builder stage (see `pnpm build:boot`).
+COPY --from=builder --chown=node:node /app/dist-boot/commerce-migrate.cjs ./commerce-migrate.cjs
+
+# The Infisical-aware wrapper and the start sequence it hands over to.
+COPY --chown=node:node entrypoint.sh boot.sh ./
+RUN chmod +x ./entrypoint.sh ./boot.sh
 
 USER node
 

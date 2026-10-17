@@ -22,6 +22,7 @@ const eslintConfig = [
       "build/**",
       "coverage/**",
       "docs-dist/**",
+      "dist-boot/**",
       "next-env.d.ts",
     ],
   },
