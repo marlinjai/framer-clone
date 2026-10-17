@@ -17,7 +17,8 @@
 //   5. the start step again: the fleet migration sees the schema, applies
 //      nothing, and re-asserts the append-only REVOKEs;
 //   6. as commerce_app: the backstop holds, a catalog is seeded, an order is
-//      placed, and the placed order and its lines cannot be changed or deleted.
+//      placed, and the placed order and its lines cannot be changed or deleted;
+//   7. the roles file once more on the migrated database: nothing changes.
 // It also pins the privilege shape: commerce_ddl is not a superuser and cannot
 // alter other roles; commerce_app cannot create anything and has search_path ext.
 
@@ -285,5 +286,30 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
     } finally {
       await app.end();
     }
+  });
+  it('re-applying the file on a migrated, provisioned database changes nothing', async () => {
+    await applyRolesFile();
+
+    const [p] = await su!`
+      SELECT
+        (SELECT rolconfig FROM pg_roles WHERE rolname = 'commerce_app') AS app_config,
+        (SELECT rolcanlogin FROM pg_roles WHERE rolname = 'commerce_ddl') AS ddl_login,
+        (SELECT nspowner::regrole::text FROM pg_namespace WHERE nspname = 'ext') AS ext_owner,
+        (SELECT nspowner::regrole::text FROM pg_namespace WHERE nspname = ${schema}) AS schema_owner,
+        has_table_privilege('commerce_app', ${schema + '."order"'}, 'UPDATE') AS app_order_update,
+        has_table_privilege('commerce_app', ${schema + '."order"'}, 'INSERT') AS app_order_insert
+    `;
+    expect(p).toEqual({
+      app_config: ['search_path=ext'],
+      ddl_login: true,
+      ext_owner: 'commerce_ddl',
+      schema_owner: 'commerce_ddl',
+      app_order_update: false,
+      app_order_insert: true,
+    });
+
+    // The start step still runs cleanly afterwards.
+    const result = await runCommerceDeployMigrations({ ownerUrl, appUrl, log: () => {} });
+    expect(result.tenantApplied).toEqual([{ schema, applied: [] }]);
   });
 });
