@@ -21,19 +21,22 @@ Build order decided by Marlin on 2026-10-15: finish the per-company schemas, get
 again, then the invoicing tier on top, then the import of the existing invoices and the
 connections to the suite. The four lines below are in that order.
 
-- [ ] 1. Commerce per company (step MT-18 of the multi-tenancy plan, carried out as the commerce
-  tenant plan): CM-01 to CM-12 are merged. Open: CM-10, every shop page and the four shop routes
-  read the schema of the site's own company instead of the shared `commerce` schema, failing
-  closed for a site without one, with a two-company isolation test through the real routes
-  (in progress on `feat/commerce-cm10-tenant-routes`); then CM-13, the guard checks in CI and
-  Prisma out of the commerce module. Isolation stays schema-per-tenant-group on auth-brain tenant
-  groups (confirmed 2026-10-15, not a database per company). See
-  [commerce tenant plan](docs/plans/2026-06-27-commerce-tenant-db-migration-plan.md). (2026-10-15)
+- [x] 1. Commerce per company (step MT-18 of the multi-tenancy plan, carried out as the commerce
+  tenant plan): every company's shop data lives in its own `tg_<hex32>` Postgres schema on
+  auth-brain tenant groups, every shop page and route reads only that schema and fails closed
+  without one (CM-10, #92), the tenant isolation guards run in CI as `pnpm lint:guards`, and
+  Prisma is out of the commerce module with its test coverage ported (CM-13), including a fix
+  that keeps orders, credit notes and stock movements append-only for the app role. See
+  [commerce tenant plan](docs/plans/2026-06-27-commerce-tenant-db-migration-plan.md). Done
+  2026-10-17.
 - [ ] 2. Running again: production was retired on 2026-09-10 (the app had been down since 27
   July; app, database without backups and the app.lumitra.co record were removed, infra commit
   d15a07d). Redeploy as a new Coolify app and database declared in Terraform, this time with a
   backup schedule, then the cutover of the multi-tenancy plan's wave 5 (MT-19 to MT-23: wildcard
-  DNS for the published sites, certificates, the Coolify host, the configuration switch).
+  DNS for the published sites, certificates, the Coolify host, the configuration switch). On the
+  new database, drop the EMPTY legacy `commerce` schema that the historical Prisma migrations
+  still create (no commerce data survived the retirement; why no migration drops it is in the
+  commerce tenant plan's reality note of 2026-10-17).
   Recommended start without Cloudflare's paid certificate manager (about 10 dollars a month,
   global edge caching); Marlin decides that at this step. MT-01 to MT-17 are merged. See
   [multi-tenancy plan](docs/plans/2026-06-26-multi-tenancy-phase2-plan.md) and
