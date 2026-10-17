@@ -9,6 +9,11 @@
 //     indexes; any other unique violation (a primary-key duplicate, the sku
 //     index) or another SQLSTATE must propagate unchanged, never be swallowed
 //     as an idempotent replay,
+//   - a duplicate-key error on an UNRELATED constraint, raised by the insert
+//     inside reserve itself, propagates unchanged out of reserve AND out of
+//     reserveWithRetry (no idempotent re-read, no second transaction); this
+//     runs reserve end to end on a real Kysely instance whose driver answers
+//     each compiled query from a script instead of a database,
 //   - the input guards fire before any query (non-positive / fractional
 //     quantities, an empty kit, a zero adjust delta).
 //
@@ -19,7 +24,16 @@
 // the postgres.js 23505 cases here.
 
 import { describe, expect, it, vi } from 'vitest';
-import type { Kysely } from 'kysely';
+import {
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+  type CompiledQuery,
+  type DatabaseConnection,
+  type Driver,
+  type QueryResult,
+} from 'kysely';
 
 import type { CommerceDB } from '../../db-types';
 import {
@@ -28,6 +42,7 @@ import {
   reserve,
   reserveKit,
   reserveTransaction,
+  reserveWithRetry,
   RESERVE_ISOLATION_LEVEL,
 } from '../reserve';
 
@@ -132,5 +147,88 @@ describe('input guards fire before any query', () => {
         requestId: 'adj-0',
       }),
     ).rejects.toThrow(/adjust\.delta must be a non-zero integer/);
+  });
+});
+
+/**
+ * A real Kysely<CommerceDB> (Postgres compiler, real query builders and
+ * transactions) over a scripted driver: `answer` receives each compiled SQL
+ * statement and returns its result or throws. Lets reserve run its full
+ * control flow without a database.
+ */
+function scriptedDb(answer: (sqlText: string) => QueryResult<unknown>) {
+  const statements: string[] = [];
+  let transactions = 0;
+  const connection: DatabaseConnection = {
+    async executeQuery<R>(query: CompiledQuery): Promise<QueryResult<R>> {
+      statements.push(query.sql);
+      return answer(query.sql) as QueryResult<R>;
+    },
+    async *streamQuery() {
+      throw new Error('streaming is not scripted');
+    },
+  };
+  const driver: Driver = {
+    async init() {},
+    async acquireConnection() {
+      return connection;
+    },
+    async beginTransaction() {
+      transactions += 1;
+    },
+    async commitTransaction() {},
+    async rollbackTransaction() {},
+    async releaseConnection() {},
+    async destroy() {},
+  };
+  const db = new Kysely<CommerceDB>({
+    dialect: {
+      createAdapter: () => new PostgresAdapter(),
+      createDriver: () => driver,
+      createIntrospector: (k) => new PostgresIntrospector(k),
+      createQueryCompiler: () => new PostgresQueryCompiler(),
+    },
+  });
+  return { db, statements, transactionCount: () => transactions };
+}
+
+describe('an unrelated duplicate-key error propagates unchanged out of reserve', () => {
+  // A managed variant with stock: policy lookup, location check, idempotency
+  // pre-check (nothing yet), the guarded UPDATE matching one row, and then the
+  // stock_movement INSERT fails on its PRIMARY KEY, not on a request_id index.
+  const pkViolation = pgError('23505', 'stock_movement_pkey');
+  const answer = (sqlText: string): QueryResult<unknown> => {
+    if (/from "product_variant"/.test(sqlText)) {
+      return { rows: [{ manage_inventory: true, allow_backorder: false }] };
+    }
+    if (/from "stock_location"/.test(sqlText)) return { rows: [{ id: 'loc-1' }] };
+    if (/from "stock_movement"/.test(sqlText)) return { rows: [] };
+    if (/^\s*UPDATE/i.test(sqlText)) return { rows: [], numAffectedRows: BigInt(1) };
+    if (/insert into "stock_movement"/.test(sqlText)) throw pkViolation;
+    throw new Error(`unscripted statement: ${sqlText}`);
+  };
+  const args = {
+    inventoryItemId: 'inv-1',
+    variantId: 'var-1',
+    locationId: 'loc-1',
+    needed: 1,
+    requestId: 'req-pk',
+  };
+
+  it('reserve rethrows the very same error object (not the DuplicateRequestError sentinel)', async () => {
+    const { db, statements } = scriptedDb(answer);
+    const caught = await reserve(db, TG, args).catch((e: unknown) => e);
+    expect(caught).toBe(pkViolation);
+    expect((caught as Error).name).not.toBe('DuplicateRequestError');
+    // It really reached the guarded UPDATE and the movement INSERT.
+    expect(statements.some((q) => /^\s*UPDATE/i.test(q))).toBe(true);
+    expect(statements.some((q) => /insert into "stock_movement"/.test(q))).toBe(true);
+  });
+
+  it('reserveWithRetry propagates it too: one transaction, no idempotent re-read', async () => {
+    const { db, statements, transactionCount } = scriptedDb(answer);
+    await expect(reserveWithRetry(db, TG, args)).rejects.toBe(pkViolation);
+    expect(transactionCount()).toBe(1);
+    expect(statements.some((q) => /from "reservation"/.test(q))).toBe(false);
   });
 });
