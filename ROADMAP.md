@@ -46,19 +46,21 @@ connections to the suite. The four lines below are in that order.
   (proven by `roles.itest.ts`), and `deploy/README.md` matches the infra RUNBOOK
   (`infra/deployments/framer-clone/RUNBOOK.md`), whose steps 1, 7, 9 and 10 now simplify.
   (2026-10-17)
-- [ ] 3. The Books: build the Customer + SalesDocument + DocumentTemplate schema and the invoices/
-  offers document tier for Marlin's own accounting (joins with receipt-ocr-app's expense side).
-  Roughly 85 percent of the new code lands in this repo. Decided 2026-08-15, not yet started.
-  Re-confirmed by Marlin on 2026-10-14 as the place invoices are written (offers, use by other
-  businesses, products and services shared with commerce), with these settings from
-  receipt-ocr-app's plan "Invoicing and income" of 2026-10-14: company Whiz-Art Media, documents
-  default to the small-business treatment (section 19 of the value-added tax act, section 34a
-  invoice fields), invoice numbers continue the plain integer series at 62 (not
-  `RE-{YYYY}-{####}`), and `Customer` points to the shared contacts database for name and address
-  instead of holding its own copy. receipt-ocr-app mirrors issued invoices read-only. Amended
-  2026-10-15: the invoice tables live in each company's schema as per-tenant Kysely migrations,
-  not in Prisma with a company column, so they are built after line 1 and never migrated later.
-  See [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md). (2026-10-15)
+- [ ] 3. The Books: the Customer + SalesDocument + DocumentTemplate document tier for Marlin's own
+  accounting (invoices and credit notes now, offers later; joins with receipt-ocr-app's expense
+  side), in each company's own schema. Phase 1 is built (2026-10-17): migration `007_books` with
+  the seven tables and the triggers that freeze an issued document for every database role,
+  customers over the shared contacts database, gap-free numbering from a locked counter (invoices
+  continue the plain series at 62), the German VAT rules shared with the order path, the
+  repository API with idempotent issue and cancellation through a credit note, and the tests
+  (four stateful-flow paths, concurrency, two companies in one schema, the real contacts
+  package). Open: phase 2 (routes and the editor, with the `books` grant check) and phase 3
+  (templates, PDF rendering), then running `pnpm books:init-company` for Whiz-Art Media. Settings
+  from receipt-ocr-app's plan "Invoicing and income" of 2026-10-14: company Whiz-Art Media,
+  small-business treatment by default (section 19 of the value-added tax act, section 34a
+  invoice fields), `Customer` points to the shared contacts database for name and address.
+  See [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md), section "Phase 1
+  build specification" and its deviations in P1.12. (2026-10-17)
 - [ ] 4. Existing invoices and the suite: import invoices 28 to 61 as historical documents
   with their original PDFs attached (never re-rendered), then connect: the read-only endpoint
   receipt-ocr-app pulls issued invoices from (service-account key from auth-brain; the receipts

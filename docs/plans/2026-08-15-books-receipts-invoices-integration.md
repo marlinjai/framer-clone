@@ -909,6 +909,56 @@ Each follows from the documents named; none needed Marlin.
     (Kleinunternehmerregelung).`, stored per company and editable; decided, say so if you
     disagree.
 
+**Deviations found while building phase 1 (2026-10-17).** Each follows from the spec's own
+reasoning; decided, say so if you disagree.
+
+16. **The codegen diff check could not hold as written.** `pnpm db:codegen-commerce` failed on
+    main (kysely-codegen needs the `pg` driver, which the repository does not carry), and even
+    when it ran it wrote a three-line header over kysely-codegen's raw output while the committed
+    `db-types.ts` was hand-annotated, so `git diff --exit-code` could never be clean. Taken: the
+    script now introspects the provisioned schema itself and writes the whole committed file,
+    with what introspection cannot see (trigger-maintained columns, JSONB shapes, docs) declared
+    next to its reason; an unmapped JSONB column or type fails the run. kysely-codegen is removed.
+    The commerce types came out unchanged except for one fix: the file now defines its own
+    `Generated<T>` (as kysely-codegen does), because kysely's does not unwrap a nested
+    `ColumnType`, so `Generated<Timestamp>` had been selecting as an object type.
+17. **`toJsonb` is a cast expression, not `JSON.stringify`.** postgres.js JSON-serializes a
+    parameter the server types as jsonb, so a pre-serialized string was stored as a JSON string
+    scalar. `toJsonb(value)` returns `sql\`${JSON.stringify(value)}::text::jsonb\`` (the
+    contacts-core pattern), and `JsonColumn<T>` accepts only that branded expression on write, so
+    passing a plain string is a compile error.
+18. **Guards `DEFAULT_ROOTS`.** Already `['src', 'scripts']` since CM-13, so `src/server/books`
+    and `src/server/tax` are scanned without adding them; nothing added.
+19. **Re-running `initBooksCompany`.** Read literally, "a lower `nextValue` is `COUNTER_EXISTS`"
+    makes every re-run fail once a document was issued (the counter is then above the configured
+    start), which contradicts "idempotent". Taken: an existing counter is never changed; a
+    different format, or a requested `nextValue` ABOVE the current value (it would skip numbers),
+    is `COUNTER_EXISTS`; a value at or below the current one leaves it as it is. The settings row
+    is upserted (configuration; issued documents carry their own sender snapshot).
+20. **The issue-date order check runs after the counter lock** (step 7, not step 6), where
+    concurrent issues of one company are already serialized; the format and "not in the future"
+    checks run up front, before any read. Same rule, no race.
+21. **Event timestamps are stamped by the repository**, strictly increasing within the process,
+    because `CURRENT_TIMESTAMP` is frozen per transaction and a cancellation writes three events
+    in one; events are read ordered by `(created_at, id)`.
+22. **Small extensions of the stated interfaces:** `TaxProfile` carries `supported` (false for a
+    third country under regular taxation, the flag issue turns into `TAX_CASE_UNSUPPORTED`);
+    `booksScope` takes an optional fourth argument `{ recipients }` (the `RecipientDirectory` the
+    tests substitute; the default is the contacts database); a draft without a customer is
+    computed as a domestic consumer under its own key (`<status>|||`), so the first customer
+    always changes the key; the shared column lists live in `repository/columns.ts`, the derived
+    tax state in `repository/taxState.ts`, the event writer in `repository/events.ts`; an offer's
+    `issued -> draft` skips the frozen-row comparison (the draft CHECK forces the number off).
+23. **`books:init-company` flags.** Beside `--tenant-group`, `--tenant` and `--sender`, the script
+    takes `--tax-status` and repeated `--counter 'invoice={n}:62'` (formats are configuration,
+    never constants), and `--sender-file-only` to skip auth-brain. It reads the company through
+    `GET /api/admin/machine/tenants?group_id=...` with `AUTH_BRAIN_ADMIN_API_KEY` (the SDK has no
+    company read); auth-brain wins for legal name, VAT id and billing address.
+24. **Not done in phase 1, because it is a live action:** scaffolding `CONTACTS_DATABASE_URL` as a
+    placeholder in framer-clone's Infisical project and copying the value with `copy_secret`.
+    The variable is documented in `.env.example`; unset, issuing answers
+    `RECIPIENT_UNAVAILABLE`. It belongs with roadmap line 4's production wiring.
+
 ## 1. Audit: what actually exists today
 
 Verified by reading the repos on 2026-08-15, not inferred from docs.
