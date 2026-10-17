@@ -19,6 +19,7 @@
 //   1. `.selectFrom('tenant_groups')`        — BARE GLOBAL → COMPILE ERROR.
 //   2. `.selectFrom('public.tenant_groups')` — qualified global → compiles.
 //   3. `.selectFrom('product')`              — bare commerce table → compiles.
+//   3b. `.selectFrom('sales_document')`      — bare Books table → compiles.
 
 import { assertTenantGroupId } from '@marlinjai/tenant-db';
 import { getCommerceBase, tenantDb } from '../db';
@@ -42,6 +43,12 @@ export function _commercePublicPrefixDisciplineProbe(): void {
   // (3) A per-tenant commerce table referenced BARE compiles and resolves to
   // `tg_<id>.product` via withSchema.
   db.selectFrom('product');
+
+  // (3b) A Books table (007_books) is a per-tenant table too: bare key compiles,
+  // and the `public.` form does not.
+  db.selectFrom('sales_document');
+  // @ts-expect-error 'public.sales_document' is not a key; Books tables are bare-only.
+  db.selectFrom('public.sales_document');
 
   // (4) Conversely, a commerce table referenced WITH a `public.` prefix must NOT
   // compile: commerce tables exist ONLY as bare keys. This keeps the two
