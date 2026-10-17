@@ -44,7 +44,7 @@ import {
 import postgres from 'postgres';
 
 import type { CommerceDB } from '../../db-types';
-import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
+import { commerceProvisionOptions } from '../../provisioning/provision';
 import { createOrder, type Cart } from '../createOrder';
 
 const DB_NAME = 'framer_clone_test';
@@ -184,18 +184,8 @@ beforeAll(async () => {
   await owner.unsafe(`CREATE ROLE ${APP_ROLE} LOGIN`);
   await migratePublic(owner);
 
-  await provisionTenant(owner, {
-    tenantGroupId: TG_A,
-    slug: 'cm09-iso-a',
-    appRole: APP_ROLE,
-    tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
-  });
-  await provisionTenant(owner, {
-    tenantGroupId: TG_B,
-    slug: 'cm09-iso-b',
-    appRole: APP_ROLE,
-    tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
-  });
+  await provisionTenant(owner, commerceProvisionOptions(TG_A, 'cm09-iso-a'));
+  await provisionTenant(owner, commerceProvisionOptions(TG_B, 'cm09-iso-b'));
 
   ownerBase = createNodeDb<CommerceDB>({ connectionString: ownerUrl });
 }, 180_000);

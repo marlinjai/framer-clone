@@ -39,6 +39,7 @@ import {
 
 import type { CommerceDB } from '../../db-types';
 import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
+import { commerceProvisionOptions } from '../../provisioning/provision';
 import { catalogRepository } from '../catalog';
 import { pricingRepository } from '../pricing';
 
@@ -84,12 +85,9 @@ beforeAll(async () => {
   await migratePublic(owner);
 
   // TG_A WITH grants; TG_B WITHOUT (so commerce_app is denied on tg_b).
-  await provisionTenant(owner, {
-    tenantGroupId: TG_A,
-    slug: 'cm06-price-a',
-    appRole: APP_ROLE,
-    tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
-  });
+  await provisionTenant(owner, commerceProvisionOptions(TG_A, 'cm06-price-a'));
+  // Deliberately NOT the production options: tg_b is the never-granted
+  // schema the GRANT PROOF needs (commerce_app holds no rights on it).
   await provisionTenant(owner, {
     tenantGroupId: TG_B,
     slug: 'cm06-price-b',

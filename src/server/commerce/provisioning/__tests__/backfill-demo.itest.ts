@@ -51,7 +51,7 @@ import {
 import postgres from 'postgres';
 
 import type { CommerceDB } from '../../db-types';
-import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
+import { commerceProvisionOptions } from '../provision';
 import { getCommerceServerRepository } from '../../repository/read';
 import { createOrder, type Cart } from '../../order/createOrder';
 import { backfillDemoTenant } from '../backfill-demo';
@@ -110,12 +110,7 @@ beforeAll(async () => {
   // (b) Roles + the public tenant tier + the demo's tg_<demo> schema.
   await owner.unsafe(`CREATE ROLE ${APP_ROLE} LOGIN`);
   await migratePublic(owner);
-  await provisionTenant(owner, {
-    tenantGroupId: TG_DEMO,
-    slug: 'demo',
-    appRole: APP_ROLE,
-    tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
-  });
+  await provisionTenant(owner, commerceProvisionOptions(TG_DEMO, 'demo'));
 
   ownerBase = createNodeDb<CommerceDB>({ connectionString: ownerUrl });
   prisma = new PrismaClient({ datasourceUrl: ownerUrl });

@@ -37,7 +37,7 @@ import {
 import postgres from 'postgres';
 
 import type { CommerceDB } from '../../db-types';
-import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
+import { commerceProvisionOptions } from '../../provisioning/provision';
 import {
   reserveKitWithRetry,
   reserveTransaction,
@@ -67,12 +67,11 @@ beforeAll(async () => {
   const ownerUrl = `postgresql://postgres@${host}:${port}/${DB_NAME}`;
 
   owner = postgres(ownerUrl, { max: 1, prepare: false, transform: { undefined: null } });
+  // The production provisioning options grant to and lock the app role, so it
+  // must exist (TRUST auth: no password).
+  await owner.unsafe('CREATE ROLE commerce_app LOGIN');
   await migratePublic(owner);
-  await provisionTenant(owner, {
-    tenantGroupId: TG,
-    slug: 'cm08-concurrency',
-    tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
-  });
+  await provisionTenant(owner, commerceProvisionOptions(TG, 'cm08-concurrency'));
 
   ownerBase = createNodeDb<CommerceDB>({ connectionString: ownerUrl });
 }, 180_000);
