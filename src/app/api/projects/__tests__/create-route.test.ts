@@ -38,16 +38,17 @@ vi.mock('@/server/sites', async (importActual) => {
 });
 
 const mockProvision = vi.fn();
-vi.mock('@/server/commerce/provisioning/provision', () => ({
-  provisionCommerceTenant: (...args: unknown[]) => mockProvision(...args),
-}));
+vi.mock('@/server/commerce/provisioning/provision', async (importActual) => {
+  const actual = await importActual<typeof import('@/server/commerce/provisioning/provision')>();
+  return { ...actual, ensureCommerceTenant: (...args: unknown[]) => mockProvision(...args) };
+});
 
 import { getSiteRepository } from '@/server/sites';
 import { POST } from '../route';
 
 const getRepoMock = vi.mocked(getSiteRepository);
 
-const SCOPE = { workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra' };
+const SCOPE = { workspaceId: 'ws_marlin', tenantGroupId: '018f9c10-0000-7000-8000-00000000c0de' };
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -55,7 +56,7 @@ function makeSession() {
   return {
     user: { id: 'user-1' },
     session: {},
-    tenants: [{ id: 'tenant-1', group_id: 'tg_lumitra' }],
+    tenants: [{ id: 'tenant-1', group_id: '018f9c10-0000-7000-8000-00000000c0de' }],
     workspaces: [{ id: 'ws_marlin', tenant_id: 'tenant-1' }],
     active_tenant: { id: 'tenant-1' },
     active_workspace: { id: 'ws_marlin' },
@@ -147,7 +148,7 @@ describe('POST /api/projects (authorized)', () => {
     mockVerifySession.mockResolvedValue(makeSession());
     mockCan.mockResolvedValue(true);
     mockProvision.mockReset();
-    mockProvision.mockResolvedValue({ schema: 'tg_x', applied: [] });
+    mockProvision.mockResolvedValue({ schema: 'tg_x', applied: [], provisioned: false });
     vi.stubEnv('COMMERCE_OWNER_DATABASE_URL', 'postgresql://commerce_ddl@db:5432/app');
   });
 
@@ -159,7 +160,7 @@ describe('POST /api/projects (authorized)', () => {
     const order: string[] = [];
     mockProvision.mockImplementation(async () => {
       order.push('provision');
-      return { schema: 'tg_x', applied: [] };
+      return { schema: 'tg_x', applied: [], provisioned: true };
     });
     const save = vi.fn(async () => {
       order.push('save');
@@ -169,7 +170,12 @@ describe('POST /api/projects (authorized)', () => {
     const res = await POST(createReq({ name: 'Shop' }));
 
     expect(res.status).toBe(200);
-    expect(mockProvision).toHaveBeenCalledWith({ tenantGroupId: 'tg_lumitra', slug: 'tg_lumitra' });
+    // The registry slug is collision-free: the display slug (absent on this
+    // session, so only the id) plus the tenant-group id.
+    expect(mockProvision).toHaveBeenCalledWith({
+      tenantGroupId: '018f9c10-0000-7000-8000-00000000c0de',
+      slug: '018f9c1000007000800000000000c0de',
+    });
     expect(order).toEqual(['provision', 'save']);
   });
 
@@ -203,7 +209,7 @@ describe('POST /api/projects (authorized)', () => {
     expect(json.error.code).toBe('commerce_provision_failed');
     // The cause stays in the server log, not the response.
     expect(json.error.message).not.toMatch(/ECONNREFUSED/);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/provisionCommerceTenant failed/), cause);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/ensureCommerceTenant failed/), cause);
     expect(save).not.toHaveBeenCalled();
     errorSpy.mockRestore();
   });

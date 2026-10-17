@@ -42,7 +42,7 @@ import {
 import ProjectModel, { type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { createIntrinsicComponent } from '@/models/ComponentModel';
 import { jsonError } from '@/lib/api/respond';
-import { provisionCommerceTenant } from '@/server/commerce/provisioning/provision';
+import { commerceSlugFor, ensureCommerceTenant } from '@/server/commerce/provisioning/provision';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -57,7 +57,14 @@ export const dynamic = 'force-dynamic';
  * create path. The first time a tenant-group creates a project here, its
  * `tg_<id>` commerce schema is stood up (migrations + `commerce_app` grants +
  * the `ext`-locked backstop) on the OWNER connection, out-of-band from the
- * request's app-role pool. Every later call is an idempotent no-op of a few ms.
+ * request's app-role pool. Every later project of an already provisioned company
+ * costs one registry read and nothing else (`ensureCommerceTenant`: no lock, no
+ * DDL, no ALTER ROLE); only a miss runs the full provision, under the global
+ * provisioning lock with bounded waits (10 s lock, 30 s statement).
+ *
+ * The registry slug is `commerceSlugFor(tenant group, display slug)`: the
+ * display slug plus the tenant-group id, so two companies whose auth-brain slugs
+ * collide never block each other on the UNIQUE `tenant_groups.slug`.
  *
  * It runs BEFORE the site row is written, and a failure fails the request with
  * a 500 and a named code, with the cause in the server log:
@@ -66,7 +73,8 @@ export const dynamic = 'force-dynamic';
  *    this only catches a miswired environment, loudly, instead of creating
  *    projects whose shop would fail later.
  *  - `commerce_provision_failed` when provisioning throws (database down, a
- *    tenant group id that is not a UUID, a migration error).
+ *    tenant group id that is not a UUID, a migration error, a provisioning lock
+ *    not granted within 10 s).
  * Provisioning first means a failure leaves NOTHING behind: no site row whose
  * company has no commerce schema, no "created but broken" project, and a retry
  * of the same request is clean. The connection details stay out of the
@@ -78,7 +86,7 @@ export const dynamic = 'force-dynamic';
  */
 async function ensureCommerceProvisioned(
   tenantGroupId: string,
-  slug: string,
+  displaySlug: string | undefined,
 ): Promise<Response | null> {
   if (!process.env.COMMERCE_OWNER_DATABASE_URL) {
     console.error(
@@ -91,11 +99,11 @@ async function ensureCommerceProvisioned(
     );
   }
   try {
-    await provisionCommerceTenant({ tenantGroupId, slug });
+    await ensureCommerceTenant({ tenantGroupId, slug: commerceSlugFor(tenantGroupId, displaySlug) });
     return null;
   } catch (err) {
     console.error(
-      `[commerce] provisionCommerceTenant failed for tenant_group ${tenantGroupId}:`,
+      `[commerce] ensureCommerceTenant failed for tenant_group ${tenantGroupId}:`,
       err,
     );
     return jsonError(
@@ -202,10 +210,8 @@ export async function POST(req: Request): Promise<Response> {
   //    exists BEFORE the site row is written (idempotent, OWNER connection). A
   //    failure returns its 500 here and nothing is persisted. The tenant slug
   //    comes from the SERVER-verified session, never the client; fall back to
-  //    the tenant_group id if the tenant isn't on the session.
-  const tenantSlug =
-    session.tenants.find((t) => t.group_id === scope.tenantGroupId)?.slug ??
-    scope.tenantGroupId;
+  //    the tenant_group id alone if the tenant isn't on the session.
+  const tenantSlug = session.tenants.find((t) => t.group_id === scope.tenantGroupId)?.slug;
   const commerceFailure = await ensureCommerceProvisioned(scope.tenantGroupId, tenantSlug);
   if (commerceFailure) return commerceFailure;
 

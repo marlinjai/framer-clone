@@ -10,11 +10,14 @@
 //      re-asserted (idempotent and resumable).
 //
 // Both run under one session advisory lock (COMMERCE_DEPLOY_LOCK_KEY), so two
-// containers starting at once queue instead of racing on a fresh database.
+// containers starting at once queue instead of racing on a fresh database. All
+// waits are bounded (ownerSql.ts BOOT_TIMEOUTS: lock 30 s, statement 45 s), so a
+// stuck lock fails the start with CommerceLockTimeoutError instead of hanging.
 //
 // Before touching anything it proves it is NOT connected as the low-privilege
 // app role: the owner URL must be set, must not be a placeholder, must differ
-// from the app URL, and `current_user` must not be `commerce_app`. Any failure
+// from the app URL, and `current_user` must be neither `commerce_app` nor a
+// superuser (the non-superuser owner commerce_ddl is the only accepted one). Any failure
 // throws, and the boot script turns a throw into a failed container start, so a
 // bad migration or a miswired secret stops the deploy instead of serving a
 // half-migrated shop.
@@ -22,10 +25,15 @@
 // No `server-only` import anywhere in this module's graph: it is bundled into a
 // single file by esbuild (scripts/commerce-migrate.ts) and run with plain node.
 
-import postgres from 'postgres';
-
 import { migrateCommercePublic } from './public';
 import { COMMERCE_APP_ROLE, migrateAllCommerceTenants } from './provision';
+import {
+  acquireAdvisoryLock,
+  BOOT_TIMEOUTS,
+  openOwnerSql,
+  releaseAdvisoryLock,
+  type OwnerTimeouts,
+} from './ownerSql';
 
 /**
  * Session advisory lock key held around the whole start step (public tier plus
@@ -101,40 +109,48 @@ export async function runCommerceDeployMigrations(opts?: {
   ownerUrl?: string;
   appUrl?: string;
   log?: (line: string) => void;
+  timeouts?: OwnerTimeouts;
 }): Promise<CommerceDeployResult> {
   const log = opts?.log ?? ((line: string) => console.log(line));
+  const timeouts = opts?.timeouts ?? BOOT_TIMEOUTS;
   const ownerUrl = assertOwnerUrlShape({
     ownerUrl: opts?.ownerUrl ?? process.env.COMMERCE_OWNER_DATABASE_URL,
     appUrl: opts?.appUrl ?? process.env.COMMERCE_APP_DATABASE_URL,
   });
 
   // One session for the identity check and the lock. The migrations open their
-  // own connections; the lock on this session covers them because every other
-  // start step waits on the same key.
-  const lockSession = postgres(ownerUrl, { max: 1, prepare: false });
+  // own sessions; the lock on this one covers them because every other start
+  // step waits on the same key.
+  const lockSession = openOwnerSql(ownerUrl, timeouts);
   try {
     // Who are we really? A URL can name any role; ask the server.
-    const rows = await lockSession<{ role: string }[]>`SELECT current_user AS role`;
-    const role = rows[0].role;
+    const [{ role, superuser }] = await lockSession<{ role: string; superuser: boolean }[]>`
+      SELECT current_user AS role,
+             (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS superuser
+    `;
     if (role === COMMERCE_APP_ROLE) {
       throw new Error(
         `COMMERCE_OWNER_DATABASE_URL authenticates as ${COMMERCE_APP_ROLE}, the ` +
           'low-privilege app role. Point it at the owner role commerce_ddl.',
       );
     }
-
-    const [{ locked }] = await lockSession<{ locked: boolean }[]>`
-      SELECT pg_try_advisory_lock(${COMMERCE_DEPLOY_LOCK_KEY}) AS locked
-    `;
-    if (!locked) {
-      log('commerce: another start step holds the commerce migration lock, waiting');
-      await lockSession`SELECT pg_advisory_lock(${COMMERCE_DEPLOY_LOCK_KEY})`;
+    if (superuser) {
+      // The non-superuser owner is proven (roles.itest.ts), so there is no
+      // reason to run the commerce tier, or keep a URL in the server process,
+      // with superuser rights over the whole Postgres instance.
+      throw new Error(
+        `COMMERCE_OWNER_DATABASE_URL authenticates as ${role}, a superuser. Use the ` +
+          'non-superuser owner role commerce_ddl (prisma/sql/commerce-roles.sql).',
+      );
     }
+
+    await acquireAdvisoryLock(lockSession, COMMERCE_DEPLOY_LOCK_KEY, 'commerce migration lock', timeouts, () =>
+      log('commerce: another start step holds the commerce migration lock, waiting'),
+    );
     try {
-      return await migrateUnderLock(ownerUrl, role, log);
+      return await migrateUnderLock(ownerUrl, role, log, timeouts);
     } finally {
-      // Ending the session releases the lock as well; never mask the real error.
-      await lockSession`SELECT pg_advisory_unlock(${COMMERCE_DEPLOY_LOCK_KEY})`.catch(() => undefined);
+      await releaseAdvisoryLock(lockSession, COMMERCE_DEPLOY_LOCK_KEY);
     }
   } finally {
     await lockSession.end();
@@ -146,10 +162,11 @@ async function migrateUnderLock(
   ownerUrl: string,
   role: string,
   log: (line: string) => void,
+  timeouts: OwnerTimeouts,
 ): Promise<CommerceDeployResult> {
   log(`commerce: migrating as ${role}`);
 
-  const publicApplied = await migrateCommercePublic(ownerUrl);
+  const publicApplied = await migrateCommercePublic(ownerUrl, timeouts);
   log(
     publicApplied.length === 0
       ? 'commerce: public tier up to date'
@@ -158,6 +175,7 @@ async function migrateUnderLock(
 
   const fleet = await migrateAllCommerceTenants({
     connectionString: ownerUrl,
+    timeouts,
     onSchemaDone: ({ schema, applied, index, total }) => {
       const what = applied.length === 0 ? 'up to date' : `applied ${applied.join(', ')}`;
       log(`commerce: [${index + 1}/${total}] ${schema}: ${what}`);
