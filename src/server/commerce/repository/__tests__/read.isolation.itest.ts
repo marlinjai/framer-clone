@@ -185,7 +185,7 @@ beforeAll(async () => {
 
   // The low-privilege app role must exist before provisioning (the migration
   // REVOKEs are role-guarded; provisionTenant grants per-schema access to it).
-  await owner.unsafe(`CREATE ROLE ${APP_ROLE} LOGIN`);
+  await owner`CREATE ROLE ${owner(APP_ROLE)} LOGIN`;
 
   // Public control plane (ext schema + tenant_groups registry).
   await migratePublic(owner);
@@ -231,6 +231,7 @@ beforeAll(async () => {
   // tg_a's handle. Any unqualified read that fell back to the default path would
   // surface it; a correctly-qualified Kysely read must never see it.
   await owner`
+    -- tenant-db-guard-disable-next-line G3: deliberate DECOY fixture (the trap the isolation proof needs)
     CREATE TABLE IF NOT EXISTS public.product (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -244,6 +245,7 @@ beforeAll(async () => {
     )
   `;
   await owner`
+    -- tenant-db-guard-disable-next-line G3: deliberate DECOY fixture (the trap the isolation proof needs)
     INSERT INTO public.product (id, title, handle)
     VALUES ('decoy-1', 'DECOY_PUBLIC', 'widget-a'), ('decoy-2', 'DECOY_PUBLIC', 'widget-b')
   `;

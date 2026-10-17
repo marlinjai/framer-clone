@@ -30,16 +30,38 @@
  *     name (`FROM "order"`) is caught (upstream skipped any name after a
  *     double quote), and `${...}` interpolations are blanked before matching so
  *     JavaScript identifiers inside them never count.
+ *   - G3 covers every SQL template tag, not only a tag literally named `sql`:
+ *     Kysely's `sql` under any import alias (`import { sql as q }`), and
+ *     postgres.js tags (`tx`, `owner`, any identifier assigned from
+ *     `postgres(...)`, typed `Sql` / `TransactionSql`, or bound by
+ *     `.begin(async (x) => ...)`). An interpolated identifier helper with a
+ *     literal tenant table (`${tx('stock_movement')}`) counts as that table.
+ *   - G3 accepts a schema qualifier only when it is an interpolation (the
+ *     tenant schema reference); a literal qualifier such as `commerce.product`
+ *     or `public.stock_movement` in front of a tenant table is flagged.
+ *   - G3 also flags SQL the scanner cannot read: `sql.raw(`, `sql.table(` (any
+ *     alias) and postgres.js `.unsafe(`. G2 also flags
+ *     `set_config('search_path', ...)`.
  *   - The CLI walks directories itself (no shell glob expansion), and with no
- *     arguments it scans DEFAULT_ROOTS, which is what `pnpm lint:guards` and CI
- *     run.
+ *     arguments it scans DEFAULT_ROOTS (all of src and scripts, minus the
+ *     explicit exclusions below), which is what `pnpm lint:guards` and CI run.
+ *
+ * ALLOWANCES (narrow, path-scoped, each with its reason; see ALLOWANCES):
+ *   - src/server/commerce/provisioning/backfill-demo.ts and its itest: the
+ *     one-shot backfill reads and seeds the LEGACY shared `commerce` schema by
+ *     design and builds its copy statements dynamically, so `.unsafe(` is
+ *     allowed there (G3-raw only).
+ *   - src/server/cms/withTenant.ts: the CMS (not commerce) Prisma seam that
+ *     pins a CMS schema with SET LOCAL inside a Prisma transaction; it is out
+ *     of the commerce isolation model, so G2 is allowed there only.
  *
  * Rules:
  *  G1: no `.withSchema` anywhere (scoped handles come from commerceTenantDb /
  *      tenantDb, which own the only withSchema call, inside tenant-db).
- *  G2: no runtime `SET search_path` / `SET LOCAL search_path`.
- *  G3: no bare tenant table name inside a sql`...` template (qualify it with
- *      tenantSchemaRef(tgId)).
+ *  G2: no runtime `SET search_path` / `SET LOCAL search_path` / set_config.
+ *  G3: no bare (or literally qualified) tenant table inside a SQL template
+ *      (qualify it with tenantSchemaRef(tgId)), and no unscannable raw SQL
+ *      (sql.raw / sql.table / .unsafe).
  *  G4: no `GRANT ... ON ALL SCHEMAS` (grants are per schema only).
  *  G5: a Workers postgres config must set `prepare: false`.
  *
@@ -64,16 +86,12 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const TENANT_MIGRATIONS_DIR = 'src/server/commerce/migrations/tenant';
 
 /**
- * Every place commerce SQL or a commerce handle can live: the commerce module
- * itself, the commerce API routes, the server renderer (render path plus the
- * demo seed), and the operator scripts (provisioning, backfill, codegen).
+ * The scan covers ALL application code and operator scripts, so no commerce
+ * caller (the editor routes under src/app/api/projects/[projectId]/commerce,
+ * the render path under src/app/(site), anything added later) can sit outside
+ * a hand-kept list.
  */
-export const DEFAULT_ROOTS = [
-  'src/server/commerce',
-  'src/app/api/commerce',
-  'src/lib/renderer/server',
-  'scripts',
-];
+export const DEFAULT_ROOTS = ['src', 'scripts'];
 
 /**
  * Paths never scanned (relative to the repository root, POSIX separators): the
@@ -85,6 +103,17 @@ const EXCLUDED_PREFIXES = [
   'scripts/check-guards.mjs',
   'src/server/commerce/__tests__/checkGuards.test.ts',
 ];
+
+/**
+ * Narrow, path-scoped allowances: path -> rule ids that do not apply there.
+ * Every entry is justified in the header. Rule ids: G1, G2, G3 (table), G3-raw
+ * (unscannable raw SQL), G4, G5.
+ */
+const ALLOWANCES = {
+  'src/server/commerce/provisioning/backfill-demo.ts': ['G3-raw'],
+  'src/server/commerce/provisioning/__tests__/backfill-demo.itest.ts': ['G3-raw'],
+  'src/server/cms/withTenant.ts': ['G2'],
+};
 
 const SCANNED_EXTENSIONS = /\.(?:ts|tsx|mts|cts|js|mjs|cjs)$/;
 
@@ -127,8 +156,9 @@ export function scanText(file) {
   // NAMES a banned pattern never trips a rule.
   const code = stripComments(file.text);
   const lines = code.split('\n');
+  const allowed = new Set(ALLOWANCES[toPosix(relative(REPO_ROOT, resolve(REPO_ROOT, file.path)))] ?? []);
   const push = (rule, idx, message) => {
-    if (disabledLines.has(idx + 1)) return;
+    if (disabledLines.has(idx + 1) || allowed.has(rule)) return;
     violations.push({ rule, line: idx + 1, message });
   };
 
@@ -158,6 +188,9 @@ export function scanText(file) {
     ) {
       push('G2', idx, 'no runtime SET [LOCAL] search_path in commerce; the scoped handle qualifies every table, and the locked path is a ROLE DEFAULT');
     }
+    if (/set_config\s*\(\s*['"`]search_path['"`]/i.test(line)) {
+      push('G2', idx, "no set_config('search_path', ...): it is a runtime search_path SET");
+    }
 
     // G4: all-schema grants.
     if (/GRANT[\s\S]*?ON\s+ALL\s+SCHEMAS\b/i.test(line)) {
@@ -165,21 +198,42 @@ export function scanText(file) {
     }
   });
 
-  // G3: a bare tenant table inside a sql`...` template.
-  for (const tpl of allSqlTemplates(code)) {
-    const body = blankInterpolations(tpl.body);
+  const tags = sqlTagNames(code);
+  const kyselyTags = kyselySqlAliases(code);
+
+  // G3-raw: SQL the scanner cannot read.
+  const rawPatterns = [
+    ...kyselyTags.map((t) => ({ re: new RegExp(`\\b${escapeRe(t)}\\s*\\.\\s*(raw|table)\\s*\\(`, 'g'), what: `${t}.raw( / ${t}.table(` })),
+    { re: /\.\s*unsafe\s*(?:<[^>()]*(?:<[^>()]*>[^>()]*)*>)?\s*\(/g, what: '.unsafe(' },
+  ];
+  for (const { re, what } of rawPatterns) {
+    let m;
+    while ((m = re.exec(code)) !== null) {
+      push('G3-raw', lineOf(code, m.index), `raw SQL string (${what}) cannot be checked for tenant tables; use a tagged template with tenantSchemaRef / an identifier helper`);
+    }
+  }
+
+  // G3: a bare or literally qualified tenant table inside any SQL template.
+  for (const tpl of allTaggedTemplates(code, tags)) {
+    const body = substituteInterpolations(tpl.body, file.knownTables);
     for (const t of file.knownTables) {
-      // Unquoted: a whole word, not schema-qualified (no `.` before it), and not
-      // the ORDER of `ORDER BY`. Quoted: `"t"` not preceded by `.`.
-      const bare = new RegExp(`(?<![.\\w"$])\\b${t}\\b(?!\\s+by\\b)(?!")`, 'i');
-      const quoted = new RegExp(`(?<![.\\w])"${t}"`, 'i');
-      const hit = bare.exec(body) ?? quoted.exec(body);
-      if (hit) {
+      // Unquoted: a whole word, not the ORDER of `ORDER BY`, and not a
+      // single-quoted string value ('order' is data, not a table). Quoted: `"t"`.
+      const re = new RegExp(`(?<![\\w"$'])(?:\\b${t}\\b(?!\\s+by\\b)(?!["'])|"${t}")`, 'gi');
+      let m;
+      while ((m = re.exec(body)) !== null) {
+        const before = body.slice(0, m.index);
+        const qualifier = /([A-Za-z_][\w$]*|"[^"]*")\s*\.\s*$/.exec(before);
+        if (qualifier && qualifier[1] === INTERP) continue; // ${tenantSchemaRef(...)}.t
+        const line = lineOf(code, tpl.start) + (before.match(/\n/g)?.length ?? 0);
         push(
           'G3',
-          lineOf(code, tpl.start + hit.index),
-          `bare tenant table "${t}" in a sql\`\` template; qualify it as \${tenantSchemaRef(tgId)}.${t}`,
+          line,
+          qualifier
+            ? `tenant table "${t}" qualified by the literal schema ${qualifier[1]} in a SQL template; qualify it as \${tenantSchemaRef(tgId)}.${t}`
+            : `bare tenant table "${t}" in a SQL template; qualify it as \${tenantSchemaRef(tgId)}.${t}`,
         );
+        break; // one report per table per template
       }
     }
   }
@@ -230,8 +284,16 @@ function stripComments(text) {
   return out;
 }
 
-/** Replace each `${...}` (nesting aware) with spaces of the same length. */
-function blankInterpolations(body) {
+/** Placeholder an interpolation becomes before G3 matches (word chars only). */
+const INTERP = '__interp__';
+
+/**
+ * Replace each `${...}` (nesting aware) with INTERP, keeping its newlines. An
+ * identifier helper called with a literal tenant table (`${tx('order')}`,
+ * `${sql.id("product")}`, `${sql.table('price')}`) becomes that table, quoted,
+ * so a bare or literally qualified use of it is still caught.
+ */
+function substituteInterpolations(body, knownTables) {
   let out = '';
   let i = 0;
   while (i < body.length) {
@@ -246,7 +308,10 @@ function blankInterpolations(body) {
         }
       }
       const end = Math.min(j, body.length - 1);
-      for (let k = i; k <= end; k++) out += body[k] === '\n' ? '\n' : ' ';
+      const expr = body.slice(i + 2, end);
+      const helper = /^\s*[\w$.!]+\s*\(\s*['"`]([A-Za-z_][\w]*)['"`]\s*\)\s*$/.exec(expr);
+      const newlines = (expr.match(/\n/g) ?? []).join('');
+      out += (helper && knownTables.includes(helper[1]) ? `"${helper[1]}"` : INTERP) + newlines;
       i = end + 1;
       continue;
     }
@@ -256,18 +321,57 @@ function blankInterpolations(body) {
   return out;
 }
 
+function escapeRe(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Local names Kysely's `sql` is imported under (always includes `sql`). */
+function kyselySqlAliases(code) {
+  const names = new Set(['sql']);
+  const re = /import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*['"]kysely['"]/g;
+  let m;
+  while ((m = re.exec(code)) !== null) {
+    for (const part of m[1].split(',')) {
+      const alias = /^\s*sql\s+as\s+([A-Za-z_$][\w$]*)\s*$/.exec(part);
+      if (alias) names.add(alias[1]);
+    }
+  }
+  return [...names];
+}
+
+/**
+ * Every identifier used as a SQL template tag in this file: the Kysely aliases,
+ * the postgres.js defaults `tx` / `owner`, names assigned from `postgres(...)`,
+ * names typed `Sql` / `TransactionSql`, and `.begin(...)` callback parameters.
+ */
+function sqlTagNames(code) {
+  const names = new Set([...kyselySqlAliases(code), 'tx', 'owner']);
+  const patterns = [
+    /\b([A-Za-z_$][\w$]*)\s*(?::[^=;\n]*)?=\s*postgres\s*\(/g,
+    /\b([A-Za-z_$][\w$]*)\s*[?!]?\s*:\s*(?:postgres\s*\.\s*)?(?:Sql|TransactionSql)\b/g,
+    /\.begin\s*\(\s*(?:async\s*)?\(?\s*([A-Za-z_$][\w$]*)/g,
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(code)) !== null) names.add(m[1]);
+  }
+  return [...names];
+}
+
 function lineOf(text, index) {
   return text.slice(0, index).split('\n').length - 1;
 }
 
 /**
- * Extract the bodies of all sql`...` tagged templates, including the typed
- * form sql<Row>`...` with nested generics (sql<Array<Row>>`...`). Missing the
- * typed form would be a dangerous false negative.
+ * Extract the bodies of every template tagged by one of `tags`, including the
+ * typed form sql<Row>`...` with nested generics (sql<Array<Row>>`...`). Missing
+ * the typed form would be a dangerous false negative.
  */
-function allSqlTemplates(text) {
+function allTaggedTemplates(text, tags) {
   const out = [];
-  const tagRe = /\bsql\s*/g;
+  // `tag`, `tag!` (non-null assertion) and `obj.tag` all count; the optional
+  // generic list is handled below.
+  const tagRe = new RegExp(`(?<![\\w$])(?:${tags.map(escapeRe).join('|')})\\s*!?\\s*`, 'g');
   let m;
   while ((m = tagRe.exec(text)) !== null) {
     let cursor = m.index + m[0].length;

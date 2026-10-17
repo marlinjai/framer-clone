@@ -74,23 +74,23 @@ beforeAll(async () => {
 
   // The ext schema exists in a real deployment (created by migratePublic, CM-03);
   // create it here so the ext-locked role is realistic.
-  await owner.unsafe('CREATE SCHEMA IF NOT EXISTS ext');
+  await owner`CREATE SCHEMA IF NOT EXISTS ext`;
 
   // Role 1 (commerce_app): ext-locked default path — the correct backstop.
   // Exactly what prisma/sql/commerce-roles.sql + bootstrapAppRole produce.
-  await owner.unsafe(`DROP ROLE IF EXISTS "${APP_ROLE}"`).catch(() => {});
-  await owner.unsafe(`CREATE ROLE "${APP_ROLE}" LOGIN`);
-  await owner.unsafe(`ALTER ROLE "${APP_ROLE}" SET search_path = ext`);
-  await owner.unsafe(`GRANT USAGE ON SCHEMA ext TO "${APP_ROLE}"`);
-  await owner.unsafe(`GRANT CONNECT ON DATABASE "${DB_NAME}" TO "${APP_ROLE}"`);
+  await owner`DROP ROLE IF EXISTS ${owner(APP_ROLE)}`.catch(() => {});
+  await owner`CREATE ROLE ${owner(APP_ROLE)} LOGIN`;
+  await owner`ALTER ROLE ${owner(APP_ROLE)} SET search_path = ext`;
+  await owner`GRANT USAGE ON SCHEMA ext TO ${owner(APP_ROLE)}`;
+  await owner`GRANT CONNECT ON DATABASE ${owner(DB_NAME)} TO ${owner(APP_ROLE)}`;
 
   // Role 2 (commerce_ddl / owner): a default path that still contains `public`
   // — the misconfiguration of pointing the app at the owner role.
-  await owner.unsafe(`DROP ROLE IF EXISTS "${OWNER_ROLE}"`).catch(() => {});
-  await owner.unsafe(`CREATE ROLE "${OWNER_ROLE}" LOGIN`);
-  await owner.unsafe(`ALTER ROLE "${OWNER_ROLE}" SET search_path = ext, public`);
-  await owner.unsafe(`GRANT USAGE ON SCHEMA ext TO "${OWNER_ROLE}"`);
-  await owner.unsafe(`GRANT CONNECT ON DATABASE "${DB_NAME}" TO "${OWNER_ROLE}"`);
+  await owner`DROP ROLE IF EXISTS ${owner(OWNER_ROLE)}`.catch(() => {});
+  await owner`CREATE ROLE ${owner(OWNER_ROLE)} LOGIN`;
+  await owner`ALTER ROLE ${owner(OWNER_ROLE)} SET search_path = ext, public`;
+  await owner`GRANT USAGE ON SCHEMA ext TO ${owner(OWNER_ROLE)}`;
+  await owner`GRANT CONNECT ON DATABASE ${owner(DB_NAME)} TO ${owner(OWNER_ROLE)}`;
 
   appBase = createNodeDb({ connectionString: makeUrl(APP_ROLE, host, port) });
   ownerBase = createNodeDb({ connectionString: makeUrl(OWNER_ROLE, host, port) });

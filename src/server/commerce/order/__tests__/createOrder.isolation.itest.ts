@@ -181,7 +181,7 @@ beforeAll(async () => {
   const ownerUrl = `postgresql://postgres@${host}:${port}/${DB_NAME}`;
 
   owner = postgres(ownerUrl, { max: 1, prepare: false, transform: { undefined: null } });
-  await owner.unsafe(`CREATE ROLE ${APP_ROLE} LOGIN`);
+  await owner`CREATE ROLE ${owner(APP_ROLE)} LOGIN`;
   await migratePublic(owner);
 
   await provisionTenant(owner, commerceProvisionOptions(TG_A, 'cm09-iso-a'));

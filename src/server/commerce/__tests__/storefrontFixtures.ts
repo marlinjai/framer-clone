@@ -257,8 +257,8 @@ export async function countInSchema(
   schema: string,
   table: string,
 ): Promise<number> {
-  const rows = await fx.owner.unsafe<{ n: number }[]>(
-    `SELECT count(*)::int AS n FROM "${schema}"."${table}"`,
-  );
+  const rows = await fx.owner<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM ${fx.owner(schema)}.${fx.owner(table)}
+  `;
   return rows[0].n;
 }

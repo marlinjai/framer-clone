@@ -120,6 +120,7 @@ beforeAll(async () => {
   // The DECOY: a live product in the legacy shared `commerce` schema, the
   // pre-CM-10 target every site used to read. No route may fall back to it.
   await fx.owner`
+    -- tenant-db-guard-disable-next-line G3: deliberate DECOY fixture (the trap the isolation proof needs)
     INSERT INTO commerce.product (id, title, handle, updated_at)
     VALUES (${randomUUID()}, 'DECOY_SHARED', ${DECOY_HANDLE}, now())
   `;
@@ -135,6 +136,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (fx) {
+    // tenant-db-guard-disable-next-line G3: deliberate DECOY fixture (the trap the isolation proof needs)
     await fx.owner`DELETE FROM commerce.product WHERE handle = ${DECOY_HANDLE}`;
     await fx.close();
   }

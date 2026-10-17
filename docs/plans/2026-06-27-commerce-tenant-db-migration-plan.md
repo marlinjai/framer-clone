@@ -16,13 +16,18 @@ projects: [framer-clone]
 > CM-13 (branch `feat/commerce-cm13-guards-prisma-teardown`) finished the plan:
 >
 > - **Guards in CI.** `pnpm lint:guards` runs `scripts/check-guards.mjs`, vendored from tenant-db
->   (the npm package ships only `dist/`), over `src/server/commerce`, `src/app/api/commerce`,
->   `src/lib/renderer/server` and `scripts`, as a step of the CI verify job. KNOWN_TENANT_TABLES
->   is read from the 19 `CREATE TABLE` statements of `src/server/commerce/migrations/tenant`.
->   Deviations from upstream, all stricter or more precise: no core-package exemption for G1,
->   `SET LOCAL search_path` banned too (G2), and G3 skips `ORDER BY` and interpolations but
->   catches a quoted bare `"order"`. The tenant DDL itself is not scanned (bare names are the
->   runner's contract, section 4.2).
+>   (the npm package ships only `dist/`), over all of `src` and `scripts`, as a step of the CI
+>   verify job. KNOWN_TENANT_TABLES is read from the 19 `CREATE TABLE` statements of
+>   `src/server/commerce/migrations/tenant`. Deviations from upstream, all stricter or more
+>   precise: no core-package exemption for G1; `SET LOCAL search_path` and
+>   `set_config('search_path', ...)` banned too (G2); G3 covers every SQL tag (Kysely `sql` under
+>   any alias, postgres.js `tx` / `owner` / anything from `postgres()`), accepts a schema
+>   qualifier only when it is interpolated, catches a quoted bare `"order"`, skips `ORDER BY`
+>   and string values, and flags unreadable raw SQL (`sql.raw(`, `sql.table(`, `.unsafe(`). The
+>   tenant DDL itself is not scanned (bare names are the runner's contract, section 4.2). Two
+>   narrow allowances are listed in the script header (the backfill may use `.unsafe(` on the
+>   legacy schema; the CMS seam `src/server/cms/withTenant.ts` may use `SET LOCAL`), and the
+>   deliberate public / legacy decoy tables in the isolation suites carry a disable comment.
 > - **Prisma out of commerce.** The 19 commerce models and 9 enums are gone from
 >   `prisma/schema.prisma` (`schemas = ["public"]`), with every Prisma commerce repository, the
 >   Prisma reserve and createOrder paths and their hand-written `SET LOCAL search_path` lines. The

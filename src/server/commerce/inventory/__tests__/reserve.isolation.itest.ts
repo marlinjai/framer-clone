@@ -131,7 +131,7 @@ beforeAll(async () => {
   const appUrl = `postgresql://${APP_ROLE}@${host}:${port}/${DB_NAME}`;
 
   owner = postgres(ownerUrl, { max: 1, prepare: false, transform: { undefined: null } });
-  await owner.unsafe(`CREATE ROLE ${APP_ROLE} LOGIN`);
+  await owner`CREATE ROLE ${owner(APP_ROLE)} LOGIN`;
   await migratePublic(owner);
 
   // TG_A WITH grants; TG_B WITHOUT (so commerce_app is DENIED on tg_b).
@@ -154,6 +154,7 @@ beforeAll(async () => {
   // tg_a's (item, location). Any raw fragment that fell back to the search_path
   // (instead of tenantSchemaRef-qualifying) would mutate it.
   await owner`
+    -- tenant-db-guard-disable-next-line G3: deliberate DECOY fixture (the trap the isolation proof needs)
     CREATE TABLE IF NOT EXISTS public.inventory_level (
       id TEXT PRIMARY KEY,
       inventory_item_id TEXT NOT NULL,
@@ -165,6 +166,7 @@ beforeAll(async () => {
     )
   `;
   await owner`
+    -- tenant-db-guard-disable-next-line G3: deliberate DECOY fixture (the trap the isolation proof needs)
     INSERT INTO public.inventory_level (id, inventory_item_id, location_id, stocked_quantity, reserved_quantity)
     VALUES (${'decoy-1'}, ${seedA.inventoryItemId}, ${seedA.locationId}, 999, 0)
   `;
@@ -204,6 +206,7 @@ describe('CM-08 reserve isolation: schema-per-tenant wall (tenant schema)', () =
     // The public.inventory_level DECOY is UNTOUCHED (the raw UPDATE qualified via
     // tenantSchemaRef, never fell back to the search_path).
     const decoy = await owner!`
+      -- tenant-db-guard-disable-next-line G3: deliberate DECOY fixture (the trap the isolation proof needs)
       SELECT reserved_quantity FROM public.inventory_level WHERE id = ${'decoy-1'}
     `;
     expect(Number(decoy[0]!.reserved_quantity)).toBe(0);

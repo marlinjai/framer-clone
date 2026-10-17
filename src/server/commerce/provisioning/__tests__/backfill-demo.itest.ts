@@ -108,7 +108,7 @@ beforeAll(async () => {
 
   owner = postgres(ownerUrl, { max: 1, prepare: false, transform: { undefined: null } });
   // (b) Roles + the public tenant tier + the demo's tg_<demo> schema.
-  await owner.unsafe(`CREATE ROLE ${APP_ROLE} LOGIN`);
+  await owner`CREATE ROLE ${owner(APP_ROLE)} LOGIN`;
   await migratePublic(owner);
   await provisionTenant(owner, commerceProvisionOptions(TG_DEMO, 'demo'));
 

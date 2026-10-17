@@ -81,7 +81,7 @@ beforeAll(async () => {
   const appUrl = `postgresql://${APP_ROLE}@${host}:${port}/${DB_NAME}`;
 
   owner = postgres(ownerUrl, { max: 1, prepare: false, transform: { undefined: null } });
-  await owner.unsafe(`CREATE ROLE ${APP_ROLE} LOGIN`);
+  await owner`CREATE ROLE ${owner(APP_ROLE)} LOGIN`;
   await migratePublic(owner);
 
   // TG_A WITH grants; TG_B WITHOUT (so commerce_app is denied on tg_b).
@@ -138,6 +138,7 @@ beforeAll(async () => {
   // amount, so if a lookup ever leaked to public it would return DECOY_PRICE (1)
   // instead of PRICE_A (1000) — the trap. A correctly-qualified read never sees it.
   await owner`
+    -- tenant-db-guard-disable-next-line G3: deliberate DECOY fixture (the trap the isolation proof needs)
     CREATE TABLE IF NOT EXISTS public.price_set (
       id TEXT PRIMARY KEY,
       variant_id TEXT,
@@ -146,6 +147,7 @@ beforeAll(async () => {
     )
   `;
   await owner`
+    -- tenant-db-guard-disable-next-line G3: deliberate DECOY fixture (the trap the isolation proof needs)
     CREATE TABLE IF NOT EXISTS public.price (
       id TEXT PRIMARY KEY,
       price_set_id TEXT NOT NULL,
@@ -158,8 +160,10 @@ beforeAll(async () => {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+  // tenant-db-guard-disable-next-line G3: deliberate DECOY fixture (the trap the isolation proof needs)
   await owner`INSERT INTO public.price_set (id, variant_id) VALUES ('decoy-ps', ${variantIdA})`;
   await owner`
+    -- tenant-db-guard-disable-next-line G3: deliberate DECOY fixture (the trap the isolation proof needs)
     INSERT INTO public.price (id, price_set_id, currency_code, amount)
     VALUES ('decoy-pr', 'decoy-ps', 'EUR', ${DECOY_PRICE})
   `;

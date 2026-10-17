@@ -229,9 +229,7 @@ describe('CM-11 commerce fleet migration (migrateAllCommerceTenants → migrateA
       slug: 'fleet-drift',
       connectionString: ownerUrl,
     });
-    await probe!.unsafe(
-      `GRANT UPDATE, DELETE ON ALL TABLES IN SCHEMA "${drifted.schema}" TO commerce_app`,
-    );
+    await probe!`GRANT UPDATE, DELETE ON ALL TABLES IN SCHEMA ${probe!(drifted.schema)} TO commerce_app`;
     const driftedNow = await probe!`
       SELECT has_table_privilege('commerce_app', ${drifted.schema + '."order"'}, 'UPDATE') AS can_update
     `;

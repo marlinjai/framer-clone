@@ -69,7 +69,7 @@ beforeAll(async () => {
   owner = postgres(ownerUrl, { max: 1, prepare: false, transform: { undefined: null } });
   // The production provisioning options grant to and lock the app role, so it
   // must exist (TRUST auth: no password).
-  await owner.unsafe('CREATE ROLE commerce_app LOGIN');
+  await owner`CREATE ROLE commerce_app LOGIN`;
   await migratePublic(owner);
   await provisionTenant(owner, commerceProvisionOptions(TG, 'cm08-concurrency'));
 
