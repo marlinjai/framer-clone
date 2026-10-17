@@ -67,7 +67,23 @@ export async function migrateCommercePublic(connectionString?: string): Promise<
   try {
     // Pass NOTHING for the second arg: use the package-default PUBLIC_MIGRATIONS
     // (001_ext_schema + 002_tenant_groups). The package owns those bodies.
-    return await migratePublic(sql);
+    const applied = await migratePublic(sql);
+    // commerce_app resolves ext.gen_uuid_v7() / ext.touch_updated_at() under its
+    // ext-locked search_path, so it needs USAGE on `ext`. The roles SQL grants
+    // it too (it pre-creates `ext`), but granting here as the owner of `ext`
+    // keeps the tier correct even when `ext` was first created by this call.
+    // Guarded on the role existing, so a database without the commerce roles
+    // (some test harnesses) still migrates. Idempotent.
+    await sql`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commerce_app') THEN
+          GRANT USAGE ON SCHEMA ext TO commerce_app;
+        END IF;
+      END
+      $$
+    `;
+    return applied;
   } finally {
     await sql.end();
   }
