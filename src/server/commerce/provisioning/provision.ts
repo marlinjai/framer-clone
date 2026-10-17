@@ -63,8 +63,8 @@ import {
 
 /**
  * The commerce tables commerce_app may only INSERT into and SELECT from: the
- * stock ledger, the corrective documents, and the placed order (an immutable
- * invoice) with its lines.
+ * stock ledger, the corrective documents, the placed order (an immutable
+ * invoice) with its lines, and the Books audit trail (sales_document_event, 007).
  */
 export const APPEND_ONLY_TABLES = [
   'stock_movement',
@@ -72,6 +72,7 @@ export const APPEND_ONLY_TABLES = [
   'credit_note_ref',
   'order',
   'order_line_item',
+  'sales_document_event',
 ] as const;
 
 /**
@@ -96,8 +97,9 @@ export const COMMERCE_PROVISION_LOCK_KEY = 74_610_010;
 export const COMMERCE_APP_ROLE = 'commerce_app';
 
 /**
- * REVOKE UPDATE, DELETE on every append-only table of `schema` from the app
- * role. Idempotent. Pass it as `provisionTenant`'s `seed` (via
+ * REVOKE UPDATE, DELETE, TRUNCATE on every append-only table of `schema` from
+ * the app role. Idempotent. (The runner never grants TRUNCATE, so revoking it is
+ * belt and braces; it keeps the REVOKE identical to what 007 writes.) Pass it as `provisionTenant`'s `seed` (via
  * {@link commerceProvisionOptions}) so it runs inside the provisioning
  * transaction, after the runner's grant-all.
  */
@@ -107,7 +109,7 @@ export async function revokeAppendOnlyWrites(
   appRole: string = COMMERCE_APP_ROLE,
 ): Promise<void> {
   for (const table of APPEND_ONLY_TABLES) {
-    await tx`REVOKE UPDATE, DELETE ON ${tx(schema)}.${tx(table)} FROM ${tx(appRole)}`;
+    await tx`REVOKE UPDATE, DELETE, TRUNCATE ON ${tx(schema)}.${tx(table)} FROM ${tx(appRole)}`;
   }
 }
 

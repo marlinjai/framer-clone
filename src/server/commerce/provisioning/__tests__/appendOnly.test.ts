@@ -23,7 +23,7 @@ function revokedTablesInMigrations(): string[] {
       // Ignore comments: only executed SQL counts.
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '');
-    const re = /REVOKE\s+UPDATE\s*,\s*DELETE\s+ON\s+"?([A-Za-z_][A-Za-z0-9_]*)"?\s+FROM\s+commerce_app/gi;
+    const re = /REVOKE\s+UPDATE\s*,\s*DELETE(?:\s*,\s*TRUNCATE)?\s+ON\s+"?([A-Za-z_][A-Za-z0-9_]*)"?\s+FROM\s+commerce_app/gi;
     let m: RegExpExecArray | null;
     while ((m = re.exec(text)) !== null) tables.add(m[1]);
   }
