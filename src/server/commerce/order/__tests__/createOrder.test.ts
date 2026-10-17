@@ -1,10 +1,12 @@
 // src/server/commerce/order/__tests__/createOrder.test.ts
 //
-// Headless UNIT tests for the b6 createOrder control flow. These run in the node
+// Headless UNIT tests for the createOrder control flow. These run in the node
 // project of the standard `pnpm test` gate (no Docker, no live Postgres): the
-// transaction client is a programmable fake feeding canned resolvePrice / variant
-// rows, and the inner b3 reserve is stubbed, so what is exercised here is the
-// CONTROL FLOW around the order WRITE, not Postgres semantics:
+// scoped Kysely handle is a programmable fake whose transaction runs the
+// callback with a fake `trx` (feeding a canned variant snapshot row), and the
+// inner reserve plus the pricing and order repositories are stubbed, so what is
+// exercised here is the CONTROL FLOW around the order WRITE, not Postgres
+// semantics:
 //   - computeLineTax across net, gross-extraction, reduced 7%, and zero,
 //   - the explicit-rate / treatment consistency fix (an explicit rate derives its
 //     treatment from the RESOLVED rate, not from taxClass alone),
@@ -13,21 +15,24 @@
 //   - the OrderShortageError -> { ok:false, shortages } translation,
 //   - the 'no price resolved' loud throw,
 //   - validateCart's guards (empty lines, missing requestId, quantity <= 0, and the
-//     new reverse-charge B2C precondition),
-//   - both duplicate-detector predicates fed synthetic P2002 / name-tagged errors,
-//   - the idempotency pre-check return + the happy-path order assembly.
+//     reverse-charge B2C precondition),
+//   - both duplicate-detector predicates (the name-tagged reserve sentinel and the
+//     postgres.js 23505 on order_request_id_key), and the fresh-transaction
+//     re-read they trigger; an unrelated 23505 must propagate,
+//   - the transaction runs at READ COMMITTED, the idempotency pre-check return,
+//     and the happy-path order assembly.
 //
-// The REAL atomic rollback, the snapshot stability, the FK RESTRICT, the role
-// REVOKE, the live money-math, and the order-level idempotency race are proven
-// against Dockerized Postgres in createOrder.itest.ts (kept out of this gate by the
-// `.itest.ts` suffix). This file puts the b6 control flow into the CI gate, which
-// the integration-only suite could not (it is Docker-gated).
+// The REAL atomic rollback, the snapshot stability, the role REVOKE, the live
+// money-math, and the order-level idempotency race are proven against Dockerized
+// Postgres in createOrder.itest.ts and createOrder.isolation.itest.ts (kept out
+// of this gate by the `.itest.ts` suffix).
 
-import { Prisma } from '@prisma/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Kysely } from 'kysely';
 
-// The three module seams createOrder composes. We mock them so the fake tx never
-// needs a real repository or a real reserve: each test wires the canned behaviour.
+// The three module seams createOrder composes. We mock them so the fake trx
+// never needs a real repository or a real reserve: each test wires the canned
+// behaviour.
 vi.mock('../../inventory/reserve', async () => {
   const actual = await vi.importActual<typeof import('../../inventory/reserve')>(
     '../../inventory/reserve',
@@ -46,6 +51,7 @@ vi.mock('../../repository/order', () => ({
   },
 }));
 
+import type { CommerceDB } from '../../db-types';
 import { reserve } from '../../inventory/reserve';
 import { pricingRepository } from '../../repository/pricing';
 import { orderRepository } from '../../repository/order';
@@ -61,6 +67,8 @@ import {
   type Cart,
 } from '../createOrder';
 
+const TG = '018f9c10-0000-7000-8000-00000000c0de';
+
 const reserveMock = vi.mocked(reserve);
 const resolvePriceMock = vi.mocked(pricingRepository.resolvePrice);
 const findByRequestIdMock = vi.mocked(orderRepository.findByRequestId);
@@ -72,43 +80,54 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-/** Build a Prisma P2002 unique-violation error targeting the given constraint. */
-function makeP2002(target: string | string[]): Prisma.PrismaClientKnownRequestError {
-  return new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-    code: 'P2002',
-    clientVersion: 'test',
-    meta: { target },
+/** A postgres.js-shaped unique violation (what kysely-postgres-js rethrows). */
+function makePgUniqueViolation(constraintName: string): Error {
+  return Object.assign(new Error('duplicate key value violates unique constraint'), {
+    code: '23505',
+    constraint_name: constraintName,
   });
 }
 
 /**
- * A fake PrismaClient whose $transaction simply runs the callback with a fake tx.
- * The tx implements only the members createOrder touches directly:
- *   - $executeRawUnsafe (the SET LOCAL search_path),
- *   - productVariant.findUnique (the snapshot read).
- * The repository + reserve seams are mocked at module level, so the tx does not
- * need to back them. canned.variant is what every variant lookup returns.
+ * A fake scoped handle. `db.transaction().setIsolationLevel(level).execute(fn)`
+ * records the level and runs `fn` with a fake `trx`. The trx implements only the
+ * query createOrder issues directly: the variant snapshot read
+ * (selectFrom(...).leftJoin(...).select(...).where(...).executeTakeFirst()),
+ * which resolves to `canned.variant`. The repository + reserve seams are mocked
+ * at module level, so the trx does not need to back them.
  */
-function makeFakePrisma(canned: { variant?: unknown } = {}): {
-  prisma: import('@prisma/client').PrismaClient;
-  tx: Record<string, unknown>;
+function makeFakeDb(canned: { variant?: unknown } = {}): {
+  db: Kysely<CommerceDB>;
+  trx: Record<string, unknown>;
+  isolationLevels: string[];
+  transactionCount: () => number;
 } {
-  const tx = {
-    $executeRawUnsafe: vi.fn().mockResolvedValue(0),
-    productVariant: {
-      findUnique: vi
-        .fn()
-        .mockResolvedValue(
-          'variant' in canned
-            ? canned.variant
-            : { title: 'V', sku: 'SKU', taxClass: null, product: { taxClass: null } },
-        ),
-    },
-  };
-  const prisma = {
-    $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
-  } as unknown as import('@prisma/client').PrismaClient;
-  return { prisma, tx };
+  const variant =
+    'variant' in canned
+      ? canned.variant
+      : { title: 'V', sku: 'SKU', variantTaxClass: null, productTaxClass: null };
+  const builder: Record<string, unknown> = {};
+  for (const method of ['selectFrom', 'leftJoin', 'select', 'where']) {
+    builder[method] = vi.fn(() => builder);
+  }
+  builder.executeTakeFirst = vi.fn(async () => variant);
+  const trx = builder;
+  const isolationLevels: string[] = [];
+  let transactions = 0;
+  const db = {
+    transaction: vi.fn(() => ({
+      setIsolationLevel: (level: string) => {
+        isolationLevels.push(level);
+        return {
+          execute: async (fn: (t: typeof trx) => unknown) => {
+            transactions += 1;
+            return fn(trx);
+          },
+        };
+      },
+    })),
+  } as unknown as Kysely<CommerceDB>;
+  return { db, trx, isolationLevels, transactionCount: () => transactions };
 }
 
 /** A minimal valid one-line cart; tests override fields as needed. */
@@ -289,47 +308,55 @@ describe('duplicate-detector predicates', () => {
     expect(isReserveDuplicate('not an error')).toBe(false);
   });
 
-  it('isOrderRequestIdConflict matches a P2002 on request_id (string + array target), not others', () => {
-    expect(isOrderRequestIdConflict(makeP2002('order_request_id_key'))).toBe(true);
-    expect(isOrderRequestIdConflict(makeP2002(['request_id']))).toBe(true);
-    expect(isOrderRequestIdConflict(makeP2002(['requestId']))).toBe(true);
-    expect(isOrderRequestIdConflict(makeP2002('order_number_key'))).toBe(false);
-    expect(isOrderRequestIdConflict(makeP2002(['some_other_col']))).toBe(false);
+  it('isOrderRequestIdConflict matches a 23505 on the order request_id index, not others', () => {
+    expect(isOrderRequestIdConflict(makePgUniqueViolation('order_request_id_key'))).toBe(true);
+    expect(isOrderRequestIdConflict(makePgUniqueViolation('order_number_key'))).toBe(false);
+    expect(isOrderRequestIdConflict(makePgUniqueViolation('order_pkey'))).toBe(false);
+    expect(
+      isOrderRequestIdConflict(
+        Object.assign(new Error('fk'), { code: '23503', constraint_name: 'order_request_id_key' }),
+      ),
+    ).toBe(false);
     expect(isOrderRequestIdConflict(new Error('plain'))).toBe(false);
+    expect(isOrderRequestIdConflict(null)).toBe(false);
   });
 });
 
 // ===========================================================================
 describe('createOrder control flow', () => {
   it("throws loudly when no price resolves for a line (never a silent shortage)", async () => {
-    const { prisma } = makeFakePrisma();
-    findByRequestIdMock.mockResolvedValue(null);
+    const { db } = makeFakeDb();
+    findByRequestIdMock.mockResolvedValue(undefined);
     resolvePriceMock.mockResolvedValue(null); // no applicable price
 
-    await expect(createOrder(prisma, baseCart())).rejects.toThrow(/no price resolved/);
+    await expect(createOrder(db, TG, baseCart())).rejects.toThrow(/no price resolved/);
   });
 
   it('translates an OrderShortageError into { ok:false, shortages }', async () => {
-    const { prisma } = makeFakePrisma();
-    findByRequestIdMock.mockResolvedValue(null);
+    const { db } = makeFakeDb();
+    findByRequestIdMock.mockResolvedValue(undefined);
     resolvePriceMock.mockResolvedValue(1000);
     nextOrderNumberMock.mockResolvedValue('ORD-000001');
     insertOrderMock.mockResolvedValue({ id: 'order-1' } as never);
     insertLineItemMock.mockResolvedValue({ id: 'line-1' } as never);
     // The inner reserve short-stocks: createOrder must throw OrderShortageError
-    // inside the tx, which the outer catch translates to the explicit contract.
+    // inside the transaction, which the outer catch translates to the contract.
     const shortages = [{ inventoryItemId: 'inv-1', locationId: 'loc-1', needed: 5, available: 1 }];
     reserveMock.mockResolvedValue({ ok: false, shortages });
 
-    const result = await createOrder(prisma, baseCart({ lines: [{ inventoryItemId: 'inv-1', variantId: 'var-1', quantity: 5 }] }));
+    const result = await createOrder(
+      db,
+      TG,
+      baseCart({ lines: [{ inventoryItemId: 'inv-1', variantId: 'var-1', quantity: 5 }] }),
+    );
     expect(result).toEqual({ ok: false, shortages });
   });
 
-  it('happy path: assembles the order with server-computed totals and one reserve per line', async () => {
-    const { prisma, tx } = makeFakePrisma({
-      variant: { title: 'Tee', sku: 'TEE-1', taxClass: null, product: { taxClass: null } },
+  it('happy path: READ COMMITTED, server-computed totals, one INNER reserve per line on the same trx', async () => {
+    const { db, trx, isolationLevels } = makeFakeDb({
+      variant: { title: 'Tee', sku: 'TEE-1', variantTaxClass: null, productTaxClass: null },
     });
-    findByRequestIdMock.mockResolvedValue(null);
+    findByRequestIdMock.mockResolvedValue(undefined);
     resolvePriceMock.mockResolvedValue(1000); // 1000 cents unit
     nextOrderNumberMock.mockResolvedValue('ORD-000001');
     insertOrderMock.mockResolvedValue({ id: 'order-1' } as never);
@@ -337,10 +364,12 @@ describe('createOrder control flow', () => {
     reserveMock.mockResolvedValue({ ok: true, reservationId: 'res-1' });
 
     const result = await createOrder(
-      prisma,
+      db,
+      TG,
       baseCart({ lines: [{ inventoryItemId: 'inv-1', variantId: 'var-1', quantity: 2 }], clientTotal: 999999 }),
     );
     expect(result).toEqual({ ok: true, orderId: 'order-1' });
+    expect(isolationLevels).toEqual(['read committed']);
 
     // Server-computed totals: 2 * 1000 = 2000 net + 19% (380) = 2380. The bogus
     // clientTotal is ignored.
@@ -349,22 +378,28 @@ describe('createOrder control flow', () => {
     expect(orderRow.subtotal).toBe(2000);
     expect(orderRow.taxAmount).toBe(380);
     expect(orderRow.total).toBe(2380);
+    expect(nextOrderNumberMock).toHaveBeenCalledWith(trx, TG);
 
-    // One reserve per line, on the same tx (the INNER reserve, not WithRetry).
+    // One reserve per line, on the same trx (the INNER reserve, not WithRetry),
+    // with the tenant group threaded through for the raw guarded UPDATE.
     expect(reserveMock).toHaveBeenCalledTimes(1);
-    expect(reserveMock.mock.calls[0][0]).toBe(tx);
-    expect(reserveMock.mock.calls[0][1]).toMatchObject({
+    expect(reserveMock.mock.calls[0][0]).toBe(trx);
+    expect(reserveMock.mock.calls[0][1]).toBe(TG);
+    expect(reserveMock.mock.calls[0][2]).toMatchObject({
       inventoryItemId: 'inv-1',
+      variantId: 'var-1',
       needed: 2,
       requestId: 'req-1:0',
+      refType: 'order_line',
+      refId: 'line-1',
     });
   });
 
   it('idempotency pre-check: a prior order with the request_id short-circuits to ok:true', async () => {
-    const { prisma } = makeFakePrisma();
+    const { db } = makeFakeDb();
     findByRequestIdMock.mockResolvedValue({ id: 'prior-order' } as never);
 
-    const result = await createOrder(prisma, baseCart());
+    const result = await createOrder(db, TG, baseCart());
     expect(result).toEqual({ ok: true, orderId: 'prior-order' });
     // No price resolution, no insert, no reserve: the prior order wins outright.
     expect(resolvePriceMock).not.toHaveBeenCalled();
@@ -372,11 +407,66 @@ describe('createOrder control flow', () => {
     expect(reserveMock).not.toHaveBeenCalled();
   });
 
-  it('validateCart runs BEFORE any transaction: a B2C reverse-charge cart never opens a tx', async () => {
-    const { prisma } = makeFakePrisma();
+  it('a lost order request_id race (23505 on order_request_id_key) re-reads the winner in a FRESH transaction', async () => {
+    const { db, isolationLevels, transactionCount } = makeFakeDb();
+    findByRequestIdMock
+      .mockResolvedValueOnce(undefined) // in-transaction pre-check: not there yet
+      .mockResolvedValueOnce({ id: 'winner-order' } as never); // fresh re-read
+    resolvePriceMock.mockResolvedValue(1000);
+    nextOrderNumberMock.mockResolvedValue('ORD-000002');
+    insertOrderMock.mockRejectedValue(makePgUniqueViolation('order_request_id_key'));
+
+    const result = await createOrder(db, TG, baseCart());
+    expect(result).toEqual({ ok: true, orderId: 'winner-order' });
+    expect(transactionCount()).toBe(2);
+    expect(isolationLevels).toEqual(['read committed', 'read committed']);
+  });
+
+  it('a lost per-line reservation race (the reserve sentinel) also resolves to the prior order', async () => {
+    const { db, transactionCount } = makeFakeDb();
+    findByRequestIdMock
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ id: 'winner-order' } as never);
+    resolvePriceMock.mockResolvedValue(1000);
+    nextOrderNumberMock.mockResolvedValue('ORD-000003');
+    insertOrderMock.mockResolvedValue({ id: 'loser-order' } as never);
+    insertLineItemMock.mockResolvedValue({ id: 'line-1' } as never);
+    const sentinel = new Error('duplicate request_id req-1:0');
+    sentinel.name = 'DuplicateRequestError';
+    reserveMock.mockRejectedValue(sentinel);
+
+    expect(await createOrder(db, TG, baseCart())).toEqual({ ok: true, orderId: 'winner-order' });
+    expect(transactionCount()).toBe(2);
+  });
+
+  it('surfaces loudly when the race fired but no prior order exists (never a silent success)', async () => {
+    const { db } = makeFakeDb();
+    findByRequestIdMock.mockResolvedValue(undefined);
+    resolvePriceMock.mockResolvedValue(1000);
+    nextOrderNumberMock.mockResolvedValue('ORD-000004');
+    insertOrderMock.mockRejectedValue(makePgUniqueViolation('order_request_id_key'));
+
+    await expect(createOrder(db, TG, baseCart())).rejects.toThrow(/no prior order was found/);
+  });
+
+  it('an UNRELATED unique violation (order_number_key) propagates unchanged, with no re-read', async () => {
+    const { db, transactionCount } = makeFakeDb();
+    findByRequestIdMock.mockResolvedValue(undefined);
+    resolvePriceMock.mockResolvedValue(1000);
+    nextOrderNumberMock.mockResolvedValue('ORD-000005');
+    const violation = makePgUniqueViolation('order_number_key');
+    insertOrderMock.mockRejectedValue(violation);
+
+    await expect(createOrder(db, TG, baseCart())).rejects.toBe(violation);
+    expect(transactionCount()).toBe(1);
+  });
+
+  it('validateCart runs BEFORE any transaction: a B2C reverse-charge cart never opens one', async () => {
+    const { db, transactionCount } = makeFakeDb();
     await expect(
-      createOrder(prisma, baseCart({ reverseCharge: true, customerType: 'b2c', vatId: 'DE1' })),
+      createOrder(db, TG, baseCart({ reverseCharge: true, customerType: 'b2c', vatId: 'DE1' })),
     ).rejects.toThrow(/reverseCharge requires customerType "b2b"/);
-    expect((prisma.$transaction as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect(transactionCount()).toBe(0);
+    expect(db.transaction).not.toHaveBeenCalled();
   });
 });

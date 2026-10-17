@@ -1,6 +1,6 @@
 // src/server/commerce/inventory/__tests__/reserve.isolation.itest.ts
 //
-// CM-08 — the isolation crown-jewel for the NEW Kysely reserve heart (compliance
+// CM-08 — the isolation crown-jewel for the reserve heart (compliance
 // evidence). Provisions TWO real tenant-group schemas (tg_a, tg_b), seeds DISTINCT
 // managed inventory in each, plants a same-named `public.inventory_level` DECOY,
 // and proves the schema-per-tenant wall holds for the reserve path's RAW guarded
@@ -14,7 +14,6 @@
 //     by Postgres GRANTs, not app discipline; the SAME role reserving its granted
 //     schema (tg_a) succeeds.
 //
-// Exercises the NEW (CM-08 expand) Kysely path; the old Prisma path is untouched.
 // TRUST auth (no password literals — see CM-04). The `.itest.ts` suffix keeps this
 // file OUT of the headless `pnpm test` unit gate; it runs ONLY under
 // `pnpm test:integration` against Docker. Mirrors catalog.isolation.itest.ts.
@@ -35,7 +34,7 @@ import postgres from 'postgres';
 
 import type { CommerceDB } from '../../db-types';
 import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
-import { reserveWithRetryKysely } from '../reserve';
+import { reserveWithRetry } from '../reserve';
 
 const DB_NAME = 'framer_clone_test';
 const APP_ROLE = 'commerce_app';
@@ -180,7 +179,7 @@ afterAll(async () => {
   await container?.stop();
 });
 
-describe('CM-08 reserve isolation — schema-per-tenant wall (NEW Kysely path)', () => {
+describe('CM-08 reserve isolation — schema-per-tenant wall (tenant schema)', () => {
   it('provisioned both tenant schemas', async () => {
     const groups = await owner!`SELECT schema_name FROM public.tenant_groups ORDER BY slug`;
     expect(groups.map((g) => g.schema_name).sort()).toEqual([SCHEMA_A, SCHEMA_B].sort());
@@ -188,7 +187,7 @@ describe('CM-08 reserve isolation — schema-per-tenant wall (NEW Kysely path)',
 
   it('a guarded reserve scoped to tg_a mutates ONLY tg_a (tg_b and the public decoy untouched)', async () => {
     const dbA = tenantDb(ownerBase!, TG_A);
-    const result = await reserveWithRetryKysely(dbA, TG_A, {
+    const result = await reserveWithRetry(dbA, TG_A, {
       inventoryItemId: seedA.inventoryItemId,
       variantId: seedA.variantId,
       locationId: seedA.locationId,
@@ -215,7 +214,7 @@ describe('CM-08 reserve isolation — schema-per-tenant wall (NEW Kysely path)',
   it('GRANT PROOF: commerce_app may reserve its granted schema (tg_a) but is DENIED a non-granted one (tg_b)', async () => {
     // commerce_app WAS granted on tg_a -> the scoped reserve succeeds.
     const appDbA = tenantDb(appBase!, TG_A);
-    const ok = await reserveWithRetryKysely(appDbA, TG_A, {
+    const ok = await reserveWithRetry(appDbA, TG_A, {
       inventoryItemId: seedA.inventoryItemId,
       variantId: seedA.variantId,
       locationId: seedA.locationId,
@@ -227,7 +226,7 @@ describe('CM-08 reserve isolation — schema-per-tenant wall (NEW Kysely path)',
     // commerce_app was NOT granted on tg_b -> Postgres refuses at the grant layer.
     const appDbB = tenantDb(appBase!, TG_B);
     await expect(
-      reserveWithRetryKysely(appDbB, TG_B, {
+      reserveWithRetry(appDbB, TG_B, {
         inventoryItemId: seedB.inventoryItemId,
         variantId: seedB.variantId,
         locationId: seedB.locationId,

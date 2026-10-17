@@ -35,7 +35,7 @@ import { getPrismaClient } from '@/server/db';
 import { getCmsRepository } from '@/server/cms';
 import { commerceRepoForSite } from '@/server/commerce/storefrontTenant';
 import { commerceTenantDbChecked } from '@/server/commerce/db';
-import { getCommerceServerRepositoryDb } from '@/server/commerce/repository/read';
+import { getCommerceServerRepository } from '@/server/commerce/repository/read';
 import { POST as ordersPOST } from '@/app/api/commerce/orders/route';
 import {
   resolvePublishedSite,
@@ -246,7 +246,7 @@ describe('published-site render smoke (real Postgres, real seeded data)', () => 
   describe('demo checkout end to end through the storefront orders route', () => {
     it('places one order on the demo host: 201, the order lands in tg_<demo>, stock is reserved', async () => {
       const db = await commerceTenantDbChecked(DEMO_TENANT_GROUP_ID);
-      const repo = getCommerceServerRepositoryDb(db);
+      const repo = getCommerceServerRepository(db);
       const page = await repo.listProducts();
       const variantId = page.products[0]!.variantIds[0]!;
       const before = await repo.getAvailability(variantId);

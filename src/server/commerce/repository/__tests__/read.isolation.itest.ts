@@ -3,8 +3,8 @@
 // CM-07 — the READ-repo isolation crown-jewel (compliance evidence). Provisions
 // TWO real tenant-group schemas (tg_a, tg_b) against a Dockerized Postgres, seeds
 // DISTINCT catalog / price / inventory data in each, plants a same-named
-// `public.product` DECOY (reusing tg_a's handle), and proves — by running the NEW
-// `commerceReadRepositoryKysely` / `getCommerceServerRepositoryDb` through scoped
+// `public.product` DECOY (reusing tg_a's handle), and proves, by running the
+// `commerceReadRepository` / `getCommerceServerRepository` through scoped
 // `tenantDb(...)` handles — that the schema-per-tenant wall holds for every read
 // method the publish hydrator consumes:
 //
@@ -17,13 +17,12 @@
 //   - THE GRANT PROOF (the auditable control): a `commerce_app`-scoped connection
 //     reading a schema it was NOT granted (tg_b) raises `permission denied for
 //     schema` — the wall is enforced by Postgres GRANTs, not app discipline;
-//   - PLUS a structural proof that `getCommerceServerRepositoryDb(db)` satisfies
+//   - PLUS a structural proof that `getCommerceServerRepository(db)` satisfies
 //     the `CommerceServerRepository` contract the hydrator expects (compile-time
 //     via the typed annotations below + a runtime shape assertion).
 //
-// This exercises the NEW (CM-07 expand) Kysely path; the old Prisma
-// `commerceReadRepository` / `getCommerceServerRepository` is untouched and
-// covered by read.test.ts.
+// The read edge cases (filter / sort / limit, tax-class fallback, availability
+// aggregation and its zero / throw paths) are in read.itest.ts.
 //
 // TRUST auth (POSTGRES_HOST_AUTH_METHOD=trust + username-only URLs, no password
 // literals — hardcoded creds trip GitGuardian; see CM-04). The `.itest.ts` suffix
@@ -50,10 +49,10 @@ import type { CommerceServerRepository } from '@/lib/renderer/publish/hydrateBin
 
 import type { CommerceDB } from '../../db-types';
 import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
-import { catalogRepositoryKysely } from '../catalog';
+import { catalogRepository } from '../catalog';
 import {
-  commerceReadRepositoryKysely,
-  getCommerceServerRepositoryDb,
+  commerceReadRepository,
+  getCommerceServerRepository,
 } from '../read';
 
 const DB_NAME = 'framer_clone_test';
@@ -95,24 +94,24 @@ async function seedTenant(
     reserved?: number;
   },
 ): Promise<{ productId: string; variantId: string }> {
-  const product = await catalogRepositoryKysely.createProduct(db, {
+  const product = await catalogRepository.createProduct(db, {
     title: opts.productTitle,
     handle: opts.handle,
   });
-  const option = await catalogRepositoryKysely.addOption(db, {
+  const option = await catalogRepository.addOption(db, {
     productId: product.id,
     title: 'Size',
   });
-  const value = await catalogRepositoryKysely.addOptionValue(db, {
+  const value = await catalogRepository.addOptionValue(db, {
     optionId: option.id,
     value: 'Small',
   });
-  const variant = await catalogRepositoryKysely.addVariant(db, {
+  const variant = await catalogRepository.addVariant(db, {
     productId: product.id,
     title: 'Small',
     sku: opts.sku,
   });
-  await catalogRepositoryKysely.setVariantOptions(db, variant.id, [
+  await catalogRepository.setVariantOptions(db, variant.id, [
     { optionId: option.id, optionValueId: value.id },
   ]);
 
@@ -259,7 +258,7 @@ afterAll(async () => {
   await container?.stop();
 });
 
-describe('CM-07 read isolation — schema-per-tenant wall (NEW Kysely path)', () => {
+describe('CM-07 read isolation — schema-per-tenant wall (tenant schema)', () => {
   it('provisioned both tenant schemas and marked them active', async () => {
     const groups = await owner!`
       SELECT schema_name, status FROM public.tenant_groups ORDER BY slug
@@ -270,7 +269,7 @@ describe('CM-07 read isolation — schema-per-tenant wall (NEW Kysely path)', ()
 
   it('listProducts scoped to tg_a sees ONLY tg_a (zero tg_b, zero decoy)', async () => {
     const dbA = tenantDb(ownerBase!, TG_A);
-    const page = await commerceReadRepositoryKysely.listProducts(dbA);
+    const page = await commerceReadRepository.listProducts(dbA);
     expect(page.total).toBe(1);
     expect(page.products).toHaveLength(1);
     expect(page.products[0]!.title).toBe('Widget A');
@@ -284,7 +283,7 @@ describe('CM-07 read isolation — schema-per-tenant wall (NEW Kysely path)', ()
 
   it('getProductByHandle scoped to tg_a returns the live product, never the public decoy', async () => {
     const dbA = tenantDb(ownerBase!, TG_A);
-    const product = await commerceReadRepositoryKysely.getProductByHandle(dbA, 'widget-a');
+    const product = await commerceReadRepository.getProductByHandle(dbA, 'widget-a');
     expect(product).not.toBeNull();
     expect(product!.id).toBe(productIdA);
     expect(product!.title).toBe('Widget A'); // not 'DECOY_PUBLIC'
@@ -293,20 +292,20 @@ describe('CM-07 read isolation — schema-per-tenant wall (NEW Kysely path)', ()
   it('listVariants / getPrices / getAvailability scoped to tg_a read tg_a data', async () => {
     const dbA = tenantDb(ownerBase!, TG_A);
 
-    const variants = await commerceReadRepositoryKysely.listVariants(dbA, productIdA);
+    const variants = await commerceReadRepository.listVariants(dbA, productIdA);
     expect(variants).toHaveLength(1);
     expect(variants[0]!.id).toBe(variantIdA);
     expect(variants[0]!.sku).toBe('WIDGET-A-S');
     expect(variants[0]!.optionValues.map((o) => o.label)).toEqual(['Small']);
 
-    const prices = await commerceReadRepositoryKysely.getPrices(dbA, variantIdA);
+    const prices = await commerceReadRepository.getPrices(dbA, variantIdA);
     expect(prices).toHaveLength(1);
     expect(prices[0]!.amountCents).toBe(PRICE_A);
     expect(Number.isInteger(prices[0]!.amountCents)).toBe(true);
     expect(prices[0]!.currency).toBe('EUR');
 
     // available_quantity is read DIRECTLY from the GENERATED column and aggregated.
-    const availability = await commerceReadRepositoryKysely.getAvailability(dbA, variantIdA);
+    const availability = await commerceReadRepository.getAvailability(dbA, variantIdA);
     expect(availability).toEqual({
       variantId: variantIdA,
       locationId: ALL_LOCATIONS,
@@ -319,14 +318,14 @@ describe('CM-07 read isolation — schema-per-tenant wall (NEW Kysely path)', ()
     const dbB = tenantDb(ownerBase!, TG_B);
 
     // tg_b has no product with tg_a's handle.
-    expect(await commerceReadRepositoryKysely.getProductByHandle(dbB, 'widget-a')).toBeNull();
+    expect(await commerceReadRepository.getProductByHandle(dbB, 'widget-a')).toBeNull();
     // tg_b has no variants under tg_a's product id.
-    expect(await commerceReadRepositoryKysely.listVariants(dbB, productIdA)).toEqual([]);
+    expect(await commerceReadRepository.listVariants(dbB, productIdA)).toEqual([]);
     // tg_b has no price_set for tg_a's variant.
-    expect(await commerceReadRepositoryKysely.getPrices(dbB, variantIdA)).toEqual([]);
+    expect(await commerceReadRepository.getPrices(dbB, variantIdA)).toEqual([]);
     // tg_b has no such variant -> getAvailability throws (advisory contract).
     await expect(
-      commerceReadRepositoryKysely.getAvailability(dbB, variantIdA),
+      commerceReadRepository.getAvailability(dbB, variantIdA),
     ).rejects.toThrow(/no variant with id/);
   });
 
@@ -334,14 +333,14 @@ describe('CM-07 read isolation — schema-per-tenant wall (NEW Kysely path)', ()
     const dbA = tenantDb(ownerBase!, TG_A);
     const dbB = tenantDb(ownerBase!, TG_B);
 
-    const pageB = await commerceReadRepositoryKysely.listProducts(dbB);
+    const pageB = await commerceReadRepository.listProducts(dbB);
     expect(pageB.total).toBe(1);
     expect(pageB.products[0]!.title).toBe('Widget B');
     expect(pageB.products.some((p) => p.title === 'DECOY_PUBLIC')).toBe(false);
 
-    expect(await commerceReadRepositoryKysely.getPrices(dbB, variantIdB)).toHaveLength(1);
+    expect(await commerceReadRepository.getPrices(dbB, variantIdB)).toHaveLength(1);
     // tg_a cannot see tg_b's variant/price either.
-    expect(await commerceReadRepositoryKysely.getPrices(dbA, variantIdB)).toEqual([]);
+    expect(await commerceReadRepository.getPrices(dbA, variantIdB)).toEqual([]);
     // The seeded ids are distinct and live only in their own schema.
     expect(productIdA).not.toBe(productIdB);
     expect(variantIdA).not.toBe(variantIdB);
@@ -350,23 +349,23 @@ describe('CM-07 read isolation — schema-per-tenant wall (NEW Kysely path)', ()
   it('GRANT PROOF: commerce_app may read its granted schema but is DENIED a non-granted one', async () => {
     // commerce_app WAS granted on tg_a -> the scoped read succeeds.
     const appDbA = tenantDb(appBase!, TG_A);
-    const page = await commerceReadRepositoryKysely.listProducts(appDbA);
+    const page = await commerceReadRepository.listProducts(appDbA);
     expect(page.total).toBe(1);
 
     // commerce_app was NOT granted on tg_b -> Postgres refuses at the grant layer,
     // not the app layer: `permission denied for schema tg_<b>`.
     const appDbB = tenantDb(appBase!, TG_B);
-    await expect(commerceReadRepositoryKysely.listProducts(appDbB)).rejects.toThrow(
+    await expect(commerceReadRepository.listProducts(appDbB)).rejects.toThrow(
       /permission denied for schema/,
     );
   });
 
-  it('getCommerceServerRepositoryDb(db) satisfies the CommerceServerRepository contract', async () => {
+  it('getCommerceServerRepository(db) satisfies the CommerceServerRepository contract', async () => {
     // Compile-time: the annotation pins the factory's return to the hydrator's
     // contract (the in-loop `tsc` enforces this whole-program). Runtime: the five
     // methods exist as functions and the wired factory delegates to the Kysely
     // read repo against the scoped handle.
-    const repo: CommerceServerRepository = getCommerceServerRepositoryDb(
+    const repo: CommerceServerRepository = getCommerceServerRepository(
       tenantDb(ownerBase!, TG_A),
     );
     expect(typeof repo.listProducts).toBe('function');

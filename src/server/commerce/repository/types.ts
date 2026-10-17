@@ -2,46 +2,41 @@ import 'server-only';
 
 // src/server/commerce/repository/types.ts
 //
-// Transport-agnostic repository interfaces for the four commerce concerns.
-// These are the seam between the HTTP/WebSocket layer and Postgres: a route
-// handler or a realtime consumer opens a `withTenant` block and hands the tx
-// client to a repository. The repository knows ONLY about the transaction
-// client and domain data; it has no idea whether the caller is a REST route,
-// a WebSocket frame, or a background job. That is what "transport-agnostic"
-// means here, and it is enforced structurally: every method's first parameter
-// is `tx: Prisma.TransactionClient`. There is no PrismaClient, no Request, no
-// socket anywhere in this file.
+// Transport-agnostic repository contracts for the commerce data layer. These
+// are the seam between the HTTP layer and Postgres: a route handler resolves the
+// company's tenant group, takes the scoped Kysely handle `commerceTenantDb(tgId)`
+// (../db.ts) and hands it to a repository. The repository knows ONLY that handle
+// and domain data; it has no idea whether the caller is a REST route, a seed
+// script or a test. Every method takes `db: Kysely<CommerceDB>` first.
 //
-// Why `tx` and not a bare PrismaClient: stock movements and money MUST be
-// written and read on the same connection inside the same transaction that
-// `withTenant` opened (so the pinned search_path applies and so reservation /
-// ledger writes are atomic). Passing the tx makes that non-negotiable: a
-// repository physically cannot start its own out-of-band transaction.
+// Isolation is baked into the handle: tenant-db's `withSchema` rewrites every
+// structured table reference to `tg_<hex32>.<table>`, so a repository cannot name
+// another company's schema. A raw `sql` fragment must qualify tenant tables with
+// `tenantSchemaRef(tgId)` (CI guard G3, `pnpm lint:guards`).
 //
-// NO domain tables exist yet. b2 (inventory ledger), b4 (catalog), b5 (pricing
-// + tax), and b6 (minimal orders) add the Prisma models AND flesh out these
-// interfaces with the real method sets and row shapes. What lands here is the
-// CONTRACT every later spec must honour: one representative method per concern,
-// each taking the tx first, so the shape is fixed before the tables exist.
-// Later specs widen these interfaces; they do not change the `tx`-first rule.
+// Atomicity: a caller that needs several writes to commit together (an order and
+// its reservations) opens ONE `db.transaction()` and passes the transaction
+// handle in; repositories never open an out-of-band transaction of their own
+// (setVariantOptions opens one only to make its clear-then-insert atomic).
 
+import type { Kysely, Selectable } from 'kysely';
 import type {
-  Prisma,
-  Price,
-  PriceSet,
-  Product,
-  ProductOption,
-  ProductOptionValue,
-  ProductStatus,
-  ProductVariant,
-  Order,
-  OrderLineItem,
+  CommerceDB,
   CustomerType,
   NetOrGross,
+  OrderLineItemTable,
   OrderStatus,
+  OrderTable,
+  PriceSetTable,
+  PriceTable,
+  ProductOptionTable,
+  ProductOptionValueTable,
+  ProductStatus,
+  ProductTable,
+  ProductVariantTable,
   TaxTreatment,
   VariantRefSource,
-} from '@prisma/client';
+} from '../db-types';
 
 /** Create-a-product input. status defaults to 'draft' when omitted. */
 export interface CreateProductInput {
@@ -80,54 +75,6 @@ export interface VariantOptionAssignment {
   optionValueId: string;
 }
 
-/**
- * Catalog reads/writes (products, variants, options): owned by b4. Widens the b1
- * representative seam (count) with the catalog write surface. Every method takes
- * the transaction client first (the b1 tx-first rule): the repository never opens
- * its own transaction and never touches a bare PrismaClient.
- */
-export interface CatalogRepository {
-  /** Count catalog entries (products) visible in the current tenant schema. */
-  count(tx: Prisma.TransactionClient): Promise<number>;
-
-  /** Create a product. */
-  createProduct(tx: Prisma.TransactionClient, input: CreateProductInput): Promise<Product>;
-
-  /** Add an option (e.g. "Color") to a product. */
-  addOption(tx: Prisma.TransactionClient, input: AddOptionInput): Promise<ProductOption>;
-
-  /** Add a value (e.g. "Red") to an option. */
-  addOptionValue(
-    tx: Prisma.TransactionClient,
-    input: AddOptionValueInput,
-  ): Promise<ProductOptionValue>;
-
-  /** Add a variant to a product (its option_signature starts NULL). */
-  addVariant(tx: Prisma.TransactionClient, input: AddVariantInput): Promise<ProductVariant>;
-
-  /**
-   * Replace a variant's option assignments (the matrix), then recompute its
-   * option_signature. A wrong (option, value) pairing is rejected by the
-   * composite FK; an option combination already owned by another live variant
-   * is rejected by the option_signature partial-UNIQUE. Both surface as throws.
-   */
-  setVariantOptions(
-    tx: Prisma.TransactionClient,
-    variantId: string,
-    assignments: VariantOptionAssignment[],
-  ): Promise<void>;
-}
-
-/**
- * Inventory ledger (append-only stock movements + on-hand views): owned by b2.
- * b3 adds the guarded reservation path on top. Representative seam method;
- * b2 widens this interface.
- */
-export interface InventoryRepository {
-  /** Current on-hand quantity for a SKU, derived from the stock_movement ledger. */
-  onHand(tx: Prisma.TransactionClient, sku: string): Promise<number>;
-}
-
 /** Create-a-price-set input. variantId attaches the set to a variant (one per variant). */
 export interface CreatePriceSetInput {
   variantId?: string | null;
@@ -159,35 +106,6 @@ export interface ResolvePriceOptions {
   priceListIds?: string[];
   quantity?: number;
   now?: Date;
-}
-
-/**
- * Price resolution (money in integer minor units): owned by b5. Widens the b1
- * representative seam with the real pricing surface. Every method takes the
- * transaction client first (the b1 tx-first rule); resolvePrice is a PURE READ
- * over tx (no React, Node-evaluable) that returns integer cents unchanged, doing
- * no float math. The catalog-side tax_class lives on Product/ProductVariant
- * (b5), read directly off those rows; the bought tax-engine resolution is E8.
- */
-export interface PricingRepository {
-  /** Create a price_set (optionally attached to a variant). */
-  createPriceSet(tx: Prisma.TransactionClient, input: CreatePriceSetInput): Promise<PriceSet>;
-
-  /** Add a price (integer cents) to a price_set, optionally on a price_list. */
-  addPrice(tx: Prisma.TransactionClient, input: AddPriceInput): Promise<Price>;
-
-  /**
-   * Resolve the unit price for a variant in integer minor units (cents), or null
-   * when no price applies. A price-list price (from an active list named in
-   * priceListIds, within its window, and matching the quantity band) wins over
-   * the base price; among a tier the lowest amount wins. The returned value is
-   * the stored Int amount unchanged: no float math is performed.
-   */
-  resolvePrice(
-    tx: Prisma.TransactionClient,
-    variantId: string,
-    options: ResolvePriceOptions,
-  ): Promise<number | null>;
 }
 
 /**
@@ -234,35 +152,92 @@ export interface CreateOrderLineItemInput {
   variantRefSource: VariantRefSource;
 }
 
+/** RETURNING / SELECT projections the repositories return (CommerceDB rows). */
+export type CatalogProductRow = Selectable<ProductTable>;
+export type CatalogOptionRow = Selectable<ProductOptionTable>;
+export type CatalogOptionValueRow = Selectable<ProductOptionValueTable>;
+export type CatalogVariantRow = Selectable<ProductVariantTable>;
+export type PricingPriceSetRow = Selectable<PriceSetTable>;
+export type PricingPriceRow = Selectable<PriceTable>;
+export type OrderRow = Selectable<OrderTable>;
+export type OrderLineItemRow = Selectable<OrderLineItemTable>;
+
 /**
- * Order capture (minimal orders + line items): owned by b6. Widens the b1
- * representative seam (nextOrderNumber) with the order/line INSERT surface and
- * the request_id idempotency re-read. Every method takes the transaction client
- * first (the b1 tx-first rule): the repository never opens its own transaction
- * and never touches a bare PrismaClient. The atomic cart -> order orchestration
- * (price resolution, tax math, stock reservation, rollback) lives in createOrder,
- * NOT here: this is the data-access seam only.
+ * Catalog writes (products, options, values, variants and the variant/option
+ * matrix). The composite FK and the option_signature triggers in the tenant
+ * schema stay authoritative; nothing is re-checked in JS.
  */
-export interface OrderRepository {
-  /** Allocate the next monotonic order number within the current tenant schema. */
-  nextOrderNumber(tx: Prisma.TransactionClient): Promise<string>;
+export interface CatalogRepository {
+  /** Count catalog entries (products) visible in the scoped tenant schema. */
+  count(db: Kysely<CommerceDB>): Promise<number>;
 
-  /** Insert the order row (all monetary fields server-computed by the caller). */
-  insertOrder(tx: Prisma.TransactionClient, input: CreateOrderRowInput): Promise<Order>;
+  /** Create a product (status defaults to 'draft' at the DB when omitted). */
+  createProduct(db: Kysely<CommerceDB>, input: CreateProductInput): Promise<CatalogProductRow>;
 
-  /** Insert one snapshot line item belonging to an order. */
-  insertLineItem(
-    tx: Prisma.TransactionClient,
-    input: CreateOrderLineItemInput,
-  ): Promise<OrderLineItem>;
+  /** Add an option (e.g. "Color") to a product. */
+  addOption(db: Kysely<CommerceDB>, input: AddOptionInput): Promise<CatalogOptionRow>;
+
+  /** Add a value (e.g. "Red") to an option. */
+  addOptionValue(
+    db: Kysely<CommerceDB>,
+    input: AddOptionValueInput,
+  ): Promise<CatalogOptionValueRow>;
+
+  /** Add a variant to a product (its option_signature starts NULL, trigger-set). */
+  addVariant(db: Kysely<CommerceDB>, input: AddVariantInput): Promise<CatalogVariantRow>;
 
   /**
-   * Re-read an order by its request_id (the idempotency key), or null. Used both
-   * for the sequential idempotency pre-check and for the fresh-transaction
-   * recovery after a concurrent UNIQUE(request_id) race.
+   * Replace a variant's option assignments (the matrix). The composite FK rejects
+   * a wrong (option, value) pairing; the option_signature partial-UNIQUE rejects a
+   * combination already owned by another live variant. Both surface as throws and
+   * roll back the wrapping transaction.
    */
-  findByRequestId(
-    tx: Prisma.TransactionClient,
-    requestId: string,
-  ): Promise<Order | null>;
+  setVariantOptions(
+    db: Kysely<CommerceDB>,
+    variantId: string,
+    assignments: VariantOptionAssignment[],
+  ): Promise<void>;
+}
+
+/**
+ * Price resolution and price writes, money in integer minor units (cents).
+ * resolvePrice is a pure read that returns the stored Int unchanged.
+ */
+export interface PricingRepository {
+  /** Create a price_set (optionally attached to a variant). */
+  createPriceSet(db: Kysely<CommerceDB>, input: CreatePriceSetInput): Promise<PricingPriceSetRow>;
+
+  /** Add a price (integer cents) to a price_set, optionally on a price_list. */
+  addPrice(db: Kysely<CommerceDB>, input: AddPriceInput): Promise<PricingPriceRow>;
+
+  /**
+   * Resolve the unit price for a variant in integer minor units (cents), or null
+   * when no price applies. A price-list price (active, in its window, matching the
+   * quantity band, named in priceListIds) wins over the base price; within a tier
+   * the LOWEST integer amount wins. No float math.
+   */
+  resolvePrice(
+    db: Kysely<CommerceDB>,
+    variantId: string,
+    options: ResolvePriceOptions,
+  ): Promise<number | null>;
+}
+
+/**
+ * Order capture data access (order + line items + the request_id idempotency
+ * re-read). The atomic cart to order orchestration (price resolution, tax math,
+ * stock reservation, rollback) lives in ../order/createOrder.ts, not here.
+ */
+export interface OrderRepository {
+  /** Allocate the next monotonic order number within the tenant's schema. */
+  nextOrderNumber(db: Kysely<CommerceDB>, tgId: string): Promise<string>;
+
+  /** Insert the order row (all monetary fields server-computed by the caller). */
+  insertOrder(db: Kysely<CommerceDB>, input: CreateOrderRowInput): Promise<OrderRow>;
+
+  /** Insert one snapshot line item belonging to an order. */
+  insertLineItem(db: Kysely<CommerceDB>, input: CreateOrderLineItemInput): Promise<OrderLineItemRow>;
+
+  /** Re-read an order by its request_id (the idempotency key), or undefined. */
+  findByRequestId(db: Kysely<CommerceDB>, requestId: string): Promise<OrderRow | undefined>;
 }

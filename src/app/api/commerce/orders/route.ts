@@ -11,7 +11,7 @@
 //   1. it resolves each variant to its inventory item (the SKU bridge: a
 //      variant and its inventory item share a SKU; there is no FK between them
 //      in v1, so the route bridges them here, server-side),
-//   2. it calls the atomic createOrderKysely (b6, ported in CM-09), which runs
+//   2. it calls the atomic createOrder (b6, ported in CM-09), which runs
 //      the WHOLE order inside ONE real READ COMMITTED transaction on the scoped
 //      tenant handle (NOT adapter.transaction, the verified no-op) and reserves
 //      each line through b3's guarded conditional decrement (the 3 stacked
@@ -55,7 +55,7 @@
 
 import { z } from 'zod';
 
-import { createOrderKysely, type Cart } from '@/server/commerce/order/createOrder';
+import { createOrder, type Cart } from '@/server/commerce/order/createOrder';
 import {
   readOrderTotal,
   resolveOrderLines,
@@ -148,7 +148,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     // The server authors the cart: idempotency key, currency, tax region, and
-    // the inventory identity. createOrderKysely ignores any client total; here
+    // the inventory identity. createOrder ignores any client total; here
     // the client never sends one at all.
     const cart: Cart = {
       // The client-owned idempotency key when present (so a re-submit dedupes to
@@ -163,11 +163,11 @@ export async function POST(req: Request): Promise<Response> {
       })),
     };
 
-    // b6 createOrderKysely runs the whole order inside ONE READ COMMITTED
+    // b6 createOrder runs the whole order inside ONE READ COMMITTED
     // transaction on the scoped handle and reserves each line through b3's
     // guarded conditional decrement. This is the checkout STOP: order-created,
     // no payment.
-    const result = await createOrderKysely(db, tenantGroupId, cart);
+    const result = await createOrder(db, tenantGroupId, cart);
 
     if (!result.ok) {
       // A guarded-reserve rejection. Map the inventory-item-keyed shortages back

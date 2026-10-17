@@ -2,7 +2,7 @@
 //
 // Headless UNIT tests for POST /api/commerce/orders. The host -> published-site
 // resolver (resolvePublishedSite), the scoped commerce handle factory, the
-// Kysely storefront reads and createOrderKysely are all mocked, so NO database
+// Kysely storefront reads and createOrder are all mocked, so NO database
 // is touched. The REAL tenancy edge (storefrontTenant.ts + tenant.ts) runs.
 // These prove the route:
 //   - gates on the request HOST resolving to a published site (an unresolvable
@@ -41,10 +41,10 @@ vi.mock('@/server/commerce/repository/storefront', async (importOriginal) => ({
 }));
 
 vi.mock('@/server/commerce/order/createOrder', () => ({
-  createOrderKysely: vi.fn(),
+  createOrder: vi.fn(),
 }));
 
-import { createOrderKysely } from '@/server/commerce/order/createOrder';
+import { createOrder } from '@/server/commerce/order/createOrder';
 import { commerceTenantDbChecked } from '@/server/commerce/db';
 import {
   readOrderTotal,
@@ -54,7 +54,7 @@ import {
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
 import { POST } from '../route';
 
-const createOrderMock = vi.mocked(createOrderKysely);
+const createOrderMock = vi.mocked(createOrder);
 const resolveSiteMock = vi.mocked(resolvePublishedSite);
 const tenantDbMock = vi.mocked(commerceTenantDbChecked);
 const resolveLinesMock = vi.mocked(resolveOrderLines);

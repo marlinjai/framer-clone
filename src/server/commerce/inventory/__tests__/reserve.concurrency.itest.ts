@@ -1,6 +1,6 @@
 // src/server/commerce/inventory/__tests__/reserve.concurrency.itest.ts
 //
-// CM-08 — the concurrency crown-jewel for the NEW Kysely reserve heart. Proves
+// CM-08 — the concurrency crown-jewel for the reserve heart. Proves
 // the guarded-decrement guarantees against a REAL provisioned tenant schema,
 // because the correctness story is Postgres semantics, not mockable:
 //
@@ -18,8 +18,8 @@
 //   4. two overlapping kits supplied in OPPOSITE component order acquire their
 //      locks ASCENDING and do not deadlock; both commit.
 //
-// Exercises the NEW (CM-08 expand) Kysely path; the old Prisma path is untouched
-// (reserve.itest.ts). TRUST auth (no password literals). The `.itest.ts` suffix
+// The sequential guards and the release / fulfill / adjust effects are in
+// reserve.itest.ts. TRUST auth (no password literals). The `.itest.ts` suffix
 // keeps this file OUT of the headless `pnpm test` unit gate; it runs ONLY under
 // `pnpm test:integration` against Docker. Requires a running Docker daemon.
 
@@ -39,9 +39,9 @@ import postgres from 'postgres';
 import type { CommerceDB } from '../../db-types';
 import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
 import {
-  reserveKitWithRetryKysely,
-  reserveTransactionKysely,
-  reserveWithRetryKysely,
+  reserveKitWithRetry,
+  reserveTransaction,
+  reserveWithRetry,
 } from '../reserve';
 
 const DB_NAME = 'framer_clone_test';
@@ -200,10 +200,10 @@ async function countRows(
   return Number(row.c);
 }
 
-describe('CM-08 reserve concurrency (NEW Kysely path, Dockerized Postgres)', () => {
+describe('CM-08 reserve concurrency (Dockerized Postgres)', () => {
   it('opens the reserve transaction at READ COMMITTED', async () => {
     const db = tenantDb(ownerBase!, TG);
-    const isolation = await reserveTransactionKysely(db, async (trx) => {
+    const isolation = await reserveTransaction(db, async (trx) => {
       const result = await sql<{ transaction_isolation: string }>`SHOW transaction_isolation`.execute(
         trx,
       );
@@ -217,14 +217,14 @@ describe('CM-08 reserve concurrency (NEW Kysely path, Dockerized Postgres)', () 
     const { variantId, inventoryItemId, locationId } = await seedManaged(db, 1);
 
     const [a, b] = await Promise.all([
-      reserveWithRetryKysely(db, TG, {
+      reserveWithRetry(db, TG, {
         inventoryItemId,
         variantId,
         locationId,
         needed: 1,
         requestId: `race-a-${randomUUID()}`,
       }),
-      reserveWithRetryKysely(db, TG, {
+      reserveWithRetry(db, TG, {
         inventoryItemId,
         variantId,
         locationId,
@@ -255,14 +255,14 @@ describe('CM-08 reserve concurrency (NEW Kysely path, Dockerized Postgres)', () 
     const requestId = `concurrent-dup-${randomUUID()}`;
 
     const [a, b] = await Promise.all([
-      reserveWithRetryKysely(db, TG, {
+      reserveWithRetry(db, TG, {
         inventoryItemId,
         variantId,
         locationId,
         needed: 3,
         requestId,
       }),
-      reserveWithRetryKysely(db, TG, {
+      reserveWithRetry(db, TG, {
         inventoryItemId,
         variantId,
         locationId,
@@ -305,7 +305,7 @@ describe('CM-08 reserve concurrency (NEW Kysely path, Dockerized Postgres)', () 
 
     // Two concurrent kits each need BOTH items, supplied in OPPOSITE input order.
     const [k1, k2] = await Promise.all([
-      reserveKitWithRetryKysely(db, TG, {
+      reserveKitWithRetry(db, TG, {
         components: [
           { inventoryItemId: hi, variantId: variantByItem.get(hi)!, requiredQuantity: 1 },
           { inventoryItemId: lo, variantId: variantByItem.get(lo)!, requiredQuantity: 1 },
@@ -313,7 +313,7 @@ describe('CM-08 reserve concurrency (NEW Kysely path, Dockerized Postgres)', () 
         locationId,
         requestId: `kit-race-1-${randomUUID()}`,
       }),
-      reserveKitWithRetryKysely(db, TG, {
+      reserveKitWithRetry(db, TG, {
         components: [
           { inventoryItemId: lo, variantId: variantByItem.get(lo)!, requiredQuantity: 1 },
           { inventoryItemId: hi, variantId: variantByItem.get(hi)!, requiredQuantity: 1 },

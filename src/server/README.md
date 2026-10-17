@@ -1,7 +1,7 @@
 # `src/server/**`: the server-only boundary
 
 Everything under `src/server/**` runs ONLY on the Node.js server. It is the
-home of the database client and (later) the CMS and commerce engines. None of
+home of the database clients and the CMS, sites and commerce engines. None of
 it is ever imported by a client component.
 
 ## Boundary contract
@@ -14,10 +14,12 @@ it is ever imported by a client component.
 - **No React, no client state.** This layer holds data access and domain
   logic, not components or stores. It does not touch MST. The active client
   data provider stays `InMemoryDataSourceProvider` until Track A swaps it.
-- **Current contents:** `db.ts` (the PrismaClient singleton). Later: `cms/`
-  (the CMS adapter + repository) and `commerce/` (the owned commerce engine).
-  Engine separation is this code boundary, NOT a database boundary: one
-  PrismaClient and one Postgres schema serve both (see `prisma/schema.prisma`).
+- **Current contents:** `db.ts` (the PrismaClient singleton for the CMS,
+  sites and agent runs in the `public` schema), `cms/` (the CMS adapter +
+  repository), `sites/`, and `commerce/` (the owned commerce engine).
+  Commerce does NOT use Prisma: every company's commerce data lives in its own
+  `tg_<hex32>` Postgres schema, reached through `commerce/db.ts` (Kysely over
+  `@marlinjai/tenant-db`), and `pnpm lint:guards` keeps its raw SQL qualified.
 
 ## The PrismaClient singleton (`db.ts`)
 

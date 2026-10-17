@@ -21,23 +21,21 @@
 // so the thin `scripts/seed-demo.ts` wrapper can run it against a live database
 // for the prod demo. It is the ONE source of truth for the demo shape.
 //
-// This module deliberately uses the REAL write seams (the NEW Kysely catalog /
-// pricing repos over a scoped `commerceTenantDb(tgId)` handle, the CMS
+// This module deliberately uses the REAL write seams (the catalog / pricing
+// repositories over a scoped `commerceTenantDb(tgId)` handle, the CMS
 // PrismaAdapter) so the seeded rows are exactly what the read path expects: a
 // mocked seed could not catch a real schema/mapping mismatch, which is the whole
 // point of the smoke.
 //
-// CM-12: every COMMERCE write routes through ONE scoped `commerceTenantDb(tgId)`
-// Kysely handle (each bare table resolves to `tg_<id>.<table>`): the catalog /
-// pricing writes via `catalogRepositoryKysely` / `pricingRepositoryKysely`, and
-// the 3 ex-direct inventory creates (stock_location / inventory_item /
-// inventory_level, the only commerce writes that used to bypass `withTenant`)
-// are now schema-qualified inserts on the SAME handle. No commerce write bypasses
-// it. The non-commerce CMS writes (site / sitePage / siteDomain, the CMS
-// collection adapter) stay on Prisma; they are NOT part of this migration.
-// (CM-10 deleted the `withTenant` seam entirely.) The demo stock sits in ONE
-// warehouse registered as the default fulfillment location, so an order placed
-// on the demo host through the storefront orders route can reserve it.
+// Every COMMERCE write routes through ONE scoped `commerceTenantDb(tgId)` Kysely
+// handle (each table resolves to `tg_<id>.<table>`): the catalog / pricing writes
+// via `catalogRepository` / `pricingRepository`, and the inventory rows
+// (stock_location / inventory_item / inventory_level) as schema-qualified inserts
+// on the SAME handle. No commerce write bypasses it. The non-commerce writes
+// (site / sitePage / siteDomain, the CMS collection adapter) stay on Prisma.
+// The demo stock sits in ONE warehouse registered as the default fulfillment
+// location, so an order placed on the demo host through the storefront orders
+// route can reserve it.
 
 import { randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
@@ -46,8 +44,8 @@ import { PrismaAdapter } from '@marlinjai/data-table-adapter-prisma';
 
 import { CMS_WORKSPACE_ID } from '@/lib/cms/constants';
 import { commerceTenantDb, type CommerceDB } from '@/server/commerce/db';
-import { catalogRepositoryKysely } from '@/server/commerce/repository/catalog';
-import { pricingRepositoryKysely } from '@/server/commerce/repository/pricing';
+import { catalogRepository } from '@/server/commerce/repository/catalog';
+import { pricingRepository } from '@/server/commerce/repository/pricing';
 import { DEFAULT_WORKSPACE_ID } from '@/server/commerce/inventory/reserve';
 
 // The demo's isolation boundary. The CMS rows isolate by `workspace_id`; the
@@ -142,36 +140,36 @@ async function seedProduct(
   spec: ProductSpec,
   locationId: string,
 ): Promise<void> {
-  const product = await catalogRepositoryKysely.createProduct(db, {
+  const product = await catalogRepository.createProduct(db, {
     title: spec.title,
     handle: spec.handle,
   });
-  const option = await catalogRepositoryKysely.addOption(db, {
+  const option = await catalogRepository.addOption(db, {
     productId: product.id,
     title: spec.optionTitle,
   });
 
   for (const entry of spec.values) {
-    const optionValue = await catalogRepositoryKysely.addOptionValue(db, {
+    const optionValue = await catalogRepository.addOptionValue(db, {
       optionId: option.id,
       value: entry.value,
     });
-    const variant = await catalogRepositoryKysely.addVariant(db, {
+    const variant = await catalogRepository.addVariant(db, {
       productId: product.id,
       title: `${spec.title} / ${entry.value}`,
       sku: entry.sku,
     });
     // Assign the variant its single option value (the AFTER-trigger recompute
     // makes the combination unique per product at the database level).
-    await catalogRepositoryKysely.setVariantOptions(db, variant.id, [
+    await catalogRepository.setVariantOptions(db, variant.id, [
       { optionId: option.id, optionValueId: optionValue.id },
     ]);
 
     // Price: a base price in integer minor units (cents).
-    const priceSet = await pricingRepositoryKysely.createPriceSet(db, {
+    const priceSet = await pricingRepository.createPriceSet(db, {
       variantId: variant.id,
     });
-    await pricingRepositoryKysely.addPrice(db, {
+    await pricingRepository.addPrice(db, {
       priceSetId: priceSet.id,
       currency: 'EUR',
       amount: entry.amountCents,
@@ -421,7 +419,7 @@ export async function seedDemoSite(
   // default fulfillment location. That is the order path's real contract: the
   // storefront orders route sends no location, so the reserve falls back to the
   // `fulfillment_location_default` row for DEFAULT_WORKSPACE_ID and reserves
-  // against the level AT that location (reserve.ts resolveLocationKysely). A
+  // against the level AT that location (reserve.ts resolveLocation). A
   // location per variant with no default (the earlier seed) made every demo
   // checkout fail with "no default fulfillment location configured".
   const warehouseId = await seedDemoWarehouse(db);

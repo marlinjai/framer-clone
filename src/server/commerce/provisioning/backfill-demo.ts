@@ -7,10 +7,12 @@
 // storefront renders + checks out identically once CM-10 flips the render path /
 // routes onto `tg_<demo>`.
 //
-// It is ADDITIVE: the old `commerce` schema is NOT touched (CM-13 drops it, and
-// only AFTER the demo verifies green on `tg_<demo>`). Both schemas coexist until
-// then, so a deploy rollback re-points to the old constant path. This module does
-// NOT delete anything.
+// It is ADDITIVE: the old `commerce` schema is NOT touched. CM-13 removed the
+// Prisma commerce models and code but deliberately shipped NO migration that
+// drops the schema, so a database that still holds commerce rows keeps them
+// until this backfill has copied them and the company verifies green on its
+// `tg_<id>` schema; dropping `commerce` afterwards is an explicit operator step
+// (plan section 9). This module does NOT delete anything.
 //
 // OWNER ROLE ONLY. The copy does cross-schema `INSERT ... SELECT` and writes the
 // append-only tables (stock_movement / credit_note / credit_note_ref / order /
@@ -34,7 +36,7 @@
 //      round-trip through text into the TARGET schema's type (see CopyColumn).
 //   4. SEQUENCE ADVANCE: copied `order` rows keep their ORD-%06d order_numbers,
 //      so the target's fresh `order_number_seq` is advanced past the highest
-//      copied number, or the first post-flip `createOrderKysely` would draw a
+//      copied number, or the first post-flip `createOrder` would draw a
 //      colliding number (`order_number` is UNIQUE).
 //   5. LEGACY RESTAMP: the demo Site / SitePage / SiteDomain / SiteExperiment
 //      rows on existing deployments still carry the pre-CM-12 string id
@@ -57,9 +59,9 @@ import { assertTenantGroupId, tenantSchema } from '@marlinjai/tenant-db';
 import { provisionCommerceTenant } from './provision';
 
 /**
- * The legacy single-tenant commerce schema (Prisma `@@schema("commerce")`) the
- * rows are copied FROM. Hardcoded (not imported from withTenant.ts) so this
- * transitional module carries no dependency on the seam CM-13 deletes.
+ * The legacy single-tenant commerce schema the rows are copied FROM (created by
+ * the historical Prisma migrations 20260616120000 to 20260616160000, which stay
+ * in prisma/migrations; no Prisma model maps it any more).
  */
 const SOURCE_SCHEMA = 'commerce';
 

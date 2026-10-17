@@ -14,9 +14,9 @@
 //      `commerceTenantDb`-equivalent handle writes the WHOLE commerce catalog into
 //      `tg_<demo>`; the legacy `commerce` schema stays EMPTY (no commerce write
 //      bypasses the scoped handle into the old schema).
-//   2. READ PATH: `getCommerceServerRepositoryDb(tenantDb(base, tg_demo))` returns
+//   2. READ PATH: `getCommerceServerRepository(tenantDb(base, tg_demo))` returns
 //      the seeded catalog (2 products), proving the demo renders on the new path.
-//   3. PLACE-ORDER: a `createOrderKysely` order against `tg_<demo>` succeeds on a
+//   3. PLACE-ORDER: a `createOrder` order against `tg_<demo>` succeeds on a
 //      seeded variant (price + SKU-bridged inventory), proving checkout works.
 //   4. BACKFILL: copying a representative `commerce` dataset (including the FULL
 //      FK graph: a price_list-attached price, an order with a line item, and an
@@ -52,8 +52,8 @@ import postgres from 'postgres';
 
 import type { CommerceDB } from '../../db-types';
 import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
-import { getCommerceServerRepositoryDb } from '../../repository/read';
-import { createOrderKysely, type Cart } from '../../order/createOrder';
+import { getCommerceServerRepository } from '../../repository/read';
+import { createOrder, type Cart } from '../../order/createOrder';
 import { backfillDemoTenant } from '../backfill-demo';
 import {
   seedDemoSite,
@@ -163,7 +163,7 @@ describe('CM-12 seed FLIP: every commerce write routes through commerceTenantDb'
   });
 
   it('the demo read path returns the seeded catalog from tg_<demo>', async () => {
-    const repo = getCommerceServerRepositoryDb(tenantDb(ownerBase!, TG_DEMO));
+    const repo = getCommerceServerRepository(tenantDb(ownerBase!, TG_DEMO));
     const page = await repo.listProducts();
     expect(page.total).toBe(2);
     expect(page.products.map((p) => p.title).sort()).toEqual([...DEMO_PRODUCT_TITLES].sort());
@@ -175,7 +175,7 @@ describe('CM-12 seed FLIP: every commerce write routes through commerceTenantDb'
     expect(availability.availableQuantity).toBeGreaterThan(0);
   });
 
-  it('places an order against tg_<demo> via createOrderKysely (checkout works)', async () => {
+  it('places an order against tg_<demo> via createOrder (checkout works)', async () => {
     const dbDemo = tenantDb(ownerBase!, TG_DEMO);
     // Pick a seeded variant + its SKU-bridged inventory item + a stock location.
     const variant = await dbDemo
@@ -207,7 +207,7 @@ describe('CM-12 seed FLIP: every commerce write routes through commerceTenantDb'
         },
       ],
     };
-    const result = await createOrderKysely(dbDemo, TG_DEMO, cart);
+    const result = await createOrder(dbDemo, TG_DEMO, cart);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('unreachable');
 
@@ -408,7 +408,7 @@ describe('CM-12 backfill: copy commerce -> tg_<backfill>, regenerate generated/t
         },
       ],
     };
-    const result = await createOrderKysely(dbBackfill, TG_BACKFILL, cart);
+    const result = await createOrder(dbBackfill, TG_BACKFILL, cart);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('unreachable');
 

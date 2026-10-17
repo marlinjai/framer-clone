@@ -18,7 +18,7 @@ import 'server-only';
 // resolved integer-cents price). That is a different family from the seam DTOs
 // the SSR read repo (read.ts) returns, so this module builds the b7 graph
 // itself and hands it to the pure `toProductDTO` mapper. Prices come from the
-// Kysely b5 resolver (`pricingRepositoryKysely.resolvePrice`), integer cents.
+// Kysely b5 resolver (`pricingRepository.resolvePrice`), integer cents.
 //
 // Soft deletes: every catalog read filters `deleted_at IS NULL` (products,
 // options, values, variants, inventory items), matching the live storefront.
@@ -27,7 +27,7 @@ import type { Kysely } from 'kysely';
 import { jsonArrayFrom } from 'kysely/helpers/postgres';
 
 import type { CommerceDB } from '../db-types';
-import { pricingRepositoryKysely } from './pricing';
+import { pricingRepository } from './pricing';
 import { toProductDTO, type ProductDTO, type ProductGraph } from '@/lib/commerce/dto';
 
 /**
@@ -96,7 +96,7 @@ async function toPricedProductDTO(
   for (const variant of graph.variants) {
     priceByVariant.set(
       variant.id,
-      await pricingRepositoryKysely.resolvePrice(db, variant.id, { currency }),
+      await pricingRepository.resolvePrice(db, variant.id, { currency }),
     );
   }
   return toProductDTO(graph, priceByVariant);

@@ -5,7 +5,7 @@
 // DISTINCT pricing data in each, plants a same-named `public.price_set` +
 // `public.price` DECOY (a deliberately CHEAP decoy price keyed to tg_a's variant
 // id, so a leaked/unqualified lookup would WIN with the wrong, lower amount), and
-// proves — by running the NEW `pricingRepositoryKysely` through scoped
+// proves, by running `pricingRepository` through scoped
 // `tenantDb(...)` handles — that the schema-per-tenant wall holds:
 //
 //   - resolvePrice scoped to tg_a returns tg_a's stored Int amount, never the
@@ -13,16 +13,15 @@
 //   - resolvePrice via a tg_b handle for a tg_a variant returns null (the schema
 //     WALL: tg_b has no such price_set);
 //   - symmetry: tg_b resolves only tg_b's price;
-//   - the money guard is preserved on the NEW path (addPrice rejects a float);
+//   - the money guard holds on the scoped path (addPrice rejects a float);
 //   - THE GRANT PROOF: a `commerce_app`-scoped connection reading a schema it was
 //     NOT granted (tg_b) raises `permission denied for schema`.
 //
 // Money stays server-authoritative INTEGER cents throughout: resolvePrice does no
 // float math; amounts are compared as integers and returned unchanged.
 //
-// This exercises the NEW (CM-06 expand) Kysely path; the old Prisma
-// `pricingRepository` is untouched and covered by pricing.itest.ts /
-// pricing.test.ts. TRUST auth, `.itest.ts` (Docker-only) — see catalog
+// End-to-end pricing behaviour is in pricing.itest.ts and the resolution rules
+// in pricing.test.ts. TRUST auth, `.itest.ts` (Docker-only) — see catalog
 // isolation header for the rationale.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -40,8 +39,8 @@ import {
 
 import type { CommerceDB } from '../../db-types';
 import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
-import { catalogRepositoryKysely } from '../catalog';
-import { pricingRepositoryKysely } from '../pricing';
+import { catalogRepository } from '../catalog';
+import { pricingRepository } from '../pricing';
 
 const DB_NAME = 'framer_clone_test';
 const APP_ROLE = 'commerce_app';
@@ -103,34 +102,34 @@ beforeAll(async () => {
   const dbA = tenantDb(ownerBase, TG_A);
   const dbB = tenantDb(ownerBase, TG_B);
 
-  // Seed a variant + price per schema through the NEW Kysely repos.
-  const prodA = await catalogRepositoryKysely.createProduct(dbA, {
+  // Seed a variant + price per schema through the repositories.
+  const prodA = await catalogRepository.createProduct(dbA, {
     title: 'Priced A',
     handle: 'priced-a',
   });
-  const varA = await catalogRepositoryKysely.addVariant(dbA, {
+  const varA = await catalogRepository.addVariant(dbA, {
     productId: prodA.id,
     sku: 'PRICED-A-1',
   });
   variantIdA = varA.id;
-  const psetA = await pricingRepositoryKysely.createPriceSet(dbA, { variantId: varA.id });
-  await pricingRepositoryKysely.addPrice(dbA, {
+  const psetA = await pricingRepository.createPriceSet(dbA, { variantId: varA.id });
+  await pricingRepository.addPrice(dbA, {
     priceSetId: psetA.id,
     currency: 'EUR',
     amount: PRICE_A,
   });
 
-  const prodB = await catalogRepositoryKysely.createProduct(dbB, {
+  const prodB = await catalogRepository.createProduct(dbB, {
     title: 'Priced B',
     handle: 'priced-b',
   });
-  const varB = await catalogRepositoryKysely.addVariant(dbB, {
+  const varB = await catalogRepository.addVariant(dbB, {
     productId: prodB.id,
     sku: 'PRICED-B-1',
   });
   variantIdB = varB.id;
-  const psetB = await pricingRepositoryKysely.createPriceSet(dbB, { variantId: varB.id });
-  await pricingRepositoryKysely.addPrice(dbB, {
+  const psetB = await pricingRepository.createPriceSet(dbB, { variantId: varB.id });
+  await pricingRepository.addPrice(dbB, {
     priceSetId: psetB.id,
     currency: 'EUR',
     amount: PRICE_B,
@@ -175,7 +174,7 @@ afterAll(async () => {
   await container?.stop();
 });
 
-describe('CM-06 pricing isolation — schema-per-tenant wall (NEW Kysely path)', () => {
+describe('CM-06 pricing isolation — schema-per-tenant wall (tenant schema)', () => {
   it('provisioned both tenant schemas and marked them active', async () => {
     const groups = await owner!`
       SELECT schema_name, status FROM public.tenant_groups ORDER BY slug
@@ -186,7 +185,7 @@ describe('CM-06 pricing isolation — schema-per-tenant wall (NEW Kysely path)',
 
   it('resolvePrice scoped to tg_a returns tg_a stored cents, never the cheap decoy', async () => {
     const dbA = tenantDb(ownerBase!, TG_A);
-    const amount = await pricingRepositoryKysely.resolvePrice(dbA, variantIdA, {
+    const amount = await pricingRepository.resolvePrice(dbA, variantIdA, {
       currency: 'EUR',
     });
     expect(amount).toBe(PRICE_A);
@@ -196,7 +195,7 @@ describe('CM-06 pricing isolation — schema-per-tenant wall (NEW Kysely path)',
 
   it('resolvePrice via a tg_b handle for a tg_a variant returns null (schema WALL)', async () => {
     const dbB = tenantDb(ownerBase!, TG_B);
-    const amount = await pricingRepositoryKysely.resolvePrice(dbB, variantIdA, {
+    const amount = await pricingRepository.resolvePrice(dbB, variantIdA, {
       currency: 'EUR',
     });
     expect(amount).toBeNull();
@@ -205,19 +204,19 @@ describe('CM-06 pricing isolation — schema-per-tenant wall (NEW Kysely path)',
   it('symmetry: tg_b resolves only tg_b price, and tg_a cannot see tg_b price', async () => {
     const dbA = tenantDb(ownerBase!, TG_A);
     const dbB = tenantDb(ownerBase!, TG_B);
-    expect(await pricingRepositoryKysely.resolvePrice(dbB, variantIdB, { currency: 'EUR' })).toBe(
+    expect(await pricingRepository.resolvePrice(dbB, variantIdB, { currency: 'EUR' })).toBe(
       PRICE_B,
     );
-    expect(await pricingRepositoryKysely.resolvePrice(dbA, variantIdB, { currency: 'EUR' })).toBeNull();
+    expect(await pricingRepository.resolvePrice(dbA, variantIdB, { currency: 'EUR' })).toBeNull();
   });
 
-  it('the money guard is preserved on the NEW path (addPrice rejects a float)', () => {
+  it('the money guard holds on the scoped path (addPrice rejects a float)', () => {
     const dbA = tenantDb(ownerBase!, TG_A);
     // assertIntegerCents fires SYNCHRONOUSLY at the boundary, before any insert
     // promise is built, so the bad amount throws at the call site (no I/O). The
     // thunk form captures that synchronous throw (mirrors pricing.test.ts).
     expect(() =>
-      pricingRepositoryKysely.addPrice(dbA, {
+      pricingRepository.addPrice(dbA, {
         priceSetId: 'irrelevant',
         currency: 'EUR',
         amount: 19.99, // euros, not cents — a float, rejected at the boundary
@@ -227,13 +226,13 @@ describe('CM-06 pricing isolation — schema-per-tenant wall (NEW Kysely path)',
 
   it('GRANT PROOF: commerce_app may resolve in its granted schema but is DENIED a non-granted one', async () => {
     const appDbA = tenantDb(appBase!, TG_A);
-    expect(await pricingRepositoryKysely.resolvePrice(appDbA, variantIdA, { currency: 'EUR' })).toBe(
+    expect(await pricingRepository.resolvePrice(appDbA, variantIdA, { currency: 'EUR' })).toBe(
       PRICE_A,
     );
 
     const appDbB = tenantDb(appBase!, TG_B);
     await expect(
-      pricingRepositoryKysely.resolvePrice(appDbB, variantIdB, { currency: 'EUR' }),
+      pricingRepository.resolvePrice(appDbB, variantIdB, { currency: 'EUR' }),
     ).rejects.toThrow(/permission denied for schema/);
   });
 });
