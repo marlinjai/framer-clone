@@ -1,7 +1,7 @@
 import type { Migration } from '@marlinjai/tenant-db';
 
 /**
- * Books phase 1 — `007_books`: the invoicing tier (offers, invoices, credit
+ * Books phase 1, `007_books`: the invoicing tier (offers, invoices, credit
  * notes) in each tenant group's own `tg_<hex32>` schema, beside the commerce
  * tables. Specified in docs/plans/2026-08-15-books-receipts-invoices-integration.md,
  * section "Phase 1 build specification (2026-10-17)", P1.1.

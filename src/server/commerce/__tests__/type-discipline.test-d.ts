@@ -19,7 +19,7 @@
 //   1. `.selectFrom('tenant_groups')`        — BARE GLOBAL → COMPILE ERROR.
 //   2. `.selectFrom('public.tenant_groups')` — qualified global → compiles.
 //   3. `.selectFrom('product')`              — bare commerce table → compiles.
-//   3b. `.selectFrom('sales_document')`      — bare Books table → compiles.
+//   3b. `.selectFrom('sales_document')`     : bare Books table, compiles.
 
 import { assertTenantGroupId } from '@marlinjai/tenant-db';
 import { getCommerceBase, tenantDb } from '../db';
