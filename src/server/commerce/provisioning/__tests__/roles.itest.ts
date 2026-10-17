@@ -68,6 +68,11 @@ beforeAll(async () => {
   ownerUrl = url('commerce_ddl', host, port);
   appUrl = url('commerce_app', host, port);
   su = postgres(superUrl, { max: 1, prepare: false, onnotice: () => {} });
+  // Simulate a database from an older dump: PUBLIC (every role, commerce_app
+  // included) may create in `public`, as Postgres 14 and earlier allowed. TEMP
+  // on the database is a Postgres default for PUBLIC anyway. The roles file
+  // must take both away.
+  await su`GRANT CREATE ON SCHEMA public TO PUBLIC`;
 }, 180_000);
 
 /** Apply the roles file the way the deploy does: psql, stop on the first error. */
@@ -123,6 +128,8 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
         has_schema_privilege('commerce_app', 'public', 'CREATE') AS app_public_create,
         has_schema_privilege('commerce_app', 'ext', 'USAGE') AS app_ext_usage,
         has_schema_privilege('commerce_app', 'ext', 'CREATE') AS app_ext_create,
+        has_database_privilege('commerce_app', current_database(), 'TEMP') AS app_temp,
+        has_database_privilege('commerce_ddl', current_database(), 'TEMP') AS ddl_temp,
         (SELECT nspowner::regrole::text FROM pg_namespace WHERE nspname = 'ext') AS ext_owner,
         (SELECT rolconfig FROM pg_roles WHERE rolname = 'commerce_app') AS app_config,
         pg_has_role('commerce_ddl', 'commerce_app', 'USAGE') AS ddl_inherits_app,
@@ -135,11 +142,23 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
       app_public_create: false,
       app_ext_usage: true,
       app_ext_create: false,
+      app_temp: false,
+      ddl_temp: false,
       ext_owner: 'commerce_ddl',
       app_config: ['search_path=ext'],
       ddl_inherits_app: false,
       ddl_can_set_app: false,
     });
+
+    // And in practice: commerce_app can create neither a table in `public` nor a
+    // temporary table.
+    const app = postgres(appUrl, { max: 1, prepare: false });
+    try {
+      await expect(app`CREATE TABLE public.decoy (id int)`).rejects.toThrow(/permission denied/);
+      await expect(app`CREATE TEMP TABLE scratch (id int)`).rejects.toThrow(/permission denied/);
+    } finally {
+      await app.end();
+    }
 
     // CREATEROLE on Postgres 16 reaches only roles commerce_ddl administers.
     const ddl = postgres(ownerUrl, { max: 1, prepare: false });

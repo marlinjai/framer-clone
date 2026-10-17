@@ -95,10 +95,17 @@ ALTER ROLE commerce_ddl NOSUPERUSER NOCREATEDB CREATEROLE NOREPLICATION NOBYPASS
 -- CREATE ON DATABASE lets commerce_ddl create the `ext` and `tg_<id>` schemas
 -- and install pgcrypto (a trusted extension since Postgres 13, so no superuser
 -- is needed for it).
+--
+-- TEMPORARY is taken away from PUBLIC (Postgres grants it to every role by
+-- default): no commerce code creates temporary tables, and an app role that can
+-- create them has a scratch area outside every tenant schema. Nothing is granted
+-- back: commerce_app and commerce_ddl need none, and the database's bootstrap
+-- user is a superuser, which privileges do not restrict.
 DO $$
 BEGIN
   EXECUTE format('GRANT CONNECT ON DATABASE %I TO commerce_app, commerce_ddl', current_database());
   EXECUTE format('GRANT CREATE ON DATABASE %I TO commerce_ddl', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database());
 END
 $$;
 
@@ -109,6 +116,10 @@ $$;
 -- The public migrations create public.__public_db_migrations,
 -- public.tenant_groups and public.tenant_migration_progress there, owned by
 -- commerce_ddl. commerce_app gets nothing on `public` beyond the default USAGE.
+-- A database restored from an older dump (or created on Postgres 14 and
+-- upgraded) can still give CREATE on `public` to PUBLIC, i.e. to commerce_app;
+-- the REVOKE takes that away and is a no-op on a fresh Postgres 16.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE, CREATE ON SCHEMA public TO commerce_ddl;
 
 -- `ext` holds pgcrypto, ext.gen_uuid_v7() and ext.touch_updated_at(), which the
