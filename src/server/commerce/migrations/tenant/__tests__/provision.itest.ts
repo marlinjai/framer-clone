@@ -11,13 +11,13 @@
 // suffix keeps it OUT of the headless `pnpm test` unit run — it runs ONLY under
 // `pnpm test:integration` against Docker. Mirrors public.itest.ts.
 //
-// REVOKE / GRANT ORDER CAVEAT (flagged for CM-02 / CM-11): provisionTenant runs
-// the tenant migrations (which REVOKE UPDATE,DELETE on the append-only tables)
-// and THEN `grantSchemaToAppRole` issues `GRANT ... UPDATE, DELETE ON ALL TABLES`
-// — which CLOBBERS those REVOKEs (verified empirically). So a real onboard/deploy
-// must RE-APPLY the append-only REVOKEs post-grant for them to bite. This test
-// reproduces that required post-grant step (`reapplyAppendOnlyRevokes`) before
-// the teeth probe, exactly as CM-11's onboard will have to.
+// REVOKE / GRANT ORDER: provisionTenant runs the tenant migrations (which REVOKE
+// UPDATE,DELETE on the append-only tables) and THEN `grantSchemaToAppRole`
+// issues `GRANT ... UPDATE, DELETE ON ALL TABLES`, which CLOBBERS those REVOKEs.
+// Production re-applies them through the runner's `seed` hook inside the same
+// transaction (`commerceProvisionOptions` in provisioning/provision.ts), so this
+// probe provisions with exactly that seed and asserts the teeth, plus a control
+// provision WITHOUT it that proves the clobbering the seed exists to undo.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
@@ -29,6 +29,7 @@ import {
   assertTenantGroupId,
 } from '@marlinjai/tenant-db';
 import { COMMERCE_TENANT_MIGRATIONS } from '../index';
+import { APPEND_ONLY_TABLES, revokeAppendOnlyWrites } from '../../../provisioning/provision';
 
 const DB_NAME = 'framer_clone_test';
 const APP_ROLE = 'commerce_app';
@@ -80,14 +81,6 @@ const EXPECTED_TABLES = [
   'stock_movement',
 ];
 
-const APPEND_ONLY_TABLES = [
-  'stock_movement',
-  'credit_note',
-  'credit_note_ref',
-  'order',
-  'order_line_item',
-];
-
 let container: StartedTestContainer | undefined;
 let owner: postgres.Sql | undefined; // container superuser: DDL owner + probe
 let app: postgres.Sql | undefined; // low-privilege commerce_app connection
@@ -99,21 +92,6 @@ function inSchema<T>(fn: (tx: postgres.TransactionSql) => Promise<T>): Promise<T
     await tx`SET LOCAL search_path = ${tx(SCHEMA)}, ext`;
     return fn(tx);
   }) as Promise<T>;
-}
-
-/**
- * Re-apply the append-only REVOKEs AFTER provisionTenant's grant-all, mirroring
- * the post-grant deploy/onboard step that makes them bite (see file header).
- * Identical SQL to the migration bodies' REVOKEs.
- */
-async function reapplyAppendOnlyRevokes(): Promise<void> {
-  await inSchema(async (tx) => {
-    await tx`REVOKE UPDATE, DELETE ON "stock_movement" FROM commerce_app`;
-    await tx`REVOKE UPDATE, DELETE ON "credit_note" FROM commerce_app`;
-    await tx`REVOKE UPDATE, DELETE ON "credit_note_ref" FROM commerce_app`;
-    await tx`REVOKE UPDATE, DELETE ON "order" FROM commerce_app`;
-    await tx`REVOKE UPDATE, DELETE ON "order_line_item" FROM commerce_app`;
-  });
 }
 
 beforeAll(async () => {
@@ -152,10 +130,9 @@ beforeAll(async () => {
     slug: 'cm04-probe',
     appRole: APP_ROLE,
     tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
+    // The production post-grant REVOKE seed (see header).
+    seed: (tx, ctx) => revokeAppendOnlyWrites(tx, ctx.schema),
   });
-
-  // Post-grant REVOKE re-apply (required for teeth — see header).
-  await reapplyAppendOnlyRevokes();
 
   const appUrl = `postgresql://${APP_ROLE}@${host}:${port}/${DB_NAME}`;
   app = postgres(appUrl, { max: 2, prepare: false, transform: { undefined: null } });
@@ -563,6 +540,20 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
     await expect(
       app!`DELETE FROM ${app!(SCHEMA)}.${app!('stock_movement')} WHERE id = 'rv_mv'`,
     ).rejects.toThrow(/permission denied/);
+  });
+
+  it('CONTROL: without the REVOKE seed the runner grant-all leaves UPDATE/DELETE granted (why the seed exists)', async () => {
+    const control = assertTenantGroupId('018f9c10-0000-7000-8000-0000000000c5');
+    const { schema } = await provisionTenant(owner!, {
+      tenantGroupId: control,
+      slug: 'cm13-no-seed',
+      appRole: APP_ROLE,
+      tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
+    });
+    const rows = await owner!`
+      SELECT has_table_privilege(${APP_ROLE}, ${schema + '."order"'}, 'UPDATE') AS can_update
+    `;
+    expect(rows[0]!.can_update).toBe(true);
   });
 
   it('commerce_app is denied UPDATE/DELETE on every append-only table', async () => {

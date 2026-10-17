@@ -37,7 +37,7 @@ import postgres from 'postgres';
 
 import type { CommerceDB } from '../db-types';
 import { DEFAULT_WORKSPACE_ID } from '../inventory/reserve';
-import { COMMERCE_TENANT_MIGRATIONS } from '../migrations/tenant/index';
+import { commerceProvisionOptions } from '../provisioning/provision';
 
 /** A fixed key every fixture takes before provisioning (serializes ALTER ROLE). */
 const PROVISION_LOCK_KEY = 74_610_010;
@@ -75,6 +75,21 @@ export function openStorefrontFixtures(): StorefrontFixtures {
   };
 }
 
+/**
+ * A Kysely base on the LOW-PRIVILEGE `commerce_app` role (the role the routes
+ * connect as), for suites that prove what that role may NOT do (the append-only
+ * REVOKEs). Scope it with tenantDb(base, tgId); destroy it in afterAll.
+ */
+export function openCommerceAppBase(): Kysely<CommerceDB> {
+  const url = process.env.COMMERCE_APP_DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      'storefrontFixtures: COMMERCE_APP_DATABASE_URL is unset; run under `pnpm test:integration`',
+    );
+  }
+  return createNodeDb<CommerceDB>({ connectionString: url });
+}
+
 export interface ProvisionedTenant {
   tgId: TenantGroupId;
   schema: string;
@@ -90,12 +105,9 @@ export async function provisionCommerceTenant(
   const tgId = assertTenantGroupId(randomUUID());
   await fx.owner`SELECT pg_advisory_lock(${PROVISION_LOCK_KEY})`;
   try {
-    await provisionTenant(fx.owner, {
-      tenantGroupId: tgId,
-      slug: `${slugPrefix}-${tgId.slice(0, 8)}`,
-      appRole: 'commerce_app',
-      tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
-    });
+    // The production options (migrations, app-role grants, append-only REVOKE
+    // seed), so the suites exercise exactly what an onboard provisions.
+    await provisionTenant(fx.owner, commerceProvisionOptions(tgId, `${slugPrefix}-${tgId.slice(0, 8)}`));
   } finally {
     await fx.owner`SELECT pg_advisory_unlock(${PROVISION_LOCK_KEY})`;
   }

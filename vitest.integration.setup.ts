@@ -19,7 +19,7 @@ import { migratePublic, provisionTenant } from '@marlinjai/tenant-db';
 // Both imports are dependency-free on purpose: this globalSetup runs as plain
 // Node (vite-node), so it must not pull modules that need the `server-only` /
 // `@` aliases the test files get from vitest.integration.config.ts.
-import { COMMERCE_TENANT_MIGRATIONS } from './src/server/commerce/migrations/tenant/index';
+import { commerceProvisionOptions } from './src/server/commerce/provisioning/provision';
 import { DEMO_TENANT_GROUP_ID } from './src/lib/renderer/server/demoTenant';
 
 let container: StartedTestContainer | undefined;
@@ -142,19 +142,15 @@ export async function setup(): Promise<void> {
   //      §3 (the runner's per-schema grants do not cover `ext`, and the
   //      ext-resident defaults/triggers must resolve under the ext-locked path).
   //   4. `provisionTenant`: the demo tenant-group's `tg_<demo>` schema with the
-  //      commerce migration set, per-schema grants, and the ext-locked
-  //      search_path backstop on commerce_app.
+  //      commerce migration set, per-schema grants, the ext-locked search_path
+  //      backstop on commerce_app, and the append-only REVOKEs re-applied after
+  //      the grants (the production `commerceProvisionOptions`).
   const owner = postgres(url, { max: 1, prepare: false });
   try {
     await owner.unsafe('CREATE ROLE commerce_app LOGIN');
     await migratePublic(owner);
     await owner.unsafe('GRANT USAGE ON SCHEMA ext TO commerce_app');
-    await provisionTenant(owner, {
-      tenantGroupId: DEMO_TENANT_GROUP_ID,
-      slug: 'demo',
-      appRole: 'commerce_app',
-      tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
-    });
+    await provisionTenant(owner, commerceProvisionOptions(DEMO_TENANT_GROUP_ID, 'demo'));
   } finally {
     await owner.end();
   }
