@@ -54,6 +54,13 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # Tenant isolation guards (G1 to G5) over the commerce source: no bare
+      # commerce table inside a sql`` template, no .withSchema, no runtime
+      # SET [LOCAL] search_path. A plain node script with no dependencies, so it
+      # runs before the install and a violation fails the job in seconds.
+      - name: Tenant isolation guards
+        run: pnpm lint:guards
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
