@@ -37,10 +37,7 @@ import postgres from 'postgres';
 
 import type { CommerceDB } from '../db-types';
 import { DEFAULT_WORKSPACE_ID } from '../inventory/reserve';
-import { commerceProvisionOptions } from '../provisioning/provision';
-
-/** A fixed key every fixture takes before provisioning (serializes ALTER ROLE). */
-const PROVISION_LOCK_KEY = 74_610_010;
+import { COMMERCE_PROVISION_LOCK_KEY as PROVISION_LOCK_KEY, commerceProvisionOptions } from '../provisioning/provision';
 
 export interface StorefrontFixtures {
   /** Owner-role postgres.js connection (raw counts, provisioning). */

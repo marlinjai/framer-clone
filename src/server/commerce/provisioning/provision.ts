@@ -65,6 +65,19 @@ export const APPEND_ONLY_TABLES = [
 ] as const;
 
 /**
+ * Session advisory lock key that serializes every commerce provision in the
+ * database. Each provision ends with tenant-db's bootstrapAppRole, an
+ * `ALTER ROLE commerce_app SET search_path = ext`; two provisions of DIFFERENT
+ * tenant groups (two companies creating their first project at the same moment)
+ * would both update the same pg_authid row and one fails with "tuple
+ * concurrently updated". The runner's own lock is per tenant group, so it does
+ * not prevent that. Provisioning is rare and short, so one global lock costs
+ * nothing. The integration fixtures take the same key around their direct
+ * provisionTenant calls.
+ */
+export const COMMERCE_PROVISION_LOCK_KEY = 74_610_010;
+
+/**
  * The low-privilege app role granted per-schema USAGE + table access by the
  * runner, and whose default search_path the runner locks to `ext`. MUST match
  * the role `COMMERCE_APP_DATABASE_URL` connects as (see prisma/sql/commerce-roles.sql
@@ -136,7 +149,11 @@ function requireOwnerUrl(connectionString?: string): string {
  * derived `tg_<hex32>` name; applied = migration ids newly applied this call,
  * empty `[]` on a no-op re-provision).
  *
- * Idempotent: a second call for the same tenant-group BLOCKS on the per-org
+ * Serialized: every provision takes {@link COMMERCE_PROVISION_LOCK_KEY} first,
+ * so concurrent provisions of different tenant groups queue instead of
+ * colliding on `ALTER ROLE commerce_app`.
+ *
+ * Idempotent: a second call for the same tenant-group BLOCKS on the
  * advisory lock if one is in flight, then sees the schema + migrations already
  * present and no-ops. So this is safe to call from a hot path (e.g. project
  * create) without de-duping.
@@ -156,11 +173,19 @@ export async function provisionCommerceTenant(opts: {
 }): Promise<{ schema: string; applied: string[] }> {
   const ownerUrl = requireOwnerUrl(opts.connectionString);
 
+  // max: 1 keeps the advisory lock and the provision on ONE session.
   const sql = postgres(ownerUrl, { max: 1, prepare: false });
   try {
-    // The app role drives the per-schema grants + the `ext`-locked role default
-    // (the backstop); the seed re-applies the append-only REVOKEs after them.
-    return await provisionTenant(sql, commerceProvisionOptions(opts.tenantGroupId, opts.slug));
+    await sql`SELECT pg_advisory_lock(${COMMERCE_PROVISION_LOCK_KEY})`;
+    try {
+      // The app role drives the per-schema grants + the `ext`-locked role default
+      // (the backstop); the seed re-applies the append-only REVOKEs after them.
+      return await provisionTenant(sql, commerceProvisionOptions(opts.tenantGroupId, opts.slug));
+    } finally {
+      // Closing the session releases the lock too, so a failing unlock (a broken
+      // connection) must not mask the provision's own error.
+      await sql`SELECT pg_advisory_unlock(${COMMERCE_PROVISION_LOCK_KEY})`.catch(() => undefined);
+    }
   } finally {
     await sql.end();
   }

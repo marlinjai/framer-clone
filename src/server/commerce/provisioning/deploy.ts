@@ -9,6 +9,9 @@
 //      tenant migrations it is missing, and the append-only REVOKEs are
 //      re-asserted (idempotent and resumable).
 //
+// Both run under one session advisory lock (COMMERCE_DEPLOY_LOCK_KEY), so two
+// containers starting at once queue instead of racing on a fresh database.
+//
 // Before touching anything it proves it is NOT connected as the low-privilege
 // app role: the owner URL must be set, must not be a placeholder, must differ
 // from the app URL, and `current_user` must not be `commerce_app`. Any failure
@@ -23,6 +26,18 @@ import postgres from 'postgres';
 
 import { migrateCommercePublic } from './public';
 import { COMMERCE_APP_ROLE, migrateAllCommerceTenants } from './provision';
+
+/**
+ * Session advisory lock key held around the whole start step (public tier plus
+ * fleet). Two containers starting at once (a rolling deploy, a restart during a
+ * deploy, two replicas) would otherwise race: the public migrations take no
+ * lock of their own, so both could try to create the same `ext` objects and
+ * bookkeeping rows on a fresh database. With the lock the second container
+ * waits, then finds everything applied and does nothing. Distinct from
+ * COMMERCE_PROVISION_LOCK_KEY: a company provisioning its first project does
+ * not wait for a deploy, and the fleet migration never alters roles.
+ */
+export const COMMERCE_DEPLOY_LOCK_KEY = 74_610_011;
 
 /** What the start sequence did, for the boot log. */
 export interface CommerceDeployResult {
@@ -93,21 +108,45 @@ export async function runCommerceDeployMigrations(opts?: {
     appUrl: opts?.appUrl ?? process.env.COMMERCE_APP_DATABASE_URL,
   });
 
-  // Who are we really? A URL can name any role; ask the server.
-  const probe = postgres(ownerUrl, { max: 1, prepare: false });
-  let role: string;
+  // One session for the identity check and the lock. The migrations open their
+  // own connections; the lock on this session covers them because every other
+  // start step waits on the same key.
+  const lockSession = postgres(ownerUrl, { max: 1, prepare: false });
   try {
-    const rows = await probe<{ role: string }[]>`SELECT current_user AS role`;
-    role = rows[0].role;
+    // Who are we really? A URL can name any role; ask the server.
+    const rows = await lockSession<{ role: string }[]>`SELECT current_user AS role`;
+    const role = rows[0].role;
+    if (role === COMMERCE_APP_ROLE) {
+      throw new Error(
+        `COMMERCE_OWNER_DATABASE_URL authenticates as ${COMMERCE_APP_ROLE}, the ` +
+          'low-privilege app role. Point it at the owner role commerce_ddl.',
+      );
+    }
+
+    const [{ locked }] = await lockSession<{ locked: boolean }[]>`
+      SELECT pg_try_advisory_lock(${COMMERCE_DEPLOY_LOCK_KEY}) AS locked
+    `;
+    if (!locked) {
+      log('commerce: another start step holds the commerce migration lock, waiting');
+      await lockSession`SELECT pg_advisory_lock(${COMMERCE_DEPLOY_LOCK_KEY})`;
+    }
+    try {
+      return await migrateUnderLock(ownerUrl, role, log);
+    } finally {
+      // Ending the session releases the lock as well; never mask the real error.
+      await lockSession`SELECT pg_advisory_unlock(${COMMERCE_DEPLOY_LOCK_KEY})`.catch(() => undefined);
+    }
   } finally {
-    await probe.end();
+    await lockSession.end();
   }
-  if (role === COMMERCE_APP_ROLE) {
-    throw new Error(
-      `COMMERCE_OWNER_DATABASE_URL authenticates as ${COMMERCE_APP_ROLE}, the ` +
-        'low-privilege app role. Point it at the owner role commerce_ddl.',
-    );
-  }
+}
+
+/** The public tier and the fleet, run while the deploy lock is held. */
+async function migrateUnderLock(
+  ownerUrl: string,
+  role: string,
+  log: (line: string) => void,
+): Promise<CommerceDeployResult> {
   log(`commerce: migrating as ${role}`);
 
   const publicApplied = await migrateCommercePublic(ownerUrl);
