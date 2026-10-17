@@ -37,10 +37,11 @@
 // provision re-applies the REVOKEs through the runner's `seed` hook, which runs
 // INSIDE the same owner transaction, after the grants and before the schema is
 // marked active: there is no moment in which the app role holds those rights.
-// `migrateAllTenants` does not re-grant existing tables, so the REVOKEs survive
-// fleet migrations; a future migration that adds an append-only table must
-// REVOKE in its own body (the schema's default privileges grant it otherwise)
-// and be added to APPEND_ONLY_TABLES.
+// The fleet runner re-applies them too: `migrateAllCommerceTenants` runs
+// `revokeAppendOnlyWrites` for every schema it processed, so the guarantee does
+// not rest on what `migrateAllTenants` happens to grant or not grant today. A
+// future migration that adds an append-only table must REVOKE in its own body
+// AND be added to APPEND_ONLY_TABLES (a unit test fails if the two disagree).
 
 import postgres from 'postgres';
 import {
@@ -200,11 +201,17 @@ export async function migrateAllCommerceTenants(opts?: {
 
   const sql = postgres(ownerUrl, { max: 1, prepare: false });
   try {
-    return await migrateAllTenants(sql, {
+    const result = await migrateAllTenants(sql, {
       tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
       batchSize: opts?.batchSize,
       onSchemaDone: opts?.onSchemaDone,
     });
+    // Re-assert the append-only REVOKEs on every processed schema (idempotent),
+    // independent of the runner's grant behaviour.
+    for (const { schema } of result.schemas) {
+      await sql.begin((tx) => revokeAppendOnlyWrites(tx, schema));
+    }
+    return result;
   } finally {
     await sql.end();
   }

@@ -222,6 +222,21 @@ describe('CM-11 commerce fleet migration (migrateAllCommerceTenants → migrateA
       connectionString: ownerUrl,
     });
 
+    // Simulate privilege drift on one schema (a grant-all by hand or by a future
+    // runner version): the fleet sweep must take UPDATE / DELETE away again.
+    const drifted = await provisionCommerceTenant({
+      tenantGroupId: randomUUID(),
+      slug: 'fleet-drift',
+      connectionString: ownerUrl,
+    });
+    await probe!.unsafe(
+      `GRANT UPDATE, DELETE ON ALL TABLES IN SCHEMA "${drifted.schema}" TO commerce_app`,
+    );
+    const driftedNow = await probe!`
+      SELECT has_table_privilege('commerce_app', ${drifted.schema + '."order"'}, 'UPDATE') AS can_update
+    `;
+    expect(driftedNow[0].can_update).toBe(true);
+
     const registryCount = await probe!`SELECT count(*)::int AS n FROM public.tenant_groups`;
     expect(registryCount[0].n).toBeGreaterThanOrEqual(2);
 
@@ -240,6 +255,11 @@ describe('CM-11 commerce fleet migration (migrateAllCommerceTenants → migrateA
     expect(second.processed).toBe(second.total);
     for (const s of second.schemas) {
       expect(s.applied).toEqual([]);
+    }
+
+    // Every schema of the fleet, the drifted one included, is append-only again.
+    for (const s of first.schemas) {
+      await expectAppendOnly(s.schema);
     }
   });
 });
