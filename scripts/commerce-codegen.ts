@@ -310,6 +310,16 @@ const HEADER = `// src/server/commerce/db-types.ts
 
 const SCALAR_ALIASES = `// --- scalar aliases ------------------------------------------------------------
 
+/**
+ * A column the database fills when an INSERT omits it (a DEFAULT, a GENERATED
+ * expression or a trigger). Defined here rather than imported from kysely,
+ * because kysely's own \`Generated<T>\` does not unwrap a nested ColumnType:
+ * \`Generated<Timestamp>\` would select as the ColumnType object instead of a
+ * Date. Same definition kysely-codegen emits.
+ */
+export type Generated<T> =
+  T extends ColumnType<infer S, infer I, infer U> ? ColumnType<S, I | undefined, U> : ColumnType<T, T | undefined, T>;
+
 /** A \`TIMESTAMP(3)\` / \`timestamptz\` column: selected as a Date, written as a Date or ISO string. */
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
@@ -327,7 +337,7 @@ function emitFile(enums: EnumType[], globals: Table[], tenants: Table[]): string
   const enumNames = new Set(enums.map((e) => e.name));
   const parts: string[] = [];
   parts.push(HEADER);
-  parts.push("import type { ColumnType, Generated } from 'kysely';");
+  parts.push("import type { ColumnType } from 'kysely';");
   parts.push(
     "// The package's brand types for the two key namespaces: GlobalKey forces\n// `public.<name>` keys, TenantKey forbids a `public.` prefix on a bare key.\nimport type { GlobalKey, TenantKey } from '@marlinjai/tenant-db';\n\n// The shapes of the Books JSONB columns (zod-inferred; type-only import).\n" +
       JSON_IMPORTS +

@@ -17,6 +17,9 @@ importers:
       '@marlinjai/auth-brain-sdk':
         specifier: ^1.1.0
         version: 1.1.0(zod@4.3.6)
+      '@marlinjai/contacts-core':
+        specifier: ^0.3.0
+        version: 0.3.0(postgres@3.4.9)
       '@marlinjai/data-table-adapter-prisma':
         specifier: ^0.2.2
         version: 0.2.2(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
@@ -1151,6 +1154,12 @@ packages:
     peerDependenciesMeta:
       puppeteer:
         optional: true
+
+  '@marlinjai/contacts-core@0.3.0':
+    resolution: {integrity: sha512-dxmLYjn6lk/INHpoH0qmHslsz8JTGnfhhxUIfVPaqQyZmld2ZoH9xZn0NB62rz1CjABhysj1jACPgK4x09pejw==}
+    hasBin: true
+    peerDependencies:
+      postgres: '>=3.4.5'
 
   '@marlinjai/data-table-adapter-prisma@0.2.2':
     resolution: {integrity: sha512-0dTxCjlE+Y9dN6JYEzRweEPR6zWFkCqHlJaxgUexwSb/WOL8p2xo65IFIQQJfmJXfugFOuKCDJawz4NfN8Y1Xg==}
@@ -6716,6 +6725,12 @@ snapshots:
       - terser
       - tsx
       - yaml
+
+  '@marlinjai/contacts-core@0.3.0(postgres@3.4.9)':
+    dependencies:
+      kysely: 0.27.6
+      kysely-postgres-js: 2.0.0(kysely@0.27.6)(postgres@3.4.9)
+      postgres: 3.4.9
 
   '@marlinjai/data-table-adapter-prisma@0.2.2(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)':
     dependencies:

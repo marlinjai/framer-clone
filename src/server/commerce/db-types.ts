@@ -32,7 +32,7 @@
 // Pure type module (no runtime), so it needs no `server-only` and adds nothing
 // to the build.
 
-import type { ColumnType, Generated } from 'kysely';
+import type { ColumnType } from 'kysely';
 // The package's brand types for the two key namespaces: GlobalKey forces
 // `public.<name>` keys, TenantKey forbids a `public.` prefix on a bare key.
 import type { GlobalKey, TenantKey } from '@marlinjai/tenant-db';
@@ -48,6 +48,16 @@ import type {
 } from '../books/snapshots';
 
 // --- scalar aliases ------------------------------------------------------------
+
+/**
+ * A column the database fills when an INSERT omits it (a DEFAULT, a GENERATED
+ * expression or a trigger). Defined here rather than imported from kysely,
+ * because kysely's own `Generated<T>` does not unwrap a nested ColumnType:
+ * `Generated<Timestamp>` would select as the ColumnType object instead of a
+ * Date. Same definition kysely-codegen emits.
+ */
+export type Generated<T> =
+  T extends ColumnType<infer S, infer I, infer U> ? ColumnType<S, I | undefined, U> : ColumnType<T, T | undefined, T>;
 
 /** A `TIMESTAMP(3)` / `timestamptz` column: selected as a Date, written as a Date or ISO string. */
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
