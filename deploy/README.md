@@ -42,7 +42,7 @@ publish gets a live address.
 | `entrypoint.sh` | Logs in to Infisical with the machine identity, then runs `boot.sh` inside `infisical run`, so every secret below is in the environment. Fails at once if the three Coolify variables are missing. PID 1 is `tini` (Dockerfile `ENTRYPOINT`), which reaps zombies and passes `docker stop`'s SIGTERM to `infisical run`; infisical forwards it to node and waits for node to exit, and node finishes its in-flight requests first, so a stop drains instead of killing. |
 | `boot.sh` | The start sequence, see below. Runnable on its own for tests: `docker run --entrypoint ./boot.sh -e ...`. |
 | `scripts/commerce-migrate.ts` | The commerce start step (source of `commerce-migrate.cjs`). Logic in `src/server/commerce/provisioning/deploy.ts`. |
-| `prisma/sql/commerce-roles.sql` | Creates the two commerce roles with all their privileges. Applied once per database, as the database superuser, before the first start. No passwords. |
+| `prisma/sql/commerce-roles.sql` | Creates the two commerce roles with all their privileges. Applied once per database, as the database superuser, before the first start, and again whenever the file changes (it pins both roles to the shape it describes, taking away anything an earlier version granted). No passwords. |
 | `.github/workflows/ci.yml` | Typecheck, lint, guards, unit tests, Docker integration tests, build, and a real `docker build` of the production image, on every push and pull request. |
 | `.github/workflows/deploy.yml` | Manual for now (`gh workflow run deploy --ref main`): builds and pushes the image, fires the Coolify webhook, then polls `https://app.lumitra.co/api/health/db` for up to 180 seconds. |
 | `src/app/api/health/route.ts` | `GET /api/health`, liveness, `{ "ok": true }` without touching the database. Coolify's health check uses it. |
@@ -62,9 +62,12 @@ app):
    append-only rules are re-asserted). It refuses to run when the owner URL is
    unset, still a placeholder or equal to the app URL, and unless both the login
    (`session_user`) and the effective role (`current_user`) are `commerce_ddl`
-   without superuser, `BYPASSRLS` or membership in `pg_read_all_data`,
-   `pg_write_all_data`, `pg_execute_server_program`, `pg_read_server_files` or
-   `pg_write_server_files`. Both steps are idempotent and run under one Postgres
+   without superuser, `BYPASSRLS`, `CREATEROLE`, a grant of `commerce_app`, or
+   membership in `pg_read_all_data`, `pg_write_all_data`,
+   `pg_execute_server_program`, `pg_read_server_files` or `pg_write_server_files`.
+   It also checks, read only, that `commerce_app`'s default `search_path` is
+   exactly `ext`, and otherwise fails with the administrator's repair command
+   (re-applying the roles file). Both steps are idempotent and run under one Postgres
    advisory lock, so two containers starting at once queue instead of racing, and
    a start with nothing new applies nothing. Time budgets:
    - Waiting for that lock: 30 seconds. A start that would wait longer fails with
@@ -94,7 +97,9 @@ the lock and 30 seconds per statement. "Complete" means: the registry row is
 `active`, the `tg_<id>` schema exists, and every commerce tenant migration is
 recorded for it; a row still `provisioning`, a dropped schema or a missing progress
 row all count as a miss and are provisioned again. If it fails, project creation
-answers 500 with `commerce_not_configured` (owner URL unset) or
+answers 500 with `commerce_not_configured` (owner URL unset),
+`commerce_misconfigured` (`commerce_app`'s default `search_path` is not `ext`; the
+repair command is in the server log, and a retry only helps after it ran) or
 `commerce_provision_failed` (cause in the server log only) and writes nothing, so a
 retry is clean. A company whose commerce an operator has suspended
 (`tenant_groups.status = 'suspended'`) gets 403 `commerce_suspended` and nothing is
@@ -112,7 +117,7 @@ tables and is `DATABASE_URL`):
 | Role | URL variable | What it may do |
 | --- | --- | --- |
 | `commerce_app` | `COMMERCE_APP_DATABASE_URL` | Low privilege, used by every storefront and editor request. Reads and writes rows inside the company schemas, but may not change or delete a placed order, its lines, a credit note or a stock movement (insert and read only). Creates nothing. Its default `search_path` is exactly `ext`, which the app checks on first commerce use and refuses to run otherwise. |
-| `commerce_ddl` | `COMMERCE_OWNER_DATABASE_URL` | Owner, not a superuser. Owns `ext`, the registry and every company schema; runs the start step and the first-project provisioning. Holds `CREATE` on the database and on `public`, plus `CREATEROLE` with admin rights over `commerce_app` only, because provisioning resets `commerce_app`'s `search_path` (Postgres 16 allows that only with both). |
+| `commerce_ddl` | `COMMERCE_OWNER_DATABASE_URL` | Owner, not a superuser. Owns `ext`, the registry and every company schema; runs the start step and the first-project provisioning. Holds `CREATE` on the database and on `public`, and nothing over any role: no `CREATEROLE`, no grant of `commerce_app`. Provisioning only reads `commerce_app`'s `search_path` (`@marlinjai/tenant-db` 0.2, `appRoleBootstrap: 'verify'`), which the roles file sets as the superuser. A wrong value fails the start step, and a project create answers 500 `commerce_misconfigured` with nothing created and the repair command in the server log. |
 
 **The owner URL lives in the running server, on purpose.** First-project
 provisioning runs inline in the project-create request, so
@@ -121,13 +126,11 @@ not only of the start step. That is acceptable because the owner role is bounded
 
 - It can: create schemas in this database, create and change tables in the
   schemas it owns (`ext`, the commerce registry tables in `public`, every
-  `tg_<id>`), grant on those objects, set `commerce_app`'s session defaults, and
-  create new roles (the `CREATEROLE` side effect, which Postgres 16 limits to roles
-  it creates or administers; no new role gets anything on this database's objects
-  unless granted).
+  `tg_<id>`), and grant on those objects.
 - It cannot: read or change the Prisma tables (sites, CMS, data tables) owned by
-  the database's bootstrap user, alter or drop any role other than `commerce_app`,
-  become or inherit `commerce_app`, create temporary tables, create databases, read
+  the database's bootstrap user, create, alter or drop any role (so it can neither
+  mint a login role nor reset `commerce_app`'s password or `search_path`), become
+  or inherit `commerce_app`, create temporary tables, create databases, read
   server files, bypass row security, or act as a superuser. The start step refuses
   any owner URL that is not exactly this role (see the start sequence above).
 
@@ -157,9 +160,35 @@ older dumps; nothing in the app needs either. It creates both roles without a lo
 `07-commerce-roles.sh` then gives each a login with a freshly generated password and
 writes both URLs into Infisical without printing them. The integration test
 `src/server/commerce/provisioning/__tests__/roles.itest.ts` proves the whole chain
-on a fresh Postgres 16: the file twice, the start step, a company provision and a
-placed order, with `commerce_ddl` as a non-superuser and the append-only rules
-holding for `commerce_app`.
+on a fresh Postgres 16: the file twice, the start step, a company provisioned twice
+and a placed order, with `commerce_ddl` as a non-superuser without `CREATEROLE` or
+any grant over `commerce_app`, and the append-only rules holding for
+`commerce_app`. It also proves that re-applying the file to a database shaped by the
+earlier version takes both powers away, and that a wrong `commerce_app`
+`search_path` stops the start step and a provision with the named error, creating
+nothing.
+
+**Upgrading a live database from the earlier roles file.** Until October 2026 the
+file gave `commerce_ddl` `CREATEROLE` and an admin grant over `commerce_app`. The
+start step now refuses an owner that still holds either, so re-apply the file as
+the database superuser BEFORE deploying a build that contains this change, and
+deploy right after it. The two belong back to back: an older build (tenant-db 0.1)
+running against the re-applied database still tries `ALTER ROLE commerce_app` on
+every first-project provision, so until the new build is live a company's first
+project answers 500 (rolled back, nothing created; existing shops are unaffected).
+Rolling back to such an older build needs the old grants restored first, as the
+superuser: `ALTER ROLE commerce_ddl CREATEROLE;` and
+`GRANT commerce_app TO commerce_ddl WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;`.
+
+```sh
+psql -v ON_ERROR_STOP=1 -U <bootstrap superuser> -d <database> -f prisma/sql/commerce-roles.sql
+```
+
+It leaves both logins and passwords alone. Check the result with
+`SELECT rolcreaterole FROM pg_roles WHERE rolname = 'commerce_ddl'` (expect `f`)
+and `SELECT count(*) FROM pg_auth_members WHERE roleid = 'commerce_app'::regrole
+AND member = 'commerce_ddl'::regrole` (expect `0`). A deploy that runs first fails
+its start step with exactly that instruction.
 
 ## Environment
 

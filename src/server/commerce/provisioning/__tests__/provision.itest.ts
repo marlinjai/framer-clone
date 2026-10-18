@@ -67,6 +67,9 @@ beforeAll(async () => {
   // The runner grants per-schema USAGE + table privileges to `commerce_app` and
   // locks its default search_path to `ext`. That role must exist first.
   await probe`CREATE ROLE commerce_app NOLOGIN`;
+  // The superuser sets the app role's search_path, as prisma/sql/commerce-roles.sql
+  // does: provisioning only verifies it (appRoleBootstrap 'verify').
+  await probe`ALTER ROLE commerce_app SET search_path = ext`;
 
   // Stand up the public tier (ext schema + the tenant_groups registry) the
   // per-tenant provisioning builds on.

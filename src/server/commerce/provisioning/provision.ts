@@ -6,7 +6,7 @@
 // THIS module stands up one org's `tg_<id>` commerce schema on top of it, and
 // rolls new commerce DDL across the whole fleet of already-provisioned orgs.
 //
-// Both entrypoints run DDL (CREATE SCHEMA / TABLE / GRANT / ALTER ROLE), so they
+// Both entrypoints run DDL (CREATE SCHEMA / TABLE / GRANT), so they
 // MUST use a DIRECT OWNER connection (`commerce_ddl`, COMMERCE_OWNER_DATABASE_URL),
 // NEVER the app base singleton from db.ts. That singleton connects as the
 // low-privilege `commerce_app` role (role-default search_path = ext, no DDL
@@ -18,15 +18,25 @@
 // The runner (@marlinjai/tenant-db) owns ALL the hard parts: it is atomic,
 // advisory-locked (per tenant_group, held for the WHOLE provision), and
 // idempotent — registry upsert -> CREATE SCHEMA -> inline migrations under the
-// lock -> verify -> per-schema grants -> `ext`-locked role default (the backstop)
-// -> status='active'. We do NOT add our own locking or a second registry; we
+// lock -> verify -> per-schema grants -> check of the `ext`-locked role default
+// (the backstop) -> status='active'. We do NOT add our own locking or a second registry; we
 // supply the OWNER connection and the commerce migration set and let the runner
 // do the work.
 //
 // ALWAYS pass `appRole: 'commerce_app'`. The no-appRole path skips the
-// per-schema grants AND the `ext` role-default backstop, so it is forbidden in
+// per-schema grants AND the `ext` role-default check, so it is forbidden in
 // prod (it would leave the new schema unreachable by the app role and the app
-// role's search_path unlocked).
+// role's search_path unchecked).
+//
+// LEAST-PRIVILEGE OWNER (tenant-db 0.2). commerce_ddl has no CREATEROLE and no
+// grant over commerce_app (prisma/sql/commerce-roles.sql), so it may not run
+// `ALTER ROLE commerce_app`. Every provision therefore passes
+// `appRoleBootstrap: 'verify'`: the runner only READS commerce_app's stored
+// search_path, which the roles file sets to `ext` as the superuser, and throws
+// AppRoleSearchPathError (code TENANT_APP_ROLE_SEARCH_PATH) when it differs,
+// rolling the whole provision back so nothing is created. Its message names the
+// administrator's repair command. The container start step runs the same check
+// (deploy.ts), so a wrong value stops the deploy before any customer meets it.
 //
 // APPEND-ONLY REVOKES (found and fixed in CM-13). The runner runs the tenant
 // migrations, whose bodies REVOKE UPDATE, DELETE on the append-only tables from
@@ -52,7 +62,9 @@ import {
   provisionTenant,
   migrateAllTenants,
   tenantSchema,
+  type AppRoleBootstrapMode,
   type MigrateAllResult,
+  type ProvisionTenantOptions,
 } from '@marlinjai/tenant-db';
 import { COMMERCE_TENANT_MIGRATIONS } from '../migrations/tenant';
 import {
@@ -80,24 +92,36 @@ export const APPEND_ONLY_TABLES = [
 
 /**
  * Session advisory lock key that serializes every commerce provision in the
- * database. Each provision ends with tenant-db's bootstrapAppRole, an
- * `ALTER ROLE commerce_app SET search_path = ext`; two provisions of DIFFERENT
- * tenant groups (two companies creating their first project at the same moment)
- * would both update the same pg_authid row and one fails with "tuple
- * concurrently updated". The runner's own lock is per tenant group, so it does
- * not prevent that. Provisioning is rare and short, so one global lock costs
- * nothing. The integration fixtures take the same key around their direct
- * provisionTenant calls.
+ * database. The runner's own lock is per tenant group; this one makes
+ * provisions of DIFFERENT tenant groups (two companies creating their first
+ * project at the same moment) queue instead of running their schema DDL side by
+ * side, and bounds how long a request waits for that queue (the session's
+ * lock_timeout, CommerceLockTimeoutError beyond it). Under tenant-db 0.1 it also
+ * kept two provisions from both running `ALTER ROLE commerce_app` and failing
+ * with "tuple concurrently updated"; since provisioning only verifies the app
+ * role ('verify', see the module comment) that collision cannot happen any more,
+ * and the lock stays for the ordering and the bounded wait. Provisioning is rare
+ * and short, so one global lock costs nothing. The integration fixtures take the
+ * same key around their direct provisionTenant calls.
  */
 export const COMMERCE_PROVISION_LOCK_KEY = 74_610_010;
 
 /**
  * The low-privilege app role granted per-schema USAGE + table access by the
- * runner, and whose default search_path the runner locks to `ext`. MUST match
+ * runner, and whose default search_path (`ext`, set by the roles file) the
+ * runner verifies on every provision. MUST match
  * the role `COMMERCE_APP_DATABASE_URL` connects as (see prisma/sql/commerce-roles.sql
  * + db.ts). Passing it is mandatory: the no-appRole path is forbidden in prod.
  */
 export const COMMERCE_APP_ROLE = 'commerce_app';
+
+/**
+ * How every commerce provision treats the app role's default search_path:
+ * read it, never write it (see the module comment). The owner role has no right
+ * to write it, so `'ensure'` would only turn a wrong value into a permission
+ * error instead of the clear `mismatch` one.
+ */
+export const COMMERCE_APP_ROLE_BOOTSTRAP = 'verify' as const satisfies AppRoleBootstrapMode;
 
 /**
  * The tables commerce_app may read, insert and update but never DELETE from:
@@ -161,15 +185,18 @@ export async function grantAppRole(
 
 /**
  * The full `provisionTenant` options for one commerce tenant group: the commerce
- * migration set, the app role (grants + `ext` backstop) and the append-only
- * REVOKE seed. Every caller that provisions a commerce schema (this module, the
- * integration harness, the test fixtures) uses it, so none can forget a part.
+ * migration set, the app role (grants + a read-only check of its `ext`
+ * search_path, `appRoleBootstrap: 'verify'`, never an `ALTER ROLE`) and the
+ * append-only REVOKE seed. Every caller that provisions a commerce schema (this
+ * module, the seed and backfill scripts, the integration harness, the test
+ * fixtures) uses it, so none can forget a part.
  */
-export function commerceProvisionOptions(tenantGroupId: string, slug: string) {
+export function commerceProvisionOptions(tenantGroupId: string, slug: string): ProvisionTenantOptions {
   return {
     tenantGroupId,
     slug,
     appRole: COMMERCE_APP_ROLE,
+    appRoleBootstrap: COMMERCE_APP_ROLE_BOOTSTRAP,
     tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
     seed: (tx: postgres.TransactionSql, ctx: { schema: string }) => revokeAppendOnlyWrites(tx, ctx.schema),
   };
@@ -185,7 +212,7 @@ function requireOwnerUrl(connectionString?: string): string {
   if (!ownerUrl) {
     throw new Error(
       'COMMERCE_OWNER_DATABASE_URL is not set. Per-tenant provisioning and ' +
-        'fleet migration run DDL (CREATE SCHEMA/TABLE/GRANT, ALTER ROLE) and ' +
+        'fleet migration run DDL (CREATE SCHEMA/TABLE/GRANT) and ' +
         'MUST connect as the OWNER role (`commerce_ddl`), which is distinct ' +
         'from the low-privilege app role (`commerce_app`, COMMERCE_APP_DATABASE_URL) ' +
         'the runtime base handle uses. Set the owner URL in Infisical / the ' +
@@ -227,8 +254,9 @@ async function provisionUnderLock(
 ): Promise<{ schema: string; applied: string[] }> {
   await acquireAdvisoryLock(sql, COMMERCE_PROVISION_LOCK_KEY, 'commerce provisioning lock', timeouts);
   try {
-    // The app role drives the per-schema grants + the `ext`-locked role default
-    // (the backstop); the seed re-applies the append-only REVOKEs after them.
+    // The app role drives the per-schema grants + the read-only check of its
+    // `ext`-locked role default (the backstop); the seed re-applies the
+    // append-only REVOKEs after the grants.
     return await provisionTenant(sql, commerceProvisionOptions(tenantGroupId, slug));
   } finally {
     await releaseAdvisoryLock(sql, COMMERCE_PROVISION_LOCK_KEY);
@@ -247,9 +275,8 @@ async function provisionUnderLock(
  * `{ schema, applied }` (applied is `[]` on a no-op re-provision).
  *
  * Serialized: every provision takes {@link COMMERCE_PROVISION_LOCK_KEY} first,
- * so concurrent provisions of different tenant groups queue instead of
- * colliding on `ALTER ROLE commerce_app`. A wait longer than the lock timeout
- * fails with CommerceLockTimeoutError.
+ * so concurrent provisions of different tenant groups queue. A wait longer than
+ * the lock timeout fails with CommerceLockTimeoutError.
  *
  * @param opts.tenantGroupId The tenant_group id (validated to a strict UUID by
  *   the runner's chokepoint; the schema name is DERIVED, never echoed).
@@ -260,6 +287,8 @@ async function provisionUnderLock(
  * @param opts.timeouts      Optional bounded waits (tests).
  *
  * @throws Error if no OWNER connection string is available.
+ * @throws AppRoleSearchPathError (tenant-db) when commerce_app's default
+ *   search_path is not exactly `ext`; nothing is created.
  */
 export async function provisionCommerceTenant(opts: {
   tenantGroupId: string;
@@ -331,8 +360,8 @@ export async function readCommerceTenantState(
  *
  * Hit: one read of `public.tenant_groups` and `public.tenant_migration_progress`
  * finds the group `active`, its schema present and every commerce tenant
- * migration recorded, and nothing else happens: no lock, no DDL, no
- * `ALTER ROLE`. Miss (first project, a row still `provisioning`, a dropped
+ * migration recorded, and nothing else happens: no lock, no DDL, no role
+ * check. Miss (first project, a row still `provisioning`, a dropped
  * schema, a migration not recorded): the full provision under the global
  * provisioning lock, exactly as {@link provisionCommerceTenant}. A SUSPENDED
  * group is neither: the runner would set it `active` again, so this throws
@@ -340,6 +369,8 @@ export async function readCommerceTenantState(
  *
  * @returns `provisioned: true` when the full provision ran.
  * @throws CommerceTenantSuspendedError for a suspended tenant group.
+ * @throws AppRoleSearchPathError (tenant-db) on a miss when commerce_app's
+ *   default search_path is not exactly `ext`; nothing is created.
  */
 export async function ensureCommerceTenant(opts: {
   tenantGroupId: string;

@@ -20,9 +20,15 @@
 // the owner URL must be set, must not be a placeholder and must differ from the
 // app URL, and on the server BOTH session_user (the login) and current_user
 // (the effective role, which a URL's `options=-c role=...` can change) must be
-// `commerce_ddl`, which must not be a superuser, must not bypass row security
+// `commerce_ddl`, which must not be a superuser, must not bypass row security,
+// must not create or administer roles (no CREATEROLE, no grant of commerce_app)
 // and must not belong to a predefined role that reads or writes everything or
-// reaches the server's files or programs (assertOwnerIdentity). Any failure
+// reaches the server's files or programs (assertOwnerIdentity). Then it checks,
+// read-only, that the app role commerce_app's default search_path is exactly
+// `ext` (tenant-db bootstrapAppRole in 'verify' mode, the same check every
+// provision runs): a wrong value would make every first project fail, so it
+// stops the start with tenant-db's AppRoleSearchPathError, whose message is the
+// administrator's repair command (assertAppRoleSearchPath). Any failure
 // throws, and the boot script turns a throw into a failed container start, so a
 // bad migration or a miswired secret stops the deploy instead of serving a
 // half-migrated shop.
@@ -32,8 +38,9 @@
 
 import { migrateCommercePublic } from './public';
 import postgres from 'postgres';
+import { AppRoleSearchPathError, bootstrapAppRole } from '@marlinjai/tenant-db';
 
-import { migrateAllCommerceTenants } from './provision';
+import { COMMERCE_APP_ROLE, COMMERCE_APP_ROLE_BOOTSTRAP, migrateAllCommerceTenants } from './provision';
 import {
   acquireAdvisoryLock,
   BOOT_LOCK_TIMEOUTS,
@@ -135,6 +142,8 @@ export async function assertOwnerIdentity(sql: postgres.Sql): Promise<string> {
       current_user: string;
       super: boolean;
       bypassrls: boolean;
+      createrole: boolean;
+      administers_app: boolean;
       memberships: string[];
     }[]
   >`
@@ -142,6 +151,11 @@ export async function assertOwnerIdentity(sql: postgres.Sql): Promise<string> {
            current_user::text AS current_user,
            bool_or(r.rolsuper) AS super,
            bool_or(r.rolbypassrls) AS bypassrls,
+           bool_or(r.rolcreaterole) AS createrole,
+           -- Any membership, direct or through another role (Postgres 16:
+           -- MEMBER regardless of the INHERIT, SET and ADMIN options).
+           (pg_has_role(session_user, ${COMMERCE_APP_ROLE}, 'MEMBER')
+             OR pg_has_role(current_user, ${COMMERCE_APP_ROLE}, 'MEMBER')) AS administers_app,
            COALESCE(
              (SELECT array_agg(DISTINCT f.name ORDER BY f.name)
               FROM unnest(${FORBIDDEN_OWNER_MEMBERSHIPS as unknown as string[]}::text[]) AS f(name)
@@ -169,6 +183,15 @@ export async function assertOwnerIdentity(sql: postgres.Sql): Promise<string> {
   if (who.bypassrls) {
     throw new Error(`${COMMERCE_OWNER_ROLE} has BYPASSRLS; re-run prisma/sql/commerce-roles.sql to remove it.`);
   }
+  if (who.createrole || who.administers_app) {
+    const what = [who.createrole && 'CREATEROLE', who.administers_app && `a grant of ${COMMERCE_APP_ROLE}`]
+      .filter(Boolean)
+      .join(' and ');
+    throw new Error(
+      `${COMMERCE_OWNER_ROLE} still holds ${what}. The owner must not create or alter roles: ` +
+        're-apply prisma/sql/commerce-roles.sql as the database superuser (it takes both away), then deploy again.',
+    );
+  }
   if (who.memberships.length > 0) {
     throw new Error(
       `${COMMERCE_OWNER_ROLE} is a member of ${who.memberships.join(', ')}; revoke that membership ` +
@@ -176,6 +199,37 @@ export async function assertOwnerIdentity(sql: postgres.Sql): Promise<string> {
     );
   }
   return who.current_user;
+}
+
+/**
+ * Check, read-only, that the app role's default search_path is exactly `ext`,
+ * the value prisma/sql/commerce-roles.sql sets and every provision verifies.
+ * Runs on the owner session; reading the setting needs no privilege, and
+ * nothing is ever written.
+ *
+ * @throws Error carrying tenant-db's AppRoleSearchPathError message (the exact
+ *   administrator command that repairs it) as `cause`, when the value differs or
+ *   the role is missing.
+ */
+export async function assertAppRoleSearchPath(sql: postgres.Sql): Promise<void> {
+  try {
+    await bootstrapAppRole(sql, COMMERCE_APP_ROLE, { mode: COMMERCE_APP_ROLE_BOOTSTRAP });
+  } catch (err) {
+    if (err instanceof AppRoleSearchPathError) {
+      // The roles file creates the role and sets the role-wide value, so it is
+      // the repair for everything except a per-database override.
+      const viaRolesFile =
+        err.database === null
+          ? ' Re-applying prisma/sql/commerce-roles.sql as the database superuser does exactly that.'
+          : '';
+      throw new Error(
+        `The app role ${COMMERCE_APP_ROLE} is not ready (${err.problem}), so no company could be ` +
+          `provisioned. ${err.message}${viaRolesFile}`,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
 }
 
 /**
@@ -210,6 +264,7 @@ export async function runCommerceDeployMigrations(opts?: {
   const lockSession = await openOwnerSql(ownerUrl, lockTimeouts);
   try {
     const role = await assertOwnerIdentity(lockSession);
+    await assertAppRoleSearchPath(lockSession);
 
     await acquireAdvisoryLock(lockSession, COMMERCE_DEPLOY_LOCK_KEY, 'commerce migration lock', lockTimeouts, () =>
       log('commerce: another start step holds the commerce migration lock, waiting'),

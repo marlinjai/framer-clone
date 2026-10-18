@@ -54,6 +54,9 @@ beforeAll(async () => {
   ownerUrl = `postgresql://postgres@${container.getHost()}:${container.getMappedPort(5432)}/${DB_NAME}`;
   owner = postgres(ownerUrl, { max: 1, prepare: false, onnotice: () => {} });
   await owner`CREATE ROLE commerce_app LOGIN`;
+  // The superuser sets the app role's search_path, as prisma/sql/commerce-roles.sql
+  // does: provisioning only verifies it (appRoleBootstrap 'verify').
+  await owner`ALTER ROLE commerce_app SET search_path = ext`;
   await migratePublic(owner);
   await owner`GRANT USAGE ON SCHEMA ext TO commerce_app`;
 }, 180_000);

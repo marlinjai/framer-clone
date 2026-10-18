@@ -186,6 +186,9 @@ beforeAll(async () => {
   // The low-privilege app role must exist before provisioning (the migration
   // REVOKEs are role-guarded; provisionTenant grants per-schema access to it).
   await owner`CREATE ROLE ${owner(APP_ROLE)} LOGIN`;
+  // The superuser sets the app role's search_path, as prisma/sql/commerce-roles.sql
+  // does: provisioning only verifies it (appRoleBootstrap 'verify').
+  await owner`ALTER ROLE ${owner(APP_ROLE)} SET search_path = ext`;
 
   // Public control plane (ext schema + tenant_groups registry).
   await migratePublic(owner);

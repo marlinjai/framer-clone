@@ -70,6 +70,9 @@ beforeAll(async () => {
   // The production provisioning options grant to and lock the app role, so it
   // must exist (TRUST auth: no password).
   await owner`CREATE ROLE commerce_app LOGIN`;
+  // The superuser sets the app role's search_path, as prisma/sql/commerce-roles.sql
+  // does: provisioning only verifies it (appRoleBootstrap 'verify').
+  await owner`ALTER ROLE commerce_app SET search_path = ext`;
   await migratePublic(owner);
   await provisionTenant(owner, commerceProvisionOptions(TG, 'cm08-policy'));
 

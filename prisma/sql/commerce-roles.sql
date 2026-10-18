@@ -8,8 +8,12 @@
 -- superuser (on Coolify that is the database's own bootstrap user, e.g.
 -- `framer_clone`), with `psql -v ON_ERROR_STOP=1`. It is idempotent: running it
 -- again changes nothing and fails nothing, so it is safe to re-apply after an
--- upgrade of this file. It names no database: every database-level grant uses
--- current_database(), so the same file runs in tests and in production.
+-- upgrade of this file. Re-applying it is also how an upgrade of this file
+-- reaches a live database: it pins both roles to the shape written here, so a
+-- power an earlier version granted (CREATEROLE on commerce_ddl and the ADMIN
+-- grant over commerce_app, until October 2026) is taken away again. It names
+-- no database: every database-level grant uses current_database(), so the same
+-- file runs in tests and in production.
 --
 -- NO PASSWORDS. The roles are created NOLOGIN here. The deploy's role script
 -- (infra repo, deployments/framer-clone/scripts/07-commerce-roles.sh) then runs
@@ -24,10 +28,11 @@
 -- Both run as commerce_ddl, at container start (deploy/boot.sh) and when a
 -- company creates its first project.
 --
--- REQUIRES POSTGRES 16 OR LATER. The ADMIN-only role grant below
--- (`WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`) and the narrowed CREATEROLE
--- semantics it relies on are Postgres 16 features; on older servers the file
--- stops with an error instead of granting something broader.
+-- REQUIRES POSTGRES 16 OR LATER. The role model is verified on Postgres 16
+-- only (the integration tests, @marlinjai/tenant-db's least-privilege-owner
+-- suite), and Postgres 15 and older treat CREATEROLE, role grants and the
+-- `public` schema differently enough that a role shaped here could end up with
+-- broader rights there. On an older server the file stops with an error.
 --
 -- =====================================================================
 -- The two roles
@@ -47,7 +52,12 @@
 --                 connection (COMMERCE_OWNER_DATABASE_URL), used outside the
 --                 request pool. It owns `ext`, the public commerce registry and
 --                 every `tg_<id>` schema. Its search_path keeps `public`, which
---                 is why it is never the application handle.
+--                 is why it is never the application handle. It can neither
+--                 create nor alter roles (NOCREATEROLE, no grant over
+--                 commerce_app): provisioning only READS commerce_app's
+--                 search_path (tenant-db appRoleBootstrap 'verify'), so a leaked
+--                 owner URL cannot mint login roles or reset commerce_app's
+--                 password or search_path.
 --
 -- The append-only guarantee rests on commerce_app being neither the owner of
 -- the tables nor a superuser: an owner or superuser bypasses table privileges,
@@ -84,10 +94,10 @@ END
 $$;
 
 -- Pin the attributes on every run, so a role that pre-existed with broader
--- rights is brought back to the intended shape. CREATEROLE on commerce_ddl is
--- explained in section 4.
+-- rights is brought back to the intended shape. NOCREATEROLE on commerce_ddl
+-- takes away the CREATEROLE an earlier version of this file granted (section 4).
 ALTER ROLE commerce_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-ALTER ROLE commerce_ddl NOSUPERUSER NOCREATEDB CREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE commerce_ddl NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 
 -- ---------------------------------------------------------------------
 -- 2. Database level: both may connect, only the owner may create schemas.
@@ -132,18 +142,35 @@ ALTER SCHEMA ext OWNER TO commerce_ddl;
 GRANT USAGE ON SCHEMA ext TO commerce_app;
 
 -- ---------------------------------------------------------------------
--- 4. The owner may set the app role's search_path, and nothing else on it.
+-- 4. The owner holds no power over any role, commerce_app included.
 -- ---------------------------------------------------------------------
--- Every provision runs tenant-db's bootstrapAppRole, which issues
--- `ALTER ROLE commerce_app SET search_path = ext`. On Postgres 16 a
--- non-superuser may change another role's settings only with CREATEROLE AND the
--- ADMIN option on that role. INHERIT FALSE and SET FALSE mean commerce_ddl does
--- not gain commerce_app's privileges and cannot become commerce_app; it may
--- only administer it. Postgres 16's CREATEROLE no longer reaches roles the
--- holder has no ADMIN option on, so commerce_ddl cannot touch `framer_clone` or
--- any other existing role. What CREATEROLE does still allow is creating new
--- roles (which start without any privilege on this database's objects).
-GRANT commerce_app TO commerce_ddl WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;
+-- Until October 2026 this section granted commerce_app to commerce_ddl WITH
+-- ADMIN (plus CREATEROLE in section 1), because tenant-db 0.1 ran
+-- `ALTER ROLE commerce_app SET search_path = ext` on every provision. Since
+-- tenant-db 0.2 the app passes appRoleBootstrap 'verify': provisioning only
+-- reads the value section 5 sets, and fails with AppRoleSearchPathError
+-- (rolled back, nothing created) when it is wrong. So the grant is taken away,
+-- whichever superuser recorded it (Postgres 16 tracks a grantor per membership,
+-- and a plain REVOKE only removes the current role's own grants). CASCADE also
+-- drops any grant of commerce_app that commerce_ddl passed on with that ADMIN
+-- option. On a database without the grant the loop finds nothing and does
+-- nothing.
+DO $$
+DECLARE
+  g record;
+BEGIN
+  FOR g IN
+    -- pg_get_userbyid gives the bare role name; %I quotes it once (a
+    -- regrole::text value is already quoted when the name needs it).
+    SELECT pg_get_userbyid(grantor) AS grantor
+      FROM pg_auth_members
+     WHERE roleid = 'commerce_app'::regrole
+       AND member = 'commerce_ddl'::regrole
+  LOOP
+    EXECUTE format('REVOKE commerce_app FROM commerce_ddl GRANTED BY %I CASCADE', g.grantor);
+  END LOOP;
+END
+$$;
 
 -- ---------------------------------------------------------------------
 -- 5. The ext-locked search_path backstop on commerce_app.
@@ -151,8 +178,10 @@ GRANT commerce_app TO commerce_ddl WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;
 -- A role default, never a per-connection SET (postgres.js does not reset
 -- session state when a pooled connection is reused). With search_path = ext the
 -- ext functions resolve, but every table must be schema-qualified, so a bare
--- table name fails loudly. Provisioning sets the same value again; setting it
--- here makes the role correct before any tenant exists.
+-- table name fails loudly. This is the ONLY place the value is written:
+-- provisioning and the container start step only verify it (tenant-db
+-- bootstrapAppRole in 'verify' mode) and refuse to go on when it differs, with
+-- the exact command to repair it (re-applying this file is that repair).
 ALTER ROLE commerce_app SET search_path = ext;
 -- commerce_ddl keeps the default ("$user", public): it needs `public` for DDL,
 -- and assertBackstop() therefore refuses it as an application handle.

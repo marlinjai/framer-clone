@@ -52,6 +52,15 @@ projects: [framer-clone]
 >   `src/server/commerce/provisioning/provision.ts`); the ported `createOrder` and `pricing`
 >   suites caught it.
 >
+> **Reality (2026-10-19): least-privilege owner.** Section 4.1 described `bootstrapAppRole`
+> running `ALTER ROLE commerce_app SET search_path = ext` on every provision, which forced
+> `commerce_ddl` to hold CREATEROLE plus an ADMIN grant over `commerce_app`. With
+> `@marlinjai/tenant-db` 0.2 every provision passes `appRoleBootstrap: 'verify'`: it only reads
+> the value, which `prisma/sql/commerce-roles.sql` sets as the superuser, and a wrong value fails
+> with `AppRoleSearchPathError` (rolled back; 500 `commerce_misconfigured` on project create, a
+> failed container start at boot). The roles file now takes CREATEROLE and the grant away on
+> re-apply, and the start step refuses an owner that still holds either.
+>
 > Nothing in this plan remains open. Isolation stays schema-per-tenant-group on auth-brain tenant
 > groups (confirmed by Marlin 2026-10-15), not one database per company.
 
@@ -127,7 +136,7 @@ We mirror `provisionTenant` / `migrateAllTenants` exactly (RECON 1 §3, §4; REC
 ### 4.1 Roles + connection strings
 
 Two roles, mirroring the existing `prisma/sql/commerce-roles.sql` intent but for the tenant-db model:
-- **`commerce_app`** (LOGIN, low-privilege): the app's base handle. Gets per-schema `USAGE` + `SELECT,INSERT,UPDATE,DELETE` + sequence `USAGE,SELECT` via `grantSchemaToAppRole`, and role-default `search_path = ext` via `bootstrapAppRole` (`ALTER ROLE commerce_app SET search_path = ext`). The append-only REVOKEs (`stock_movement`, `credit_note`, `credit_note_ref`, `order`, `order_line_item`) are applied per-schema inside the tenant migrations so they have teeth (the app role is non-owner).
+- **`commerce_app`** (LOGIN, low-privilege): the app's base handle. Gets per-schema `USAGE` + `SELECT,INSERT,UPDATE,DELETE` + sequence `USAGE,SELECT` via `grantSchemaToAppRole`, and role-default `search_path = ext`, set once by the superuser in `prisma/sql/commerce-roles.sql` and only verified by `bootstrapAppRole` on each provision (see the 2026-10-19 reality note). The append-only REVOKEs (`stock_movement`, `credit_note`, `credit_note_ref`, `order`, `order_line_item`) are applied per-schema inside the tenant migrations so they have teeth (the app role is non-owner).
 - **`commerce_ddl`** (owner): holds DDL + advisory-lock privilege. The runner's `createMigrationClient(ownerConnString, { max:1 })` uses this. Passed as `appRole` to `provisionTenant`. NEVER the app role.
 
 Two `DATABASE_URL`s in Infisical: app role for the pool, owner role for the runner/provisioner.
