@@ -6,6 +6,7 @@ import { catalog } from './003_catalog';
 import { pricingAndTax } from './004_pricing_and_tax';
 import { minimalOrders } from './005_minimal_orders';
 import { inventoryPolicy } from './006_inventory_policy';
+import { books } from './007_books';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -32,6 +33,10 @@ import { inventoryPolicy } from './006_inventory_policy';
  *                            accounting-identity CHECK, the credit_note->order FK
  *   006_inventory_policy   — product_variant.manage_inventory / allow_backorder
  *                            flags; DROP the reserved<=stocked CHECK (backorder)
+ *   007_books              : the Books invoicing tier (company settings, number
+ *                            counters, customer, template, sales_document with its
+ *                            lines and append-only events, freeze triggers BK001
+ *                            to BK005)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -41,4 +46,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   pricingAndTax,
   minimalOrders,
   inventoryPolicy,
+  books,
 ];

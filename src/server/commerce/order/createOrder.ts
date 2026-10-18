@@ -52,25 +52,28 @@ import { pricingRepository } from '../repository/pricing';
 import { orderRepository } from '../repository/order';
 import type { CreateOrderLineItemInput } from '../repository/types';
 import type { CommerceDB } from '../db-types';
+import {
+  assertReverseChargeAllowed,
+  computeLineTax,
+  KLEINUNTERNEHMER_NOTICE,
+  REVERSE_CHARGE_NOTICE,
+} from '../../tax/germanVat';
 
-// German VAT default rates in integer BASIS POINTS (1900 = 19.00%, 700 = 7.00%,
-// 0 = zero-rated). b5 owns only the catalog-side tax_class CLASSIFICATION, not a
-// rate (the bought tax engine is E8), so v1 maps a class to one of these defaults;
-// a caller may override per line with an explicit taxRate.
-export const STANDARD_RATE_BPS = 1900;
-export const REDUCED_RATE_BPS = 700;
-export const ZERO_RATE_BPS = 0;
-// 100% in basis points: the upper bound on any tax rate. Mirrors the b6 migration's
-// CHECK (tax_rate <= 10000) on order_line_item; an explicit rate above this is a
-// programming error, surfaced loudly at the boundary (never persisted).
-export const MAX_RATE_BPS = 10000;
-
-// The legal notices set on the order when VAT is suppressed. ASCII-safe text (no
-// em-dashes / en-dashes per the repo convention).
-export const REVERSE_CHARGE_NOTICE =
-  'Steuerschuldnerschaft des Leistungsempfaengers (Reverse-Charge-Verfahren, Section 13b UStG).';
-export const KLEINUNTERNEHMER_NOTICE =
-  'Gemaess Section 19 UStG wird keine Umsatzsteuer ausgewiesen (Kleinunternehmer).';
+// The German VAT rules (rates, notices, per-line tax, the reverse-charge
+// precondition) live in the shared module src/server/tax/germanVat.ts, which the
+// Books domain uses too. They are re-exported here so every existing importer of
+// this module keeps working unchanged.
+export {
+  STANDARD_RATE_BPS,
+  REDUCED_RATE_BPS,
+  ZERO_RATE_BPS,
+  MAX_RATE_BPS,
+  REVERSE_CHARGE_NOTICE,
+  KLEINUNTERNEHMER_NOTICE,
+  computeLineTax,
+  resolveLineRate,
+  type LineTax,
+} from '../../tax/germanVat';
 
 /** One cart line: the client's SELECTION intent. The server authors the rest. */
 export interface CartLine {
@@ -149,94 +152,6 @@ function assertNonNegativeIntCents(value: number, label: string): void {
   }
 }
 
-/** The resolved tax treatment for one line (b5 TAX-04 full snapshot). */
-export interface LineTax {
-  net: number;
-  tax: number;
-  gross: number;
-  rate: number;
-  treatment: CreateOrderLineItemInput['taxTreatment'];
-}
-
-/**
- * Compute one line's net/tax/gross in integer cents plus the snapshotted rate and
- * treatment discriminator. VAT suppression (reverse_charge / kleinunternehmer)
- * forces a zero tax_amount and the matching treatment; kleinunternehmer takes
- * precedence (a small-business seller never charges VAT, regardless of the B2B
- * reverse-charge mechanism). Otherwise the rate is the explicit per-line rate, or
- * the class-derived default. All arithmetic is integer (Math.round), so no float
- * can enter the totals.
- */
-export function computeLineTax(
-  base: number,
-  opts: {
-    taxClass?: string | null;
-    explicitRate?: number;
-    netOrGross: 'net' | 'gross';
-    reverseCharge: boolean;
-    kleinunternehmer: boolean;
-  },
-): LineTax {
-  if (opts.kleinunternehmer) {
-    return { net: base, tax: 0, gross: base, rate: 0, treatment: 'kleinunternehmer' };
-  }
-  if (opts.reverseCharge) {
-    return { net: base, tax: 0, gross: base, rate: 0, treatment: 'reverse_charge' };
-  }
-
-  const rate = resolveLineRate(opts.taxClass, opts.explicitRate);
-  if (rate === ZERO_RATE_BPS) {
-    return { net: base, tax: 0, gross: base, rate: 0, treatment: 'zero' };
-  }
-
-  // Derive the treatment discriminator from the RESOLVED rate, not from taxClass
-  // alone: an explicit per-line rate override (e.g. 700 with a null taxClass) must
-  // snapshot a CONSISTENT (rate, treatment) pair so a per-Steuersatz reprint buckets
-  // it correctly. The reduced-rate bps maps to 'reduced', anything else 'standard'
-  // (the zero case is already returned above).
-  const treatment = treatmentForRate(rate);
-  if (opts.netOrGross === 'gross') {
-    // base is gross (tax-inclusive): extract the tax from within.
-    const tax = Math.round((base * rate) / (10000 + rate));
-    return { net: base - tax, tax, gross: base, rate, treatment };
-  }
-  // base is net: add the tax on top.
-  const tax = Math.round((base * rate) / 10000);
-  return { net: base, tax, gross: base + tax, rate, treatment };
-}
-
-/** Map an applied tax class to its default rate, or honor an explicit override. */
-export function resolveLineRate(taxClass: string | null | undefined, explicitRate?: number): number {
-  if (explicitRate != null) {
-    assertNonNegativeIntCents(explicitRate, 'taxRate');
-    // Reject an explicit rate above the basis-points ceiling (mirrors the b6
-    // migration's CHECK (tax_rate <= 10000)); a rate over 100% is a bug, not data.
-    if (explicitRate > MAX_RATE_BPS) {
-      throw new Error(
-        `createOrder: taxRate must be <= ${MAX_RATE_BPS} basis points, got ${explicitRate}`,
-      );
-    }
-    return explicitRate;
-  }
-  if (taxClass === 'reduced') return REDUCED_RATE_BPS;
-  if (taxClass === 'zero') return ZERO_RATE_BPS;
-  return STANDARD_RATE_BPS;
-}
-
-/**
- * Map a RESOLVED non-zero rate (basis points) to its treatment discriminator. The
- * reduced-rate bps is 'reduced', everything else 'standard'. (A zero rate is the
- * 'zero' treatment, handled by the caller before this is reached.) Deriving the
- * treatment from the rate (not from taxClass) keeps the snapshotted (rate,
- * treatment) pair consistent even when an explicit per-line rate overrides the
- * class-derived default.
- */
-function treatmentForRate(rate: number): CreateOrderLineItemInput['taxTreatment'] {
-  if (rate === ZERO_RATE_BPS) return 'zero';
-  if (rate === REDUCED_RATE_BPS) return 'reduced';
-  return 'standard';
-}
-
 /** True iff the error is the b3 inner-reserve concurrent-duplicate sentinel. */
 export function isReserveDuplicate(error: unknown): boolean {
   // DuplicateRequestError is not exported from reserve.ts (it never escapes the
@@ -252,24 +167,14 @@ export function validateCart(cart: Cart): void {
   if (!Array.isArray(cart.lines) || cart.lines.length === 0) {
     throw new Error('createOrder: cart must have at least one line');
   }
-  // Reverse-charge precondition: the Section 13b reverse-charge mechanism only
-  // applies to a B2B sale to a VAT-registered recipient. reverseCharge is a bare
-  // client boolean that SUPPRESSES VAT and emits the 13b notice, so without this
-  // gate a {customerType:'b2c', reverseCharge:true} cart would silently yield a
-  // zero-VAT B2C invoice (illegal). REJECT loudly unless the recipient is B2B with
-  // a non-empty VAT id. (VIES / format validation of the vatId stays deferred to
-  // E8; only the b2b + non-empty-vatId precondition is enforced now.)
+  // Reverse-charge precondition (shared with the Books domain): the Section 13b
+  // mechanism only applies to a B2B sale to a VAT-registered recipient.
+  // reverseCharge is a bare client boolean that SUPPRESSES VAT and emits the 13b
+  // notice, so without this gate a {customerType:'b2c', reverseCharge:true} cart
+  // would silently yield a zero-VAT B2C invoice (illegal). An unset customerType
+  // defaults to b2c and is rejected the same way.
   if (cart.reverseCharge) {
-    if (cart.customerType !== 'b2b') {
-      throw new Error(
-        'createOrder: reverseCharge requires customerType "b2b" (a B2C reverse-charge invoice is illegal)',
-      );
-    }
-    if (!cart.vatId || cart.vatId.trim() === '') {
-      throw new Error(
-        'createOrder: reverseCharge requires a non-empty vatId (the recipient must be VAT-registered)',
-      );
-    }
+    assertReverseChargeAllowed({ customerType: cart.customerType ?? 'b2c', vatId: cart.vatId });
   }
   for (const line of cart.lines) {
     if (!line.inventoryItemId) throw new Error('createOrder: line.inventoryItemId is required');

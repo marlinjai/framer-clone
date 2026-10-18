@@ -38,8 +38,11 @@
 // INSIDE the same owner transaction, after the grants and before the schema is
 // marked active: there is no moment in which the app role holds those rights.
 // The fleet runner re-applies them too: `migrateAllCommerceTenants` runs
-// `revokeAppendOnlyWrites` for every schema it processed, so the guarantee does
-// not rest on what `migrateAllTenants` happens to grant or not grant today. A
+// `grantAppRole` and then `revokeAppendOnlyWrites` for every schema it
+// processed, so neither the app role's access to tables a new migration adds
+// nor the append-only guarantee rests on what `migrateAllTenants` happens to
+// grant or not grant (it grants nothing; new tables used to depend on the
+// schema's default privileges, see books-fleet.itest.ts). A
 // future migration that adds an append-only table must REVOKE in its own body
 // AND be added to APPEND_ONLY_TABLES (a unit test fails if the two disagree).
 
@@ -63,8 +66,8 @@ import {
 
 /**
  * The commerce tables commerce_app may only INSERT into and SELECT from: the
- * stock ledger, the corrective documents, and the placed order (an immutable
- * invoice) with its lines.
+ * stock ledger, the corrective documents, the placed order (an immutable
+ * invoice) with its lines, and the Books audit trail (sales_document_event, 007).
  */
 export const APPEND_ONLY_TABLES = [
   'stock_movement',
@@ -72,6 +75,7 @@ export const APPEND_ONLY_TABLES = [
   'credit_note_ref',
   'order',
   'order_line_item',
+  'sales_document_event',
 ] as const;
 
 /**
@@ -96,8 +100,18 @@ export const COMMERCE_PROVISION_LOCK_KEY = 74_610_010;
 export const COMMERCE_APP_ROLE = 'commerce_app';
 
 /**
- * REVOKE UPDATE, DELETE on every append-only table of `schema` from the app
- * role. Idempotent. Pass it as `provisionTenant`'s `seed` (via
+ * The tables commerce_app may read, insert and update but never DELETE from:
+ * the Books number counters (007). Deleting a counter row and inserting a fresh
+ * one would restart a document series; the 007 trigger refuses it for every
+ * role (BK003), this REVOKE refuses it for the app role before it gets there.
+ */
+export const NO_DELETE_TABLES = ['document_number_counter'] as const;
+
+/**
+ * REVOKE UPDATE, DELETE, TRUNCATE on every append-only table of `schema`, and
+ * DELETE, TRUNCATE on every no-delete table, from the app role. Idempotent. (The
+ * runner never grants TRUNCATE, so revoking it is belt and braces; it keeps the
+ * REVOKEs identical to what the migrations write.) Pass it as `provisionTenant`'s `seed` (via
  * {@link commerceProvisionOptions}) so it runs inside the provisioning
  * transaction, after the runner's grant-all.
  */
@@ -106,9 +120,43 @@ export async function revokeAppendOnlyWrites(
   schema: string,
   appRole: string = COMMERCE_APP_ROLE,
 ): Promise<void> {
+  // Only the tables the schema has: a schema still being brought up to date
+  // (provisioned or migrated with an older set) lacks the later ones, and a
+  // REVOKE on a missing table would abort the whole transaction.
+  const present = await tx<{ table_name: string }[]>`
+    SELECT table_name FROM information_schema.tables
+     WHERE table_schema = ${schema} AND table_name = ANY(${[...APPEND_ONLY_TABLES, ...NO_DELETE_TABLES]})
+  `;
+  const existing = new Set(present.map((r) => r.table_name));
   for (const table of APPEND_ONLY_TABLES) {
-    await tx`REVOKE UPDATE, DELETE ON ${tx(schema)}.${tx(table)} FROM ${tx(appRole)}`;
+    if (!existing.has(table)) continue;
+    await tx`REVOKE UPDATE, DELETE, TRUNCATE ON ${tx(schema)}.${tx(table)} FROM ${tx(appRole)}`;
   }
+  for (const table of NO_DELETE_TABLES) {
+    if (!existing.has(table)) continue;
+    await tx`REVOKE DELETE, TRUNCATE ON ${tx(schema)}.${tx(table)} FROM ${tx(appRole)}`;
+  }
+}
+
+/**
+ * Grant the app role what provisioning grants it on `schema` (USAGE on the
+ * schema, row access on every table, sequence use, and the same default
+ * privileges for tables created later). Idempotent. The fleet runner calls it
+ * before re-applying the append-only REVOKEs, so a table a new migration adds is
+ * reachable by commerce_app whichever role runs the migration and however old
+ * the schema's provisioning is. Mirrors the runner's grantSchemaToAppRole,
+ * which @marlinjai/tenant-db does not export.
+ */
+export async function grantAppRole(
+  tx: postgres.TransactionSql,
+  schema: string,
+  appRole: string = COMMERCE_APP_ROLE,
+): Promise<void> {
+  await tx`GRANT USAGE ON SCHEMA ${tx(schema)} TO ${tx(appRole)}`;
+  await tx`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${tx(schema)} TO ${tx(appRole)}`;
+  await tx`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${tx(schema)} TO ${tx(appRole)}`;
+  await tx`ALTER DEFAULT PRIVILEGES IN SCHEMA ${tx(schema)} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${tx(appRole)}`;
+  await tx`ALTER DEFAULT PRIVILEGES IN SCHEMA ${tx(schema)} GRANT USAGE, SELECT ON SEQUENCES TO ${tx(appRole)}`;
 }
 
 /**
@@ -358,10 +406,17 @@ export async function migrateAllCommerceTenants(opts?: {
       batchSize: opts?.batchSize,
       onSchemaDone: opts?.onSchemaDone,
     });
-    // Re-assert the append-only REVOKEs on every processed schema (idempotent),
-    // independent of the runner's grant behaviour.
+    // Re-assert the app role's grants, then the append-only REVOKEs, on every
+    // processed schema (both idempotent, one transaction per schema, so there is
+    // no moment with the grants but without the REVOKEs). The runner itself
+    // grants nothing here: tables a new migration creates reach commerce_app only
+    // through the schema's default privileges, which exist only when the schema
+    // was provisioned by the current runner AND is migrated by the same role.
     for (const { schema } of result.schemas) {
-      await sql.begin((tx) => revokeAppendOnlyWrites(tx, schema));
+      await sql.begin(async (tx) => {
+        await grantAppRole(tx, schema);
+        await revokeAppendOnlyWrites(tx, schema);
+      });
     }
     return result;
   } finally {

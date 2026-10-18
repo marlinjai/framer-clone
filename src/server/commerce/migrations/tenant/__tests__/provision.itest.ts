@@ -45,6 +45,7 @@ const EXPECTED_MIGRATION_IDS = [
   '004_pricing_and_tax',
   '005_minimal_orders',
   '006_inventory_policy',
+  '007_books',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {
@@ -57,11 +58,22 @@ const EXPECTED_ENUMS: Record<string, string[]> = {
   NetOrGross: ['net', 'gross'],
   VariantRefSource: ['none', 'datatable', 'owned'],
   TaxTreatment: ['standard', 'reduced', 'zero', 'reverse_charge', 'kleinunternehmer'],
+  // Books (007_books)
+  SalesDocType: ['offer', 'invoice', 'credit_note'],
+  SalesDocStatus: ['draft', 'issued', 'sent', 'accepted', 'rejected', 'paid', 'cancelled'],
+  SalesDocSource: ['editor', 'import'],
+  SalesDocLineKind: ['service', 'product', 'text'],
+  SalesDocEventType: ['draft_created', 'customer_set', 'issued', 'cancelled'],
+  CompanyTaxStatus: ['small_business', 'regular'],
 };
 
 const EXPECTED_TABLES = [
+  'books_company_settings',
   'credit_note',
   'credit_note_ref',
+  'customer',
+  'document_number_counter',
+  'document_template',
   'fulfillment_location_default',
   'inventory_item',
   'inventory_level',
@@ -77,6 +89,9 @@ const EXPECTED_TABLES = [
   'product_variant',
   'product_variant_option',
   'reservation',
+  'sales_document',
+  'sales_document_event',
+  'sales_document_line',
   'stock_location',
   'stock_movement',
 ];
@@ -146,7 +161,7 @@ afterAll(async () => {
 
 describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe', () => {
   // --- provisioning result ------------------------------------------------
-  it('provisions tg_<id>, applies all 7 migrations in order, marks active', async () => {
+  it('provisions tg_<id>, applies all 8 migrations in order, marks active', async () => {
     expect(provisionResult?.schema).toBe(SCHEMA);
     expect(provisionResult?.applied).toEqual(EXPECTED_MIGRATION_IDS);
 
@@ -179,7 +194,7 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
   });
 
   // --- tables -------------------------------------------------------------
-  it('creates exactly the 19 commerce tables in the schema', async () => {
+  it('creates exactly the 19 commerce and 7 Books tables in the schema', async () => {
     const rows = await owner!`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = ${SCHEMA} AND table_type = 'BASE TABLE'

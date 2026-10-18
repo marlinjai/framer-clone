@@ -1,34 +1,44 @@
 // scripts/commerce-codegen.ts
 //
-// CM-05 — regenerate the typed `CommerceDB` interface (src/server/commerce/
-// db-types.ts) from the LIVE per-tenant DDL, so the type contract can never
-// silently drift from the CM-04 migration set.
+// Generates src/server/commerce/db-types.ts, the typed `CommerceDB` interface
+// every commerce and Books repository is generic over, from the LIVE per-tenant
+// DDL. The committed file is exactly this script's output, so the check
 //
-// HOW IT WORKS. kysely-codegen introspects a real Postgres schema, so this
-// script stands up a throwaway one:
-//   1. boot a disposable `postgres:16-alpine` via testcontainers (TRUST auth, so
-//      no password literals — mirrors provision.itest.ts / backstop.itest.ts);
-//   2. create the low-privilege `commerce_app` role (the per-migration REVOKEs
-//      are guarded on its existence), then `migratePublic` + `provisionTenant`
-//      with COMMERCE_TENANT_MIGRATIONS to materialise one real `tg_<id>` schema;
-//   3. run the `kysely-codegen` CLI against it with `--default-schema tg_<id>`,
-//      so the 19 commerce tables get BARE keys and `public.tenant_groups` keeps
-//      its `public.` prefix — i.e. the public-prefix discipline shape directly;
-//   4. post-process (header + the trigger-column reconciliation kysely-codegen
-//      cannot infer) and write src/server/commerce/db-types.ts.
+//   pnpm db:codegen-commerce && git diff --exit-code src/server/commerce/db-types.ts
+//
+// proves the types match the migrations (Books plan P1.11). Run it after every
+// tenant migration change and commit the result.
+//
+// HOW IT WORKS:
+//   1. boot a disposable `postgres:16-alpine` via testcontainers (TRUST auth, no
+//      password literals; Docker found the same way the integration setup finds
+//      it, scripts/docker-host.ts);
+//   2. create the `commerce_app` role (the migrations' REVOKEs are guarded on
+//      it), `migratePublic`, then `provisionTenant` with the full tenant
+//      migration set, materialising one real `tg_<id>` schema;
+//   3. introspect pg_catalog: the schema's enum types (in creation order, labels
+//      in sort order), its tables (in creation order) and their columns (in
+//      column order), plus the global `public.tenant_groups`;
+//   4. emit the file: global tables under `public.<name>` keys only, tenant
+//      tables under bare keys only (the public-prefix discipline), every column
+//      with a database default (or a GENERATED expression) wrapped in
+//      `Generated<>`.
+//
+// What introspection cannot see is declared below, next to the reason, and an
+// unmapped case fails the run instead of guessing:
+//   - COLUMN_OVERRIDES: trigger-maintained columns and the registry's status;
+//   - JSON_COLUMNS: the TypeScript shape of every JSONB column (a JSONB column
+//     without an entry is an error), written through toJsonb;
+//   - TABLE_DOCS / COLUMN_NOTES: the documentation printed into the file.
+//
+// The earlier version piped kysely-codegen's output through a small fix-up and
+// left a hand-annotated file as the contract, so the two could never be equal
+// (and kysely-codegen needed the `pg` driver, which this repository does not
+// carry). Generating the contract itself is what makes the diff check hold.
 //
 // RUN IT:  pnpm db:codegen-commerce   (requires Docker; never runs at build time)
-//
-// IMPORTANT — the COMMITTED db-types.ts is the CONTRACT; this script only
-// REFRESHES it when the DDL changes. kysely-codegen cannot see that
-// `product_variant.option_signature` is trigger-maintained (it would emit a
-// plain insertable `string | null`), so the post-process wraps it in
-// `Generated<>` and the operator should eyeball the diff before committing.
 
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import postgres from 'postgres';
@@ -41,106 +51,387 @@ import {
 } from '@marlinjai/tenant-db';
 
 import { COMMERCE_TENANT_MIGRATIONS } from '../src/server/commerce/migrations/tenant/index';
+import { ensureDockerHost } from './docker-host';
 
 const DB_NAME = 'framer_clone_codegen';
 const APP_ROLE = 'commerce_app';
-// A fixed throwaway tenant-group id: the derived schema name is deterministic so
-// the `--default-schema` flag and the post-process are reproducible run-to-run.
+// A fixed throwaway tenant-group id, so the run is reproducible.
 const TG = assertTenantGroupId('018f9c10-0000-7000-8000-0000000000c5');
 const SCHEMA = tenantSchema(TG);
 
-const OUT_FILE = fileURLToPath(
-  new URL('../src/server/commerce/db-types.ts', import.meta.url),
-);
+const OUT_FILE = fileURLToPath(new URL('../src/server/commerce/db-types.ts', import.meta.url));
 
-/**
- * Apply the reconciliations kysely-codegen cannot infer from introspection:
- *  - `product_variant.option_signature` is maintained EXCLUSIVELY by triggers
- *    (003_catalog), so it must be `Generated<...>` (never inserted/updated), but
- *    introspection sees only a nullable TEXT column.
- * Returns the reconciled source. (The committed file carries a richer header +
- * per-table comments; an operator reconciles those by hand from this output.)
- */
-function reconcile(raw: string): string {
-  let out = raw;
+// --- declarations introspection cannot make ----------------------------------
 
-  // option_signature: wrap the introspected nullable TEXT in Generated<>.
-  out = out.replace(
-    /option_signature:\s*string\s*\|\s*null;/,
-    'option_signature: Generated<string | null>;',
-  );
+/** Column types that differ from what the catalog says, with the reason. */
+const COLUMN_OVERRIDES: Record<string, string> = {
+  // The registry's status is TEXT with a fixed vocabulary in the package DDL.
+  'public.tenant_groups.status': "Generated<'provisioning' | 'active' | 'suspended'>",
+  // Maintained EXCLUSIVELY by the 003_catalog triggers: never inserted or updated.
+  'product_variant.option_signature': 'Generated<string | null>',
+};
 
-  const header =
-    '// GENERATED by scripts/commerce-codegen.ts (pnpm db:codegen-commerce).\n' +
-    '// The committed db-types.ts is the hand-reconciled CONTRACT — review the\n' +
-    '// diff (esp. the Generated<> trigger columns) before committing.\n\n';
-  return header + out;
+/** The TypeScript shape of every JSONB column (read parsed, written through toJsonb). */
+const JSON_COLUMNS: Record<string, string> = {
+  'books_company_settings.sender_block': 'SenderBlockV1',
+  'document_template.footer_blocks': 'FooterBlocks',
+  'sales_document.tax_summary': 'TaxSummary',
+  'sales_document.customer_snapshot': 'CustomerSnapshotV1',
+  'sales_document.sender_snapshot': 'SenderSnapshotV1',
+  'sales_document_event.payload': 'EventPayload',
+};
+
+/** The type-only imports the JSON shapes need. */
+const JSON_IMPORTS = "import type {\n  CustomerSnapshotV1,\n  EventPayload,\n  FooterBlocks,\n  SenderBlockV1,\n  SenderSnapshotV1,\n  TaxSummary,\n} from '../books/snapshots';";
+
+/** One doc comment per table (a table without one fails the run). */
+const TABLE_DOCS: Record<string, string> = {
+  'public.tenant_groups':
+    "`public.tenant_groups`: the runner's registry (one row per `tg_<id>` schema),\nowned by @marlinjai/tenant-db's `002_tenant_groups` public migration.",
+  inventory_item: '001_inventory_ledger: owned inventory item (SKU-bridged to variants).',
+  stock_location: '001_inventory_ledger: a physical stock location.',
+  inventory_level:
+    '001_inventory_ledger: per-(item, location) stock level. `available_quantity`\nis GENERATED ALWAYS (stocked - reserved) STORED: read-only, never written.',
+  stock_movement: '001_inventory_ledger: append-only stock movement ledger (no updated_at).',
+  reservation: '002_guarded_reservation: soft stock reservation.',
+  fulfillment_location_default: '002_guarded_reservation: per-workspace default fulfillment location.',
+  product: '003_catalog (+ 004 tax_class): product.',
+  product_option: '003_catalog: product option (e.g. "Size").',
+  product_option_value: '003_catalog: product option value (e.g. "Large").',
+  product_variant:
+    '003_catalog (+ 004 tax_class, 006 policy flags): product variant.\n`option_signature` is NULLABLE and maintained EXCLUSIVELY by triggers.',
+  product_variant_option: '003_catalog: the variant<->option-value matrix (composite PK).',
+  price_set: '004_pricing_and_tax: one price set per variant.',
+  price: '004_pricing_and_tax: a price (amount = INTEGER minor units / cents).',
+  price_rule: '004_pricing_and_tax: price rule (attribute match).',
+  price_list: '004_pricing_and_tax: price list (override / sale window).',
+  credit_note:
+    '004_pricing_and_tax (+ 005 order_id): storefront credit note (Storno /\nGutschrift). Append-only, no updated_at. amount = INTEGER cents.',
+  credit_note_ref: '004_pricing_and_tax: credit-note reference (append-only, no updated_at).',
+  order:
+    '005_minimal_orders: order ("order" is a reserved word; the key stays bare).\nFull German order-level tax model; money columns are INTEGER cents.',
+  order_line_item:
+    '005_minimal_orders: order line item (variant snapshot + tax treatment).\nAppend-only, no updated_at. `tax_rate` is integer BASIS POINTS (1900 = 19%).',
+  books_company_settings:
+    '007_books: one row per company: tax status, exemption note, sender block,\ndefault payment terms.',
+  document_number_counter:
+    '007_books: one row per company and document type, the only source of\ndocument numbers. `next_value` is BIGINT (read as a string).',
+  customer:
+    '007_books: the tax fields of a recipient; name and address live in the shared\ncontacts database (`contact_id`).',
+  document_template: '007_books: document layout (rendered from in phase 3).',
+  sales_document:
+    '007_books: offer, invoice and credit note. DATE columns are written and read\nas `YYYY-MM-DD` text (select them through the Books column lists, never\nselectAll); `number_value` is BIGINT (read as a string). Frozen after issue\nby the sales_document_guard trigger.',
+  sales_document_line:
+    '007_books: a document line. `tax_class` / `tax_rate_override` are inputs;\n`tax_rate`, `tax_amount`, `tax_treatment` are derived.',
+  sales_document_event: '007_books: the append-only audit trail (no updated_at).',
+};
+
+/** Inline notes printed above a column. */
+const COLUMN_NOTES: Record<string, string> = {
+  'inventory_level.available_quantity': 'GENERATED ALWAYS AS (stocked_quantity - reserved_quantity) STORED.',
+  'product.tax_class': 'Added in 004_pricing_and_tax (classification string, not a rate).',
+  'product_variant.option_signature': 'Trigger-maintained (003_catalog). Nullable: a bare variant has NULL.',
+  'product_variant.tax_class': 'Added in 004_pricing_and_tax (per-variant override of product.tax_class).',
+  'product_variant.manage_inventory': 'Added in 006_inventory_policy (default TRUE).',
+  'product_variant.allow_backorder': 'Added in 006_inventory_policy (default FALSE).',
+  'credit_note.order_id': 'Added in 005_minimal_orders (hard FK to "order").',
+};
+
+// --- introspection -----------------------------------------------------------
+
+interface EnumType {
+  name: string;
+  labels: string[];
 }
 
+interface Column {
+  name: string;
+  typeName: string;
+  typeKind: string; // pg_type.typtype: 'b' base, 'e' enum
+  notNull: boolean;
+  hasDefault: boolean;
+  generated: boolean;
+}
+
+interface Table {
+  key: string; // 'public.tenant_groups' or the bare name
+  name: string;
+  columns: Column[];
+}
+
+async function readEnums(sql: postgres.Sql, schema: string): Promise<EnumType[]> {
+  const rows = await sql<{ name: string; labels: string[] }[]>`
+    SELECT t.typname AS name,
+           array_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
+      FROM pg_type t
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+      JOIN pg_enum e ON e.enumtypid = t.oid
+     WHERE n.nspname = ${schema}
+     GROUP BY t.oid, t.typname
+     ORDER BY t.oid
+  `;
+  return rows.map((r) => ({ name: r.name, labels: r.labels }));
+}
+
+async function readTables(sql: postgres.Sql, schema: string, keyPrefix: string, only?: string[]): Promise<Table[]> {
+  const tables = await sql<{ oid: number; name: string }[]>`
+    SELECT c.oid::int AS oid, c.relname AS name
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = ${schema}
+       AND c.relkind = 'r'
+       AND c.relname NOT LIKE '\\_\\_%'
+     ORDER BY c.oid
+  `;
+  const out: Table[] = [];
+  for (const t of tables) {
+    if (only && !only.includes(t.name)) continue;
+    const columns = await sql<Column[]>`
+      SELECT a.attname AS name,
+             ty.typname AS "typeName",
+             ty.typtype AS "typeKind",
+             a.attnotnull AS "notNull",
+             a.atthasdef AS "hasDefault",
+             (a.attgenerated <> '' OR a.attidentity <> '') AS generated
+        FROM pg_attribute a
+        JOIN pg_type ty ON ty.oid = a.atttypid
+       WHERE a.attrelid = ${t.oid}
+         AND a.attnum > 0
+         AND NOT a.attisdropped
+       ORDER BY a.attnum
+    `;
+    out.push({ key: `${keyPrefix}${t.name}`, name: t.name, columns });
+  }
+  return out;
+}
+
+// --- emission ----------------------------------------------------------------
+
+const SCALARS: Record<string, string> = {
+  text: 'string',
+  varchar: 'string',
+  uuid: 'string',
+  int2: 'number',
+  int4: 'number',
+  int8: 'Int8',
+  bool: 'boolean',
+  timestamp: 'Timestamp',
+  timestamptz: 'Timestamp',
+  date: 'DateString',
+};
+
+function pascal(name: string): string {
+  return name
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join('');
+}
+
+function columnType(table: Table, col: Column, enumNames: Set<string>): string {
+  const id = `${table.key}.${col.name}`;
+  const override = COLUMN_OVERRIDES[id];
+  if (override) return override;
+
+  let base: string;
+  if (col.typeName === 'jsonb' || col.typeName === 'json') {
+    const shape = JSON_COLUMNS[id];
+    if (!shape) throw new Error(`commerce-codegen: JSONB column ${id} has no JSON_COLUMNS entry`);
+    base = `JsonColumn<${shape}>`;
+  } else if (col.typeKind === 'e') {
+    if (!enumNames.has(col.typeName)) throw new Error(`commerce-codegen: enum ${col.typeName} (${id}) not found`);
+    base = col.typeName;
+  } else {
+    const scalar = SCALARS[col.typeName];
+    if (!scalar) throw new Error(`commerce-codegen: no TypeScript mapping for ${col.typeName} (${id})`);
+    base = scalar;
+  }
+
+  const nullable = col.notNull ? base : `${base} | null`;
+  return col.hasDefault || col.generated ? `Generated<${nullable}>` : nullable;
+}
+
+function docComment(text: string, indent = ''): string {
+  const lines = text.split('\n');
+  if (lines.length === 1 && text.length + indent.length + 7 <= 100) return `${indent}/** ${text} */`;
+  return [`${indent}/**`, ...lines.map((l) => `${indent} * ${l}`), `${indent} */`].join('\n');
+}
+
+function emitEnum(e: EnumType): string {
+  const oneLine = `export type ${e.name} = ${e.labels.map((l) => `'${l}'`).join(' | ')};`;
+  if (oneLine.length <= 80) return oneLine;
+  return [`export type ${e.name} =`, ...e.labels.map((l, i) => `  | '${l}'${i === e.labels.length - 1 ? ';' : ''}`)].join('\n');
+}
+
+function emitTable(table: Table, enumNames: Set<string>): string {
+  const doc = TABLE_DOCS[table.key];
+  if (!doc) throw new Error(`commerce-codegen: table ${table.key} has no TABLE_DOCS entry`);
+  const body = table.columns.map((col) => {
+    const note = COLUMN_NOTES[`${table.key}.${col.name}`];
+    const line = `  ${col.name}: ${columnType(table, col, enumNames)};`;
+    return note ? `  // ${note}\n${line}` : line;
+  });
+  return `${docComment(doc)}\nexport interface ${pascal(table.name)}Table {\n${body.join('\n')}\n}`;
+}
+
+const HEADER = `// src/server/commerce/db-types.ts
+//
+// GENERATED by scripts/commerce-codegen.ts (pnpm db:codegen-commerce) from the
+// live per-tenant DDL. Do not edit by hand: change the migration (or the
+// generator's declarations) and regenerate. CI-style check:
+//   pnpm db:codegen-commerce && git diff --exit-code src/server/commerce/db-types.ts
+//
+// The typed \`CommerceDB\` Database interface every commerce and Books repository
+// is generic over: \`Kysely<CommerceDB>\`.
+//
+// PUBLIC-PREFIX DISCIPLINE. Inside a \`tenantDb(...)\` query Kysely's withSchema
+// rewrites every BARE table identifier to the tenant schema (\`tg_<id>.<table>\`).
+// A GLOBAL table therefore MUST be referenced with an explicit \`public.\` prefix,
+// or it silently resolves against the tenant schema (and a same-named DECOY
+// there would be a cross-tenant read). Forgetting the prefix is a COMPILE error,
+// because global tables are registered under their \`public.<name>\` key ONLY and
+// per-tenant tables under their BARE key ONLY. The two namespaces are disjoint
+// (proved by __tests__/type-discipline.test-d.ts).
+//
+// TYPE RULES:
+//   - every column with a database DEFAULT or a GENERATED expression is
+//     \`Generated<>\` (optional on INSERT); trigger-maintained columns too;
+//   - money columns are INTEGER cents and rates integer basis points: \`number\`;
+//   - BIGINT is \`Int8\`: postgres.js reads it as a string, so convert explicitly;
+//   - DATE is \`DateString\`: written as \`YYYY-MM-DD\` and read as text (the base
+//     handle carries no custom parser and postgres.js would parse DATE into a
+//     Date at UTC midnight, so the Books read helpers cast every DATE column to
+//     text);
+//   - JSONB is \`JsonColumn<T>\`: read as the parsed shape T, written only
+//     through \`toJsonb(value)\` (src/server/books/snapshots.ts), a text parameter
+//     cast to jsonb.
+//
+// Pure type module (no runtime), so it needs no \`server-only\` and adds nothing
+// to the build.
+`;
+
+const SCALAR_ALIASES = `// --- scalar aliases ------------------------------------------------------------
+
+/**
+ * A column the database fills when an INSERT omits it (a DEFAULT, a GENERATED
+ * expression or a trigger). Defined here rather than imported from kysely,
+ * because kysely's own \`Generated<T>\` does not unwrap a nested ColumnType:
+ * \`Generated<Timestamp>\` would select as the ColumnType object instead of a
+ * Date. Same definition kysely-codegen emits.
+ */
+export type Generated<T> =
+  T extends ColumnType<infer S, infer I, infer U> ? ColumnType<S, I | undefined, U> : ColumnType<T, T | undefined, T>;
+
+/** A \`TIMESTAMP(3)\` / \`timestamptz\` column: selected as a Date, written as a Date or ISO string. */
+export type Timestamp = ColumnType<Date, Date | string, Date | string>;
+
+/** A \`BIGINT\` column: postgres.js reads it as a string; written as a number, bigint or string. */
+export type Int8 = ColumnType<string, string | number | bigint, string | number | bigint>;
+
+/** A \`DATE\` column: a calendar day as \`YYYY-MM-DD\` text (select it cast to text). */
+export type DateString = ColumnType<string, string, string>;
+
+/**
+ * What a \`JSONB\` column accepts on write: only the expression \`toJsonb(value)\`
+ * (src/server/books/snapshots.ts) produces, a text parameter cast to jsonb. A
+ * plain string would not do: postgres.js JSON-serializes a parameter the server
+ * types as jsonb, so a pre-serialized string would be stored as a JSON string
+ * scalar. The brand makes that mistake a compile error.
+ */
+export type JsonbWrite = { readonly __brand: 'JsonbWrite' };
+
+/** A \`JSONB\` column: read as the parsed shape T, written through toJsonb. */
+export type JsonColumn<T> = ColumnType<T, JsonbWrite, JsonbWrite>;
+`;
+
+function emitFile(enums: EnumType[], globals: Table[], tenants: Table[]): string {
+  const enumNames = new Set(enums.map((e) => e.name));
+  const parts: string[] = [];
+  parts.push(HEADER);
+  parts.push("import type { ColumnType } from 'kysely';");
+  parts.push(
+    "// The package's brand types for the two key namespaces: GlobalKey forces\n// `public.<name>` keys, TenantKey forbids a `public.` prefix on a bare key.\nimport type { GlobalKey, TenantKey } from '@marlinjai/tenant-db';\n\n// The shapes of the Books JSONB columns (zod-inferred; type-only import).\n" +
+      JSON_IMPORTS +
+      '\n',
+  );
+  parts.push(SCALAR_ALIASES);
+  parts.push(
+    '// --- enum types (string unions, in the order of pg_enum.enumsortorder) -------\n\n' +
+      enums.map(emitEnum).join('\n') +
+      '\n',
+  );
+  parts.push(
+    '// =============================================================================\n// GLOBAL tables: registered under `public.<name>` keys ONLY.\n// =============================================================================\n\n' +
+      globals.map((t) => emitTable(t, enumNames)).join('\n\n') +
+      '\n',
+  );
+  parts.push(
+    '// =============================================================================\n// PER-TENANT tables (commerce and Books): registered under BARE keys ONLY, in\n// the order their migrations create them.\n// =============================================================================\n\n' +
+      tenants.map((t) => emitTable(t, enumNames)).join('\n\n') +
+      '\n',
+  );
+  const keys = [
+    '  // --- global tables (public.<name> keys ONLY) ---',
+    ...globals.map((t) => `  '${t.key}': ${pascal(t.name)}Table;`),
+    '',
+    '  // --- per-tenant tables (bare keys ONLY) ---',
+    ...tenants.map((t) => `  ${t.key}: ${pascal(t.name)}Table;`),
+  ];
+  parts.push(
+    '// =============================================================================\n// The Database interface. GLOBAL keys are `public.`-qualified; tenant tables\n// are BARE. The two namespaces are disjoint by construction.\n// =============================================================================\n\nexport interface CommerceDB {\n' +
+      keys.join('\n') +
+      '\n}\n',
+  );
+  parts.push(`// --- compile-time discipline guards (the package's brand types) --------------
+// These aliases partition CommerceDB's keys by namespace and prove (consumed by
+// type-discipline.test-d.ts) that the two halves stay disjoint.
+
+/** The \`public.\`-qualified global keys of CommerceDB (a {@link GlobalKey} subset). */
+export type CommerceGlobalKey = Extract<keyof CommerceDB, GlobalKey>;
+
+/** The bare per-tenant keys of CommerceDB (a {@link TenantKey} subset). */
+export type CommerceTenantKey = TenantKey<Extract<keyof CommerceDB, string>>;
+`);
+  return parts.join('\n');
+}
+
+// --- main --------------------------------------------------------------------
+
 async function main(): Promise<void> {
+  ensureDockerHost();
   let container: StartedTestContainer | undefined;
   let owner: postgres.Sql | undefined;
   try {
     container = await new GenericContainer('postgres:16-alpine')
       .withEnvironment({
         POSTGRES_USER: 'postgres',
-        POSTGRES_PASSWORD: 'postgres',
         POSTGRES_DB: DB_NAME,
         // trust auth: roles log in by username alone, no password literals.
         POSTGRES_HOST_AUTH_METHOD: 'trust',
       })
       .withExposedPorts(5432)
-      .withWaitStrategy(
-        Wait.forLogMessage(/database system is ready to accept connections/, 2),
-      )
+      .withWaitStrategy(Wait.forLogMessage(/database system is ready to accept connections/, 2))
       .start();
 
-    const host = container.getHost();
-    const port = container.getMappedPort(5432);
-    const ownerUrl = `postgresql://postgres@${host}:${port}/${DB_NAME}`;
-    owner = postgres(ownerUrl, { max: 1, prepare: false });
+    const ownerUrl = `postgresql://postgres@${container.getHost()}:${container.getMappedPort(5432)}/${DB_NAME}`;
+    owner = postgres(ownerUrl, { max: 1, prepare: false, onnotice: () => {} });
 
     // The app role must exist before migrating (REVOKEs are guarded on it).
     await owner`CREATE ROLE ${owner(APP_ROLE)} LOGIN`;
-
     await migratePublic(owner);
     await provisionTenant(owner, {
       tenantGroupId: TG,
-      slug: 'cm05-codegen',
+      slug: 'codegen',
       appRole: APP_ROLE,
       tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
     });
 
-    const rawOut = join(mkdtempSync(join(tmpdir(), 'commerce-codegen-')), 'raw.ts');
+    const enums = await readEnums(owner, SCHEMA);
+    const globals = await readTables(owner, 'public', 'public.', ['tenant_groups']);
+    const tenants = await readTables(owner, SCHEMA, '');
+    if (globals.length !== 1) throw new Error('commerce-codegen: public.tenant_groups not found');
 
-    // Run the kysely-codegen CLI. `--default-schema <tg>` yields BARE keys for
-    // the commerce tables and a `public.`-prefixed key for tenant_groups (the
-    // discipline shape). `--exclude-pattern` drops the runner's bookkeeping
-    // tables; `--no-domains` keeps output to tables only.
-    execFileSync(
-      'pnpm',
-      [
-        'exec',
-        'kysely-codegen',
-        '--url',
-        ownerUrl,
-        '--dialect',
-        'postgres',
-        '--default-schema',
-        SCHEMA,
-        '--exclude-pattern',
-        '*.__*',
-        '--exclude-pattern',
-        'public.tenant_migration_progress',
-        '--out-file',
-        rawOut,
-      ],
-      { stdio: 'inherit' },
-    );
-
-    const reconciled = reconcile(readFileSync(rawOut, 'utf8'));
-    writeFileSync(OUT_FILE, reconciled, 'utf8');
-    console.log(`Wrote ${OUT_FILE}. Review the diff before committing.`);
+    writeFileSync(OUT_FILE, emitFile(enums, globals, tenants), 'utf8');
+    console.log(`Wrote ${OUT_FILE} (${tenants.length} tenant tables, ${enums.length} enums).`);
   } finally {
     await owner?.end();
     await container?.stop();
