@@ -39,7 +39,7 @@ publish gets a live address.
 | File | Purpose |
 | --- | --- |
 | `Dockerfile` | Three stages: dependencies (frozen lockfile), builder (Prisma client, Next standalone build, and `pnpm build:boot`, which bundles the commerce start step into one file), runtime (node, the Infisical CLI, a Prisma CLI sidecar under `/opt/prisma`, the standalone server, `commerce-migrate.cjs`, `entrypoint.sh`, `boot.sh`). Built for `linux/arm64`. |
-| `entrypoint.sh` | Logs in to Infisical with the machine identity, then runs `boot.sh` inside `infisical run`, so every secret below is in the environment. Fails at once if the three Coolify variables are missing. PID 1 is `tini -g` (Dockerfile `ENTRYPOINT`), which reaps zombies and passes `docker stop`'s SIGTERM to the whole process group, so node shuts down cleanly instead of being killed after the grace period. |
+| `entrypoint.sh` | Logs in to Infisical with the machine identity, then runs `boot.sh` inside `infisical run`, so every secret below is in the environment. Fails at once if the three Coolify variables are missing. PID 1 is `tini` (Dockerfile `ENTRYPOINT`), which reaps zombies and passes `docker stop`'s SIGTERM to `infisical run`; infisical forwards it to node and waits for node to exit, and node finishes its in-flight requests first, so a stop drains instead of killing. |
 | `boot.sh` | The start sequence, see below. Runnable on its own for tests: `docker run --entrypoint ./boot.sh -e ...`. |
 | `scripts/commerce-migrate.ts` | The commerce start step (source of `commerce-migrate.cjs`). Logic in `src/server/commerce/provisioning/deploy.ts`. |
 | `prisma/sql/commerce-roles.sql` | Creates the two commerce roles with all their privileges. Applied once per database, as the database superuser, before the first start. No passwords. |
@@ -60,13 +60,26 @@ app):
    default, the `public.tenant_groups` registry), then the tenant fleet migration
    (every company's `tg_<id>` schema gets the commerce migrations it lacks, and the
    append-only rules are re-asserted). It refuses to run when the owner URL is
-   unset, still a placeholder, equal to the app URL, authenticates as
-   `commerce_app`, or authenticates as a superuser. Both steps are idempotent and
-   run under one Postgres advisory lock, so two containers starting at once queue
-   instead of racing, and a start with nothing new applies nothing. Waits are
-   bounded: 30 seconds for the lock, 45 seconds per statement. A start that would
-   wait longer fails with `CommerceLockTimeoutError` naming the lock, inside
-   Coolify's health-check window rather than after it.
+   unset, still a placeholder or equal to the app URL, and unless both the login
+   (`session_user`) and the effective role (`current_user`) are `commerce_ddl`
+   without superuser, `BYPASSRLS` or membership in `pg_read_all_data`,
+   `pg_write_all_data`, `pg_execute_server_program`, `pg_read_server_files` or
+   `pg_write_server_files`. Both steps are idempotent and run under one Postgres
+   advisory lock, so two containers starting at once queue instead of racing, and
+   a start with nothing new applies nothing. Time budgets:
+   - Waiting for that lock: 30 seconds. A start that would wait longer fails with
+     `CommerceLockTimeoutError` naming the lock, inside Coolify's health-check
+     window rather than after it.
+   - Lock waits inside the migrations (the DDL's table locks): 5 seconds. A
+     migration whose table is busy with the old container's shop traffic gives up
+     and fails the start (retry the deploy) instead of queueing an exclusive lock
+     that would stall every shop request behind it.
+   - Each migration statement: no limit by default, so a legitimate long migration
+     (a backfill, an index build) is not killed. Set
+     `COMMERCE_MIGRATE_STATEMENT_TIMEOUT_MS` (whole milliseconds, `0` for none) to
+     bound it; a malformed value fails the start. A deploy that runs a long
+     migration also needs Coolify's health-check start period raised for that
+     deploy, or Coolify marks the new container unhealthy while it migrates.
 3. `node server.js`, the Next standalone server on port 3000, bound to `0.0.0.0`.
 
 What the start does NOT do: seed the demo. `scripts/seed-demo.ts` creates the demo
@@ -77,9 +90,16 @@ the site row is written. Every later project of that company costs one read of
 the registry and nothing else: no lock, no DDL. Only a company without a complete
 schema runs the full provision, under a provisioning lock that serializes
 companies provisioning at the same moment, with bounded waits of 10 seconds for
-the lock and 30 seconds per statement. If it fails, project creation answers 500
-with `commerce_not_configured` (owner URL unset) or `commerce_provision_failed`
-(cause in the server log only) and writes nothing, so a retry is clean. The
+the lock and 30 seconds per statement. "Complete" means: the registry row is
+`active`, the `tg_<id>` schema exists, and every commerce tenant migration is
+recorded for it; a row still `provisioning`, a dropped schema or a missing progress
+row all count as a miss and are provisioned again. If it fails, project creation
+answers 500 with `commerce_not_configured` (owner URL unset) or
+`commerce_provision_failed` (cause in the server log only) and writes nothing, so a
+retry is clean. A company whose commerce an operator has suspended
+(`tenant_groups.status = 'suspended'`) gets 403 `commerce_suspended` and nothing is
+provisioned, because provisioning would quietly reactivate it; only an operator
+lifts a suspension. The
 registry slug is the company's display slug plus its tenant-group id, so two
 companies with the same display slug never block each other.
 
@@ -109,7 +129,7 @@ not only of the start step. That is acceptable because the owner role is bounded
   the database's bootstrap user, alter or drop any role other than `commerce_app`,
   become or inherit `commerce_app`, create temporary tables, create databases, read
   server files, bypass row security, or act as a superuser. The start step refuses
-  an owner URL that authenticates as a superuser.
+  any owner URL that is not exactly this role (see the start sequence above).
 
 A leaked owner URL therefore exposes the shop data of every company and the shop
 schema, not the rest of the database or the server. Moving provisioning off the
@@ -119,8 +139,16 @@ is the deferral noted in the route.
 **No superuser fallback.** The infra RUNBOOK allowed `COMMERCE_OWNER_DATABASE_URL`
 to fall back to the database's bootstrap user if the non-superuser owner did not
 work. It works (`roles.itest.ts`), and `deploy.ts` now refuses a superuser owner
-URL at start (tested in `concurrency.itest.ts`), so that fallback is no longer
-accepted and is dropped from the RUNBOOK.
+URL at start, also one hidden behind a role switch in the URL (tested in
+`concurrency.itest.ts`), so that fallback is no longer accepted and is dropped from
+the RUNBOOK.
+
+**A direct connection.** The owner URL must reach Postgres directly (as the
+RUNBOOK's container-network URL does) or through a session-mode pooler, never a
+transaction-mode PgBouncer: the start step and provisioning rely on session
+advisory locks and session settings. The bounded waits are set with `set_config`
+after connecting rather than as startup parameters, so a pooler that rejects
+unknown startup parameters is not the failure mode.
 
 `prisma/sql/commerce-roles.sql` sets all of this up on Postgres 16 or later and is
 safe to run again. It also takes `CREATE` on `public` and `TEMPORARY` on the
@@ -152,7 +180,8 @@ says where each comes from.
 | --- | --- | --- |
 | `DATABASE_URL` | yes | Postgres URL of the database's bootstrap user: Prisma migrations, sites, CMS |
 | `COMMERCE_APP_DATABASE_URL` | yes | Same database as `commerce_app`; every commerce read and write at runtime |
-| `COMMERCE_OWNER_DATABASE_URL` | yes | Same database as `commerce_ddl` (never a superuser, refused at start); the start step and first-project provisioning, so it is in the server process environment. The start fails without it, and project creation answers 500 `commerce_not_configured`. |
+| `COMMERCE_OWNER_DATABASE_URL` | yes | Same database as `commerce_ddl` (never a superuser, refused at start), a direct connection; the start step and first-project provisioning, so it is in the server process environment. The start fails without it, and project creation answers 500 `commerce_not_configured`. |
+| `COMMERCE_MIGRATE_STATEMENT_TIMEOUT_MS` | no | Bound on each commerce migration statement at container start, in whole milliseconds; unset or `0` means no limit (the default) |
 | `EDITOR_HOST` | yes | Host that serves the editor (`app.lumitra.co`); every other host is treated as a published site |
 | `PUBLIC_SITE_BASE_HOST` | yes | Parent domain of published sites (`sites.lumitra.co`); the label in front of it selects the site |
 | `AUTH_BRAIN_URL` | no | auth-brain base URL for session checks and the login redirect; defaults to `https://auth.lumitra.co` |

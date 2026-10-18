@@ -166,11 +166,14 @@ EXPOSE 3000
 # (HTTP GET /api/health, host 127.0.0.1). A Docker-level HEALTHCHECK conflicts
 # with Coolify's IPv6 localhost probe.
 
-# tini is PID 1. The process chain is tini -> infisical run -> node (boot.sh
-# execs node, entrypoint.sh execs infisical), so neither the shell scripts nor
-# node is PID 1. Without an init, PID 1 ignores signals it has no handler for
-# and never reaps zombies, so `docker stop` (SIGTERM) would wait out its grace
-# period and SIGKILL the app. tini reaps, and `-g` sends the signal to the whole
-# process group, so node receives SIGTERM directly whether or not infisical
-# relays it.
-ENTRYPOINT ["/usr/bin/tini", "-g", "--", "./entrypoint.sh"]
+# tini is PID 1: it reaps zombies and forwards SIGTERM to its one child. The
+# chain is tini -> infisical run -> node (entrypoint.sh execs infisical, boot.sh
+# execs node). `infisical run` passes every signal to its child and WAITS for it
+# to exit before exiting with its status (execBasicCmd in the Infisical CLI's
+# packages/cmd/run.go: signal.Notify, cmd.Process.Signal, cmd.Wait), and the Next
+# standalone server answers SIGTERM by closing its listener, finishing the
+# requests in flight and exiting 0. So `docker stop` drains node within the
+# grace period. No `-g` (signal the whole group): it would only send node a
+# second SIGTERM, and the forwarding chain is what keeps every parent alive
+# until node is done.
+ENTRYPOINT ["/usr/bin/tini", "--", "./entrypoint.sh"]
