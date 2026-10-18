@@ -29,8 +29,9 @@
 // `public.__public_db_migrations` bookkeeping, so re-running on every deploy is
 // safe and applies nothing new once the public tier exists.
 
-import postgres from 'postgres';
 import { migratePublic } from '@marlinjai/tenant-db';
+
+import { migrationTimeouts, openOwnerSql, type OwnerTimeouts } from './ownerSql';
 
 /**
  * Run the commerce PUBLIC migration set once against a fresh (or already
@@ -47,7 +48,10 @@ import { migratePublic } from '@marlinjai/tenant-db';
  *
  * @throws Error if no owner connection string is available.
  */
-export async function migrateCommercePublic(connectionString?: string): Promise<string[]> {
+export async function migrateCommercePublic(
+  connectionString?: string,
+  timeouts: OwnerTimeouts = migrationTimeouts(),
+): Promise<string[]> {
   const ownerUrl = connectionString ?? process.env.COMMERCE_OWNER_DATABASE_URL;
   if (!ownerUrl) {
     throw new Error(
@@ -63,11 +67,27 @@ export async function migrateCommercePublic(connectionString?: string): Promise<
   // A direct, single-connection owner client OUTSIDE the app pool. `prepare:
   // false` keeps it pooler-safe; `max: 1` because this is a one-shot migration
   // runner, not a serving pool.
-  const sql = postgres(ownerUrl, { max: 1, prepare: false });
+  const sql = await openOwnerSql(ownerUrl, timeouts);
   try {
     // Pass NOTHING for the second arg: use the package-default PUBLIC_MIGRATIONS
     // (001_ext_schema + 002_tenant_groups). The package owns those bodies.
-    return await migratePublic(sql);
+    const applied = await migratePublic(sql);
+    // commerce_app resolves ext.gen_uuid_v7() / ext.touch_updated_at() under its
+    // ext-locked search_path, so it needs USAGE on `ext`. The roles SQL grants
+    // it too (it pre-creates `ext`), but granting here as the owner of `ext`
+    // keeps the tier correct even when `ext` was first created by this call.
+    // Guarded on the role existing, so a database without the commerce roles
+    // (some test harnesses) still migrates. Idempotent.
+    await sql`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commerce_app') THEN
+          GRANT USAGE ON SCHEMA ext TO commerce_app;
+        END IF;
+      END
+      $$
+    `;
+    return applied;
   } finally {
     await sql.end();
   }

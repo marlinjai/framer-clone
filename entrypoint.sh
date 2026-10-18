@@ -11,11 +11,13 @@ set -e
 #        - INFISICAL_PROJECT_ID   (the framer-clone Infisical project id, created
 #                                  by Terraform during provisioning)
 #      Every other secret (DATABASE_URL, ANTHROPIC_API_KEY, AUTH_BRAIN_URL,
-#      ANALYTICS_*, EDITOR_HOST, PUBLIC_SITE_BASE_HOST, ...) is fetched via
+#      ANALYTICS_*, EDITOR_HOST, PUBLIC_SITE_BASE_HOST,
+#      COMMERCE_APP_DATABASE_URL, COMMERCE_OWNER_DATABASE_URL, ...) is fetched via
 #      `infisical run` at boot, never baked into the image.
-#   2. Apply pending Prisma migrations (a bad migration fails the boot, so
-#      Coolify marks the deploy failed instead of serving a broken app).
-#   3. Hand off to the Next.js standalone server under `infisical run`.
+#   2. Run boot.sh inside `infisical run`: Prisma migrations, then the commerce
+#      public and tenant migrations as the owner role, then the Next.js server.
+#      Any failing step fails the boot, so Coolify marks the deploy failed
+#      instead of serving a broken app. See boot.sh for the sequence.
 #
 # HOSTNAME=0.0.0.0 is set in the Dockerfile so the standalone server is reachable
 # by Coolify's loopback healthcheck.
@@ -47,16 +49,13 @@ INFISICAL_TOKEN=$(infisical login \
 # app process again so it lives only in the infisical wrapper.
 export INFISICAL_TOKEN
 
-# 2 + 3. Pull all secrets into the inner shell, run pending Prisma migrations,
-# then exec the Next.js standalone server. `exec` so the server is PID 1 and
-# receives signals directly.
+# 2. Pull all secrets into the environment and hand over to boot.sh, which
+# runs the migrations and then execs the Next.js standalone server. `exec`
+# replaces this shell with `infisical run`, the direct child of tini (PID 1).
+# infisical forwards SIGTERM to node and waits for it to exit, so node can drain.
 exec infisical run \
   --env="$ENVIRONMENT" \
   --projectId="$INFISICAL_PROJECT_ID" \
   --path="$SECRETS_PATH" \
   --domain "$DOMAIN" \
-  -- env -u INFISICAL_TOKEN sh -c '
-    set -e
-    prisma migrate deploy --schema=./prisma/schema.prisma
-    exec node server.js
-  '
+  -- env -u INFISICAL_TOKEN ./boot.sh

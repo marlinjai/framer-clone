@@ -11,6 +11,7 @@ node_modules
 .next
 out
 build
+dist-boot
 .turbo
 
 # coverage and test outputs

@@ -23,7 +23,10 @@
 //
 // Failures surface as the Track-0 `{ error: { code, message } }` envelope:
 // 401 unauthenticated, 403 not a workspace admin / no resolvable workspace,
-// 400 malformed body, 500 otherwise (`create_failed`).
+// 400 malformed body, 403 `commerce_suspended` (company's commerce suspended),
+// 500 `commerce_not_configured` / `commerce_provision_failed`
+// when the company's shop schema cannot be set up (nothing is written then), 500
+// `create_failed` otherwise.
 //
 // Runs on the Node runtime because the repository reaches Postgres through
 // adapter-prisma.
@@ -40,13 +43,17 @@ import {
 import ProjectModel, { type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { createIntrinsicComponent } from '@/models/ComponentModel';
 import { jsonError } from '@/lib/api/respond';
-import { provisionCommerceTenant } from '@/server/commerce/provisioning/provision';
+import {
+  commerceSlugFor,
+  CommerceTenantSuspendedError,
+  ensureCommerceTenant,
+} from '@/server/commerce/provisioning/provision';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * CM-11 — the commerce-tenant ONBOARD HOOK.
+ * CM-11, the commerce-tenant ONBOARD HOOK.
  *
  * framer-clone does NOT mint tenant-groups: the workspace -> tenant -> tenant_group
  * hierarchy is owned by auth-brain and arrives on the verified session (scope.ts).
@@ -55,42 +62,72 @@ export const dynamic = 'force-dynamic';
  * create path. The first time a tenant-group creates a project here, its
  * `tg_<id>` commerce schema is stood up (migrations + `commerce_app` grants +
  * the `ext`-locked backstop) on the OWNER connection, out-of-band from the
- * request's app-role pool.
+ * request's app-role pool. Every later project of an already provisioned company
+ * costs one registry read and nothing else (`ensureCommerceTenant`: no lock, no
+ * DDL, no ALTER ROLE); only a miss runs the full provision, under the global
+ * provisioning lock with bounded waits (10 s lock, 30 s statement).
  *
- * Best-effort + non-fatal by design:
- *  - It runs on the OWNER connection (`provisionCommerceTenant` opens its own),
- *    NEVER the low-privilege `commerce_app` base handle (no DDL privilege).
- *  - It is idempotent + advisory-locked in the runner, so calling it on every
- *    project create is safe: the first call runs the DDL, every later call sees
- *    the schema already `active` and no-ops in a few ms.
- *  - It is SKIPPED when `COMMERCE_OWNER_DATABASE_URL` is unset (a CMS-only
- *    deploy with no commerce engine), so it adds no noise there.
- *  - A provisioning failure is LOGGED but does NOT fail the CMS project create:
- *    commerce provisioning is orthogonal to creating a site, and the next create
- *    (or the explicit CM-12 provision / `pnpm db:migrate-tenants`) retries it.
+ * The registry slug is `commerceSlugFor(tenant group, display slug)`: the
+ * display slug plus the tenant-group id, so two companies whose auth-brain slugs
+ * collide never block each other on the UNIQUE `tenant_groups.slug`.
+ *
+ * It runs BEFORE the site row is written, and a failure fails the request with
+ * a named code, with the cause in the server log:
+ *  - 500 `commerce_not_configured` when COMMERCE_OWNER_DATABASE_URL is unset. A
+ *    production container cannot even start without it (deploy/boot.sh), so
+ *    this only catches a miswired environment, loudly, instead of creating
+ *    projects whose shop would fail later.
+ *  - 403 `commerce_suspended` when an operator suspended the company's commerce
+ *    (`tenant_groups.status = 'suspended'`). Provisioning would set it active
+ *    again, so it is never attempted; 403 rather than 500 because nothing is
+ *    broken and a retry cannot succeed: the refusal is a decision about this
+ *    company, lifted only by an operator.
+ *  - 500 `commerce_provision_failed` when provisioning throws (database down, a
+ *    tenant group id that is not a UUID, a migration error, a provisioning lock
+ *    not granted within 10 s).
+ * Provisioning first means a failure leaves NOTHING behind: no site row whose
+ * company has no commerce schema, no "created but broken" project, and a retry
+ * of the same request is clean. The connection details stay out of the
+ * response; the log carries them.
  *
  * FLAG (deferral): there is no job/outbox seam in framer-clone to defer the DDL
- * to, so the first provision runs inline in this request. Pre-MVP there is one
- * demo tenant-group, so this fires its full DDL exactly once; thereafter it is a
- * near-instant no-op. If a background-job seam lands later, move this off the
- * request path.
+ * to, so the first provision runs inline in this request. If a background-job
+ * seam lands later, move this off the request path.
  */
-async function provisionCommerceForScopeBestEffort(
+async function ensureCommerceProvisioned(
   tenantGroupId: string,
-  slug: string,
-): Promise<void> {
-  // Skip entirely when the commerce OWNER url is not configured (CMS-only
-  // deploy): no commerce engine to provision, and no error to log.
-  if (!process.env.COMMERCE_OWNER_DATABASE_URL) return;
-  try {
-    await provisionCommerceTenant({ tenantGroupId, slug });
-  } catch (err) {
-    // Non-fatal: the site was created; commerce provisioning will retry on the
-    // next create or via the explicit operator path. Surface it loudly so a
-    // real misconfiguration is visible in logs.
+  displaySlug: string | undefined,
+): Promise<Response | null> {
+  if (!process.env.COMMERCE_OWNER_DATABASE_URL) {
     console.error(
-      `[commerce] provisionCommerceTenant failed for tenant_group ${tenantGroupId}:`,
+      `[commerce] cannot provision tenant_group ${tenantGroupId}: COMMERCE_OWNER_DATABASE_URL is not set`,
+    );
+    return jsonError(
+      'commerce_not_configured',
+      'the shop database is not configured on this server; no project was created',
+      500,
+    );
+  }
+  try {
+    await ensureCommerceTenant({ tenantGroupId, slug: commerceSlugFor(tenantGroupId, displaySlug) });
+    return null;
+  } catch (err) {
+    if (err instanceof CommerceTenantSuspendedError) {
+      console.error(`[commerce] project create refused: commerce for tenant_group ${tenantGroupId} is suspended`);
+      return jsonError(
+        'commerce_suspended',
+        "this company's shop is suspended; no project was created. Contact support to lift the suspension.",
+        403,
+      );
+    }
+    console.error(
+      `[commerce] ensureCommerceTenant failed for tenant_group ${tenantGroupId}:`,
       err,
+    );
+    return jsonError(
+      'commerce_provision_failed',
+      'setting up the shop for this company failed; no project was created, try again',
+      500,
     );
   }
 }
@@ -187,7 +224,16 @@ export async function POST(req: Request): Promise<Response> {
     if (result.data.name !== undefined) name = result.data.name;
   }
 
-  // 5. Mint the id SERVER-SIDE and persist a minimal draft snapshot under the
+  // 5. CM-11 onboard hook: ensure this tenant-group's `tg_<id>` commerce schema
+  //    exists BEFORE the site row is written (idempotent, OWNER connection). A
+  //    failure returns its 500 here and nothing is persisted. The tenant slug
+  //    comes from the SERVER-verified session, never the client; fall back to
+  //    the tenant_group id alone if the tenant isn't on the session.
+  const tenantSlug = session.tenants.find((t) => t.group_id === scope.tenantGroupId)?.slug;
+  const commerceFailure = await ensureCommerceProvisioned(scope.tenantGroupId, tenantSlug);
+  if (commerceFailure) return commerceFailure;
+
+  // 6. Mint the id SERVER-SIDE and persist a minimal draft snapshot under the
   //    session scope. No publishProject call: the row stays `draft` (DB default).
   const siteId = crypto.randomUUID();
   const now = Date.now();
@@ -204,15 +250,6 @@ export async function POST(req: Request): Promise<Response> {
       500,
     );
   }
-
-  // 6. CM-11 onboard hook: ensure this tenant-group's `tg_<id>` commerce schema
-  //    exists (idempotent, OWNER connection, best-effort / non-fatal). The
-  //    tenant slug comes from the SERVER-verified session, never the client;
-  //    fall back to the tenant_group id if the tenant isn't on the session.
-  const tenantSlug =
-    session.tenants.find((t) => t.group_id === scope.tenantGroupId)?.slug ??
-    scope.tenantGroupId;
-  await provisionCommerceForScopeBestEffort(scope.tenantGroupId, tenantSlug);
 
   return Response.json({ siteId });
 }

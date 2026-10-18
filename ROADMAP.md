@@ -40,7 +40,12 @@ connections to the suite. The four lines below are in that order.
   Recommended start without Cloudflare's paid certificate manager (about 10 dollars a month,
   global edge caching); Marlin decides that at this step. MT-01 to MT-17 are merged. See
   [multi-tenancy plan](docs/plans/2026-06-26-multi-tenancy-phase2-plan.md) and
-  [gap analysis](docs/plans/2026-06-26-multi-tenancy-gap-analysis.md). (2026-10-15)
+  [gap analysis](docs/plans/2026-06-26-multi-tenancy-gap-analysis.md). App side ready
+  2026-10-17: the container start runs the commerce public and tenant migrations as the owner
+  role, `prisma/sql/commerce-roles.sql` is complete for a non-superuser owner on Postgres 16
+  (proven by `roles.itest.ts`), and `deploy/README.md` matches the infra RUNBOOK
+  (`infra/deployments/framer-clone/RUNBOOK.md`), whose steps 1, 7, 9 and 10 now simplify.
+  (2026-10-17)
 - [ ] 3. The Books: build the Customer + SalesDocument + DocumentTemplate schema and the invoices/
   offers document tier for Marlin's own accounting (joins with receipt-ocr-app's expense side).
   Roughly 85 percent of the new code lands in this repo. Decided 2026-08-15, not yet started.

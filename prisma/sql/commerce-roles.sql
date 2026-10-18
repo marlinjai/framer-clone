@@ -1,64 +1,77 @@
 -- prisma/sql/commerce-roles.sql
 --
--- Postgres role topology for the owned commerce engine, on the
--- @marlinjai/tenant-db schema-per-tenant-group model (CM-02). This file
--- creates the TWO roles the commerce engine runs under and fixes their
--- PRIVILEGE topology + the search_path BACKSTOP. It is run ONCE, by an
--- operator / deploy step, as a superuser (or the database owner) OUTSIDE the
--- application's transaction pool. It is intentionally idempotent so it can be
--- re-applied safely.
+-- The two Postgres roles the commerce engine runs under, on the
+-- @marlinjai/tenant-db schema-per-tenant-group model, with every privilege they
+-- need on a fresh Postgres 16 database and nothing more.
 --
--- It does NOT set passwords. The LOGIN passwords for each role are injected via
--- Infisical / Coolify at provisioning time with a separate
--- `ALTER ROLE ... WITH LOGIN PASSWORD`, never committed to the repository and
--- never written to a .env file. This file only fixes the privilege topology and
--- the ext-locked role-default search_path.
+-- WHO RUNS IT. Once per database, before the first container start, by a
+-- superuser (on Coolify that is the database's own bootstrap user, e.g.
+-- `framer_clone`), with `psql -v ON_ERROR_STOP=1`. It is idempotent: running it
+-- again changes nothing and fails nothing, so it is safe to re-apply after an
+-- upgrade of this file. It names no database: every database-level grant uses
+-- current_database(), so the same file runs in tests and in production.
 --
--- It does NOT create any tenant schema, table, or REVOKE. Under the tenant-db
--- model every `tg_<hex32>` schema and its per-schema USAGE / table / sequence
--- GRANTs to commerce_app, plus the append-only REVOKEs on the ledger / order
--- tables, are applied PER SCHEMA by the provisioning runner
--- (`provisionTenant`, which calls grantSchemaToAppRole + bootstrapAppRole)
--- inside the tenant migrations. This file only stands up the roles those grants
--- target. (Pre-MVP: this replaces the old single-`commerce`-schema role SQL;
--- there is no `commerce` schema or `IN SCHEMA commerce` default-privilege here
--- anymore — commerce is 100% per-tenant.)
+-- NO PASSWORDS. The roles are created NOLOGIN here. The deploy's role script
+-- (infra repo, deployments/framer-clone/scripts/07-commerce-roles.sh) then runs
+-- `ALTER ROLE <role> WITH LOGIN PASSWORD '...'` with freshly generated values and
+-- writes the two connection strings into Infisical. Nothing secret is in this
+-- file, and re-running it never takes the LOGIN attribute away again.
+--
+-- WHAT IT DOES NOT DO. It creates no tenant schema and no table. The `ext`
+-- schema's contents and the `public.tenant_groups` registry come from the public
+-- migrations (migratePublic), each `tg_<hex32>` schema plus its per-schema grants
+-- and the append-only REVOKEs come from provisioning (provisionCommerceTenant).
+-- Both run as commerce_ddl, at container start (deploy/boot.sh) and when a
+-- company creates its first project.
+--
+-- REQUIRES POSTGRES 16 OR LATER. The ADMIN-only role grant below
+-- (`WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`) and the narrowed CREATEROLE
+-- semantics it relies on are Postgres 16 features; on older servers the file
+-- stops with an error instead of granting something broader.
 --
 -- =====================================================================
 -- The two roles
 -- =====================================================================
 --
---   commerce_app  LOW-PRIVILEGE, DML-only. The role the pooled application
---                 connection authenticates as (COMMERCE_APP_DATABASE_URL, read
---                 by src/server/commerce/db.ts). It may SELECT / INSERT /
---                 UPDATE / DELETE within each provisioned `tg_<id>` schema (via
---                 the per-schema grants provisionTenant issues) but may NOT run
---                 DDL and owns NO object. Its DEFAULT search_path is locked to
---                 the single `ext` schema (the backstop below): every table
---                 must be schema-qualified or withSchema-qualified, so a bare
---                 unqualified table reference fails LOUDLY instead of silently
---                 reading a `public` decoy. It is the role the per-schema
---                 append-only REVOKEs (stock_movement, credit_note,
---                 credit_note_ref, "order", order_line_item) apply to, which is
---                 how those tables become append-only AT THE DATABASE for
---                 ordinary application traffic.
+--   commerce_app  LOW PRIVILEGE, DML only. The pooled application connection
+--                 (COMMERCE_APP_DATABASE_URL, src/server/commerce/db.ts). It may
+--                 SELECT / INSERT / UPDATE / DELETE inside each provisioned
+--                 `tg_<id>` schema through the grants provisioning issues, minus
+--                 UPDATE and DELETE on the append-only tables (stock_movement,
+--                 credit_note, credit_note_ref, "order", order_line_item). It
+--                 owns nothing, runs no DDL, and its default search_path is
+--                 exactly `ext`, so an unqualified table name fails loudly
+--                 instead of reading a `public` decoy (assertCommerceBackstop).
 --
---   commerce_ddl  OWNER, DDL-capable (CREATE / ALTER / DROP). The role the
---                 migration / provisioning runner authenticates as
---                 (COMMERCE_OWNER_DATABASE_URL, read by the CM-11 provisioning
---                 code via createMigrationClient). It connects OUTSIDE the
---                 transaction pool (a direct connection) because schema changes
---                 must not interleave with pooled application transactions. Its
---                 search_path legitimately includes `public` for DDL, so it is
---                 NEVER used as the application base handle: assertBackstop()
---                 would (correctly) throw on it.
+--   commerce_ddl  OWNER, not a superuser. The migration and provisioning
+--                 connection (COMMERCE_OWNER_DATABASE_URL), used outside the
+--                 request pool. It owns `ext`, the public commerce registry and
+--                 every `tg_<id>` schema. Its search_path keeps `public`, which
+--                 is why it is never the application handle.
+--
+-- The append-only guarantee rests on commerce_app being neither the owner of
+-- the tables nor a superuser: an owner or superuser bypasses table privileges,
+-- an ordinary grantee does not. commerce_ddl being a non-superuser is not
+-- required for that guarantee, but it keeps a leaked owner URL from reaching
+-- the rest of the server (other databases, roles, files).
 
 -- ---------------------------------------------------------------------
--- 1. Create the roles if they do not already exist.
+-- 0. Refuse to run on a server older than Postgres 16.
 -- ---------------------------------------------------------------------
--- NOLOGIN here: the LOGIN attribute and password are granted out-of-band via
--- Infisical so no secret lives in this file. Re-running is a no-op once the
--- roles exist.
+DO $$
+BEGIN
+  IF current_setting('server_version_num')::int < 160000 THEN
+    RAISE EXCEPTION 'commerce-roles.sql needs Postgres 16 or later (found %)',
+      current_setting('server_version');
+  END IF;
+END
+$$;
+
+-- ---------------------------------------------------------------------
+-- 1. Create the roles if they do not exist yet.
+-- ---------------------------------------------------------------------
+-- NOLOGIN on creation only: 07-commerce-roles.sh grants LOGIN with a password
+-- afterwards, and a re-run of this file leaves that alone.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commerce_app') THEN
@@ -70,74 +83,76 @@ BEGIN
 END
 $$;
 
+-- Pin the attributes on every run, so a role that pre-existed with broader
+-- rights is brought back to the intended shape. CREATEROLE on commerce_ddl is
+-- explained in section 4.
+ALTER ROLE commerce_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE commerce_ddl NOSUPERUSER NOCREATEDB CREATEROLE NOREPLICATION NOBYPASSRLS;
+
 -- ---------------------------------------------------------------------
--- 2. The ext-locked search_path BACKSTOP on commerce_app (the crown).
+-- 2. Database level: both may connect, only the owner may create schemas.
 -- ---------------------------------------------------------------------
--- This is the single most important line in the file. A ROLE DEFAULT
--- (ALTER ROLE ... SET), applied ONCE — NEVER a per-connection or per-request
--- `SET search_path` (postgres.js does not DISCARD on release, so a
--- connection-level SET would leak to the next pooled request). With
--- `search_path = ext`, ext-resident functions/extensions (ext.gen_uuid_v7,
--- pgcrypto, ext.touch_updated_at) resolve, but EVERY table (public OR tenant)
--- must be explicitly schema-qualified or withSchema-qualified. A bare
--- unqualified table reference therefore FAILS LOUDLY ("relation does not
--- exist") instead of silently reading a `public` decoy.
+-- CREATE ON DATABASE lets commerce_ddl create the `ext` and `tg_<id>` schemas
+-- and install pgcrypto (a trusted extension since Postgres 13, so no superuser
+-- is needed for it).
 --
--- This mirrors @marlinjai/tenant-db's bootstrapAppRole (which provisionTenant
--- also invokes per provision); setting it here makes the role correct from
--- creation, so assertCommerceBackstop() passes even before any tenant exists.
--- Idempotent: ALTER ROLE ... SET is last-write-wins.
-ALTER ROLE commerce_app SET search_path = ext;
-
--- commerce_ddl keeps Postgres's default search_path ("$user", public) — it is
--- the owner and legitimately needs `public` for DDL. We do NOT lock it to ext.
--- This is precisely why it must never be the application base handle:
--- assertBackstop() throws on any path containing `public`/`$user`.
-
--- ---------------------------------------------------------------------
--- 3. USAGE on the `ext` schema for commerce_app.
--- ---------------------------------------------------------------------
--- The ext schema (pgcrypto, gen_uuid_v7, touch_updated_at) is created by the
--- public migration set (`migratePublic`, CM-03). commerce_app needs USAGE on it
--- so the column DEFAULTs / triggers that resolve against `ext` work under its
--- ext-locked path. Guarded on schema existence so this file is order-independent
--- and idempotent: re-run after migratePublic to apply, harmless before.
+-- TEMPORARY is taken away from PUBLIC (Postgres grants it to every role by
+-- default): no commerce code creates temporary tables, and an app role that can
+-- create them has a scratch area outside every tenant schema. Nothing is granted
+-- back: commerce_app and commerce_ddl need none, and the database's bootstrap
+-- user is a superuser, which privileges do not restrict.
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'ext') THEN
-    GRANT USAGE ON SCHEMA ext TO commerce_app;
-  END IF;
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO commerce_app, commerce_ddl', current_database());
+  EXECUTE format('GRANT CREATE ON DATABASE %I TO commerce_ddl', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database());
 END
 $$;
 
--- =====================================================================
--- Why the split into TWO roles gives the per-schema REVOKEs teeth
--- =====================================================================
---
--- The per-tenant migrations (CM-04) make the inventory ledger / order tables
--- append-only with, per `tg_<id>` schema, e.g.:
---
---     REVOKE UPDATE, DELETE ON tg_<id>.stock_movement FROM commerce_app;
---
--- That REVOKE only protects anything if BOTH hold:
---
--- 1. The application connects as a role that is NOT the table owner and is NOT
---    superuser. A table's owner (and any superuser) bypasses table
---    GRANT/REVOKE entirely. Because commerce_ddl OWNS the tg_<id> objects and
---    commerce_app is a distinct, non-owner, low-privilege DML role, the REVOKE
---    has teeth: the append-only guarantee is enforced by Postgres for ordinary
---    application traffic, not merely by application code.
---
--- 2. The app connection's role cannot be silently swapped for a more privileged
---    one. commerce_app and commerce_ddl are DISTINCT login roles with distinct
---    connection strings (COMMERCE_APP_DATABASE_URL vs COMMERCE_OWNER_DATABASE_URL),
---    so the pool for ordinary traffic (commerce_app) can never acquire DDL or
---    owner privileges. Migrations use a SEPARATE direct connection as
---    commerce_ddl, outside the transaction pool.
---
--- Pooling note: under the tenant-db model isolation is `withSchema` identifier
--- rewriting in the per-request handle (tenantDb), NOT a per-request `SET
--- search_path`. There is therefore no session search_path state to leak across
--- pooled clients; the only search_path is the immutable ext-locked role default
--- above. A transaction-pooling proxy needs no special server_reset_query for
--- search_path because the engine never issues a session-level SET.
+-- ---------------------------------------------------------------------
+-- 3. Schemas: `public` for the registry, `ext` owned by commerce_ddl.
+-- ---------------------------------------------------------------------
+-- Postgres 15 and later no longer let every role create objects in `public`.
+-- The public migrations create public.__public_db_migrations,
+-- public.tenant_groups and public.tenant_migration_progress there, owned by
+-- commerce_ddl. commerce_app gets nothing on `public` beyond the default USAGE.
+-- A database restored from an older dump (or created on Postgres 14 and
+-- upgraded) can still give CREATE on `public` to PUBLIC, i.e. to commerce_app;
+-- the REVOKE takes that away and is a no-op on a fresh Postgres 16.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE, CREATE ON SCHEMA public TO commerce_ddl;
+
+-- `ext` holds pgcrypto, ext.gen_uuid_v7() and ext.touch_updated_at(), which the
+-- tenant tables use as column defaults and triggers. Creating it here, owned by
+-- commerce_ddl, makes the grant to commerce_app below independent of whether
+-- the public migrations have run yet (their CREATE SCHEMA IF NOT EXISTS then
+-- keeps this schema). Functions in it are executable by PUBLIC by default.
+CREATE SCHEMA IF NOT EXISTS ext AUTHORIZATION commerce_ddl;
+ALTER SCHEMA ext OWNER TO commerce_ddl;
+GRANT USAGE ON SCHEMA ext TO commerce_app;
+
+-- ---------------------------------------------------------------------
+-- 4. The owner may set the app role's search_path, and nothing else on it.
+-- ---------------------------------------------------------------------
+-- Every provision runs tenant-db's bootstrapAppRole, which issues
+-- `ALTER ROLE commerce_app SET search_path = ext`. On Postgres 16 a
+-- non-superuser may change another role's settings only with CREATEROLE AND the
+-- ADMIN option on that role. INHERIT FALSE and SET FALSE mean commerce_ddl does
+-- not gain commerce_app's privileges and cannot become commerce_app; it may
+-- only administer it. Postgres 16's CREATEROLE no longer reaches roles the
+-- holder has no ADMIN option on, so commerce_ddl cannot touch `framer_clone` or
+-- any other existing role. What CREATEROLE does still allow is creating new
+-- roles (which start without any privilege on this database's objects).
+GRANT commerce_app TO commerce_ddl WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;
+
+-- ---------------------------------------------------------------------
+-- 5. The ext-locked search_path backstop on commerce_app.
+-- ---------------------------------------------------------------------
+-- A role default, never a per-connection SET (postgres.js does not reset
+-- session state when a pooled connection is reused). With search_path = ext the
+-- ext functions resolve, but every table must be schema-qualified, so a bare
+-- table name fails loudly. Provisioning sets the same value again; setting it
+-- here makes the role correct before any tenant exists.
+ALTER ROLE commerce_app SET search_path = ext;
+-- commerce_ddl keeps the default ("$user", public): it needs `public` for DDL,
+-- and assertBackstop() therefore refuses it as an application handle.

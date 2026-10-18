@@ -45,11 +45,21 @@
 
 import postgres from 'postgres';
 import {
+  assertTenantGroupId,
   provisionTenant,
   migrateAllTenants,
+  tenantSchema,
   type MigrateAllResult,
 } from '@marlinjai/tenant-db';
 import { COMMERCE_TENANT_MIGRATIONS } from '../migrations/tenant';
+import {
+  acquireAdvisoryLock,
+  migrationTimeouts,
+  openOwnerSql,
+  PROVISION_TIMEOUTS,
+  releaseAdvisoryLock,
+  type OwnerTimeouts,
+} from './ownerSql';
 
 /**
  * The commerce tables commerce_app may only INSERT into and SELECT from: the
@@ -63,6 +73,19 @@ export const APPEND_ONLY_TABLES = [
   'order',
   'order_line_item',
 ] as const;
+
+/**
+ * Session advisory lock key that serializes every commerce provision in the
+ * database. Each provision ends with tenant-db's bootstrapAppRole, an
+ * `ALTER ROLE commerce_app SET search_path = ext`; two provisions of DIFFERENT
+ * tenant groups (two companies creating their first project at the same moment)
+ * would both update the same pg_authid row and one fails with "tuple
+ * concurrently updated". The runner's own lock is per tenant group, so it does
+ * not prevent that. Provisioning is rare and short, so one global lock costs
+ * nothing. The integration fixtures take the same key around their direct
+ * provisionTenant calls.
+ */
+export const COMMERCE_PROVISION_LOCK_KEY = 74_610_010;
 
 /**
  * The low-privilege app role granted per-schema USAGE + table access by the
@@ -125,27 +148,68 @@ function requireOwnerUrl(connectionString?: string): string {
 }
 
 /**
- * Provision (or re-provision) ONE tenant-group's commerce schema. Atomic,
- * advisory-locked, idempotent — driven entirely by the runner's
- * `provisionTenant`.
+ * The registry slug for a tenant group's commerce schema: the company's display
+ * slug plus its full tenant-group id (hyphens removed).
  *
- * Opens a DIRECT OWNER postgres.js connection (`max: 1`, `prepare: false`,
- * pooler-safe), provisions `tg_<id>` with the CM-04 commerce migration set and
- * the `commerce_app` grants + `ext`-locked backstop, then closes the connection
- * in a `finally`. Returns the runner's `{ schema, applied }` (schema = the
- * derived `tg_<hex32>` name; applied = migration ids newly applied this call,
- * empty `[]` on a no-op re-provision).
+ * `public.tenant_groups.slug` is UNIQUE and the runner's registry upsert
+ * conflicts only on `id`, so two companies whose auth-brain display slugs
+ * collide (two "acme"s, or a slug reused after a rename) would make the second
+ * company's provision fail on `tenant_groups_slug_key` on EVERY project create,
+ * forever. Appending the id makes the slug as unique as the id itself, without
+ * ever touching another group's row. The display part stays for humans reading
+ * the registry; nothing looks a company up by slug.
+ */
+export function commerceSlugFor(tenantGroupId: string, displaySlug?: string | null): string {
+  const id = assertTenantGroupId(tenantGroupId);
+  const hex = id.replace(/-/g, '');
+  const base = (displaySlug ?? '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  // No display slug, or one that is just the id again: the id alone.
+  return base && base !== hex && base !== id.toLowerCase() ? `${base}-${hex}` : hex;
+}
+
+/**
+ * Run the full provision on an already open OWNER session, under the global
+ * provisioning lock (bounded by the session's lock_timeout).
+ */
+async function provisionUnderLock(
+  sql: postgres.Sql,
+  tenantGroupId: string,
+  slug: string,
+  timeouts: OwnerTimeouts,
+): Promise<{ schema: string; applied: string[] }> {
+  await acquireAdvisoryLock(sql, COMMERCE_PROVISION_LOCK_KEY, 'commerce provisioning lock', timeouts);
+  try {
+    // The app role drives the per-schema grants + the `ext`-locked role default
+    // (the backstop); the seed re-applies the append-only REVOKEs after them.
+    return await provisionTenant(sql, commerceProvisionOptions(tenantGroupId, slug));
+  } finally {
+    await releaseAdvisoryLock(sql, COMMERCE_PROVISION_LOCK_KEY);
+  }
+}
+
+/**
+ * Provision (or re-provision) ONE tenant-group's commerce schema, always running
+ * the runner's full `provisionTenant` (registry upsert, migrations, grants, the
+ * `ext` backstop, the append-only REVOKEs). Operator and seed paths use it; the
+ * project-create request uses {@link ensureCommerceTenant}, which skips all of
+ * this for a company that is already provisioned.
  *
- * Idempotent: a second call for the same tenant-group BLOCKS on the per-org
- * advisory lock if one is in flight, then sees the schema + migrations already
- * present and no-ops. So this is safe to call from a hot path (e.g. project
- * create) without de-duping.
+ * Opens a DIRECT OWNER session with bounded waits ({@link PROVISION_TIMEOUTS}
+ * by default) and closes it in a `finally`. Returns the runner's
+ * `{ schema, applied }` (applied is `[]` on a no-op re-provision).
+ *
+ * Serialized: every provision takes {@link COMMERCE_PROVISION_LOCK_KEY} first,
+ * so concurrent provisions of different tenant groups queue instead of
+ * colliding on `ALTER ROLE commerce_app`. A wait longer than the lock timeout
+ * fails with CommerceLockTimeoutError.
  *
  * @param opts.tenantGroupId The tenant_group id (validated to a strict UUID by
  *   the runner's chokepoint; the schema name is DERIVED, never echoed).
- * @param opts.slug          URL-safe slug recorded on the registry row.
+ * @param opts.slug          Slug recorded on the registry row (UNIQUE; see
+ *   {@link commerceSlugFor} for a collision-free one).
  * @param opts.connectionString Optional OWNER url override (tests). Defaults to
  *   `COMMERCE_OWNER_DATABASE_URL`, read at call time.
+ * @param opts.timeouts      Optional bounded waits (tests).
  *
  * @throws Error if no OWNER connection string is available.
  */
@@ -153,14 +217,100 @@ export async function provisionCommerceTenant(opts: {
   tenantGroupId: string;
   slug: string;
   connectionString?: string;
+  timeouts?: OwnerTimeouts;
 }): Promise<{ schema: string; applied: string[] }> {
   const ownerUrl = requireOwnerUrl(opts.connectionString);
-
-  const sql = postgres(ownerUrl, { max: 1, prepare: false });
+  const timeouts = opts.timeouts ?? PROVISION_TIMEOUTS;
+  // max: 1 keeps the advisory lock and the provision on ONE session.
+  const sql = await openOwnerSql(ownerUrl, timeouts);
   try {
-    // The app role drives the per-schema grants + the `ext`-locked role default
-    // (the backstop); the seed re-applies the append-only REVOKEs after them.
-    return await provisionTenant(sql, commerceProvisionOptions(opts.tenantGroupId, opts.slug));
+    return await provisionUnderLock(sql, opts.tenantGroupId, opts.slug, timeouts);
+  } finally {
+    await sql.end();
+  }
+}
+
+/** What the registry says about one tenant group's commerce schema. */
+export type CommerceTenantState =
+  /** Active, schema present, every commerce tenant migration recorded. */
+  | 'ready'
+  /** Suspended by an operator: never provisioned (that would reactivate it). */
+  | 'suspended'
+  /** No row, still provisioning, schema gone, or a migration not recorded. */
+  | 'missing';
+
+/** A suspended tenant group's commerce schema must not be touched. */
+export class CommerceTenantSuspendedError extends Error {
+  constructor(tenantGroupId: string) {
+    super(
+      `Commerce for tenant group ${tenantGroupId} is suspended. Provisioning would ` +
+        'reactivate it, so nothing was provisioned; an operator must lift the suspension.',
+    );
+    this.name = 'CommerceTenantSuspendedError';
+  }
+}
+
+/**
+ * Read the registry for one tenant group. `ready` needs all of: the row is
+ * `active`, its schema exists (`to_regnamespace`), and every commerce tenant
+ * migration is recorded for that schema. `suspended` wins over everything else.
+ */
+export async function readCommerceTenantState(
+  sql: postgres.Sql,
+  tenantGroupId: string,
+  schema: string,
+): Promise<CommerceTenantState> {
+  const rows = await sql<{ status: string; schema_present: boolean; done: string[] }[]>`
+    SELECT tg.status,
+           to_regnamespace(tg.schema_name) IS NOT NULL AS schema_present,
+           COALESCE(array_agg(p.migration_id) FILTER (WHERE p.migration_id IS NOT NULL), '{}') AS done
+    FROM public.tenant_groups tg
+    LEFT JOIN public.tenant_migration_progress p ON p.schema_name = tg.schema_name
+    WHERE tg.id = ${tenantGroupId}::uuid AND tg.schema_name = ${schema}
+    GROUP BY tg.status, tg.schema_name
+  `;
+  if (rows.length === 0) return 'missing';
+  const [row] = rows;
+  if (row.status === 'suspended') return 'suspended';
+  if (row.status !== 'active' || !row.schema_present) return 'missing';
+  const done = new Set(row.done);
+  return COMMERCE_TENANT_MIGRATIONS.every((m) => done.has(m.id)) ? 'ready' : 'missing';
+}
+
+/**
+ * Make sure a tenant group's commerce schema exists, cheaply when it already
+ * does. The project-create request calls this on every create.
+ *
+ * Hit: one read of `public.tenant_groups` and `public.tenant_migration_progress`
+ * finds the group `active`, its schema present and every commerce tenant
+ * migration recorded, and nothing else happens: no lock, no DDL, no
+ * `ALTER ROLE`. Miss (first project, a row still `provisioning`, a dropped
+ * schema, a migration not recorded): the full provision under the global
+ * provisioning lock, exactly as {@link provisionCommerceTenant}. A SUSPENDED
+ * group is neither: the runner would set it `active` again, so this throws
+ * {@link CommerceTenantSuspendedError} and touches nothing.
+ *
+ * @returns `provisioned: true` when the full provision ran.
+ * @throws CommerceTenantSuspendedError for a suspended tenant group.
+ */
+export async function ensureCommerceTenant(opts: {
+  tenantGroupId: string;
+  slug: string;
+  connectionString?: string;
+  timeouts?: OwnerTimeouts;
+}): Promise<{ schema: string; applied: string[]; provisioned: boolean }> {
+  const ownerUrl = requireOwnerUrl(opts.connectionString);
+  const timeouts = opts.timeouts ?? PROVISION_TIMEOUTS;
+  const tgId = assertTenantGroupId(opts.tenantGroupId);
+  const schema = tenantSchema(tgId);
+
+  const sql = await openOwnerSql(ownerUrl, timeouts);
+  try {
+    const state = await readCommerceTenantState(sql, tgId, schema);
+    if (state === 'ready') return { schema, applied: [], provisioned: false };
+    if (state === 'suspended') throw new CommerceTenantSuspendedError(tgId);
+    const result = await provisionUnderLock(sql, tgId, opts.slug, timeouts);
+    return { ...result, provisioned: true };
   } finally {
     await sql.end();
   }
@@ -184,6 +334,7 @@ export async function provisionCommerceTenant(opts: {
  * @param opts.batchSize     Process at most this many schemas per call.
  * @param opts.onSchemaDone  Per-schema progress callback (for logging / resume).
  * @param opts.connectionString Optional OWNER url override (tests).
+ * @param opts.timeouts      Bounded waits; defaults to migrationTimeouts().
  *
  * @throws Error if no OWNER connection string is available.
  */
@@ -196,10 +347,11 @@ export async function migrateAllCommerceTenants(opts?: {
     total: number;
   }) => void;
   connectionString?: string;
+  timeouts?: OwnerTimeouts;
 }): Promise<MigrateAllResult> {
   const ownerUrl = requireOwnerUrl(opts?.connectionString);
 
-  const sql = postgres(ownerUrl, { max: 1, prepare: false });
+  const sql = await openOwnerSql(ownerUrl, opts?.timeouts ?? migrationTimeouts());
   try {
     const result = await migrateAllTenants(sql, {
       tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
