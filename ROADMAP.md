@@ -45,7 +45,11 @@ connections to the suite. The four lines below are in that order.
   role, `prisma/sql/commerce-roles.sql` is complete for a non-superuser owner on Postgres 16
   (proven by `roles.itest.ts`), and `deploy/README.md` matches the infra RUNBOOK
   (`infra/deployments/framer-clone/RUNBOOK.md`), whose steps 1, 7, 9 and 10 now simplify.
-  (2026-10-17)
+  Since 2026-10-19 (`@marlinjai/tenant-db` 0.2) the owner role holds no CREATEROLE and no grant
+  over `commerce_app`: provisioning only verifies `commerce_app`'s search path, and the start step
+  refuses an owner that still holds either power, so a database set up with the earlier roles
+  file must have `prisma/sql/commerce-roles.sql` re-applied by its superuser before this build is
+  deployed (command and check in `deploy/README.md`). (2026-10-19)
 - [ ] 3. The Books: the Customer + SalesDocument + DocumentTemplate document tier for Marlin's own
   accounting (invoices and credit notes now, offers later; joins with receipt-ocr-app's expense
   side), in each company's own schema. Phase 1 is built (2026-10-17): migration `007_books` with
