@@ -24,7 +24,7 @@
 // Failures surface as the Track-0 `{ error: { code, message } }` envelope:
 // 401 unauthenticated, 403 not a workspace admin / no resolvable workspace,
 // 400 malformed body, 403 `commerce_suspended` (company's commerce suspended),
-// 500 `commerce_not_configured` / `commerce_provision_failed`
+// 500 `commerce_not_configured` / `commerce_misconfigured` / `commerce_provision_failed`
 // when the company's shop schema cannot be set up (nothing is written then), 500
 // `create_failed` otherwise.
 //
@@ -48,6 +48,7 @@ import {
   CommerceTenantSuspendedError,
   ensureCommerceTenant,
 } from '@/server/commerce/provisioning/provision';
+import { AppRoleSearchPathError } from '@marlinjai/tenant-db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -61,10 +62,10 @@ export const dynamic = 'force-dynamic';
  * server-verified `tenantGroupId` AND (b) owns commerce DDL: the project/site
  * create path. The first time a tenant-group creates a project here, its
  * `tg_<id>` commerce schema is stood up (migrations + `commerce_app` grants +
- * the `ext`-locked backstop) on the OWNER connection, out-of-band from the
+ * a read-only check of the `ext`-locked backstop) on the OWNER connection, out-of-band from the
  * request's app-role pool. Every later project of an already provisioned company
  * costs one registry read and nothing else (`ensureCommerceTenant`: no lock, no
- * DDL, no ALTER ROLE); only a miss runs the full provision, under the global
+ * DDL, no role check); only a miss runs the full provision, under the global
  * provisioning lock with bounded waits (10 s lock, 30 s statement).
  *
  * The registry slug is `commerceSlugFor(tenant group, display slug)`: the
@@ -82,7 +83,14 @@ export const dynamic = 'force-dynamic';
  *    again, so it is never attempted; 403 rather than 500 because nothing is
  *    broken and a retry cannot succeed: the refusal is a decision about this
  *    company, lifted only by an operator.
- *  - 500 `commerce_provision_failed` when provisioning throws (database down, a
+ *  - 500 `commerce_misconfigured` when the app role commerce_app's default
+ *    search_path is not exactly `ext` (tenant-db AppRoleSearchPathError).
+ *    Provisioning only verifies that value, never sets it (the owner role may
+ *    not alter roles), so a retry cannot succeed until an administrator runs
+ *    the repair command the error names, which goes to the server log only; the
+ *    container start step refuses to start on the same condition, so this
+ *    catches a value changed after the start.
+ *  - 500 `commerce_provision_failed` when provisioning throws anything else (database down, a
  *    tenant group id that is not a UUID, a migration error, a provisioning lock
  *    not granted within 10 s).
  * Provisioning first means a failure leaves NOTHING behind: no site row whose
@@ -118,6 +126,16 @@ async function ensureCommerceProvisioned(
         'commerce_suspended',
         "this company's shop is suspended; no project was created. Contact support to lift the suspension.",
         403,
+      );
+    }
+    if (err instanceof AppRoleSearchPathError) {
+      console.error(
+        `[commerce] cannot provision tenant_group ${tenantGroupId}: the app role is misconfigured (${err.problem}). ${err.message}`,
+      );
+      return jsonError(
+        'commerce_misconfigured',
+        'the shop database on this server needs an administrator to fix it; no project was created',
+        500,
       );
     }
     console.error(

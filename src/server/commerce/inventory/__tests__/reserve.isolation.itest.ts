@@ -132,6 +132,9 @@ beforeAll(async () => {
 
   owner = postgres(ownerUrl, { max: 1, prepare: false, transform: { undefined: null } });
   await owner`CREATE ROLE ${owner(APP_ROLE)} LOGIN`;
+  // The superuser sets the app role's search_path, as prisma/sql/commerce-roles.sql
+  // does: provisioning only verifies it (appRoleBootstrap 'verify').
+  await owner`ALTER ROLE ${owner(APP_ROLE)} SET search_path = ext`;
   await migratePublic(owner);
 
   // TG_A WITH grants; TG_B WITHOUT (so commerce_app is DENIED on tg_b).

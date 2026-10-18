@@ -13,14 +13,23 @@
 //   2. `prisma migrate deploy` as the superuser (the Prisma tier, DATABASE_URL);
 //   3. the container start step (runCommerceDeployMigrations) as commerce_ddl:
 //      public migrations on an empty fleet;
-//   4. a company's first project: provisionCommerceTenant as commerce_ddl;
+//   4. a company's first project: provisionCommerceTenant as commerce_ddl,
+//      twice (the second applies nothing);
 //   5. the start step again: the fleet migration sees the schema, applies
 //      nothing, and re-asserts the append-only REVOKEs;
 //   6. as commerce_app: the backstop holds, a catalog is seeded, an order is
 //      placed, and the placed order and its lines cannot be changed or deleted;
-//   7. the roles file once more on the migrated database: nothing changes.
-// It also pins the privilege shape: commerce_ddl is not a superuser and cannot
-// alter other roles; commerce_app cannot create anything and has search_path ext.
+//   7. the roles file once more on the migrated database: nothing changes;
+//   8. a database still shaped by the earlier roles file (commerce_ddl with
+//      CREATEROLE and an ADMIN grant over commerce_app): the start step refuses
+//      it, and re-applying the file takes both powers away;
+//   9. a wrong commerce_app search_path: the start step and a provision both
+//      fail with the named error and create nothing; re-applying the file
+//      repairs it.
+// It also pins the privilege shape: commerce_ddl is not a superuser, has no
+// CREATEROLE and no grant over commerce_app, and can alter no role at all
+// (provisioning only verifies the app role, tenant-db appRoleBootstrap
+// 'verify'); commerce_app cannot create anything and has search_path ext.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
@@ -30,7 +39,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
 import { createNodeDb } from '@marlinjai/tenant-db/node';
-import { assertBackstop, tenantDb } from '@marlinjai/tenant-db';
+import { AppRoleSearchPathError, assertBackstop, tenantDb } from '@marlinjai/tenant-db';
 
 import type { CommerceDB } from '../../db-types';
 import { createOrder } from '../../order/createOrder';
@@ -108,7 +117,7 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
     `;
     expect(roles).toEqual([
       { rolname: 'commerce_app', rolsuper: false, rolcanlogin: true, rolcreaterole: false, rolcreatedb: false },
-      { rolname: 'commerce_ddl', rolsuper: false, rolcanlogin: true, rolcreaterole: true, rolcreatedb: false },
+      { rolname: 'commerce_ddl', rolsuper: false, rolcanlogin: true, rolcreaterole: false, rolcreatedb: false },
     ]);
   });
 
@@ -135,7 +144,11 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
         (SELECT nspowner::regrole::text FROM pg_namespace WHERE nspname = 'ext') AS ext_owner,
         (SELECT rolconfig FROM pg_roles WHERE rolname = 'commerce_app') AS app_config,
         pg_has_role('commerce_ddl', 'commerce_app', 'USAGE') AS ddl_inherits_app,
-        pg_has_role('commerce_ddl', 'commerce_app', 'SET') AS ddl_can_set_app
+        pg_has_role('commerce_ddl', 'commerce_app', 'SET') AS ddl_can_set_app,
+        EXISTS (
+          SELECT 1 FROM pg_auth_members
+           WHERE roleid = 'commerce_app'::regrole AND member = 'commerce_ddl'::regrole
+        ) AS ddl_holds_app_grant
     `;
     expect(p).toEqual({
       ddl_db_create: true,
@@ -152,6 +165,7 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
       app_config: ['search_path=ext'],
       ddl_inherits_app: false,
       ddl_can_set_app: false,
+      ddl_holds_app_grant: false,
     });
 
     // And in practice: commerce_app can create neither a table in `public` nor a
@@ -164,12 +178,16 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
       await app.end();
     }
 
-    // CREATEROLE on Postgres 16 reaches only roles commerce_ddl administers.
+    // commerce_ddl can alter no role: not another login, not commerce_app, and
+    // it cannot create one.
     const ddl = postgres(ownerUrl, { max: 1, prepare: false });
     try {
-      await expect(ddl`ALTER ROLE postgres SET search_path = ext`).rejects.toThrow(
+      await expect(ddl`ALTER ROLE postgres SET search_path = ext`).rejects.toThrow(/permission denied/);
+      await expect(ddl`ALTER ROLE commerce_app SET search_path = ext, public`).rejects.toThrow(
         /permission denied/,
       );
+      await expect(ddl`ALTER ROLE commerce_app PASSWORD NULL`).rejects.toThrow(/permission denied/);
+      await expect(ddl`CREATE ROLE intruder LOGIN`).rejects.toThrow(/permission denied/);
     } finally {
       await ddl.end();
     }
@@ -215,6 +233,11 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
       SELECT nspowner::regrole::text AS owner FROM pg_namespace WHERE nspname = ${schema}
     `;
     expect(s.owner).toBe('commerce_ddl');
+
+    // Provisioning the same company again is a no-op, still without any right
+    // over commerce_app.
+    const again = await provisionCommerceTenant({ tenantGroupId: tgId, slug: 'roles-itest', connectionString: ownerUrl });
+    expect(again).toEqual({ schema, applied: [] });
   });
 
   it('start step again: the fleet migration sees the schema and applies nothing', async () => {
@@ -334,5 +357,70 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
     // The start step still runs cleanly afterwards.
     const result = await runCommerceDeployMigrations({ ownerUrl, appUrl, log: () => {} });
     expect(result.tenantApplied).toEqual([{ schema, applied: [] }]);
+  });
+  it('a database shaped by the earlier roles file: the start step refuses it, re-applying the file takes both powers away', async () => {
+    // What commerce-roles.sql granted until October 2026, recorded as the
+    // superuser's grant exactly like on the live database.
+    await su!`ALTER ROLE commerce_ddl CREATEROLE`;
+    await su!`GRANT commerce_app TO commerce_ddl WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`;
+
+    await expect(runCommerceDeployMigrations({ ownerUrl, appUrl, log: () => {} })).rejects.toThrow(
+      /commerce_ddl still holds CREATEROLE and a grant of commerce_app\. .*re-apply prisma\/sql\/commerce-roles\.sql/,
+    );
+
+    await applyRolesFile();
+
+    const [p] = await su!`
+      SELECT
+        (SELECT rolcreaterole FROM pg_roles WHERE rolname = 'commerce_ddl') AS ddl_createrole,
+        (SELECT rolcanlogin FROM pg_roles WHERE rolname = 'commerce_ddl') AS ddl_login,
+        (SELECT count(*)::int FROM pg_auth_members
+          WHERE roleid = 'commerce_app'::regrole AND member = 'commerce_ddl'::regrole) AS ddl_app_grants,
+        (SELECT rolconfig FROM pg_roles WHERE rolname = 'commerce_app') AS app_config
+    `;
+    expect(p).toEqual({ ddl_createrole: false, ddl_login: true, ddl_app_grants: 0, app_config: ['search_path=ext'] });
+
+    // And the owner is back to what it may do: the start step passes, a
+    // provision of a new company works.
+    await expect(runCommerceDeployMigrations({ ownerUrl, appUrl, log: () => {} })).resolves.toMatchObject({
+      role: 'commerce_ddl',
+    });
+    const fresh = await provisionCommerceTenant({
+      tenantGroupId: randomUUID(),
+      slug: 'roles-itest-after-downgrade',
+      connectionString: ownerUrl,
+    });
+    expect(fresh.applied.length).toBeGreaterThan(0);
+  });
+
+  it('a wrong commerce_app search_path: the start step and a provision fail with the named error and create nothing', async () => {
+    await su!`ALTER ROLE commerce_app SET search_path = ext, public`;
+
+    // The start step stops with the administrator's repair command.
+    await expect(runCommerceDeployMigrations({ ownerUrl, appUrl, log: () => {} })).rejects.toThrow(
+      /commerce_app is not ready \(mismatch\).*ALTER ROLE "commerce_app" SET search_path = ext.*commerce-roles\.sql/,
+    );
+
+    // A company's first project fails with tenant-db's named error, rolled back.
+    const badId = randomUUID();
+    const err = await provisionCommerceTenant({ tenantGroupId: badId, slug: 'roles-itest-bad', connectionString: ownerUrl }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(AppRoleSearchPathError);
+    expect(err).toMatchObject({ code: 'TENANT_APP_ROLE_SEARCH_PATH', problem: 'mismatch', appRole: 'commerce_app' });
+
+    const [left] = await su!`
+      SELECT
+        (SELECT count(*)::int FROM public.tenant_groups WHERE id = ${badId}::uuid) AS registry_rows,
+        (SELECT count(*)::int FROM pg_namespace WHERE nspname = ${'tg_' + badId.replace(/-/g, '')}) AS schemas,
+        (SELECT rolconfig FROM pg_roles WHERE rolname = 'commerce_app') AS app_config
+    `;
+    // Nothing created, and the role was not touched (verify never writes).
+    expect(left).toEqual({ registry_rows: 0, schemas: 0, app_config: ['search_path=ext, public'] });
+
+    // The operator's repair is re-applying the roles file; then the same company provisions.
+    await applyRolesFile();
+    const repaired = await provisionCommerceTenant({ tenantGroupId: badId, slug: 'roles-itest-bad', connectionString: ownerUrl });
+    expect(repaired.applied.length).toBeGreaterThan(0);
   });
 });

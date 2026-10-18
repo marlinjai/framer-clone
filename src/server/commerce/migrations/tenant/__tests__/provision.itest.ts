@@ -134,16 +134,20 @@ beforeAll(async () => {
   // username alone) so we can open a scoped connection. CREATE ROLE is a utility
   // statement (no bind params), so this uses .unsafe with a trusted test constant.
   await owner.unsafe(`CREATE ROLE ${APP_ROLE} LOGIN`);
+  // The superuser sets the app role's search_path, as prisma/sql/commerce-roles.sql
+  // does: provisioning only verifies it (appRoleBootstrap 'verify').
+  await owner`ALTER ROLE ${owner(APP_ROLE)} SET search_path = ext`;
 
   // Public control plane (ext schema + tenant_groups registry).
   await migratePublic(owner);
 
   // Provision the tenant: creates tg_<id>, runs the commerce migrations, grants
-  // the app role, applies the ext-locked role default, marks active.
+  // the app role, verifies the ext-locked role default, marks active.
   provisionResult = await provisionTenant(owner, {
     tenantGroupId: TG,
     slug: 'cm04-probe',
     appRole: APP_ROLE,
+    appRoleBootstrap: 'verify',
     tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
     // The production post-grant REVOKE seed (see header).
     seed: (tx, ctx) => revokeAppendOnlyWrites(tx, ctx.schema),
@@ -563,6 +567,7 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
       tenantGroupId: control,
       slug: 'cm13-no-seed',
       appRole: APP_ROLE,
+      appRoleBootstrap: 'verify',
       tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
     });
     const rows = await owner!`
@@ -588,6 +593,7 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
       tenantGroupId: TG,
       slug: 'cm04-probe',
       appRole: APP_ROLE,
+      appRoleBootstrap: 'verify',
       tenantMigrations: COMMERCE_TENANT_MIGRATIONS,
     });
     expect(again.schema).toBe(SCHEMA);

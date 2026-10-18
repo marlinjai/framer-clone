@@ -14,8 +14,9 @@
 //   - 401 with no session, 403 when no active workspace / not an admin, 400 on a
 //     malformed body,
 //   - the company's commerce schema is provisioned BEFORE the site row is
-//     written, and a missing owner URL or a failing provision is a 500 with a
-//     named code, a server log line, and nothing persisted.
+//     written, and a missing owner URL, a misconfigured app role or a failing
+//     provision is a 500 with a named code, a server log line, and nothing
+//     persisted.
 // resolveActiveScope and the typed error mapping are kept REAL (only
 // getSiteRepository is mocked) so the actual scope/error wiring is exercised.
 
@@ -208,6 +209,27 @@ describe('POST /api/projects (authorized)', () => {
     expect((await res.json()).error.code).toBe('commerce_suspended');
     expect(save).not.toHaveBeenCalled();
     expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/is suspended/));
+    errorSpy.mockRestore();
+  });
+
+  it('500s with commerce_misconfigured, logs the repair command only, and writes nothing on a wrong app-role search_path', async () => {
+    const { AppRoleSearchPathError } = await import('@marlinjai/tenant-db');
+    mockProvision.mockRejectedValue(new AppRoleSearchPathError('commerce_app', 'mismatch', '"$user", public'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const save = vi.fn();
+    installRepo({ saveProject: save });
+
+    const res = await POST(createReq({ name: 'Shop' }));
+
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.error.code).toBe('commerce_misconfigured');
+    // The role name, the found value and the repair command stay in the log.
+    expect(json.error.message).not.toMatch(/commerce_app|search_path|ALTER ROLE/);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/app role is misconfigured \(mismatch\).*ALTER ROLE "commerce_app" SET search_path = ext/),
+    );
+    expect(save).not.toHaveBeenCalled();
     errorSpy.mockRestore();
   });
 

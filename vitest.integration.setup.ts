@@ -65,18 +65,21 @@ export async function setup(): Promise<void> {
   //
   //   1. `commerce_app`: the LOW-PRIVILEGE login role db.ts connects as.
   //      Password-less (TRUST auth above), so no password literal is needed.
+  //      Its default search_path is set to `ext` here, by the superuser, as
+  //      prisma/sql/commerce-roles.sql does: provisioning only verifies it.
   //   2. `migratePublic`: the `ext` schema + the `public.tenant_groups`
   //      registry (the global tier, CM-03).
   //   3. USAGE on `ext` for commerce_app: mirrors prisma/sql/commerce-roles.sql
   //      §3 (the runner's per-schema grants do not cover `ext`, and the
   //      ext-resident defaults/triggers must resolve under the ext-locked path).
   //   4. `provisionTenant`: the demo tenant-group's `tg_<demo>` schema with the
-  //      commerce migration set, per-schema grants, the ext-locked search_path
-  //      backstop on commerce_app, and the append-only REVOKEs re-applied after
+  //      commerce migration set, per-schema grants, the check of the ext-locked
+  //      search_path backstop on commerce_app, and the append-only REVOKEs re-applied after
   //      the grants (the production `commerceProvisionOptions`).
   const owner = postgres(url, { max: 1, prepare: false });
   try {
     await owner.unsafe('CREATE ROLE commerce_app LOGIN');
+    await owner`ALTER ROLE commerce_app SET search_path = ext`;
     await migratePublic(owner);
     await owner.unsafe('GRANT USAGE ON SCHEMA ext TO commerce_app');
     await provisionTenant(owner, commerceProvisionOptions(DEMO_TENANT_GROUP_ID, 'demo'));
