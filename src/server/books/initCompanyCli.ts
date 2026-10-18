@@ -64,6 +64,9 @@ async function readAuthBrainTenant(
   fail('the company is not a tenant of that tenant group in auth-brain');
 }
 
+/** The address block, taken whole from one source. */
+const ADDRESS_FIELDS = ['addressLine1', 'addressLine2', 'postalCode', 'city', 'countryCode'] as const;
+
 function emptySender(): SenderBlockV1 {
   return Object.fromEntries(SENDER_FIELDS.map((f) => [f, null])) as SenderBlockV1;
 }
@@ -95,7 +98,9 @@ export async function runBooksInitCompany(
   const tenantId = values.tenant ?? fail('--tenant is required');
   const senderFile = values.sender ?? fail('--sender is required');
   const taxStatus = values['tax-status'];
-  if (taxStatus !== 'small_business' && taxStatus !== 'regular') fail('--tax-status must be small_business or regular');
+  if (taxStatus !== undefined && taxStatus !== 'small_business' && taxStatus !== 'regular') {
+    fail('--tax-status must be small_business or regular');
+  }
   const counters = (values.counter ?? []).map(parseCounter);
   if (counters.length === 0) fail('at least one --counter is required (formats are company configuration)');
 
@@ -104,20 +109,29 @@ export async function runBooksInitCompany(
 
   if (!values['sender-file-only']) {
     const t = await readAuthBrainTenant(env, tenantGroupId, tenantId);
-    const fromAuthBrain: Partial<SenderBlockV1> = {
-      legalName: t.legal_name,
-      vatId: t.vat_id,
-      addressLine1: t.billing_address?.street ?? null,
-      postalCode: t.billing_address?.postal_code ?? null,
-      city: t.billing_address?.city ?? null,
-      countryCode: t.billing_address?.country ?? null,
-    };
-    for (const [field, value] of Object.entries(fromAuthBrain) as Array<[keyof SenderBlockV1, string | null]>) {
+    // Identity fields one by one: auth-brain wins where it holds a value.
+    const identity: Partial<SenderBlockV1> = { legalName: t.legal_name, vatId: t.vat_id };
+    for (const [field, value] of Object.entries(identity) as Array<[keyof SenderBlockV1, string | null]>) {
       if (value === null || value.trim() === '') continue;
       if (fromFile[field] != null && fromFile[field] !== value) {
         log(`note: ${field} comes from auth-brain; the file's value is ignored`);
       }
       sender[field] = value;
+    }
+    // The address as one block, never mixed: auth-brain's billing address when it
+    // has one, otherwise the file's address lines.
+    const a = t.billing_address;
+    if (a) {
+      if (ADDRESS_FIELDS.some((f) => fromFile[f] != null)) {
+        log("note: the address comes from auth-brain's billing address; the file's address fields are ignored");
+      }
+      sender.addressLine1 = a.street;
+      sender.addressLine2 = null;
+      sender.postalCode = a.postal_code;
+      sender.city = a.city;
+      sender.countryCode = a.country;
+    } else {
+      log('note: auth-brain holds no billing address; the address comes from the file');
     }
   }
 

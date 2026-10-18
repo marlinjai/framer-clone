@@ -6,9 +6,11 @@
 // it issues. `initBooksCompany` writes both in one transaction and is safe to
 // run again:
 //
-//   - the settings row is inserted, or brought to the given values (it is
-//     configuration, not a record: issued documents carry their own frozen
-//     sender snapshot, so changing it never alters an issued document);
+//   - the settings row is inserted (tax status required the first time), or on
+//     a re-run only the given fields change: an omitted tax status, exemption
+//     note or payment terms keeps the stored value, the sender block is replaced
+//     (it is configuration, not a record: issued documents carry their own
+//     frozen sender snapshot, so changing it never alters an issued document);
 //   - a missing counter row is inserted; an existing counter is never lowered
 //     and never reformatted. A different `format`, or a `nextValue` above the
 //     counter's current value (which would skip numbers), is COUNTER_EXISTS. A
@@ -65,10 +67,21 @@ export async function requireSettings(db: Db, scope: BooksScope): Promise<Compan
   return settings;
 }
 
+// The sender's country is an ISO 3166-1 alpha-2 code (normalized to upper case).
+const initSenderBlock = senderBlockV1Schema.extend({
+  countryCode: z
+    .string()
+    .trim()
+    .transform((v) => v.toUpperCase())
+    .refine((v) => /^[A-Z]{2}$/.test(v), 'expected an ISO 3166-1 alpha-2 country code such as DE')
+    .nullable(),
+});
+
 const initInput = z.object({
-  taxStatus: z.enum(['small_business', 'regular']),
+  // Required the first time; on a re-run, omitted means "keep what is stored".
+  taxStatus: z.enum(['small_business', 'regular']).optional(),
   exemptionNote: z.string().trim().min(1).max(500).optional(),
-  senderBlock: senderBlockV1Schema,
+  senderBlock: initSenderBlock,
   defaultPaymentTermsDays: z.number().int().min(0).max(365).optional(),
   counters: z
     .array(
@@ -102,18 +115,46 @@ export async function initBooksCompany(
       .setIsolationLevel('read committed')
       .execute(async (trx) => {
         const now = new Date();
-        const values = {
-          tax_status: args.taxStatus,
-          exemption_note: args.exemptionNote ?? DEFAULT_EXEMPTION_NOTE,
-          sender_block: toJsonb(args.senderBlock),
-          default_payment_terms_days: args.defaultPaymentTermsDays ?? 14,
-          updated_at: now,
-        };
-        await trx
-          .insertInto('books_company_settings')
-          .values({ tenant_id: scope.tenantId, ...values })
-          .onConflict((oc) => oc.column('tenant_id').doUpdateSet(values))
-          .execute();
+        const stored = await trx
+          .selectFrom('books_company_settings')
+          .select('tenant_id')
+          .where('tenant_id', '=', scope.tenantId)
+          .forUpdate()
+          .executeTakeFirst();
+        if (!stored) {
+          if (!args.taxStatus) {
+            throw invalid('INVALID_INPUT', [
+              { path: ['taxStatus'], message: 'required when the company is initialised for the first time' },
+            ]);
+          }
+          await trx
+            .insertInto('books_company_settings')
+            .values({
+              tenant_id: scope.tenantId,
+              tax_status: args.taxStatus,
+              exemption_note: args.exemptionNote ?? DEFAULT_EXEMPTION_NOTE,
+              sender_block: toJsonb(args.senderBlock),
+              default_payment_terms_days: args.defaultPaymentTermsDays ?? 14,
+              updated_at: now,
+            })
+            .execute();
+        } else {
+          // A re-run changes only what it was given; the sender block is always
+          // given and replaces the stored one.
+          await trx
+            .updateTable('books_company_settings')
+            .set({
+              ...(args.taxStatus !== undefined ? { tax_status: args.taxStatus } : {}),
+              ...(args.exemptionNote !== undefined ? { exemption_note: args.exemptionNote } : {}),
+              ...(args.defaultPaymentTermsDays !== undefined
+                ? { default_payment_terms_days: args.defaultPaymentTermsDays }
+                : {}),
+              sender_block: toJsonb(args.senderBlock),
+              updated_at: now,
+            })
+            .where('tenant_id', '=', scope.tenantId)
+            .execute();
+        }
 
         const counters: InitBooksCompanyResult['counters'] = [];
         for (const c of args.counters) {

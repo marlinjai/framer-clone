@@ -77,8 +77,12 @@ function cliEnv(overrides: Env = {}): Env {
   };
 }
 
+const STUB_ADDRESS = { street: 'Musterstrasse 1', city: 'Berlin', postal_code: '10115', country: 'DE' };
+
 /** A company registered in the stub, and a local sender file with the fields auth-brain does not hold. */
-function company() {
+function company(
+  opts: { billingAddress?: Record<string, string> | null; file?: Record<string, unknown> } = {},
+) {
   const tenantId = newTenantId();
   stubTenants.set(env.tgId, [
     ...(stubTenants.get(env.tgId) ?? []),
@@ -86,23 +90,23 @@ function company() {
       id: tenantId,
       legal_name: 'Example Studio',
       vat_id: null,
-      billing_address: { street: 'Musterstrasse 1', city: 'Berlin', postal_code: '10115', country: 'DE' },
+      billing_address: opts.billingAddress === undefined ? STUB_ADDRESS : opts.billingAddress,
     },
   ]);
   const senderFile = join(workDir, `${tenantId}.json`);
   writeFileSync(
     senderFile,
-    JSON.stringify({ taxNumber: '12/345/67890', bankName: 'Example Bank', legalName: 'Old Name From File' }),
+    JSON.stringify(opts.file ?? { taxNumber: '12/345/67890', bankName: 'Example Bank', legalName: 'Old Name From File' }),
   );
   return { tenantId, senderFile };
 }
 
-function argv(tenantId: string, senderFile: string, counters: string[]) {
+function argv(tenantId: string, senderFile: string, counters: string[], extra: string[] = ['--tax-status', 'small_business']) {
   return [
     '--tenant-group', env.tgId,
     '--tenant', tenantId,
     '--sender', senderFile,
-    '--tax-status', 'small_business',
+    ...extra,
     ...counters.flatMap((c) => ['--counter', c]),
   ];
 }
@@ -205,5 +209,72 @@ describe('books:init-company end to end', () => {
     // Nothing was written for that company.
     const scope = scopeFor(env.appDb, env.tgId, tenantId, new FakeDirectory());
     expect(await readSettings(env.appDb, scope)).toBeNull();
+  });
+
+  it('a re-run without --tax-status or --exemption-note keeps the stored ones', async () => {
+    const { tenantId, senderFile } = company();
+    await runBooksInitCompany(
+      argv(tenantId, senderFile, COUNTERS, ['--tax-status', 'regular', '--exemption-note', 'Custom note', '--payment-terms', '30']),
+      cliEnv(),
+      () => {},
+    );
+    const rerun = await runBooksInitCompany(argv(tenantId, senderFile, COUNTERS, []), cliEnv(), () => {});
+    expect(rerun.settings).toMatchObject({ taxStatus: 'regular', exemptionNote: 'Custom note', defaultPaymentTermsDays: 30 });
+    // Given again, they change.
+    const changed = await runBooksInitCompany(
+      argv(tenantId, senderFile, COUNTERS, ['--tax-status', 'small_business']),
+      cliEnv(),
+      () => {},
+    );
+    expect(changed.settings).toMatchObject({ taxStatus: 'small_business', exemptionNote: 'Custom note' });
+    // The first run of a company without --tax-status is refused.
+    const fresh = company();
+    await expect(runBooksInitCompany(argv(fresh.tenantId, fresh.senderFile, COUNTERS, []), cliEnv(), () => {})).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+    });
+  });
+
+  it('the address block comes whole from one source, never mixed', async () => {
+    // auth-brain has a billing address: every address field comes from it.
+    const a = company({
+      file: { taxNumber: '12/345/67890', addressLine1: 'File Street 9', addressLine2: 'Rear building', postalCode: '99999' },
+    });
+    const logs: string[] = [];
+    const fromAuthBrain = await runBooksInitCompany(argv(a.tenantId, a.senderFile, COUNTERS), cliEnv(), (l) => logs.push(l));
+    expect(fromAuthBrain.settings.senderBlock).toMatchObject({
+      addressLine1: 'Musterstrasse 1',
+      addressLine2: null,
+      postalCode: '10115',
+      city: 'Berlin',
+      countryCode: 'DE',
+    });
+    expect(logs.some((l) => l.includes("address comes from auth-brain's billing address"))).toBe(true);
+
+    // auth-brain has none: every address field comes from the file.
+    const b = company({
+      billingAddress: null,
+      file: { taxNumber: '12/345/67890', addressLine1: 'File Street 9', postalCode: '99999', city: 'Leipzig', countryCode: 'de' },
+    });
+    const fromFile = await runBooksInitCompany(argv(b.tenantId, b.senderFile, COUNTERS), cliEnv(), () => {});
+    expect(fromFile.settings.senderBlock).toMatchObject({
+      addressLine1: 'File Street 9',
+      postalCode: '99999',
+      city: 'Leipzig',
+      countryCode: 'DE',
+    });
+  });
+
+  it('a country that is not an ISO 3166-1 alpha-2 code is refused', async () => {
+    const fromStub = company({ billingAddress: { ...STUB_ADDRESS, country: 'Germany' } });
+    await expect(runBooksInitCompany(argv(fromStub.tenantId, fromStub.senderFile, COUNTERS), cliEnv(), () => {})).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+    });
+    const fromFile = company({
+      billingAddress: null,
+      file: { taxNumber: '1', addressLine1: 'x', postalCode: '1', city: 'y', countryCode: 'DEU' },
+    });
+    await expect(runBooksInitCompany(argv(fromFile.tenantId, fromFile.senderFile, COUNTERS), cliEnv(), () => {})).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+    });
   });
 });

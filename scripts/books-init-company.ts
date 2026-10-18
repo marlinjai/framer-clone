@@ -7,7 +7,7 @@
 //
 //   pnpm books:init-company \
 //     --tenant-group <tenant group uuid> --tenant <company uuid> \
-//     --sender <local JSON file> --tax-status small_business \
+//     --sender <local JSON file> [--tax-status small_business] \
 //     --counter 'invoice={n}:62' --counter 'credit_note=GS-{n}:1' --counter 'offer=ANG-{n}:1' \
 //     [--payment-terms 14] [--exemption-note '...'] [--sender-file-only]
 //
@@ -15,9 +15,13 @@
 // from the auth-brain company record (the admin machine API, GET
 // /api/admin/machine/tenants), the rest (tax number, bank details, contact
 // lines) from the local JSON file, which stays on the operator's machine and is
-// never committed. Where both hold a field, auth-brain wins and the script says
-// which field the file's value was ignored for (names only). `--sender-file-only`
-// skips auth-brain and takes everything from the file.
+// never committed. Legal name and VAT id: auth-brain wins where it holds a
+// value. The address is taken whole from one source, never mixed: auth-brain's
+// billing address when it has one, otherwise the file's address lines. The
+// script says which file values were ignored (names only). `--sender-file-only`
+// skips auth-brain and takes everything from the file. `--tax-status`,
+// `--exemption-note` and `--payment-terms` are required (tax status) or
+// defaulted the first time; on a re-run an omitted flag keeps the stored value.
 //
 // Environment (inject with Infisical, never a .env file):
 //   COMMERCE_APP_DATABASE_URL  the low-privilege app role (the Books tables are
