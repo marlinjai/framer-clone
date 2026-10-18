@@ -13,7 +13,9 @@ import { createDraft } from '../repository/documents';
 import { addLine } from '../repository/lines';
 import { getDocument } from '../repository/read';
 import { issue } from '../issue';
-import { DEFAULT_EXEMPTION_NOTE } from '../settings';
+import { DEFAULT_EXEMPTION_NOTE, initBooksCompany } from '../settings';
+import { addDays } from '../numbering';
+import { MAX_AMOUNT_CENTS } from '../totals';
 import {
   ACTOR,
   FakeDirectory,
@@ -22,6 +24,8 @@ import {
   newTenantId,
   openBooksEnv,
   scopeFor,
+  syntheticSender,
+  berlinToday,
   type BooksEnv,
 } from './booksFixtures';
 
@@ -183,5 +187,106 @@ describe('Books tax cases', () => {
     expect(again.creditNote.document.id).toBe(cn.id);
     // A draft or a credit note cannot be cancelled.
     await expect(cancelInvoice(scope, cn.id, { actorUserId: ACTOR, reason: 'x' })).rejects.toMatchObject({ code: 'NOT_CANCELLABLE' });
+  });
+
+  it('the issuer tax id follows the tax status and reverse charge', async () => {
+    // Section 19: the small-business id alone is enough.
+    const dir = new FakeDirectory();
+    const small = scopeFor(env.appDb, env.tgId, newTenantId(), dir);
+    await initBooksCompany(small, {
+      taxStatus: 'small_business',
+      senderBlock: syntheticSender({ taxNumber: null, vatId: null, smallBusinessId: 'DE123456789-00001' }),
+      counters: [{ docType: 'invoice', format: '{n}', nextValue: 62 }],
+    });
+    const { customer: c1 } = await newCustomer(small, dir);
+    const d1 = await createDraft(small, { docType: 'invoice', actorUserId: ACTOR, customerId: c1.id });
+    await addLine(small, d1.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
+    expect((await issue(small, d1.document.id, { actorUserId: ACTOR })).document.document.documentNumber).toBe('62');
+
+    // Regular taxation: the small-business id alone is refused.
+    const regular = scopeFor(env.appDb, env.tgId, newTenantId(), dir);
+    await initBooksCompany(regular, {
+      taxStatus: 'regular',
+      senderBlock: syntheticSender({ taxNumber: null, vatId: null, smallBusinessId: 'DE123456789-00001' }),
+      counters: [{ docType: 'invoice', format: '{n}', nextValue: 1 }],
+    });
+    const { customer: c2 } = await newCustomer(regular, dir, { customerType: 'b2c' });
+    const d2 = await createDraft(regular, { docType: 'invoice', actorUserId: ACTOR, customerId: c2.id, serviceDate: '2026-10-01' });
+    await addLine(regular, d2.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
+    await expect(issue(regular, d2.document.id, { actorUserId: ACTOR })).rejects.toMatchObject({
+      code: 'SENDER_INCOMPLETE',
+      details: { missing: ['taxNumber|vatId'] },
+    });
+
+    // Reverse charge: the issuer's VAT id is required even with a tax number.
+    const rc = scopeFor(env.appDb, env.tgId, newTenantId(), dir);
+    await initBooksCompany(rc, {
+      taxStatus: 'regular',
+      senderBlock: syntheticSender({ vatId: null }),
+      counters: [{ docType: 'invoice', format: '{n}', nextValue: 1 }],
+    });
+    const { customer: c3 } = await newCustomer(rc, dir, { customerType: 'b2b', vatId: 'FR12345678901', countryCode: 'FR' });
+    const d3 = await createDraft(rc, { docType: 'invoice', actorUserId: ACTOR, customerId: c3.id, serviceDate: '2026-10-01' });
+    await addLine(rc, d3.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
+    await expect(issue(rc, d3.document.id, { actorUserId: ACTOR })).rejects.toMatchObject({
+      code: 'SENDER_INCOMPLETE',
+      details: { missing: ['vatId'] },
+    });
+  });
+
+  it('a credit note is never dated before the invoice it cancels', async () => {
+    const { dir, scope } = await regularCompany();
+    const { customer } = await newCustomer(scope, dir, { customerType: 'b2c' });
+    const draft = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id, serviceDate: '2026-10-01' });
+    await addLine(scope, draft.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
+    const today = berlinToday();
+    await issue(scope, draft.document.id, { actorUserId: ACTOR, issueDate: today });
+    await expect(
+      cancelInvoice(scope, draft.document.id, { actorUserId: ACTOR, reason: 'Backdated', issueDate: addDays(today, -1) }),
+    ).rejects.toMatchObject({ code: 'ISSUE_DATE_OUT_OF_ORDER' });
+    const same = await cancelInvoice(scope, draft.document.id, { actorUserId: ACTOR, reason: 'Same day', issueDate: today });
+    expect(same.creditNote.document.issueDate).toBe(today);
+  });
+
+  it('the cancellation reason is capped at 200 characters', async () => {
+    const { dir, scope } = await regularCompany();
+    const { customer } = await newCustomer(scope, dir, { customerType: 'b2c' });
+    const draft = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id, serviceDate: '2026-10-01' });
+    await addLine(scope, draft.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
+    await issue(scope, draft.document.id, { actorUserId: ACTOR });
+    await expect(
+      cancelInvoice(scope, draft.document.id, { actorUserId: ACTOR, reason: 'x'.repeat(201) }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    const ok = await cancelInvoice(scope, draft.document.id, { actorUserId: ACTOR, reason: 'x'.repeat(200) });
+    expect(ok.alreadyCancelled).toBe(false);
+  });
+
+  it('line and document amounts stay within INTEGER (2^31 - 1 cents)', async () => {
+    // Section 19 (no tax): a line of exactly the limit fits and issues.
+    const dir = new FakeDirectory();
+    const small = scopeFor(env.appDb, env.tgId, newTenantId(), dir);
+    await initCompany(small);
+    const { customer } = await newCustomer(small, dir);
+    const draft = await createDraft(small, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id });
+    const atLimit = await addLine(small, draft.document.id, { title: 'Large', quantity: 1000, unitPrice: MAX_AMOUNT_CENTS });
+    expect(atLimit.document.total).toBe(MAX_AMOUNT_CENTS);
+    // One more cent on the document: refused, nothing written.
+    await expect(addLine(small, draft.document.id, { title: 'Cent', quantity: 1000, unitPrice: 1 })).rejects.toMatchObject({
+      code: 'INVALID_LINE',
+    });
+    // One line above the limit: refused.
+    await expect(
+      addLine(small, draft.document.id, { title: 'Too large', quantity: 1001, unitPrice: MAX_AMOUNT_CENTS }),
+    ).rejects.toMatchObject({ code: 'INVALID_LINE' });
+    expect((await getDocument(small, draft.document.id)).lines).toHaveLength(1);
+    expect((await issue(small, draft.document.id, { actorUserId: ACTOR })).document.document.total).toBe(MAX_AMOUNT_CENTS);
+
+    // Regular taxation: the net fits but net plus 19 percent does not.
+    const { dir: dir2, scope: regular } = await regularCompany();
+    const { customer: c2 } = await newCustomer(regular, dir2, { customerType: 'b2c' });
+    const d2 = await createDraft(regular, { docType: 'invoice', actorUserId: ACTOR, customerId: c2.id });
+    await expect(
+      addLine(regular, d2.document.id, { title: 'Large', quantity: 1000, unitPrice: MAX_AMOUNT_CENTS, taxClass: 'standard' }),
+    ).rejects.toMatchObject({ code: 'INVALID_LINE' });
   });
 });

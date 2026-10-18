@@ -19,7 +19,7 @@ import { tenantDb } from '@marlinjai/tenant-db';
 
 import type { CommerceDB } from '../../commerce/db-types';
 import { REVERSE_CHARGE_NOTICE } from '../../tax/germanVat';
-import { addLine, updateLine } from '../repository/lines';
+import { addLine, removeLine, updateLine } from '../repository/lines';
 import { createDraft, setCustomer } from '../repository/documents';
 import { getDocument } from '../repository/read';
 import { updateCustomerTaxFields } from '../repository/customers';
@@ -355,5 +355,42 @@ describe('Books stateful flow', () => {
     expect(again).toMatchObject({ alreadyIssued: true });
     expect(again.document.document.documentNumber).toBe('62');
     expect(await counterValue(scope.tenantId)).toBe(63);
+  });
+
+  it('a line removed between the pre-check and the lock cannot produce a zero-line invoice', async () => {
+    const dir = new FakeDirectory();
+    const scope = scopeFor(env.appDb, env.tgId, newTenantId(), dir);
+    await initCompany(scope);
+    const { customer } = await newCustomer(scope, dir);
+    const draft = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id });
+    const view = await addLine(scope, draft.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
+    await expect(
+      issue(scope, draft.document.id, { actorUserId: ACTOR }, {
+        // A concurrent editor removes the only billable line after the pre-check.
+        beforeTransaction: async () => {
+          await removeLine(scope, draft.document.id, view.lines[0].id);
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'NO_BILLABLE_LINES' });
+    expect((await getDocument(scope, draft.document.id)).document.status).toBe('draft');
+    expect(await counterValue(scope.tenantId)).toBe(62);
+  });
+
+  it('issued_at and the default issue date come from the injected clock', async () => {
+    const dir = new FakeDirectory();
+    const scope = scopeFor(env.appDb, env.tgId, newTenantId(), dir);
+    await initCompany(scope);
+    const { customer } = await newCustomer(scope, dir);
+    const draft = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id });
+    await addLine(scope, draft.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
+    const now = new Date('2026-10-01T10:00:00.000Z');
+    const { document } = await issue(scope, draft.document.id, { actorUserId: ACTOR }, { now });
+    expect(document.document.issueDate).toBe('2026-10-01');
+    const row = await env.ownerDb
+      .selectFrom('sales_document')
+      .select((eb) => eb.cast<string>('issued_at', 'text').as('issued_at'))
+      .where('id', '=', draft.document.id)
+      .executeTakeFirstOrThrow();
+    expect(row.issued_at).toBe('2026-10-01 10:00:00');
   });
 });

@@ -20,7 +20,8 @@
 //      with the same derived values (no recompute: a cancellation offsets
 //      exactly what was invoiced). Amounts stay non-negative; the document type
 //      carries the sign. A credit note has no due date and no payment reference.
-//   4. Lock the credit_note counter, allocate, issue the credit note; write its
+//   4. Lock the credit_note counter, allocate (the credit note's issue date is
+//      never earlier than the invoice's), issue the credit note; write its
 //      `draft_created` and `issued` events.
 //   5. Set the invoice to cancelled; write its `cancelled` event. Commit.
 
@@ -37,11 +38,17 @@ import { buildSenderSnapshot, senderMissingFields, toJsonb } from './snapshots';
 
 const cancelInput = z.object({
   actorUserId: z.string().trim().min(1).max(200),
-  reason: z.string().trim().min(1).max(1000),
+  // Written into the invoice's `cancelled` event: a short business reason, never
+  // personal data (no names, no addresses). Capped so it cannot grow the log.
+  reason: z.string().trim().min(1).max(200),
   issueDate: z.string().optional(),
 });
 export type CancelInvoiceInput = z.input<typeof cancelInput>;
 
+/**
+ * `reason` is stored in the invoice's `cancelled` event payload: a short business
+ * reason (at most 200 characters) that must not contain personal data.
+ */
 export interface CancelResult {
   invoice: DocumentView;
   creditNote: DocumentView;
@@ -90,7 +97,10 @@ export async function cancelInvoice(
 
         // (2) A fresh sender; the invoice's recipient.
         const settings = await requireSettings(trx, scope);
-        const missingSender = senderMissingFields(settings.senderBlock);
+        const missingSender = senderMissingFields(settings.senderBlock, {
+          taxStatus: settings.taxStatus,
+          reverseCharge: invoice.reverse_charge,
+        });
         if (missingSender.length > 0) {
           throw new BooksError('SENDER_INCOMPLETE', `SENDER_INCOMPLETE: ${missingSender.join(', ')}`, {
             missing: missingSender,
@@ -99,7 +109,15 @@ export async function cancelInvoice(
         const senderSnapshot = buildSenderSnapshot(settings.senderBlock);
 
         // (3) The credit note as a draft, with copies of the lines.
-        const now = new Date();
+        // A credit note is never dated before the invoice it cancels.
+        if (invoice.issue_date && issueDate < invoice.issue_date) {
+          throw new BooksError(
+            'ISSUE_DATE_OUT_OF_ORDER',
+            `ISSUE_DATE_OUT_OF_ORDER: ${issueDate} is earlier than the invoice (${invoice.issue_date})`,
+            { issueDate, invoiceIssueDate: invoice.issue_date },
+          );
+        }
+        const now = options.now ?? new Date();
         const creditNoteId = randomUUID();
         await trx
           .insertInto('sales_document')

@@ -19,11 +19,14 @@
 //   3. Open the transaction; lock the document FOR UPDATE. No longer a draft: a
 //      concurrent issue won, return it. Its customer changed since step 2:
 //      CONCURRENT_EDIT.
-//   4. Read the company setting (SETTINGS_MISSING), validate the sender block
-//      (SENDER_INCOMPLETE). Under regular taxation a service date or period is
+//   4. Repeat the billable-line check on the lines under the lock. Read the
+//      company setting (SETTINGS_MISSING). Under regular taxation a service date or period is
 //      required (SERVICE_DATE_REQUIRED); under Section 19 both stay optional.
 //   5. Resolve the tax profile (TAX_CASE_UNSUPPORTED for a third country under
-//      regular taxation); recompute every line and the totals from the inputs.
+//      regular taxation); validate the sender block for it (SENDER_INCOMPLETE:
+//      under Section 19 one of tax number, VAT id or small-business id, under
+//      regular taxation tax number or VAT id, under reverse charge the VAT id);
+//      recompute every line and the totals from the inputs.
 //   6. Determine the issue date (argument or today in Europe/Berlin; never in
 //      the future).
 //   7. Lock the counter, check the date against the last number of the type
@@ -36,6 +39,7 @@
 import { z } from 'zod';
 
 import { ReverseChargeNotAllowedError } from '../tax/germanVat';
+import { totalsExceedLimit } from './totals';
 import { BooksError, invalid, withDbErrors } from './errors';
 import { addDays, allocateNumber, resolveIssueDate } from './numbering';
 import { readRecipient } from './recipients';
@@ -69,7 +73,9 @@ export interface IssueResult {
  */
 export interface IssueOptions {
   afterCounterUpdate?: () => void | Promise<void>;
-  /** The clock for "today" (Europe/Berlin). */
+  /** Runs between the pre-checks and the transaction (proves the checks are repeated under the lock). */
+  beforeTransaction?: () => void | Promise<void>;
+  /** The clock: "today" (Europe/Berlin) and `issued_at`. */
   now?: Date;
 }
 
@@ -118,6 +124,8 @@ export async function issue(
     });
   }
 
+  if (options.beforeTransaction) await options.beforeTransaction();
+
   return withDbErrors(() =>
     scope.db
       .transaction()
@@ -136,16 +144,15 @@ export async function issue(
         }
         const customer = await selectCustomerRow(trx, scope, customerBefore.id, { forShare: true });
         if (!customer) throw new BooksError('CUSTOMER_NOT_FOUND', 'CUSTOMER_NOT_FOUND', { customerId: customerBefore.id });
-
-        // (4) Company setting and sender.
-        const settings = await requireSettings(trx, scope);
-        const missingSender = senderMissingFields(settings.senderBlock);
-        if (missingSender.length > 0) {
-          throw new BooksError('SENDER_INCOMPLETE', `SENDER_INCOMPLETE: ${missingSender.join(', ')}`, {
-            missing: missingSender,
-          });
+        // The billable-line check again, on the lines as they are under the lock:
+        // a line removed after the pre-check must not let a zero-line invoice through.
+        const lockedLines = await selectLineRows(trx, scope, id);
+        if (!lockedLines.some((l) => l.kind !== 'text')) {
+          throw new BooksError('NO_BILLABLE_LINES', 'NO_BILLABLE_LINES', { documentId: id });
         }
-        const senderSnapshot = buildSenderSnapshot(settings.senderBlock);
+
+        // (4) Company setting.
+        const settings = await requireSettings(trx, scope);
         if (settings.taxStatus === 'regular' && !row.service_date && !row.service_period_start) {
           throw new BooksError('SERVICE_DATE_REQUIRED', 'SERVICE_DATE_REQUIRED', { documentId: id });
         }
@@ -165,11 +172,27 @@ export async function issue(
             countryCode: customer.country_code,
           });
         }
-        const now = new Date();
+        // The sender, now that the profile says whether this is reverse charge
+        // (which needs the issuer's VAT id).
+        const missingSender = senderMissingFields(settings.senderBlock, {
+          taxStatus: settings.taxStatus,
+          reverseCharge: profile.reverseCharge,
+        });
+        if (missingSender.length > 0) {
+          throw new BooksError('SENDER_INCOMPLETE', `SENDER_INCOMPLETE: ${missingSender.join(', ')}`, {
+            missing: missingSender,
+          });
+        }
+        const senderSnapshot = buildSenderSnapshot(settings.senderBlock);
+
+        const now = options.now ?? new Date();
         const fields = await syncDraftTaxState(trx, scope, id, profile, customer, row.net_or_gross, {
           forceAll: true,
           now,
         });
+        if (totalsExceedLimit({ subtotal: fields.subtotal, taxAmount: fields.tax_amount, total: fields.total })) {
+          throw invalid('INVALID_LINE', [{ path: ['total'], message: 'the document total exceeds the largest amount (21,474,836.47 EUR)' }]);
+        }
 
         // (7) The counter (the issue date was resolved in step 6, up front).
         const number = await allocateNumber(trx, scope, 'invoice', issueDate);

@@ -5,7 +5,17 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { applyDiscount, deriveLine, lineNetBeforeDiscount, summarize, type LineInputs, type LineTaxContext } from '../totals';
+import {
+  MAX_AMOUNT_CENTS,
+  applyDiscount,
+  deriveLine,
+  lineExceedsLimit,
+  lineNetBeforeDiscount,
+  summarize,
+  totalsExceedLimit,
+  type LineInputs,
+  type LineTaxContext,
+} from '../totals';
 
 const NET: LineTaxContext = { netOrGross: 'net', kleinunternehmer: false, reverseCharge: false };
 
@@ -78,5 +88,19 @@ describe('totals', () => {
       taxAmount: 0,
       taxTreatment: 'reverse_charge',
     });
+  });
+
+  it('amounts stay within a PostgreSQL INTEGER (2^31 - 1 cents)', () => {
+    expect(MAX_AMOUNT_CENTS).toBe(2 ** 31 - 1);
+    // Exactly the limit, no tax: fits.
+    const atLimit = deriveLine(line({ unitPrice: MAX_AMOUNT_CENTS }), { ...NET, kleinunternehmer: true });
+    expect(atLimit.subtotal).toBe(MAX_AMOUNT_CENTS);
+    expect(lineExceedsLimit(atLimit)).toBe(false);
+    // One cent more: refused.
+    expect(lineExceedsLimit(deriveLine(line({ quantity: 1001, unitPrice: MAX_AMOUNT_CENTS }), { ...NET, kleinunternehmer: true }))).toBe(true);
+    // The net fits but net plus 19 percent does not.
+    expect(lineExceedsLimit(deriveLine(line({ unitPrice: MAX_AMOUNT_CENTS, taxClass: 'standard' }), NET))).toBe(true);
+    expect(totalsExceedLimit({ subtotal: MAX_AMOUNT_CENTS, taxAmount: 0, total: MAX_AMOUNT_CENTS })).toBe(false);
+    expect(totalsExceedLimit({ subtotal: MAX_AMOUNT_CENTS, taxAmount: 1, total: MAX_AMOUNT_CENTS + 1 })).toBe(true);
   });
 });

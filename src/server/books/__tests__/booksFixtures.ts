@@ -123,7 +123,8 @@ export function syntheticSender(overrides: Partial<SenderBlockV1> = {}): SenderB
     city: 'Berlin',
     countryCode: 'DE',
     taxNumber: '12/345/67890',
-    vatId: null,
+    // A synthetic VAT id, so a regular company can also issue reverse-charge invoices.
+    vatId: 'DE123456789',
     smallBusinessId: null,
     email: 'billing@example.invalid',
     phone: null,

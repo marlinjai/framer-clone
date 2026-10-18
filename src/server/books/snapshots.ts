@@ -98,6 +98,11 @@ export type EventPayload = Record<string, unknown>;
  * column would hold a JSON string scalar instead of the object.
  */
 export function toJsonb(value: unknown): RawBuilder<JsonbWrite> {
+  // A JSONB column is either written with a value or left NULL by the caller;
+  // serializing null or undefined would store the JSON literal `null`.
+  if (value === null || value === undefined) {
+    throw new Error('toJsonb: no value to write (leave the column NULL instead)');
+  }
   return sql<JsonbWrite>`${JSON.stringify(value)}::text::jsonb`;
 }
 
@@ -105,21 +110,39 @@ export function toJsonb(value: unknown): RawBuilder<JsonbWrite> {
 
 /** The sender fields section 34a requires on every invoice. */
 const SENDER_REQUIRED = ['legalName', 'addressLine1', 'postalCode', 'city', 'countryCode'] as const;
-/** At least one of these identifies the issuer to the tax office. */
+/**
+ * How the issuer is identified to the tax office (section 14 (4) no. 2 UStG,
+ * section 34a UStDV): under Section 19 the tax number, the VAT id or the
+ * small-business identification number (Kleinunternehmer-Identifikationsnummer);
+ * under regular taxation the tax number or the VAT id. A reverse-charge
+ * invoice must carry the issuer's VAT id (section 14a (1) UStG).
+ */
 export const SENDER_TAX_ID_FIELDS = ['taxNumber', 'vatId', 'smallBusinessId'] as const;
+export const REGULAR_SENDER_TAX_ID_FIELDS = ['taxNumber', 'vatId'] as const;
+
+/** What decides which issuer tax id an invoice needs. */
+export interface SenderTaxContext {
+  taxStatus: 'small_business' | 'regular';
+  reverseCharge: boolean;
+}
 
 function blank(value: string | null | undefined): boolean {
   return value == null || value.trim() === '';
 }
 
 /**
- * The names of the required sender fields that are empty. The tax id group is
- * reported as one entry, `taxNumber|vatId|smallBusinessId`, when all three are
- * empty. Names only, never values.
+ * The names of the required sender fields that are empty for an invoice in the
+ * given tax context. A tax id group is reported as one entry (e.g.
+ * `taxNumber|vatId`) when none of its fields is set. Names only, never values.
  */
-export function senderMissingFields(block: SenderBlockV1): string[] {
+export function senderMissingFields(block: SenderBlockV1, ctx: SenderTaxContext): string[] {
   const missing: string[] = SENDER_REQUIRED.filter((f) => blank(block[f]));
-  if (SENDER_TAX_ID_FIELDS.every((f) => blank(block[f]))) missing.push(SENDER_TAX_ID_FIELDS.join('|'));
+  if (ctx.reverseCharge) {
+    if (blank(block.vatId)) missing.push('vatId');
+    return missing;
+  }
+  const accepted = ctx.taxStatus === 'small_business' ? SENDER_TAX_ID_FIELDS : REGULAR_SENDER_TAX_ID_FIELDS;
+  if (accepted.every((f) => blank(block[f]))) missing.push(accepted.join('|'));
   return missing;
 }
 

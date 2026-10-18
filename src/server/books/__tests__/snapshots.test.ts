@@ -10,6 +10,7 @@ import {
   buildSenderSnapshot,
   recipientMissingFields,
   senderMissingFields,
+  toJsonb,
   type RecipientContact,
   type SenderBlockV1,
 } from '../snapshots';
@@ -59,17 +60,39 @@ function contact(overrides: Partial<RecipientContact> = {}): RecipientContact {
 
 describe('snapshots', () => {
   it('sender block requires name, address and one tax id', () => {
-    expect(senderMissingFields(sender())).toEqual([]);
-    expect(senderMissingFields(sender({ legalName: null }))).toEqual(['legalName']);
-    expect(senderMissingFields(sender({ addressLine1: '  ' }))).toEqual(['addressLine1']);
-    expect(senderMissingFields(sender({ postalCode: null }))).toEqual(['postalCode']);
-    expect(senderMissingFields(sender({ city: null }))).toEqual(['city']);
-    expect(senderMissingFields(sender({ countryCode: null }))).toEqual(['countryCode']);
-    expect(senderMissingFields(sender({ taxNumber: null }))).toEqual(['taxNumber|vatId|smallBusinessId']);
-    // Any one of the three tax ids is enough.
-    expect(senderMissingFields(sender({ taxNumber: null, vatId: 'DE123456789' }))).toEqual([]);
-    expect(senderMissingFields(sender({ taxNumber: null, smallBusinessId: 'SB-1' }))).toEqual([]);
+    const sb = { taxStatus: 'small_business' as const, reverseCharge: false };
+    expect(senderMissingFields(sender(), sb)).toEqual([]);
+    expect(senderMissingFields(sender({ legalName: null }), sb)).toEqual(['legalName']);
+    expect(senderMissingFields(sender({ addressLine1: '  ' }), sb)).toEqual(['addressLine1']);
+    expect(senderMissingFields(sender({ postalCode: null }), sb)).toEqual(['postalCode']);
+    expect(senderMissingFields(sender({ city: null }), sb)).toEqual(['city']);
+    expect(senderMissingFields(sender({ countryCode: null }), sb)).toEqual(['countryCode']);
+    expect(senderMissingFields(sender({ taxNumber: null }), sb)).toEqual(['taxNumber|vatId|smallBusinessId']);
+    // Under Section 19 any one of the three identifies the issuer (section 34a UStDV).
+    expect(senderMissingFields(sender({ taxNumber: null, vatId: 'DE123456789' }), sb)).toEqual([]);
+    expect(senderMissingFields(sender({ taxNumber: null, smallBusinessId: 'DE123456789-00001' }), sb)).toEqual([]);
     expect(buildSenderSnapshot(sender())).toMatchObject({ v: 1, legalName: 'Example Studio' });
+  });
+
+  it('under regular taxation the small-business id alone is not enough', () => {
+    const regular = { taxStatus: 'regular' as const, reverseCharge: false };
+    expect(senderMissingFields(sender({ taxNumber: null, smallBusinessId: 'DE123456789-00001' }), regular)).toEqual([
+      'taxNumber|vatId',
+    ]);
+    expect(senderMissingFields(sender(), regular)).toEqual([]);
+    expect(senderMissingFields(sender({ taxNumber: null, vatId: 'DE123456789' }), regular)).toEqual([]);
+  });
+
+  it('a reverse-charge invoice needs the issuer\'s VAT id (section 14a UStG)', () => {
+    const rc = { taxStatus: 'regular' as const, reverseCharge: true };
+    expect(senderMissingFields(sender(), rc)).toEqual(['vatId']);
+    expect(senderMissingFields(sender({ vatId: 'DE123456789' }), rc)).toEqual([]);
+  });
+
+  it('toJsonb refuses null and undefined', () => {
+    expect(() => toJsonb(null)).toThrow(/no value/);
+    expect(() => toJsonb(undefined)).toThrow(/no value/);
+    expect(() => toJsonb({ v: 1 })).not.toThrow();
   });
 
   it('customer snapshot requires the section 34a recipient fields', () => {

@@ -205,4 +205,23 @@ describe('Books isolation: two companies in one tenant group schema', () => {
       expect(checked).toContain(table);
     }
   });
+
+  it('a forged cursor is INVALID_INPUT, never a database error', async () => {
+    const dir = new FakeDirectory();
+    const { scope } = await company(dir);
+    const forge = (c: unknown) => Buffer.from(JSON.stringify(c), 'utf8').toString('base64url');
+    for (const cursor of [
+      'not-base64-json',
+      forge({ issueDate: null, createdAt: 'yesterday', id: 'x' }),
+      forge({ issueDate: null, createdAt: '2026-13-45 99:99:99', id: 'x' }),
+      forge({ issueDate: '2026-02-30', createdAt: '2026-10-01 10:00:00.000', id: 'x' }),
+    ]) {
+      await expect(listDocuments(scope, { cursor })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    }
+    // A cursor the list returned works.
+    const first = await listDocuments(scope, { limit: 1 });
+    expect(first.nextCursor).not.toBeNull();
+    const second = await listDocuments(scope, { limit: 1, cursor: first.nextCursor as string });
+    expect(second.items[0].id).not.toBe(first.items[0].id);
+  });
 });

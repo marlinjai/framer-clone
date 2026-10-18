@@ -53,6 +53,23 @@ export interface LineTaxContext {
   reverseCharge: boolean;
 }
 
+/**
+ * The largest amount a money column holds (PostgreSQL INTEGER, 2^31 - 1 cents).
+ * A line whose net or gross, or a document whose total, would exceed it is
+ * refused (INVALID_LINE) instead of failing as a database overflow.
+ */
+export const MAX_AMOUNT_CENTS = 2_147_483_647;
+
+/** True when a derived line (or its gross, net + tax) does not fit a money column. */
+export function lineExceedsLimit(derived: DerivedLine): boolean {
+  return derived.subtotal > MAX_AMOUNT_CENTS || derived.subtotal + derived.taxAmount > MAX_AMOUNT_CENTS;
+}
+
+/** True when a document's totals do not fit a money column. */
+export function totalsExceedLimit(totals: { subtotal: number; taxAmount: number; total: number }): boolean {
+  return totals.subtotal > MAX_AMOUNT_CENTS || totals.taxAmount > MAX_AMOUNT_CENTS || totals.total > MAX_AMOUNT_CENTS;
+}
+
 /** round(quantity * unitPrice / 1000), quantity in thousandths. */
 export function lineNetBeforeDiscount(quantity: number, unitPrice: number): number {
   return Math.round((quantity * unitPrice) / 1000);

@@ -20,7 +20,7 @@ import { pricingRepository } from '../../commerce/repository/pricing';
 import { BooksError, invalid } from '../errors';
 import type { BooksScope } from '../scope';
 import { requireSettings } from '../settings';
-import { deriveLine, type LineInputs, type TaxClass } from '../totals';
+import { MAX_AMOUNT_CENTS, deriveLine, lineExceedsLimit, type LineInputs, type TaxClass } from '../totals';
 import { finishDraftMutation, inDraftTransaction, lockDraft } from './documents';
 import { readPersistedView, selectLineRows, type DocumentRowWithSnapshots, type DocumentView } from './read';
 import { profileFor, selectCustomerRow } from './taxState';
@@ -33,7 +33,7 @@ const lineFields = {
   description: z.string().max(4000).nullable(),
   quantity: z.number().int().min(0).max(1_000_000_000),
   unitLabel: z.string().trim().min(1).max(20),
-  unitPrice: z.number().int().min(0).max(1_000_000_000),
+  unitPrice: z.number().int().min(0).max(MAX_AMOUNT_CENTS),
   discountBp: z.number().int().min(0).max(10000),
   taxClass: z.enum(TAX_CLASSES).nullable(),
   taxRateOverride: z.number().int().min(0).max(10000).nullable(),
@@ -123,16 +123,22 @@ async function variantDefaults(
   return { title: title.slice(0, 300), unitPrice, taxClass };
 }
 
-/** Derived values of one line under the draft's current profile. */
+/** Derived values of one line under the draft's current profile (INVALID_LINE beyond the money limit). */
 async function deriveForDraft(trx: Transaction<CommerceDB>, scope: BooksScope, row: DocumentRowWithSnapshots, line: LineInputs) {
   const settings = await requireSettings(trx, scope);
   const customer = row.customer_id ? ((await selectCustomerRow(trx, scope, row.customer_id)) ?? null) : null;
   const profile = profileFor(settings, customer);
-  return deriveLine(line, {
+  const derived = deriveLine(line, {
     netOrGross: row.net_or_gross,
     kleinunternehmer: profile.kleinunternehmer,
     reverseCharge: profile.reverseCharge,
   });
+  if (lineExceedsLimit(derived)) {
+    throw invalid('INVALID_LINE', [
+      { path: ['unitPrice'], message: 'quantity times price exceeds the largest amount (21,474,836.47 EUR)' },
+    ]);
+  }
+  return derived;
 }
 
 /** Append a line at the end of a draft. */

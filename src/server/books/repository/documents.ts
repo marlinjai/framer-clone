@@ -18,6 +18,7 @@ import { isIsoDate } from '../numbering';
 import type { BooksScope } from '../scope';
 import { requireSettings } from '../settings';
 import { toJsonb } from '../snapshots';
+import { totalsExceedLimit } from '../totals';
 import { insertEvent } from './events';
 import { readPersistedView, selectDocumentRow, type DocumentRowWithSnapshots, type DocumentView } from './read';
 import { profileFor, selectCustomerRow, syncDraftTaxState, type CustomerRow } from './taxState';
@@ -119,6 +120,11 @@ export async function finishDraftMutation(
     forceAll: Boolean(opts.forceAll) || profile.key !== row.tax_profile_key,
     now,
   });
+  if (totalsExceedLimit({ subtotal: fields.subtotal, taxAmount: fields.tax_amount, total: fields.total })) {
+    throw invalid('INVALID_LINE', [
+      { path: ['total'], message: 'the document total would exceed the largest amount (21,474,836.47 EUR)' },
+    ]);
+  }
   await trx
     .updateTable('sales_document')
     .set({

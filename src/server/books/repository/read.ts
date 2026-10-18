@@ -26,6 +26,7 @@ import type {
   VariantRefSource,
 } from '../../commerce/db-types';
 import { BooksError, invalid } from '../errors';
+import { isIsoDate } from '../numbering';
 import { documentColumns, documentColumnsWithSnapshots, EVENT_COLUMNS, LINE_COLUMNS } from './columns';
 import { readSettings } from '../settings';
 import { documentTaxFields, profileFor, recomputeLines, selectCustomerRow } from './taxState';
@@ -365,14 +366,26 @@ export async function selectEventRows(db: Db, scope: BooksScope, documentId: str
     .execute();
 }
 
-/** Read the full view as persisted (no stale check). */
-export async function readPersistedView(db: Db, scope: BooksScope, id: string): Promise<DocumentView> {
+/**
+ * Run a multi-statement read in ONE snapshot: inside a caller's transaction as
+ * is, otherwise in a REPEATABLE READ transaction, so a document, its lines and
+ * its events are never read from different moments.
+ */
+export function inReadSnapshot<T>(db: Db, fn: (db: Db) => Promise<T>): Promise<T> {
+  if (db.isTransaction) return fn(db);
+  return db.transaction().setIsolationLevel('repeatable read').execute((trx) => fn(trx));
+}
+
+/** Read the full view as persisted (no stale check), from one snapshot. */
+export function readPersistedView(db: Db, scope: BooksScope, id: string): Promise<DocumentView> {
+  return inReadSnapshot(db, (snap) => readPersistedViewIn(snap, scope, id));
+}
+
+async function readPersistedViewIn(db: Db, scope: BooksScope, id: string): Promise<DocumentView> {
   const row = await selectDocumentRow(db, scope, id);
   if (!row) throw new BooksError('NOT_FOUND', 'NOT_FOUND: document', { documentId: id });
-  const [lines, events] = await Promise.all([
-    selectLineRows(db, scope, id),
-    selectEventRows(db, scope, id),
-  ]);
+  const lines = await selectLineRows(db, scope, id);
+  const events = await selectEventRows(db, scope, id);
   return {
     document: mapDocumentWithSnapshots(row),
     lines: lines.map(mapLine),
@@ -391,13 +404,15 @@ export async function readPersistedView(db: Db, scope: BooksScope, id: string): 
  * in-memory recomputation with `stale: true`; the persisted figures are never
  * returned as current. The next mutation or the issue persists them.
  */
-export async function getDocument(scope: BooksScope, id: string): Promise<DocumentView> {
-  const row = await selectDocumentRow(scope.db, scope, id);
+export function getDocument(scope: BooksScope, id: string): Promise<DocumentView> {
+  return inReadSnapshot(scope.db, (db) => getDocumentIn(db, scope, id));
+}
+
+async function getDocumentIn(db: Db, scope: BooksScope, id: string): Promise<DocumentView> {
+  const row = await selectDocumentRow(db, scope, id);
   if (!row) throw new BooksError('NOT_FOUND', 'NOT_FOUND: document', { documentId: id });
-  const [lineRows, eventRows] = await Promise.all([
-    selectLineRows(scope.db, scope, id),
-    selectEventRows(scope.db, scope, id),
-  ]);
+  const lineRows = await selectLineRows(db, scope, id);
+  const eventRows = await selectEventRows(db, scope, id);
   const view: DocumentView = {
     document: mapDocumentWithSnapshots(row),
     lines: lineRows.map(mapLine),
@@ -406,9 +421,9 @@ export async function getDocument(scope: BooksScope, id: string): Promise<Docume
   };
   if (row.status !== 'draft') return view;
 
-  const settings = await readSettings(scope.db, scope);
+  const settings = await readSettings(db, scope);
   if (!settings) return { ...view, stale: row.tax_profile_key === null };
-  const customer = row.customer_id ? ((await selectCustomerRow(scope.db, scope, row.customer_id)) ?? null) : null;
+  const customer = row.customer_id ? ((await selectCustomerRow(db, scope, row.customer_id)) ?? null) : null;
   const profile = profileFor(settings, customer);
   if (profile.key === row.tax_profile_key) return view;
 
@@ -463,7 +478,15 @@ interface Cursor {
   id: string;
 }
 
-const cursorSchema = z.object({ issueDate: z.string().nullable(), createdAt: z.string(), id: z.string() });
+const cursorSchema = z.object({
+  issueDate: z.string().refine(isIsoDate).nullable(),
+  // The text form of a TIMESTAMP(3) column, as listDocuments wrote it.
+  createdAt: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?$/)
+    .refine((v) => isIsoDate(v.slice(0, 10)) && !Number.isNaN(Date.parse(`${v.replace(' ', 'T').slice(0, 23)}Z`))),
+  id: z.string().min(1).max(100),
+});
 
 function encodeCursor(c: Cursor): string {
   return Buffer.from(JSON.stringify(c), 'utf8').toString('base64url');
