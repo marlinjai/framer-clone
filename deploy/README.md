@@ -181,8 +181,7 @@ It leaves both logins and passwords alone. Check the result with
 `SELECT rolcreaterole FROM pg_roles WHERE rolname = 'commerce_ddl'` (expect `f`)
 and `SELECT count(*) FROM pg_auth_members WHERE roleid = 'commerce_app'::regrole
 AND member = 'commerce_ddl'::regrole` (expect `0`). A deploy that runs first fails
-its start step with exactly that instruction, and the running container keeps
-serving.
+its start step with exactly that instruction.
 
 ## Environment
 
