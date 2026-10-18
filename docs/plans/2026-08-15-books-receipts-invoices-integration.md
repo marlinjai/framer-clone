@@ -958,6 +958,32 @@ reasoning; decided, say so if you disagree.
     placeholder in framer-clone's Infisical project and copying the value with `copy_secret`.
     The variable is documented in `.env.example`; unset, issuing answers
     `RECIPIENT_UNAVAILABLE`. It belongs with roadmap line 4's production wiring.
+25. **Review hardening (2026-10-18), so that no database role can change an issued document.**
+    `007_books` (never applied outside test containers) is tightened in place:
+    - a document is inserted as a draft unless `source = 'import'` (BK004), an import carries
+      its number, dates and snapshots and is never a draft (CHECKs; this replaces the earlier
+      "the import may relax the issued CHECK" branch), and `id`, `tenant_id`, `doc_type` and
+      `source` are fixed on every update, drafts included (BK001), so a draft cannot become an
+      import;
+    - number counters cannot be deleted, truncated or moved to another company or type (BK003),
+      and `commerce_app` has no DELETE on them (`NO_DELETE_TABLES`, re-applied after the
+      provisioning and fleet grants);
+    - TRUNCATE is refused on `sales_document` and `sales_document_line` (BK001) as on the event
+      table (BK002); `books_company_settings` is configuration, not frozen, and has none;
+    - the JSONB columns carry shape CHECKs (snapshots, sender block and payload are objects,
+      tax summary and footer blocks are lists), and `toJsonb` refuses null and undefined.
+    In the domain: `issue` repeats the billable-line check on the lines read under the document
+    lock; the issuer's tax id follows section 14 (4) no. 2 UStG and section 34a UStDV (under
+    Section 19 tax number, VAT id or small-business identification number; under regular
+    taxation tax number or VAT id; a reverse-charge invoice needs the VAT id, section 14a); a
+    credit note is never dated before its invoice; line and document amounts are capped at
+    2^31 - 1 cents (`INVALID_LINE`); `issued_at` follows the injected clock; `getDocument` reads
+    in one REPEATABLE READ snapshot; a forged list cursor is `INVALID_INPUT`; the cancellation
+    reason is capped at 200 characters and must not contain personal data.
+    `books:init-company` (refining item 23): `--tax-status` is required only the first time, and
+    on a re-run an omitted tax status, exemption note or payment terms keeps the stored value;
+    the sender's country must be an ISO 3166-1 alpha-2 code; the address is taken whole from one
+    source (auth-brain's billing address when it has one, otherwise the file), never mixed.
 
 ## 1. Audit: what actually exists today
 
