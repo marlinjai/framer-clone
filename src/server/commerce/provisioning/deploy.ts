@@ -10,14 +10,19 @@
 //      re-asserted (idempotent and resumable).
 //
 // Both run under one session advisory lock (COMMERCE_DEPLOY_LOCK_KEY), so two
-// containers starting at once queue instead of racing on a fresh database. All
-// waits are bounded (ownerSql.ts BOOT_TIMEOUTS: lock 30 s, statement 45 s), so a
-// stuck lock fails the start with CommerceLockTimeoutError instead of hanging.
+// containers starting at once queue instead of racing on a fresh database. The
+// wait for that lock is bounded at 30 s (BOOT_LOCK_TIMEOUTS), so a stuck start
+// fails with CommerceLockTimeoutError instead of hanging. The migrations
+// themselves run with a 5 s lock wait for their DDL and no statement limit
+// unless COMMERCE_MIGRATE_STATEMENT_TIMEOUT_MS sets one (ownerSql.ts).
 //
-// Before touching anything it proves it is NOT connected as the low-privilege
-// app role: the owner URL must be set, must not be a placeholder, must differ
-// from the app URL, and `current_user` must be neither `commerce_app` nor a
-// superuser (the non-superuser owner commerce_ddl is the only accepted one). Any failure
+// Before touching anything it proves it is connected as the intended owner:
+// the owner URL must be set, must not be a placeholder and must differ from the
+// app URL, and on the server BOTH session_user (the login) and current_user
+// (the effective role, which a URL's `options=-c role=...` can change) must be
+// `commerce_ddl`, which must not be a superuser, must not bypass row security
+// and must not belong to a predefined role that reads or writes everything or
+// reaches the server's files or programs (assertOwnerIdentity). Any failure
 // throws, and the boot script turns a throw into a failed container start, so a
 // bad migration or a miswired secret stops the deploy instead of serving a
 // half-migrated shop.
@@ -26,14 +31,32 @@
 // single file by esbuild (scripts/commerce-migrate.ts) and run with plain node.
 
 import { migrateCommercePublic } from './public';
-import { COMMERCE_APP_ROLE, migrateAllCommerceTenants } from './provision';
+import postgres from 'postgres';
+
+import { migrateAllCommerceTenants } from './provision';
 import {
   acquireAdvisoryLock,
-  BOOT_TIMEOUTS,
+  BOOT_LOCK_TIMEOUTS,
+  migrationTimeouts,
   openOwnerSql,
   releaseAdvisoryLock,
   type OwnerTimeouts,
 } from './ownerSql';
+
+/** The only role the start step accepts behind COMMERCE_OWNER_DATABASE_URL. */
+export const COMMERCE_OWNER_ROLE = 'commerce_ddl';
+
+/**
+ * Predefined roles that would let the owner read or write every table, or
+ * reach the server's files and programs. Membership in any of them is refused.
+ */
+export const FORBIDDEN_OWNER_MEMBERSHIPS = [
+  'pg_read_all_data',
+  'pg_write_all_data',
+  'pg_execute_server_program',
+  'pg_read_server_files',
+  'pg_write_server_files',
+] as const;
 
 /**
  * Session advisory lock key held around the whole start step (public tier plus
@@ -98,21 +121,84 @@ export function assertOwnerUrlShape(env: {
 }
 
 /**
+ * Prove the owner session is exactly the intended, bounded owner role. Checks
+ * the login (session_user) and the effective role (current_user): a URL whose
+ * `options` switch the role could otherwise hide a superuser login behind
+ * `commerce_ddl`.
+ *
+ * @throws Error naming what is wrong.
+ */
+export async function assertOwnerIdentity(sql: postgres.Sql): Promise<string> {
+  const [who] = await sql<
+    {
+      session_user: string;
+      current_user: string;
+      super: boolean;
+      bypassrls: boolean;
+      memberships: string[];
+    }[]
+  >`
+    SELECT session_user::text AS session_user,
+           current_user::text AS current_user,
+           bool_or(r.rolsuper) AS super,
+           bool_or(r.rolbypassrls) AS bypassrls,
+           COALESCE(
+             (SELECT array_agg(DISTINCT f.name ORDER BY f.name)
+              FROM unnest(${FORBIDDEN_OWNER_MEMBERSHIPS as unknown as string[]}::text[]) AS f(name)
+              WHERE pg_has_role(session_user, f.name, 'MEMBER')
+                 OR pg_has_role(current_user, f.name, 'MEMBER')),
+             '{}'
+           ) AS memberships
+    FROM pg_roles r
+    WHERE r.rolname IN (session_user, current_user)
+  `;
+  const named = `session_user ${who.session_user}, current_user ${who.current_user}`;
+  if (who.super) {
+    throw new Error(
+      `COMMERCE_OWNER_DATABASE_URL reaches a superuser (${named}). Use the non-superuser ` +
+        `owner role ${COMMERCE_OWNER_ROLE} (prisma/sql/commerce-roles.sql).`,
+    );
+  }
+  if (who.session_user !== COMMERCE_OWNER_ROLE || who.current_user !== COMMERCE_OWNER_ROLE) {
+    throw new Error(
+      `COMMERCE_OWNER_DATABASE_URL must log in as ${COMMERCE_OWNER_ROLE} and stay that role ` +
+        `(found ${named}). The app role commerce_app, the database's own user and role ` +
+        'switches in the URL are all refused.',
+    );
+  }
+  if (who.bypassrls) {
+    throw new Error(`${COMMERCE_OWNER_ROLE} has BYPASSRLS; re-run prisma/sql/commerce-roles.sql to remove it.`);
+  }
+  if (who.memberships.length > 0) {
+    throw new Error(
+      `${COMMERCE_OWNER_ROLE} is a member of ${who.memberships.join(', ')}; revoke that membership ` +
+        'before deploying (the owner must not read or write every table or reach server files).',
+    );
+  }
+  return who.current_user;
+}
+
+/**
  * Run the commerce public migrations and the tenant fleet migration as the
  * owner role. Throws on any failure (the caller exits non-zero).
  *
  * @param opts.ownerUrl Defaults to COMMERCE_OWNER_DATABASE_URL.
  * @param opts.appUrl   Defaults to COMMERCE_APP_DATABASE_URL (only compared).
  * @param opts.log      Progress lines; defaults to console.log.
+ * @param opts.timeouts Overrides for the bounded waits (tests).
  */
 export async function runCommerceDeployMigrations(opts?: {
   ownerUrl?: string;
   appUrl?: string;
   log?: (line: string) => void;
-  timeouts?: OwnerTimeouts;
+  /** Bounded waits: `lock` for the start-step lock session, `migration` for the migrations. */
+  timeouts?: { lock?: OwnerTimeouts; migration?: OwnerTimeouts };
 }): Promise<CommerceDeployResult> {
   const log = opts?.log ?? ((line: string) => console.log(line));
-  const timeouts = opts?.timeouts ?? BOOT_TIMEOUTS;
+  const lockTimeouts = opts?.timeouts?.lock ?? BOOT_LOCK_TIMEOUTS;
+  // Read (and validate) the migration budget before touching the database, so a
+  // malformed COMMERCE_MIGRATE_STATEMENT_TIMEOUT_MS fails the start at once.
+  const migrationBudget = opts?.timeouts?.migration ?? migrationTimeouts();
   const ownerUrl = assertOwnerUrlShape({
     ownerUrl: opts?.ownerUrl ?? process.env.COMMERCE_OWNER_DATABASE_URL,
     appUrl: opts?.appUrl ?? process.env.COMMERCE_APP_DATABASE_URL,
@@ -121,34 +207,15 @@ export async function runCommerceDeployMigrations(opts?: {
   // One session for the identity check and the lock. The migrations open their
   // own sessions; the lock on this one covers them because every other start
   // step waits on the same key.
-  const lockSession = openOwnerSql(ownerUrl, timeouts);
+  const lockSession = await openOwnerSql(ownerUrl, lockTimeouts);
   try {
-    // Who are we really? A URL can name any role; ask the server.
-    const [{ role, superuser }] = await lockSession<{ role: string; superuser: boolean }[]>`
-      SELECT current_user AS role,
-             (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS superuser
-    `;
-    if (role === COMMERCE_APP_ROLE) {
-      throw new Error(
-        `COMMERCE_OWNER_DATABASE_URL authenticates as ${COMMERCE_APP_ROLE}, the ` +
-          'low-privilege app role. Point it at the owner role commerce_ddl.',
-      );
-    }
-    if (superuser) {
-      // The non-superuser owner is proven (roles.itest.ts), so there is no
-      // reason to run the commerce tier, or keep a URL in the server process,
-      // with superuser rights over the whole Postgres instance.
-      throw new Error(
-        `COMMERCE_OWNER_DATABASE_URL authenticates as ${role}, a superuser. Use the ` +
-          'non-superuser owner role commerce_ddl (prisma/sql/commerce-roles.sql).',
-      );
-    }
+    const role = await assertOwnerIdentity(lockSession);
 
-    await acquireAdvisoryLock(lockSession, COMMERCE_DEPLOY_LOCK_KEY, 'commerce migration lock', timeouts, () =>
+    await acquireAdvisoryLock(lockSession, COMMERCE_DEPLOY_LOCK_KEY, 'commerce migration lock', lockTimeouts, () =>
       log('commerce: another start step holds the commerce migration lock, waiting'),
     );
     try {
-      return await migrateUnderLock(ownerUrl, role, log, timeouts);
+      return await migrateUnderLock(ownerUrl, role, log, migrationBudget);
     } finally {
       await releaseAdvisoryLock(lockSession, COMMERCE_DEPLOY_LOCK_KEY);
     }

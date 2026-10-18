@@ -23,7 +23,8 @@
 //
 // Failures surface as the Track-0 `{ error: { code, message } }` envelope:
 // 401 unauthenticated, 403 not a workspace admin / no resolvable workspace,
-// 400 malformed body, 500 `commerce_not_configured` / `commerce_provision_failed`
+// 400 malformed body, 403 `commerce_suspended` (company's commerce suspended),
+// 500 `commerce_not_configured` / `commerce_provision_failed`
 // when the company's shop schema cannot be set up (nothing is written then), 500
 // `create_failed` otherwise.
 //
@@ -42,7 +43,11 @@ import {
 import ProjectModel, { type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { createIntrinsicComponent } from '@/models/ComponentModel';
 import { jsonError } from '@/lib/api/respond';
-import { commerceSlugFor, ensureCommerceTenant } from '@/server/commerce/provisioning/provision';
+import {
+  commerceSlugFor,
+  CommerceTenantSuspendedError,
+  ensureCommerceTenant,
+} from '@/server/commerce/provisioning/provision';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -67,12 +72,17 @@ export const dynamic = 'force-dynamic';
  * collide never block each other on the UNIQUE `tenant_groups.slug`.
  *
  * It runs BEFORE the site row is written, and a failure fails the request with
- * a 500 and a named code, with the cause in the server log:
- *  - `commerce_not_configured` when COMMERCE_OWNER_DATABASE_URL is unset. A
+ * a named code, with the cause in the server log:
+ *  - 500 `commerce_not_configured` when COMMERCE_OWNER_DATABASE_URL is unset. A
  *    production container cannot even start without it (deploy/boot.sh), so
  *    this only catches a miswired environment, loudly, instead of creating
  *    projects whose shop would fail later.
- *  - `commerce_provision_failed` when provisioning throws (database down, a
+ *  - 403 `commerce_suspended` when an operator suspended the company's commerce
+ *    (`tenant_groups.status = 'suspended'`). Provisioning would set it active
+ *    again, so it is never attempted; 403 rather than 500 because nothing is
+ *    broken and a retry cannot succeed: the refusal is a decision about this
+ *    company, lifted only by an operator.
+ *  - 500 `commerce_provision_failed` when provisioning throws (database down, a
  *    tenant group id that is not a UUID, a migration error, a provisioning lock
  *    not granted within 10 s).
  * Provisioning first means a failure leaves NOTHING behind: no site row whose
@@ -102,6 +112,14 @@ async function ensureCommerceProvisioned(
     await ensureCommerceTenant({ tenantGroupId, slug: commerceSlugFor(tenantGroupId, displaySlug) });
     return null;
   } catch (err) {
+    if (err instanceof CommerceTenantSuspendedError) {
+      console.error(`[commerce] project create refused: commerce for tenant_group ${tenantGroupId} is suspended`);
+      return jsonError(
+        'commerce_suspended',
+        "this company's shop is suspended; no project was created. Contact support to lift the suspension.",
+        403,
+      );
+    }
     console.error(
       `[commerce] ensureCommerceTenant failed for tenant_group ${tenantGroupId}:`,
       err,

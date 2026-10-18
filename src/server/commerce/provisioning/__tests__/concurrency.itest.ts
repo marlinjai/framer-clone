@@ -17,7 +17,12 @@
 //   4. Bounded waits: a lock held elsewhere turns into CommerceLockTimeoutError
 //      for the start step and for a provision, instead of an endless wait.
 //   5. Two companies whose display slugs collide both provision.
-//   6. The start step refuses a superuser owner URL.
+//   6. A suspended company is refused and stays suspended; a row still
+//      provisioning, a missing progress row and a dropped schema are misses.
+//   7. Owner sessions set their waits with SET; start-time migrations give up
+//      on a held table lock after their short lock wait.
+//   8. The start step accepts only commerce_ddl as login AND effective role,
+//      without superuser, BYPASSRLS or all-data / server-access memberships.
 //
 // TRUST auth with username-only URIs: no password literal anywhere.
 
@@ -38,11 +43,12 @@ import { provisionTenant } from '@marlinjai/tenant-db';
 import {
   COMMERCE_PROVISION_LOCK_KEY,
   commerceSlugFor,
+  CommerceTenantSuspendedError,
   ensureCommerceTenant,
   provisionCommerceTenant,
 } from '../provision';
 import { COMMERCE_DEPLOY_LOCK_KEY, runCommerceDeployMigrations } from '../deploy';
-import { CommerceLockTimeoutError } from '../ownerSql';
+import { CommerceLockTimeoutError, openOwnerSql } from '../ownerSql';
 
 const provisionSpy = vi.mocked(provisionTenant);
 /** Short waits for the timeout cases, so the suite stays fast. */
@@ -57,6 +63,7 @@ let ownerUrl: string;
 let appUrl: string;
 let su: postgres.Sql | undefined;
 let superUrl: string;
+let hostPort: string;
 
 beforeAll(async () => {
   container = await new GenericContainer('postgres:16-alpine')
@@ -78,6 +85,7 @@ beforeAll(async () => {
     'psql', '-v', 'ON_ERROR_STOP=1', '-q', '-U', 'postgres', '-d', DB_NAME, '-f', ROLES_SQL_IN_CONTAINER,
   ]);
   if (exitCode !== 0) throw new Error(`commerce-roles.sql failed (exit ${exitCode}): ${output}`);
+  hostPort = `${host}:${port}`;
   superUrl = `postgresql://postgres@${host}:${port}/${DB_NAME}`;
   su = postgres(superUrl, { max: 1, prepare: false });
   await su`ALTER ROLE commerce_app LOGIN`;
@@ -171,7 +179,7 @@ describe('commerce advisory locks', () => {
     await su!`SELECT pg_advisory_lock(${COMMERCE_DEPLOY_LOCK_KEY})`;
     try {
       await expect(
-        runCommerceDeployMigrations({ ownerUrl, appUrl, log: (l) => lines.push(l), timeouts: SHORT }),
+        runCommerceDeployMigrations({ ownerUrl, appUrl, log: (l) => lines.push(l), timeouts: { lock: SHORT } }),
       ).rejects.toThrow(/commerce migration lock: lock not granted within 300 ms/);
       expect(lines).toContain('commerce: another start step holds the commerce migration lock, waiting');
     } finally {
@@ -197,9 +205,163 @@ describe('commerce advisory locks', () => {
     }
   });
 
-  it('the start step refuses a superuser owner URL', async () => {
-    await expect(runCommerceDeployMigrations({ ownerUrl: superUrl, appUrl, log: () => {} })).rejects.toThrow(
-      /authenticates as postgres, a superuser/,
-    );
+  /** Provision a fresh company through the project-create path; returns its id and schema. */
+  async function freshCompany(label: string): Promise<{ id: string; schema: string }> {
+    const id = randomUUID();
+    const r = await ensureCommerceTenant({ tenantGroupId: id, slug: commerceSlugFor(id, label), connectionString: ownerUrl });
+    expect(r.provisioned).toBe(true);
+    return { id, schema: r.schema };
+  }
+
+  it('a suspended company is refused, never provisioned, and stays suspended', async () => {
+    const { id } = await freshCompany('suspended');
+    await su!`UPDATE public.tenant_groups SET status = 'suspended' WHERE id = ${id}::uuid`;
+    provisionSpy.mockClear();
+
+    await expect(
+      ensureCommerceTenant({ tenantGroupId: id, slug: commerceSlugFor(id, 'suspended'), connectionString: ownerUrl }),
+    ).rejects.toBeInstanceOf(CommerceTenantSuspendedError);
+
+    expect(provisionSpy).not.toHaveBeenCalled();
+    const [row] = await su!<{ status: string }[]>`SELECT status FROM public.tenant_groups WHERE id = ${id}::uuid`;
+    expect(row.status).toBe('suspended');
+  });
+
+  it('misses: a row still provisioning, a missing progress row, a dropped schema; each is provisioned again', async () => {
+    const stillProvisioning = await freshCompany('half-done');
+    await su!`UPDATE public.tenant_groups SET status = 'provisioning' WHERE id = ${stillProvisioning.id}::uuid`;
+
+    const missingProgress = await freshCompany('no-progress');
+    await su!`
+      DELETE FROM public.tenant_migration_progress
+      WHERE schema_name = ${missingProgress.schema} AND migration_id = '003_catalog'
+    `;
+
+    const dropped = await freshCompany('dropped');
+    await su!`DROP SCHEMA ${su!(dropped.schema)} CASCADE`;
+
+    for (const company of [stillProvisioning, missingProgress, dropped]) {
+      provisionSpy.mockClear();
+      const r = await ensureCommerceTenant({
+        tenantGroupId: company.id,
+        slug: commerceSlugFor(company.id, 'again'),
+        connectionString: ownerUrl,
+      });
+      expect(r.provisioned).toBe(true);
+      expect(provisionSpy).toHaveBeenCalledTimes(1);
+      // ...and afterwards the company is a hit again.
+      const again = await ensureCommerceTenant({ tenantGroupId: company.id, slug: 'x', connectionString: ownerUrl });
+      expect(again.provisioned).toBe(false);
+    }
+
+    const [state] = await su!<{ status: string; schema_back: boolean; progress_back: boolean }[]>`
+      SELECT
+        (SELECT status FROM public.tenant_groups WHERE id = ${stillProvisioning.id}::uuid) AS status,
+        to_regnamespace(${dropped.schema}) IS NOT NULL AS schema_back,
+        EXISTS (SELECT 1 FROM public.tenant_migration_progress
+                WHERE schema_name = ${missingProgress.schema} AND migration_id = '003_catalog') AS progress_back
+    `;
+    expect(state).toEqual({ status: 'active', schema_back: true, progress_back: true });
+    // The dropped schema was rebuilt from scratch: every migration applied again.
+    const tables = await su!<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = ${dropped.schema}
+    `;
+    expect(tables[0].n).toBeGreaterThan(10);
+  });
+
+  it('owner sessions get their bounded waits with SET after connecting, not as startup parameters', async () => {
+    const sql = await openOwnerSql(ownerUrl, { lockTimeoutMs: 1234, statementTimeoutMs: 0 });
+    try {
+      const [row] = await sql<{ lock: string; statement: string; app: string }[]>`
+        SELECT current_setting('lock_timeout') AS lock,
+               current_setting('statement_timeout') AS statement,
+               current_setting('application_name') AS app
+      `;
+      expect(row).toEqual({ lock: '1234ms', statement: '0', app: 'framer-clone-commerce-owner' });
+    } finally {
+      await sql.end();
+    }
+  });
+
+  it('start-time migrations give up on a held table lock after their short lock wait', async () => {
+    // Another session holds an exclusive lock on the registry, like DDL stuck
+    // behind long storefront transactions. The migrations must not queue forever.
+    const holder = postgres(superUrl, { max: 1, prepare: false });
+    let release!: () => void;
+    const released = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => (locked = r));
+    const holding = holder.begin(async (tx) => {
+      await tx`LOCK TABLE public.tenant_groups IN ACCESS EXCLUSIVE MODE`;
+      locked();
+      await released;
+    });
+    try {
+      await isLocked;
+      const started = Date.now();
+      await expect(
+        runCommerceDeployMigrations({
+          ownerUrl,
+          appUrl,
+          log: () => {},
+          timeouts: { migration: { lockTimeoutMs: 300, statementTimeoutMs: 0 } },
+        }),
+      ).rejects.toThrow(/lock timeout/);
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      release();
+      await holding;
+      await holder.end();
+    }
+  });
+
+  describe('owner identity at start', () => {
+    const urlFor = (user: string, role?: string) =>
+      `postgresql://${user}@${hostPort}/${DB_NAME}` + (role ? `?options=${encodeURIComponent(`-c role=${role}`)}` : '');
+    const run = (url: string) => runCommerceDeployMigrations({ ownerUrl: url, appUrl, log: () => {} });
+
+    beforeAll(async () => {
+      await su!`CREATE ROLE impostor LOGIN`;
+      await su!`GRANT commerce_ddl TO impostor`;
+    });
+
+    it('refuses a superuser login, also when the URL switches the role to commerce_ddl', async () => {
+      await expect(run(superUrl)).rejects.toThrow(/reaches a superuser \(session_user postgres, current_user postgres\)/);
+      await expect(run(urlFor('postgres', 'commerce_ddl'))).rejects.toThrow(
+        /reaches a superuser \(session_user postgres, current_user commerce_ddl\)/,
+      );
+    });
+
+    it('refuses any other login, even one that switches to commerce_ddl', async () => {
+      await expect(run(urlFor('impostor', 'commerce_ddl'))).rejects.toThrow(
+        /must log in as commerce_ddl and stay that role \(found session_user impostor, current_user commerce_ddl\)/,
+      );
+      // The app role itself (with a distinct app URL, so the URL shape check passes).
+      await expect(
+        runCommerceDeployMigrations({ ownerUrl: appUrl, appUrl: 'postgresql://other@h/db', log: () => {} }),
+      ).rejects.toThrow(/found session_user commerce_app, current_user commerce_app/);
+    });
+
+    it('refuses commerce_ddl with BYPASSRLS', async () => {
+      await su!`ALTER ROLE commerce_ddl BYPASSRLS`;
+      try {
+        await expect(run(ownerUrl)).rejects.toThrow(/has BYPASSRLS/);
+      } finally {
+        await su!`ALTER ROLE commerce_ddl NOBYPASSRLS`;
+      }
+    });
+
+    it('refuses commerce_ddl as a member of a predefined all-data or server-access role', async () => {
+      for (const role of ['pg_read_all_data', 'pg_write_all_data', 'pg_execute_server_program']) {
+        await su!`GRANT ${su!(role)} TO commerce_ddl`;
+        try {
+          await expect(run(ownerUrl)).rejects.toThrow(new RegExp(`member of ${role}`));
+        } finally {
+          await su!`REVOKE ${su!(role)} FROM commerce_ddl`;
+        }
+      }
+      // And the clean owner still passes.
+      await expect(run(ownerUrl)).resolves.toMatchObject({ role: 'commerce_ddl' });
+    });
   });
 });

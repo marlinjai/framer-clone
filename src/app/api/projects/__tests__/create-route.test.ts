@@ -195,6 +195,22 @@ describe('POST /api/projects (authorized)', () => {
     errorSpy.mockRestore();
   });
 
+  it('403s with commerce_suspended and writes nothing when the company commerce is suspended', async () => {
+    const { CommerceTenantSuspendedError } = await import('@/server/commerce/provisioning/provision');
+    mockProvision.mockRejectedValue(new CommerceTenantSuspendedError('018f9c10-0000-7000-8000-00000000c0de'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const save = vi.fn();
+    installRepo({ saveProject: save });
+
+    const res = await POST(createReq({ name: 'Shop' }));
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).error.code).toBe('commerce_suspended');
+    expect(save).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/is suspended/));
+    errorSpy.mockRestore();
+  });
+
   it('500s with commerce_provision_failed, logs the cause, and writes nothing when provisioning throws', async () => {
     const cause = new Error('connect ECONNREFUSED');
     mockProvision.mockRejectedValue(cause);

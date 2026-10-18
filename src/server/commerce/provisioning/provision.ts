@@ -54,7 +54,7 @@ import {
 import { COMMERCE_TENANT_MIGRATIONS } from '../migrations/tenant';
 import {
   acquireAdvisoryLock,
-  BOOT_TIMEOUTS,
+  migrationTimeouts,
   openOwnerSql,
   PROVISION_TIMEOUTS,
   releaseAdvisoryLock,
@@ -222,7 +222,7 @@ export async function provisionCommerceTenant(opts: {
   const ownerUrl = requireOwnerUrl(opts.connectionString);
   const timeouts = opts.timeouts ?? PROVISION_TIMEOUTS;
   // max: 1 keeps the advisory lock and the provision on ONE session.
-  const sql = openOwnerSql(ownerUrl, timeouts);
+  const sql = await openOwnerSql(ownerUrl, timeouts);
   try {
     return await provisionUnderLock(sql, opts.tenantGroupId, opts.slug, timeouts);
   } finally {
@@ -230,22 +230,51 @@ export async function provisionCommerceTenant(opts: {
   }
 }
 
+/** What the registry says about one tenant group's commerce schema. */
+export type CommerceTenantState =
+  /** Active, schema present, every commerce tenant migration recorded. */
+  | 'ready'
+  /** Suspended by an operator: never provisioned (that would reactivate it). */
+  | 'suspended'
+  /** No row, still provisioning, schema gone, or a migration not recorded. */
+  | 'missing';
+
+/** A suspended tenant group's commerce schema must not be touched. */
+export class CommerceTenantSuspendedError extends Error {
+  constructor(tenantGroupId: string) {
+    super(
+      `Commerce for tenant group ${tenantGroupId} is suspended. Provisioning would ` +
+        'reactivate it, so nothing was provisioned; an operator must lift the suspension.',
+    );
+    this.name = 'CommerceTenantSuspendedError';
+  }
+}
+
 /**
- * True when the registry says this tenant group is fully provisioned: its row is
- * `active` and every commerce tenant migration is recorded for its schema.
+ * Read the registry for one tenant group. `ready` needs all of: the row is
+ * `active`, its schema exists (`to_regnamespace`), and every commerce tenant
+ * migration is recorded for that schema. `suspended` wins over everything else.
  */
-async function isFullyProvisioned(sql: postgres.Sql, tenantGroupId: string, schema: string): Promise<boolean> {
-  const rows = await sql<{ status: string; done: string[] }[]>`
+export async function readCommerceTenantState(
+  sql: postgres.Sql,
+  tenantGroupId: string,
+  schema: string,
+): Promise<CommerceTenantState> {
+  const rows = await sql<{ status: string; schema_present: boolean; done: string[] }[]>`
     SELECT tg.status,
+           to_regnamespace(tg.schema_name) IS NOT NULL AS schema_present,
            COALESCE(array_agg(p.migration_id) FILTER (WHERE p.migration_id IS NOT NULL), '{}') AS done
     FROM public.tenant_groups tg
     LEFT JOIN public.tenant_migration_progress p ON p.schema_name = tg.schema_name
     WHERE tg.id = ${tenantGroupId}::uuid AND tg.schema_name = ${schema}
-    GROUP BY tg.status
+    GROUP BY tg.status, tg.schema_name
   `;
-  if (rows.length === 0 || rows[0].status !== 'active') return false;
-  const done = new Set(rows[0].done);
-  return COMMERCE_TENANT_MIGRATIONS.every((m) => done.has(m.id));
+  if (rows.length === 0) return 'missing';
+  const [row] = rows;
+  if (row.status === 'suspended') return 'suspended';
+  if (row.status !== 'active' || !row.schema_present) return 'missing';
+  const done = new Set(row.done);
+  return COMMERCE_TENANT_MIGRATIONS.every((m) => done.has(m.id)) ? 'ready' : 'missing';
 }
 
 /**
@@ -253,13 +282,16 @@ async function isFullyProvisioned(sql: postgres.Sql, tenantGroupId: string, sche
  * does. The project-create request calls this on every create.
  *
  * Hit: one read of `public.tenant_groups` and `public.tenant_migration_progress`
- * finds the group `active` with every commerce tenant migration recorded, and
- * nothing else happens: no lock, no DDL, no `ALTER ROLE`. Miss (first project,
- * a half-finished earlier attempt, or a migration the fleet has not recorded):
- * the full provision under the global provisioning lock, exactly as
- * {@link provisionCommerceTenant}.
+ * finds the group `active`, its schema present and every commerce tenant
+ * migration recorded, and nothing else happens: no lock, no DDL, no
+ * `ALTER ROLE`. Miss (first project, a row still `provisioning`, a dropped
+ * schema, a migration not recorded): the full provision under the global
+ * provisioning lock, exactly as {@link provisionCommerceTenant}. A SUSPENDED
+ * group is neither: the runner would set it `active` again, so this throws
+ * {@link CommerceTenantSuspendedError} and touches nothing.
  *
  * @returns `provisioned: true` when the full provision ran.
+ * @throws CommerceTenantSuspendedError for a suspended tenant group.
  */
 export async function ensureCommerceTenant(opts: {
   tenantGroupId: string;
@@ -272,11 +304,11 @@ export async function ensureCommerceTenant(opts: {
   const tgId = assertTenantGroupId(opts.tenantGroupId);
   const schema = tenantSchema(tgId);
 
-  const sql = openOwnerSql(ownerUrl, timeouts);
+  const sql = await openOwnerSql(ownerUrl, timeouts);
   try {
-    if (await isFullyProvisioned(sql, tgId, schema)) {
-      return { schema, applied: [], provisioned: false };
-    }
+    const state = await readCommerceTenantState(sql, tgId, schema);
+    if (state === 'ready') return { schema, applied: [], provisioned: false };
+    if (state === 'suspended') throw new CommerceTenantSuspendedError(tgId);
     const result = await provisionUnderLock(sql, tgId, opts.slug, timeouts);
     return { ...result, provisioned: true };
   } finally {
@@ -302,7 +334,7 @@ export async function ensureCommerceTenant(opts: {
  * @param opts.batchSize     Process at most this many schemas per call.
  * @param opts.onSchemaDone  Per-schema progress callback (for logging / resume).
  * @param opts.connectionString Optional OWNER url override (tests).
- * @param opts.timeouts      Bounded waits; defaults to BOOT_TIMEOUTS.
+ * @param opts.timeouts      Bounded waits; defaults to migrationTimeouts().
  *
  * @throws Error if no OWNER connection string is available.
  */
@@ -319,7 +351,7 @@ export async function migrateAllCommerceTenants(opts?: {
 }): Promise<MigrateAllResult> {
   const ownerUrl = requireOwnerUrl(opts?.connectionString);
 
-  const sql = openOwnerSql(ownerUrl, opts?.timeouts ?? BOOT_TIMEOUTS);
+  const sql = await openOwnerSql(ownerUrl, opts?.timeouts ?? migrationTimeouts());
   try {
     const result = await migrateAllTenants(sql, {
       tenantMigrations: COMMERCE_TENANT_MIGRATIONS,

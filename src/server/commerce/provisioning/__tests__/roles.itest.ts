@@ -178,7 +178,7 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
   it('refuses to run the start step as the app role', async () => {
     await expect(
       runCommerceDeployMigrations({ ownerUrl: appUrl, appUrl: 'postgresql://other', log: () => {} }),
-    ).rejects.toThrow(/authenticates as commerce_app/);
+    ).rejects.toThrow(/must log in as commerce_ddl and stay that role \(found session_user commerce_app/);
   });
 
   it('start step as commerce_ddl: public tier on an empty fleet', async () => {
