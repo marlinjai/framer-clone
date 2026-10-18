@@ -91,7 +91,9 @@ function expectedPrivileges() {
       t,
       t === 'sales_document_event'
         ? { sel: true, ins: true, upd: false, del: false }
-        : { sel: true, ins: true, upd: true, del: true },
+        : t === 'document_number_counter'
+          ? { sel: true, ins: true, upd: true, del: false }
+          : { sel: true, ins: true, upd: true, del: true },
     ]),
   );
 }

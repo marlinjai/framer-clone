@@ -48,10 +48,14 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      the owner included, and survive any later GRANT. Errors carry custom
  *      SQLSTATEs so the repository and the tests can tell them apart from a
  *      permission error (42501):
- *        BK001  write to a frozen document, or to a line of a non-draft document
+ *        BK001  write to a frozen document, or to a line of a non-draft document;
+ *               a change of a document's id, company, type or source; DELETE or
+ *               TRUNCATE of documents or lines
  *        BK002  UPDATE, DELETE or TRUNCATE on sales_document_event
- *        BK003  a number counter moved backwards
- *        BK004  a status transition that is not allowed
+ *        BK003  a number counter moved backwards, changed company or type, or was
+ *               deleted or truncated
+ *        BK004  a status transition that is not allowed (also: inserting a
+ *               document that is not a draft, outside the import)
  *        BK005  issue with totals that do not equal the sum of the lines
  *   5. The event table is append-only twice: the trigger above, and the house
  *      REVOKE (here, and re-applied after the provisioning grants through
@@ -94,7 +98,8 @@ export const books: Migration = {
 
         CONSTRAINT "books_company_settings_pkey" PRIMARY KEY ("tenant_id"),
         CONSTRAINT "books_company_settings_tenant_id_check" CHECK ("tenant_id" ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
-        CONSTRAINT "books_company_settings_payment_terms_check" CHECK ("default_payment_terms_days" BETWEEN 0 AND 365)
+        CONSTRAINT "books_company_settings_payment_terms_check" CHECK ("default_payment_terms_days" BETWEEN 0 AND 365),
+        CONSTRAINT "books_company_settings_sender_block_check" CHECK (jsonb_typeof("sender_block") = 'object')
       )
     `;
 
@@ -169,6 +174,7 @@ export const books: Migration = {
         CONSTRAINT "document_template_pkey" PRIMARY KEY ("id"),
         CONSTRAINT "document_template_tenant_id_check" CHECK ("tenant_id" ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
         CONSTRAINT "document_template_accent_color_check" CHECK ("accent_color" IS NULL OR "accent_color" ~ '^#[0-9a-fA-F]{6}$'),
+        CONSTRAINT "document_template_footer_blocks_check" CHECK (jsonb_typeof("footer_blocks") = 'array'),
         CONSTRAINT "document_template_tenant_id_id_key" UNIQUE ("tenant_id", "id"),
         CONSTRAINT "document_template_tenant_id_name_key" UNIQUE ("tenant_id", "name")
       )
@@ -235,6 +241,10 @@ export const books: Migration = {
         CONSTRAINT "sales_document_subtotal_nonneg_check" CHECK ("subtotal" >= 0),
         CONSTRAINT "sales_document_tax_amount_nonneg_check" CHECK ("tax_amount" >= 0),
         CONSTRAINT "sales_document_total_nonneg_check" CHECK ("total" >= 0),
+        -- The JSON shapes: snapshots are objects, the tax summary a list.
+        CONSTRAINT "sales_document_tax_summary_check" CHECK (jsonb_typeof("tax_summary") = 'array'),
+        CONSTRAINT "sales_document_customer_snapshot_check" CHECK ("customer_snapshot" IS NULL OR jsonb_typeof("customer_snapshot") = 'object'),
+        CONSTRAINT "sales_document_sender_snapshot_check" CHECK ("sender_snapshot" IS NULL OR jsonb_typeof("sender_snapshot") = 'object'),
         -- The accounting identity (as order_total_sum_check in 005).
         CONSTRAINT "sales_document_total_sum_check" CHECK ("total" = "subtotal" + "tax_amount"),
         -- A draft has no number, ever.
@@ -244,15 +254,22 @@ export const books: Migration = {
             AND "customer_snapshot" IS NULL AND "sender_snapshot" IS NULL
           )
         ),
-        -- Anything past draft carries the complete issued field set. The import
-        -- (after phase 3) may relax what an imported row must carry.
+        -- Anything past draft carries the complete issued field set. An imported
+        -- historical document (after phase 3) may lack what only this system
+        -- derives (customer row, tax profile key), but never its number, its
+        -- dates or its snapshots; and it is never a draft.
         CONSTRAINT "sales_document_issued_complete_check" CHECK (
           "status" = 'draft' OR (
             "document_number" IS NOT NULL AND "number_value" IS NOT NULL AND "issue_date" IS NOT NULL
             AND "issued_at" IS NOT NULL AND "customer_id" IS NOT NULL AND "customer_snapshot" IS NOT NULL
             AND "sender_snapshot" IS NOT NULL AND "customer_type" IS NOT NULL AND "tax_profile_key" IS NOT NULL
-          ) OR "source" = 'import'
+          ) OR (
+            "source" = 'import' AND "document_number" IS NOT NULL AND "number_value" IS NOT NULL
+            AND "issue_date" IS NOT NULL AND "issued_at" IS NOT NULL
+            AND "customer_snapshot" IS NOT NULL AND "sender_snapshot" IS NOT NULL
+          )
         ),
+        CONSTRAINT "sales_document_import_not_draft_check" CHECK ("source" <> 'import' OR "status" <> 'draft'),
         -- A credit note names the invoice it corrects; nothing else does.
         CONSTRAINT "sales_document_credit_note_ref_check" CHECK (
           ("doc_type" = 'credit_note') = ("corrects_document_id" IS NOT NULL)
@@ -364,6 +381,7 @@ export const books: Migration = {
         "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
         CONSTRAINT "sales_document_event_pkey" PRIMARY KEY ("id"),
+        CONSTRAINT "sales_document_event_payload_check" CHECK (jsonb_typeof("payload") = 'object'),
         CONSTRAINT "sales_document_event_tenant_id_check" CHECK ("tenant_id" ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
         CONSTRAINT "sales_document_event_document_fkey" FOREIGN KEY ("tenant_id", "document_id")
           REFERENCES "sales_document" ("tenant_id", "id") ON DELETE RESTRICT ON UPDATE RESTRICT
@@ -390,6 +408,10 @@ export const books: Migration = {
     //      stricter than a column list and cannot go stale when a column is added.
     // DELETE always raises BK001: a draft is never deleted either (it carries its
     // draft_created event; an abandoned draft stays a draft and consumes nothing).
+    // INSERT: a document is created as a draft unless it is an import (BK004).
+    // Every UPDATE, draft or not: id, tenant_id, doc_type and source are fixed
+    // (BK001), so a draft can never be turned into an import that skips the
+    // issued-field CHECK.
     await tx`
       CREATE OR REPLACE FUNCTION "sales_document_guard"()
       RETURNS TRIGGER
@@ -404,6 +426,25 @@ export const books: Migration = {
       BEGIN
           IF TG_OP = 'DELETE' THEN
               RAISE EXCEPTION 'sales_document % cannot be deleted', OLD."id"
+                  USING ERRCODE = 'BK001';
+          END IF;
+
+          IF TG_OP = 'INSERT' THEN
+              -- A document is born a draft; only the historical import inserts
+              -- documents that are already issued (with their number and
+              -- snapshots, which the CHECKs enforce).
+              IF NEW."status" <> 'draft' AND NEW."source" <> 'import' THEN
+                  RAISE EXCEPTION 'sales_document %: a document is created as a draft (got %)', NEW."id", NEW."status"
+                      USING ERRCODE = 'BK004';
+              END IF;
+              RETURN NEW;
+          END IF;
+
+          -- The identity of a document never changes, not even on a draft: a draft
+          -- cannot become an import, change its type or move to another company.
+          IF NEW."id" IS DISTINCT FROM OLD."id" OR NEW."tenant_id" IS DISTINCT FROM OLD."tenant_id"
+             OR NEW."doc_type" IS DISTINCT FROM OLD."doc_type" OR NEW."source" IS DISTINCT FROM OLD."source" THEN
+              RAISE EXCEPTION 'sales_document %: id, tenant_id, doc_type and source are fixed', OLD."id"
                   USING ERRCODE = 'BK001';
           END IF;
 
@@ -474,9 +515,39 @@ export const books: Migration = {
     await tx`DROP TRIGGER IF EXISTS "sales_document_guard" ON "sales_document"`;
     await tx`
       CREATE TRIGGER "sales_document_guard"
-          BEFORE UPDATE OR DELETE ON "sales_document"
+          BEFORE INSERT OR UPDATE OR DELETE ON "sales_document"
           FOR EACH ROW
           EXECUTE FUNCTION "sales_document_guard"()
+    `;
+
+    // TRUNCATE bypasses row triggers, so it gets a statement trigger of its own,
+    // on the documents and on their lines (a TRUNCATE ... CASCADE from the
+    // customer or template table reaches them too and is refused the same way).
+    await tx`
+      CREATE OR REPLACE FUNCTION "sales_document_no_truncate"()
+      RETURNS TRIGGER
+      LANGUAGE plpgsql
+      SET search_path FROM CURRENT
+      AS $$
+      BEGIN
+          RAISE EXCEPTION '% cannot be truncated', TG_TABLE_NAME
+              USING ERRCODE = 'BK001';
+      END;
+      $$
+    `;
+    await tx`DROP TRIGGER IF EXISTS "sales_document_no_truncate" ON "sales_document"`;
+    await tx`
+      CREATE TRIGGER "sales_document_no_truncate"
+          BEFORE TRUNCATE ON "sales_document"
+          FOR EACH STATEMENT
+          EXECUTE FUNCTION "sales_document_no_truncate"()
+    `;
+    await tx`DROP TRIGGER IF EXISTS "sales_document_line_no_truncate" ON "sales_document_line"`;
+    await tx`
+      CREATE TRIGGER "sales_document_line_no_truncate"
+          BEFORE TRUNCATE ON "sales_document_line"
+          FOR EACH STATEMENT
+          EXECUTE FUNCTION "sales_document_no_truncate"()
     `;
 
     // ====================================================================
@@ -573,6 +644,17 @@ export const books: Migration = {
       SET search_path FROM CURRENT
       AS $$
       BEGIN
+          -- Deleting a counter (and inserting a fresh one at 1) or truncating the
+          -- table would restart a series as surely as lowering next_value.
+          IF TG_OP IN ('DELETE', 'TRUNCATE') THEN
+              RAISE EXCEPTION 'document_number_counter rows cannot be removed (% refused)', TG_OP
+                  USING ERRCODE = 'BK003';
+          END IF;
+          IF NEW."tenant_id" IS DISTINCT FROM OLD."tenant_id" OR NEW."doc_type" IS DISTINCT FROM OLD."doc_type" THEN
+              RAISE EXCEPTION 'document_number_counter (%, %) cannot move to another company or type',
+                  OLD."tenant_id", OLD."doc_type"
+                  USING ERRCODE = 'BK003';
+          END IF;
           IF NEW."next_value" < OLD."next_value" THEN
               RAISE EXCEPTION 'document_number_counter (%, %) cannot move backwards (% to %)',
                   OLD."tenant_id", OLD."doc_type", OLD."next_value", NEW."next_value"
@@ -585,20 +667,29 @@ export const books: Migration = {
     await tx`DROP TRIGGER IF EXISTS "document_number_counter_monotonic" ON "document_number_counter"`;
     await tx`
       CREATE TRIGGER "document_number_counter_monotonic"
-          BEFORE UPDATE ON "document_number_counter"
+          BEFORE UPDATE OR DELETE ON "document_number_counter"
           FOR EACH ROW
+          EXECUTE FUNCTION "document_number_counter_monotonic"()
+    `;
+    await tx`DROP TRIGGER IF EXISTS "document_number_counter_no_truncate" ON "document_number_counter"`;
+    await tx`
+      CREATE TRIGGER "document_number_counter_no_truncate"
+          BEFORE TRUNCATE ON "document_number_counter"
+          FOR EACH STATEMENT
           EXECUTE FUNCTION "document_number_counter_monotonic"()
     `;
 
     // ====================================================================
-    // The house REVOKE on the append-only event table (re-applied after the
-    // provisioning grants through APPEND_ONLY_TABLES). Guarded on role existence.
+    // The house REVOKEs (re-applied after the provisioning grants through
+    // APPEND_ONLY_TABLES and NO_DELETE_TABLES): the event table is append-only,
+    // and a counter row is never deleted. Guarded on role existence.
     // ====================================================================
     await tx`
       DO $$
       BEGIN
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commerce_app') THEN
           REVOKE UPDATE, DELETE, TRUNCATE ON "sales_document_event" FROM commerce_app;
+          REVOKE DELETE, TRUNCATE ON "document_number_counter" FROM commerce_app;
         END IF;
       END
       $$

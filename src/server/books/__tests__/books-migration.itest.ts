@@ -75,10 +75,13 @@ describe('007_books structure', () => {
     `;
     expect(triggers.map((t) => t.tgname)).toEqual([
       'document_number_counter_monotonic',
+      'document_number_counter_no_truncate',
       'sales_document_event_append_only',
       'sales_document_event_no_truncate',
       'sales_document_guard',
       'sales_document_line_guard',
+      'sales_document_line_no_truncate',
+      'sales_document_no_truncate',
     ]);
     const again = await provisionTenant(
       env.fx.owner,
@@ -96,6 +99,9 @@ describe('007_books structure', () => {
   });
 
   it('an issued row without snapshots is refused', async () => {
+    // Since the review fixes the insert trigger refuses a non-draft editor row
+    // first (BK004); the CHECK behind it is proven by an UPDATE to issued below
+    // and by the import case.
     const dir = new FakeDirectory();
     const scope = scopeFor(env.appDb, env.tgId, newTenantId(), dir);
     await initCompany(scope);
@@ -117,7 +123,32 @@ describe('007_books structure', () => {
         )
         .execute(),
     );
-    expect(code).toBe('23514');
+    expect(code).toBe('BK004');
+    // The CHECK itself: a draft updated to issued without its snapshots.
+    const draft = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id });
+    await addLine(scope, draft.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
+    const row = await env.ownerDb
+      .selectFrom('sales_document')
+      .select(['subtotal', 'tax_amount'])
+      .where('id', '=', draft.document.id)
+      .executeTakeFirstOrThrow();
+    expect(
+      await rejectionCode(
+        env.ownerDb
+          .updateTable('sales_document')
+          .set({
+            status: 'issued',
+            document_number: 'X-1',
+            number_value: 5000,
+            issue_date: '2026-10-01',
+            issued_at: new Date(),
+            subtotal: row.subtotal,
+            tax_amount: row.tax_amount,
+          })
+          .where('id', '=', draft.document.id)
+          .execute(),
+      ),
+    ).toBe('23514');
   });
 
   it('a credit note without corrects_document_id is refused', async () => {
@@ -125,6 +156,39 @@ describe('007_books structure', () => {
       env.ownerDb.insertInto('sales_document').values(rawDraft(newTenantId(), { doc_type: 'credit_note' })).execute(),
     );
     expect(code).toBe('23514');
+  });
+
+  it('an import carries its number and snapshots and is never a draft', async () => {
+    const tenantId = newTenantId();
+    // Issued import without number or snapshots.
+    expect(
+      await rejectionCode(
+        env.ownerDb.insertInto('sales_document').values(rawDraft(tenantId, { status: 'issued', source: 'import' })).execute(),
+      ),
+    ).toBe('23514');
+    // An import that claims to be a draft.
+    expect(
+      await rejectionCode(env.ownerDb.insertInto('sales_document').values(rawDraft(tenantId, { source: 'import' })).execute()),
+    ).toBe('23514');
+  });
+
+  it('JSONB columns hold the shape they promise', async () => {
+    const tenantId = newTenantId();
+    // A tax summary that is not a list.
+    expect(
+      await rejectionCode(
+        env.ownerDb.insertInto('sales_document').values(rawDraft(tenantId, { tax_summary: toJsonb({ not: 'a list' }) })).execute(),
+      ),
+    ).toBe('23514');
+    // A sender block that is a JSON string instead of an object.
+    expect(
+      await rejectionCode(
+        env.ownerDb
+          .insertInto('books_company_settings')
+          .values({ tenant_id: tenantId, exemption_note: 'n', sender_block: toJsonb('a string'), updated_at: new Date() })
+          .execute(),
+      ),
+    ).toBe('23514');
   });
 
   it('reverse charge on b2c is refused', async () => {

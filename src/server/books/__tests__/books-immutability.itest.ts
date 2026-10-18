@@ -187,6 +187,84 @@ describe.each(roles)('an issued document is frozen (as %s)', (_role, db) => {
   });
 });
 
+describe.each(roles)('documents and counters keep their identity (as %s)', (_role, db) => {
+  it('a document is inserted as a draft; only an import may arrive issued', async () => {
+    const { scope, issued } = await company();
+    const d = issued.document;
+    const base = {
+      tenant_id: scope.tenantId,
+      doc_type: 'invoice' as const,
+      payment_terms_days: 14,
+      customer_id: d.customerId,
+      customer_type: d.customerType,
+      tax_profile_key: d.taxProfileKey,
+      document_number: `X-${randomUUID().slice(0, 8)}`,
+      number_value: 900_000 + Math.floor(Math.random() * 1000),
+      issue_date: d.issueDate,
+      issued_at: new Date(),
+      customer_snapshot: toJsonb(d.customerSnapshot),
+      sender_snapshot: toJsonb(d.senderSnapshot),
+      updated_at: new Date(),
+    };
+    expect(
+      await rejectionCode(db().insertInto('sales_document').values({ ...base, id: randomUUID(), status: 'issued' }).execute()),
+    ).toBe('BK004');
+    // The import path: allowed when it carries its number and snapshots.
+    await db().insertInto('sales_document').values({ ...base, id: randomUUID(), status: 'issued', source: 'import' }).execute();
+  });
+
+  it('a draft cannot become an import, change its type or move to another company', async () => {
+    const { scope, draft } = await company();
+    const update = (set: UpdateObject<CommerceDB, 'sales_document'>) =>
+      db().updateTable('sales_document').set(set).where('tenant_id', '=', scope.tenantId).where('id', '=', draft.document.id).execute();
+    expect(await rejectionCode(update({ source: 'import' }))).toBe('BK001');
+    expect(await rejectionCode(update({ doc_type: 'offer' }))).toBe('BK001');
+    expect(await rejectionCode(update({ tenant_id: newTenantId() }))).toBe('BK001');
+  });
+
+  it('a counter row cannot be deleted and re-inserted, nor moved', async () => {
+    const { scope } = await company();
+    const del = db()
+      .deleteFrom('document_number_counter')
+      .where('tenant_id', '=', scope.tenantId)
+      .where('doc_type', '=', 'invoice')
+      .execute();
+    // commerce_app has no DELETE (the REVOKE); the owner is stopped by the trigger.
+    expect(await rejectionCode(del)).toBe(_role === 'owner' ? 'BK003' : '42501');
+    expect(
+      await rejectionCode(
+        db()
+          .insertInto('document_number_counter')
+          .values({ tenant_id: scope.tenantId, doc_type: 'invoice', next_value: 1, format: '{n}', updated_at: new Date() })
+          .execute(),
+      ),
+    ).toBe('23505');
+    expect(
+      await rejectionCode(
+        db()
+          .updateTable('document_number_counter')
+          .set({ tenant_id: newTenantId() })
+          .where('tenant_id', '=', scope.tenantId)
+          .where('doc_type', '=', 'invoice')
+          .execute(),
+      ),
+    ).toBe('BK003');
+  });
+});
+
+describe('TRUNCATE is refused on every frozen Books table (as owner)', () => {
+  it('sales_document, sales_document_line and document_number_counter raise BK001 / BK003', async () => {
+    await company();
+    const o = env.fx.owner;
+    // A cascade also reaches the lines and events; whichever trigger fires first refuses it.
+    expect(['BK001', 'BK002']).toContain(await rejectionCode(o`TRUNCATE ${o(env.schema)}.sales_document CASCADE`));
+    expect(await rejectionCode(o`TRUNCATE ${o(env.schema)}.sales_document_line`)).toBe('BK001');
+    expect(await rejectionCode(o`TRUNCATE ${o(env.schema)}.document_number_counter`)).toBe('BK003');
+    // A cascade from the customer table reaches the documents and is refused there.
+    expect(['BK001', 'BK002']).toContain(await rejectionCode(o`TRUNCATE ${o(env.schema)}.customer CASCADE`));
+  });
+});
+
 describe('the event log is append-only', () => {
   it('UPDATE, DELETE and TRUNCATE on sales_document_event raise BK002', async () => {
     const { scope, issued } = await company();

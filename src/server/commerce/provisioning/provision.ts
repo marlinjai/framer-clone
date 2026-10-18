@@ -100,9 +100,18 @@ export const COMMERCE_PROVISION_LOCK_KEY = 74_610_010;
 export const COMMERCE_APP_ROLE = 'commerce_app';
 
 /**
- * REVOKE UPDATE, DELETE, TRUNCATE on every append-only table of `schema` from
- * the app role. Idempotent. (The runner never grants TRUNCATE, so revoking it is
- * belt and braces; it keeps the REVOKE identical to what 007 writes.) Pass it as `provisionTenant`'s `seed` (via
+ * The tables commerce_app may read, insert and update but never DELETE from:
+ * the Books number counters (007). Deleting a counter row and inserting a fresh
+ * one would restart a document series; the 007 trigger refuses it for every
+ * role (BK003), this REVOKE refuses it for the app role before it gets there.
+ */
+export const NO_DELETE_TABLES = ['document_number_counter'] as const;
+
+/**
+ * REVOKE UPDATE, DELETE, TRUNCATE on every append-only table of `schema`, and
+ * DELETE, TRUNCATE on every no-delete table, from the app role. Idempotent. (The
+ * runner never grants TRUNCATE, so revoking it is belt and braces; it keeps the
+ * REVOKEs identical to what the migrations write.) Pass it as `provisionTenant`'s `seed` (via
  * {@link commerceProvisionOptions}) so it runs inside the provisioning
  * transaction, after the runner's grant-all.
  */
@@ -116,12 +125,16 @@ export async function revokeAppendOnlyWrites(
   // REVOKE on a missing table would abort the whole transaction.
   const present = await tx<{ table_name: string }[]>`
     SELECT table_name FROM information_schema.tables
-     WHERE table_schema = ${schema} AND table_name = ANY(${[...APPEND_ONLY_TABLES]})
+     WHERE table_schema = ${schema} AND table_name = ANY(${[...APPEND_ONLY_TABLES, ...NO_DELETE_TABLES]})
   `;
   const existing = new Set(present.map((r) => r.table_name));
   for (const table of APPEND_ONLY_TABLES) {
     if (!existing.has(table)) continue;
     await tx`REVOKE UPDATE, DELETE, TRUNCATE ON ${tx(schema)}.${tx(table)} FROM ${tx(appRole)}`;
+  }
+  for (const table of NO_DELETE_TABLES) {
+    if (!existing.has(table)) continue;
+    await tx`REVOKE DELETE, TRUNCATE ON ${tx(schema)}.${tx(table)} FROM ${tx(appRole)}`;
   }
 }
 
