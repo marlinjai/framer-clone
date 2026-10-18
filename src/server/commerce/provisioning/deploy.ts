@@ -152,13 +152,10 @@ export async function assertOwnerIdentity(sql: postgres.Sql): Promise<string> {
            bool_or(r.rolsuper) AS super,
            bool_or(r.rolbypassrls) AS bypassrls,
            bool_or(r.rolcreaterole) AS createrole,
-           EXISTS (
-             SELECT 1 FROM pg_auth_members m
-              JOIN pg_roles granted ON granted.oid = m.roleid
-              JOIN pg_roles holder ON holder.oid = m.member
-             WHERE granted.rolname = ${COMMERCE_APP_ROLE}
-               AND holder.rolname IN (session_user, current_user)
-           ) AS administers_app,
+           -- Any membership, direct or through another role (Postgres 16:
+           -- MEMBER regardless of the INHERIT, SET and ADMIN options).
+           (pg_has_role(session_user, ${COMMERCE_APP_ROLE}, 'MEMBER')
+             OR pg_has_role(current_user, ${COMMERCE_APP_ROLE}, 'MEMBER')) AS administers_app,
            COALESCE(
              (SELECT array_agg(DISTINCT f.name ORDER BY f.name)
               FROM unnest(${FORBIDDEN_OWNER_MEMBERSHIPS as unknown as string[]}::text[]) AS f(name)

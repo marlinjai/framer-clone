@@ -358,6 +358,7 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
     const result = await runCommerceDeployMigrations({ ownerUrl, appUrl, log: () => {} });
     expect(result.tenantApplied).toEqual([{ schema, applied: [] }]);
   });
+
   it('a database shaped by the earlier roles file: the start step refuses it, re-applying the file takes both powers away', async () => {
     // What commerce-roles.sql granted until October 2026, recorded as the
     // superuser's grant exactly like on the live database.
@@ -391,6 +392,22 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
       connectionString: ownerUrl,
     });
     expect(fresh.applied.length).toBeGreaterThan(0);
+  });
+
+  it('the start step also refuses commerce_ddl holding commerce_app through another role', async () => {
+    await su!`CREATE ROLE app_via NOLOGIN`;
+    await su!`GRANT commerce_app TO app_via WITH INHERIT FALSE, SET FALSE`;
+    await su!`GRANT app_via TO commerce_ddl WITH INHERIT FALSE, SET FALSE`;
+    try {
+      await expect(runCommerceDeployMigrations({ ownerUrl, appUrl, log: () => {} })).rejects.toThrow(
+        /commerce_ddl still holds a grant of commerce_app\./,
+      );
+    } finally {
+      await su!`DROP ROLE app_via`;
+    }
+    await expect(runCommerceDeployMigrations({ ownerUrl, appUrl, log: () => {} })).resolves.toMatchObject({
+      role: 'commerce_ddl',
+    });
   });
 
   it('a wrong commerce_app search_path: the start step and a provision fail with the named error and create nothing', async () => {

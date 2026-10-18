@@ -171,7 +171,14 @@ nothing.
 **Upgrading a live database from the earlier roles file.** Until October 2026 the
 file gave `commerce_ddl` `CREATEROLE` and an admin grant over `commerce_app`. The
 start step now refuses an owner that still holds either, so re-apply the file as
-the database superuser BEFORE deploying a build that contains this change:
+the database superuser BEFORE deploying a build that contains this change, and
+deploy right after it. The two belong back to back: an older build (tenant-db 0.1)
+running against the re-applied database still tries `ALTER ROLE commerce_app` on
+every first-project provision, so until the new build is live a company's first
+project answers 500 (rolled back, nothing created; existing shops are unaffected).
+Rolling back to such an older build needs the old grants restored first, as the
+superuser: `ALTER ROLE commerce_ddl CREATEROLE;` and
+`GRANT commerce_app TO commerce_ddl WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;`.
 
 ```sh
 psql -v ON_ERROR_STOP=1 -U <bootstrap superuser> -d <database> -f prisma/sql/commerce-roles.sql

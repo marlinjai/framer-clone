@@ -11,8 +11,9 @@
 -- upgrade of this file. Re-applying it is also how an upgrade of this file
 -- reaches a live database: it pins both roles to the shape written here, so a
 -- power an earlier version granted (CREATEROLE on commerce_ddl and the ADMIN
--- grant over commerce_app, until October 2026) is taken away again. It names no database: every database-level grant uses
--- current_database(), so the same file runs in tests and in production.
+-- grant over commerce_app, until October 2026) is taken away again. It names
+-- no database: every database-level grant uses current_database(), so the same
+-- file runs in tests and in production.
 --
 -- NO PASSWORDS. The roles are created NOLOGIN here. The deploy's role script
 -- (infra repo, deployments/framer-clone/scripts/07-commerce-roles.sh) then runs
@@ -159,7 +160,9 @@ DECLARE
   g record;
 BEGIN
   FOR g IN
-    SELECT grantor::regrole::text AS grantor
+    -- pg_get_userbyid gives the bare role name; %I quotes it once (a
+    -- regrole::text value is already quoted when the name needs it).
+    SELECT pg_get_userbyid(grantor) AS grantor
       FROM pg_auth_members
      WHERE roleid = 'commerce_app'::regrole
        AND member = 'commerce_ddl'::regrole
