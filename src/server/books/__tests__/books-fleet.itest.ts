@@ -23,7 +23,12 @@ import postgres from 'postgres';
 import { assertTenantGroupId, migratePublic, provisionTenant, tenantSchema } from '@marlinjai/tenant-db';
 
 import { COMMERCE_TENANT_MIGRATIONS } from '../../commerce/migrations/tenant';
-import { commerceProvisionOptions, migrateAllCommerceTenants } from '../../commerce/provisioning/provision';
+import {
+  commerceProvisionOptions,
+  ensureCommerceTenant,
+  migrateAllCommerceTenants,
+  readCommerceTenantState,
+} from '../../commerce/provisioning/provision';
 
 const DB_NAME = 'books_fleet';
 let container: StartedTestContainer | undefined;
@@ -60,6 +65,10 @@ afterAll(async () => {
 
 /** Provision a tenant group with the migration set as it stood before 007_books. */
 async function provisionAt006(): Promise<string> {
+  return (await provisionAt006WithId()).schema;
+}
+
+async function provisionAt006WithId(): Promise<{ tgId: string; schema: string }> {
   const tgId = assertTenantGroupId(randomUUID());
   const before = COMMERCE_TENANT_MIGRATIONS.filter((m) => m.id < '007');
   expect(before.map((m) => m.id).at(-1)).toBe('006_inventory_policy');
@@ -67,7 +76,7 @@ async function provisionAt006(): Promise<string> {
     ...commerceProvisionOptions(tgId, `fleet-${tgId.slice(0, 8)}`),
     tenantMigrations: before,
   });
-  return tenantSchema(tgId);
+  return { tgId, schema: tenantSchema(tgId) };
 }
 
 /** commerce_app's rights on every Books table of a schema. */
@@ -143,5 +152,23 @@ describe('007_books through the fleet runner', () => {
     } finally {
       await app.end();
     }
+  });
+
+  it('a company at 006 is not "ready": the fleet path brings it to 007 and then it is', async () => {
+    const { tgId, schema } = await provisionAt006WithId();
+    expect(await readCommerceTenantState(owner, tgId, schema)).toBe('missing');
+    await fleetMigrate(schema);
+    expect(await readCommerceTenantState(owner, tgId, schema)).toBe('ready');
+  });
+
+  it('ensureCommerceTenant on a company at 006 applies 007 with the fresh rights, then takes the fast path', async () => {
+    const { tgId, schema } = await provisionAt006WithId();
+    const first = await ensureCommerceTenant({ tenantGroupId: tgId, slug: `fleet-${tgId.slice(0, 8)}`, connectionString: ownerUrl });
+    expect(first.provisioned).toBe(true);
+    expect(first.applied).toEqual(['007_books']);
+    expect(await privileges(schema)).toEqual(expectedPrivileges());
+    expect(await readCommerceTenantState(owner, tgId, schema)).toBe('ready');
+    const second = await ensureCommerceTenant({ tenantGroupId: tgId, slug: `fleet-${tgId.slice(0, 8)}`, connectionString: ownerUrl });
+    expect(second).toMatchObject({ provisioned: false, applied: [] });
   });
 });
