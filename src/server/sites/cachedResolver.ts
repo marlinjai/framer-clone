@@ -17,6 +17,39 @@ import 'server-only';
 //
 // The Cloudflare CDN edge (Wave 5) fronts THIS origin cache; this file is the
 // origin layer only.
+//
+// HITS ONLY, NEVER MISSES (fix of 2026-10-19). Only a resolved site is written to
+// `unstable_cache`. A miss (no SiteDomain for the label, or the site is not
+// published) used to be cached as `null` with no expiry, so a site that appeared
+// WITHOUT the publish route (the demo seed script, an operator script, a restore,
+// an import) stayed 404 until the container restarted, and every random label on
+// the `*.sites.lumitra.co` wildcard wrote a permanent cache entry. Now:
+//
+//   - A malformed label is rejected by `parseSubdomain` (DNS-label shape) before
+//     any cache or database work.
+//   - The cached callback THROWS a private sentinel on a miss; `unstable_cache`
+//     only stores a value after the callback resolves, so a miss writes nothing.
+//   - Misses are remembered in a small IN-PROCESS negative cache instead: a
+//     bounded map (at most NEGATIVE_CACHE_MAX_ENTRIES labels, oldest evicted
+//     first) whose entries expire after NEGATIVE_CACHE_TTL_MS. Not
+//     `unstable_cache` with a short `revalidate`: self-hosted Next writes those
+//     entries to `.next/cache` on disk and a `revalidate` only marks them stale,
+//     it never deletes them, so a flood of random labels would still grow the
+//     disk without bound.
+//
+// Load under a flood of random labels: memory is capped by the map size; each
+// NEW label costs one lookup on the unique `subdomain` index (plus one primary
+// key read when the label exists but is not published); a REPEATED missing label
+// costs at most one such lookup per TTL. Rate limiting arbitrary hostnames is
+// the Cloudflare edge's job, not this layer's.
+//
+// OPERATOR SCRIPTS need no secret and no endpoint: a site created out of band
+// (seed, restore, import) is served within NEGATIVE_CACHE_TTL_MS of its rows
+// landing, because its label was at worst remembered as a miss. The publish and
+// unpublish routes stay instant: `revalidateSiteCache` clears both the hit entry
+// (by tag) and any remembered miss for the label. A script that CHANGES an
+// already-served published site must go through publish/unpublish (the seed
+// creates on a fresh database and never changes one).
 
 import { unstable_cache, revalidateTag } from 'next/cache';
 import { getPrismaClient } from '@/server/db';
@@ -34,17 +67,74 @@ export function siteCacheTag(subdomain: string): string {
   return `site:${subdomain}`;
 }
 
+/** How long a miss is remembered before the database is asked again. */
+export const NEGATIVE_CACHE_TTL_MS = 30_000;
+
+/** The most labels remembered as misses at once; the oldest is evicted first. */
+export const NEGATIVE_CACHE_MAX_ENTRIES = 1_000;
+
+/**
+ * The in-process negative cache: label -> expiry (epoch ms). A Map iterates in
+ * insertion order, so the first key is always the oldest entry, which makes
+ * eviction O(1) without an extra structure.
+ */
+const missCache = new Map<string, number>();
+
+function isRememberedMiss(subdomain: string, now: number): boolean {
+  const expiresAt = missCache.get(subdomain);
+  if (expiresAt === undefined) return false;
+  if (expiresAt > now) return true;
+  missCache.delete(subdomain);
+  return false;
+}
+
+function rememberMiss(subdomain: string, now: number): void {
+  // Re-insert so a refreshed entry moves to the young end of the order.
+  missCache.delete(subdomain);
+  while (missCache.size >= NEGATIVE_CACHE_MAX_ENTRIES) {
+    const oldest = missCache.keys().next().value;
+    if (oldest === undefined) break;
+    missCache.delete(oldest);
+  }
+  missCache.set(subdomain, now + NEGATIVE_CACHE_TTL_MS);
+}
+
+/** Drop every remembered miss. A test seam; production code never needs it. */
+export function clearSiteMissCache(): void {
+  missCache.clear();
+}
+
+/** How many labels are currently remembered as misses (for tests and metrics). */
+export function siteMissCacheSize(): number {
+  return missCache.size;
+}
+
+/**
+ * Thrown inside the cached callback when the label resolves to no published
+ * site, so `unstable_cache` stores nothing. Module-private: only this file
+ * throws it and only this file catches it.
+ */
+class SiteMiss extends Error {
+  constructor(subdomain: string) {
+    super(`no published site for subdomain ${subdomain}`);
+    this.name = 'SiteMiss';
+  }
+}
+
 /**
  * Resolve the published site for a request Host, cached cross-request and keyed
  * by the host's subdomain (tagged `site:<subdomain>`).
  *
- * The subdomain is parsed up front: a host with no usable subdomain is NOT
- * cacheable (it 404s) and returns null immediately, so a shared "null" entry is
- * never written. The cache KEY is the subdomain, so two hosts -> two entries and
- * cross-tenant bleed is impossible.
+ * The subdomain is parsed (and shape-checked) up front: a host with no usable
+ * subdomain returns null immediately, touching neither the cache nor the
+ * database. A resolved site is cached until its tag is revalidated; a miss is
+ * never written to `unstable_cache`, only remembered in the bounded in-process
+ * negative cache for NEGATIVE_CACHE_TTL_MS (see the file header). The cache KEY
+ * is the subdomain, so two hosts -> two entries and cross-tenant bleed is
+ * impossible.
  *
  * The Prisma client is constructed INSIDE the cached callback (via
- * `resolvePublishedSite`'s default) — never captured as a closure arg — so the
+ * `resolvePublishedSite`'s default), never captured as a closure arg, so the
  * cache stores only plain serializable data (the resolved `PublishedSite`).
  */
 export async function getCachedPublishedSite(
@@ -52,16 +142,28 @@ export async function getCachedPublishedSite(
 ): Promise<PublishedSite | null> {
   const subdomain = parseSubdomain(host);
   if (!subdomain) return null;
+  if (isRememberedMiss(subdomain, Date.now())) return null;
 
   const load = unstable_cache(
     // No closure-captured Prisma client: resolvePublishedSite constructs it
     // itself. `host` is captured for parsing only; the cache KEY is the
     // subdomain in keyParts, and one subdomain maps to exactly one host.
-    async (): Promise<PublishedSite | null> => resolvePublishedSite(host),
+    async (): Promise<PublishedSite> => {
+      const site = await resolvePublishedSite(host);
+      if (!site) throw new SiteMiss(subdomain);
+      return site;
+    },
     ['published-site', subdomain],
     { tags: [siteCacheTag(subdomain)] },
   );
-  return load();
+
+  try {
+    return await load();
+  } catch (err) {
+    if (!(err instanceof SiteMiss)) throw err;
+    rememberMiss(subdomain, Date.now());
+    return null;
+  }
 }
 
 /**
@@ -85,8 +187,11 @@ export async function resolveSubdomainForSiteId(
 /**
  * Invalidate a site's cached resolution so the NEXT request re-reads from the
  * DB. Called by publish (with the freshly-allocated/idempotent subdomain) and
- * unpublish (with the looked-up subdomain) after the write commits.
+ * unpublish (with the looked-up subdomain) after the write commits. Clears both
+ * the cached hit (by tag) and a remembered miss, so a label that 404'd seconds
+ * before its first publish serves the new site immediately.
  */
 export function revalidateSiteCache(subdomain: string): void {
+  missCache.delete(subdomain);
   revalidateTag(siteCacheTag(subdomain));
 }

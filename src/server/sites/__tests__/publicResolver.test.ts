@@ -23,6 +23,21 @@ afterEach(() => {
 });
 
 describe('parseSubdomain', () => {
+  it('rejects a label that is not DNS-label shaped (no cache or DB work downstream)', () => {
+    expect(parseSubdomain('bad_label.lumitra.site', 'lumitra.site')).toBeNull();
+    expect(parseSubdomain('-lead.lumitra.site', 'lumitra.site')).toBeNull();
+    expect(parseSubdomain('trail-.lumitra.site', 'lumitra.site')).toBeNull();
+    expect(parseSubdomain(`${'a'.repeat(64)}.lumitra.site`, 'lumitra.site')).toBeNull();
+    expect(parseSubdomain('bad_label.example.com', null)).toBeNull();
+    // Hyphens inside a label and a 63-char label are fine.
+    expect(parseSubdomain('my-shop.lumitra.site', 'lumitra.site')).toBe('my-shop');
+    expect(parseSubdomain(`${'a'.repeat(63)}.lumitra.site`, 'lumitra.site')).toBe('a'.repeat(63));
+  });
+
+  it('does not apply the reserved-name list (an operator-seeded site may use one)', () => {
+    expect(parseSubdomain('app.lumitra.site', 'lumitra.site')).toBe('app');
+  });
+
   it('extracts the leftmost label against a configured base host', () => {
     expect(parseSubdomain('demo.lumitra.site', 'lumitra.site')).toBe('demo');
     expect(parseSubdomain('demo.lumitra.site:3000', 'lumitra.site')).toBe('demo');
