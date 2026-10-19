@@ -145,55 +145,8 @@ const HistoryMenu = observer(() => {
 });
 HistoryMenu.displayName = 'HistoryMenu';
 
-// --- WorkspaceSelector -----------------------------------------------------
-// A minimal workspace switcher. Rendered ONLY when the session has more than
-// one workspace — the common D1 case (one personal workspace per user) hides
-// it entirely. Choosing a workspace re-scopes the dashboard: the chosen id is
-// carried to /projects, where the server resolves it via
-// resolveScopeForWorkspace (membership-checked, never a client-trusted scope).
-// The workspaces arrive as a prop; we deliberately do NOT plumb the live
-// session into this client component for the single-workspace common path.
-export type WorkspaceOption = { id: string; name: string };
-
-function WorkspaceSelector({
-  workspaces,
-  activeWorkspaceId,
-}: {
-  workspaces: WorkspaceOption[];
-  activeWorkspaceId?: string;
-}) {
-  const router = useRouter();
-  if (workspaces.length <= 1) return null;
-  return (
-    <label className="flex items-center gap-1.5 text-sm">
-      <span className="sr-only">Workspace</span>
-      <select
-        aria-label="Workspace"
-        value={activeWorkspaceId ?? workspaces[0]?.id}
-        onChange={(e) =>
-          router.push(`/projects?workspace=${encodeURIComponent(e.target.value)}`)
-        }
-        className="h-8 rounded border border-border bg-background px-2 text-sm text-foreground hover:bg-accent"
-      >
-        {workspaces.map((w) => (
-          <option key={w.id} value={w.id}>
-            {w.name}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
 // --- TopBar ----------------------------------------------------------------
-const TopBar = observer(
-  ({
-    workspaces = [],
-    activeWorkspaceId,
-  }: {
-    workspaces?: WorkspaceOption[];
-    activeWorkspaceId?: string;
-  } = {}) => {
+const TopBar = observer(() => {
   const rootStore = useStore();
   const { editorUI } = rootStore;
   const project = editorUI.currentProject;
@@ -223,10 +176,6 @@ const TopBar = observer(
         >
           <ChevronLeft size={18} />
         </Link>
-        <WorkspaceSelector
-          workspaces={workspaces}
-          activeWorkspaceId={activeWorkspaceId}
-        />
         <div className="text-sm font-semibold text-foreground truncate max-w-[180px]">
           {project?.metadata.title ?? 'Untitled Project'}
         </div>

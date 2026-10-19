@@ -31,7 +31,20 @@ export default function NewProjectButton() {
         body: JSON.stringify({}),
       });
       if (!res.ok) {
-        throw new Error(`Could not create a new project (${res.status}).`);
+        // Prefer the server's own explanation (e.g. `no_active_workspace` when
+        // the workspace was switched in another tab) over a bare status code.
+        let message = `Could not create a new project (${res.status}).`;
+        try {
+          const body: { error?: { code?: string; message?: string } } = await res.json();
+          if (body.error?.code === 'no_active_workspace') {
+            message = 'No workspace is selected. Reload the page and choose a workspace.';
+          } else if (body.error?.message) {
+            message = `Could not create a new project: ${body.error.message}`;
+          }
+        } catch {
+          // Non-JSON error body: keep the status-code message.
+        }
+        throw new Error(message);
       }
       const data: { siteId?: string } = await res.json();
       if (!data.siteId) {

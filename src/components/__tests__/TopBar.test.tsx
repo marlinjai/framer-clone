@@ -68,30 +68,6 @@ describe('TopBar navigation chrome', () => {
     expect(link.getAttribute('href')).toBe('/projects');
   });
 
-  it('hides the workspace selector for a single-workspace session (default)', () => {
-    render(<TopBar />);
-    expect(screen.queryByRole('combobox', { name: /workspace/i })).toBeNull();
-  });
-
-  it('renders a re-scoping workspace selector when the session has >1 workspace', () => {
-    render(
-      <TopBar
-        workspaces={[
-          { id: 'ws_a', name: 'Acme' },
-          { id: 'ws_b', name: 'Beta' },
-        ]}
-        activeWorkspaceId="ws_a"
-      />,
-    );
-    const select = screen.getByRole('combobox', {
-      name: /workspace/i,
-    }) as HTMLSelectElement;
-    expect(select.value).toBe('ws_a');
-
-    fireEvent.change(select, { target: { value: 'ws_b' } });
-    expect(pushMock).toHaveBeenCalledWith('/projects?workspace=ws_b');
-  });
-
   it('targets the id-aware preview route when a project is loaded', () => {
     render(<TopBar />);
     fireEvent.click(screen.getByRole('button', { name: /preview/i }));

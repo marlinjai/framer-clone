@@ -6,23 +6,27 @@ import 'server-only';
 // from the page so the isolation + auth-bounce + 404 contract is unit-testable
 // without rendering a server component.
 //
-// HARD ISOLATION: the workspace the project is loaded under is derived ENTIRELY
-// from the SERVER-verified auth-brain session (the session's active workspace ->
-// its tenant -> tenant_group), never from a client-supplied workspace or the
-// loaded MST tree. `loadProject` filters by `workspace_id`, so a `projectId`
+// HARD ISOLATION: the workspace the project is loaded under is derived from the
+// SERVER-verified auth-brain session (the request's active workspace -> its
+// tenant -> tenant_group), never from a client-supplied scope or the loaded MST
+// tree. The app-local `framer_ws` selector only chooses among the workspaces
+// the verified session contains (resolveActiveScope). `loadProject` filters by `workspace_id`, so a `projectId`
 // that lives in ANOTHER workspace is indistinguishable from a missing one: it
 // throws `SiteNotFoundError`, which this loader maps to a `not_found` result the
 // page turns into `notFound()`. A foreign tenant's project is NEVER rendered.
 //
-// FAIL-CLOSED: a missing cookie, a failed/expired verify, or a session with no
-// resolvable active workspace all resolve to the same `unauthenticated` result
-// carrying the auth-brain login URL — the page then redirects, never throws a
-// 500. The extra try/catch around verify is belt-and-suspenders so a thrown
-// verify can never surface as a 500 editor.
+// FAIL-CLOSED: a missing cookie or a failed/expired verify resolves to
+// `unauthenticated` carrying the auth-brain login URL. A VALID session with no
+// resolvable workspace resolves to `choose_workspace` carrying the dashboard's
+// chooser URL (with this path as `next`), NEVER the login: auth-brain would see
+// the valid session and send the user straight back, the endless redirect loop
+// of 2026-10-19. The extra try/catch around verify is belt-and-suspenders so a
+// thrown verify can never surface as a 500 editor.
 
 import { cookies, headers } from 'next/headers';
 import { getSnapshot } from 'mobx-state-tree';
 import { authBrainClient } from '@/lib/auth-brain';
+import { ACTIVE_WORKSPACE_COOKIE } from '@/lib/activeWorkspaceCookie';
 import {
   getSiteRepository,
   resolveActiveScope,
@@ -38,6 +42,7 @@ const SESSION_COOKIE = 'lumitra_session';
 
 export type ProjectLoadResult =
   | { status: 'unauthenticated'; loginUrl: string }
+  | { status: 'choose_workspace'; chooserUrl: string }
   | { status: 'not_found' }
   | { status: 'ok'; snapshot: ProjectSnapshotOut };
 
@@ -91,11 +96,18 @@ export async function loadProjectSnapshot(
     return { status: 'unauthenticated', loginUrl: await buildLoginUrl(projectId, returnPathSuffix) };
   }
 
-  // Scope is derived from the SERVER session only. No active workspace ->
-  // treat as unauthenticated (bounce to login), never guess a workspace.
-  const scopeResult = resolveActiveScope(session);
+  // Scope is derived from the SERVER session only. No resolvable workspace ->
+  // send the user to pick one (never the login, never a guessed workspace).
+  const scopeResult = resolveActiveScope(
+    session,
+    jar.get(ACTIVE_WORKSPACE_COOKIE)?.value ?? null,
+  );
   if (!scopeResult.ok) {
-    return { status: 'unauthenticated', loginUrl: await buildLoginUrl(projectId, returnPathSuffix) };
+    const next = `/projects/${encodeURIComponent(projectId)}${returnPathSuffix}`;
+    return {
+      status: 'choose_workspace',
+      chooserUrl: `/projects?next=${encodeURIComponent(next)}`,
+    };
   }
 
   try {

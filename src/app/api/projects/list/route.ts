@@ -12,13 +12,16 @@
 // Workspace selection: an optional `?workspace=<id>` re-scopes via
 // resolveScopeForWorkspace (membership-checked — a workspace not in the session
 // is a 403, never a silent fallback to another workspace). With no param we use
-// the session's active workspace (resolveActiveScope), mirroring the dashboard.
+// the request's active workspace (resolveActiveScope: the membership-checked
+// `framer_ws` selector, else the session's active workspace, else its only
+// one), exactly like the dashboard.
 //
 // Failures surface as the Track-0 `{ error: { code, message } }` envelope: 401
 // unauthenticated, 403 no resolvable / non-member workspace, 500 otherwise.
 //
 // Node runtime because the repository reaches Postgres through adapter-prisma.
 
+import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
 import {
   authenticateAccountRequest,
   getVerifiedSession,
@@ -47,13 +50,13 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   // 3. Resolve scope: an explicit, membership-checked workspace when asked for,
-  //    else the session's active workspace. Either way the scope is derived
+  //    else the request's active workspace. Either way the scope is derived
   //    server-side and never trusted from the client.
   const url = new URL(req.url);
   const workspaceId = url.searchParams.get('workspace');
   const scopeResult = workspaceId
     ? resolveScopeForWorkspace(session, workspaceId)
-    : resolveActiveScope(session);
+    : resolveActiveScope(session, readActiveWorkspaceCookie(req));
   if (!scopeResult.ok) {
     return jsonError(
       'no_active_workspace',

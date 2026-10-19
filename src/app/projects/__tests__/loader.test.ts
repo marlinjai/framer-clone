@@ -3,16 +3,17 @@
 // src/app/projects/__tests__/loader.test.ts
 //
 // Unit tests for the /projects dashboard data loader (MT-09). next/headers,
-// the auth-brain client, and the site repository are mocked; resolveActiveScope
-// is kept REAL, so these assert the actual scope-derivation + isolation +
-// auth-bounce contract without a database or a rendered server component:
-//   - a session for workspace A loads ONLY workspace-A sites: listSites is
-//     called with the scope derived from THAT session (active workspace ->
-//     tenant -> tenant_group), never a client-supplied workspace,
-//   - no session (no cookie) bounces to the auth-brain login with a return_to
-//     of this dashboard,
-//   - an invalid/expired session (verify -> null) and a session with no active
-//     workspace both fail-closed to the same login bounce.
+// the auth-brain client, and the site repository are mocked; the scope
+// resolution (resolveActiveScope / resolveActiveWorkspaceId) is kept REAL, so
+// these assert the actual contract without a database or a rendered page:
+//   - the listing is scoped to the workspace derived from the VERIFIED session
+//     (the `framer_ws` selector only chooses among its workspaces),
+//   - only an absent or invalid session yields a login URL; a valid session
+//     with no resolvable workspace yields the chooser, NEVER a login URL (the
+//     2026-10-19 redirect loop),
+//   - the four stateful-flow paths of the selection: forward (choose), change
+//     (the listing follows the new workspace), resume (cookie after reload),
+//     re-entry after membership removal (stale cookie falls back safely).
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
@@ -35,28 +36,62 @@ vi.mock('@/server/sites', async (importActual) => {
   };
 });
 
-const mockCookieGet = vi.fn();
+let jar: Record<string, string> = {};
 const mockHeaderGet = vi.fn();
 vi.mock('next/headers', () => ({
-  cookies: async () => ({ get: mockCookieGet }),
+  cookies: async () => ({
+    get: (name: string) => (name in jar ? { name, value: jar[name] } : undefined),
+  }),
   headers: async () => ({ get: mockHeaderGet }),
 }));
 
-import { loadDashboard } from '../loader';
+import { loadDashboard, type DashboardData } from '../loader';
+
+const LOGIN_URL =
+  'https://auth.lumitra.co/login?return_to=https%3A%2F%2Fapp.lumitra.co%2Fprojects';
 
 // A session whose active workspace is ws_a (tenant_group tg_a).
 function sessionA() {
   return {
     user: { id: 'user-a' },
     session: {},
-    tenants: [{ id: 'tenant-a', group_id: 'tg_a' }],
-    workspaces: [{ id: 'ws_a', tenant_id: 'tenant-a' }],
+    tenants: [{ id: 'tenant-a', group_id: 'tg_a', name: 'Acme', slug: 'acme' }],
+    workspaces: [{ id: 'ws_a', tenant_id: 'tenant-a', name: 'Acme', slug: 'acme' }],
     active_tenant: { id: 'tenant-a' },
     active_workspace: { id: 'ws_a' },
   };
 }
 
-// A session that verifies but has no resolvable active workspace.
+// The production shape of 2026-10-19: several companies, active_tenant set,
+// active_workspace NULL.
+function multiSession(workspaceIds = ['ws_a', 'ws_b', 'ws_c']) {
+  const all = {
+    ws_a: { tenant: 'tenant-a', group: 'tg_a', name: 'Acme', slug: 'acme' },
+    ws_b: { tenant: 'tenant-b', group: 'tg_b', name: 'Beta', slug: 'beta' },
+    ws_c: { tenant: 'tenant-c', group: 'tg_c', name: 'Cactus', slug: 'cactus' },
+  } as const;
+  const ids = workspaceIds as Array<keyof typeof all>;
+  return {
+    user: { id: 'user-m' },
+    session: {},
+    tenants: ids.map((id) => ({
+      id: all[id].tenant,
+      group_id: all[id].group,
+      name: all[id].name,
+      slug: all[id].slug,
+    })),
+    workspaces: ids.map((id) => ({
+      id,
+      tenant_id: all[id].tenant,
+      name: all[id].name,
+      slug: all[id].slug,
+    })),
+    active_tenant: { id: 'tenant-b' },
+    active_workspace: null,
+  };
+}
+
+// A session that verifies but has no workspace at all.
 function sessionNoWorkspace() {
   return {
     user: { id: 'user-a' },
@@ -72,15 +107,27 @@ function setHeaders(map: Record<string, string>) {
   mockHeaderGet.mockImplementation((name: string) => map[name] ?? null);
 }
 
+function signedIn(session: unknown, framerWs?: string) {
+  jar = { lumitra_session: 'sess' };
+  if (framerWs !== undefined) jar.framer_ws = framerWs;
+  mockVerifySession.mockResolvedValue(session);
+}
+
+function expectOk(result: DashboardData) {
+  if (result.status !== 'ok') throw new Error(`expected ok, got ${result.status}`);
+  return result;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  jar = {};
   setHeaders({ 'x-forwarded-proto': 'https', 'x-forwarded-host': 'app.lumitra.co' });
+  mockListSites.mockResolvedValue([]);
 });
 
-describe('loadDashboard — workspace isolation', () => {
+describe('loadDashboard: workspace isolation', () => {
   it('lists only the caller workspace’s sites, scoped to the session workspace', async () => {
-    mockCookieGet.mockReturnValue({ value: 'sess_a' });
-    mockVerifySession.mockResolvedValue(sessionA());
+    signedIn(sessionA());
     const sitesA = [
       {
         siteId: 'site-a1',
@@ -94,80 +141,176 @@ describe('loadDashboard — workspace isolation', () => {
     ];
     mockListSites.mockResolvedValue(sitesA);
 
+    const result = expectOk(await loadDashboard());
+
+    expect(mockVerifySession).toHaveBeenCalledWith('sess');
+    expect(mockListSites).toHaveBeenCalledTimes(1);
+    expect(mockListSites).toHaveBeenCalledWith({ workspaceId: 'ws_a', tenantGroupId: 'tg_a' });
+    expect(result.sites).toBe(sitesA);
+    expect(result.activeWorkspace).toMatchObject({ id: 'ws_a', companyName: 'Acme' });
+  });
+
+  it('ignores a forged framer_ws naming a workspace outside the session', async () => {
+    signedIn(sessionA(), 'ws_foreign');
+
+    expectOk(await loadDashboard());
+
+    expect(mockListSites).toHaveBeenCalledWith({ workspaceId: 'ws_a', tenantGroupId: 'tg_a' });
+  });
+
+  it('a forged framer_ws on a multi-workspace session renders the chooser, never another tenant', async () => {
+    signedIn(multiSession(), 'ws_foreign');
+
     const result = await loadDashboard();
 
-    // The session cookie was verified.
-    expect(mockVerifySession).toHaveBeenCalledWith('sess_a');
-    // listSites was called with the scope DERIVED from session A, never a
-    // client-supplied workspace.
-    expect(mockListSites).toHaveBeenCalledTimes(1);
-    expect(mockListSites).toHaveBeenCalledWith({
-      workspaceId: 'ws_a',
-      tenantGroupId: 'tg_a',
-    });
-    expect(result).toEqual({ authenticated: true, sites: sitesA });
+    expect(result.status).toBe('choose_workspace');
+    expect(mockListSites).not.toHaveBeenCalled();
   });
 });
 
-describe('loadDashboard — fail-closed auth bounce', () => {
-  it('redirects to the auth-brain login with a return_to of /projects when there is no session cookie', async () => {
-    mockCookieGet.mockReturnValue(undefined);
-
+describe('loadDashboard: only an absent or invalid session goes to the login', () => {
+  it('redirects to the auth-brain login when there is no session cookie', async () => {
     const result = await loadDashboard();
 
     expect(mockVerifySession).not.toHaveBeenCalled();
     expect(mockListSites).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      authenticated: false,
-      loginUrl:
-        'https://auth.lumitra.co/login?return_to=https%3A%2F%2Fapp.lumitra.co%2Fprojects',
-    });
+    expect(result).toEqual({ status: 'unauthenticated', loginUrl: LOGIN_URL });
   });
 
   it('redirects when the session cookie fails to verify (fail-closed)', async () => {
-    mockCookieGet.mockReturnValue({ value: 'bad' });
-    mockVerifySession.mockResolvedValue(null);
+    signedIn(null);
 
-    const result = await loadDashboard();
-
+    expect(await loadDashboard()).toEqual({ status: 'unauthenticated', loginUrl: LOGIN_URL });
     expect(mockListSites).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      authenticated: false,
-      loginUrl:
-        'https://auth.lumitra.co/login?return_to=https%3A%2F%2Fapp.lumitra.co%2Fprojects',
-    });
   });
 
   it('redirects when verifySession throws (never a 500)', async () => {
-    mockCookieGet.mockReturnValue({ value: 'boom' });
+    jar = { lumitra_session: 'boom' };
     mockVerifySession.mockRejectedValue(new Error('network'));
 
     const result = await loadDashboard();
 
     expect(mockListSites).not.toHaveBeenCalled();
-    expect(result.authenticated).toBe(false);
+    expect(result.status).toBe('unauthenticated');
   });
 
-  it('redirects when the session has no resolvable active workspace', async () => {
-    mockCookieGet.mockReturnValue({ value: 'sess_a' });
-    mockVerifySession.mockResolvedValue(sessionNoWorkspace());
+  it('a framer_ws cookie without a session still goes to the login', async () => {
+    jar = { framer_ws: 'ws_a' };
 
-    const result = await loadDashboard();
-
-    expect(mockListSites).not.toHaveBeenCalled();
-    expect(result.authenticated).toBe(false);
+    expect((await loadDashboard()).status).toBe('unauthenticated');
   });
 
   it('falls back to the Host header when x-forwarded-host is absent', async () => {
     setHeaders({ host: 'app.lumitra.co' });
-    mockCookieGet.mockReturnValue(undefined);
+
+    expect(await loadDashboard()).toEqual({ status: 'unauthenticated', loginUrl: LOGIN_URL });
+  });
+
+  // The loop-impossibility contract: for EVERY valid session shape, whatever the
+  // selector cookie says, the loader never returns a login URL.
+  const validCases: Array<[string, () => unknown, string | undefined]> = [
+    ['multi-workspace, no cookie (the production bug)', () => multiSession(), undefined],
+    ['multi-workspace, forged cookie', () => multiSession(), 'ws_foreign'],
+    ['multi-workspace, empty cookie', () => multiSession(), ''],
+    ['multi-workspace, valid cookie', () => multiSession(), 'ws_b'],
+    ['single workspace, no active_workspace', () => ({ ...sessionA(), active_workspace: null }), undefined],
+    ['active_workspace set', () => sessionA(), undefined],
+    ['no workspace at all', () => sessionNoWorkspace(), undefined],
+    ['no workspace at all, stale cookie', () => sessionNoWorkspace(), 'ws_a'],
+  ];
+  it.each(validCases)('never returns a login URL for a valid session: %s', async (_name, make, cookie) => {
+    signedIn(make(), cookie);
 
     const result = await loadDashboard();
 
-    expect(result).toEqual({
-      authenticated: false,
-      loginUrl:
-        'https://auth.lumitra.co/login?return_to=https%3A%2F%2Fapp.lumitra.co%2Fprojects',
-    });
+    expect(result.status).not.toBe('unauthenticated');
+    expect(JSON.stringify(result)).not.toContain('/login');
+  });
+});
+
+describe('loadDashboard: workspace chooser and selection flow', () => {
+  it('renders the chooser (not a redirect) with every workspace when none is active', async () => {
+    signedIn(multiSession());
+
+    const result = await loadDashboard();
+
+    expect(result.status).toBe('choose_workspace');
+    if (result.status !== 'choose_workspace') return;
+    expect(result.activeWorkspaceId).toBeNull();
+    expect(result.workspaces.map((w) => [w.id, w.companyName, w.companySlug])).toEqual([
+      ['ws_a', 'Acme', 'acme'],
+      ['ws_b', 'Beta', 'beta'],
+      ['ws_c', 'Cactus', 'cactus'],
+    ]);
+    expect(mockListSites).not.toHaveBeenCalled();
+  });
+
+  it('does not guess from active_tenant', async () => {
+    // active_tenant is tenant-b, but the user never picked a workspace.
+    signedIn(multiSession());
+
+    expect((await loadDashboard()).status).toBe('choose_workspace');
+  });
+
+  it('renders an empty chooser for a session with no workspace at all', async () => {
+    signedIn(sessionNoWorkspace());
+
+    const result = await loadDashboard();
+
+    expect(result).toEqual({ status: 'choose_workspace', workspaces: [], activeWorkspaceId: null });
+  });
+
+  it('forward + resume: the chosen workspace (framer_ws) scopes the listing, also after a reload', async () => {
+    signedIn(multiSession(), 'ws_b');
+    const first = expectOk(await loadDashboard());
+    // A reload is a fresh request carrying the same cookie.
+    const again = expectOk(await loadDashboard());
+
+    expect(first.activeWorkspace.id).toBe('ws_b');
+    expect(again.activeWorkspace.id).toBe('ws_b');
+    expect(mockListSites).toHaveBeenNthCalledWith(1, { workspaceId: 'ws_b', tenantGroupId: 'tg_b' });
+    expect(mockListSites).toHaveBeenNthCalledWith(2, { workspaceId: 'ws_b', tenantGroupId: 'tg_b' });
+  });
+
+  it('change: switching the workspace makes the project list follow it', async () => {
+    mockListSites.mockImplementation(async (scope: { workspaceId: string }) => [
+      { siteId: `site-of-${scope.workspaceId}` },
+    ]);
+
+    signedIn(multiSession(), 'ws_a');
+    const before = expectOk(await loadDashboard());
+    signedIn(multiSession(), 'ws_c');
+    const after = expectOk(await loadDashboard());
+
+    expect(before.sites).toEqual([{ siteId: 'site-of-ws_a' }]);
+    expect(after.sites).toEqual([{ siteId: 'site-of-ws_c' }]);
+    expect(after.activeWorkspace.id).toBe('ws_c');
+  });
+
+  it('switch mode shows the chooser with the current workspace marked, without listing', async () => {
+    signedIn(multiSession(), 'ws_b');
+
+    const result = await loadDashboard({ forceChooser: true });
+
+    expect(result).toMatchObject({ status: 'choose_workspace', activeWorkspaceId: 'ws_b' });
+    expect(mockListSites).not.toHaveBeenCalled();
+  });
+
+  it('re-entry after membership removal, several left: stale cookie falls back to the chooser', async () => {
+    signedIn(multiSession(['ws_a', 'ws_c']), 'ws_b');
+
+    const result = await loadDashboard();
+
+    expect(result.status).toBe('choose_workspace');
+    expect(mockListSites).not.toHaveBeenCalled();
+  });
+
+  it('re-entry after membership removal, one left: stale cookie falls back to that one', async () => {
+    signedIn(multiSession(['ws_c']), 'ws_b');
+
+    const result = expectOk(await loadDashboard());
+
+    expect(result.activeWorkspace.id).toBe('ws_c');
+    expect(mockListSites).toHaveBeenCalledWith({ workspaceId: 'ws_c', tenantGroupId: 'tg_c' });
   });
 });

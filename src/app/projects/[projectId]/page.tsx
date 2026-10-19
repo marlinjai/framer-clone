@@ -27,9 +27,15 @@ export default async function ProjectEditorPage({
   const { projectId } = await params;
   const result = await loadProjectSnapshot(projectId);
 
-  // Fail-closed: no valid session / no resolvable workspace -> bounce to login.
+  // Fail-closed: no valid session -> bounce to login.
   if (result.status === 'unauthenticated') {
     redirect(result.loginUrl);
+  }
+
+  // Valid session, no workspace picked yet -> the dashboard's chooser, which
+  // renders (never redirects) and then continues back here.
+  if (result.status === 'choose_workspace') {
+    redirect(result.chooserUrl);
   }
 
   // Missing OR cross-workspace id -> 404. Never render a foreign tenant's site.

@@ -1,0 +1,30 @@
+'use server';
+
+// src/app/projects/workspace-actions.ts
+//
+// The server action behind the workspace chooser and the "Switch workspace"
+// control on /projects. It works as a plain HTML form post (no client script
+// needed): the chosen id is validated against the VERIFIED session before the
+// `framer_ws` cookie is written (selectActiveWorkspace), then the browser is
+// sent on to the dashboard or to the editor path it came from.
+
+import { redirect } from 'next/navigation';
+import {
+  safeEditorReturnPath,
+  selectActiveWorkspace,
+} from '@/server/auth/activeWorkspace';
+
+export async function chooseWorkspace(formData: FormData): Promise<void> {
+  const result = await selectActiveWorkspace(formData.get('workspaceId'));
+  if (!result.ok) {
+    // No valid session: the dashboard sends the user to the login. An id the
+    // session does not contain (forged, or membership just removed): back to
+    // the chooser with a visible error, nothing written.
+    redirect(
+      result.reason === 'unauthenticated'
+        ? '/projects'
+        : '/projects?switch=1&error=workspace_unavailable',
+    );
+  }
+  redirect(safeEditorReturnPath(formData.get('next')));
+}

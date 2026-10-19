@@ -6,11 +6,12 @@
 //
 // The GET stays UNAUTHENTICATED. PATCH/DELETE are mutations, guarded by the real
 // auth-brain path (getVerifiedSession -> resolveActiveScope ->
-// authenticateRequest) and scoped to the SESSION's active workspace, surfacing
+// authenticateRequest) and scoped to the request's active workspace, surfacing
 // the typed write-error contract (404 not_found, 409 collection_exists on a
 // rename collision). A repository throw SURFACES as an envelope, never a
 // swallowed empty 200.
 
+import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
 import { z } from 'zod';
 import { getCmsRepository, getCmsWriteRepository, cmsWriteErrorResponse } from '@/server/cms';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
@@ -39,7 +40,7 @@ async function guardWrite(
   if (!session) {
     return { ok: false, response: jsonError('unauthorized', 'authentication required', 401) };
   }
-  const scopeResult = resolveActiveScope(session);
+  const scopeResult = resolveActiveScope(session, readActiveWorkspaceCookie(req));
   if (!scopeResult.ok) {
     return { ok: false, response: jsonError('no_active_workspace', 'no active workspace', 403) };
   }

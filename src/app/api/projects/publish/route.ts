@@ -22,6 +22,7 @@
 // Runs on the Node runtime because the repository reaches Postgres through
 // adapter-prisma.
 
+import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
 import {
   getSiteRepository,
@@ -45,9 +46,11 @@ export async function POST(req: Request): Promise<Response> {
     return jsonError('unauthorized', 'authentication required', 401);
   }
 
-  // 2. Resolve the tenant scope from the session's active workspace. A session
-  //    with no resolvable active workspace cannot publish anywhere -> 403.
-  const scopeResult = resolveActiveScope(session);
+  // 2. Resolve the tenant scope from the request's active workspace (the
+  //    membership-checked `framer_ws` selector, else the session's own active
+  //    workspace, else its only workspace). A request with no resolvable
+  //    workspace cannot publish anywhere -> 403 `no_active_workspace`.
+  const scopeResult = resolveActiveScope(session, readActiveWorkspaceCookie(req));
   if (!scopeResult.ok) {
     return jsonError(
       'no_active_workspace',

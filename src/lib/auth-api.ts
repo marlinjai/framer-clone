@@ -18,6 +18,7 @@ import type { SessionVerifyResponse } from '@marlinjai/auth-brain-sdk';
 import { authBrainClient } from './auth-brain';
 import { checkWorkspaceAccess } from './auth-check';
 import type { FramerAction } from './permissions';
+import { readRequestCookie as readCookie } from './activeWorkspaceCookie';
 
 type AuthSuccess = {
   authenticated: true;
@@ -33,21 +34,6 @@ type AuthFailure = {
 export type AuthResult = AuthSuccess | AuthFailure;
 
 const SESSION_COOKIE = 'lumitra_session';
-
-/** Read a named cookie value off a raw request `Cookie` header. */
-function readCookie(req: Request, name: string): string | null {
-  const header = req.headers.get('cookie');
-  if (!header) return null;
-  for (const part of header.split(';')) {
-    const eq = part.indexOf('=');
-    if (eq === -1) continue;
-    if (part.slice(0, eq).trim() === name) {
-      const value = part.slice(eq + 1).trim();
-      return value.length > 0 ? value : null;
-    }
-  }
-  return null;
-}
 
 /**
  * Resolve the session user id from the `lumitra_session` cookie, or null when

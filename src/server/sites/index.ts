@@ -24,6 +24,9 @@ export {
 export {
   resolveScopeForWorkspace,
   resolveActiveScope,
+  resolveActiveWorkspaceId,
+  listWorkspaceChoices,
+  type WorkspaceChoice,
   type ScopeResult,
   type ScopeResolutionError,
 } from './scope';

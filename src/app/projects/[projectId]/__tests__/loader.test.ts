@@ -12,8 +12,12 @@
 //   - a projectId that loadProject reports as SiteNotFoundError (missing OR
 //     cross-workspace) resolves to `not_found` -> the page 404s, never another
 //     tenant's project,
-//   - no session / invalid session / no active workspace all fail-closed to the
-//     same login bounce with a return_to of THIS project URL.
+//   - no session / invalid session fail-closed to the login bounce with a
+//     return_to of THIS project URL,
+//   - a VALID session with no resolvable workspace goes to the dashboard's
+//     chooser (with this path as `next`), NEVER the login (2026-10-19 loop),
+//   - the `framer_ws` selector scopes the load only when the session contains
+//     that workspace.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import ProjectModel from '@/models/ProjectModel';
@@ -178,14 +182,17 @@ describe('loadProjectSnapshot — fail-closed auth bounce', () => {
     expect(result.status).toBe('unauthenticated');
   });
 
-  it('bounces when the session has no resolvable active workspace', async () => {
+  it('sends a valid session with no resolvable workspace to the chooser, never the login', async () => {
     mockCookieGet.mockReturnValue({ value: 'sess_a' });
     mockVerifySession.mockResolvedValue(sessionNoWorkspace());
 
     const result = await loadProjectSnapshot('site-a1');
 
     expect(mockLoadProject).not.toHaveBeenCalled();
-    expect(result.status).toBe('unauthenticated');
+    expect(result).toEqual({
+      status: 'choose_workspace',
+      chooserUrl: '/projects?next=%2Fprojects%2Fsite-a1',
+    });
   });
 
   it('falls back to the Host header when x-forwarded-host is absent', async () => {
@@ -198,6 +205,79 @@ describe('loadProjectSnapshot — fail-closed auth bounce', () => {
       status: 'unauthenticated',
       loginUrl:
         'https://auth.lumitra.co/login?return_to=https%3A%2F%2Fapp.lumitra.co%2Fprojects%2Fsite-a1',
+    });
+  });
+});
+
+// Two workspaces, active_workspace null: the production shape of 2026-10-19.
+function multiSession() {
+  return {
+    user: { id: 'user-m' },
+    session: {},
+    tenants: [
+      { id: 'tenant-a', group_id: 'tg_a' },
+      { id: 'tenant-b', group_id: 'tg_b' },
+    ],
+    workspaces: [
+      { id: 'ws_a', tenant_id: 'tenant-a' },
+      { id: 'ws_b', tenant_id: 'tenant-b' },
+    ],
+    active_tenant: { id: 'tenant-b' },
+    active_workspace: null,
+  };
+}
+
+function cookieJar(values: Record<string, string>) {
+  mockCookieGet.mockImplementation((name: string) =>
+    name in values ? { name, value: values[name] } : undefined,
+  );
+}
+
+describe('loadProjectSnapshot: app-local active workspace (framer_ws)', () => {
+  it('multi-workspace session without a selection goes to the chooser, never the login', async () => {
+    cookieJar({ lumitra_session: 'sess' });
+    mockVerifySession.mockResolvedValue(multiSession());
+
+    const result = await loadProjectSnapshot('site-a1');
+
+    expect(result.status).toBe('choose_workspace');
+    expect(JSON.stringify(result)).not.toContain('/login');
+    expect(mockLoadProject).not.toHaveBeenCalled();
+  });
+
+  it('loads under the workspace the selector names when the session contains it', async () => {
+    cookieJar({ lumitra_session: 'sess', framer_ws: 'ws_b' });
+    mockVerifySession.mockResolvedValue(multiSession());
+    mockLoadProject.mockResolvedValue(projectNode('site-b1'));
+
+    const result = await loadProjectSnapshot('site-b1');
+
+    expect(result.status).toBe('ok');
+    expect(mockLoadProject).toHaveBeenCalledWith(
+      { workspaceId: 'ws_b', tenantGroupId: 'tg_b' },
+      'site-b1',
+    );
+  });
+
+  it('ignores a forged selector (workspace outside the session)', async () => {
+    cookieJar({ lumitra_session: 'sess', framer_ws: 'ws_foreign' });
+    mockVerifySession.mockResolvedValue(multiSession());
+
+    const result = await loadProjectSnapshot('site-a1');
+
+    expect(result.status).toBe('choose_workspace');
+    expect(mockLoadProject).not.toHaveBeenCalled();
+  });
+
+  it('carries the preview suffix into the chooser `next`', async () => {
+    cookieJar({ lumitra_session: 'sess' });
+    mockVerifySession.mockResolvedValue(multiSession());
+
+    const result = await loadProjectSnapshot('site-a1', '/preview');
+
+    expect(result).toEqual({
+      status: 'choose_workspace',
+      chooserUrl: '/projects?next=%2Fprojects%2Fsite-a1%2Fpreview',
     });
   });
 });

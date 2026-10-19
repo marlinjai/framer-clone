@@ -19,6 +19,7 @@
 //   401 -> no session
 //   403 -> no active workspace / not permitted to edit this workspace
 
+import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
 import { z } from 'zod';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
 import { resolveActiveScope } from '@/server/sites';
@@ -56,7 +57,7 @@ export async function POST(request: Request): Promise<Response> {
       { status: 401 },
     );
   }
-  const scopeResult = resolveActiveScope(session);
+  const scopeResult = resolveActiveScope(session, readActiveWorkspaceCookie(request));
   if (!scopeResult.ok) {
     return Response.json(
       { error: { message: 'no active workspace', code: 'no_active_workspace' } },

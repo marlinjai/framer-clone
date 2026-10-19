@@ -26,6 +26,7 @@ import { cookies } from 'next/headers';
 import { authBrainClient } from '@/lib/auth-brain';
 import { checkWorkspaceAccess } from '@/lib/auth-check';
 import type { FramerAction } from '@/lib/permissions';
+import { ACTIVE_WORKSPACE_COOKIE } from '@/lib/activeWorkspaceCookie';
 import { resolveActiveScope, type TenantScope } from '@/server/sites';
 
 const SESSION_COOKIE = 'lumitra_session';
@@ -75,9 +76,13 @@ export async function requireWorkspaceScope(
   }
   if (!session) throw new AuthError(401, 'authentication required');
 
-  // Scope is derived from the SERVER session only; no active workspace is a
-  // deny, never a guess at one.
-  const scopeResult = resolveActiveScope(session);
+  // Scope is derived from the SERVER session only: the `framer_ws` selector is
+  // honoured only when the verified session contains that workspace. No
+  // resolvable workspace is a deny, never a guess at one.
+  const scopeResult = resolveActiveScope(
+    session,
+    jar.get(ACTIVE_WORKSPACE_COOKIE)?.value ?? null,
+  );
   if (!scopeResult.ok) throw new AuthError(403, 'no active workspace');
   const { scope } = scopeResult;
 

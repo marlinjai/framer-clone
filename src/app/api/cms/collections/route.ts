@@ -12,6 +12,7 @@
 // success. Runs on the Node runtime because the repository reaches Postgres
 // through adapter-prisma.
 
+import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
 import { z } from 'zod';
 import { getCmsRepository, getCmsWriteRepository, cmsWriteErrorResponse } from '@/server/cms';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
@@ -41,7 +42,7 @@ export async function POST(req: Request): Promise<Response> {
   if (!session) {
     return jsonError('unauthorized', 'authentication required', 401);
   }
-  const scopeResult = resolveActiveScope(session);
+  const scopeResult = resolveActiveScope(session, readActiveWorkspaceCookie(req));
   if (!scopeResult.ok) {
     return jsonError('no_active_workspace', 'no active workspace', 403);
   }
