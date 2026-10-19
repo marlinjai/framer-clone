@@ -5,7 +5,8 @@
 // FAIL-CLOSED contract without any network:
 //   - each framer action maps to the correct workspace.<role> requirement
 //   - can() returns the client's boolean on success
-//   - can() returns false on ANY thrown OpenFGA error (fail-closed)
+//   - can() throws AuthzUnavailableError on ANY thrown OpenFGA error (a 503,
+//     never a deny and never a grant)
 //   - requirePermission throws PermissionDeniedError on a deny
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -27,6 +28,7 @@ import {
   can,
   requirePermission,
   PermissionDeniedError,
+  AuthzUnavailableError,
 } from '@/lib/permissions';
 
 beforeEach(() => {
@@ -68,9 +70,16 @@ describe('can()', () => {
     expect(await can('user-1', 'viewSite', 'ws-42')).toBe(false);
   });
 
-  it('fails CLOSED: any thrown OpenFGA error becomes a deny', async () => {
-    mockCan.mockRejectedValue(new Error('openfga unreachable'));
-    expect(await can('user-1', 'publishSite', 'ws-42')).toBe(false);
+  it('throws AuthzUnavailableError (not a deny, never a grant) when OpenFGA cannot answer', async () => {
+    const cause = new Error('openfga unreachable');
+    mockCan.mockRejectedValue(cause);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const err = await can('user-1', 'publishSite', 'ws-42').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AuthzUnavailableError);
+    expect((err as AuthzUnavailableError).code).toBe('authz_unavailable');
+    expect((err as AuthzUnavailableError).cause).toBe(cause);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    errorSpy.mockRestore();
   });
 });
 
@@ -78,6 +87,15 @@ describe('requirePermission()', () => {
   it('resolves when the SDK allows the action', async () => {
     mockCan.mockResolvedValue(true);
     await expect(requirePermission('user-1', 'editSite', 'ws-42')).resolves.toBeUndefined();
+  });
+
+  it('throws AuthzUnavailableError, not PermissionDeniedError, when OpenFGA cannot answer', async () => {
+    mockCan.mockRejectedValue(new Error('openfga 401'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(requirePermission('user-1', 'editSite', 'ws-42')).rejects.toBeInstanceOf(
+      AuthzUnavailableError,
+    );
+    errorSpy.mockRestore();
   });
 
   it('throws PermissionDeniedError when the action is denied', async () => {

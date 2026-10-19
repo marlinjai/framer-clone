@@ -92,4 +92,25 @@ describe('requireWorkspaceScope', () => {
     expect((err as AuthError).code).toBe('auth_unavailable');
     expect(mockCan).not.toHaveBeenCalled();
   });
+
+  it('throws 403 forbidden when OpenFGA answers a real deny', async () => {
+    jar = { lumitra_session: 'sess', framer_ws: 'ws_a' };
+    mockCan.mockResolvedValueOnce(false);
+    const err = await requireWorkspaceScope('editSite').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AuthError);
+    expect((err as AuthError).status).toBe(403);
+    expect((err as AuthError).code).toBe('forbidden');
+  });
+
+  it('throws 503 authz_unavailable (never 403) when OpenFGA cannot answer', async () => {
+    jar = { lumitra_session: 'sess', framer_ws: 'ws_a' };
+    mockCan.mockRejectedValueOnce(new AuthBrainError('OpenFGA check failed: 401', 401));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const err = await requireWorkspaceScope('editSite').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AuthError);
+    expect((err as AuthError).status).toBe(503);
+    expect((err as AuthError).code).toBe('authz_unavailable');
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });

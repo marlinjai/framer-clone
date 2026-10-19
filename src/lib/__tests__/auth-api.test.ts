@@ -19,6 +19,7 @@ vi.mock('@/lib/auth-brain', () => ({
 }));
 
 import { authenticateRequest, authenticateAccountRequest } from '@/lib/auth-api';
+import { AuthzUnavailableError } from '@/lib/authBrainAvailability';
 
 function reqWithCookie(cookie?: string): Request {
   const headers = new Headers();
@@ -81,11 +82,14 @@ describe('authenticateRequest()', () => {
     expect(mockVerifySession).toHaveBeenCalledWith('good');
   });
 
-  it('fails CLOSED (403) when the workspace check throws', async () => {
+  it('throws AuthzUnavailableError (never a 403, never a grant) when the workspace check throws', async () => {
     mockVerifySession.mockResolvedValue({ user: { id: 'user-1' } });
     mockCan.mockRejectedValue(new Error('openfga down'));
-    const res = await authenticateRequest(reqWithCookie('lumitra_session=good'), 'ws-1');
-    expect(res).toEqual({ authenticated: false, error: 'Forbidden', status: 403 });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      authenticateRequest(reqWithCookie('lumitra_session=good'), 'ws-1'),
+    ).rejects.toBeInstanceOf(AuthzUnavailableError);
+    errorSpy.mockRestore();
   });
 });
 

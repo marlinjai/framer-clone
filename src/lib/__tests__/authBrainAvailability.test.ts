@@ -16,6 +16,7 @@ vi.mock('../auth-brain', () => ({
 
 import {
   AuthUnavailableError,
+  AuthzUnavailableError,
   isAuthServiceFailure,
   verifySessionOrThrowUnavailable,
   withAuthAvailability,
@@ -68,6 +69,16 @@ describe('withAuthAvailability', () => {
     expect(res.status).toBe(503);
     expect(res.headers.get('retry-after')).toBe('5');
     expect((await res.json()).error.code).toBe('auth_unavailable');
+  });
+
+  it('turns AuthzUnavailableError into JSON 503 authz_unavailable with Retry-After', async () => {
+    const handler = withAuthAvailability(async () => {
+      throw new AuthzUnavailableError(new Error('openfga 401'));
+    });
+    const res = await handler();
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('5');
+    expect((await res.json()).error.code).toBe('authz_unavailable');
   });
 
   it('passes other errors and normal responses through', async () => {

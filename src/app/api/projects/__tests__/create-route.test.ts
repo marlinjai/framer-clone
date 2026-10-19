@@ -142,6 +142,41 @@ describe('POST /api/projects guard', () => {
       workspaceId: 'ws_marlin',
     });
   });
+
+  it('503s authz_unavailable (never 403) when OpenFGA cannot answer, logs the cause, writes nothing', async () => {
+    const { AuthBrainError } = await import('@marlinjai/auth-brain-sdk');
+    mockVerifySession.mockResolvedValue(makeSession());
+    mockCan.mockRejectedValue(new AuthBrainError('OpenFGA check failed: 401', 401));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const save = vi.fn();
+    installRepo({ saveProject: save });
+
+    const res = await POST(createReq({ name: 'x' }));
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('5');
+    expect((await res.json()).error.code).toBe('authz_unavailable');
+    expect(save).not.toHaveBeenCalled();
+    expect(mockProvision).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/\[authz\] OpenFGA check failed \(action editSite, workspace ws_marlin\)/),
+      expect.any(AuthBrainError),
+    );
+    errorSpy.mockRestore();
+  });
+
+  it('503s authz_unavailable on a network error from OpenFGA as well', async () => {
+    mockVerifySession.mockResolvedValue(makeSession());
+    mockCan.mockRejectedValue(new TypeError('fetch failed'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    installRepo({ saveProject: vi.fn() });
+
+    const res = await POST(createReq({ name: 'x' }));
+
+    expect(res.status).toBe(503);
+    expect((await res.json()).error.code).toBe('authz_unavailable');
+    errorSpy.mockRestore();
+  });
 });
 
 describe('POST /api/projects (authorized)', () => {
