@@ -373,4 +373,29 @@ describe('POST /api/ai/cms-agent: workspace isolation', () => {
     await readStream(res);
     expect(adapter.createRow).not.toHaveBeenCalled();
   });
+
+  it('refuses a select value that is not an option of that cell\'s column', async () => {
+    adapter.getColumns.mockResolvedValue([{ id: 'c_status', tableId: 't1', name: 'Status', type: 'select' }]);
+    adapter.getSelectOptions.mockResolvedValue([{ id: 'opt_published', name: 'Published' }]);
+    adapter.getRow.mockResolvedValue({ id: 'row1', tableId: 't1', cells: {} });
+    anthropicState.turns = [
+      {
+        content: [
+          { type: 'tool_use', id: 'tu1', name: 'update_row', input: { rowId: 'row1', cells: { c_status: 'opt_of_b' } } },
+        ],
+        stop_reason: 'tool_use',
+      },
+      {
+        content: [
+          { type: 'tool_use', id: 'tu2', name: 'create_row', input: { tableId: 't1', cells: { c_status: 'opt_of_b' } } },
+        ],
+        stop_reason: 'tool_use',
+      },
+      { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+    ];
+    const res = await POST(makeRequest(baseBody(), { cookie: authCookie }));
+    await readStream(res);
+    expect(adapter.updateRow).not.toHaveBeenCalled();
+    expect(adapter.createRow).not.toHaveBeenCalled();
+  });
 });

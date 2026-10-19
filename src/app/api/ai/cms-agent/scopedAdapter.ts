@@ -21,7 +21,9 @@
 import type { Row } from '@marlinjai/data-table-core';
 import {
   assertColumnInWorkspace,
+  assertRowCreateInWorkspace,
   assertRowInWorkspace,
+  assertRowUpdateInWorkspace,
   assertRowsInWorkspace,
   assertSelectOptionInWorkspace,
   assertTableInWorkspace,
@@ -66,18 +68,20 @@ export function workspaceScopedCmsAdapter(raw: CmsAdapter, workspaceId: string):
         : { items: [], total: 0, hasMore: false },
 
     // --- writes: assert ownership, then delegate ---
+    // Row writes also check the ids they STORE: a parent row of the same table
+    // and select / multi_select option ids of the cell's own column.
     createRow: async (input) => {
-      await assertTableInWorkspace(input.tableId, workspaceId);
+      await assertRowCreateInWorkspace(input, workspaceId);
       return raw.createRow(input);
     },
     bulkCreateRows: async (inputs) => {
-      for (const tableId of new Set(inputs.map((i) => i.tableId))) {
-        await assertTableInWorkspace(tableId, workspaceId);
+      for (const input of inputs) {
+        await assertRowCreateInWorkspace(input, workspaceId);
       }
       return raw.bulkCreateRows(inputs);
     },
     updateRow: async (rowId, cells) => {
-      await assertRowInWorkspace(rowId, workspaceId);
+      await assertRowUpdateInWorkspace(rowId, cells, workspaceId);
       return raw.updateRow(rowId, cells);
     },
     archiveRow: async (rowId) => {

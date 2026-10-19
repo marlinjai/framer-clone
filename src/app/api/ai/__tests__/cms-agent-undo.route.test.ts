@@ -15,6 +15,8 @@ const adapter = vi.hoisted(() => ({
   getTable: vi.fn(),
   getRow: vi.fn(),
   getColumn: vi.fn(),
+  getColumns: vi.fn(async () => []),
+  getSelectOptions: vi.fn(async () => []),
   deleteRow: vi.fn(),
   bulkDeleteRows: vi.fn(),
   updateRow: vi.fn(),

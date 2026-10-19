@@ -71,6 +71,11 @@ import {
   assertViewInWorkspace,
   assertSelectOptionInWorkspace,
   assertFileReferenceInWorkspace,
+  assertIdsAmong,
+  assertRowCreateInWorkspace,
+  assertRowUpdateInWorkspace,
+  assertRelationInWorkspace,
+  assertFileColumnOfRow,
 } from './workspaceGuard';
 import type { CmsStatusField } from '@/lib/cms/constants';
 import type { CmsActionErrorCode, CmsActionResult } from '@/lib/cms/actionResult';
@@ -117,12 +122,6 @@ async function ownedRow(rowId: string, workspaceId: string): Promise<Row | null>
 async function ownedColumn(columnId: string, workspaceId: string): Promise<Column | null> {
   const column = await getCmsAdapter().getColumn(columnId);
   return column && (await tableIsOwned(column.tableId, workspaceId)) ? column : null;
-}
-
-// Distinct table ids from a batch of row-create inputs, so bulkCreateRows
-// asserts each target table once rather than per row.
-function distinctTableIds(inputs: CreateRowInput[]): string[] {
-  return [...new Set(inputs.map((i) => i.tableId))];
 }
 
 // --- Tables ---
@@ -217,6 +216,8 @@ export async function reorderColumns(tableId: string, columnIds: string[]): Prom
   return guarded(async () => {
     const scope = await requireCmsEditorScope('editSite');
     await assertTableInWorkspace(tableId, scope.workspaceId);
+    // Only the table's own columns may be named; a foreign id refuses the call.
+    assertIdsAmong(columnIds, (await getCmsAdapter().getColumns(tableId)).map((c) => c.id));
     return getCmsAdapter().reorderColumns(tableId, columnIds);
   });
 }
@@ -262,6 +263,8 @@ export async function reorderSelectOptions(columnId: string, optionIds: string[]
   return guarded(async () => {
     const scope = await requireCmsEditorScope('editSite');
     await assertColumnInWorkspace(columnId, scope.workspaceId);
+    // Only the column's own options may be named; a foreign id refuses the call.
+    assertIdsAmong(optionIds, (await getCmsAdapter().getSelectOptions(columnId)).map((o) => o.id));
     return getCmsAdapter().reorderSelectOptions(columnId, optionIds);
   });
 }
@@ -271,7 +274,9 @@ export async function reorderSelectOptions(columnId: string, optionIds: string[]
 export async function createRow(input: CreateRowInput): Promise<CmsActionResult<Row>> {
   return guarded(async () => {
     const scope = await requireCmsEditorScope('editSite');
-    await assertTableInWorkspace(input.tableId, scope.workspaceId);
+    // The table, a parent row of the SAME table, and select options of the
+    // cell's own column.
+    await assertRowCreateInWorkspace(input, scope.workspaceId);
     return getCmsAdapter().createRow(input);
   });
 }
@@ -297,7 +302,7 @@ export async function getRows(
 export async function updateRow(rowId: string, cells: Record<string, CellValue>): Promise<CmsActionResult<Row>> {
   return guarded(async () => {
     const scope = await requireCmsEditorScope('editSite');
-    await assertRowInWorkspace(rowId, scope.workspaceId);
+    await assertRowUpdateInWorkspace(rowId, cells, scope.workspaceId);
     return getCmsAdapter().updateRow(rowId, cells);
   });
 }
@@ -329,9 +334,9 @@ export async function unarchiveRow(rowId: string): Promise<CmsActionResult<void>
 export async function bulkCreateRows(inputs: CreateRowInput[]): Promise<CmsActionResult<Row[]>> {
   return guarded(async () => {
     const scope = await requireCmsEditorScope('editSite');
-    await Promise.all(
-      distinctTableIds(inputs).map((id) => assertTableInWorkspace(id, scope.workspaceId)),
-    );
+    for (const input of inputs) {
+      await assertRowCreateInWorkspace(input, scope.workspaceId);
+    }
     return getCmsAdapter().bulkCreateRows(inputs);
   });
 }
@@ -358,8 +363,14 @@ export async function createRelation(input: CreateRelationInput): Promise<CmsAct
   return guarded(async () => {
     const scope = await requireCmsEditorScope('editSite');
     // Both endpoints must live in the active workspace, so a relation can never
-    // bridge across the isolation boundary.
-    await assertRowsInWorkspace([input.sourceRowId, input.targetRowId], scope.workspaceId);
+    // bridge across the isolation boundary, and the column must be a relation
+    // column of the source row's table whose target table holds the target row.
+    await assertRelationInWorkspace(
+      input.sourceRowId,
+      input.sourceColumnId,
+      input.targetRowId,
+      scope.workspaceId,
+    );
     return getCmsAdapter().createRelation(input);
   });
 }
@@ -371,7 +382,7 @@ export async function deleteRelation(
 ): Promise<CmsActionResult<void>> {
   return guarded(async () => {
     const scope = await requireCmsEditorScope('editSite');
-    await assertRowsInWorkspace([sourceRowId, targetRowId], scope.workspaceId);
+    await assertRelationInWorkspace(sourceRowId, columnId, targetRowId, scope.workspaceId);
     return getCmsAdapter().deleteRelation(sourceRowId, columnId, targetRowId);
   });
 }
@@ -409,7 +420,8 @@ export async function getRelationsForRow(
 export async function addFileReference(input: CreateFileRefInput): Promise<CmsActionResult<FileReference>> {
   return guarded(async () => {
     const scope = await requireCmsEditorScope('editSite');
-    await assertRowInWorkspace(input.rowId, scope.workspaceId);
+    // The row in the workspace and the column one of the row's own table.
+    await assertFileColumnOfRow(input.rowId, input.columnId, scope.workspaceId);
     return getCmsAdapter().addFileReference(input);
   });
 }
@@ -441,6 +453,11 @@ export async function reorderFileReferences(
   return guarded(async () => {
     const scope = await requireCmsEditorScope('editSite');
     await assertRowInWorkspace(rowId, scope.workspaceId);
+    // Only this row's own files in this column may be named.
+    assertIdsAmong(
+      fileRefIds,
+      (await getCmsAdapter().getFileReferences(rowId, columnId)).map((f) => f.id),
+    );
     return getCmsAdapter().reorderFileReferences(rowId, columnId, fileRefIds);
   });
 }
@@ -491,6 +508,8 @@ export async function reorderViews(tableId: string, viewIds: string[]): Promise<
   return guarded(async () => {
     const scope = await requireCmsEditorScope('editSite');
     await assertTableInWorkspace(tableId, scope.workspaceId);
+    // Only the table's own views may be named; a foreign id refuses the call.
+    assertIdsAmong(viewIds, (await getCmsAdapter().getViews(tableId)).map((v) => v.id));
     return getCmsAdapter().reorderViews(tableId, viewIds);
   });
 }
