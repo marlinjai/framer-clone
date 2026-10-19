@@ -14,9 +14,11 @@
 // concrete repo is injected by the caller). Commerce reads (catalog list,
 // product-by-handle, the default variant + price + advisory availability) are
 // fetched the SAME way: a `CommerceServerRepository` is injected by the caller
-// and read DIRECTLY in Node (no HTTP, no React, no jsdom). The LIVE client keeps
-// reading `/api/cms/*` and `/api/commerce/*` over HTTP via its polling
-// providers; that path is unchanged by this module.
+// and read DIRECTLY in Node (no HTTP, no React, no jsdom). The LIVE editor and
+// preview client keeps reading `/api/cms/*` over HTTP via its polling provider,
+// and the storefront islands read `/api/commerce/*`; that path is unchanged by
+// this module. Tenancy is the CALLER's: the storefront render passes
+// `getCmsRepository(site.workspaceId)` for the site its request Host resolves to.
 //
 // Options-object signature: `hydrateBindings(tree, params, { cmsRepo,
 // commerceRepo })`. `commerceRepo` is ADDITIVE and OPTIONAL: a CMS-only caller

@@ -145,11 +145,14 @@ export const config = {
   //   - /preview/* (and /projects/<id>/preview, reached via the gated dashboard)
   //     render anonymous previews
   //   - /api/health/* is the liveness probe
-  //   - /api/cms + /api/commerce are LEFT OPEN: their reads are public (v1
-  //     read-open contract) and their writes (incl. anonymous order POSTs to
-  //     /api/commerce/orders) carry their OWN per-resource guard in the route
-  //     handler -- bouncing them to a login page would break public reads and
-  //     anonymous checkout. Defense in depth lives in the handlers, not here.
+  //   - /api/cms + /api/commerce are LEFT OPEN here because they serve BOTH
+  //     planes: on a published-site host their reads are scoped to the Host's
+  //     site (never the session, D2/D4), on the editor host the CMS reads and
+  //     all writes check the session themselves (src/server/cms/readScope.ts,
+  //     the write guards, src/server/commerce/editorTenant.ts). Anonymous order
+  //     POSTs to /api/commerce/orders must reach their handler too, so bouncing
+  //     either prefix to a login page here would break storefront reads and
+  //     checkout. Defense in depth lives in the handlers, not here.
   //   - _next static assets, favicon, robots are never gated
   //
   // The removed `/editor`, `/api/sites`, `/api/admin` patterns matched NO route

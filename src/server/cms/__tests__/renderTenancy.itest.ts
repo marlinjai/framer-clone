@@ -23,6 +23,7 @@ import type { PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
 import { getCmsRepository } from '@/server/cms';
 import { CMS_WORKSPACE_ID } from '@/lib/cms/constants';
+import { hydrateBindings, type ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 
 // Two DISTINCT tenant workspaces, each with its own collection content. The
 // suffix keeps them clear of the constant single-tenant workspace and of any
@@ -33,6 +34,11 @@ const COLLECTION_A = 'Alpha Collection';
 const COLLECTION_B = 'Beta Collection';
 
 let prisma: PrismaClient;
+// Ids of the seeded collections and one row in each, for the by-id reads.
+let tableA: string;
+let tableB: string;
+let rowA: string;
+let rowB: string;
 
 beforeAll(async () => {
   // Same DATABASE_URL the globalSetup exported, so the seed writes and the
@@ -40,8 +46,10 @@ beforeAll(async () => {
   prisma = getPrismaClient();
   const adapter = new PrismaAdapter({ prisma });
 
-  await adapter.createTable({ workspaceId: WORKSPACE_A, name: COLLECTION_A });
-  await adapter.createTable({ workspaceId: WORKSPACE_B, name: COLLECTION_B });
+  tableA = (await adapter.createTable({ workspaceId: WORKSPACE_A, name: COLLECTION_A })).id;
+  tableB = (await adapter.createTable({ workspaceId: WORKSPACE_B, name: COLLECTION_B })).id;
+  rowA = (await adapter.createRow({ tableId: tableA, cells: {} })).id;
+  rowB = (await adapter.createRow({ tableId: tableB, cells: {} })).id;
 }, 120_000);
 
 afterAll(async () => {
@@ -76,5 +84,60 @@ describe('MT-13: per-site CMS workspace isolation on the render path', () => {
     );
     expect(names).not.toContain(COLLECTION_A);
     expect(names).not.toContain(COLLECTION_B);
+  });
+});
+
+// The by-id reads behind the /api/cms routes and the SSR hydrator, against the
+// real adapter: a repository bound to workspace A must answer workspace B's
+// collection and row ids exactly like missing ones.
+describe('by-id reads stay inside the bound workspace (real Postgres)', () => {
+  it('getCollection: own collection found, foreign collection null', async () => {
+    const repoA = getCmsRepository(WORKSPACE_A);
+    expect((await repoA.getCollection(tableA))?.name).toBe(COLLECTION_A);
+    expect(await repoA.getCollection(tableB)).toBeNull();
+  });
+
+  it('listRows: own rows listed, foreign collection an empty page', async () => {
+    const repoA = getCmsRepository(WORKSPACE_A);
+    expect((await repoA.listRows(tableA)).rows.map((r) => r.id)).toEqual([rowA]);
+    expect(await repoA.listRows(tableB)).toEqual({ rows: [], nextCursor: undefined, total: 0 });
+  });
+
+  it('getRow: own row found, foreign row null (also via a mismatched collection id)', async () => {
+    const repoA = getCmsRepository(WORKSPACE_A);
+    expect((await repoA.getRow(tableA, rowA))?.id).toBe(rowA);
+    expect(await repoA.getRow(tableB, rowB)).toBeNull();
+    // A foreign row smuggled under an own collection id is refused too.
+    expect(await repoA.getRow(tableA, rowB)).toBeNull();
+  });
+});
+
+// The SSR render path (src/app/(site)/[...slug]/page.tsx) hydrates bound CMS
+// data through getCmsRepository(site.workspaceId). A published page whose
+// collection binding names ANOTHER workspace's collection id must render
+// nothing from it.
+describe('SSR hydration through the site-bound repository (real Postgres)', () => {
+  function collectionNode(collectionId: string): ComponentNode {
+    return {
+      type: 'div',
+      props: { 'data-component-kind': 'collection', emptyContent: 'No items' },
+      bindings: { collection: { mode: 'read', expression: collectionId } },
+      children: [{ type: 'div', props: { 'data-testid': 'item' } }],
+    } as unknown as ComponentNode;
+  }
+
+  it('renders one item per own row for a binding to the site\'s own collection', async () => {
+    const out = await hydrateBindings(collectionNode(tableA), {}, {
+      cmsRepo: getCmsRepository(WORKSPACE_A),
+    });
+    expect(out.children).toHaveLength(1);
+  });
+
+  it('renders the empty state, not the foreign rows, for a binding to another workspace\'s collection', async () => {
+    const out = await hydrateBindings(collectionNode(tableB), {}, {
+      cmsRepo: getCmsRepository(WORKSPACE_A),
+    });
+    expect(JSON.stringify(out)).not.toContain(rowB);
+    expect(JSON.stringify(out)).toContain('No items');
   });
 });
