@@ -15,17 +15,21 @@ import 'server-only';
 // throws `SiteNotFoundError`, which this loader maps to a `not_found` result the
 // page turns into `notFound()`. A foreign tenant's project is NEVER rendered.
 //
-// FAIL-CLOSED: a missing cookie or a failed/expired verify resolves to
-// `unauthenticated` carrying the auth-brain login URL. A VALID session with no
+// FAIL-CLOSED: a missing cookie or an invalid/expired session (verify -> null)
+// resolves to `unauthenticated` carrying the auth-brain login URL. auth-brain
+// failing to answer (network error, 5xx) resolves to `auth_unavailable`: the
+// page shows a retry notice, never the login. A VALID session with no
 // resolvable workspace resolves to `choose_workspace` carrying the dashboard's
 // chooser URL (with this path as `next`), NEVER the login: auth-brain would see
 // the valid session and send the user straight back, the endless redirect loop
-// of 2026-10-19. The extra try/catch around verify is belt-and-suspenders so a
-// thrown verify can never surface as a 500 editor.
+// of 2026-10-19.
 
 import { cookies, headers } from 'next/headers';
 import { getSnapshot } from 'mobx-state-tree';
-import { authBrainClient } from '@/lib/auth-brain';
+import {
+  AuthUnavailableError,
+  verifySessionOrThrowUnavailable,
+} from '@/lib/authBrainAvailability';
 import { ACTIVE_WORKSPACE_COOKIE } from '@/lib/activeWorkspaceCookie';
 import {
   getSiteRepository,
@@ -42,6 +46,7 @@ const SESSION_COOKIE = 'lumitra_session';
 
 export type ProjectLoadResult =
   | { status: 'unauthenticated'; loginUrl: string }
+  | { status: 'auth_unavailable' }
   | { status: 'choose_workspace'; chooserUrl: string }
   | { status: 'not_found' }
   | { status: 'ok'; snapshot: ProjectSnapshotOut };
@@ -86,10 +91,16 @@ export async function loadProjectSnapshot(
   let session = null;
   if (cookie) {
     try {
-      session = await authBrainClient.verifySession(cookie);
-    } catch {
-      // Fail-closed: a thrown verify is treated as no session, never a 500.
-      session = null;
+      session = await verifySessionOrThrowUnavailable(cookie);
+    } catch (err) {
+      // auth-brain could not answer. NOT "signed out": sending the user to the
+      // login would loop (auth-brain, once back, sees the valid session). The
+      // page renders a retry notice instead.
+      if (err instanceof AuthUnavailableError) {
+        console.error('[auth] auth-brain unavailable during session verify', err.cause);
+        return { status: 'auth_unavailable' };
+      }
+      throw err;
     }
   }
   if (!session) {

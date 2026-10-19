@@ -37,6 +37,7 @@ import type { PrismaClient } from '@prisma/client';
 import { jsonError } from '@/lib/api/respond';
 import { getVerifiedSession } from '@/lib/auth-api';
 import { checkWorkspaceAccess } from '@/lib/auth-check';
+import { AuthUnavailableError, authUnavailableResponse } from '@/lib/authBrainAvailability';
 import { getPrismaClient } from '@/server/db';
 import { resolveScopeForWorkspace } from '@/server/sites/scope';
 import { commerceTenantDbChecked, isCommerceTenantNotProvisioned } from './db';
@@ -72,8 +73,13 @@ export async function resolveEditorCommerce(
   let session: Awaited<ReturnType<typeof getVerifiedSession>> = null;
   try {
     session = await getVerifiedSession(req);
-  } catch {
-    // Fail closed: a verify that throws is treated as no session.
+  } catch (err) {
+    // auth-brain could not answer: a JSON 503, never "signed out" (which would
+    // send a signed-in user to the login during an outage).
+    if (err instanceof AuthUnavailableError) {
+      return { ok: false, response: authUnavailableResponse() };
+    }
+    // Any other throw fails closed as no session.
     session = null;
   }
   if (!session) {

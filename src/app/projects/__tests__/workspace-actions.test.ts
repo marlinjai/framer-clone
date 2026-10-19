@@ -80,4 +80,12 @@ describe('chooseWorkspace', () => {
 
     expect(await redirectOf(chooseWorkspace(form({ workspaceId: 'ws_a' })))).toBe('/projects');
   });
+
+  it('an auth-brain outage continues to the requested page (its retry notice), not the login', async () => {
+    mockSelect.mockResolvedValue({ ok: false, reason: 'auth_unavailable' });
+
+    expect(
+      await redirectOf(chooseWorkspace(form({ workspaceId: 'ws_a', next: '/projects/site_2' }))),
+    ).toBe('/projects/site_2');
+  });
 });

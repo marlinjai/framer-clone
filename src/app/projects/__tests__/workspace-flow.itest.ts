@@ -13,6 +13,8 @@
 //   2. change: switching makes the project list (derived state) follow, and a
 //      project of the other workspace is no longer loadable,
 //   3. resume: a fresh request carrying the same cookie keeps the workspace,
+//   (plus an auth-brain outage mid-flow: a retry notice and a JSON 503, never
+//   the login, and the selection survives the recovery)
 //   4. re-entry after membership removal: the stale cookie falls back safely
 //      (to the only remaining workspace, or to the chooser), never to a foreign
 //      tenant's data.
@@ -43,9 +45,14 @@ function session() {
   };
 }
 
+// Flip to simulate an auth-brain outage (the SDK throws on network errors).
+let authBrainDown = false;
 vi.mock('@/lib/auth-brain', () => ({
   authBrainClient: {
-    verifySession: vi.fn(async (cookie: string) => (cookie === 'sess_flow' ? session() : null)),
+    verifySession: vi.fn(async (cookie: string) => {
+      if (authBrainDown) throw new Error('Network error: ECONNREFUSED');
+      return cookie === 'sess_flow' ? session() : null;
+    }),
     can: vi.fn(async () => true),
     verifyApiKey: vi.fn(),
     getCurrentUser: vi.fn(),
@@ -143,6 +150,20 @@ describe('editor active workspace (integration)', () => {
     // ---- resume: a fresh request with the same cookie ------------------
     const resumed = await loadDashboard();
     expect(resumed.status === 'ok' && resumed.activeWorkspace.id).toBe('ws_flow_b');
+
+    // ---- auth-brain outage: no login, no write, then recovery ------------
+    authBrainDown = true;
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await loadDashboard()).toEqual({ status: 'auth_unavailable' });
+    expect(await loadProjectSnapshot(siteId)).toEqual({ status: 'auth_unavailable' });
+    const duringOutage = await createProject(createReq('outage'));
+    expect(duringOutage.status).toBe(503);
+    expect((await duringOutage.json()).error.code).toBe('auth_unavailable');
+    expect(await prisma.site.count({ where: { name: 'outage' } })).toBe(0);
+    authBrainDown = false;
+    errSpy.mockRestore();
+    const recovered = await loadDashboard();
+    expect(recovered.status === 'ok' && recovered.activeWorkspace.id).toBe('ws_flow_b');
 
     // ---- change: switch to A; the list follows, B's project is gone ----
     expect(await selectActiveWorkspace('ws_flow_a')).toMatchObject({ ok: true });

@@ -24,6 +24,7 @@
 //   401 -> no session / missing ANTHROPIC_API_KEY
 //   403 -> no active workspace / not permitted to edit this workspace
 
+import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
 import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
@@ -114,7 +115,7 @@ function dynamicContext(
   ].join('\n');
 }
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePOST(request: Request): Promise<Response> {
   // ---- 1. Parse + validate body ------------------------------------
   let raw: unknown;
   try {
@@ -346,3 +347,7 @@ async function runAgentLoop(args: LoopArgs): Promise<void> {
     sse.close();
   }
 }
+
+// An auth-brain outage during session verify answers JSON 503 `auth_unavailable`
+// (src/lib/authBrainAvailability.ts), never a 500 and never "signed out".
+export const POST = withAuthAvailability(handlePOST);

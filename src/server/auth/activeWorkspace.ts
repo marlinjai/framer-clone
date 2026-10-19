@@ -14,7 +14,10 @@ import 'server-only';
 // stays in resolveScopeForWorkspace + checkWorkspaceAccess.
 
 import { cookies } from 'next/headers';
-import { authBrainClient } from '@/lib/auth-brain';
+import {
+  AuthUnavailableError,
+  verifySessionOrThrowUnavailable,
+} from '@/lib/authBrainAvailability';
 import {
   ACTIVE_WORKSPACE_COOKIE,
   activeWorkspaceCookieOptions,
@@ -24,13 +27,13 @@ const SESSION_COOKIE = 'lumitra_session';
 
 export type SelectWorkspaceResult =
   | { ok: true; workspaceId: string }
-  | { ok: false; reason: 'unauthenticated' | 'not_a_member' };
+  | { ok: false; reason: 'unauthenticated' | 'not_a_member' | 'auth_unavailable' };
 
 /**
  * Make `workspaceId` the editor's active workspace for this browser, iff the
- * verified session contains it. Fail-closed: no session or a thrown verify is
- * `unauthenticated`, an id outside the session is `not_a_member`, and in both
- * cases the cookie is left untouched.
+ * verified session contains it. Fail-closed: no session is `unauthenticated`,
+ * auth-brain failing to answer is `auth_unavailable`, an id outside the session
+ * is `not_a_member`, and in every such case the cookie is left untouched.
  */
 export async function selectActiveWorkspace(
   workspaceId: unknown,
@@ -41,9 +44,10 @@ export async function selectActiveWorkspace(
 
   let session = null;
   try {
-    session = await authBrainClient.verifySession(sessionCookie);
-  } catch {
-    session = null;
+    session = await verifySessionOrThrowUnavailable(sessionCookie);
+  } catch (err) {
+    if (err instanceof AuthUnavailableError) return { ok: false, reason: 'auth_unavailable' };
+    throw err;
   }
   if (!session) return { ok: false, reason: 'unauthenticated' };
 

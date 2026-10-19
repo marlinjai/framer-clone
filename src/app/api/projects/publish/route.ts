@@ -22,6 +22,7 @@
 // Runs on the Node runtime because the repository reaches Postgres through
 // adapter-prisma.
 
+import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
 import {
@@ -38,7 +39,7 @@ import { projectBodySchema as publishBodySchema } from '../_schema';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(req: Request): Promise<Response> {
+async function handlePOST(req: Request): Promise<Response> {
   // 1. The verified session. No valid session -> 401. This is also the ONLY
   //    source of the tenant scope below.
   const session = await getVerifiedSession(req);
@@ -120,3 +121,7 @@ export async function POST(req: Request): Promise<Response> {
     liveUrl,
   });
 }
+
+// An auth-brain outage during session verify answers JSON 503 `auth_unavailable`
+// (src/lib/authBrainAvailability.ts), never a 500 and never "signed out".
+export const POST = withAuthAvailability(handlePOST);

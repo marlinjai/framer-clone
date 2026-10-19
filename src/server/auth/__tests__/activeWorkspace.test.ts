@@ -27,6 +27,7 @@ vi.mock('next/headers', () => ({
   }),
 }));
 
+import { AuthBrainError, AuthBrainNetworkError } from '@marlinjai/auth-brain-sdk';
 import { safeEditorReturnPath, selectActiveWorkspace } from '../activeWorkspace';
 
 function multiSession(workspaceIds = ['ws_a', 'ws_b']) {
@@ -70,7 +71,7 @@ describe('selectActiveWorkspace', () => {
     expect(mockSet).not.toHaveBeenCalled();
   });
 
-  it('refuses without a session cookie, an invalid session, or a throwing verify', async () => {
+  it('refuses without a session cookie or with an invalid session', async () => {
     jar = {};
     expect(await selectActiveWorkspace('ws_a')).toEqual({ ok: false, reason: 'unauthenticated' });
 
@@ -78,9 +79,15 @@ describe('selectActiveWorkspace', () => {
     mockVerifySession.mockResolvedValueOnce(null);
     expect(await selectActiveWorkspace('ws_a')).toEqual({ ok: false, reason: 'unauthenticated' });
 
-    mockVerifySession.mockRejectedValueOnce(new Error('down'));
+    mockVerifySession.mockRejectedValueOnce(new AuthBrainError('verifySession failed: 400', 400));
     expect(await selectActiveWorkspace('ws_a')).toEqual({ ok: false, reason: 'unauthenticated' });
 
+    expect(mockSet).not.toHaveBeenCalled();
+  });
+
+  it('reports an auth-brain outage as auth_unavailable and writes nothing', async () => {
+    mockVerifySession.mockRejectedValueOnce(new AuthBrainNetworkError(new Error('down')));
+    expect(await selectActiveWorkspace('ws_a')).toEqual({ ok: false, reason: 'auth_unavailable' });
     expect(mockSet).not.toHaveBeenCalled();
   });
 

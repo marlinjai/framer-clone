@@ -14,6 +14,7 @@
 // loaded project instead of the seeded one.
 
 import { notFound, redirect } from 'next/navigation';
+import AuthUnavailable from '../../AuthUnavailable';
 import { loadProjectSnapshot } from '../loader';
 import PreviewMount from './PreviewMount';
 
@@ -32,6 +33,12 @@ export default async function ProjectPreviewPage({
   // Fail-closed: no valid session -> bounce to login.
   if (result.status === 'unauthenticated') {
     redirect(result.loginUrl);
+  }
+
+  // auth-brain could not answer: a retry notice on this same address, never
+  // the login.
+  if (result.status === 'auth_unavailable') {
+    return <AuthUnavailable retryHref={`/projects/${encodeURIComponent(projectId)}/preview`} />;
   }
 
   // Valid session, no workspace picked yet -> the dashboard's chooser, which

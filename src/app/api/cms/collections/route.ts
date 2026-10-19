@@ -12,6 +12,7 @@
 // success. Runs on the Node runtime because the repository reaches Postgres
 // through adapter-prisma.
 
+import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
 import { z } from 'zod';
 import { getCmsRepository, getCmsWriteRepository, cmsWriteErrorResponse } from '@/server/cms';
@@ -37,7 +38,7 @@ export async function GET(): Promise<Response> {
   }
 }
 
-export async function POST(req: Request): Promise<Response> {
+async function handlePOST(req: Request): Promise<Response> {
   const session = await getVerifiedSession(req);
   if (!session) {
     return jsonError('unauthorized', 'authentication required', 401);
@@ -77,3 +78,7 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 }
+
+// An auth-brain outage during session verify answers JSON 503 `auth_unavailable`
+// (src/lib/authBrainAvailability.ts), never a 500 and never "signed out".
+export const POST = withAuthAvailability(handlePOST);

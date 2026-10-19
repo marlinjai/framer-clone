@@ -46,6 +46,7 @@ vi.mock('@/lib/ai/anthropicClient', () => ({
   resolveModelId: () => 'o',
 }));
 
+import { AuthBrainError, AuthBrainNetworkError } from '@marlinjai/auth-brain-sdk';
 import { POST as createProject } from '../projects/route';
 import { POST as saveProject } from '../projects/save/route';
 import { POST as publishProject } from '../projects/publish/route';
@@ -176,5 +177,34 @@ describe('GET /api/projects/list: active workspace resolution', () => {
       req('/api/projects/list?workspace=ws_foreign', 'GET', 'lumitra_session=sess'),
     );
     expect(denied.status).toBe(403);
+  });
+});
+
+// An auth-brain outage during session verify is NOT "signed out": every route
+// answers JSON 503 `auth_unavailable`, never a 401 (the client would send the
+// user to the login) and never an unhandled 500.
+describe.each([
+  ...ROUTES,
+  ['GET /api/projects/list', (c: string) => listProjects(req('/api/projects/list', 'GET', c))] as const,
+])('%s: auth-brain outage', (_name, call) => {
+  it('answers JSON 503 auth_unavailable', async () => {
+    mockVerifySession.mockRejectedValue(new AuthBrainNetworkError(new Error('ECONNREFUSED')));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await call('lumitra_session=sess; framer_ws=ws_a');
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get('location')).toBeNull();
+    expect((await res.json()).error.code).toBe('auth_unavailable');
+    expect(mockCan).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it('a 4xx cookie rejection (not 401) is still a 401', async () => {
+    mockVerifySession.mockRejectedValue(new AuthBrainError('verifySession failed: 400', 400));
+
+    const res = await call('lumitra_session=garbage');
+
+    expect(res.status).toBe(401);
   });
 });

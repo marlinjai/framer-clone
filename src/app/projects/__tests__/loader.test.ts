@@ -45,6 +45,7 @@ vi.mock('next/headers', () => ({
   headers: async () => ({ get: mockHeaderGet }),
 }));
 
+import { AuthBrainError, AuthBrainNetworkError } from '@marlinjai/auth-brain-sdk';
 import { loadDashboard, type DashboardData } from '../loader';
 
 const LOGIN_URL =
@@ -120,6 +121,7 @@ function expectOk(result: DashboardData) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.restoreAllMocks();
   jar = {};
   setHeaders({ 'x-forwarded-proto': 'https', 'x-forwarded-host': 'app.lumitra.co' });
   mockListSites.mockResolvedValue([]);
@@ -184,14 +186,30 @@ describe('loadDashboard: only an absent or invalid session goes to the login', (
     expect(mockListSites).not.toHaveBeenCalled();
   });
 
-  it('redirects when verifySession throws (never a 500)', async () => {
-    jar = { lumitra_session: 'boom' };
-    mockVerifySession.mockRejectedValue(new Error('network'));
+  // An auth-brain outage is NOT "signed out": no login URL (that would loop),
+  // the page renders the retry notice instead.
+  it.each([
+    ['a network error', new AuthBrainNetworkError(new Error('ECONNREFUSED'))],
+    ['a 503', new AuthBrainError('verifySession failed: 503', 503)],
+    ['a 500', new AuthBrainError('verifySession failed: 500', 500)],
+    ['a 429', new AuthBrainError('verifySession failed: 429', 429)],
+    ['an unreadable body', new SyntaxError('Unexpected token')],
+  ])('auth-brain unavailable (%s) -> auth_unavailable, never a login URL', async (_n, err) => {
+    jar = { lumitra_session: 'sess', framer_ws: 'ws_a' };
+    mockVerifySession.mockRejectedValue(err);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const result = await loadDashboard();
 
+    expect(result).toEqual({ status: 'auth_unavailable' });
     expect(mockListSites).not.toHaveBeenCalled();
-    expect(result.status).toBe('unauthenticated');
+  });
+
+  it('a cookie auth-brain rejects with a 4xx (not 401) counts as signed out', async () => {
+    jar = { lumitra_session: 'garbage' };
+    mockVerifySession.mockRejectedValue(new AuthBrainError('verifySession failed: 400', 400));
+
+    expect(await loadDashboard()).toEqual({ status: 'unauthenticated', loginUrl: LOGIN_URL });
   });
 
   it('a framer_ws cookie without a session still goes to the login', async () => {

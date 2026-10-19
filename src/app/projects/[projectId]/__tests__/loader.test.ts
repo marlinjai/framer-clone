@@ -22,6 +22,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import ProjectModel from '@/models/ProjectModel';
 import { SiteNotFoundError } from '@/server/sites';
+import { AuthBrainError, AuthBrainNetworkError } from '@marlinjai/auth-brain-sdk';
 
 const mockVerifySession = vi.fn();
 vi.mock('@/lib/auth-brain', () => ({
@@ -172,14 +173,32 @@ describe('loadProjectSnapshot — fail-closed auth bounce', () => {
     expect(result.status).toBe('unauthenticated');
   });
 
-  it('bounces when verifySession throws (never a 500)', async () => {
-    mockCookieGet.mockReturnValue({ value: 'boom' });
-    mockVerifySession.mockRejectedValue(new Error('network'));
+  it('auth-brain unavailable -> auth_unavailable, never the login (no outage loop)', async () => {
+    mockCookieGet.mockReturnValue({ value: 'sess_a' });
+    mockVerifySession.mockRejectedValue(new AuthBrainNetworkError(new Error('timeout')));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const result = await loadProjectSnapshot('site-a1');
 
+    expect(result).toEqual({ status: 'auth_unavailable' });
     expect(mockLoadProject).not.toHaveBeenCalled();
-    expect(result.status).toBe('unauthenticated');
+    errSpy.mockRestore();
+  });
+
+  it('preview: a 502 from auth-brain is auth_unavailable too', async () => {
+    mockCookieGet.mockReturnValue({ value: 'sess_a' });
+    mockVerifySession.mockRejectedValue(new AuthBrainError('verifySession failed: 502', 502));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(await loadProjectSnapshot('site-a1', '/preview')).toEqual({ status: 'auth_unavailable' });
+    errSpy.mockRestore();
+  });
+
+  it('a cookie auth-brain rejects with a 4xx (not 401) bounces to login', async () => {
+    mockCookieGet.mockReturnValue({ value: 'garbage' });
+    mockVerifySession.mockRejectedValue(new AuthBrainError('verifySession failed: 400', 400));
+
+    expect((await loadProjectSnapshot('site-a1')).status).toBe('unauthenticated');
   });
 
   it('sends a valid session with no resolvable workspace to the chooser, never the login', async () => {

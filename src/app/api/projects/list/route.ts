@@ -21,6 +21,7 @@
 //
 // Node runtime because the repository reaches Postgres through adapter-prisma.
 
+import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
 import {
   authenticateAccountRequest,
@@ -36,7 +37,7 @@ import { jsonError } from '@/lib/api/respond';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: Request): Promise<Response> {
+async function handleGET(req: Request): Promise<Response> {
   // 1. Session-only guard: no valid session -> 401.
   const auth = await authenticateAccountRequest(req);
   if (!auth.authenticated) {
@@ -76,3 +77,7 @@ export async function GET(req: Request): Promise<Response> {
     );
   }
 }
+
+// An auth-brain outage during session verify answers JSON 503 `auth_unavailable`
+// (src/lib/authBrainAvailability.ts), never a 500 and never "signed out".
+export const GET = withAuthAvailability(handleGET);

@@ -16,6 +16,11 @@ import {
 
 export async function chooseWorkspace(formData: FormData): Promise<void> {
   const result = await selectActiveWorkspace(formData.get('workspaceId'));
+  if (!result.ok && result.reason === 'auth_unavailable') {
+    // auth-brain could not answer: go on to the requested page, which shows
+    // the "sign-in service unavailable, retry" notice for that same address.
+    redirect(safeEditorReturnPath(formData.get('next')));
+  }
   if (!result.ok) {
     // No valid session: the dashboard sends the user to the login. An id the
     // session does not contain (forged, or membership just removed): back to

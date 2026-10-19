@@ -25,6 +25,7 @@ vi.mock('next/headers', () => ({
   }),
 }));
 
+import { AuthBrainError } from '@marlinjai/auth-brain-sdk';
 import { AuthError, requireWorkspaceScope } from '../requireWorkspaceScope';
 
 function multiSession() {
@@ -80,5 +81,15 @@ describe('requireWorkspaceScope', () => {
     jar = { framer_ws: 'ws_a' };
     const err = await requireWorkspaceScope().catch((e: unknown) => e);
     expect((err as AuthError).status).toBe(401);
+  });
+
+  it('throws 503 auth_unavailable when auth-brain cannot answer (never 401)', async () => {
+    jar = { lumitra_session: 'sess', framer_ws: 'ws_a' };
+    mockVerifySession.mockRejectedValueOnce(new AuthBrainError('verifySession failed: 504', 504));
+    const err = await requireWorkspaceScope().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AuthError);
+    expect((err as AuthError).status).toBe(503);
+    expect((err as AuthError).code).toBe('auth_unavailable');
+    expect(mockCan).not.toHaveBeenCalled();
   });
 });

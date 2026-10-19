@@ -24,6 +24,7 @@ import { safeEditorReturnPath } from '@/server/auth/activeWorkspace';
 import { loadDashboard } from './loader';
 import NewProjectButton from './NewProjectButton';
 import WorkspaceChooser, { workspaceLabel } from './WorkspaceChooser';
+import AuthUnavailable from './AuthUnavailable';
 import { chooseWorkspace } from './workspace-actions';
 
 export const dynamic = 'force-dynamic';
@@ -54,6 +55,12 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
   if (data.status === 'unauthenticated') {
     // No valid session -> bounce to auth-brain login. The ONLY redirect here.
     redirect(data.loginUrl);
+  }
+
+  if (data.status === 'auth_unavailable') {
+    // auth-brain could not answer: a retry notice, never the login (an outage
+    // must not loop a signed-in user through the login).
+    return <AuthUnavailable retryHref="/projects" />;
   }
 
   if (data.status === 'choose_workspace') {

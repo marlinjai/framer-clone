@@ -11,6 +11,7 @@
 // rename collision). A repository throw SURFACES as an envelope, never a
 // swallowed empty 200.
 
+import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
 import { z } from 'zod';
 import { getCmsRepository, getCmsWriteRepository, cmsWriteErrorResponse } from '@/server/cms';
@@ -79,7 +80,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
+async function handlePATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
@@ -112,7 +113,7 @@ export async function PATCH(
   }
 }
 
-export async function DELETE(
+async function handleDELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
@@ -136,3 +137,8 @@ export async function DELETE(
     );
   }
 }
+
+// An auth-brain outage during session verify answers JSON 503 `auth_unavailable`
+// (src/lib/authBrainAvailability.ts), never a 500 and never "signed out".
+export const PATCH = withAuthAvailability(handlePATCH);
+export const DELETE = withAuthAvailability(handleDELETE);

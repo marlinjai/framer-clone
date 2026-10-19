@@ -23,7 +23,10 @@ import 'server-only';
 // workspace.
 
 import { cookies } from 'next/headers';
-import { authBrainClient } from '@/lib/auth-brain';
+import {
+  AuthUnavailableError,
+  verifySessionOrThrowUnavailable,
+} from '@/lib/authBrainAvailability';
 import { checkWorkspaceAccess } from '@/lib/auth-check';
 import type { FramerAction } from '@/lib/permissions';
 import { ACTIVE_WORKSPACE_COOKIE } from '@/lib/activeWorkspaceCookie';
@@ -39,13 +42,14 @@ const SESSION_COOKIE = 'lumitra_session';
  * a data error.
  */
 export class AuthError extends Error {
-  readonly status: 401 | 403;
-  readonly code: 'unauthorized' | 'forbidden';
-  constructor(status: 401 | 403, message: string) {
+  readonly status: 401 | 403 | 503;
+  readonly code: 'unauthorized' | 'forbidden' | 'auth_unavailable';
+  constructor(status: 401 | 403 | 503, message: string) {
     super(message);
     this.name = 'AuthError';
     this.status = status;
-    this.code = status === 401 ? 'unauthorized' : 'forbidden';
+    this.code =
+      status === 401 ? 'unauthorized' : status === 403 ? 'forbidden' : 'auth_unavailable';
   }
 }
 
@@ -69,10 +73,13 @@ export async function requireWorkspaceScope(
 
   let session = null;
   try {
-    session = await authBrainClient.verifySession(cookie);
-  } catch {
-    // Fail-closed: a thrown verify is treated as no session, never authorized.
-    session = null;
+    session = await verifySessionOrThrowUnavailable(cookie);
+  } catch (err) {
+    // auth-brain could not answer: a 503, never "signed out". Never authorized.
+    if (err instanceof AuthUnavailableError) {
+      throw new AuthError(503, 'sign-in service unavailable, retry');
+    }
+    throw err;
   }
   if (!session) throw new AuthError(401, 'authentication required');
 

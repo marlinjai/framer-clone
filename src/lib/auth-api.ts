@@ -15,10 +15,10 @@
  */
 
 import type { SessionVerifyResponse } from '@marlinjai/auth-brain-sdk';
-import { authBrainClient } from './auth-brain';
 import { checkWorkspaceAccess } from './auth-check';
 import type { FramerAction } from './permissions';
 import { readRequestCookie as readCookie } from './activeWorkspaceCookie';
+import { verifySessionOrThrowUnavailable } from './authBrainAvailability';
 
 type AuthSuccess = {
   authenticated: true;
@@ -37,18 +37,21 @@ const SESSION_COOKIE = 'lumitra_session';
 
 /**
  * Resolve the session user id from the `lumitra_session` cookie, or null when
- * there is no cookie or the session is invalid/expired (fail-closed).
+ * there is no cookie or the session is invalid/expired (fail-closed). Throws
+ * AuthUnavailableError when auth-brain cannot answer (never "signed out").
  */
 async function getSessionUserId(req: Request): Promise<string | null> {
   const cookie = readCookie(req, SESSION_COOKIE);
   if (!cookie) return null;
-  const session = await authBrainClient.verifySession(cookie);
+  const session = await verifySessionOrThrowUnavailable(cookie);
   return session?.user?.id ?? null;
 }
 
 /**
  * Resolve the FULL verified session from the `lumitra_session` cookie, or null
  * when there is no cookie or the session is invalid/expired (fail-closed).
+ * Throws AuthUnavailableError when auth-brain cannot answer: wrap the route in
+ * withAuthAvailability so that becomes the JSON 503 `auth_unavailable`.
  *
  * `authenticateRequest` only needs the user id, but a route that must derive the
  * tenant scope (workspace_id + tenant_group_id) needs the whole session graph
@@ -61,7 +64,7 @@ export async function getVerifiedSession(
 ): Promise<SessionVerifyResponse | null> {
   const cookie = readCookie(req, SESSION_COOKIE);
   if (!cookie) return null;
-  return authBrainClient.verifySession(cookie);
+  return verifySessionOrThrowUnavailable(cookie);
 }
 
 /**
