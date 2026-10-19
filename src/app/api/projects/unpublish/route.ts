@@ -37,6 +37,7 @@ import {
 import { jsonError, parseBody } from '@/lib/api/respond';
 import {
   resolveSubdomainForSiteId,
+  revalidateCustomHostsForSiteId,
   revalidateSiteCache,
 } from '@/server/sites/cachedResolver';
 
@@ -96,6 +97,9 @@ async function handlePOST(req: Request): Promise<Response> {
     // allocated subdomain has nothing cached, so there is nothing to revalidate.
     const subdomain = await resolveSubdomainForSiteId(siteId);
     if (subdomain) revalidateSiteCache(subdomain);
+    // Its custom domains too: an unpublished site must stop serving on every
+    // host at once, never linger on a connected domain from cache.
+    await revalidateCustomHostsForSiteId(siteId);
   } catch (err) {
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
     return jsonError(

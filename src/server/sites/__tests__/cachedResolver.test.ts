@@ -62,11 +62,21 @@ vi.mock('next/cache', () => ({
 // seed script or a restore writes rows without the publish route).
 const BASE_DOMAINS: Record<string, string> = { demo: 's1', shop: 's2' };
 let domains: Record<string, string> = { ...BASE_DOMAINS };
+// Custom domains: live claim hostname -> its site and status (mutable per test).
+let customDomains: Record<string, { siteId: string; verificationStatus: string }> = {};
 const findUnique = vi.fn(
-  async ({ where }: { where: { subdomain: string } }) => {
-    const siteId = domains[where.subdomain];
+  async ({ where }: { where: { subdomain?: string; customHostname?: string } }) => {
+    if (where.customHostname !== undefined) {
+      return customDomains[where.customHostname] ?? null;
+    }
+    const siteId = domains[where.subdomain ?? ''];
     return siteId ? { siteId } : null;
   },
+);
+const findMany = vi.fn(async ({ where }: { where: { siteId: string } }) =>
+  Object.entries(customDomains)
+    .filter(([, row]) => row.siteId === where.siteId)
+    .map(([hostname]) => ({ hostname, customHostname: hostname })),
 );
 const findFirst = vi.fn(
   async ({ where }: { where: { id: string; status: string } }) => {
@@ -103,7 +113,7 @@ const findFirst = vi.fn(
 
 vi.mock('@/server/db', () => ({
   getPrismaClient: () => ({
-    siteDomain: { findUnique, findFirst },
+    siteDomain: { findUnique, findFirst, findMany },
     site: { findFirst },
   }),
 }));
@@ -113,7 +123,10 @@ import {
   NEGATIVE_CACHE_TTL_MS,
   clearSiteMissCache,
   getCachedPublishedSite,
+  customHostCacheTag,
   resolveSubdomainForSiteId,
+  revalidateCustomHostCache,
+  revalidateCustomHostsForSiteId,
   revalidateSiteCache,
   siteCacheTag,
   siteMissCacheSize,
@@ -126,7 +139,9 @@ beforeEach(() => {
   tagIndex.clear();
   clearSiteMissCache();
   domains = { ...BASE_DOMAINS };
+  customDomains = {};
   findUnique.mockClear();
+  findMany.mockClear();
   findFirst.mockClear();
   process.env.PUBLIC_SITE_BASE_HOST = 'lumitra.site';
 });
@@ -406,5 +421,71 @@ describe('resolveSubdomainForSiteId', () => {
       siteDomain: { findFirst: vi.fn().mockResolvedValue(null) },
     } as never;
     expect(await resolveSubdomainForSiteId('s1', prisma)).toBeNull();
+  });
+});
+
+describe('getCachedPublishedSite: custom hostnames', () => {
+  it('serves a verified custom hostname and caches it under its own tag', async () => {
+    customDomains['shop.example.com'] = { siteId: 's2', verificationStatus: 'active' };
+    expect((await getCachedPublishedSite('shop.example.com'))?.siteId).toBe('s2');
+    expect((await getCachedPublishedSite('Shop.Example.com:443'))?.siteId).toBe('s2');
+    expect(findUnique).toHaveBeenCalledTimes(1);
+    expect(tagIndex.has(customHostCacheTag('shop.example.com'))).toBe(true);
+  });
+
+  it('never serves a pending domain, and remembers it as a miss', async () => {
+    customDomains['pending.example.com'] = { siteId: 's2', verificationStatus: 'pending' };
+    expect(await getCachedPublishedSite('pending.example.com')).toBeNull();
+    expect(store.size).toBe(0);
+    expect(siteMissCacheSize()).toBe(1);
+  });
+
+  it('verification is instant: revalidateCustomHostCache clears the remembered miss', async () => {
+    expect(await getCachedPublishedSite('new.example.com')).toBeNull();
+    customDomains['new.example.com'] = { siteId: 's1', verificationStatus: 'verified' };
+    // Still the remembered miss (no DB read) until the domain is revalidated...
+    expect(await getCachedPublishedSite('new.example.com')).toBeNull();
+    expect(findUnique).toHaveBeenCalledTimes(1);
+    revalidateCustomHostCache('new.example.com');
+    expect((await getCachedPublishedSite('new.example.com'))?.siteId).toBe('s1');
+  });
+
+  it('disconnect is instant: revalidateCustomHostCache drops the cached hit', async () => {
+    customDomains['shop.example.com'] = { siteId: 's2', verificationStatus: 'active' };
+    expect((await getCachedPublishedSite('shop.example.com'))?.siteId).toBe('s2');
+    delete customDomains['shop.example.com'];
+    expect((await getCachedPublishedSite('shop.example.com'))?.siteId).toBe('s2');
+    revalidateCustomHostCache('shop.example.com');
+    expect(await getCachedPublishedSite('shop.example.com')).toBeNull();
+  });
+
+  it('keeps the subdomain and custom namespaces apart', async () => {
+    customDomains['demo.example.com'] = { siteId: 's2', verificationStatus: 'active' };
+    expect((await getCachedPublishedSite('demo.example.com'))?.siteId).toBe('s2');
+    expect((await getCachedPublishedSite('demo.lumitra.site'))?.siteId).toBe('s1');
+    // Revalidating the `demo` subdomain leaves the custom host's entry alone.
+    revalidateSiteCache('demo');
+    findUnique.mockClear();
+    expect((await getCachedPublishedSite('demo.example.com'))?.siteId).toBe('s2');
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it('revalidateCustomHostsForSiteId revalidates every hostname of the site (publish/unpublish)', async () => {
+    customDomains['a.example.com'] = { siteId: 's1', verificationStatus: 'active' };
+    customDomains['b.example.com'] = { siteId: 's1', verificationStatus: 'active' };
+    customDomains['c.example.com'] = { siteId: 's2', verificationStatus: 'active' };
+    await getCachedPublishedSite('a.example.com');
+    await getCachedPublishedSite('b.example.com');
+    await getCachedPublishedSite('c.example.com');
+    expect(store.size).toBe(3);
+
+    const revalidated = await revalidateCustomHostsForSiteId('s1');
+    expect(revalidated.sort()).toEqual(['a.example.com', 'b.example.com']);
+    expect(store.size).toBe(1);
+  });
+
+  it('a platform host is never looked up as a custom domain', async () => {
+    expect(await getCachedPublishedSite('app.lumitra.co')).toBeNull();
+    expect(findUnique).not.toHaveBeenCalled();
   });
 });

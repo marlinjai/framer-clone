@@ -61,13 +61,24 @@ import 'server-only';
 // CONCURRENT LOOKUPS COALESCE. Requests that arrive together for the same label
 // share one in-flight resolution (cleared when it settles), so a burst for one
 // unknown label costs one database lookup, not one per request.
+//
+// CUSTOM DOMAINS (plan 2026-06-25-framer-custom-domains) follow exactly the same
+// rules under their own namespace: the cache key and tag carry the full
+// normalized hostname (`site-host:<hostname>`), and a remembered miss is stored
+// under `host:<hostname>` (a subdomain label can never contain a colon, so the
+// two namespaces cannot collide). Verifying, losing or disconnecting a domain
+// calls revalidateCustomHostCache, and publish/unpublish revalidate every host
+// of the site (revalidateCustomHostsForSiteId), so a custom domain never keeps
+// serving an unpublished site from cache. Which keys a host yields, and in which
+// order, is decided by `hostLookupKeys` in publicResolver.ts.
 
 import { unstable_cache, revalidateTag } from 'next/cache';
 import { getPrismaClient } from '@/server/db';
 import {
-  resolvePublishedSite,
-  parseSubdomain,
+  hostLookupKeys,
+  resolvePublishedSiteByKey,
   type PublishedSite,
+  type SiteHostKey,
 } from './publicResolver';
 
 /**
@@ -76,6 +87,16 @@ import {
  */
 export function siteCacheTag(subdomain: string): string {
   return `site:${subdomain}`;
+}
+
+/** The cache tag for a custom hostname's cached resolution. */
+export function customHostCacheTag(hostname: string): string {
+  return `site-host:${hostname}`;
+}
+
+/** The miss-map / in-flight key of a lookup key (subdomains keep the bare label). */
+function stateKey(key: SiteHostKey): string {
+  return key.kind === 'subdomain' ? key.value : `host:${key.value}`;
 }
 
 /** How long a miss is remembered before the database is asked again. */
@@ -147,75 +168,85 @@ export function siteMissCacheSize(): number {
 }
 
 /**
- * Thrown inside the cached callback when the label resolves to no published
+ * Thrown inside the cached callback when the key resolves to no published
  * site, so `unstable_cache` stores nothing. Module-private: only this file
  * throws it and only this file catches it.
  */
 class SiteMiss extends Error {
-  constructor(subdomain: string) {
-    super(`no published site for subdomain ${subdomain}`);
+  constructor(key: string) {
+    super(`no published site for ${key}`);
     this.name = 'SiteMiss';
   }
 }
 
 /**
  * Resolve the published site for a request Host, cached cross-request and keyed
- * by the host's subdomain (tagged `site:<subdomain>`).
+ * by the host's lookup key: a subdomain label (tagged `site:<subdomain>`) or a
+ * custom hostname (tagged `site-host:<hostname>`).
  *
- * The subdomain is parsed (and shape-checked) up front: a host with no usable
- * subdomain returns null immediately, touching neither the cache nor the
- * database. A resolved site is cached until its tag is revalidated; a miss is
- * never written to `unstable_cache`, only remembered in the bounded in-process
- * negative cache for NEGATIVE_CACHE_TTL_MS (see the file header). The cache KEY
- * is the subdomain, so two hosts -> two entries and cross-tenant bleed is
- * impossible.
+ * The keys are computed (and shape-checked) up front: a host with no usable key
+ * returns null immediately, touching neither the cache nor the database. A
+ * resolved site is cached until its tag is revalidated; a miss is never written
+ * to `unstable_cache`, only remembered in the bounded in-process negative cache
+ * for NEGATIVE_CACHE_TTL_MS (see the file header). The cache KEY is the label or
+ * hostname, so two hosts -> two entries and cross-tenant bleed is impossible.
  *
  * The Prisma client is constructed INSIDE the cached callback (via
- * `resolvePublishedSite`'s default), never captured as a closure arg, so the
- * cache stores only plain serializable data (the resolved `PublishedSite`).
+ * `resolvePublishedSiteByKey`'s default), never captured as a closure arg, so
+ * the cache stores only plain serializable data (the resolved `PublishedSite`).
  */
 export async function getCachedPublishedSite(
   host: string | null | undefined,
 ): Promise<PublishedSite | null> {
-  const subdomain = parseSubdomain(host);
-  if (!subdomain) return null;
-  if (isRememberedMiss(subdomain, Date.now())) return null;
+  for (const key of hostLookupKeys(host)) {
+    const site = await getCachedSiteForKey(key);
+    if (site) return site;
+  }
+  return null;
+}
+
+/** The cached, coalesced, miss-remembering resolution of one lookup key. */
+function getCachedSiteForKey(key: SiteHostKey): Promise<PublishedSite | null> {
+  const id = stateKey(key);
+  if (isRememberedMiss(id, Date.now())) return Promise.resolve(null);
 
   const { inFlight } = resolverState();
-  const pending = inFlight.get(subdomain);
+  const pending = inFlight.get(id);
   if (pending) return pending;
 
-  const resolution = loadSite(host, subdomain);
-  inFlight.set(subdomain, resolution);
+  const resolution = loadSite(key);
+  inFlight.set(id, resolution);
   // Settle bookkeeping runs before any caller's continuation (registered first).
-  // Both steps check that the entry is still OURS: a publish that revalidated
-  // the label mid-lookup dropped it, and a stale miss must then not be
-  // remembered (it would mask the fresh publish for the TTL).
+  // Both steps check that the entry is still OURS: a publish (or a domain
+  // verification) that revalidated the key mid-lookup dropped it, and a stale
+  // miss must then not be remembered (it would mask the fresh state for the TTL).
   const settle = (site: PublishedSite | null | undefined) => {
-    if (inFlight.get(subdomain) !== resolution) return;
-    inFlight.delete(subdomain);
-    if (site === null) rememberMiss(subdomain, Date.now());
+    if (inFlight.get(id) !== resolution) return;
+    inFlight.delete(id);
+    if (site === null) rememberMiss(id, Date.now());
   };
   resolution.then(settle, () => settle(undefined));
   return resolution;
 }
 
-/** One cached resolution for a label; a miss resolves to null and is never cached. */
-async function loadSite(
-  host: string | null | undefined,
-  subdomain: string,
-): Promise<PublishedSite | null> {
+/** One cached resolution for a key; a miss resolves to null and is never cached. */
+async function loadSite(key: SiteHostKey): Promise<PublishedSite | null> {
   const load = unstable_cache(
-    // No closure-captured Prisma client: resolvePublishedSite constructs it
-    // itself. `host` is captured for parsing only; the cache KEY is the
-    // subdomain in keyParts, and one subdomain maps to exactly one host.
+    // No closure-captured Prisma client: resolvePublishedSiteByKey constructs it
+    // itself. The cache KEY is the label or hostname in keyParts.
     async (): Promise<PublishedSite> => {
-      const site = await resolvePublishedSite(host);
-      if (!site) throw new SiteMiss(subdomain);
+      const site = await resolvePublishedSiteByKey(key);
+      if (!site) throw new SiteMiss(stateKey(key));
       return site;
     },
-    ['published-site', subdomain],
-    { tags: [siteCacheTag(subdomain)] },
+    key.kind === 'subdomain'
+      ? ['published-site', key.value]
+      : ['published-site-host', key.value],
+    {
+      tags: [
+        key.kind === 'subdomain' ? siteCacheTag(key.value) : customHostCacheTag(key.value),
+      ],
+    },
   );
 
   try {
@@ -255,4 +286,39 @@ export function revalidateSiteCache(subdomain: string): void {
   resolverState().misses.delete(subdomain);
   resolverState().inFlight.delete(subdomain);
   revalidateTag(siteCacheTag(subdomain));
+}
+
+/**
+ * Invalidate a custom hostname's cached resolution (hit and remembered miss).
+ * Called when a domain is verified (starts serving), loses its claim, or is
+ * disconnected, and by revalidateCustomHostsForSiteId on publish/unpublish.
+ */
+export function revalidateCustomHostCache(hostname: string): void {
+  const id = stateKey({ kind: 'custom', value: hostname });
+  resolverState().misses.delete(id);
+  resolverState().inFlight.delete(id);
+  revalidateTag(customHostCacheTag(hostname));
+}
+
+/**
+ * Invalidate every custom hostname of a site (requested and live claim alike),
+ * so publish and unpublish are reflected on the site's custom domains on the
+ * very next request, exactly like on its subdomain. Returns the hostnames
+ * revalidated (for tests and logs).
+ */
+export async function revalidateCustomHostsForSiteId(
+  siteId: string,
+  prisma = getPrismaClient(),
+): Promise<string[]> {
+  const rows = await prisma.siteDomain.findMany({
+    where: { siteId, OR: [{ hostname: { not: null } }, { customHostname: { not: null } }] },
+    select: { hostname: true, customHostname: true },
+  });
+  const hostnames = new Set<string>();
+  for (const row of rows) {
+    if (row.hostname) hostnames.add(row.hostname);
+    if (row.customHostname) hostnames.add(row.customHostname);
+  }
+  for (const hostname of hostnames) revalidateCustomHostCache(hostname);
+  return [...hostnames];
 }

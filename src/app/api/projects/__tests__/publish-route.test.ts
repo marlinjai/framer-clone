@@ -37,10 +37,14 @@ vi.mock('@/server/sites', async (importActual) => {
 vi.mock('@/server/sites/cachedResolver', () => ({
   revalidateSiteCache: vi.fn(),
   resolveSubdomainForSiteId: vi.fn(),
+  revalidateCustomHostsForSiteId: vi.fn(async () => []),
 }));
 
 import { getSiteRepository, SiteNotFoundError } from '@/server/sites';
-import { revalidateSiteCache } from '@/server/sites/cachedResolver';
+import {
+  revalidateCustomHostsForSiteId,
+  revalidateSiteCache,
+} from '@/server/sites/cachedResolver';
 // SubdomainAllocationError is not re-exported from the @/server/sites barrel
 // (MT-06 owns that file); import it from the typed-errors module directly so the
 // exhausted-allocation 500 path can be exercised without editing a shared file.
@@ -228,6 +232,8 @@ describe('POST /api/projects/publish (authorized)', () => {
     expect(res.status).toBe(200);
     // The tag the resolver caches under is keyed by the subdomain.
     expect(revalidateSiteCache).toHaveBeenCalledWith('demo-abc123');
+    // ...and every custom domain of the site, so they serve the new content too.
+    expect(revalidateCustomHostsForSiteId).toHaveBeenCalledWith(PROJECT.id);
   });
 
   it('composes liveUrl from PUBLIC_SITE_BASE_HOST when it is set', async () => {
