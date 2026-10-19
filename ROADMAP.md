@@ -29,23 +29,12 @@ connections to the suite. The four lines below are in that order.
   that keeps orders, credit notes and stock movements append-only for the app role. See
   [commerce tenant plan](docs/plans/2026-06-27-commerce-tenant-db-migration-plan.md). Done
   2026-10-17.
-- [ ] 2. Running again: live since 2026-10-19. New Coolify app and Postgres (daily backup), the
+- [x] 2. Running again: live since 2026-10-19 (new Coolify app and database with daily backups,
   editor on app.lumitra.co, published sites on <label>.sites.lumitra.co with a DNS-01 wildcard
-  certificate on the shared proxy (free path, the paid certificate manager declined for now),
-  commerce roles hardened (owner without CREATEROLE, #97), the demo company seeded and a test
-  order placed; the full record is in infra's deployments/framer-clone/RUNBOOK.md. Left: (1)
-  drop the EMPTY legacy `commerce` schema on the production database (19 tables, 0 rows, created
-  only by the historical Prisma migrations; needs Marlin's one-line yes as a production drop);
-  (2) publish a new project from the editor and open its <random>.sites.lumitra.co address (the
-  runbook's last check, after the site-lookup cache fix is deployed); (3) merge and deploy the
-  company scoping (branch `feat/company-scope-sites-grant`, on top of the redirect-loop fix of
-  #99): the editor works per company instead of per workspace, only companies holding the
-  auth-brain app grant `sites` can use it (lumitra-core and whiz-art-media, registered in
-  auth-brain in a parallel change), the chooser lists companies backed by the app-local
-  `framer_company` cookie (the old `framer_ws` cookie is migrated once), and a user without such
-  a company sees "Lumitra Sites is not enabled for your companies" instead of a login bounce;
-  then confirm in the automation browser that choosing a company sticks across a reload and
-  that a company without the grant is not offered. (2026-10-19)
+  certificate, hardened commerce roles, demo seeded, test order placed). The empty legacy
+  `commerce` schema was dropped (0 rows, structure saved on the server), and a project was
+  created, published and opened at its new address in the browser, then removed. The infra side
+  is recorded in infra's deployments/framer-clone/RUNBOOK.md. Done 2026-10-19.
 - [ ] 3. The Books: the Customer + SalesDocument + DocumentTemplate document tier for Marlin's own
   accounting (invoices and credit notes now, offers later; joins with receipt-ocr-app's expense
   side), in each company's own schema. Phase 1 is built (2026-10-17): migration `007_books` with
