@@ -315,6 +315,76 @@ describe('getCachedPublishedSite: bounded under a flood of random labels', () =>
   });
 });
 
+describe('getCachedPublishedSite: shared state and coalescing', () => {
+  it('shares the miss map across module instances (publish route and page bundles)', async () => {
+    expect(await getCachedPublishedSite('sharedmiss.lumitra.site')).toBeNull();
+    expect(findUnique).toHaveBeenCalledTimes(1);
+
+    // A second, independently evaluated copy of the module (as a separately
+    // bundled route handler would load it) sees the same remembered miss...
+    vi.resetModules();
+    const other = await import('../cachedResolver');
+    // Genuinely a different module instance, not the cached one.
+    expect(other.getCachedPublishedSite).not.toBe(getCachedPublishedSite);
+    expect(other.siteMissCacheSize()).toBe(1);
+    expect(await other.getCachedPublishedSite('sharedmiss.lumitra.site')).toBeNull();
+    expect(findUnique).toHaveBeenCalledTimes(1);
+
+    // ...and a revalidate through that copy clears it for this one.
+    domains.sharedmiss = 's1';
+    other.revalidateSiteCache('sharedmiss');
+    expect((await getCachedPublishedSite('sharedmiss.lumitra.site'))?.siteId).toBe('s1');
+  });
+
+  it('coalesces N concurrent requests for one unknown label into one lookup', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    findUnique.mockImplementationOnce(async () => {
+      await gate;
+      return null;
+    });
+
+    const N = 25;
+    const requests = Array.from({ length: N }, () =>
+      getCachedPublishedSite('burstlabel.lumitra.site'),
+    );
+    release();
+    const results = await Promise.all(requests);
+
+    expect(results).toEqual(Array(N).fill(null));
+    expect(findUnique).toHaveBeenCalledTimes(1);
+    expect(siteMissCacheSize()).toBe(1);
+
+    // The in-flight entry was cleared on settle: after the TTL a new lookup runs.
+    clearSiteMissCache();
+    await getCachedPublishedSite('burstlabel.lumitra.site');
+    expect(findUnique).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not remember a stale miss when a publish revalidates the label mid-lookup', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    findUnique.mockImplementationOnce(async () => {
+      await gate;
+      return null;
+    });
+
+    const stale = getCachedPublishedSite('racelabel.lumitra.site');
+    // The publish lands while the lookup is still running.
+    domains.racelabel = 's2';
+    revalidateSiteCache('racelabel');
+    release();
+    expect(await stale).toBeNull();
+
+    expect(siteMissCacheSize()).toBe(0);
+    expect((await getCachedPublishedSite('racelabel.lumitra.site'))?.siteId).toBe('s2');
+  });
+});
+
 describe('siteCacheTag', () => {
   it('namespaces the tag by subdomain', () => {
     expect(siteCacheTag('demo')).toBe('site:demo');
