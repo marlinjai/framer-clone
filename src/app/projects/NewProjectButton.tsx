@@ -11,7 +11,7 @@
 // stays a server component. Keep server-only imports OUT of this file (the
 // `next build` boundary check runs in the verify gate).
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 
@@ -36,8 +36,17 @@ export default function NewProjectButton() {
         let message = `Could not create a new project (${res.status}).`;
         try {
           const body: { error?: { code?: string; message?: string } } = await res.json();
-          if (body.error?.code === 'no_active_workspace') {
+          const code = body.error?.code;
+          if (code === 'no_active_workspace') {
             message = 'No workspace is selected. Reload the page and choose a workspace.';
+          } else if (code === 'authz_unavailable') {
+            // OpenFGA (the permission service) could not answer. Not a deny:
+            // the user may well be allowed, so say it is temporary.
+            message =
+              'Could not create a new project: the permission service is temporarily unavailable. Please try again in a moment.';
+          } else if (code === 'auth_unavailable') {
+            message =
+              'Could not create a new project: the sign-in service is temporarily unavailable. Please try again in a moment.';
           } else if (body.error?.message) {
             message = `Could not create a new project: ${body.error.message}`;
           }

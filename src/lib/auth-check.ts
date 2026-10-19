@@ -17,8 +17,10 @@
 import { can, type FramerAction } from './permissions';
 
 /**
- * Returns true iff `userId` may perform `action` in `workspaceId`. Fail-closed:
- * any OpenFGA error or an absent relation is a deny (see `permissions.can`).
+ * Returns true iff `userId` may perform `action` in `workspaceId`; false for an
+ * absent relation (a real deny) or an empty workspace id. THROWS
+ * AuthzUnavailableError when OpenFGA cannot answer (see `permissions.can`): the
+ * caller must surface that as a 503 `authz_unavailable`, never as a 403.
  */
 export async function checkWorkspaceAccess(
   userId: string,

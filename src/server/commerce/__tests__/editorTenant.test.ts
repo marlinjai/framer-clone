@@ -23,7 +23,7 @@ vi.mock('../db', () => ({
 }));
 
 import { getVerifiedSession } from '@/lib/auth-api';
-import { AuthUnavailableError } from '@/lib/authBrainAvailability';
+import { AuthUnavailableError, AuthzUnavailableError } from '@/lib/authBrainAvailability';
 import { checkWorkspaceAccess } from '@/lib/auth-check';
 import { commerceTenantDbChecked } from '../db';
 import { resolveEditorCommerce } from '../editorTenant';
@@ -87,6 +87,16 @@ describe('resolveEditorCommerce', () => {
       status: 503,
       code: 'auth_unavailable',
     });
+    expect(tenantDbMock).not.toHaveBeenCalled();
+  });
+
+  it('503s authz_unavailable (never 403) when the permission check cannot be answered', async () => {
+    accessMock.mockRejectedValueOnce(new AuthzUnavailableError(new Error('openfga 401')));
+    expect(
+      await statusOf(
+        await resolveEditorCommerce(req, 'p1', prismaWith({ workspaceId: 'ws_a', tenantGroupId: TG_A })),
+      ),
+    ).toEqual({ status: 503, code: 'authz_unavailable' });
     expect(tenantDbMock).not.toHaveBeenCalled();
   });
 

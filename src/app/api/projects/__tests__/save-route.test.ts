@@ -113,6 +113,25 @@ describe('POST /api/projects/save guard', () => {
       workspaceId: 'ws_marlin',
     });
   });
+
+  it('503s authz_unavailable (never 403) when OpenFGA cannot answer', async () => {
+    const { AuthBrainError } = await import('@marlinjai/auth-brain-sdk');
+    mockVerifySession.mockResolvedValue(makeSession());
+    mockCan.mockRejectedValue(new AuthBrainError('OpenFGA check failed: 503', 503));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const save = vi.fn();
+    const publish = vi.fn();
+    installRepo({ saveProject: save, publishProject: publish });
+
+    const res = await POST(saveReq({ project: PROJECT }));
+
+    expect(res.status).toBe(503);
+    expect((await res.json()).error.code).toBe('authz_unavailable');
+    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });
 
 describe('POST /api/projects/save (authorized)', () => {

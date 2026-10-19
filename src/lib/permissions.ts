@@ -20,13 +20,10 @@
  * fails fast at boot rather than silently mis-authorizing at runtime.
  */
 
-import {
-  definePermissions,
-  requirePermission as sdkRequirePermission,
-  PermissionDeniedError,
-} from '@marlinjai/auth-brain-sdk';
+import { definePermissions, PermissionDeniedError } from '@marlinjai/auth-brain-sdk';
 import type { ResourceHandle } from '@marlinjai/auth-brain-sdk';
 import { authBrainClient } from './auth-brain';
+import { AuthzUnavailableError } from './authBrainAvailability';
 
 /**
  * The framer-clone action vocabulary. Reads require workspace membership at the
@@ -62,13 +59,17 @@ function workspaceResource(workspaceId: string): ResourceHandle {
 }
 
 /**
- * Returns true iff `userId` may perform `action` in `workspaceId`.
+ * Returns true iff `userId` may perform `action` in `workspaceId`, false for a
+ * real deny (OpenFGA answered `allowed: false`).
  *
- * Fail-closed contract: the underlying `can()` THROWS on any OpenFGA error
- * (network, 5xx, un-provisioned store, unknown scope) and returns false when
- * the relation is simply absent. This helper treats BOTH as a deny -- an
- * unreachable or un-provisioned OpenFGA never silently grants. We never log the
- * cookie, the session, or the OpenFGA response on any path.
+ * THROWS {@link AuthzUnavailableError} when OpenFGA could not answer at all:
+ * the SDK's `can()` throws on a network error, any non-OK status (401 for a
+ * missing or wrong pre-shared key, 5xx, an un-provisioned store) and a missing
+ * OpenFGA configuration. That is never a grant, and never reported as a deny
+ * either: routes wrapped in `withAuthAvailability` answer 503
+ * `authz_unavailable`, the server-action guard throws `AuthError(503)`. The
+ * cause is logged here, once, with the action and workspace but never the
+ * cookie, the session or the token.
  */
 export async function can(
   userId: string,
@@ -81,28 +82,33 @@ export async function can(
       FRAMER_PERMISSIONS[action].requires,
       workspaceResource(workspaceId),
     );
-  } catch {
-    return false;
+  } catch (err) {
+    console.error(
+      `[authz] OpenFGA check failed (action ${action}, workspace ${workspaceId}); answering authz_unavailable`,
+      err,
+    );
+    throw new AuthzUnavailableError(err);
   }
 }
 
 /**
  * Throws {@link PermissionDeniedError} when `userId` may NOT perform `action` in
  * `workspaceId`. Use at a route boundary when the caller prefers an exception to
- * a boolean. Unlike {@link can}, this lets an underlying OpenFGA error propagate
- * (still a non-success: the caller's catch must treat it as a deny).
+ * a boolean. Built on {@link can}, so an OpenFGA failure throws
+ * {@link AuthzUnavailableError}, never a PermissionDeniedError.
  */
 export async function requirePermission(
   userId: string,
   action: FramerAction,
   workspaceId: string,
 ): Promise<void> {
-  await sdkRequirePermission(
-    authBrainClient,
-    userId,
-    FRAMER_PERMISSIONS[action].requires,
-    workspaceResource(workspaceId),
-  );
+  if (!(await can(userId, action, workspaceId))) {
+    throw new PermissionDeniedError(
+      userId,
+      FRAMER_PERMISSIONS[action].requires,
+      workspaceResource(workspaceId),
+    );
+  }
 }
 
-export { PermissionDeniedError };
+export { PermissionDeniedError, AuthzUnavailableError };

@@ -15,6 +15,7 @@ import 'server-only';
 //   3. the session must contain the project's workspace AND hold `viewSite`
 //      on it (the same auth-brain check every other project route uses)
 //                                                          -> else 403 forbidden
+//      (OpenFGA failing to answer that check     -> 503 authz_unavailable)
 //      An unknown project id answers the SAME 403, so a project's existence
 //      never leaks to someone who cannot see it.
 //   4. the project's site must carry a valid tenant group whose tg_<id> schema
@@ -37,7 +38,12 @@ import type { PrismaClient } from '@prisma/client';
 import { jsonError } from '@/lib/api/respond';
 import { getVerifiedSession } from '@/lib/auth-api';
 import { checkWorkspaceAccess } from '@/lib/auth-check';
-import { AuthUnavailableError, authUnavailableResponse } from '@/lib/authBrainAvailability';
+import {
+  AuthUnavailableError,
+  AuthzUnavailableError,
+  authUnavailableResponse,
+  authzUnavailableResponse,
+} from '@/lib/authBrainAvailability';
 import { getPrismaClient } from '@/server/db';
 import { resolveScopeForWorkspace } from '@/server/sites/scope';
 import { commerceTenantDbChecked, isCommerceTenantNotProvisioned } from './db';
@@ -97,7 +103,17 @@ export async function resolveEditorCommerce(
 
   const scope = resolveScopeForWorkspace(session, site.workspaceId);
   if (!scope.ok) return forbidden();
-  const allowed = await checkWorkspaceAccess(session.user.id, site.workspaceId, 'viewSite');
+  let allowed: boolean;
+  try {
+    allowed = await checkWorkspaceAccess(session.user.id, site.workspaceId, 'viewSite');
+  } catch (err) {
+    // OpenFGA could not answer (cause logged in permissions.can): a JSON 503
+    // `authz_unavailable`, never a 403 that reads as a deny.
+    if (err instanceof AuthzUnavailableError) {
+      return { ok: false, response: authzUnavailableResponse() };
+    }
+    throw err;
+  }
   if (!allowed) return forbidden();
 
   const notProvisioned: CommerceReadContext = {

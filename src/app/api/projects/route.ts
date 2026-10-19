@@ -24,6 +24,8 @@
 //
 // Failures surface as the Track-0 `{ error: { code, message } }` envelope:
 // 401 unauthenticated, 403 not a workspace admin / no resolvable workspace,
+// 503 `auth_unavailable` / `authz_unavailable` when auth-brain or OpenFGA
+// cannot answer (never reported as a 403),
 // 400 malformed body, 403 `commerce_suspended` (company's commerce suspended),
 // 500 `commerce_not_configured` / `commerce_misconfigured` / `commerce_provision_failed`
 // when the company's shop schema cannot be set up (nothing is written then), 500
@@ -277,6 +279,7 @@ async function handlePOST(req: Request): Promise<Response> {
   return Response.json({ siteId });
 }
 
-// An auth-brain outage during session verify answers JSON 503 `auth_unavailable`
+// An auth-brain outage during session verify answers JSON 503 `auth_unavailable`,
+// and OpenFGA failing a permission check answers JSON 503 `authz_unavailable`
 // (src/lib/authBrainAvailability.ts), never a 500 and never "signed out".
 export const POST = withAuthAvailability(handlePOST);

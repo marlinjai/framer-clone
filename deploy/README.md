@@ -214,7 +214,9 @@ says where each comes from.
 | `EDITOR_HOST` | yes | Host that serves the editor (`app.lumitra.co`); every other host is treated as a published site |
 | `PUBLIC_SITE_BASE_HOST` | yes | Parent domain of published sites (`sites.lumitra.co`); the label in front of it selects the site |
 | `AUTH_BRAIN_URL` | no | auth-brain base URL for session checks and the login redirect; defaults to `https://auth.lumitra.co` |
-| `OPENFGA_API_URL`, `OPENFGA_STORE_ID` | yes | The authorization service behind per-workspace permission checks; without them every guarded write is denied |
+| `OPENFGA_API_URL`, `OPENFGA_STORE_ID` | yes | The authorization service behind per-workspace permission checks; without them every guarded route answers 503 `authz_unavailable` |
+| `OPENFGA_API_TOKEN` | yes in production | OpenFGA's pre-shared key, sent as a Bearer token on every check. The suite's OpenFGA answers 401 without it, and every guarded route then answers 503 `authz_unavailable`; the start logs a warning when `OPENFGA_API_URL` is set and this is not |
+| `OPENFGA_AUTHORIZATION_MODEL_ID` | no | Pins checks to one authorization model; unset uses the store's latest model |
 | `ANTHROPIC_API_KEY` | for AI | Key for the editor's AI routes (`/api/ai/*`) |
 | `AI_DEFAULT_MODEL` | no | `HAIKU` (default) or `SONNET` for routes that do not pin a model |
 | `ANALYTICS_PUBLIC_INGESTION_KEY` | for analytics | The PUBLIC `ap_live_` ingestion key published sites send events with; a secret-shaped value is refused. A site's own `apiKeyRef` can name a different variable holding its key. |

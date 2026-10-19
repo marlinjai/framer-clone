@@ -59,6 +59,39 @@ export async function verifySessionOrThrowUnavailable(
   }
 }
 
+/**
+ * OpenFGA (the authorization server behind every permission check) could not
+ * be asked whether the action is allowed: a network error, a 401 because the
+ * pre-shared key is missing or wrong, a 5xx, a missing store configuration.
+ *
+ * This is NOT a deny. A real deny is OpenFGA answering `allowed: false`, which
+ * stays a 403 Forbidden. Reporting an outage as "Forbidden" sent production on
+ * a wrong trail on 2026-10-19 (the editor said "Forbidden" to admins while
+ * OpenFGA was rejecting the unauthenticated check), so every caller maps this
+ * to a 503 `authz_unavailable` instead. Still never a grant: the guarded action
+ * does not run.
+ */
+export class AuthzUnavailableError extends Error {
+  readonly code = 'authz_unavailable' as const;
+  constructor(readonly cause: unknown) {
+    super('the permission service (OpenFGA) is unavailable');
+    this.name = 'AuthzUnavailableError';
+  }
+}
+
+/** The JSON 503 every editor API route answers when OpenFGA cannot answer. */
+export function authzUnavailableResponse(): Response {
+  return Response.json(
+    {
+      error: {
+        code: 'authz_unavailable',
+        message: 'the permission service is temporarily unavailable, retry shortly',
+      },
+    },
+    { status: 503, headers: { 'retry-after': '5' } },
+  );
+}
+
 /** The JSON 503 every editor API route answers during an auth-brain outage. */
 export function authUnavailableResponse(): Response {
   return Response.json(
@@ -74,8 +107,9 @@ export function authUnavailableResponse(): Response {
 
 /**
  * Wrap a route handler so an AuthUnavailableError thrown anywhere in its
- * session handling becomes the JSON 503 instead of an unhandled 500. Any other
- * error is rethrown untouched.
+ * session handling, or an AuthzUnavailableError thrown by a permission check,
+ * becomes the matching JSON 503 instead of an unhandled 500 (or, worse, a 403
+ * that reads as a deny). Any other error is rethrown untouched.
  */
 export function withAuthAvailability<A extends unknown[]>(
   handler: (...args: A) => Promise<Response>,
@@ -87,6 +121,10 @@ export function withAuthAvailability<A extends unknown[]>(
       if (err instanceof AuthUnavailableError) {
         console.error('[auth] auth-brain unavailable during session verify', err.cause);
         return authUnavailableResponse();
+      }
+      if (err instanceof AuthzUnavailableError) {
+        // The cause was already logged where the check failed (permissions.can).
+        return authzUnavailableResponse();
       }
       throw err;
     }

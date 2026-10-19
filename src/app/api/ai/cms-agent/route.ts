@@ -348,6 +348,7 @@ async function runAgentLoop(args: LoopArgs): Promise<void> {
   }
 }
 
-// An auth-brain outage during session verify answers JSON 503 `auth_unavailable`
+// An auth-brain outage during session verify answers JSON 503 `auth_unavailable`,
+// and OpenFGA failing a permission check answers JSON 503 `authz_unavailable`
 // (src/lib/authBrainAvailability.ts), never a 500 and never "signed out".
 export const POST = withAuthAvailability(handlePOST);

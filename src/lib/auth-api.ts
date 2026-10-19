@@ -74,6 +74,10 @@ export async function getVerifiedSession(
  *   2. Session but no workspace access for `action` -> 403 Forbidden.
  *   3. Otherwise -> { authenticated: true, userId }.
  *
+ * When OpenFGA cannot answer the permission check this THROWS
+ * AuthzUnavailableError rather than returning a 403: wrap the route in
+ * withAuthAvailability so that becomes the JSON 503 `authz_unavailable`.
+ *
  * `action` defaults to `editSite` (the mutation guard) so a route that forgets
  * to pass one gets the SAFER, stricter check, never the weaker read check.
  */
