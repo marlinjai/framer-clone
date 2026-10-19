@@ -33,7 +33,16 @@ vi.mock('@/server/cms/actions', () => {
 });
 
 import * as actions from '@/server/cms/actions';
+import { CmsActionError } from '@/lib/cms/actionResult';
 import { createCmsServerActionsAdapter } from '../cmsServerActionsAdapter';
+
+// The read actions are wired straight through; every other action is guarded
+// and returns a CmsActionResult the adapter unwraps.
+const READ_NAMES = new Set([
+  'getTable', 'listTables', 'getColumns', 'getColumn', 'getSelectOptions',
+  'getRow', 'getRows', 'getRelatedRows', 'getRelationsForRow', 'getFileReferences',
+  'getViews', 'getView',
+]);
 
 describe('createCmsServerActionsAdapter', () => {
   it('wires every one of the 40 DatabaseAdapter methods to its matching server action (no cross-wiring)', () => {
@@ -44,8 +53,40 @@ describe('createCmsServerActionsAdapter', () => {
     expect(Object.keys(actionsMod).sort()).toEqual([...ACTION_NAMES].sort());
 
     for (const name of ACTION_NAMES) {
-      expect(adapter[name]).toBe(actionsMod[name]);
+      if (READ_NAMES.has(name)) expect(adapter[name]).toBe(actionsMod[name]);
+      else expect(typeof adapter[name]).toBe('function');
     }
+  });
+
+  it('calls the matching guarded action with the same arguments and unwraps its value', async () => {
+    const adapter = createCmsServerActionsAdapter() as unknown as Record<
+      string,
+      (...args: unknown[]) => Promise<unknown>
+    >;
+    const actionsMod = actions as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    for (const name of ACTION_NAMES) {
+      if (READ_NAMES.has(name)) continue;
+      actionsMod[name].mockResolvedValueOnce({ ok: true, value: `${name}-value` });
+      await expect(adapter[name]('a', 'b', 'c')).resolves.toBe(`${name}-value`);
+      // Each wrapper forwards its own arguments in order (1 to 3 of them).
+      const forwarded = actionsMod[name].mock.lastCall!;
+      expect(forwarded.length).toBeGreaterThan(0);
+      expect(forwarded).toEqual(['a', 'b', 'c'].slice(0, forwarded.length));
+    }
+  });
+
+  it('rethrows a failed result on the client as a CmsActionError with its code and message', async () => {
+    const adapter = createCmsServerActionsAdapter();
+    vi.mocked(actions.updateRow).mockResolvedValueOnce({
+      ok: false,
+      code: 'authz_unavailable',
+      message: 'The permission service is temporarily unavailable, so the change was not saved.',
+    });
+    const err = await adapter.updateRow('r1', {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CmsActionError);
+    expect((err as CmsActionError).code).toBe('authz_unavailable');
+    expect((err as CmsActionError).retryable).toBe(true);
+    expect((err as CmsActionError).message).toMatch(/permission service/);
   });
 
   it('runs transaction locally as fn(adapter) (the CMS PrismaAdapter transaction is itself a no-op)', async () => {

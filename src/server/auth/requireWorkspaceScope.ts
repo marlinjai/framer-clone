@@ -39,6 +39,7 @@ const SESSION_COOKIE = 'lumitra_session';
 export type AuthErrorCode =
   | 'unauthorized'
   | 'forbidden'
+  | 'no_active_workspace'
   | 'auth_unavailable'
   | 'authz_unavailable';
 
@@ -69,7 +70,8 @@ export class AuthError extends Error {
  * Resolve and authorize the TenantScope for the current server-action request.
  *
  *   1. No `lumitra_session` cookie / failed verify -> AuthError 401.
- *   2. Session but no resolvable active workspace -> AuthError 403.
+ *   2. Session but no resolvable active workspace -> AuthError 403
+ *      `no_active_workspace`.
  *   3. Session + workspace but no permission for `action` -> AuthError 403.
  *   4. auth-brain cannot answer -> AuthError 503 `auth_unavailable`; OpenFGA
  *      cannot answer the permission check -> AuthError 503
@@ -105,7 +107,7 @@ export async function requireWorkspaceScope(
     session,
     jar.get(ACTIVE_WORKSPACE_COOKIE)?.value ?? null,
   );
-  if (!scopeResult.ok) throw new AuthError(403, 'no active workspace');
+  if (!scopeResult.ok) throw new AuthError(403, 'no active workspace', 'no_active_workspace');
   const { scope } = scopeResult;
 
   let allowed: boolean;

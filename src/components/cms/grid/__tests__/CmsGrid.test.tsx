@@ -23,8 +23,8 @@ vi.mock('@/server/cms/actions', () => {
   }
   // The grid awaits ensureStatusField before mounting the table; resolve it.
   mod.ensureStatusField = vi.fn().mockResolvedValue({
-    columnId: 'c_status',
-    options: { draft: 'd', published: 'p', scheduled: 's' },
+    ok: true,
+    value: { columnId: 'c_status', options: { draft: 'd', published: 'p', scheduled: 's' } },
   });
   return mod;
 });
@@ -74,6 +74,8 @@ vi.mock('@marlinjai/data-table-react', async (orig) => {
 });
 
 import CmsGrid from '../CmsGrid';
+import { ensureStatusField } from '@/server/cms/actions';
+import { CmsActionError } from '@/lib/cms/actionResult';
 
 const TABLE = { id: 't1', workspaceId: 'framer-clone', name: 'Events' };
 const COLUMNS = [
@@ -159,5 +161,53 @@ describe('CmsGrid', () => {
     await waitFor(() =>
       expect(fake.updateRow).toHaveBeenCalledWith('r1', expect.objectContaining({ c_title: 'edited' })),
     );
+  });
+});
+
+describe('CmsGrid error banner', () => {
+  it('shows a readable message and the retry hint when ensureStatusField reports authz_unavailable', async () => {
+    vi.mocked(ensureStatusField).mockResolvedValueOnce({
+      ok: false,
+      code: 'authz_unavailable',
+      message: 'The permission service is temporarily unavailable, so the change was not saved.',
+    });
+    render(<CmsGrid tableId="t1" dbAdapter={fake as unknown as DatabaseAdapter} />);
+
+    const banner = await screen.findByTestId('cms-grid-error');
+    expect(banner.getAttribute('role')).toBe('alert');
+    expect(banner.textContent).toMatch(/permission service is temporarily unavailable/);
+    expect(screen.getByTestId('cms-grid-error-retry').textContent).toMatch(/try again in a moment/i);
+    // The grid still opens (without status defaulting).
+    await screen.findByTestId('mock-tableview');
+  });
+
+  it('shows the message WITHOUT a retry hint for a real deny on a write', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fake.updateRow.mockRejectedValueOnce(new CmsActionError('forbidden'));
+    render(<CmsGrid tableId="t1" dbAdapter={fake as unknown as DatabaseAdapter} />);
+    await screen.findByTestId('mock-tableview');
+
+    fireEvent.click(screen.getByTestId('edit-cell'));
+
+    const banner = await screen.findByTestId('cms-grid-error');
+    expect(banner.textContent).toMatch(/do not have permission/);
+    expect(screen.queryByTestId('cms-grid-error-retry')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));
+    expect(screen.queryByTestId('cms-grid-error')).toBeNull();
+    errorSpy.mockRestore();
+  });
+
+  it('shows a generic message (never the raw digest) for an unexpected write failure', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fake.updateRow.mockRejectedValueOnce(new Error('An error occurred in the Server Components render'));
+    render(<CmsGrid tableId="t1" dbAdapter={fake as unknown as DatabaseAdapter} />);
+    await screen.findByTestId('mock-tableview');
+
+    fireEvent.click(screen.getByTestId('edit-cell'));
+
+    const banner = await screen.findByTestId('cms-grid-error');
+    expect(banner.textContent).toMatch(/Something went wrong/);
+    expect(banner.textContent).not.toMatch(/Server Components/);
+    errorSpy.mockRestore();
   });
 });

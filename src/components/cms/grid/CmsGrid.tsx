@@ -37,10 +37,89 @@ import type {
 } from '@marlinjai/data-table-core';
 import { CMS_WORKSPACE_ID, type CmsStatusField } from '@/lib/cms/constants';
 import { ensureStatusField } from '@/server/cms/actions';
+import { CMS_RETRY_HINT, CmsActionError } from '@/lib/cms/actionResult';
 import { createCmsServerActionsAdapter } from './cmsServerActionsAdapter';
 import { cmsFileAdapter } from './cmsFileAdapter';
 
 const defaultAdapter = createCmsServerActionsAdapter();
+
+/** What the grid's error banner shows. */
+export interface CmsGridError {
+  message: string;
+  /** An outage (auth-brain or OpenFGA): show the retry hint. */
+  retryable: boolean;
+}
+
+// Shown for an UNEXPECTED failure. In production its real message is an
+// opaque server-action digest, so never display it; the cause is in the
+// browser console and the server log.
+const UNEXPECTED_ERROR =
+  'Something went wrong and the change may not have been saved. Reload the page and try again.';
+
+/** Map any failure from an adapter call to the banner the grid shows. */
+export function cmsGridErrorFor(err: unknown): CmsGridError {
+  if (err instanceof CmsActionError) return { message: err.message, retryable: err.retryable };
+  return { message: UNEXPECTED_ERROR, retryable: false };
+}
+
+// Wrap the adapter so every failed call is reported to the grid's banner (and
+// still rejects, so the data-table hooks keep their own failure handling). The
+// data-table hooks fire many writes as `void addRow(...)`, so without this a
+// failed write would only reach the console as an unhandled rejection.
+function reportingAdapter(
+  adapter: DatabaseAdapter,
+  report: (err: unknown) => void,
+): DatabaseAdapter {
+  return new Proxy(adapter, {
+    get(target, prop, receiver) {
+      const value: unknown = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function' || prop === 'transaction') return value;
+      return (...args: unknown[]) => {
+        try {
+          const result: unknown = value.apply(target, args);
+          if (result instanceof Promise) {
+            return result.catch((err: unknown) => {
+              report(err);
+              throw err;
+            });
+          }
+          return result;
+        } catch (err) {
+          report(err);
+          throw err;
+        }
+      };
+    },
+  });
+}
+
+// The reporting adapter already put a failed call on the banner, and the
+// data-table hooks only update their local state AFTER a write succeeds, so a
+// failed write leaves nothing to undo. A fire-and-forget grid callback
+// therefore only needs to stop the rejection from escaping as an unhandled one.
+function alreadyReported(): void {}
+
+function CmsGridErrorBanner({ error, onDismiss }: { error: CmsGridError; onDismiss: () => void }) {
+  return (
+    <div
+      role="alert"
+      data-testid="cms-grid-error"
+      className="flex shrink-0 items-start gap-3 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-[13px] text-destructive"
+    >
+      <div className="flex-1">
+        <p>{error.message}</p>
+        {error.retryable ? <p data-testid="cms-grid-error-retry">{CMS_RETRY_HINT}</p> : null}
+      </div>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="shrink-0 rounded-md px-2 py-0.5 font-medium hover:bg-destructive/10"
+      >
+        Dismiss
+      </button>
+    </div>
+  );
+}
 
 export interface CmsGridProps {
   tableId: string;
@@ -94,16 +173,18 @@ function CmsGridContent({
   // New items default to Draft (the reserved Status field), so freshly added
   // content is never accidentally treated as published.
   const newItem = React.useCallback(() => {
-    void addRow(
+    addRow(
       statusField ? { cells: { [statusField.columnId]: statusField.options.draft } } : undefined,
-    );
+    ).catch(alreadyReported);
   }, [addRow, statusField]);
 
   // Delete the selected rows on Backspace/Delete, but never while the user is
   // typing in a cell editor (input/textarea/contentEditable).
   const handleDeleteSelected = React.useCallback(() => {
     if (selectedRows.size === 0) return;
-    selectedRows.forEach((id) => deleteRow(id));
+    selectedRows.forEach((id) => {
+      deleteRow(id).catch(alreadyReported);
+    });
     setSelectedRows(new Set());
   }, [selectedRows, deleteRow]);
 
@@ -206,15 +287,23 @@ function CmsGridContent({
           columns={columns}
           rows={displayRows}
           selectOptions={selectOptions}
-          onCellChange={(rowId, columnId, value: CellValue) => updateCell(rowId, columnId, value)}
+          onCellChange={(rowId, columnId, value: CellValue) => {
+            updateCell(rowId, columnId, value).catch(alreadyReported);
+          }}
           onAddRow={newItem}
-          onDeleteRow={deleteRow}
+          onDeleteRow={(rowId) => {
+            deleteRow(rowId).catch(alreadyReported);
+          }}
           onRowOpen={(row) => setDetailRowId(row.id)}
-          onColumnResize={(columnId, width) => updateColumn(columnId, { width })}
-          onColumnAlignmentChange={(columnId, alignment: TextAlignment) =>
-            updateColumn(columnId, { alignment })
-          }
-          onAddProperty={(name, type: ColumnType) => addColumn({ name, type })}
+          onColumnResize={(columnId, width) => {
+            updateColumn(columnId, { width }).catch(alreadyReported);
+          }}
+          onColumnAlignmentChange={(columnId, alignment: TextAlignment) => {
+            updateColumn(columnId, { alignment }).catch(alreadyReported);
+          }}
+          onAddProperty={(name, type: ColumnType) => {
+            addColumn({ name, type }).catch(alreadyReported);
+          }}
           onCreateSelectOption={createSelectOption}
           onUpdateSelectOption={updateSelectOption}
           onDeleteSelectOption={deleteSelectOption}
@@ -262,9 +351,11 @@ function CmsGridContent({
           selectOptions={selectOptions}
           isOpen
           onClose={() => setDetailRowId(null)}
-          onCellChange={(columnId, value) => updateCell(detailRow.id, columnId, value)}
+          onCellChange={(columnId, value) => {
+            updateCell(detailRow.id, columnId, value).catch(alreadyReported);
+          }}
           onDeleteRow={() => {
-            void deleteRow(detailRow.id);
+            deleteRow(detailRow.id).catch(alreadyReported);
             setDetailRowId(null);
           }}
           onCreateSelectOption={createSelectOption}
@@ -286,42 +377,67 @@ export default function CmsGrid({ tableId, dbAdapter = defaultAdapter }: CmsGrid
   // gracefully: the grid still opens, just without status defaulting.
   const [statusField, setStatusField] = React.useState<CmsStatusField | null>(null);
   const [ready, setReady] = React.useState(false);
+  const [error, setError] = React.useState<CmsGridError | null>(null);
+
+  const report = React.useCallback((err: unknown) => {
+    console.error('[cms] grid action failed', err);
+    setError(cmsGridErrorFor(err));
+  }, []);
+  const adapter = React.useMemo(() => reportingAdapter(dbAdapter, report), [dbAdapter, report]);
 
   React.useEffect(() => {
     let cancelled = false;
     setReady(false);
     ensureStatusField(tableId)
-      .then((sf) => {
-        if (!cancelled) {
-          setStatusField(sf);
-          setReady(true);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
+      .then((result) => {
+        if (cancelled) return;
+        if (result.ok) {
+          setStatusField(result.value);
+        } else {
+          // An expected failure (signed out, no permission, an outage): the
+          // grid still opens, without status defaulting, and says why.
           setStatusField(null);
-          setReady(true);
+          setError(cmsGridErrorFor(new CmsActionError(result.code, result.message)));
         }
+        setReady(true);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setStatusField(null);
+        report(err);
+        setReady(true);
       });
     return () => {
       cancelled = true;
     };
-  }, [tableId]);
+  }, [tableId, report]);
+
+  const banner = error ? (
+    <CmsGridErrorBanner error={error} onDismiss={() => setError(null)} />
+  ) : null;
 
   if (!ready) {
     return (
-      <div
-        className="p-8 text-center text-sm text-muted-foreground"
-        data-testid="cms-grid-preparing"
-      >
-        Preparing collection...
+      <div className="flex h-full flex-col">
+        {banner}
+        <div
+          className="p-8 text-center text-sm text-muted-foreground"
+          data-testid="cms-grid-preparing"
+        >
+          Preparing collection...
+        </div>
       </div>
     );
   }
 
   return (
-    <DataTableProvider dbAdapter={dbAdapter} fileAdapter={cmsFileAdapter} workspaceId={CMS_WORKSPACE_ID}>
-      <CmsGridContent tableId={tableId} statusField={statusField} />
-    </DataTableProvider>
+    <div className="flex h-full flex-col">
+      {banner}
+      <div className="min-h-0 flex-1">
+        <DataTableProvider dbAdapter={adapter} fileAdapter={cmsFileAdapter} workspaceId={CMS_WORKSPACE_ID}>
+          <CmsGridContent tableId={tableId} statusField={statusField} />
+        </DataTableProvider>
+      </div>
+    </div>
   );
 }

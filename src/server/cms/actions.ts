@@ -24,6 +24,11 @@
 // instead of an app-layer resolve) is MT-18; the CMS engine is single-schema in
 // Phase 2, so the ownership resolve is the only correct isolation today.
 //
+// Every guarded action returns a CmsActionResult (src/lib/cms/actionResult.ts):
+// an auth or permission failure is `{ ok: false, code, message }` instead of a
+// throw, so the grid can show a readable message in production (where Next.js
+// strips thrown server-action messages); unexpected errors still throw.
+//
 // Read actions stay unauthenticated, matching the public read-route policy. The
 // panel never touches MST; this path adds no new HTTP routes.
 
@@ -61,6 +66,28 @@ import {
   assertFileReferenceInWorkspace,
 } from './workspaceGuard';
 import type { CmsStatusField } from '@/lib/cms/constants';
+import type { CmsActionErrorCode, CmsActionResult } from '@/lib/cms/actionResult';
+import { cmsActionErrorMessage } from '@/lib/cms/actionResult';
+import { AuthError } from '@/server/auth/requireWorkspaceScope';
+
+// Run a guarded action body and return its result. An AuthError (no session,
+// no active workspace, a denied permission, an entity outside the workspace,
+// auth-brain or OpenFGA unable to answer) is an EXPECTED failure and comes back
+// as `{ ok: false, code, message }`, because production Next.js would replace a
+// thrown message with an opaque digest and the grid could not tell an outage
+// from a deny. Anything else (a database failure, a bug) still throws.
+// Not exported: a 'use server' file may only export async actions.
+async function guarded<T>(body: () => Promise<T>): Promise<CmsActionResult<T>> {
+  try {
+    return { ok: true, value: await body() };
+  } catch (err) {
+    if (err instanceof AuthError) {
+      const code: CmsActionErrorCode = err.code;
+      return { ok: false, code, message: cmsActionErrorMessage(code) };
+    }
+    throw err;
+  }
+}
 
 // Distinct table ids from a batch of row-create inputs, so bulkCreateRows
 // asserts each target table once rather than per row.
@@ -70,27 +97,33 @@ function distinctTableIds(inputs: CreateRowInput[]): string[] {
 
 // --- Tables ---
 
-export async function createTable(input: CreateTableInput): Promise<Table> {
-  const scope = await requireWorkspaceScope('editSite');
-  // The new collection lands in the request's active workspace, never a client-
-  // supplied or constant workspace id. Nothing exists yet to own-check.
-  return getCmsAdapter().createTable({ ...input, workspaceId: scope.workspaceId });
+export async function createTable(input: CreateTableInput): Promise<CmsActionResult<Table>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    // The new collection lands in the request's active workspace, never a client-
+    // supplied or constant workspace id. Nothing exists yet to own-check.
+    return getCmsAdapter().createTable({ ...input, workspaceId: scope.workspaceId });
+  });
 }
 
 export async function getTable(tableId: string): Promise<Table | null> {
   return getCmsAdapter().getTable(tableId);
 }
 
-export async function updateTable(tableId: string, updates: UpdateTableInput): Promise<Table> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertTableInWorkspace(tableId, scope.workspaceId);
-  return getCmsAdapter().updateTable(tableId, updates);
+export async function updateTable(tableId: string, updates: UpdateTableInput): Promise<CmsActionResult<Table>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertTableInWorkspace(tableId, scope.workspaceId);
+    return getCmsAdapter().updateTable(tableId, updates);
+  });
 }
 
-export async function deleteTable(tableId: string): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertTableInWorkspace(tableId, scope.workspaceId);
-  return getCmsAdapter().deleteTable(tableId);
+export async function deleteTable(tableId: string): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertTableInWorkspace(tableId, scope.workspaceId);
+    return getCmsAdapter().deleteTable(tableId);
+  });
 }
 
 export async function listTables(workspaceId: string): Promise<Table[]> {
@@ -99,10 +132,12 @@ export async function listTables(workspaceId: string): Promise<Table[]> {
 
 // --- Columns ---
 
-export async function createColumn(input: CreateColumnInput): Promise<Column> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertTableInWorkspace(input.tableId, scope.workspaceId);
-  return getCmsAdapter().createColumn(input);
+export async function createColumn(input: CreateColumnInput): Promise<CmsActionResult<Column>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertTableInWorkspace(input.tableId, scope.workspaceId);
+    return getCmsAdapter().createColumn(input);
+  });
 }
 
 export async function getColumns(tableId: string): Promise<Column[]> {
@@ -113,30 +148,38 @@ export async function getColumn(columnId: string): Promise<Column | null> {
   return getCmsAdapter().getColumn(columnId);
 }
 
-export async function updateColumn(columnId: string, updates: UpdateColumnInput): Promise<Column> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertColumnInWorkspace(columnId, scope.workspaceId);
-  return getCmsAdapter().updateColumn(columnId, updates);
+export async function updateColumn(columnId: string, updates: UpdateColumnInput): Promise<CmsActionResult<Column>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertColumnInWorkspace(columnId, scope.workspaceId);
+    return getCmsAdapter().updateColumn(columnId, updates);
+  });
 }
 
-export async function deleteColumn(columnId: string): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertColumnInWorkspace(columnId, scope.workspaceId);
-  return getCmsAdapter().deleteColumn(columnId);
+export async function deleteColumn(columnId: string): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertColumnInWorkspace(columnId, scope.workspaceId);
+    return getCmsAdapter().deleteColumn(columnId);
+  });
 }
 
-export async function reorderColumns(tableId: string, columnIds: string[]): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertTableInWorkspace(tableId, scope.workspaceId);
-  return getCmsAdapter().reorderColumns(tableId, columnIds);
+export async function reorderColumns(tableId: string, columnIds: string[]): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertTableInWorkspace(tableId, scope.workspaceId);
+    return getCmsAdapter().reorderColumns(tableId, columnIds);
+  });
 }
 
 // --- Select options ---
 
-export async function createSelectOption(input: CreateSelectOptionInput): Promise<SelectOption> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertColumnInWorkspace(input.columnId, scope.workspaceId);
-  return getCmsAdapter().createSelectOption(input);
+export async function createSelectOption(input: CreateSelectOptionInput): Promise<CmsActionResult<SelectOption>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertColumnInWorkspace(input.columnId, scope.workspaceId);
+    return getCmsAdapter().createSelectOption(input);
+  });
 }
 
 export async function getSelectOptions(columnId: string): Promise<SelectOption[]> {
@@ -146,30 +189,38 @@ export async function getSelectOptions(columnId: string): Promise<SelectOption[]
 export async function updateSelectOption(
   optionId: string,
   updates: UpdateSelectOptionInput,
-): Promise<SelectOption> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertSelectOptionInWorkspace(optionId, scope.workspaceId);
-  return getCmsAdapter().updateSelectOption(optionId, updates);
+): Promise<CmsActionResult<SelectOption>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertSelectOptionInWorkspace(optionId, scope.workspaceId);
+    return getCmsAdapter().updateSelectOption(optionId, updates);
+  });
 }
 
-export async function deleteSelectOption(optionId: string): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertSelectOptionInWorkspace(optionId, scope.workspaceId);
-  return getCmsAdapter().deleteSelectOption(optionId);
+export async function deleteSelectOption(optionId: string): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertSelectOptionInWorkspace(optionId, scope.workspaceId);
+    return getCmsAdapter().deleteSelectOption(optionId);
+  });
 }
 
-export async function reorderSelectOptions(columnId: string, optionIds: string[]): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertColumnInWorkspace(columnId, scope.workspaceId);
-  return getCmsAdapter().reorderSelectOptions(columnId, optionIds);
+export async function reorderSelectOptions(columnId: string, optionIds: string[]): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertColumnInWorkspace(columnId, scope.workspaceId);
+    return getCmsAdapter().reorderSelectOptions(columnId, optionIds);
+  });
 }
 
 // --- Rows ---
 
-export async function createRow(input: CreateRowInput): Promise<Row> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertTableInWorkspace(input.tableId, scope.workspaceId);
-  return getCmsAdapter().createRow(input);
+export async function createRow(input: CreateRowInput): Promise<CmsActionResult<Row>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertTableInWorkspace(input.tableId, scope.workspaceId);
+    return getCmsAdapter().createRow(input);
+  });
 }
 
 export async function getRow(rowId: string): Promise<Row | null> {
@@ -180,68 +231,86 @@ export async function getRows(tableId: string, query?: QueryOptions): Promise<Qu
   return getCmsAdapter().getRows(tableId, query);
 }
 
-export async function updateRow(rowId: string, cells: Record<string, CellValue>): Promise<Row> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertRowInWorkspace(rowId, scope.workspaceId);
-  return getCmsAdapter().updateRow(rowId, cells);
+export async function updateRow(rowId: string, cells: Record<string, CellValue>): Promise<CmsActionResult<Row>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertRowInWorkspace(rowId, scope.workspaceId);
+    return getCmsAdapter().updateRow(rowId, cells);
+  });
 }
 
-export async function deleteRow(rowId: string): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertRowInWorkspace(rowId, scope.workspaceId);
-  return getCmsAdapter().deleteRow(rowId);
+export async function deleteRow(rowId: string): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertRowInWorkspace(rowId, scope.workspaceId);
+    return getCmsAdapter().deleteRow(rowId);
+  });
 }
 
-export async function archiveRow(rowId: string): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertRowInWorkspace(rowId, scope.workspaceId);
-  return getCmsAdapter().archiveRow(rowId);
+export async function archiveRow(rowId: string): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertRowInWorkspace(rowId, scope.workspaceId);
+    return getCmsAdapter().archiveRow(rowId);
+  });
 }
 
-export async function unarchiveRow(rowId: string): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertRowInWorkspace(rowId, scope.workspaceId);
-  return getCmsAdapter().unarchiveRow(rowId);
+export async function unarchiveRow(rowId: string): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertRowInWorkspace(rowId, scope.workspaceId);
+    return getCmsAdapter().unarchiveRow(rowId);
+  });
 }
 
-export async function bulkCreateRows(inputs: CreateRowInput[]): Promise<Row[]> {
-  const scope = await requireWorkspaceScope('editSite');
-  await Promise.all(
-    distinctTableIds(inputs).map((id) => assertTableInWorkspace(id, scope.workspaceId)),
-  );
-  return getCmsAdapter().bulkCreateRows(inputs);
+export async function bulkCreateRows(inputs: CreateRowInput[]): Promise<CmsActionResult<Row[]>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await Promise.all(
+      distinctTableIds(inputs).map((id) => assertTableInWorkspace(id, scope.workspaceId)),
+    );
+    return getCmsAdapter().bulkCreateRows(inputs);
+  });
 }
 
-export async function bulkDeleteRows(rowIds: string[]): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertRowsInWorkspace(rowIds, scope.workspaceId);
-  return getCmsAdapter().bulkDeleteRows(rowIds);
+export async function bulkDeleteRows(rowIds: string[]): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertRowsInWorkspace(rowIds, scope.workspaceId);
+    return getCmsAdapter().bulkDeleteRows(rowIds);
+  });
 }
 
-export async function bulkArchiveRows(rowIds: string[]): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertRowsInWorkspace(rowIds, scope.workspaceId);
-  return getCmsAdapter().bulkArchiveRows(rowIds);
+export async function bulkArchiveRows(rowIds: string[]): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertRowsInWorkspace(rowIds, scope.workspaceId);
+    return getCmsAdapter().bulkArchiveRows(rowIds);
+  });
 }
 
 // --- Relations ---
 
-export async function createRelation(input: CreateRelationInput): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  // Both endpoints must live in the active workspace, so a relation can never
-  // bridge across the isolation boundary.
-  await assertRowsInWorkspace([input.sourceRowId, input.targetRowId], scope.workspaceId);
-  return getCmsAdapter().createRelation(input);
+export async function createRelation(input: CreateRelationInput): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    // Both endpoints must live in the active workspace, so a relation can never
+    // bridge across the isolation boundary.
+    await assertRowsInWorkspace([input.sourceRowId, input.targetRowId], scope.workspaceId);
+    return getCmsAdapter().createRelation(input);
+  });
 }
 
 export async function deleteRelation(
   sourceRowId: string,
   columnId: string,
   targetRowId: string,
-): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertRowsInWorkspace([sourceRowId, targetRowId], scope.workspaceId);
-  return getCmsAdapter().deleteRelation(sourceRowId, columnId, targetRowId);
+): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertRowsInWorkspace([sourceRowId, targetRowId], scope.workspaceId);
+    return getCmsAdapter().deleteRelation(sourceRowId, columnId, targetRowId);
+  });
 }
 
 export async function getRelatedRows(rowId: string, columnId: string): Promise<Row[]> {
@@ -256,16 +325,20 @@ export async function getRelationsForRow(
 
 // --- File references ---
 
-export async function addFileReference(input: CreateFileRefInput): Promise<FileReference> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertRowInWorkspace(input.rowId, scope.workspaceId);
-  return getCmsAdapter().addFileReference(input);
+export async function addFileReference(input: CreateFileRefInput): Promise<CmsActionResult<FileReference>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertRowInWorkspace(input.rowId, scope.workspaceId);
+    return getCmsAdapter().addFileReference(input);
+  });
 }
 
-export async function removeFileReference(fileRefId: string): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertFileReferenceInWorkspace(fileRefId, scope.workspaceId);
-  return getCmsAdapter().removeFileReference(fileRefId);
+export async function removeFileReference(fileRefId: string): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertFileReferenceInWorkspace(fileRefId, scope.workspaceId);
+    return getCmsAdapter().removeFileReference(fileRefId);
+  });
 }
 
 export async function getFileReferences(rowId: string, columnId: string): Promise<FileReference[]> {
@@ -276,18 +349,22 @@ export async function reorderFileReferences(
   rowId: string,
   columnId: string,
   fileRefIds: string[],
-): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertRowInWorkspace(rowId, scope.workspaceId);
-  return getCmsAdapter().reorderFileReferences(rowId, columnId, fileRefIds);
+): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertRowInWorkspace(rowId, scope.workspaceId);
+    return getCmsAdapter().reorderFileReferences(rowId, columnId, fileRefIds);
+  });
 }
 
 // --- Views ---
 
-export async function createView(input: CreateViewInput): Promise<View> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertTableInWorkspace(input.tableId, scope.workspaceId);
-  return getCmsAdapter().createView(input);
+export async function createView(input: CreateViewInput): Promise<CmsActionResult<View>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertTableInWorkspace(input.tableId, scope.workspaceId);
+    return getCmsAdapter().createView(input);
+  });
 }
 
 export async function getViews(tableId: string): Promise<View[]> {
@@ -298,22 +375,28 @@ export async function getView(viewId: string): Promise<View | null> {
   return getCmsAdapter().getView(viewId);
 }
 
-export async function updateView(viewId: string, updates: UpdateViewInput): Promise<View> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertViewInWorkspace(viewId, scope.workspaceId);
-  return getCmsAdapter().updateView(viewId, updates);
+export async function updateView(viewId: string, updates: UpdateViewInput): Promise<CmsActionResult<View>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertViewInWorkspace(viewId, scope.workspaceId);
+    return getCmsAdapter().updateView(viewId, updates);
+  });
 }
 
-export async function deleteView(viewId: string): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertViewInWorkspace(viewId, scope.workspaceId);
-  return getCmsAdapter().deleteView(viewId);
+export async function deleteView(viewId: string): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertViewInWorkspace(viewId, scope.workspaceId);
+    return getCmsAdapter().deleteView(viewId);
+  });
 }
 
-export async function reorderViews(tableId: string, viewIds: string[]): Promise<void> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertTableInWorkspace(tableId, scope.workspaceId);
-  return getCmsAdapter().reorderViews(tableId, viewIds);
+export async function reorderViews(tableId: string, viewIds: string[]): Promise<CmsActionResult<void>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertTableInWorkspace(tableId, scope.workspaceId);
+    return getCmsAdapter().reorderViews(tableId, viewIds);
+  });
 }
 
 // --- CMS publish state (reserved "Status" field) ---
@@ -336,40 +419,42 @@ const STATUS_OPTIONS = [
  * create a column on `tableId`); safe to call on every grid open (a no-op once
  * the field exists).
  */
-export async function ensureStatusField(tableId: string): Promise<CmsStatusField> {
-  const scope = await requireWorkspaceScope('editSite');
-  await assertTableInWorkspace(tableId, scope.workspaceId);
-  const adapter = getCmsAdapter();
+export async function ensureStatusField(tableId: string): Promise<CmsActionResult<CmsStatusField>> {
+  return guarded(async () => {
+    const scope = await requireWorkspaceScope('editSite');
+    await assertTableInWorkspace(tableId, scope.workspaceId);
+    const adapter = getCmsAdapter();
 
-  const columns = await adapter.getColumns(tableId);
-  let statusColumn = columns.find(
-    (c) => c.type === 'select' && c.name.trim().toLowerCase() === STATUS_FIELD_NAME.toLowerCase(),
-  );
-  if (!statusColumn) {
-    statusColumn = await adapter.createColumn({
-      tableId,
-      name: STATUS_FIELD_NAME,
-      type: 'select',
-    });
-  }
+    const columns = await adapter.getColumns(tableId);
+    let statusColumn = columns.find(
+      (c) => c.type === 'select' && c.name.trim().toLowerCase() === STATUS_FIELD_NAME.toLowerCase(),
+    );
+    if (!statusColumn) {
+      statusColumn = await adapter.createColumn({
+        tableId,
+        name: STATUS_FIELD_NAME,
+        type: 'select',
+      });
+    }
 
-  const existing = await adapter.getSelectOptions(statusColumn.id);
-  const ids: Record<string, string> = {};
-  for (const opt of STATUS_OPTIONS) {
-    const found = existing.find((o) => o.name.trim().toLowerCase() === opt.name.toLowerCase());
-    ids[opt.key] = found
-      ? found.id
-      : (
-          await adapter.createSelectOption({
-            columnId: statusColumn.id,
-            name: opt.name,
-            color: opt.color,
-          })
-        ).id;
-  }
+    const existing = await adapter.getSelectOptions(statusColumn.id);
+    const ids: Record<string, string> = {};
+    for (const opt of STATUS_OPTIONS) {
+      const found = existing.find((o) => o.name.trim().toLowerCase() === opt.name.toLowerCase());
+      ids[opt.key] = found
+        ? found.id
+        : (
+            await adapter.createSelectOption({
+              columnId: statusColumn.id,
+              name: opt.name,
+              color: opt.color,
+            })
+          ).id;
+    }
 
-  return {
-    columnId: statusColumn.id,
-    options: { draft: ids.draft, published: ids.published, scheduled: ids.scheduled },
-  };
+    return {
+      columnId: statusColumn.id,
+      options: { draft: ids.draft, published: ids.published, scheduled: ids.scheduled },
+    };
+  });
 }
