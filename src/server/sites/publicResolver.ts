@@ -19,6 +19,7 @@ import type { PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
 import type { PageSnapshotOut } from '@/models/PageModel';
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
+import { RFC1035_LABEL } from '@/server/sites/subdomain';
 
 // Re-exported so resolver consumers can import the sentinel from one barrel; the
 // canonical, dependency-free source is `homeSentinel.ts` (edge-safe for the
@@ -59,6 +60,14 @@ export interface PublishedSite {
  *
  * `www` is treated as "no subdomain" (null). The port is stripped. A host with
  * no usable subdomain returns null (the route 404s).
+ *
+ * The label must also have the SHAPE of a DNS label (`RFC1035_LABEL`, the same
+ * contract the publish-time allocator in `subdomain.ts` generates against): a
+ * malformed label (an underscore, a leading or trailing hyphen, over 63 chars)
+ * can never be an allocated subdomain, so it returns null here, before any
+ * cache or database work. The reserved-name list is deliberately NOT applied:
+ * it is an allocation rule, and an operator-seeded site may legitimately live
+ * on a reserved label (the hosted demo runs as `app`).
  */
 export function parseSubdomain(
   host: string | null | undefined,
@@ -76,15 +85,18 @@ export function parseSubdomain(
     if (!hostname.endsWith(suffix)) return null;
     const remainder = hostname.slice(0, -suffix.length);
     if (!remainder) return null;
-    const label = remainder.split('.')[0];
-    if (!label || label === 'www') return null;
-    return label;
+    return usableLabel(remainder.split('.')[0]);
   }
 
   const labels = hostname.split('.');
   if (labels.length < 3) return null;
-  const label = labels[0];
+  return usableLabel(labels[0]);
+}
+
+/** A parsed label is usable when it is present, not `www`, and DNS-label shaped. */
+function usableLabel(label: string | undefined): string | null {
   if (!label || label === 'www') return null;
+  if (!RFC1035_LABEL.test(label)) return null;
   return label;
 }
 

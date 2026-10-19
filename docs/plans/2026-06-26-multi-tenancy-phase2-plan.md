@@ -1,12 +1,15 @@
 ---
 type: plan
-status: draft
+status: completed
 title: Multi-Tenancy Phase 2 Implementation Plan (orchestrator-ready spec DAG)
 summary: Orchestrator-ready, dependency-ordered spec DAG to take framer-clone from the deployed single-tenant storefront slice to the Framer multi-tenant model (authenticated multi-user editor at app.lumitra.co/projects/<id>, random subdomains on a *.sites.lumitra.co wildcard). Decomposes into 23 independently-implementable specs across 5 waves, each with id, goal, files, deps, and verifiable acceptance criteria. Code lands first under the current (inverted) env, then a hands-on infra flip (DNS + wildcard TLS + Coolify + env) cuts over without breaking the live deploy.
 date: 2026-06-26
 tags: [multi-tenancy, framer-clone, plan]
 projects: [framer-clone]
 ---
+
+> **Completed 2026-10-19.** MT-01 to MT-17 merged earlier; MT-18 (multi-tenant commerce) was carried out as the commerce tenant plan (`2026-06-27-commerce-tenant-db-migration-plan.md`, CM-01 to CM-13); MT-19 to MT-22 went live on 2026-10-19 with the redeploy (wildcard record, DNS-01 wildcard certificate on the shared Traefik proxy, Coolify host on app.lumitra.co and *.sites.lumitra.co, the env switch); MT-23 (docs) is in deploy/README.md and the infra runbook `deployments/framer-clone/RUNBOOK.md`. The paid edge certificate was declined for now.
+
 
 # Multi-Tenancy Phase 2 Implementation Plan
 

@@ -1,12 +1,15 @@
 ---
 type: plan
-status: draft
+status: archived
 title: Multi-Tenancy Gap Analysis (single-tenant slice -> Framer multi-tenant model)
 summary: One consolidated code gap analysis for migrating framer-clone from the deployed single-tenant storefront slice to the multi-tenant Framer model (authenticated multi-user editor at app.lumitra.co/projects/<id>, random subdomains on a *.sites.lumitra.co wildcard). The data + scope + auth-scoping layers are already multi-tenant-correct; the gaps are routing surfaces, the editor shell, the publish-side subdomain allocator, the interim admin-secret removal, commerce tenancy, and wildcard DNS/TLS.
 date: 2026-06-26
 tags: [multi-tenancy, framer-clone, architecture]
 projects: [framer-clone]
 ---
+
+> **Archived 2026-10-19.** Every gap listed here was closed by the multi-tenancy phase 2 plan (completed 2026-10-19) and the commerce tenant plan.
+
 
 # Multi-Tenancy Gap Analysis: framer-clone
 

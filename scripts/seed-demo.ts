@@ -33,6 +33,14 @@
 //
 // It expects a fresh, migrated database (run `prisma migrate deploy` first); it
 // seeds, it does not reconcile or upsert.
+//
+// NO CACHE STEP NEEDED. The seed writes the published site straight to the
+// database, bypassing the publish route that revalidates the storefront cache.
+// That is fine: the storefront never caches a miss in `unstable_cache`, it only
+// remembers one in memory for NEGATIVE_CACHE_TTL_MS (30 seconds, see
+// src/server/sites/cachedResolver.ts). So even if the demo host was requested
+// before the seed ran, it serves the seeded site within 30 seconds, without a
+// restart, an endpoint or a secret.
 
 import { PrismaClient } from '@prisma/client';
 import { seedDemoSite } from '@/lib/renderer/server/seedDemoSite';
