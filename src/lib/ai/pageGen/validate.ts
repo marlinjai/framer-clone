@@ -314,8 +314,9 @@ class Validator {
     if (Object.keys(style).length > 0) merged.style = style;
     if (type === 'img') {
       if (!(typeof merged.src === 'string' && isSafeSrc(merged.src))) {
+        // No src is the documented way to ask for a placeholder (the user
+        // swaps in a real image); only a broken src was already warned about.
         merged.src = PLACEHOLDER_IMAGE_SRC;
-        this.warn(path, 'image without a usable src got the placeholder image');
       }
       if (typeof merged.alt !== 'string' || merged.alt.trim() === '') {
         merged.alt = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : 'Image';
