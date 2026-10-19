@@ -224,7 +224,7 @@ says where each comes from.
 | `COMMERCE_APP_DATABASE_URL` | yes | Same database as `commerce_app`; every commerce read and write at runtime |
 | `COMMERCE_OWNER_DATABASE_URL` | yes | Same database as `commerce_ddl` (never a superuser, refused at start), a direct connection; the start step and first-project provisioning, so it is in the server process environment. The start fails without it, and project creation answers 500 `commerce_not_configured`. |
 | `COMMERCE_MIGRATE_STATEMENT_TIMEOUT_MS` | no | Bound on each commerce migration statement at container start, in whole milliseconds; unset or `0` means no limit (the default) |
-| `EDITOR_HOST` | yes | Host that serves the editor (`app.lumitra.co`); every other host is treated as a published site |
+| `EDITOR_HOST` | yes | Host that serves the editor (`app.lumitra.co`); every other host is treated as a published site. With `NODE_ENV=production` the container refuses to start when it is unset or blank (`boot.sh`, and again in `src/instrumentation.ts`) |
 | `PUBLIC_SITE_BASE_HOST` | yes | Parent domain of published sites (`sites.lumitra.co`); the label in front of it selects the site |
 | `AUTH_BRAIN_URL` | no | auth-brain base URL for session checks and the login redirect; defaults to `https://auth.lumitra.co` |
 | `OPENFGA_API_URL`, `OPENFGA_STORE_ID` | yes | The authorization service behind the permission checks (run on the active company's workspace); without them every guarded route answers 503 `authz_unavailable` |
