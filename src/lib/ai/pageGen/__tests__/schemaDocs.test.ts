@@ -44,7 +44,7 @@ describe('buildSchemaDocs', () => {
   });
 
   it('contains no long dashes', () => {
-    expect(docs).not.toMatch(/[–—]/);
+    expect(docs).not.toMatch(/[\u2013\u2014]/);
   });
 });
 
