@@ -29,27 +29,15 @@ connections to the suite. The four lines below are in that order.
   that keeps orders, credit notes and stock movements append-only for the app role. See
   [commerce tenant plan](docs/plans/2026-06-27-commerce-tenant-db-migration-plan.md). Done
   2026-10-17.
-- [ ] 2. Running again: production was retired on 2026-09-10 (the app had been down since 27
-  July; app, database without backups and the app.lumitra.co record were removed, infra commit
-  d15a07d). Redeploy as a new Coolify app and database declared in Terraform, this time with a
-  backup schedule, then the cutover of the multi-tenancy plan's wave 5 (MT-19 to MT-23: wildcard
-  DNS for the published sites, certificates, the Coolify host, the configuration switch). On the
-  new database, drop the EMPTY legacy `commerce` schema that the historical Prisma migrations
-  still create (no commerce data survived the retirement; why no migration drops it is in the
-  commerce tenant plan's reality note of 2026-10-17).
-  Recommended start without Cloudflare's paid certificate manager (about 10 dollars a month,
-  global edge caching); Marlin decides that at this step. MT-01 to MT-17 are merged. See
-  [multi-tenancy plan](docs/plans/2026-06-26-multi-tenancy-phase2-plan.md) and
-  [gap analysis](docs/plans/2026-06-26-multi-tenancy-gap-analysis.md). App side ready
-  2026-10-17: the container start runs the commerce public and tenant migrations as the owner
-  role, `prisma/sql/commerce-roles.sql` is complete for a non-superuser owner on Postgres 16
-  (proven by `roles.itest.ts`), and `deploy/README.md` matches the infra RUNBOOK
-  (`infra/deployments/framer-clone/RUNBOOK.md`), whose steps 1, 7, 9 and 10 now simplify.
-  Since 2026-10-19 (`@marlinjai/tenant-db` 0.2) the owner role holds no CREATEROLE and no grant
-  over `commerce_app`: provisioning only verifies `commerce_app`'s search path, and the start step
-  refuses an owner that still holds either power, so a database set up with the earlier roles
-  file must have `prisma/sql/commerce-roles.sql` re-applied by its superuser before this build is
-  deployed (command and check in `deploy/README.md`). (2026-10-19)
+- [ ] 2. Running again: live since 2026-10-19. New Coolify app and Postgres (daily backup), the
+  editor on app.lumitra.co, published sites on <label>.sites.lumitra.co with a DNS-01 wildcard
+  certificate on the shared proxy (free path, the paid certificate manager declined for now),
+  commerce roles hardened (owner without CREATEROLE, #97), the demo company seeded and a test
+  order placed; the full record is in infra's deployments/framer-clone/RUNBOOK.md. Left: (1)
+  drop the EMPTY legacy `commerce` schema on the production database (19 tables, 0 rows, created
+  only by the historical Prisma migrations; needs Marlin's one-line yes as a production drop);
+  (2) publish a new project from the editor and open its <random>.sites.lumitra.co address (the
+  runbook's last check, after the site-lookup cache fix is deployed). (2026-10-19)
 - [ ] 3. The Books: the Customer + SalesDocument + DocumentTemplate document tier for Marlin's own
   accounting (invoices and credit notes now, offers later; joins with receipt-ocr-app's expense
   side), in each company's own schema. Phase 1 is built (2026-10-17): migration `007_books` with
