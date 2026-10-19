@@ -11,8 +11,11 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
 ## Open
 
 - [ ] AI-driven page generation: let AI agents write pages directly as MST (MobX-State-Tree, the
-  in-memory tree that backs the editor) snapshot JSON, so the data format is the API. No code
-  evidence of this shipping yet. See [plan](docs/plans/ai-driven-page-generation.md). (2026-10-14)
+  in-memory tree that backs the editor) snapshot JSON, so the data format is the API. Decided and
+  in progress since 2026-10-19: phases 1 to 3 (registry-generated schema docs with validation, the
+  guarded `/api/ai/generate-page` route, the editor's "Generate page" dialog with undo) are being
+  built on `feat/ai-page-generation`; phase 4's style references and screenshot loop stay open.
+  See [plan](docs/plans/ai-driven-page-generation.md). (2026-10-19)
 - [ ] Custom domains (Option B): let a site owner connect their own domain to a published site
   (domain-control validation, per-domain TLS, in-editor onboarding), on top of the default
   subdomain hosting that already shipped. Background work, still wanted, not started. See
