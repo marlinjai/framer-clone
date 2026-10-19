@@ -42,6 +42,7 @@ vi.mock('@marlinjai/data-table-react', async (orig) => {
     rows: Array<{ id: string; cells: Record<string, unknown> }>;
     onAddProperty?: (name: string, type: string) => void;
     onCellChange?: (rowId: string, columnId: string, value: unknown) => void;
+    onSelectionChange?: (ids: Set<string>) => void;
   }) {
     return React.createElement(
       'div',
@@ -63,6 +64,10 @@ vi.mock('@marlinjai/data-table-react', async (orig) => {
       React.createElement('button', {
         'data-testid': 'add-formula',
         onClick: () => props.onAddProperty?.('Calc', 'formula'),
+      }),
+      React.createElement('button', {
+        'data-testid': 'select-first',
+        onClick: () => props.onSelectionChange?.(new Set([props.rows[0].id])),
       }),
       React.createElement('button', {
         'data-testid': 'edit-cell',
@@ -209,5 +214,35 @@ describe('CmsGrid error banner', () => {
     expect(banner.textContent).toMatch(/Something went wrong/);
     expect(banner.textContent).not.toMatch(/Server Components/);
     errorSpy.mockRestore();
+  });
+});
+
+describe('CmsGrid delete selected', () => {
+  it('keeps a row selected when its delete fails, so the user can retry', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fake.deleteRow.mockRejectedValueOnce(new CmsActionError('authz_unavailable'));
+    render(<CmsGrid tableId="t1" dbAdapter={fake as unknown as DatabaseAdapter} />);
+    await screen.findByTestId('mock-tableview');
+
+    fireEvent.click(screen.getByTestId('select-first'));
+    expect(await screen.findByText('1 selected')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+
+    await screen.findByTestId('cms-grid-error');
+    expect(fake.deleteRow).toHaveBeenCalledWith('r1');
+    expect(screen.getByText('1 selected')).toBeTruthy();
+    errorSpy.mockRestore();
+  });
+
+  it('clears the selection once the delete succeeds', async () => {
+    render(<CmsGrid tableId="t1" dbAdapter={fake as unknown as DatabaseAdapter} />);
+    await screen.findByTestId('mock-tableview');
+
+    fireEvent.click(screen.getByTestId('select-first'));
+    await screen.findByText('1 selected');
+    fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+
+    await waitFor(() => expect(screen.queryByText('1 selected')).toBeNull());
+    expect(screen.queryByTestId('cms-grid-error')).toBeNull();
   });
 });

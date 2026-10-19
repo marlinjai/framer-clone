@@ -180,12 +180,14 @@ function CmsGridContent({
 
   // Delete the selected rows on Backspace/Delete, but never while the user is
   // typing in a cell editor (input/textarea/contentEditable).
+  // A failed delete (already on the banner) keeps its row selected, so the
+  // user can retry; only the rows actually deleted leave the selection.
   const handleDeleteSelected = React.useCallback(() => {
     if (selectedRows.size === 0) return;
-    selectedRows.forEach((id) => {
-      deleteRow(id).catch(alreadyReported);
+    const ids = [...selectedRows];
+    void Promise.allSettled(ids.map((id) => deleteRow(id))).then((results) => {
+      setSelectedRows(new Set(ids.filter((_, i) => results[i].status === 'rejected')));
     });
-    setSelectedRows(new Set());
   }, [selectedRows, deleteRow]);
 
   React.useEffect(() => {

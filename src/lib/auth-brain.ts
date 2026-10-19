@@ -15,6 +15,12 @@ import { createAuthBrainClient } from '@marlinjai/auth-brain-sdk';
 // runtime via Infisical; this default only governs build-time evaluation.
 const authBrainUrl = process.env.AUTH_BRAIN_URL ?? 'https://auth.lumitra.co';
 
+// An empty or whitespace-only value counts as unset: an empty Bearer token or
+// model id must never be sent to OpenFGA.
+function optionalEnv(name: string): string | undefined {
+  return process.env[name]?.trim() || undefined;
+}
+
 export const authBrainClient = createAuthBrainClient({
   baseUrl: authBrainUrl,
   cookieName: 'lumitra_session',
@@ -31,7 +37,7 @@ export const authBrainClient = createAuthBrainClient({
   // The suite's OpenFGA runs with a pre-shared key: without this Bearer token
   // every check answers 401. Unset for a local OpenFGA that runs without a key
   // (src/instrumentation.ts warns at start when the URL is set but this is not).
-  openfgaToken: process.env.OPENFGA_API_TOKEN,
+  openfgaToken: optionalEnv('OPENFGA_API_TOKEN'),
   // Pins checks to one authorization model instead of the store's latest.
-  openfgaModelId: process.env.OPENFGA_AUTHORIZATION_MODEL_ID,
+  openfgaModelId: optionalEnv('OPENFGA_AUTHORIZATION_MODEL_ID'),
 });
