@@ -6,7 +6,7 @@
 // paths and requiring the same answer.
 
 import { describe, it, expect } from 'vitest';
-import { RequestCookies } from 'next/dist/server/web/spec-extension/cookies';
+import { RequestCookies } from '@edge-runtime/cookies';
 import type { SessionVerifyResponse } from '@marlinjai/auth-brain-sdk';
 import {
   companySelectorsFromJar,

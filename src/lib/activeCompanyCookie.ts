@@ -22,7 +22,7 @@
 // Free of next/headers and server-only on purpose, so the route handlers, the
 // loaders and the server actions can all share it.
 
-import { RequestCookies } from 'next/dist/server/web/spec-extension/cookies';
+import { RequestCookies } from '@edge-runtime/cookies';
 import type { CompanySelectors } from '@/server/sites/scope';
 
 /** The cookie name. Host-only on the editor host (no Domain attribute). */
