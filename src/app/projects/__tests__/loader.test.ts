@@ -332,3 +332,23 @@ describe('loadDashboard: workspace chooser and selection flow', () => {
     expect(mockListSites).toHaveBeenCalledWith({ workspaceId: 'ws_c', tenantGroupId: 'tg_c' });
   });
 });
+
+describe('loadDashboard: deep link through the login', () => {
+  it('carries a validated next into the login return_to', async () => {
+    const result = await loadDashboard({ next: '/projects/site_7/preview' });
+
+    expect(result).toEqual({
+      status: 'unauthenticated',
+      loginUrl:
+        'https://auth.lumitra.co/login?return_to=' +
+        encodeURIComponent('https://app.lumitra.co/projects?next=%2Fprojects%2Fsite_7%2Fpreview'),
+    });
+  });
+
+  it('drops an unsafe next from the return_to', async () => {
+    expect(await loadDashboard({ next: 'https://evil.example/x' })).toEqual({
+      status: 'unauthenticated',
+      loginUrl: LOGIN_URL,
+    });
+  });
+});

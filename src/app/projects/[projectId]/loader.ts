@@ -72,6 +72,21 @@ async function buildLoginUrl(
 }
 
 /**
+ * The dashboard chooser URL that continues to this project (or its preview)
+ * once a workspace is chosen. `switchMode` forces the chooser even though a
+ * workspace is active (the project lives in another of the caller's
+ * workspaces); without it the dashboard would forward straight back here.
+ */
+function chooserUrlFor(
+  projectId: string,
+  returnPathSuffix: string,
+  { switchMode }: { switchMode: boolean },
+): string {
+  const next = `/projects/${encodeURIComponent(projectId)}${returnPathSuffix}`;
+  return `/projects?${switchMode ? 'switch=1&' : ''}next=${encodeURIComponent(next)}`;
+}
+
+/**
  * Resolve the editor's data for `/projects/<projectId>`: the workspace-scoped
  * project serialized to a snapshot the client editor hydrates, OR a fail-closed
  * `unauthenticated`/`not_found` result. The page is the only thing that
@@ -114,10 +129,9 @@ export async function loadProjectSnapshot(
     jar.get(ACTIVE_WORKSPACE_COOKIE)?.value ?? null,
   );
   if (!scopeResult.ok) {
-    const next = `/projects/${encodeURIComponent(projectId)}${returnPathSuffix}`;
     return {
       status: 'choose_workspace',
-      chooserUrl: `/projects?next=${encodeURIComponent(next)}`,
+      chooserUrl: chooserUrlFor(projectId, returnPathSuffix, { switchMode: false }),
     };
   }
 
@@ -132,7 +146,27 @@ export async function loadProjectSnapshot(
     const snapshot = getSnapshot(project) as ProjectSnapshotOut;
     return { status: 'ok', snapshot };
   } catch (err) {
-    if (err instanceof SiteNotFoundError) return { status: 'not_found' };
+    if (err instanceof SiteNotFoundError) {
+      // The link may point at a project in ANOTHER of the caller's own
+      // workspaces (shared link, or the workspace was switched in another
+      // tab). Look only among the session's other workspaces; when it is
+      // there, offer the chooser (forced, with this path as `next`) instead
+      // of a 404. A site outside the session stays a plain 404: the lookup
+      // is restricted to the caller's workspaces, so nothing leaks.
+      const others = session.workspaces
+        .map((w) => w.id)
+        .filter((id) => id !== scopeResult.scope.workspaceId);
+      if (others.length > 0) {
+        const home = await getSiteRepository().findSiteWorkspaceAmong(projectId, others);
+        if (home) {
+          return {
+            status: 'choose_workspace',
+            chooserUrl: chooserUrlFor(projectId, returnPathSuffix, { switchMode: true }),
+          };
+        }
+      }
+      return { status: 'not_found' };
+    }
     // Any other failure is a genuine 500 — do not swallow it into a 404.
     throw err;
   }

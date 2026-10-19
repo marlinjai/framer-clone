@@ -14,10 +14,12 @@
 //
 // Query parameters (all display-only; none of them changes the scope):
 //   ?switch=1   open the chooser although a workspace is active,
-//   ?next=...   the editor path to continue to after choosing (validated by
-//               the chooseWorkspace action, so it is never an open redirect),
+//   ?next=...   a validated editor path (safeEditorReturnPath, never an open
+//               redirect) to continue to: carried through the login and the
+//               chooser, and followed as soon as a workspace is active,
 //   ?error=...  a refused choice, shown as an alert in the chooser.
 
+import React from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { safeEditorReturnPath } from '@/server/auth/activeWorkspace';
@@ -51,16 +53,20 @@ interface ProjectsPageProps {
 
 export default async function ProjectsPage({ searchParams }: ProjectsPageProps) {
   const query = await searchParams;
-  const data = await loadDashboard({ forceChooser: param(query.switch) === '1' });
+  const forceChooser = param(query.switch) === '1';
+  const next = safeEditorReturnPath(param(query.next));
+  const data = await loadDashboard({ forceChooser, next });
   if (data.status === 'unauthenticated') {
-    // No valid session -> bounce to auth-brain login. The ONLY redirect here.
+    // No valid session -> bounce to auth-brain login (the only login redirect).
     redirect(data.loginUrl);
   }
 
   if (data.status === 'auth_unavailable') {
     // auth-brain could not answer: a retry notice, never the login (an outage
     // must not loop a signed-in user through the login).
-    return <AuthUnavailable retryHref="/projects" />;
+    const retryHref =
+      next === '/projects' ? '/projects' : `/projects?next=${encodeURIComponent(next)}`;
+    return <AuthUnavailable retryHref={retryHref} />;
   }
 
   if (data.status === 'choose_workspace') {
@@ -69,12 +75,20 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
       <WorkspaceChooser
         workspaces={data.workspaces}
         activeWorkspaceId={data.activeWorkspaceId}
-        next={safeEditorReturnPath(param(query.next))}
+        next={next}
         error={errorCode ? (CHOOSER_ERRORS[errorCode] ?? null) : null}
         portalUrl={new URL('/', process.env.AUTH_BRAIN_URL ?? 'https://auth.lumitra.co').toString()}
         action={chooseWorkspace}
       />
     );
+  }
+
+  // A deep link that came through the login (or the chooser) continues to
+  // its project now that a workspace is active. Loop-free: the project loader
+  // resolves the same workspace, and its only way back here is the FORCED
+  // chooser (`switch=1`), which renders and never forwards.
+  if (next !== '/projects' && !forceChooser) {
+    redirect(next);
   }
 
   const { sites, workspaces, activeWorkspace } = data;

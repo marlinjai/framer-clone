@@ -32,6 +32,7 @@ import {
   verifySessionOrThrowUnavailable,
 } from '@/lib/authBrainAvailability';
 import { ACTIVE_WORKSPACE_COOKIE } from '@/lib/activeWorkspaceCookie';
+import { safeEditorReturnPath } from '@/server/auth/activeWorkspace';
 import {
   getSiteRepository,
   listWorkspaceChoices,
@@ -67,11 +68,13 @@ export type DashboardData =
  * contract (proto + forwarded host + path). The absolute URL is first-party in
  * prod, which the auth-brain login open-redirect-validates.
  */
-async function buildLoginUrl(): Promise<string> {
+async function buildLoginUrl(next: string): Promise<string> {
   const h = await headers();
   const proto = h.get('x-forwarded-proto') || 'https';
   const host = h.get('x-forwarded-host') || h.get('host') || '';
-  const returnTo = `${proto}://${host}/projects`;
+  // Keep a deep link (a validated editor path) through the login.
+  const nextQuery = next === '/projects' ? '' : `?next=${encodeURIComponent(next)}`;
+  const returnTo = `${proto}://${host}/projects${nextQuery}`;
 
   const loginUrl = new URL('/login', AUTH_BRAIN_URL);
   loginUrl.searchParams.set('return_to', returnTo);
@@ -84,10 +87,13 @@ async function buildLoginUrl(): Promise<string> {
  *
  * `opts.forceChooser` renders the chooser even when a workspace is active (the
  * "Switch workspace" link in the dashboard chrome); it never changes the scope.
+ * `opts.next` is a deep link to keep through the login (validated here with
+ * safeEditorReturnPath, so it can never point off-site).
  */
 export async function loadDashboard(
-  opts: { forceChooser?: boolean } = {},
+  opts: { forceChooser?: boolean; next?: unknown } = {},
 ): Promise<DashboardData> {
+  const next = safeEditorReturnPath(opts.next);
   const jar = await cookies();
   const cookie = jar.get(SESSION_COOKIE)?.value;
 
@@ -106,7 +112,7 @@ export async function loadDashboard(
       throw err;
     }
   }
-  if (!session) return { status: 'unauthenticated', loginUrl: await buildLoginUrl() };
+  if (!session) return { status: 'unauthenticated', loginUrl: await buildLoginUrl(next) };
 
   const workspaces = listWorkspaceChoices(session);
   const scopeResult = resolveActiveScope(

@@ -35,11 +35,15 @@ vi.mock('@/lib/auth-brain', () => ({
 }));
 
 const mockLoadProject = vi.fn();
+const mockFindSiteWorkspaceAmong = vi.fn();
 vi.mock('@/server/sites', async (importActual) => {
   const actual = await importActual<typeof import('@/server/sites')>();
   return {
     ...actual,
-    getSiteRepository: () => ({ loadProject: mockLoadProject }),
+    getSiteRepository: () => ({
+      loadProject: mockLoadProject,
+      findSiteWorkspaceAmong: mockFindSiteWorkspaceAmong,
+    }),
   };
 });
 
@@ -298,5 +302,41 @@ describe('loadProjectSnapshot: app-local active workspace (framer_ws)', () => {
       status: 'choose_workspace',
       chooserUrl: '/projects?next=%2Fprojects%2Fsite-a1%2Fpreview',
     });
+  });
+});
+
+describe('loadProjectSnapshot: a project in another of the caller\'s workspaces', () => {
+  it('offers the forced chooser with this path as next (not a 404)', async () => {
+    cookieJar({ lumitra_session: 'sess', framer_ws: 'ws_a' });
+    mockVerifySession.mockResolvedValue(multiSession());
+    mockLoadProject.mockRejectedValue(new SiteNotFoundError('site-b1'));
+    mockFindSiteWorkspaceAmong.mockResolvedValue('ws_b');
+
+    const result = await loadProjectSnapshot('site-b1', '/preview');
+
+    // Only the caller's OTHER workspaces are searched.
+    expect(mockFindSiteWorkspaceAmong).toHaveBeenCalledWith('site-b1', ['ws_b']);
+    expect(result).toEqual({
+      status: 'choose_workspace',
+      chooserUrl: '/projects?switch=1&next=%2Fprojects%2Fsite-b1%2Fpreview',
+    });
+  });
+
+  it('keeps the 404 for a site outside the session (no leak)', async () => {
+    cookieJar({ lumitra_session: 'sess', framer_ws: 'ws_a' });
+    mockVerifySession.mockResolvedValue(multiSession());
+    mockLoadProject.mockRejectedValue(new SiteNotFoundError('site-x'));
+    mockFindSiteWorkspaceAmong.mockResolvedValue(null);
+
+    expect(await loadProjectSnapshot('site-x')).toEqual({ status: 'not_found' });
+  });
+
+  it('a single-workspace session does not look anywhere else', async () => {
+    mockCookieGet.mockReturnValue({ value: 'sess_a' });
+    mockVerifySession.mockResolvedValue(sessionA());
+    mockLoadProject.mockRejectedValue(new SiteNotFoundError('site-x'));
+
+    expect(await loadProjectSnapshot('site-x')).toEqual({ status: 'not_found' });
+    expect(mockFindSiteWorkspaceAmong).not.toHaveBeenCalled();
   });
 });

@@ -171,7 +171,16 @@ describe('editor active workspace (integration)', () => {
     if (inA.status !== 'ok') throw new Error(`expected ok, got ${inA.status}`);
     expect(inA.activeWorkspace.id).toBe('ws_flow_a');
     expect(inA.sites.map((s) => s.siteId)).not.toContain(siteId);
-    expect((await loadProjectSnapshot(siteId)).status).toBe('not_found');
+    // B's project opened while A is active: the user IS a member of B, so the
+    // forced chooser is offered (continuing to the project), not a 404.
+    expect(await loadProjectSnapshot(siteId)).toEqual({
+      status: 'choose_workspace',
+      chooserUrl: `/projects?switch=1&next=${encodeURIComponent(`/projects/${siteId}`)}`,
+    });
+    // A site id that exists nowhere in the session stays a plain 404.
+    expect((await loadProjectSnapshot('00000000-0000-7000-8000-00000000dead')).status).toBe(
+      'not_found',
+    );
 
     // ---- re-entry after membership removal ------------------------------
     // Back to B, then the user loses B: the stale cookie must not reach B's

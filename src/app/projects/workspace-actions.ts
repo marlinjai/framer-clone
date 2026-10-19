@@ -25,10 +25,14 @@ export async function chooseWorkspace(formData: FormData): Promise<void> {
     // No valid session: the dashboard sends the user to the login. An id the
     // session does not contain (forged, or membership just removed): back to
     // the chooser with a visible error, nothing written.
+    // An expired session keeps the deep link: the dashboard carries `next`
+    // through the login and continues there afterwards.
+    const next = safeEditorReturnPath(formData.get('next'));
+    const nextQuery = next === '/projects' ? '' : `next=${encodeURIComponent(next)}`;
     redirect(
       result.reason === 'unauthenticated'
-        ? '/projects'
-        : '/projects?switch=1&error=workspace_unavailable',
+        ? `/projects${nextQuery ? `?${nextQuery}` : ''}`
+        : `/projects?switch=1&error=workspace_unavailable${nextQuery ? `&${nextQuery}` : ''}`,
     );
   }
   redirect(safeEditorReturnPath(formData.get('next')));

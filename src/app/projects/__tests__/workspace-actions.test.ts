@@ -71,6 +71,9 @@ describe('chooseWorkspace', () => {
     mockSelect.mockResolvedValue({ ok: false, reason: 'not_a_member' });
 
     expect(await redirectOf(chooseWorkspace(form({ workspaceId: 'ws_x', next: '/projects/s' })))).toBe(
+      '/projects?switch=1&error=workspace_unavailable&next=%2Fprojects%2Fs',
+    );
+    expect(await redirectOf(chooseWorkspace(form({ workspaceId: 'ws_x' })))).toBe(
       '/projects?switch=1&error=workspace_unavailable',
     );
   });
@@ -79,6 +82,17 @@ describe('chooseWorkspace', () => {
     mockSelect.mockResolvedValue({ ok: false, reason: 'unauthenticated' });
 
     expect(await redirectOf(chooseWorkspace(form({ workspaceId: 'ws_a' })))).toBe('/projects');
+  });
+
+  it('an expired session keeps the deep link as a validated next', async () => {
+    mockSelect.mockResolvedValue({ ok: false, reason: 'unauthenticated' });
+
+    expect(
+      await redirectOf(chooseWorkspace(form({ workspaceId: 'ws_a', next: '/projects/site_7/preview' }))),
+    ).toBe('/projects?next=%2Fprojects%2Fsite_7%2Fpreview');
+    expect(
+      await redirectOf(chooseWorkspace(form({ workspaceId: 'ws_a', next: 'https://evil.example' }))),
+    ).toBe('/projects');
   });
 
   it('an auth-brain outage continues to the requested page (its retry notice), not the login', async () => {
