@@ -232,6 +232,7 @@ describe('ensureStatusField', () => {
 
   it('creates a Status select column + Draft/Published/Scheduled options (engine palette colors) when absent', async () => {
     adapter.getColumns.mockResolvedValue([]);
+    adapter.getRows.mockResolvedValue({ items: [], total: 0, hasMore: false });
     adapter.createColumn.mockResolvedValue({ id: 'c_status', tableId: 't_a', name: 'Status', type: 'select' });
     adapter.getSelectOptions.mockResolvedValue([]);
     adapter.createSelectOption
@@ -255,6 +256,40 @@ describe('ensureStatusField', () => {
     });
   });
 
+  it('stamps every row that exists when the field is FIRST created as Published (paged, archived included)', async () => {
+    adapter.getColumns.mockResolvedValue([]);
+    adapter.createColumn.mockResolvedValue({ id: 'c_status', tableId: 't_a', name: 'Status', type: 'select' });
+    adapter.getSelectOptions.mockResolvedValue([]);
+    adapter.createSelectOption
+      .mockResolvedValueOnce({ id: 'opt_draft' })
+      .mockResolvedValueOnce({ id: 'opt_pub' })
+      .mockResolvedValueOnce({ id: 'opt_sched' });
+    adapter.getRows
+      .mockResolvedValueOnce({
+        items: [
+          { id: 'r1', tableId: 't_a', cells: {} },
+          { id: 'r2', tableId: 't_a', cells: { c_status: null } },
+        ],
+        total: 3,
+        hasMore: true,
+      })
+      .mockResolvedValueOnce({
+        items: [{ id: 'r3', tableId: 't_a', cells: {}, archived: true }],
+        total: 3,
+        hasMore: false,
+      });
+
+    await expect(ensureStatusField('t_a')).resolves.toMatchObject({ ok: true });
+
+    expect(adapter.getRows).toHaveBeenNthCalledWith(1, 't_a', { limit: 200, offset: 0, includeArchived: true });
+    expect(adapter.getRows).toHaveBeenNthCalledWith(2, 't_a', { limit: 200, offset: 2, includeArchived: true });
+    expect(adapter.updateRow.mock.calls).toEqual([
+      ['r1', { c_status: 'opt_pub' }],
+      ['r2', { c_status: 'opt_pub' }],
+      ['r3', { c_status: 'opt_pub' }],
+    ]);
+  });
+
   it('is idempotent: reuses the existing Status column + options, creating no duplicates', async () => {
     adapter.getColumns.mockResolvedValue([{ id: 'c_status', name: 'Status', type: 'select' }]);
     adapter.getSelectOptions.mockResolvedValue([
@@ -267,6 +302,9 @@ describe('ensureStatusField', () => {
 
     expect(adapter.createColumn).not.toHaveBeenCalled();
     expect(adapter.createSelectOption).not.toHaveBeenCalled();
+    // An existing field never re-stamps rows (a Draft stays a Draft).
+    expect(adapter.getRows).not.toHaveBeenCalled();
+    expect(adapter.updateRow).not.toHaveBeenCalled();
     expect(result).toEqual({
       ok: true,
       value: { columnId: 'c_status', options: { draft: 'o1', published: 'o2', scheduled: 'o3' } },

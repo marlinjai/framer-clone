@@ -9,7 +9,11 @@ import 'server-only';
 
 export {
   getCmsRepository,
+  getPublishedCmsRepository,
   getCmsWriteRepository,
+  isValidLimit,
+  isValidCursor,
+  PUBLISHED_MAX_LIMIT,
   type CmsReadRepository,
   type CmsWriteRepository,
 } from './repository';

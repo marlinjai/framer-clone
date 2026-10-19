@@ -38,18 +38,23 @@ vi.mock('@/server/sites/cachedResolver', () => ({
   getCachedPublishedSite: (...args: unknown[]) => mockPublishedSite(...args),
 }));
 
-vi.mock('@/server/cms/repository', () => ({
+vi.mock('@/server/cms/repository', async (importActual) => ({
+  // The real query validators (isValidLimit / isValidCursor) stay; only the
+  // repository factories are replaced.
+  ...(await importActual<typeof import('@/server/cms/repository')>()),
   getCmsRepository: vi.fn(),
+  getPublishedCmsRepository: vi.fn(),
   getCmsWriteRepository: vi.fn(),
 }));
 
-import { getCmsRepository } from '@/server/cms/repository';
+import { getCmsRepository, getPublishedCmsRepository } from '@/server/cms/repository';
 import { GET as collectionsGET } from '../collections/route';
 import { GET as collectionGET } from '../collections/[id]/route';
 import { GET as rowsGET } from '../collections/[id]/rows/route';
 import { GET as rowGET } from '../collections/[id]/rows/[rowId]/route';
 
 const getCmsRepositoryMock = vi.mocked(getCmsRepository);
+const getPublishedRepoMock = vi.mocked(getPublishedCmsRepository);
 
 const EDITOR_HOST = 'app.lumitra.co';
 const SITE_A_HOST = 'alpha.sites.lumitra.co';
@@ -133,6 +138,8 @@ beforeEach(() => {
   mockPublishedSite.mockReset();
   getCmsRepositoryMock.mockReset();
   getCmsRepositoryMock.mockImplementation((ws?: string) => fakeRepoFor(ws ?? 'framer-clone'));
+  getPublishedRepoMock.mockReset();
+  getPublishedRepoMock.mockImplementation((ws: string) => fakeRepoFor(ws));
   // Default: no published site for any host.
   mockPublishedSite.mockResolvedValue(null);
 });
@@ -156,7 +163,9 @@ describe('published-site host (tenancy from the Host, never the session)', () =>
     const res = await collectionsGET(req(SITE_A_HOST, '/api/cms/collections'));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([COLLECTION_A]);
-    expect(getCmsRepositoryMock).toHaveBeenCalledWith('ws_a');
+    expect(getPublishedRepoMock).toHaveBeenCalledWith('ws_a');
+    // The published plane never uses the editor repository (which shows drafts).
+    expect(getCmsRepositoryMock).not.toHaveBeenCalled();
   });
 
   it('reads its own collection, rows and row', async () => {
@@ -193,7 +202,7 @@ describe('published-site host (tenancy from the Host, never the session)', () =>
     expect(await codeOf(row)).toBe('not_found');
 
     // The foreign workspace was never even bound.
-    expect(getCmsRepositoryMock).not.toHaveBeenCalledWith('ws_b');
+    expect(getPublishedRepoMock).not.toHaveBeenCalledWith('ws_b');
   });
 
   it('never reads the session, even when a valid editor session for another workspace is sent', async () => {
@@ -213,7 +222,7 @@ describe('published-site host (tenancy from the Host, never the session)', () =>
 
     expect(mockVerifySession).not.toHaveBeenCalled();
     expect(mockCan).not.toHaveBeenCalled();
-    expect(getCmsRepositoryMock).not.toHaveBeenCalledWith('ws_b');
+    expect(getPublishedRepoMock).not.toHaveBeenCalledWith('ws_b');
   });
 });
 
@@ -231,6 +240,7 @@ describe('unknown host (neither the editor nor a published site)', () => {
       expect(await codeOf(res)).toBe('not_found');
     }
     expect(getCmsRepositoryMock).not.toHaveBeenCalled();
+    expect(getPublishedRepoMock).not.toHaveBeenCalled();
     expect(mockVerifySession).not.toHaveBeenCalled();
   });
 });
@@ -289,6 +299,7 @@ describe('editor host with a session', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([COLLECTION_A]);
     expect(getCmsRepositoryMock).toHaveBeenCalledWith('ws_a');
+    expect(getPublishedRepoMock).not.toHaveBeenCalled();
     expect(mockCan).toHaveBeenCalledWith(
       'user-ws_a',
       expect.any(String),
@@ -460,3 +471,43 @@ describe('route mechanics', () => {
     expect(await codeOf(res)).toBe('cms_read_failed');
   });
 });
+
+describe('rows query validation (both planes)', () => {
+  beforeEach(() => {
+    mockVerifySession.mockResolvedValue(sessionFor('ws_a'));
+    mockCan.mockResolvedValue(true);
+    mockPublishedSite.mockImplementation(async (host: string) =>
+      host === SITE_A_HOST ? { siteId: 'site_a', workspaceId: 'ws_a' } : null,
+    );
+  });
+
+  it.each([
+    ['a fractional limit', { limit: 1.5 }],
+    ['a negative limit', { limit: -1 }],
+    ['a zero limit', { limit: 0 }],
+    ['a string limit', { limit: '10; DROP TABLE x' }],
+    ['a non-numeric cursor', { cursor: 'abc' }],
+    ['a negative cursor', { cursor: '-5' }],
+    ['a non-object query', [1, 2]],
+  ])('answers 400 bad_query for %s, before any read', async (_label, query) => {
+    for (const host of [EDITOR_HOST, SITE_A_HOST]) {
+      const res = await rowsGET(
+        req(host, `/api/cms/collections/col_a/rows?query=${encodeURIComponent(JSON.stringify(query))}`),
+        idParams('col_a'),
+      );
+      expect(res.status).toBe(400);
+      expect(await codeOf(res)).toBe('bad_query');
+    }
+  });
+
+  it('passes a valid limit through on the published plane (the cap is the repository\'s)', async () => {
+    const res = await rowsGET(
+      req(SITE_A_HOST, `/api/cms/collections/col_a/rows?query=${encodeURIComponent(JSON.stringify({ limit: 500 }))}`),
+      idParams('col_a'),
+    );
+    expect(res.status).toBe(200);
+    const repo = getPublishedRepoMock.mock.results.at(-1)!.value as CmsReadRepository;
+    expect(repo.listRows).toHaveBeenCalledWith('col_a', { limit: 500 });
+  });
+});
+

@@ -40,7 +40,7 @@ import {
   type MatchedPage,
 } from '@/server/sites/publicResolver';
 import { getCachedPublishedSite } from '@/server/sites/cachedResolver';
-import { getCmsRepository } from '@/server/cms';
+import { getPublishedCmsRepository } from '@/server/cms';
 import { commerceRepoForSite } from '@/server/commerce/storefrontTenant';
 import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToComponentNode';
 import {
@@ -122,7 +122,10 @@ export default async function SitePage({ params }: SitePageProps) {
   // engines use DIFFERENT mechanisms, so each carries its own value off the one
   // Site row:
   //   - CMS isolates by a `workspace_id` COLUMN -> pass `site.workspaceId` so
-  //     `listCollections`/reads see ONLY this site's workspace.
+  //     `listCollections`/reads see ONLY this site's workspace, and through the
+  //     PUBLISHED repository so only published, non-archived rows render (the
+  //     same rule as the published-site /api/cms reads,
+  //     src/server/cms/publishedVisibility.ts).
   //   - Commerce isolates by a Postgres SCHEMA per tenant group (CM-10): the
   //     scoped Kysely handle `commerceTenantDb(resolveTenantGroupForSite(site))`
   //     reaches only this site's `tg_<id>` schema. A site with no valid tenant
@@ -135,7 +138,7 @@ export default async function SitePage({ params }: SitePageProps) {
   const { body, headSnippet } = await renderPublishedPage({
     root: adapted.root,
     pageParams: matched.params,
-    cmsRepo: getCmsRepository(site.workspaceId),
+    cmsRepo: getPublishedCmsRepository(site.workspaceId),
     commerceRepo: await commerceRepoForSite(site, adapted.root),
     analytics,
   });

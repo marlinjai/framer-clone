@@ -25,6 +25,15 @@ can run it at build time.
   workspace and `viewSite` on it (401 / 403 / 503 otherwise). Published-site
   host: the workspace of the site the Host resolves to, never the session
   (decision D2). Any other host: 404. `server-only`.
+- `publishedVisibility.ts`: THE rule for which rows a published site shows
+  (no Status field: every non-archived row; a Status field: only rows whose
+  status is Published; never archived rows). `getPublishedCmsRepository` in
+  `repository.ts` applies it, caps pages at 100 rows, and is what the
+  storefront render and the published-site `/api/cms` plane read through.
+  `ensureStatusField` stamps the rows that exist when it first creates the
+  field as Published, so introducing the workflow unpublishes nothing.
+- `tableScopedAdapter.ts`: an adapter whose table discovery is narrowed to one
+  table, so a published row-by-id read never walks every tenant's tables.
 - `editorScope.ts`: `requireCmsEditorScope(action)`, the first check of every
   grid server action in `actions.ts` (reads and writes): refused off the editor
   host, then the session's active-workspace scope. `server-only`.

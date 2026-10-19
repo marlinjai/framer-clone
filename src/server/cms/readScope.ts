@@ -27,7 +27,9 @@ import 'server-only';
 //   Any OTHER host is the published-site plane:
 //     1. the Host must resolve to a PUBLISHED site (the same cached resolver the
 //        storefront render uses)                            -> else 404 not_found
-//     2. reads run on getCmsRepository(<that site's workspace>).
+//     2. reads run on getPublishedCmsRepository(<that site's workspace>): only
+//        published, non-archived rows, at most 100 per page, the same rule the
+//        storefront render uses (src/server/cms/publishedVisibility.ts).
 //     The session is NEVER read on this plane: the apex `.lumitra.co` session
 //     cookie still reaches `*.sites.lumitra.co`, and a published site's own
 //     script must not be able to read its visitor's editor workspace through it
@@ -51,7 +53,11 @@ import { readCompanySelectors } from '@/lib/activeCompanyCookie';
 import { isEditorHost } from '@/lib/editorHost';
 import { activeScopeDenial, resolveActiveScope } from '@/server/sites';
 import { getCachedPublishedSite } from '@/server/sites/cachedResolver';
-import { getCmsRepository, type CmsReadRepository } from './repository';
+import {
+  getCmsRepository,
+  getPublishedCmsRepository,
+  type CmsReadRepository,
+} from './repository';
 
 export type CmsReadContext =
   | {
@@ -64,8 +70,14 @@ export type CmsReadContext =
     }
   | { ok: false; response: Response };
 
+// The editor reads everything of its workspace (drafts included, it is where
+// they are written); a published site reads only what is published
+// (getPublishedCmsRepository: published, non-archived rows, pages capped at
+// PUBLISHED_MAX_LIMIT, by-id lookups inside the requested table only).
 function ok(plane: 'editor' | 'published', workspaceId: string): CmsReadContext {
-  return { ok: true, plane, workspaceId, repo: getCmsRepository(workspaceId) };
+  const repo =
+    plane === 'published' ? getPublishedCmsRepository(workspaceId) : getCmsRepository(workspaceId);
+  return { ok: true, plane, workspaceId, repo };
 }
 
 /**

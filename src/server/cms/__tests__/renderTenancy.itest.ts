@@ -21,7 +21,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 
 import { getPrismaClient } from '@/server/db';
-import { getCmsRepository } from '@/server/cms';
+import { getCmsRepository, getPublishedCmsRepository } from '@/server/cms';
 import { CMS_WORKSPACE_ID } from '@/lib/cms/constants';
 import { hydrateBindings, type ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 
@@ -141,3 +141,83 @@ describe('SSR hydration through the site-bound repository (real Postgres)', () =
     expect(JSON.stringify(out)).toContain('No items');
   });
 });
+
+// The PUBLISHED read tier (getPublishedCmsRepository), the one the storefront
+// render and the published-site /api/cms plane use, against the real adapter:
+// published rows only, never archived ones, pages capped at 100, by-id lookups
+// inside the requested table.
+describe('published read tier (real Postgres)', () => {
+  const WORKSPACE_P = 'mt13-workspace-published';
+  let statusTable: string;
+  let plainTable: string;
+  let publishedRow: string;
+  let draftRow: string;
+  let unsetRow: string;
+  let archivedRow: string;
+
+  beforeAll(async () => {
+    const adapter = new PrismaAdapter({ prisma });
+    statusTable = (await adapter.createTable({ workspaceId: WORKSPACE_P, name: 'Posts' })).id;
+    const status = await adapter.createColumn({ tableId: statusTable, name: 'Status', type: 'select' });
+    const draft = await adapter.createSelectOption({ columnId: status.id, name: 'Draft' });
+    const published = await adapter.createSelectOption({ columnId: status.id, name: 'Published' });
+    publishedRow = (await adapter.createRow({ tableId: statusTable, cells: { [status.id]: published.id } })).id;
+    draftRow = (await adapter.createRow({ tableId: statusTable, cells: { [status.id]: draft.id } })).id;
+    unsetRow = (await adapter.createRow({ tableId: statusTable, cells: {} })).id;
+    archivedRow = (await adapter.createRow({ tableId: statusTable, cells: { [status.id]: published.id } })).id;
+    await adapter.archiveRow(archivedRow);
+
+    // A collection with no Status field: every non-archived row is published.
+    plainTable = (await adapter.createTable({ workspaceId: WORKSPACE_P, name: 'Plain' })).id;
+    await adapter.bulkCreateRows(
+      Array.from({ length: 105 }, () => ({ tableId: plainTable, cells: {} })),
+    );
+  }, 120_000);
+
+  it('lists only Published rows of a collection with a Status field (no draft, unset or archived)', async () => {
+    const page = await getPublishedCmsRepository(WORKSPACE_P).listRows(statusTable);
+    expect(page.rows.map((r) => r.id)).toEqual([publishedRow]);
+    expect(page.total).toBe(1);
+  });
+
+  it('the editor repository still sees the drafts (preview of unpublished work)', async () => {
+    const ids = (await getCmsRepository(WORKSPACE_P).listRows(statusTable)).rows.map((r) => r.id);
+    expect(ids).toEqual(expect.arrayContaining([publishedRow, draftRow, unsetRow]));
+  });
+
+  it('getRow: published row found; draft, unset, archived and foreign rows are null', async () => {
+    const repo = getPublishedCmsRepository(WORKSPACE_P);
+    expect((await repo.getRow(statusTable, publishedRow))?.id).toBe(publishedRow);
+    expect(await repo.getRow(statusTable, draftRow)).toBeNull();
+    expect(await repo.getRow(statusTable, unsetRow)).toBeNull();
+    expect(await repo.getRow(statusTable, archivedRow)).toBeNull();
+    // A row of another collection, asked for under this one, is not found
+    // (the lookup stays inside the requested table).
+    expect(await repo.getRow(plainTable, publishedRow)).toBeNull();
+    expect(await repo.getRow(tableA, rowA)).toBeNull();
+  });
+
+  it('caps a page at 100 rows whatever limit is asked for', async () => {
+    const page = await getPublishedCmsRepository(WORKSPACE_P).listRows(plainTable, { limit: 500 });
+    expect(page.rows).toHaveLength(100);
+    expect(page.total).toBe(105);
+  });
+
+  it('counts only published rows in the collection list', async () => {
+    const collections = await getPublishedCmsRepository(WORKSPACE_P).listCollections();
+    const posts = collections.find((c) => c.id === statusTable);
+    expect(posts?.itemCount).toBe(1);
+  });
+
+  it('SSR hydration through the published repository renders only the published row', async () => {
+    const node = {
+      type: 'div',
+      props: { 'data-component-kind': 'collection', emptyContent: 'No items' },
+      bindings: { collection: { mode: 'read', expression: statusTable } },
+      children: [{ type: 'div', props: { 'data-testid': 'item' } }],
+    } as unknown as ComponentNode;
+    const out = await hydrateBindings(node, {}, { cmsRepo: getPublishedCmsRepository(WORKSPACE_P) });
+    expect(out.children).toHaveLength(1);
+  });
+});
+

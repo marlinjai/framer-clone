@@ -63,6 +63,7 @@ import type {
 } from '@marlinjai/data-table-core';
 import { getCmsAdapter } from './adapterClient';
 import { requireCmsEditorScope } from './editorScope';
+import { isStatusColumn, STATUS_FIELD_NAME } from './publishedVisibility';
 import {
   assertTableInWorkspace,
   assertColumnInWorkspace,
@@ -520,12 +521,34 @@ export async function reorderViews(tableId: string, viewIds: string[]): Promise<
 // data-table engine's fixed 9-name tag palette (NOT hex), so they render with
 // the engine's own --dt-tag-* tokens. Module-level const (not exported: a
 // 'use server' file may only export async functions).
-const STATUS_FIELD_NAME = 'Status';
 const STATUS_OPTIONS = [
   { key: 'draft', name: 'Draft', color: 'orange' },
   { key: 'published', name: 'Published', color: 'green' },
   { key: 'scheduled', name: 'Scheduled', color: 'blue' },
 ] as const;
+
+// Page through every row of `tableId` (archived included: unarchiving one
+// later must not hide it) and set the still-empty status cells to Published.
+async function stampExistingRowsPublished(
+  tableId: string,
+  statusColumnId: string,
+  publishedOptionId: string,
+): Promise<void> {
+  const adapter = getCmsAdapter();
+  const pageSize = 200;
+  let offset = 0;
+  for (;;) {
+    const page = await adapter.getRows(tableId, { limit: pageSize, offset, includeArchived: true });
+    for (const row of page.items) {
+      const current = row.cells[statusColumnId];
+      if (current === null || current === undefined || current === '') {
+        await adapter.updateRow(row.id, { [statusColumnId]: publishedOptionId });
+      }
+    }
+    if (!page.hasMore || page.items.length === 0) return;
+    offset += page.items.length;
+  }
+}
 
 /**
  * Idempotently ensure a collection has the reserved "Status" select field with
@@ -541,9 +564,8 @@ export async function ensureStatusField(tableId: string): Promise<CmsActionResul
     const adapter = getCmsAdapter();
 
     const columns = await adapter.getColumns(tableId);
-    let statusColumn = columns.find(
-      (c) => c.type === 'select' && c.name.trim().toLowerCase() === STATUS_FIELD_NAME.toLowerCase(),
-    );
+    let statusColumn = columns.find(isStatusColumn);
+    const createdNow = !statusColumn;
     if (!statusColumn) {
       statusColumn = await adapter.createColumn({
         tableId,
@@ -565,6 +587,16 @@ export async function ensureStatusField(tableId: string): Promise<CmsActionResul
               color: opt.color,
             })
           ).id;
+    }
+
+    // Introducing the workflow must not unpublish anything: a published site
+    // shows only rows whose status is Published once a collection has the
+    // field (src/server/cms/publishedVisibility.ts), and every row that exists
+    // when the field is first created was live until now. So those rows are
+    // stamped Published in the same action, once (a one-time cost of one
+    // update per existing row); rows created afterwards default to Draft.
+    if (createdNow) {
+      await stampExistingRowsPublished(tableId, statusColumn.id, ids.published);
     }
 
     return {

@@ -9,7 +9,8 @@
 // Host-scoped (src/server/cms/readScope.ts): on the editor host the session's
 // active workspace (401 without a session, 403 without `viewSite`), on a
 // published-site host the Host's site workspace (the session is never read
-// there), 404 on any other host. A row whose collection lives in another
+// there; only a published, non-archived row is returned, looked up inside the
+// collection's own table), 404 on any other host. A row whose collection lives in another
 // workspace answers the same 404 as a missing row (the repository refuses it).
 //
 // This is part of the binding/preview READ path. Row WRITES are not done over

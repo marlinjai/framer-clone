@@ -10,8 +10,9 @@
 //
 // Host-scoped (src/server/cms/readScope.ts): on the editor host the rows of the
 // session's active workspace (401 without a session, 403 without `viewSite`), on
-// a published-site host the rows of the Host's site workspace (the session is
-// never read there), 404 on any other host. The collection is resolved in that
+// a published-site host only the PUBLISHED, non-archived rows of the Host's site
+// workspace, at most 100 per page (the session is never read there), 404 on any
+// other host. A malformed limit or cursor is a 400 bad_query. The collection is resolved in that
 // workspace FIRST: a collection of another workspace answers the same 404 as a
 // missing one (the repository alone would answer an empty 200 page, which would
 // still confirm nothing but reads as success).
@@ -23,7 +24,7 @@
 // adapter (src/server/cms/actions.ts), so this route is GET-only.
 
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
-import { resolveCmsReadContext } from '@/server/cms';
+import { resolveCmsReadContext, isValidCursor, isValidLimit } from '@/server/cms';
 import type { Query } from '@/lib/bindings/dataSource/types';
 import { jsonError } from '@/lib/api/respond';
 
@@ -43,11 +44,25 @@ async function handleGET(
   let query: Query | undefined;
   const raw = new URL(req.url).searchParams.get('query');
   if (raw !== null) {
+    let parsed: unknown;
     try {
-      query = JSON.parse(raw) as Query;
+      parsed = JSON.parse(raw);
     } catch {
       return jsonError('bad_query', 'invalid query search param', 400);
     }
+    // The limit and cursor reach the adapter's SQL as LIMIT / OFFSET, so they
+    // are checked here and answered as a 400, never a database error.
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return jsonError('bad_query', 'query must be a JSON object', 400);
+    }
+    const candidate = parsed as Query;
+    if (candidate.limit !== undefined && !isValidLimit(candidate.limit)) {
+      return jsonError('bad_query', 'query.limit must be a positive integer', 400);
+    }
+    if (candidate.cursor !== undefined && !isValidCursor(candidate.cursor)) {
+      return jsonError('bad_query', 'query.cursor is not a valid cursor', 400);
+    }
+    query = candidate;
   }
 
   try {

@@ -64,7 +64,9 @@ vi.mock('@/server/commerce/storefrontTenant', () => ({
 
 const getCmsRepository = vi.fn((workspaceId: string) => ({ __boundTo: workspaceId }));
 vi.mock('@/server/cms', () => ({
-  getCmsRepository: (workspaceId: string) => getCmsRepository(workspaceId),
+  // The render must use the PUBLISHED repository (published, non-archived rows
+  // only); the editor repository is deliberately absent from this mock.
+  getPublishedCmsRepository: (workspaceId: string) => getCmsRepository(workspaceId),
 }));
 
 const mockVerifySession = vi.fn();
