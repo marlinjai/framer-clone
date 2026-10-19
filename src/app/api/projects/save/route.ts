@@ -12,24 +12,25 @@
 //
 // HARD ISOLATION (the whole point of P1): the TenantScope this writes under is
 // resolved from the SERVER-VERIFIED auth-brain session (the session's active
-// workspace -> its tenant -> tenant_group), NEVER from anything the client
+// company -> its workspace -> tenant_group), NEVER from anything the client
 // sends. The client supplies only the project snapshot; which workspace/tenant
 // it lands in is the server's decision. Authorization is the real auth-brain
 // `editSite` permission (workspace.admin), not the interim admin-secret stub.
 //
 // Failures surface loudly as the Track-0 `{ error: { code, message } }`
 // envelope: 401 unauthenticated, 403 not a workspace admin / no resolvable
-// workspace, 400 malformed body, 404 cross-workspace site id, 500 otherwise. A
+// company (`no_active_company`) / no company with Sites (`sites_not_enabled`), 400 malformed body, 404 cross-workspace site id, 500 otherwise. A
 // save failure is never swallowed into a silent success.
 //
 // Runs on the Node runtime because the repository reaches Postgres through
 // adapter-prisma.
 
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
-import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
+import { readCompanySelectors } from '@/lib/activeCompanyCookie';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
 import {
   getSiteRepository,
+  activeScopeDenial,
   resolveActiveScope,
   siteRepositoryErrorResponse,
   SiteRepositoryError,
@@ -49,17 +50,15 @@ async function handlePOST(req: Request): Promise<Response> {
     return jsonError('unauthorized', 'authentication required', 401);
   }
 
-  // 2. Resolve the tenant scope from the request's active workspace (the
-  //    membership-checked `framer_ws` selector, else the session's own active
-  //    workspace, else its only workspace). A request with no resolvable
-  //    workspace cannot save anywhere -> 403 `no_active_workspace`.
-  const scopeResult = resolveActiveScope(session, readActiveWorkspaceCookie(req));
+  // 2. Resolve the tenant scope from the request's active company (the
+  //    `framer_company` selector, else the session's active_tenant, else its
+  //    only company; only companies with the `sites` grant count), mapped to
+  //    that company's workspace. No granted company -> 403 `sites_not_enabled`;
+  //    none resolvable -> 403 `no_active_company`. Nothing is saved.
+  const scopeResult = resolveActiveScope(session, readCompanySelectors(req));
   if (!scopeResult.ok) {
-    return jsonError(
-      'no_active_workspace',
-      'no active workspace to save into',
-      403,
-    );
+    const denial = activeScopeDenial(scopeResult.error);
+    return jsonError(denial.code, denial.message, 403);
   }
   const { scope } = scopeResult;
 

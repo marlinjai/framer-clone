@@ -34,6 +34,19 @@ development). Phase 1 of the RUNBOOK has explicit records for `app.lumitra.co` a
 `demo.sites.lumitra.co`; phase 2 adds the `*.sites.lumitra.co` wildcard so every
 publish gets a live address.
 
+### Who can use the editor
+
+The editor works per company (an auth-brain tenant) and only for companies that
+hold the auth-brain app grant `sites` (in 2026-10: lumitra-core and
+whiz-art-media). The grant is managed in auth-brain, not here: granting it to a
+company lists that company in the editor's chooser on the user's next request,
+revoking it removes it, and a signed-in user without any such company sees
+"Lumitra Sites is not enabled for your companies" with a link to the account
+portal. The editor remembers the chosen company in the host-only
+`framer_company` cookie; the older per-workspace `framer_ws` cookie is migrated
+once and then deleted. A company's sites live in its workspace (`main`, or the
+oldest one should a company ever have several).
+
 ## What is committed
 
 | File | Purpose |
@@ -214,7 +227,7 @@ says where each comes from.
 | `EDITOR_HOST` | yes | Host that serves the editor (`app.lumitra.co`); every other host is treated as a published site |
 | `PUBLIC_SITE_BASE_HOST` | yes | Parent domain of published sites (`sites.lumitra.co`); the label in front of it selects the site |
 | `AUTH_BRAIN_URL` | no | auth-brain base URL for session checks and the login redirect; defaults to `https://auth.lumitra.co` |
-| `OPENFGA_API_URL`, `OPENFGA_STORE_ID` | yes | The authorization service behind per-workspace permission checks; without them every guarded route answers 503 `authz_unavailable` |
+| `OPENFGA_API_URL`, `OPENFGA_STORE_ID` | yes | The authorization service behind the permission checks (run on the active company's workspace); without them every guarded route answers 503 `authz_unavailable` |
 | `OPENFGA_API_TOKEN` | yes in production | OpenFGA's pre-shared key, sent as a Bearer token on every check. The suite's OpenFGA answers 401 without it, and every guarded route then answers 503 `authz_unavailable`; the start logs a warning when `OPENFGA_API_URL` is set and this is not |
 | `OPENFGA_AUTHORIZATION_MODEL_ID` | no | Pins checks to one authorization model; unset uses the store's latest model |
 | `ANTHROPIC_API_KEY` | for AI | Key for the editor's AI routes (`/api/ai/*`) |

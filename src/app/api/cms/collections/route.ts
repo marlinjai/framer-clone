@@ -13,11 +13,11 @@
 // through adapter-prisma.
 
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
-import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
+import { readCompanySelectors } from '@/lib/activeCompanyCookie';
 import { z } from 'zod';
 import { getCmsRepository, getCmsWriteRepository, cmsWriteErrorResponse } from '@/server/cms';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
-import { resolveActiveScope } from '@/server/sites';
+import { activeScopeDenial, resolveActiveScope } from '@/server/sites';
 import { jsonError, parseBody } from '@/lib/api/respond';
 
 export const runtime = 'nodejs';
@@ -43,9 +43,10 @@ async function handlePOST(req: Request): Promise<Response> {
   if (!session) {
     return jsonError('unauthorized', 'authentication required', 401);
   }
-  const scopeResult = resolveActiveScope(session, readActiveWorkspaceCookie(req));
+  const scopeResult = resolveActiveScope(session, readCompanySelectors(req));
   if (!scopeResult.ok) {
-    return jsonError('no_active_workspace', 'no active workspace', 403);
+    const denial = activeScopeDenial(scopeResult.error);
+    return jsonError(denial.code, denial.message, 403);
   }
   const { scope } = scopeResult;
   const auth = await authenticateRequest(req, scope.workspaceId, 'editSite');

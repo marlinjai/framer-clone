@@ -52,7 +52,7 @@ function makeSession() {
   return {
     user: { id: 'user-1' },
     session: {},
-    tenants: [{ id: 'tenant-1', group_id: 'tg_lumitra' }],
+    tenants: [{ id: 'tenant-1', app_grants: ['sites'], group_id: 'tg_lumitra' }],
     workspaces: [{ id: 'ws_marlin', tenant_id: 'tenant-1' }],
     active_tenant: { id: 'tenant-1' },
     active_workspace: { id: 'ws_marlin' },
@@ -133,7 +133,7 @@ describe('GET /api/projects/list', () => {
     const res = await GET(listReq({ workspace: 'ws_someone_else' }));
 
     expect(res.status).toBe(403);
-    expect((await res.json()).error.code).toBe('no_active_workspace');
+    expect((await res.json()).error.code).toBe('no_active_company');
     expect(listSites).not.toHaveBeenCalled();
   });
 });

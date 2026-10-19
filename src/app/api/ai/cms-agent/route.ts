@@ -22,10 +22,10 @@
 //           `event: agent:error` inside the stream)
 //   400 -> bad JSON / failed validation / CSV over the size cap
 //   401 -> no session / missing ANTHROPIC_API_KEY
-//   403 -> no active workspace / not permitted to edit this workspace
+//   403 -> no active company / Sites not enabled / not permitted to edit this workspace
 
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
-import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
+import { readCompanySelectors } from '@/lib/activeCompanyCookie';
 import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { Prisma } from '@prisma/client';
@@ -37,7 +37,7 @@ import {
 import { buildSystemPrompt } from '@/lib/ai/promptCache';
 import { createSseStream, SSE_HEADERS } from '@/lib/ai/sse';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
-import { resolveActiveScope } from '@/server/sites';
+import { activeScopeDenial, resolveActiveScope } from '@/server/sites';
 import { getCmsAdapter } from '@/server/cms/adapterClient';
 import { getPrismaClient } from '@/server/db';
 import {
@@ -153,10 +153,11 @@ async function handlePOST(request: Request): Promise<Response> {
       { status: 401 },
     );
   }
-  const scopeResult = resolveActiveScope(session, readActiveWorkspaceCookie(request));
+  const scopeResult = resolveActiveScope(session, readCompanySelectors(request));
   if (!scopeResult.ok) {
+    const denial = activeScopeDenial(scopeResult.error);
     return Response.json(
-      { error: { message: 'no active workspace', code: 'no_active_workspace' } },
+      { error: { message: denial.message, code: denial.code } },
       { status: 403 },
     );
   }

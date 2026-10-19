@@ -27,7 +27,7 @@ import type { PrismaClient } from '@prisma/client';
 const SESSION_A = {
   user: { id: 'user-a' },
   session: {},
-  tenants: [{ id: 'tenant-a', group_id: '018f9c10-0000-7000-8000-0000000000a1' }],
+  tenants: [{ id: 'tenant-a', app_grants: ['sites'], group_id: '018f9c10-0000-7000-8000-0000000000a1' }],
   workspaces: [{ id: 'ws_a', tenant_id: 'tenant-a' }],
   active_tenant: { id: 'tenant-a' },
   active_workspace: { id: 'ws_a' },
@@ -35,7 +35,7 @@ const SESSION_A = {
 const SESSION_B = {
   user: { id: 'user-b' },
   session: {},
-  tenants: [{ id: 'tenant-b', group_id: '018f9c10-0000-7000-8000-0000000000b1' }],
+  tenants: [{ id: 'tenant-b', app_grants: ['sites'], group_id: '018f9c10-0000-7000-8000-0000000000b1' }],
   workspaces: [{ id: 'ws_b', tenant_id: 'tenant-b' }],
   active_tenant: { id: 'tenant-b' },
   active_workspace: { id: 'ws_b' },

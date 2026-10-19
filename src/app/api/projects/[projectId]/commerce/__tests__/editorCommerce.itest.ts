@@ -63,7 +63,7 @@ function memberOf(workspaceId: string, groupId: string): SessionVerifyResponse {
   return {
     user: { id: `user-${workspaceId}` },
     workspaces: [{ id: workspaceId, tenant_id: `tenant-${workspaceId}` }],
-    tenants: [{ id: `tenant-${workspaceId}`, group_id: groupId }],
+    tenants: [{ id: `tenant-${workspaceId}`, app_grants: ['sites'], group_id: groupId }],
     active_workspace: { id: workspaceId },
   } as unknown as SessionVerifyResponse;
 }

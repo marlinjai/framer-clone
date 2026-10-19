@@ -39,7 +39,7 @@ function session(workspaceId: string, groupId: string): SessionVerifyResponse {
   return {
     user: { id: 'user_1' },
     workspaces: [{ id: workspaceId, tenant_id: 'tenant_1' }],
-    tenants: [{ id: 'tenant_1', group_id: groupId }],
+    tenants: [{ id: 'tenant_1', app_grants: ['sites'], group_id: groupId }],
     active_workspace: { id: workspaceId },
   } as unknown as SessionVerifyResponse;
 }
@@ -70,6 +70,19 @@ beforeEach(() => {
 });
 
 describe('resolveEditorCommerce', () => {
+  it("403s (the same as a foreign project) when the project's company lacks the sites grant", async () => {
+    sessionMock.mockResolvedValueOnce({
+      ...session('ws_a', TG_A),
+      tenants: [{ id: 'tenant_1', app_grants: ['studio'], group_id: TG_A }],
+    } as unknown as SessionVerifyResponse);
+    expect(
+      await statusOf(
+        await resolveEditorCommerce(req, 'p1', prismaWith({ workspaceId: 'ws_a', tenantGroupId: TG_A })),
+      ),
+    ).toEqual({ status: 403, code: 'forbidden' });
+    expect(accessMock).not.toHaveBeenCalled();
+  });
+
   it('401s without a verified session (and a throwing verify)', async () => {
     sessionMock.mockResolvedValueOnce(null);
     expect(await statusOf(await resolveEditorCommerce(req, 'p1', prismaWith(null)))).toEqual({

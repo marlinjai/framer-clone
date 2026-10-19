@@ -12,8 +12,11 @@ import 'server-only';
 //                                                          -> else 404 not_found
 //   1. a verified auth-brain session is required          -> else 401 unauthorized
 //   2. the project (site row) is looked up by id
-//   3. the session must contain the project's workspace AND hold `viewSite`
-//      on it (the same auth-brain check every other project route uses)
+//   3. the session must contain the project's workspace as the editor
+//      workspace of one of its companies holding the auth-brain app grant
+//      `sites` (the editor is per company and only for granted companies,
+//      2026-10-19) AND hold `viewSite` on it (the same auth-brain check every
+//      other project route uses)
 //                                                          -> else 403 forbidden
 //      (OpenFGA failing to answer that check     -> 503 authz_unavailable)
 //      An unknown project id answers the SAME 403, so a project's existence
@@ -45,7 +48,7 @@ import {
   authzUnavailableResponse,
 } from '@/lib/authBrainAvailability';
 import { getPrismaClient } from '@/server/db';
-import { resolveScopeForWorkspace } from '@/server/sites/scope';
+import { resolveScopeForCompanyWorkspace } from '@/server/sites/scope';
 import { commerceTenantDbChecked, isCommerceTenantNotProvisioned } from './db';
 import { isEditorHost } from '@/lib/editorHost';
 import type { CommerceReadContext } from './readHandlers';
@@ -101,7 +104,8 @@ export async function resolveEditorCommerce(
   });
   if (!site) return forbidden();
 
-  const scope = resolveScopeForWorkspace(session, site.workspaceId);
+  // A company without the `sites` grant answers the same 403 as a foreign one.
+  const scope = resolveScopeForCompanyWorkspace(session, site.workspaceId);
   if (!scope.ok) return forbidden();
   let allowed: boolean;
   try {

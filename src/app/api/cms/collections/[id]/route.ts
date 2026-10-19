@@ -12,11 +12,11 @@
 // swallowed empty 200.
 
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
-import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
+import { readCompanySelectors } from '@/lib/activeCompanyCookie';
 import { z } from 'zod';
 import { getCmsRepository, getCmsWriteRepository, cmsWriteErrorResponse } from '@/server/cms';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
-import { resolveActiveScope, type TenantScope } from '@/server/sites';
+import { activeScopeDenial, resolveActiveScope, type TenantScope } from '@/server/sites';
 import { jsonError, parseBody } from '@/lib/api/respond';
 
 export const runtime = 'nodejs';
@@ -41,9 +41,10 @@ async function guardWrite(
   if (!session) {
     return { ok: false, response: jsonError('unauthorized', 'authentication required', 401) };
   }
-  const scopeResult = resolveActiveScope(session, readActiveWorkspaceCookie(req));
+  const scopeResult = resolveActiveScope(session, readCompanySelectors(req));
   if (!scopeResult.ok) {
-    return { ok: false, response: jsonError('no_active_workspace', 'no active workspace', 403) };
+    const denial = activeScopeDenial(scopeResult.error);
+    return { ok: false, response: jsonError(denial.code, denial.message, 403) };
   }
   const { scope } = scopeResult;
   const auth = await authenticateRequest(req, scope.workspaceId, 'editSite');

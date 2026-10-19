@@ -41,9 +41,9 @@ export default async function ProjectPreviewPage({
     return <AuthUnavailable retryHref={`/projects/${encodeURIComponent(projectId)}/preview`} />;
   }
 
-  // Valid session, no workspace picked yet -> the dashboard's chooser, which
+  // Valid session, no company picked yet (or none with Lumitra Sites) -> the dashboard's chooser, which
   // renders (never redirects) and then continues back here.
-  if (result.status === 'choose_workspace') {
+  if (result.status === 'choose_company') {
     redirect(result.chooserUrl);
   }
 
