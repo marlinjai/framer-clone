@@ -15,8 +15,8 @@ importers:
         specifier: ^5.2.1
         version: 5.2.2(react-hook-form@7.71.2(react@19.1.9))
       '@marlinjai/auth-brain-sdk':
-        specifier: ^1.1.0
-        version: 1.1.0(zod@4.3.6)
+        specifier: ^1.7.1
+        version: 1.7.1(zod@4.3.6)
       '@marlinjai/contacts-core':
         specifier: ^0.3.0
         version: 0.3.0(postgres@3.4.9)
@@ -1122,22 +1122,22 @@ packages:
   '@kwsites/file-exists@1.1.1':
     resolution: {integrity: sha512-m9/5YGR18lIwxSFDwfE3oA7bWuq9kdau6ugN4H2rJeyhFQZcG9AgSHkQtSD15a8WvTgfz9aikZMrKPHvbpqFiw==}
 
-  '@marlinjai/auth-brain-sdk@1.1.0':
-    resolution: {integrity: sha512-9hSHnSbWSmD8PndFK7mOrYS4d8Ree9NpC5gB2PvISlX1dMLf8IFzkhmOSfRQiVt3N7mR7i7h0aWAeVNjsw8D9A==}
+  '@marlinjai/auth-brain-sdk@1.7.1':
+    resolution: {integrity: sha512-OStv5n+Ad/5BCn8E3TQpr/u04Ro9yyldFvHBNxTj7vqYZy1yP5UGvLOLGzH0MAdYHRsXPbsI4GZdAfHGkzlUiw==}
     peerDependencies:
       hono: '>=4.0.0'
     peerDependenciesMeta:
       hono:
         optional: true
 
-  '@marlinjai/auth-brain-shared@1.0.1':
-    resolution: {integrity: sha512-b9X2aIoLeOwTvgEzw8xp8Gxkr6l4gByXKPMwqO2Tfin1ovkIhlnrI6ehQ8UGPE5ppeteUfJT/WEWEaskL9R2/A==}
+  '@marlinjai/auth-brain-shared@1.9.0':
+    resolution: {integrity: sha512-C7W20fX2Nv+Y67iN8TUKwUXe+qT9LBOFXQ516hzRq3y5pUAjMD39rVxmVS2OX7jpgeSubL3501hFLtsR+A5Lrg==}
 
-  '@marlinjai/brain-core@0.2.1':
-    resolution: {integrity: sha512-lWLkn+X0ovN8RqIhz64BO86ECGWXs7wmc5youCb0PFJbvpWPTgELB9S+vTs/TLDPTShXc7KYoHr7UyCBYHBGVw==}
+  '@marlinjai/brain-core@1.0.0':
+    resolution: {integrity: sha512-NSnglYHVE4oo6H2X0iZdz5ZSOHAZoj90U8ATS6SfAA2dbOvmi+nqRtBvyCVIbywWK5uHhBDdCSSyQDrGRsmhiQ==}
     peerDependencies:
       hono: ^4.0.0
-      zod: ^3.22.4
+      zod: ^3.22.4 || ^4.0.0
     peerDependenciesMeta:
       hono:
         optional: true
@@ -6667,18 +6667,18 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@marlinjai/auth-brain-sdk@1.1.0(zod@4.3.6)':
+  '@marlinjai/auth-brain-sdk@1.7.1(zod@4.3.6)':
     dependencies:
-      '@marlinjai/auth-brain-shared': 1.0.1
-      '@marlinjai/brain-core': 0.2.1(zod@4.3.6)
+      '@marlinjai/auth-brain-shared': 1.9.0
+      '@marlinjai/brain-core': 1.0.0(zod@4.3.6)
     transitivePeerDependencies:
       - zod
 
-  '@marlinjai/auth-brain-shared@1.0.1':
+  '@marlinjai/auth-brain-shared@1.9.0':
     dependencies:
       zod: 3.25.76
 
-  '@marlinjai/brain-core@0.2.1(zod@4.3.6)':
+  '@marlinjai/brain-core@1.0.0(zod@4.3.6)':
     optionalDependencies:
       zod: 4.3.6
 
