@@ -1,7 +1,8 @@
 ---
 type: plan
-status: draft
+status: in-progress
 date: 2026-06-25
+decided: 2026-10-19
 title: Framer-clone custom domains (B): connect a customer-owned domain to a published site
 summary: The "Option B" upgrade over the demo's default subdomain hosting (Option A). Let a site owner connect their own domain (demo-custom-domain.com) to a published framer-clone site, with domain-control validation, automatic per-domain TLS, and an in-editor onboarding flow. The host-aware routing and the SiteDomain.customHostname model already exist; this plan wires resolution, certs, and UX on top. Background work, sequenced AFTER the hosted-demo (Option A) is live.
 tags: [framer-clone, custom-domains, hosting, tls, dcv, multi-tenant, north-star]
@@ -9,6 +10,13 @@ projects: [framer-clone]
 ---
 
 # Framer-clone custom domains (B)
+
+> **Status 2026-10-19: decided, then in progress.** Marlin decided on 2026-10-19 to build this.
+> The section "Reality and decisions (2026-10-19)" at the end records how it is being built,
+> which differs from the June text in three places: TLS goes through Traefik's file provider
+> on the shared server (not Coolify per-host labels and not Cloudflare for SaaS), ownership is
+> proven by a TXT token plus a routing record (not a delegated CNAME alone), and a pending claim
+> never reserves a hostname.
 
 The published-site demo ships on **Option A**: a lumitra-owned subdomain (`<site>.<base>.lumitra.co`),
 one wildcard record + one wildcard cert, customer manages no DNS. This is exactly how Framer's default
