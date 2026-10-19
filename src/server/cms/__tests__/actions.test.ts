@@ -44,7 +44,25 @@ const adapter = {
   createSelectOption: vi.fn(),
   updateRow: vi.fn(),
   deleteRow: vi.fn(),
+  listTables: vi.fn(),
+  getRows: vi.fn(),
+  getViews: vi.fn(),
+  getRelatedRows: vi.fn(),
+  getRelationsForRow: vi.fn(),
+  getFileReferences: vi.fn(),
 };
+
+// The real owning-workspace resolution the fake adapter answers with.
+const getTableImpl = async (id: string) =>
+  tableWorkspace[id] ? { id, workspaceId: tableWorkspace[id], name: id } : null;
+
+// The request Host every action sees through next/headers. With EDITOR_HOST
+// unset every host counts as the editor host (src/lib/editorHost.ts), so the
+// default keeps the existing tests on the editor plane.
+let requestHost = 'localhost:3000';
+vi.mock('next/headers', () => ({
+  headers: async () => new Headers({ host: requestHost }),
+}));
 
 vi.mock('../adapterClient', () => ({
   CMS_SCHEMA: 'public',
@@ -73,11 +91,26 @@ import {
   ensureStatusField,
   createTable as createTableAction,
   updateRow as updateRowAction,
+  getTable as getTableAction,
+  listTables as listTablesAction,
+  getColumns as getColumnsAction,
+  getColumn as getColumnAction,
+  getSelectOptions as getSelectOptionsAction,
+  getRow as getRowAction,
+  getRows as getRowsAction,
+  getRelatedRows as getRelatedRowsAction,
+  getRelationsForRow as getRelationsForRowAction,
+  getFileReferences as getFileReferencesAction,
+  getViews as getViewsAction,
+  getView as getViewAction,
 } from '../actions';
 import { AuthError } from '@/server/auth/requireWorkspaceScope';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
+  requestHost = 'localhost:3000';
+  adapter.getTable.mockImplementation(getTableImpl);
   // Default: an authorized workspace-A session.
   requireWorkspaceScope.mockResolvedValue(SCOPE_A);
 });
@@ -225,5 +258,143 @@ describe('ensureStatusField', () => {
     adapter.getTable.mockResolvedValue({ id: 't_b', workspaceId: 'ws_b', name: 'Other' });
     await expect(ensureStatusField('t_b')).resolves.toMatchObject({ ok: false, code: 'forbidden' });
     expect(adapter.createColumn).not.toHaveBeenCalled();
+  });
+});
+
+describe('CMS server actions: editor-host only (decision D2)', () => {
+  beforeEach(() => {
+    vi.stubEnv('EDITOR_HOST', 'app.lumitra.co');
+  });
+
+  it('refuses a write on a published-site host before reading the session', async () => {
+    requestHost = 'alpha.sites.lumitra.co';
+    const result = await updateRowAction('row_a', { c1: 'x' });
+    expect(result).toMatchObject({ ok: false, code: 'forbidden' });
+    expect(requireWorkspaceScope).not.toHaveBeenCalled();
+    expect(adapter.updateRow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a read on a published-site host before reading the session', async () => {
+    requestHost = 'alpha.sites.lumitra.co';
+    await expect(getTableAction('t_a')).resolves.toMatchObject({ ok: false, code: 'forbidden' });
+    await expect(listTablesAction('ws_a')).resolves.toMatchObject({ ok: false, code: 'forbidden' });
+    await expect(getRowsAction('t_a')).resolves.toMatchObject({ ok: false, code: 'forbidden' });
+    expect(requireWorkspaceScope).not.toHaveBeenCalled();
+    expect(adapter.getTable).not.toHaveBeenCalled();
+    expect(adapter.listTables).not.toHaveBeenCalled();
+    expect(adapter.getRows).not.toHaveBeenCalled();
+  });
+
+  it('serves the editor host', async () => {
+    requestHost = 'app.lumitra.co';
+    await expect(getTableAction('t_a')).resolves.toMatchObject({ ok: true });
+    expect(requireWorkspaceScope).toHaveBeenCalledWith('viewSite');
+  });
+});
+
+describe('CMS server actions: guarded reads', () => {
+  it('checks viewSite (not editSite) on the active workspace for a read', async () => {
+    await getTableAction('t_a');
+    expect(requireWorkspaceScope).toHaveBeenCalledWith('viewSite');
+  });
+
+  it.each([
+    ['getTable', () => getTableAction('t_a')],
+    ['listTables', () => listTablesAction('ws_a')],
+    ['getColumns', () => getColumnsAction('t_a')],
+    ['getRow', () => getRowAction('row_a')],
+    ['getRows', () => getRowsAction('t_a')],
+    ['getViews', () => getViewsAction('t_a')],
+  ])('%s without a session is an unauthorized result, never data', async (_name, call) => {
+    requireWorkspaceScope.mockRejectedValue(new AuthError(401, 'authentication required'));
+    await expect(call()).resolves.toMatchObject({ ok: false, code: 'unauthorized' });
+    expect(adapter.listTables).not.toHaveBeenCalled();
+    expect(adapter.getRows).not.toHaveBeenCalled();
+    expect(adapter.getColumns).not.toHaveBeenCalled();
+    expect(adapter.getViews).not.toHaveBeenCalled();
+  });
+
+  it('listTables lists the SESSION workspace and ignores the client-sent id', async () => {
+    adapter.listTables.mockResolvedValue([{ id: 't_a', workspaceId: 'ws_a', name: 't_a' }]);
+    const result = await listTablesAction('ws_b');
+    expect(adapter.listTables).toHaveBeenCalledWith('ws_a');
+    expect(adapter.listTables).not.toHaveBeenCalledWith('ws_b');
+    expect(result).toEqual({ ok: true, value: [{ id: 't_a', workspaceId: 'ws_a', name: 't_a' }] });
+  });
+
+  it('reads an own table, row, rows page, columns and views', async () => {
+    const page = { items: [{ id: 'row_a', tableId: 't_a', cells: {} }], total: 1, hasMore: false };
+    adapter.getRows.mockResolvedValue(page);
+    adapter.getColumns.mockResolvedValue([{ id: 'c1', tableId: 't_a' }]);
+    adapter.getViews.mockResolvedValue([{ id: 'v1', tableId: 't_a' }]);
+
+    await expect(getTableAction('t_a')).resolves.toEqual({
+      ok: true,
+      value: { id: 't_a', workspaceId: 'ws_a', name: 't_a' },
+    });
+    await expect(getRowAction('row_a')).resolves.toEqual({
+      ok: true,
+      value: { id: 'row_a', tableId: 't_a', cells: {} },
+    });
+    await expect(getRowsAction('t_a')).resolves.toEqual({ ok: true, value: page });
+    await expect(getColumnsAction('t_a')).resolves.toEqual({
+      ok: true,
+      value: [{ id: 'c1', tableId: 't_a' }],
+    });
+    await expect(getViewsAction('t_a')).resolves.toEqual({
+      ok: true,
+      value: [{ id: 'v1', tableId: 't_a' }],
+    });
+  });
+
+  it('answers another workspace\'s entities with the not-found shape and never reads them', async () => {
+    adapter.getColumn.mockResolvedValue({ id: 'c_b', tableId: 't_b' });
+    adapter.getView.mockResolvedValue({ id: 'v_b', tableId: 't_b' });
+
+    await expect(getTableAction('t_b')).resolves.toEqual({ ok: true, value: null });
+    await expect(getRowAction('row_b')).resolves.toEqual({ ok: true, value: null });
+    await expect(getColumnAction('c_b')).resolves.toEqual({ ok: true, value: null });
+    await expect(getViewAction('v_b')).resolves.toEqual({ ok: true, value: null });
+    await expect(getRowsAction('t_b')).resolves.toEqual({
+      ok: true,
+      value: { items: [], total: 0, hasMore: false },
+    });
+    await expect(getColumnsAction('t_b')).resolves.toEqual({ ok: true, value: [] });
+    await expect(getViewsAction('t_b')).resolves.toEqual({ ok: true, value: [] });
+    await expect(getSelectOptionsAction('c_b')).resolves.toEqual({ ok: true, value: [] });
+    await expect(getRelatedRowsAction('row_b', 'c_rel')).resolves.toEqual({ ok: true, value: [] });
+    await expect(getRelationsForRowAction('row_b')).resolves.toEqual({ ok: true, value: [] });
+    await expect(getFileReferencesAction('row_b', 'c_file')).resolves.toEqual({
+      ok: true,
+      value: [],
+    });
+
+    expect(adapter.getRows).not.toHaveBeenCalled();
+    expect(adapter.getColumns).not.toHaveBeenCalled();
+    expect(adapter.getViews).not.toHaveBeenCalled();
+    expect(adapter.getSelectOptions).not.toHaveBeenCalled();
+    expect(adapter.getRelatedRows).not.toHaveBeenCalled();
+    expect(adapter.getRelationsForRow).not.toHaveBeenCalled();
+    expect(adapter.getFileReferences).not.toHaveBeenCalled();
+  });
+
+  it('answers a missing entity with the same not-found shape as a foreign one', async () => {
+    await expect(getTableAction('t_missing')).resolves.toEqual({ ok: true, value: null });
+    await expect(getRowAction('row_missing')).resolves.toEqual({ ok: true, value: null });
+    await expect(getRowsAction('t_missing')).resolves.toEqual({
+      ok: true,
+      value: { items: [], total: 0, hasMore: false },
+    });
+  });
+
+  it('drops related rows whose own table is outside the workspace', async () => {
+    adapter.getRelatedRows.mockResolvedValue([
+      { id: 'row_a2', tableId: 't_a', cells: {} },
+      { id: 'row_b', tableId: 't_b', cells: {} },
+    ]);
+    await expect(getRelatedRowsAction('row_a', 'c_rel')).resolves.toEqual({
+      ok: true,
+      value: [{ id: 'row_a2', tableId: 't_a', cells: {} }],
+    });
   });
 });
