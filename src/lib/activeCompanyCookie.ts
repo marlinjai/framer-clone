@@ -19,9 +19,10 @@
 // fallback selector, mapped to its workspace's company, until the dashboard
 // migrates it once (src/app/projects/migrate-company/route.ts) and deletes it.
 //
-// Dependency-free on purpose (no next/headers, no server-only), so the route
-// handlers, the loaders and the server actions can all share it.
+// Free of next/headers and server-only on purpose, so the route handlers, the
+// loaders and the server actions can all share it.
 
+import { RequestCookies } from 'next/dist/server/web/spec-extension/cookies';
 import type { CompanySelectors } from '@/server/sites/scope';
 
 /** The cookie name. Host-only on the editor host (no Domain attribute). */
@@ -71,19 +72,19 @@ export function expiredCookieOptions(): {
   return { ...activeCompanyCookieOptions(), maxAge: 0 };
 }
 
-/** Read a named cookie value off a raw request `Cookie` header, or null. */
+/**
+ * Read a named cookie value off a raw request `Cookie` header, or null.
+ *
+ * Parsed with Next's own RequestCookies (`next/server` does not re-export it;
+ * this is the class next/headers' `cookies()` is built on), so a route handler
+ * reads EXACTLY what a page reads: with a duplicated name the last value wins
+ * and values are URL-decoded. A hand-rolled parser that kept the first
+ * duplicate made a page and an API call resolve different companies for the
+ * same browser.
+ */
 export function readRequestCookie(req: Request, name: string): string | null {
-  const header = req.headers.get('cookie');
-  if (!header) return null;
-  for (const part of header.split(';')) {
-    const eq = part.indexOf('=');
-    if (eq === -1) continue;
-    if (part.slice(0, eq).trim() === name) {
-      const value = part.slice(eq + 1).trim();
-      return value.length > 0 ? value : null;
-    }
-  }
-  return null;
+  const value = new RequestCookies(req.headers).get(name)?.value;
+  return value && value.length > 0 ? value : null;
 }
 
 /** The company selectors carried by a route-handler request. */
