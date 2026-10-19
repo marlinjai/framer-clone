@@ -1,9 +1,13 @@
 // src/app/api/cms/collections/route.ts
 //
-// GET  /api/cms/collections  (READ, unauthenticated)
+// GET  /api/cms/collections  (READ, host-scoped: see src/server/cms/readScope.ts)
 // POST /api/cms/collections  (WRITE, auth-brain-guarded: create a collection)
 //
-// The GET stays UNAUTHENTICATED for v1 (reads are public). The POST is a
+// The GET lists the collections of ONE workspace, decided by
+// resolveCmsReadContext: on the editor host the session's active workspace
+// (401 without a session, 403 without `viewSite`), on a published-site host the
+// workspace of the site the Host resolves to (the session is never read there),
+// and 404 on any other host. The POST is a
 // mutation, guarded by the real auth-brain path (the same shape as
 // /api/projects/publish): getVerifiedSession -> resolveActiveScope ->
 // authenticateRequest, then the collection is created in the SESSION's active
@@ -15,7 +19,7 @@
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { readCompanySelectors } from '@/lib/activeCompanyCookie';
 import { z } from 'zod';
-import { getCmsRepository, getCmsWriteRepository, cmsWriteErrorResponse } from '@/server/cms';
+import { getCmsWriteRepository, cmsWriteErrorResponse, resolveCmsReadContext } from '@/server/cms';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
 import { activeScopeDenial, resolveActiveScope } from '@/server/sites';
 import { jsonError, parseBody } from '@/lib/api/respond';
@@ -25,9 +29,13 @@ export const dynamic = 'force-dynamic';
 
 const createSchema = z.object({ name: z.string().trim().min(1) });
 
-export async function GET(): Promise<Response> {
+async function handleGET(req: Request): Promise<Response> {
+  const read = await resolveCmsReadContext(req);
+  if (!read.ok) {
+    return read.response;
+  }
   try {
-    const collections = await getCmsRepository().listCollections();
+    const collections = await read.repo.listCollections();
     return Response.json(collections);
   } catch (err) {
     return jsonError(
@@ -83,4 +91,5 @@ async function handlePOST(req: Request): Promise<Response> {
 // An auth-brain outage during session verify answers JSON 503 `auth_unavailable`,
 // and OpenFGA failing a permission check answers JSON 503 `authz_unavailable`
 // (src/lib/authBrainAvailability.ts), never a 500 and never "signed out".
+export const GET = withAuthAvailability(handleGET);
 export const POST = withAuthAvailability(handlePOST);
