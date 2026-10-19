@@ -9,7 +9,11 @@ import 'server-only';
 
 export {
   getCmsRepository,
+  getPublishedCmsRepository,
   getCmsWriteRepository,
+  isValidLimit,
+  isValidCursor,
+  PUBLISHED_MAX_LIMIT,
   type CmsReadRepository,
   type CmsWriteRepository,
 } from './repository';
@@ -21,6 +25,7 @@ export {
   cmsWriteErrorResponse,
 } from './errors';
 export { mapDataTableColumnType } from './columnTypeMap';
+export { resolveCmsReadContext, type CmsReadContext } from './readScope';
 export { withTenant } from './withTenant';
 export { getCmsAdapter, CMS_SCHEMA, CMS_WORKSPACE_ID } from './adapterClient';
 

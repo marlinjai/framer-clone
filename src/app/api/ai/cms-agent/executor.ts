@@ -157,6 +157,8 @@ async function dispatch(
 
   switch (name) {
     case 'list_collections': {
+      // The route hands in the workspace-scoped adapter (./scopedAdapter.ts),
+      // which ignores this model-supplied id and lists the active workspace.
       const tables = await adapter.listTables(input.workspaceId);
       return {
         success: true,

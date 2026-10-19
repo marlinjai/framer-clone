@@ -44,7 +44,34 @@ const adapter = {
   createSelectOption: vi.fn(),
   updateRow: vi.fn(),
   deleteRow: vi.fn(),
+  listTables: vi.fn(),
+  getRows: vi.fn(),
+  getViews: vi.fn(),
+  getRelatedRows: vi.fn(),
+  getRelationsForRow: vi.fn(),
+  getFileReferences: vi.fn(),
+  createRow: vi.fn(),
+  bulkCreateRows: vi.fn(),
+  reorderColumns: vi.fn(),
+  reorderSelectOptions: vi.fn(),
+  reorderFileReferences: vi.fn(),
+  reorderViews: vi.fn(),
+  createRelation: vi.fn(),
+  deleteRelation: vi.fn(),
+  addFileReference: vi.fn(),
 };
+
+// The real owning-workspace resolution the fake adapter answers with.
+const getTableImpl = async (id: string) =>
+  tableWorkspace[id] ? { id, workspaceId: tableWorkspace[id], name: id } : null;
+
+// The request Host every action sees through next/headers. With EDITOR_HOST
+// unset every host counts as the editor host (src/lib/editorHost.ts), so the
+// default keeps the existing tests on the editor plane.
+let requestHost = 'localhost:3000';
+vi.mock('next/headers', () => ({
+  headers: async () => new Headers({ host: requestHost }),
+}));
 
 vi.mock('../adapterClient', () => ({
   CMS_SCHEMA: 'public',
@@ -73,11 +100,36 @@ import {
   ensureStatusField,
   createTable as createTableAction,
   updateRow as updateRowAction,
+  getTable as getTableAction,
+  listTables as listTablesAction,
+  getColumns as getColumnsAction,
+  getColumn as getColumnAction,
+  getSelectOptions as getSelectOptionsAction,
+  getRow as getRowAction,
+  getRows as getRowsAction,
+  getRelatedRows as getRelatedRowsAction,
+  getRelationsForRow as getRelationsForRowAction,
+  getFileReferences as getFileReferencesAction,
+  getViews as getViewsAction,
+  getView as getViewAction,
+  createRow as createRowAction,
+  bulkCreateRows as bulkCreateRowsAction,
+  reorderColumns as reorderColumnsAction,
+  reorderSelectOptions as reorderSelectOptionsAction,
+  reorderFileReferences as reorderFileReferencesAction,
+  reorderViews as reorderViewsAction,
+  createRelation as createRelationAction,
+  deleteRelation as deleteRelationAction,
+  addFileReference as addFileReferenceAction,
 } from '../actions';
 import { AuthError } from '@/server/auth/requireWorkspaceScope';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
+  requestHost = 'localhost:3000';
+  adapter.getTable.mockImplementation(getTableImpl);
+  adapter.getColumns.mockResolvedValue([]);
   // Default: an authorized workspace-A session.
   requireWorkspaceScope.mockResolvedValue(SCOPE_A);
 });
@@ -180,6 +232,7 @@ describe('ensureStatusField', () => {
 
   it('creates a Status select column + Draft/Published/Scheduled options (engine palette colors) when absent', async () => {
     adapter.getColumns.mockResolvedValue([]);
+    adapter.getRows.mockResolvedValue({ items: [], total: 0, hasMore: false });
     adapter.createColumn.mockResolvedValue({ id: 'c_status', tableId: 't_a', name: 'Status', type: 'select' });
     adapter.getSelectOptions.mockResolvedValue([]);
     adapter.createSelectOption
@@ -203,6 +256,40 @@ describe('ensureStatusField', () => {
     });
   });
 
+  it('stamps every row that exists when the field is FIRST created as Published (paged, archived included)', async () => {
+    adapter.getColumns.mockResolvedValue([]);
+    adapter.createColumn.mockResolvedValue({ id: 'c_status', tableId: 't_a', name: 'Status', type: 'select' });
+    adapter.getSelectOptions.mockResolvedValue([]);
+    adapter.createSelectOption
+      .mockResolvedValueOnce({ id: 'opt_draft' })
+      .mockResolvedValueOnce({ id: 'opt_pub' })
+      .mockResolvedValueOnce({ id: 'opt_sched' });
+    adapter.getRows
+      .mockResolvedValueOnce({
+        items: [
+          { id: 'r1', tableId: 't_a', cells: {} },
+          { id: 'r2', tableId: 't_a', cells: { c_status: null } },
+        ],
+        total: 3,
+        hasMore: true,
+      })
+      .mockResolvedValueOnce({
+        items: [{ id: 'r3', tableId: 't_a', cells: {}, archived: true }],
+        total: 3,
+        hasMore: false,
+      });
+
+    await expect(ensureStatusField('t_a')).resolves.toMatchObject({ ok: true });
+
+    expect(adapter.getRows).toHaveBeenNthCalledWith(1, 't_a', { limit: 200, offset: 0, includeArchived: true });
+    expect(adapter.getRows).toHaveBeenNthCalledWith(2, 't_a', { limit: 200, offset: 2, includeArchived: true });
+    expect(adapter.updateRow.mock.calls).toEqual([
+      ['r1', { c_status: 'opt_pub' }],
+      ['r2', { c_status: 'opt_pub' }],
+      ['r3', { c_status: 'opt_pub' }],
+    ]);
+  });
+
   it('is idempotent: reuses the existing Status column + options, creating no duplicates', async () => {
     adapter.getColumns.mockResolvedValue([{ id: 'c_status', name: 'Status', type: 'select' }]);
     adapter.getSelectOptions.mockResolvedValue([
@@ -215,6 +302,9 @@ describe('ensureStatusField', () => {
 
     expect(adapter.createColumn).not.toHaveBeenCalled();
     expect(adapter.createSelectOption).not.toHaveBeenCalled();
+    // An existing field never re-stamps rows (a Draft stays a Draft).
+    expect(adapter.getRows).not.toHaveBeenCalled();
+    expect(adapter.updateRow).not.toHaveBeenCalled();
     expect(result).toEqual({
       ok: true,
       value: { columnId: 'c_status', options: { draft: 'o1', published: 'o2', scheduled: 'o3' } },
@@ -227,3 +317,307 @@ describe('ensureStatusField', () => {
     expect(adapter.createColumn).not.toHaveBeenCalled();
   });
 });
+
+describe('CMS server actions: editor-host only (decision D2)', () => {
+  beforeEach(() => {
+    vi.stubEnv('EDITOR_HOST', 'app.lumitra.co');
+  });
+
+  it('refuses a write on a published-site host before reading the session', async () => {
+    requestHost = 'alpha.sites.lumitra.co';
+    const result = await updateRowAction('row_a', { c1: 'x' });
+    expect(result).toMatchObject({ ok: false, code: 'forbidden' });
+    expect(requireWorkspaceScope).not.toHaveBeenCalled();
+    expect(adapter.updateRow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a read on a published-site host before reading the session', async () => {
+    requestHost = 'alpha.sites.lumitra.co';
+    await expect(getTableAction('t_a')).resolves.toMatchObject({ ok: false, code: 'forbidden' });
+    await expect(listTablesAction('ws_a')).resolves.toMatchObject({ ok: false, code: 'forbidden' });
+    await expect(getRowsAction('t_a')).resolves.toMatchObject({ ok: false, code: 'forbidden' });
+    expect(requireWorkspaceScope).not.toHaveBeenCalled();
+    expect(adapter.getTable).not.toHaveBeenCalled();
+    expect(adapter.listTables).not.toHaveBeenCalled();
+    expect(adapter.getRows).not.toHaveBeenCalled();
+  });
+
+  it('serves the editor host', async () => {
+    requestHost = 'app.lumitra.co';
+    await expect(getTableAction('t_a')).resolves.toMatchObject({ ok: true });
+    expect(requireWorkspaceScope).toHaveBeenCalledWith('viewSite');
+  });
+});
+
+describe('CMS server actions: guarded reads', () => {
+  it('checks viewSite (not editSite) on the active workspace for a read', async () => {
+    await getTableAction('t_a');
+    expect(requireWorkspaceScope).toHaveBeenCalledWith('viewSite');
+  });
+
+  it.each([
+    ['getTable', () => getTableAction('t_a')],
+    ['listTables', () => listTablesAction('ws_a')],
+    ['getColumns', () => getColumnsAction('t_a')],
+    ['getRow', () => getRowAction('row_a')],
+    ['getRows', () => getRowsAction('t_a')],
+    ['getViews', () => getViewsAction('t_a')],
+  ])('%s without a session is an unauthorized result, never data', async (_name, call) => {
+    requireWorkspaceScope.mockRejectedValue(new AuthError(401, 'authentication required'));
+    await expect(call()).resolves.toMatchObject({ ok: false, code: 'unauthorized' });
+    expect(adapter.listTables).not.toHaveBeenCalled();
+    expect(adapter.getRows).not.toHaveBeenCalled();
+    expect(adapter.getColumns).not.toHaveBeenCalled();
+    expect(adapter.getViews).not.toHaveBeenCalled();
+  });
+
+  it('listTables lists the SESSION workspace and ignores the client-sent id', async () => {
+    adapter.listTables.mockResolvedValue([{ id: 't_a', workspaceId: 'ws_a', name: 't_a' }]);
+    const result = await listTablesAction('ws_b');
+    expect(adapter.listTables).toHaveBeenCalledWith('ws_a');
+    expect(adapter.listTables).not.toHaveBeenCalledWith('ws_b');
+    expect(result).toEqual({ ok: true, value: [{ id: 't_a', workspaceId: 'ws_a', name: 't_a' }] });
+  });
+
+  it('reads an own table, row, rows page, columns and views', async () => {
+    const page = { items: [{ id: 'row_a', tableId: 't_a', cells: {} }], total: 1, hasMore: false };
+    adapter.getRows.mockResolvedValue(page);
+    adapter.getColumns.mockResolvedValue([{ id: 'c1', tableId: 't_a' }]);
+    adapter.getViews.mockResolvedValue([{ id: 'v1', tableId: 't_a' }]);
+
+    await expect(getTableAction('t_a')).resolves.toEqual({
+      ok: true,
+      value: { id: 't_a', workspaceId: 'ws_a', name: 't_a' },
+    });
+    await expect(getRowAction('row_a')).resolves.toEqual({
+      ok: true,
+      value: { id: 'row_a', tableId: 't_a', cells: {} },
+    });
+    await expect(getRowsAction('t_a')).resolves.toEqual({ ok: true, value: page });
+    await expect(getColumnsAction('t_a')).resolves.toEqual({
+      ok: true,
+      value: [{ id: 'c1', tableId: 't_a' }],
+    });
+    await expect(getViewsAction('t_a')).resolves.toEqual({
+      ok: true,
+      value: [{ id: 'v1', tableId: 't_a' }],
+    });
+  });
+
+  it('answers another workspace\'s entities with the not-found shape and never reads them', async () => {
+    adapter.getColumn.mockResolvedValue({ id: 'c_b', tableId: 't_b' });
+    adapter.getView.mockResolvedValue({ id: 'v_b', tableId: 't_b' });
+
+    await expect(getTableAction('t_b')).resolves.toEqual({ ok: true, value: null });
+    await expect(getRowAction('row_b')).resolves.toEqual({ ok: true, value: null });
+    await expect(getColumnAction('c_b')).resolves.toEqual({ ok: true, value: null });
+    await expect(getViewAction('v_b')).resolves.toEqual({ ok: true, value: null });
+    await expect(getRowsAction('t_b')).resolves.toEqual({
+      ok: true,
+      value: { items: [], total: 0, hasMore: false },
+    });
+    await expect(getColumnsAction('t_b')).resolves.toEqual({ ok: true, value: [] });
+    await expect(getViewsAction('t_b')).resolves.toEqual({ ok: true, value: [] });
+    await expect(getSelectOptionsAction('c_b')).resolves.toEqual({ ok: true, value: [] });
+    await expect(getRelatedRowsAction('row_b', 'c_rel')).resolves.toEqual({ ok: true, value: [] });
+    await expect(getRelationsForRowAction('row_b')).resolves.toEqual({ ok: true, value: [] });
+    await expect(getFileReferencesAction('row_b', 'c_file')).resolves.toEqual({
+      ok: true,
+      value: [],
+    });
+
+    expect(adapter.getRows).not.toHaveBeenCalled();
+    expect(adapter.getColumns).not.toHaveBeenCalled();
+    expect(adapter.getViews).not.toHaveBeenCalled();
+    expect(adapter.getSelectOptions).not.toHaveBeenCalled();
+    expect(adapter.getRelatedRows).not.toHaveBeenCalled();
+    expect(adapter.getRelationsForRow).not.toHaveBeenCalled();
+    expect(adapter.getFileReferences).not.toHaveBeenCalled();
+  });
+
+  it('answers a missing entity with the same not-found shape as a foreign one', async () => {
+    await expect(getTableAction('t_missing')).resolves.toEqual({ ok: true, value: null });
+    await expect(getRowAction('row_missing')).resolves.toEqual({ ok: true, value: null });
+    await expect(getRowsAction('t_missing')).resolves.toEqual({
+      ok: true,
+      value: { items: [], total: 0, hasMore: false },
+    });
+  });
+
+  it('drops related rows whose own table is outside the workspace', async () => {
+    adapter.getRelatedRows.mockResolvedValue([
+      { id: 'row_a2', tableId: 't_a', cells: {} },
+      { id: 'row_b', tableId: 't_b', cells: {} },
+    ]);
+    await expect(getRelatedRowsAction('row_a', 'c_rel')).resolves.toEqual({
+      ok: true,
+      value: [{ id: 'row_a2', tableId: 't_a', cells: {} }],
+    });
+  });
+});
+
+// Ownership of the ids a write STORES (a reorder's children, a parent row, a
+// select option, a relation's column and target), not only of the entity it
+// writes to. Workspace A owns t_a / t_a2 (rows row_a, row_a2); B owns t_b.
+describe('CMS server actions: stored-id ownership', () => {
+  beforeEach(() => {
+    tableWorkspace.t_a2 = 'ws_a';
+    rowTable.row_a2 = 't_a2';
+    adapter.getColumns.mockImplementation(async (tableId: string) =>
+      tableId === 't_a'
+        ? [
+            { id: 'c_sel', tableId: 't_a', type: 'select' },
+            { id: 'c_multi', tableId: 't_a', type: 'multi_select' },
+            { id: 'c_text', tableId: 't_a', type: 'text' },
+          ]
+        : tableId === 't_b'
+          ? [{ id: 'c_b', tableId: 't_b', type: 'select' }]
+          : [],
+    );
+    adapter.getSelectOptions.mockImplementation(async (columnId: string) =>
+      columnId === 'c_sel'
+        ? [{ id: 'opt_a1' }, { id: 'opt_a2' }]
+        : columnId === 'c_multi'
+          ? [{ id: 'opt_m1' }, { id: 'opt_m2' }]
+          : columnId === 'c_b'
+            ? [{ id: 'opt_b' }]
+            : [],
+    );
+    adapter.getColumn.mockImplementation(async (id: string) => {
+      const columns: Record<string, unknown> = {
+        c_rel: { id: 'c_rel', tableId: 't_a', type: 'relation', config: { targetTableId: 't_a2' } },
+        c_rel_open: { id: 'c_rel_open', tableId: 't_a', type: 'relation' },
+        c_text: { id: 'c_text', tableId: 't_a', type: 'text' },
+        c_rel_b: { id: 'c_rel_b', tableId: 't_b', type: 'relation' },
+        c_file: { id: 'c_file', tableId: 't_a', type: 'file' },
+        c_sel: { id: 'c_sel', tableId: 't_a', type: 'select' },
+      };
+      return columns[id] ?? null;
+    });
+    adapter.getViews.mockResolvedValue([{ id: 'v1' }, { id: 'v2' }]);
+    adapter.getFileReferences.mockResolvedValue([{ id: 'f1' }, { id: 'f2' }]);
+  });
+
+  describe('reorders name only the parent\'s own children', () => {
+    it('reorders own columns, refuses the whole call with one foreign id', async () => {
+      await expect(reorderColumnsAction('t_a', ['c_text', 'c_sel'])).resolves.toMatchObject({ ok: true });
+      expect(adapter.reorderColumns).toHaveBeenCalledWith('t_a', ['c_text', 'c_sel']);
+      adapter.reorderColumns.mockClear();
+      await expect(reorderColumnsAction('t_a', ['c_text', 'c_b'])).resolves.toMatchObject({
+        ok: false,
+        code: 'forbidden',
+      });
+      expect(adapter.reorderColumns).not.toHaveBeenCalled();
+    });
+
+    it('reorderSelectOptions refuses an option of another column', async () => {
+      await expect(reorderSelectOptionsAction('c_sel', ['opt_a2', 'opt_a1'])).resolves.toMatchObject({ ok: true });
+      await expect(reorderSelectOptionsAction('c_sel', ['opt_a1', 'opt_b'])).resolves.toMatchObject({
+        ok: false,
+        code: 'forbidden',
+      });
+      expect(adapter.reorderSelectOptions).toHaveBeenCalledTimes(1);
+    });
+
+    it('reorderFileReferences refuses a file that is not this row\'s in this column', async () => {
+      await expect(reorderFileReferencesAction('row_a', 'c_file', ['f2', 'f1'])).resolves.toMatchObject({ ok: true });
+      await expect(reorderFileReferencesAction('row_a', 'c_file', ['f1', 'f_other'])).resolves.toMatchObject({
+        ok: false,
+        code: 'forbidden',
+      });
+      expect(adapter.reorderFileReferences).toHaveBeenCalledTimes(1);
+    });
+
+    it('reorderViews refuses a view of another table', async () => {
+      await expect(reorderViewsAction('t_a', ['v2', 'v1'])).resolves.toMatchObject({ ok: true });
+      await expect(reorderViewsAction('t_a', ['v1', 'v_b'])).resolves.toMatchObject({
+        ok: false,
+        code: 'forbidden',
+      });
+      expect(adapter.reorderViews).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('relations', () => {
+    it('creates a relation through an own relation column into its target table', async () => {
+      const input = { sourceRowId: 'row_a', sourceColumnId: 'c_rel', targetRowId: 'row_a2' };
+      await expect(createRelationAction(input)).resolves.toMatchObject({ ok: true });
+      expect(adapter.createRelation).toHaveBeenCalledWith(input);
+    });
+
+    it.each([
+      ['a column of another table', { sourceRowId: 'row_a', sourceColumnId: 'c_rel_b', targetRowId: 'row_a2' }],
+      ['a non-relation column', { sourceRowId: 'row_a', sourceColumnId: 'c_text', targetRowId: 'row_a2' }],
+      ['an unknown column', { sourceRowId: 'row_a', sourceColumnId: 'c_nope', targetRowId: 'row_a2' }],
+      ['a target outside the column\'s target table', { sourceRowId: 'row_a', sourceColumnId: 'c_rel', targetRowId: 'row_a' }],
+      ['a target row of another workspace', { sourceRowId: 'row_a', sourceColumnId: 'c_rel_open', targetRowId: 'row_b' }],
+    ])('refuses createRelation with %s', async (_label, input) => {
+      await expect(createRelationAction(input)).resolves.toMatchObject({ ok: false, code: 'forbidden' });
+      expect(adapter.createRelation).not.toHaveBeenCalled();
+    });
+
+    it('deleteRelation applies the same column and target checks', async () => {
+      await expect(deleteRelationAction('row_a', 'c_rel', 'row_a2')).resolves.toMatchObject({ ok: true });
+      await expect(deleteRelationAction('row_a', 'c_rel_b', 'row_a2')).resolves.toMatchObject({
+        ok: false,
+        code: 'forbidden',
+      });
+      expect(adapter.deleteRelation).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('rows: parent row and select options', () => {
+    it('creates a row with a parent of the same table and own options', async () => {
+      const input = {
+        tableId: 't_a',
+        parentRowId: 'row_a',
+        cells: { c_sel: 'opt_a1', c_multi: ['opt_m1', 'opt_m2'], c_text: 'free text' },
+      };
+      await expect(createRowAction(input)).resolves.toMatchObject({ ok: true });
+      expect(adapter.createRow).toHaveBeenCalledWith(input);
+    });
+
+    it.each([
+      ['a parent row of another table', { tableId: 't_a', parentRowId: 'row_a2' }],
+      ['a parent row of another workspace', { tableId: 't_a', parentRowId: 'row_b' }],
+      ['a select option of another column', { tableId: 't_a', cells: { c_sel: 'opt_b' } }],
+      ['a multi_select option of another column', { tableId: 't_a', cells: { c_multi: ['opt_m1', 'opt_a1'] } }],
+      ['a non-string select value', { tableId: 't_a', cells: { c_sel: 42 } }],
+    ])('refuses createRow with %s', async (_label, input) => {
+      await expect(createRowAction(input as never)).resolves.toMatchObject({ ok: false, code: 'forbidden' });
+      expect(adapter.createRow).not.toHaveBeenCalled();
+    });
+
+    it('bulkCreateRows refuses the whole batch when one row carries a foreign option', async () => {
+      await expect(
+        bulkCreateRowsAction([
+          { tableId: 't_a', cells: { c_sel: 'opt_a1' } },
+          { tableId: 't_a', cells: { c_sel: 'opt_b' } },
+        ]),
+      ).resolves.toMatchObject({ ok: false, code: 'forbidden' });
+      expect(adapter.bulkCreateRows).not.toHaveBeenCalled();
+    });
+
+    it('updateRow allows own options and clearing, refuses a foreign option', async () => {
+      adapter.updateRow.mockResolvedValue({ id: 'row_a', tableId: 't_a', cells: {} });
+      await expect(updateRowAction('row_a', { c_sel: 'opt_a2' })).resolves.toMatchObject({ ok: true });
+      await expect(updateRowAction('row_a', { c_sel: null })).resolves.toMatchObject({ ok: true });
+      await expect(updateRowAction('row_a', { c_multi: ['opt_b'] })).resolves.toMatchObject({
+        ok: false,
+        code: 'forbidden',
+      });
+      expect(adapter.updateRow).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('addFileReference refuses a column of another table', async () => {
+    const base = { rowId: 'row_a', fileId: 'f', fileUrl: 'u', originalName: 'n', mimeType: 'image/png' };
+    await expect(addFileReferenceAction({ ...base, columnId: 'c_file' })).resolves.toMatchObject({ ok: true });
+    await expect(addFileReferenceAction({ ...base, columnId: 'c_rel_b' })).resolves.toMatchObject({
+      ok: false,
+      code: 'forbidden',
+    });
+    expect(adapter.addFileReference).toHaveBeenCalledTimes(1);
+  });
+});
+

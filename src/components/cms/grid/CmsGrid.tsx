@@ -436,6 +436,9 @@ export default function CmsGrid({ tableId, dbAdapter = defaultAdapter }: CmsGrid
     <div className="flex h-full flex-col">
       {banner}
       <div className="min-h-0 flex-1">
+        {/* The provider requires a workspace id, but it is only a label here:
+            every server action derives the workspace from the session and
+            ignores a client-sent one (listTables / createTable included). */}
         <DataTableProvider dbAdapter={adapter} fileAdapter={cmsFileAdapter} workspaceId={CMS_WORKSPACE_ID}>
           <CmsGridContent tableId={tableId} statusField={statusField} />
         </DataTableProvider>

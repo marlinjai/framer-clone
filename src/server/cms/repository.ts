@@ -22,6 +22,8 @@ import type {
 } from '@/lib/bindings/dataSource/types';
 import { getCmsAdapter, CMS_WORKSPACE_ID } from './adapterClient';
 import { mapDataTableColumnType } from './columnTypeMap';
+import { resolvePublishedFilter } from './publishedVisibility';
+import { tableScopedCmsAdapter } from './tableScopedAdapter';
 import {
   CollectionExistsError,
   CmsNotFoundError,
@@ -202,6 +204,16 @@ function mapFilterOp(op: FilterOp): DataTableFilterOperator {
   }
 }
 
+/** True for a usable page size: a positive integer. */
+export function isValidLimit(limit: unknown): limit is number {
+  return typeof limit === 'number' && Number.isInteger(limit) && limit >= 1;
+}
+
+/** True for a usable cursor: the decimal string of a non-negative offset. */
+export function isValidCursor(cursor: unknown): cursor is string {
+  return typeof cursor === 'string' && /^\d+$/.test(cursor) && Number.isSafeInteger(Number(cursor));
+}
+
 // Translate a binding `Query` into adapter-prisma `QueryOptions`. The binding
 // cursor is the opaque pagination token this repository owns: it encodes the
 // absolute row offset as a decimal string (the adapter's `getRows` returns
@@ -229,13 +241,18 @@ function mapQuery(query?: Query): DataTableQueryOptions {
     }));
   }
 
-  if (typeof query.limit === 'number') {
+  if (query.limit !== undefined) {
+    // The adapter interpolates LIMIT into its SQL, so only a positive integer
+    // may ever reach it (the routes answer 400 bad_query before this).
+    if (!isValidLimit(query.limit)) {
+      throw new Error(`CMS repository: invalid limit ${String(query.limit)}`);
+    }
     options.limit = query.limit;
   }
 
   if (query.cursor !== undefined) {
     const offset = Number(query.cursor);
-    if (!Number.isInteger(offset) || offset < 0) {
+    if (!isValidCursor(query.cursor) || !Number.isInteger(offset) || offset < 0) {
       throw new Error(`CMS repository: invalid cursor ${query.cursor}`);
     }
     options.offset = offset;
@@ -262,20 +279,22 @@ function mapQuery(query?: Query): DataTableQueryOptions {
 // in another workspace BOTH resolve to "not found" (null table) and yield the
 // same not-found result, so the boundary never leaks whether a foreign id
 // exists. This mirrors the SiteRepository / workspaceGuard convention.
-function createReadRepository(workspaceId: string): CmsReadRepository {
-  // Resolve a table by id ONLY when it belongs to the bound workspace; return
-  // null both when the table is missing and when it lives in another workspace
-  // (indistinguishable — never leak cross-tenant existence).
-  async function resolveTableInWorkspace(
-    id: string,
-  ): Promise<DataTableTable | null> {
-    const adapter = getCmsAdapter();
-    const table = await adapter.getTable(id);
-    if (!table || table.workspaceId !== workspaceId) {
-      return null;
-    }
-    return table;
+// Resolve a table by id ONLY when it belongs to `workspaceId`; null both when
+// the table is missing and when it lives in another workspace
+// (indistinguishable, never leak cross-tenant existence).
+async function tableInWorkspace(
+  id: string,
+  workspaceId: string,
+): Promise<DataTableTable | null> {
+  const table = await getCmsAdapter().getTable(id);
+  if (!table || table.workspaceId !== workspaceId) {
+    return null;
   }
+  return table;
+}
+
+function createReadRepository(workspaceId: string): CmsReadRepository {
+  const resolveTableInWorkspace = (id: string) => tableInWorkspace(id, workspaceId);
 
   return {
     async listCollections(): Promise<Collection[]> {
@@ -351,6 +370,118 @@ export function getCmsRepository(
   workspaceId: string = CMS_WORKSPACE_ID,
 ): CmsReadRepository {
   return createReadRepository(workspaceId);
+}
+
+// =============================================================================
+// published read tier (the published-site plane and the storefront render)
+// =============================================================================
+
+/** The most rows one published-plane page may return. */
+export const PUBLISHED_MAX_LIMIT = 100;
+/** The page size when a published-plane query names none (the adapter default). */
+const PUBLISHED_DEFAULT_LIMIT = 50;
+
+const EMPTY_ROWS_PAGE: RowsPage = { rows: [], nextCursor: undefined, total: 0 };
+
+// The read repository of what a PUBLISHED site may show, bound to the site's
+// workspace (src/server/cms/publishedVisibility.ts holds the rule):
+//   - only published rows (the collection's Status field, when it has one),
+//     never archived ones, including by id,
+//   - at most PUBLISHED_MAX_LIMIT rows per page,
+//   - a row by id is looked up inside the requested collection's own table only
+//     (tableScopedAdapter.ts), never by walking every tenant's tables,
+//   - collection item counts count published rows only (no draft-count leak).
+// Collections themselves are workspace-scoped exactly like the editor read.
+function createPublishedReadRepository(workspaceId: string): CmsReadRepository {
+  const base = createReadRepository(workspaceId);
+
+  async function publishedRowCount(tableId: string): Promise<number> {
+    const adapter = getCmsAdapter();
+    const filter = await resolvePublishedFilter(adapter, tableId);
+    if (filter.kind === 'none') return 0;
+    const result = await adapter.getRows(tableId, {
+      limit: 1,
+      filters:
+        filter.kind === 'status'
+          ? [{ columnId: filter.columnId, operator: 'equals', value: filter.optionId }]
+          : undefined,
+    });
+    return result.total ?? 0;
+  }
+
+  return {
+    async listCollections(): Promise<Collection[]> {
+      const adapter = getCmsAdapter();
+      const tables = await adapter.listTables(workspaceId);
+      return Promise.all(
+        tables.map(async (table) => {
+          const [columns, itemCount] = await Promise.all([
+            adapter.getColumns(table.id),
+            publishedRowCount(table.id).catch(() => 0),
+          ]);
+          return mapCollection(table, columns, itemCount);
+        }),
+      );
+    },
+
+    getCollection: (id) => base.getCollection(id),
+
+    async listRows(id: string, query?: Query): Promise<RowsPage> {
+      if (!(await tableInWorkspace(id, workspaceId))) {
+        return EMPTY_ROWS_PAGE;
+      }
+      const adapter = getCmsAdapter();
+      const filter = await resolvePublishedFilter(adapter, id);
+      if (filter.kind === 'none') {
+        return EMPTY_ROWS_PAGE;
+      }
+      const limit = Math.min(query?.limit ?? PUBLISHED_DEFAULT_LIMIT, PUBLISHED_MAX_LIMIT);
+      const options = mapQuery({ ...query, limit });
+      if (filter.kind === 'status') {
+        // Appended to the visitor's own filters (all ANDed), so `total` and the
+        // paging cursor count published rows only.
+        options.filters = [
+          ...(options.filters ?? []),
+          { columnId: filter.columnId, operator: 'equals', value: filter.optionId },
+        ];
+      }
+      const result = await adapter.getRows(id, options);
+      return {
+        rows: result.items.map(mapRow),
+        nextCursor: result.cursor,
+        total: result.total,
+      };
+    },
+
+    async getRow(id: string, rowId: string): Promise<BindingRow | null> {
+      if (!(await tableInWorkspace(id, workspaceId))) {
+        return null;
+      }
+      const filter = await resolvePublishedFilter(getCmsAdapter(), id);
+      if (filter.kind === 'none') {
+        return null;
+      }
+      const row = await tableScopedCmsAdapter(id).getRow(rowId);
+      if (!row || row.tableId !== id || row.archived) {
+        return null;
+      }
+      if (filter.kind === 'status' && row.cells[filter.columnId] !== filter.optionId) {
+        return null;
+      }
+      return mapRow(row);
+    },
+  };
+}
+
+/**
+ * Return the server-only CMS read repository of what a PUBLISHED site bound to
+ * `workspaceId` may show (published, non-archived rows; capped pages; by-id
+ * lookups inside the requested table only). Used by the storefront render and
+ * the published-site plane of /api/cms; the editor and its preview keep
+ * getCmsRepository, which shows drafts.
+ */
+export function getPublishedCmsRepository(workspaceId: string): CmsReadRepository {
+  return createPublishedReadRepository(workspaceId);
 }
 
 // =============================================================================

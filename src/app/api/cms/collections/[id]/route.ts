@@ -1,10 +1,13 @@
 // src/app/api/cms/collections/[id]/route.ts
 //
-// GET    /api/cms/collections/:id  (READ, unauthenticated)
+// GET    /api/cms/collections/:id  (READ, host-scoped: see src/server/cms/readScope.ts)
 // PATCH  /api/cms/collections/:id  (WRITE, auth-brain-guarded: rename / set icon)
 // DELETE /api/cms/collections/:id  (WRITE, auth-brain-guarded: delete)
 //
-// The GET stays UNAUTHENTICATED. PATCH/DELETE are mutations, guarded by the real
+// The GET reads ONE workspace, decided by resolveCmsReadContext (editor host:
+// the session's active workspace; published-site host: the Host's site; any
+// other host: 404). A collection of another workspace answers the same 404 as a
+// missing one, so existence never leaks across the boundary. PATCH/DELETE are mutations, guarded by the real
 // auth-brain path (getVerifiedSession -> resolveActiveScope ->
 // authenticateRequest) and scoped to the request's active workspace, surfacing
 // the typed write-error contract (404 not_found, 409 collection_exists on a
@@ -14,7 +17,12 @@
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { readCompanySelectors } from '@/lib/activeCompanyCookie';
 import { z } from 'zod';
-import { getCmsRepository, getCmsWriteRepository, cmsWriteErrorResponse } from '@/server/cms';
+import {
+  getCmsRepository,
+  getCmsWriteRepository,
+  cmsWriteErrorResponse,
+  resolveCmsReadContext,
+} from '@/server/cms';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
 import { activeScopeDenial, resolveActiveScope, type TenantScope } from '@/server/sites';
 import { jsonError, parseBody } from '@/lib/api/respond';
@@ -61,13 +69,17 @@ async function guardWrite(
   return { ok: true, scope };
 }
 
-export async function GET(
-  _req: Request,
+async function handleGET(
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const read = await resolveCmsReadContext(req);
+  if (!read.ok) {
+    return read.response;
+  }
   const { id } = await params;
   try {
-    const collection = await getCmsRepository().getCollection(id);
+    const collection = await read.repo.getCollection(id);
     if (!collection) {
       return jsonError('not_found', `collection ${id} not found`, 404);
     }
@@ -142,5 +154,6 @@ async function handleDELETE(
 // An auth-brain outage during session verify answers JSON 503 `auth_unavailable`,
 // and OpenFGA failing a permission check answers JSON 503 `authz_unavailable`
 // (src/lib/authBrainAvailability.ts), never a 500 and never "signed out".
+export const GET = withAuthAvailability(handleGET);
 export const PATCH = withAuthAvailability(handlePATCH);
 export const DELETE = withAuthAvailability(handleDELETE);

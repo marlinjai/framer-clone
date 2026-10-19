@@ -113,3 +113,132 @@ export async function assertFileReferenceInWorkspace(
   if (!file) denyCrossWorkspace();
   await assertRowInWorkspace(file.rowId, workspaceId);
 }
+
+// =============================================================================
+// Stored-id ownership: ids a write persists INSIDE an owned entity
+// =============================================================================
+//
+// Owning the entity being written is not enough: a write also stores ids that
+// point at OTHER entities (a parent row, a select option, a relation's column
+// and target row, the children of a reorder). The adapter persists those ids
+// verbatim, so each must be checked to belong where it is being stored, or a
+// workspace-A editor could link, reorder or tag with workspace-B entities. The
+// same fail-closed deny applies: a foreign id and a missing id both refuse the
+// WHOLE call, before anything is written.
+
+function denyForeignReference(): never {
+  throw new AuthError(403, 'a referenced id does not belong here');
+}
+
+/**
+ * Refuse unless every id in `ids` is one of `allowed` (a reorder may only name
+ * the parent's own children; a foreign or unknown id refuses the whole call).
+ */
+export function assertIdsAmong(ids: readonly string[], allowed: readonly string[]): void {
+  const own = new Set(allowed);
+  for (const id of ids) {
+    if (!own.has(id)) denyForeignReference();
+  }
+}
+
+/**
+ * Refuse unless every select / multi_select cell value is an option id of THAT
+ * cell's column. Cells for columns that are not in `tableId` are ignored by the
+ * adapter (it writes only the table's own columns), so they are not checked
+ * here; a null value clears the cell and is always allowed.
+ */
+export async function assertCellOptionsBelongToColumns(
+  tableId: string,
+  cells: Record<string, unknown> | undefined,
+): Promise<void> {
+  if (!cells) return;
+  const adapter = getCmsAdapter();
+  const columns = await adapter.getColumns(tableId);
+  const byId = new Map(columns.map((c) => [c.id, c]));
+  for (const [columnId, value] of Object.entries(cells)) {
+    const column = byId.get(columnId);
+    if (!column || (column.type !== 'select' && column.type !== 'multi_select')) continue;
+    if (value === null || value === undefined) continue;
+    const values = column.type === 'multi_select' ? value : [value];
+    if (!Array.isArray(values) || values.some((v) => typeof v !== 'string')) {
+      denyForeignReference();
+    }
+    const optionIds = (await adapter.getSelectOptions(column.id)).map((o) => o.id);
+    assertIdsAmong(values as string[], optionIds);
+  }
+}
+
+/**
+ * A row create: the table must be in the workspace, a parent row must be a row
+ * of the SAME table, and select / multi_select cells must name that column's
+ * own options.
+ */
+export async function assertRowCreateInWorkspace(
+  input: { tableId: string; parentRowId?: string; cells?: Record<string, unknown> },
+  workspaceId: string,
+): Promise<void> {
+  await assertTableInWorkspace(input.tableId, workspaceId);
+  if (input.parentRowId !== undefined && input.parentRowId !== null) {
+    const parent = await getCmsAdapter().getRow(input.parentRowId);
+    if (!parent || parent.tableId !== input.tableId) denyForeignReference();
+  }
+  await assertCellOptionsBelongToColumns(input.tableId, input.cells);
+}
+
+/**
+ * A row update: the row must be in the workspace and its select / multi_select
+ * cells must name that column's own options.
+ */
+export async function assertRowUpdateInWorkspace(
+  rowId: string,
+  cells: Record<string, unknown>,
+  workspaceId: string,
+): Promise<void> {
+  const row = await getCmsAdapter().getRow(rowId);
+  if (!row) denyCrossWorkspace();
+  await assertTableInWorkspace(row.tableId, workspaceId);
+  await assertCellOptionsBelongToColumns(row.tableId, cells);
+}
+
+/**
+ * A relation create / delete: both rows in the workspace, the column a
+ * `relation` column of the SOURCE row's table, and (when the column names a
+ * target table) the target row a row of that table.
+ */
+export async function assertRelationInWorkspace(
+  sourceRowId: string,
+  sourceColumnId: string,
+  targetRowId: string,
+  workspaceId: string,
+): Promise<void> {
+  const adapter = getCmsAdapter();
+  const source = await adapter.getRow(sourceRowId);
+  if (!source) denyCrossWorkspace();
+  await assertTableInWorkspace(source.tableId, workspaceId);
+  const target = await adapter.getRow(targetRowId);
+  if (!target) denyCrossWorkspace();
+  await assertTableInWorkspace(target.tableId, workspaceId);
+
+  const column = await adapter.getColumn(sourceColumnId);
+  if (!column || column.tableId !== source.tableId || column.type !== 'relation') {
+    denyForeignReference();
+  }
+  const targetTableId = (column.config as { targetTableId?: unknown } | undefined)?.targetTableId;
+  if (typeof targetTableId === 'string' && targetTableId.length > 0 && target.tableId !== targetTableId) {
+    denyForeignReference();
+  }
+}
+
+/** A file reference: the row in the workspace and the column one of the row's table. */
+export async function assertFileColumnOfRow(
+  rowId: string,
+  columnId: string,
+  workspaceId: string,
+): Promise<void> {
+  const adapter = getCmsAdapter();
+  const row = await adapter.getRow(rowId);
+  if (!row) denyCrossWorkspace();
+  await assertTableInWorkspace(row.tableId, workspaceId);
+  const column = await adapter.getColumn(columnId);
+  if (!column || column.tableId !== row.tableId) denyForeignReference();
+}

@@ -18,7 +18,27 @@ can run it at build time.
   (`CMS_SCHEMA = 'public'`) and workspace (`CMS_WORKSPACE_ID`). `server-only`.
 - `columnTypeMap.ts`: `mapDataTableColumnType(dt)`, the lossy 13 -> 8 map.
 - `repository.ts`: the read repository (`listCollections` / `getCollection` /
-  `listRows` / `getRow`). `server-only`.
+  `listRows` / `getRow`), constructed per workspace; a collection or row of
+  another workspace reads as missing. `server-only`.
+- `readScope.ts`: `resolveCmsReadContext(req)`, which decides the workspace a
+  `/api/cms/*` GET may read. Editor host: a verified session, the active
+  workspace and `viewSite` on it (401 / 403 / 503 otherwise). Published-site
+  host: the workspace of the site the Host resolves to, never the session
+  (decision D2). Any other host: 404. `server-only`.
+- `publishedVisibility.ts`: THE rule for which rows a published site shows
+  (no Status field: every non-archived row; a Status field: only rows whose
+  status is Published; never archived rows). `getPublishedCmsRepository` in
+  `repository.ts` applies it, caps pages at 100 rows, and is what the
+  storefront render and the published-site `/api/cms` plane read through.
+  `ensureStatusField` stamps the rows that exist when it first creates the
+  field as Published, so introducing the workflow unpublishes nothing.
+- `tableScopedAdapter.ts`: an adapter whose table discovery is narrowed to one
+  table, so a published row-by-id read never walks every tenant's tables.
+- `editorScope.ts`: `requireCmsEditorScope(action)`, the first check of every
+  grid server action in `actions.ts` (reads and writes): refused off the editor
+  host, then the session's active-workspace scope. `server-only`.
+- `actions.ts` + `workspaceGuard.ts`: the grid's server actions; writes assert
+  entity ownership, reads answer a foreign entity like a missing one.
 - `withTenant.ts`: the E7 multi-tenant seam (designed, not built).
 - `types.ts`: derives adapter-prisma entity types structurally from
   `PrismaAdapter` (see "Why no data-table-core import" below).

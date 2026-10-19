@@ -36,14 +36,8 @@ import * as actions from '@/server/cms/actions';
 import { CmsActionError } from '@/lib/cms/actionResult';
 import { createCmsServerActionsAdapter } from '../cmsServerActionsAdapter';
 
-// The read actions are wired straight through; every other action is guarded
-// and returns a CmsActionResult the adapter unwraps.
-const READ_NAMES = new Set([
-  'getTable', 'listTables', 'getColumns', 'getColumn', 'getSelectOptions',
-  'getRow', 'getRows', 'getRelatedRows', 'getRelationsForRow', 'getFileReferences',
-  'getViews', 'getView',
-]);
-
+// Every action, read or write, is guarded and returns a CmsActionResult the
+// adapter unwraps (reads used to be wired straight through, unauthenticated).
 describe('createCmsServerActionsAdapter', () => {
   it('wires every one of the 40 DatabaseAdapter methods to its matching server action (no cross-wiring)', () => {
     const adapter = createCmsServerActionsAdapter() as unknown as Record<string, unknown>;
@@ -53,19 +47,19 @@ describe('createCmsServerActionsAdapter', () => {
     expect(Object.keys(actionsMod).sort()).toEqual([...ACTION_NAMES].sort());
 
     for (const name of ACTION_NAMES) {
-      if (READ_NAMES.has(name)) expect(adapter[name]).toBe(actionsMod[name]);
-      else expect(typeof adapter[name]).toBe('function');
+      expect(typeof adapter[name]).toBe('function');
+      // A wrapper, never the raw action: the raw action returns a result object.
+      expect(adapter[name]).not.toBe(actionsMod[name]);
     }
   });
 
-  it('calls the matching guarded action with the same arguments and unwraps its value', async () => {
+  it('calls the matching action with the same arguments and unwraps its value', async () => {
     const adapter = createCmsServerActionsAdapter() as unknown as Record<
       string,
       (...args: unknown[]) => Promise<unknown>
     >;
     const actionsMod = actions as unknown as Record<string, ReturnType<typeof vi.fn>>;
     for (const name of ACTION_NAMES) {
-      if (READ_NAMES.has(name)) continue;
       actionsMod[name].mockResolvedValueOnce({ ok: true, value: `${name}-value` });
       await expect(adapter[name]('a', 'b', 'c')).resolves.toBe(`${name}-value`);
       // Each wrapper forwards its own arguments in order (1 to 3 of them).
@@ -73,6 +67,18 @@ describe('createCmsServerActionsAdapter', () => {
       expect(forwarded.length).toBeGreaterThan(0);
       expect(forwarded).toEqual(['a', 'b', 'c'].slice(0, forwarded.length));
     }
+  });
+
+  it('rethrows a failed READ on the client as a CmsActionError (a signed-out grid shows why)', async () => {
+    const adapter = createCmsServerActionsAdapter();
+    vi.mocked(actions.getRows).mockResolvedValueOnce({
+      ok: false,
+      code: 'unauthorized',
+      message: 'Your session has expired. Sign in again to keep editing.',
+    });
+    const err = await adapter.getRows('t1').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CmsActionError);
+    expect((err as CmsActionError).code).toBe('unauthorized');
   });
 
   it('rethrows a failed result on the client as a CmsActionError with its code and message', async () => {

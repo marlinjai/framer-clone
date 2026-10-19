@@ -6,7 +6,9 @@
 // by `position` DESC (reverse order of application), and replays each recorded
 // inverse against the CMS adapter directly. Same trust boundary as the agent
 // route: the REAL auth-brain path (getVerifiedSession -> resolveActiveScope ->
-// authenticateRequest) once, then getCmsAdapter() for dispatch.
+// authenticateRequest) once, then the run must belong to the active workspace
+// (else 404) and every inverse is replayed through the workspace-scoped adapter
+// (../scopedAdapter.ts).
 //
 // Undo is NOT a single transaction. Each inverse is applied independently; if
 // one fails (e.g. a column was manually changed after the run), undo STOPS and
@@ -18,6 +20,7 @@
 //   400 -> bad JSON / missing runId
 //   401 -> no session
 //   403 -> no active company / Sites not enabled / not permitted to edit this workspace
+//   404 -> no such run in the active workspace
 
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { readCompanySelectors } from '@/lib/activeCompanyCookie';
@@ -27,6 +30,7 @@ import { activeScopeDenial, resolveActiveScope } from '@/server/sites';
 import { getCmsAdapter } from '@/server/cms/adapterClient';
 import { getPrismaClient } from '@/server/db';
 import { applyInverse, type CmsAdapter } from '../executor';
+import { workspaceScopedCmsAdapter } from '../scopedAdapter';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -80,12 +84,31 @@ async function handlePOST(request: Request): Promise<Response> {
   }
 
   const prisma = getPrismaClient();
+  // The run must belong to the active workspace: a run id of another workspace
+  // answers the same 404 as an unknown one, so a workspace-A editor can neither
+  // replay workspace-B inverses nor learn that the run exists.
+  const run = await prisma.agentRun.findUnique({
+    where: { id: parsed.data.runId },
+    select: { workspaceId: true },
+  });
+  if (!run || run.workspaceId !== scopeResult.scope.workspaceId) {
+    return Response.json(
+      { error: { message: 'run not found', code: 'not_found' } },
+      { status: 404 },
+    );
+  }
+
   const changes = await prisma.agentChange.findMany({
     where: { runId: parsed.data.runId },
     orderBy: { position: 'desc' },
   });
 
-  const adapter = getCmsAdapter() as unknown as CmsAdapter;
+  // Every inverse is replayed through the workspace-scoped adapter too, so even
+  // a recorded payload can only touch entities of the active workspace.
+  const adapter = workspaceScopedCmsAdapter(
+    getCmsAdapter() as unknown as CmsAdapter,
+    scopeResult.scope.workspaceId,
+  );
 
   let undone = 0;
   const warnings: string[] = [];

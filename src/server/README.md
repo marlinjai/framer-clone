@@ -78,7 +78,9 @@ shape mutation routes call before touching the database:
 //     return jsonError('forbidden', 'admin only', 403);
 //   }
 //
-// Read routes (GET) are unauthenticated for v1.
+// Read routes (GET) are NOT unauthenticated any more: the CMS reads resolve
+// their workspace per plane (editor host: session + active workspace + viewSite;
+// published-site host: the Host's site; else 404), see src/server/cms/readScope.ts.
 ```
 
 Do not implement `can()` here. Routes added before the guard exists simply

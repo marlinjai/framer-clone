@@ -5,11 +5,18 @@
 // Headless tests for POST /api/ai/cms-agent/undo. Replays recorded inverses in
 // reverse `position` order against a mocked adapter; the real auth-brain path
 // runs (verifySession + can mocked, resolveActiveScope real). Prisma + adapter
-// are mocked.
+// are mocked; the workspace guard behind the scoped adapter stays REAL, so a run
+// of another workspace and an inverse touching another workspace's row are both
+// proven refused.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const adapter = vi.hoisted(() => ({
+  getTable: vi.fn(),
+  getRow: vi.fn(),
+  getColumn: vi.fn(),
+  getColumns: vi.fn(async () => []),
+  getSelectOptions: vi.fn(async () => []),
   deleteRow: vi.fn(),
   bulkDeleteRows: vi.fn(),
   updateRow: vi.fn(),
@@ -21,7 +28,10 @@ const adapter = vi.hoisted(() => ({
 vi.mock('@/server/cms/adapterClient', () => ({ getCmsAdapter: () => adapter }));
 
 const prisma = vi.hoisted(() => ({
+  agentRun: { findUnique: vi.fn() },
   agentChange: { findMany: vi.fn() },
+  selectOption: { findUnique: vi.fn() },
+  dtFile: { findUnique: vi.fn() },
 }));
 
 vi.mock('@/server/db', () => ({ getPrismaClient: () => prisma }));
@@ -66,6 +76,17 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockVerifySession.mockResolvedValue(sessionA());
   mockCan.mockResolvedValue(true);
+  // run1 is a run of the session workspace; run_b belongs to workspace B.
+  prisma.agentRun.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+    where.id === 'run1' ? { workspaceId: 'ws_a' } : where.id === 'run_b' ? { workspaceId: 'ws_b' } : null,
+  );
+  // Rows r* live in the session workspace's table t_a; row_b in workspace B.
+  adapter.getTable.mockImplementation(async (id: string) =>
+    id === 't_a' ? { id, workspaceId: 'ws_a' } : id === 't_b' ? { id, workspaceId: 'ws_b' } : null,
+  );
+  adapter.getRow.mockImplementation(async (id: string) =>
+    id === 'row_b' ? { id, tableId: 't_b', cells: {} } : { id, tableId: 't_a', cells: {} },
+  );
 });
 
 describe('POST /api/ai/cms-agent/undo', () => {
@@ -130,5 +151,35 @@ describe('POST /api/ai/cms-agent/undo', () => {
     expect(json.skipped).toBe(2);
     expect(json.warnings).toHaveLength(1);
     expect(json.warnings[0]).toContain('row is referenced');
+  });
+});
+
+describe('POST /api/ai/cms-agent/undo: workspace isolation', () => {
+  it('answers 404 for a run of another workspace and replays nothing', async () => {
+    prisma.agentChange.findMany.mockResolvedValue([
+      { tool: 'create_row', inverseTool: 'deleteRow', inversePayload: { rowId: 'r1' } },
+    ]);
+    const res = await POST(makeRequest({ runId: 'run_b' }, { cookie: authCookie }));
+    expect(res.status).toBe(404);
+    expect((await res.json()).error.code).toBe('not_found');
+    expect(prisma.agentChange.findMany).not.toHaveBeenCalled();
+    expect(adapter.deleteRow).not.toHaveBeenCalled();
+  });
+
+  it('answers the same 404 for an unknown run', async () => {
+    const res = await POST(makeRequest({ runId: 'nope' }, { cookie: authCookie }));
+    expect(res.status).toBe(404);
+    expect(prisma.agentChange.findMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses an inverse that targets another workspace\'s row and reports it', async () => {
+    prisma.agentChange.findMany.mockResolvedValue([
+      { tool: 'create_row', inverseTool: 'deleteRow', inversePayload: { rowId: 'row_b' } },
+    ]);
+    const res = await POST(makeRequest({ runId: 'run1' }, { cookie: authCookie }));
+    const json = (await res.json()) as { undone: number; skipped: number; warnings: string[] };
+    expect(adapter.deleteRow).not.toHaveBeenCalled();
+    expect(json.undone).toBe(0);
+    expect(json.warnings[0]).toContain('not in the active workspace');
   });
 });
