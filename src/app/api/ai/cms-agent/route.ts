@@ -23,6 +23,12 @@
 //   400 -> bad JSON / failed validation / CSV over the size cap
 //   401 -> no session / missing ANTHROPIC_API_KEY
 //   403 -> no active company / Sites not enabled / not permitted to edit this workspace
+//   404 -> the collection is not in the active workspace (or does not exist)
+//
+// Workspace isolation past the boundary: every adapter call of the run, the
+// model's tool calls included, goes through workspaceScopedCmsAdapter
+// (./scopedAdapter.ts), so an id from another workspace reads as missing and
+// a write to one is refused.
 
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { readCompanySelectors } from '@/lib/activeCompanyCookie';
@@ -48,6 +54,7 @@ import {
   type RecordedChange,
 } from './executor';
 import { agentToolDefs } from './tools';
+import { workspaceScopedCmsAdapter } from './scopedAdapter';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -175,6 +182,23 @@ async function handlePOST(request: Request): Promise<Response> {
     );
   }
 
+  // ---- 2b. The collection must live in the active workspace ---------------
+  // Every adapter call of this run goes through the workspace-scoped adapter
+  // (./scopedAdapter.ts), so neither the client-sent collectionId nor an id the
+  // model is talked into can reach another workspace. A collection outside the
+  // active workspace answers the same 404 as a missing one (no existence leak),
+  // before any run is recorded.
+  const adapter = workspaceScopedCmsAdapter(
+    getCmsAdapter() as unknown as CmsAdapter,
+    scope.workspaceId,
+  );
+  if (!(await adapter.getTable(body.collectionId))) {
+    return Response.json(
+      { error: { message: 'collection not found', code: 'not_found' } },
+      { status: 404 },
+    );
+  }
+
   // ---- 3. Resolve the Anthropic client (fast-fail on missing key) --------
   let anthropic: Anthropic;
   try {
@@ -206,7 +230,6 @@ async function handlePOST(request: Request): Promise<Response> {
 
   // ---- 5. Open the SSE stream and kick off the detached loop -------------
   const sse = createSseStream();
-  const adapter = getCmsAdapter() as unknown as CmsAdapter;
 
   void runAgentLoop({ adapter, anthropic, prisma, body, workspaceId, modelId, runId, sse });
 

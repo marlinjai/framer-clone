@@ -51,6 +51,7 @@ vi.mock('@/lib/ai/anthropicClient', () => ({
 const adapter = vi.hoisted(() => ({
   listTables: vi.fn(),
   getTable: vi.fn(),
+  getColumn: vi.fn(),
   getColumns: vi.fn(),
   getSelectOptions: vi.fn(),
   getRow: vi.fn(),
@@ -140,7 +141,14 @@ beforeEach(() => {
   mockCan.mockResolvedValue(true);
   anthropicState.turns = [{ content: [], stop_reason: 'end_turn' }];
   anthropicState.innerJson = '[]';
-  adapter.getTable.mockResolvedValue({ id: 't1', name: 'Events' });
+  // t1 is the session workspace's collection, t_b belongs to workspace B.
+  adapter.getTable.mockImplementation(async (id: string) =>
+    id === 't1'
+      ? { id: 't1', workspaceId: 'ws_a', name: 'Events' }
+      : id === 't_b'
+        ? { id: 't_b', workspaceId: 'ws_b', name: 'Secret B' }
+        : null,
+  );
   adapter.getColumns.mockResolvedValue([]);
   adapter.getRows.mockResolvedValue({ items: [], total: 0, hasMore: false });
   prisma.agentRun.create.mockResolvedValue({ id: 'run1' });
@@ -288,5 +296,81 @@ describe('POST /api/ai/cms-agent streaming', () => {
       { tableId: 't1', cells: { cName: 'Ada', cCity: 'London' } },
       { tableId: 't1', cells: { cName: 'Grace', cCity: 'NYC' } },
     ]);
+  });
+});
+
+describe('POST /api/ai/cms-agent: workspace isolation', () => {
+  it('answers 404 for a collection of another workspace and records no run', async () => {
+    const res = await POST(makeRequest(baseBody({ collectionId: 't_b' }), { cookie: authCookie }));
+    expect(res.status).toBe(404);
+    expect((await res.json()).error.code).toBe('not_found');
+    expect(prisma.agentRun.create).not.toHaveBeenCalled();
+    expect(adapter.getColumns).not.toHaveBeenCalled();
+    expect(adapter.getRows).not.toHaveBeenCalled();
+  });
+
+  it('answers the same 404 for an unknown collection', async () => {
+    const res = await POST(makeRequest(baseBody({ collectionId: 'nope' }), { cookie: authCookie }));
+    expect(res.status).toBe(404);
+    expect(prisma.agentRun.create).not.toHaveBeenCalled();
+  });
+
+  it('list_collections lists the SESSION workspace, whatever workspace id the model sends', async () => {
+    adapter.listTables.mockResolvedValue([{ id: 't1', workspaceId: 'ws_a', name: 'Events' }]);
+    anthropicState.turns = [
+      {
+        content: [{ type: 'tool_use', id: 'tu1', name: 'list_collections', input: { workspaceId: 'ws_b' } }],
+        stop_reason: 'tool_use',
+      },
+      { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+    ];
+    const res = await POST(makeRequest(baseBody(), { cookie: authCookie }));
+    await readStream(res);
+    expect(adapter.listTables).toHaveBeenCalledWith('ws_a');
+    expect(adapter.listTables).not.toHaveBeenCalledWith('ws_b');
+  });
+
+  it('list_rows on another workspace\'s collection reads nothing from it', async () => {
+    anthropicState.turns = [
+      {
+        content: [{ type: 'tool_use', id: 'tu1', name: 'list_rows', input: { tableId: 't_b' } }],
+        stop_reason: 'tool_use',
+      },
+      { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+    ];
+    const res = await POST(makeRequest(baseBody(), { cookie: authCookie }));
+    const body = await readStream(res);
+    expect(adapter.getRows).not.toHaveBeenCalledWith('t_b', expect.anything());
+    expect(body).toContain('Read 0 rows (total 0)');
+  });
+
+  it('refuses a write to another workspace\'s row and never reaches the adapter write', async () => {
+    adapter.getRow.mockImplementation(async (id: string) =>
+      id === 'row_b' ? { id: 'row_b', tableId: 't_b', cells: { c1: 'secret' } } : null,
+    );
+    anthropicState.turns = [
+      {
+        content: [{ type: 'tool_use', id: 'tu1', name: 'archive_row', input: { rowId: 'row_b' } }],
+        stop_reason: 'tool_use',
+      },
+      { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+    ];
+    const res = await POST(makeRequest(baseBody(), { cookie: authCookie }));
+    await readStream(res);
+    expect(adapter.archiveRow).not.toHaveBeenCalled();
+    expect(prisma.agentChange.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses creating rows in another workspace\'s collection', async () => {
+    anthropicState.turns = [
+      {
+        content: [{ type: 'tool_use', id: 'tu1', name: 'create_row', input: { tableId: 't_b', cells: { c1: 'x' } } }],
+        stop_reason: 'tool_use',
+      },
+      { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+    ];
+    const res = await POST(makeRequest(baseBody(), { cookie: authCookie }));
+    await readStream(res);
+    expect(adapter.createRow).not.toHaveBeenCalled();
   });
 });
