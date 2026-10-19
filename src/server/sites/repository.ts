@@ -116,6 +116,23 @@ export class SiteRepository {
   }
 
   /**
+   * Which of `workspaceIds` (the caller's OWN workspaces, from the verified
+   * session) holds `siteId`, or null. The query is restricted to those
+   * workspaces, so a site in a workspace the caller is not a member of is
+   * indistinguishable from a missing one: existence never leaks. Used to offer
+   * "switch workspace" for a project link that belongs to another of the
+   * caller's workspaces instead of a bare 404.
+   */
+  async findSiteWorkspaceAmong(siteId: string, workspaceIds: string[]): Promise<string | null> {
+    if (workspaceIds.length === 0) return null;
+    const row = await this.prisma.site.findFirst({
+      where: { id: siteId, workspaceId: { in: workspaceIds } },
+      select: { workspaceId: true },
+    });
+    return row?.workspaceId ?? null;
+  }
+
+  /**
    * Load a site + all its pages, scoped to the caller's workspace, and rebuild
    * a live ProjectModel (the editor working copy). Throws SiteNotFoundError
    * when the site is absent OR belongs to another workspace — the two are

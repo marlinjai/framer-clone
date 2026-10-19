@@ -6,11 +6,13 @@
 //
 // The GET stays UNAUTHENTICATED. PATCH/DELETE are mutations, guarded by the real
 // auth-brain path (getVerifiedSession -> resolveActiveScope ->
-// authenticateRequest) and scoped to the SESSION's active workspace, surfacing
+// authenticateRequest) and scoped to the request's active workspace, surfacing
 // the typed write-error contract (404 not_found, 409 collection_exists on a
 // rename collision). A repository throw SURFACES as an envelope, never a
 // swallowed empty 200.
 
+import { withAuthAvailability } from '@/lib/authBrainAvailability';
+import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
 import { z } from 'zod';
 import { getCmsRepository, getCmsWriteRepository, cmsWriteErrorResponse } from '@/server/cms';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
@@ -39,7 +41,7 @@ async function guardWrite(
   if (!session) {
     return { ok: false, response: jsonError('unauthorized', 'authentication required', 401) };
   }
-  const scopeResult = resolveActiveScope(session);
+  const scopeResult = resolveActiveScope(session, readActiveWorkspaceCookie(req));
   if (!scopeResult.ok) {
     return { ok: false, response: jsonError('no_active_workspace', 'no active workspace', 403) };
   }
@@ -78,7 +80,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
+async function handlePATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
@@ -111,7 +113,7 @@ export async function PATCH(
   }
 }
 
-export async function DELETE(
+async function handleDELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
@@ -135,3 +137,8 @@ export async function DELETE(
     );
   }
 }
+
+// An auth-brain outage during session verify answers JSON 503 `auth_unavailable`
+// (src/lib/authBrainAvailability.ts), never a 500 and never "signed out".
+export const PATCH = withAuthAvailability(handlePATCH);
+export const DELETE = withAuthAvailability(handleDELETE);

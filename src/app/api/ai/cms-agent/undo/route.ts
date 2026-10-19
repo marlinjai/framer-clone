@@ -19,6 +19,8 @@
 //   401 -> no session
 //   403 -> no active workspace / not permitted to edit this workspace
 
+import { withAuthAvailability } from '@/lib/authBrainAvailability';
+import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
 import { z } from 'zod';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
 import { resolveActiveScope } from '@/server/sites';
@@ -31,7 +33,7 @@ export const runtime = 'nodejs';
 
 const BodySchema = z.object({ runId: z.string().min(1, 'runId is required') });
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePOST(request: Request): Promise<Response> {
   let raw: unknown;
   try {
     raw = await request.json();
@@ -56,7 +58,7 @@ export async function POST(request: Request): Promise<Response> {
       { status: 401 },
     );
   }
-  const scopeResult = resolveActiveScope(session);
+  const scopeResult = resolveActiveScope(session, readActiveWorkspaceCookie(request));
   if (!scopeResult.ok) {
     return Response.json(
       { error: { message: 'no active workspace', code: 'no_active_workspace' } },
@@ -106,3 +108,7 @@ export async function POST(request: Request): Promise<Response> {
   const skipped = changes.length - undone;
   return Response.json({ undone, skipped, warnings });
 }
+
+// An auth-brain outage during session verify answers JSON 503 `auth_unavailable`
+// (src/lib/authBrainAvailability.ts), never a 500 and never "signed out".
+export const POST = withAuthAvailability(handlePOST);

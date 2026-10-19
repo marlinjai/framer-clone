@@ -23,6 +23,8 @@
 // Runs on the Node runtime because the repository reaches Postgres through
 // adapter-prisma.
 
+import { withAuthAvailability } from '@/lib/authBrainAvailability';
+import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
 import { z } from 'zod';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
 import {
@@ -44,7 +46,7 @@ export const dynamic = 'force-dynamic';
 // touches the working copy.
 const unpublishBodySchema = z.object({ siteId: z.string().min(1) });
 
-export async function POST(req: Request): Promise<Response> {
+async function handlePOST(req: Request): Promise<Response> {
   // 1. The verified session. No valid session -> 401. This is also the ONLY
   //    source of the tenant scope below.
   const session = await getVerifiedSession(req);
@@ -52,9 +54,11 @@ export async function POST(req: Request): Promise<Response> {
     return jsonError('unauthorized', 'authentication required', 401);
   }
 
-  // 2. Resolve the tenant scope from the session's active workspace. A session
-  //    with no resolvable active workspace cannot unpublish anywhere -> 403.
-  const scopeResult = resolveActiveScope(session);
+  // 2. Resolve the tenant scope from the request's active workspace (the
+  //    membership-checked `framer_ws` selector, else the session's own active
+  //    workspace, else its only workspace). A request with no resolvable
+  //    workspace cannot unpublish anywhere -> 403 `no_active_workspace`.
+  const scopeResult = resolveActiveScope(session, readActiveWorkspaceCookie(req));
   if (!scopeResult.ok) {
     return jsonError(
       'no_active_workspace',
@@ -107,3 +111,7 @@ export async function POST(req: Request): Promise<Response> {
     status: 'draft',
   });
 }
+
+// An auth-brain outage during session verify answers JSON 503 `auth_unavailable`
+// (src/lib/authBrainAvailability.ts), never a 500 and never "signed out".
+export const POST = withAuthAvailability(handlePOST);

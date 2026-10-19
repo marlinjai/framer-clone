@@ -15,7 +15,7 @@
 // and the resolved workspace scope + already-authorized adapter are passed into
 // that loop. No cookie is read after the Response is returned, because
 // next/headers is not reliably in scope in that continuation. The run is recorded
-// under the SESSION's active workspace, never a constant.
+// under the request's active workspace, never a constant.
 //
 // Status codes:
 //   200 -> SSE stream (errors after the loop starts are encoded as
@@ -24,6 +24,8 @@
 //   401 -> no session / missing ANTHROPIC_API_KEY
 //   403 -> no active workspace / not permitted to edit this workspace
 
+import { withAuthAvailability } from '@/lib/authBrainAvailability';
+import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
 import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { Prisma } from '@prisma/client';
@@ -113,7 +115,7 @@ function dynamicContext(
   ].join('\n');
 }
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePOST(request: Request): Promise<Response> {
   // ---- 1. Parse + validate body ------------------------------------
   let raw: unknown;
   try {
@@ -151,7 +153,7 @@ export async function POST(request: Request): Promise<Response> {
       { status: 401 },
     );
   }
-  const scopeResult = resolveActiveScope(session);
+  const scopeResult = resolveActiveScope(session, readActiveWorkspaceCookie(request));
   if (!scopeResult.ok) {
     return Response.json(
       { error: { message: 'no active workspace', code: 'no_active_workspace' } },
@@ -187,7 +189,7 @@ export async function POST(request: Request): Promise<Response> {
   const prisma = getPrismaClient();
   const runId = body.runId ?? crypto.randomUUID();
   const modelId = resolveModelId(body.model);
-  // The run is recorded under the SESSION's active workspace (scope.workspaceId),
+  // The run is recorded under the request's active workspace (scope.workspaceId),
   // never the client-sent body.workspaceId.
   const workspaceId = scope.workspaceId;
   await prisma.agentRun.create({
@@ -345,3 +347,7 @@ async function runAgentLoop(args: LoopArgs): Promise<void> {
     sse.close();
   }
 }
+
+// An auth-brain outage during session verify answers JSON 503 `auth_unavailable`
+// (src/lib/authBrainAvailability.ts), never a 500 and never "signed out".
+export const POST = withAuthAvailability(handlePOST);

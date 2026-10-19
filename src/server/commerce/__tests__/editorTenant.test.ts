@@ -23,6 +23,7 @@ vi.mock('../db', () => ({
 }));
 
 import { getVerifiedSession } from '@/lib/auth-api';
+import { AuthUnavailableError } from '@/lib/authBrainAvailability';
 import { checkWorkspaceAccess } from '@/lib/auth-check';
 import { commerceTenantDbChecked } from '../db';
 import { resolveEditorCommerce } from '../editorTenant';
@@ -75,8 +76,17 @@ describe('resolveEditorCommerce', () => {
       status: 401,
       code: 'unauthorized',
     });
-    sessionMock.mockRejectedValueOnce(new Error('auth-brain down'));
+    sessionMock.mockRejectedValueOnce(new Error('unexpected'));
     expect((await statusOf(await resolveEditorCommerce(req, 'p1', prismaWith(null)))).status).toBe(401);
+    expect(tenantDbMock).not.toHaveBeenCalled();
+  });
+
+  it('503s auth_unavailable when auth-brain cannot answer (never "signed out")', async () => {
+    sessionMock.mockRejectedValueOnce(new AuthUnavailableError(new Error('auth-brain down')));
+    expect(await statusOf(await resolveEditorCommerce(req, 'p1', prismaWith(null)))).toEqual({
+      status: 503,
+      code: 'auth_unavailable',
+    });
     expect(tenantDbMock).not.toHaveBeenCalled();
   });
 

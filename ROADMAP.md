@@ -37,7 +37,11 @@ connections to the suite. The four lines below are in that order.
   drop the EMPTY legacy `commerce` schema on the production database (19 tables, 0 rows, created
   only by the historical Prisma migrations; needs Marlin's one-line yes as a production drop);
   (2) publish a new project from the editor and open its <random>.sites.lumitra.co address (the
-  runbook's last check, after the site-lookup cache fix is deployed). (2026-10-19)
+  runbook's last check, after the site-lookup cache fix is deployed); (3) merge and deploy the
+  fix for the /projects redirect loop (branch `fix/editor-workspace-picker`: a signed-in user
+  whose auth-brain session has no active workspace now gets a workspace chooser backed by the
+  app-local `framer_ws` cookie instead of a bounce to the login), then confirm in the automation
+  browser that choosing a workspace sticks across a reload. (2026-10-19)
 - [ ] 3. The Books: the Customer + SalesDocument + DocumentTemplate document tier for Marlin's own
   accounting (invoices and credit notes now, offers later; joins with receipt-ocr-app's expense
   side), in each company's own schema. Phase 1 is built (2026-10-17): migration `007_books` with

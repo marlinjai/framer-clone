@@ -6,23 +6,31 @@ import 'server-only';
 // from the page so the isolation + auth-bounce + 404 contract is unit-testable
 // without rendering a server component.
 //
-// HARD ISOLATION: the workspace the project is loaded under is derived ENTIRELY
-// from the SERVER-verified auth-brain session (the session's active workspace ->
-// its tenant -> tenant_group), never from a client-supplied workspace or the
-// loaded MST tree. `loadProject` filters by `workspace_id`, so a `projectId`
+// HARD ISOLATION: the workspace the project is loaded under is derived from the
+// SERVER-verified auth-brain session (the request's active workspace -> its
+// tenant -> tenant_group), never from a client-supplied scope or the loaded MST
+// tree. The app-local `framer_ws` selector only chooses among the workspaces
+// the verified session contains (resolveActiveScope). `loadProject` filters by `workspace_id`, so a `projectId`
 // that lives in ANOTHER workspace is indistinguishable from a missing one: it
 // throws `SiteNotFoundError`, which this loader maps to a `not_found` result the
 // page turns into `notFound()`. A foreign tenant's project is NEVER rendered.
 //
-// FAIL-CLOSED: a missing cookie, a failed/expired verify, or a session with no
-// resolvable active workspace all resolve to the same `unauthenticated` result
-// carrying the auth-brain login URL — the page then redirects, never throws a
-// 500. The extra try/catch around verify is belt-and-suspenders so a thrown
-// verify can never surface as a 500 editor.
+// FAIL-CLOSED: a missing cookie or an invalid/expired session (verify -> null)
+// resolves to `unauthenticated` carrying the auth-brain login URL. auth-brain
+// failing to answer (network error, 5xx) resolves to `auth_unavailable`: the
+// page shows a retry notice, never the login. A VALID session with no
+// resolvable workspace resolves to `choose_workspace` carrying the dashboard's
+// chooser URL (with this path as `next`), NEVER the login: auth-brain would see
+// the valid session and send the user straight back, the endless redirect loop
+// of 2026-10-19.
 
 import { cookies, headers } from 'next/headers';
 import { getSnapshot } from 'mobx-state-tree';
-import { authBrainClient } from '@/lib/auth-brain';
+import {
+  AuthUnavailableError,
+  verifySessionOrThrowUnavailable,
+} from '@/lib/authBrainAvailability';
+import { ACTIVE_WORKSPACE_COOKIE } from '@/lib/activeWorkspaceCookie';
 import {
   getSiteRepository,
   resolveActiveScope,
@@ -38,6 +46,8 @@ const SESSION_COOKIE = 'lumitra_session';
 
 export type ProjectLoadResult =
   | { status: 'unauthenticated'; loginUrl: string }
+  | { status: 'auth_unavailable' }
+  | { status: 'choose_workspace'; chooserUrl: string }
   | { status: 'not_found' }
   | { status: 'ok'; snapshot: ProjectSnapshotOut };
 
@@ -62,6 +72,21 @@ async function buildLoginUrl(
 }
 
 /**
+ * The dashboard chooser URL that continues to this project (or its preview)
+ * once a workspace is chosen. `switchMode` forces the chooser even though a
+ * workspace is active (the project lives in another of the caller's
+ * workspaces); without it the dashboard would forward straight back here.
+ */
+function chooserUrlFor(
+  projectId: string,
+  returnPathSuffix: string,
+  { switchMode }: { switchMode: boolean },
+): string {
+  const next = `/projects/${encodeURIComponent(projectId)}${returnPathSuffix}`;
+  return `/projects?${switchMode ? 'switch=1&' : ''}next=${encodeURIComponent(next)}`;
+}
+
+/**
  * Resolve the editor's data for `/projects/<projectId>`: the workspace-scoped
  * project serialized to a snapshot the client editor hydrates, OR a fail-closed
  * `unauthenticated`/`not_found` result. The page is the only thing that
@@ -81,21 +106,33 @@ export async function loadProjectSnapshot(
   let session = null;
   if (cookie) {
     try {
-      session = await authBrainClient.verifySession(cookie);
-    } catch {
-      // Fail-closed: a thrown verify is treated as no session, never a 500.
-      session = null;
+      session = await verifySessionOrThrowUnavailable(cookie);
+    } catch (err) {
+      // auth-brain could not answer. NOT "signed out": sending the user to the
+      // login would loop (auth-brain, once back, sees the valid session). The
+      // page renders a retry notice instead.
+      if (err instanceof AuthUnavailableError) {
+        console.error('[auth] auth-brain unavailable during session verify', err.cause);
+        return { status: 'auth_unavailable' };
+      }
+      throw err;
     }
   }
   if (!session) {
     return { status: 'unauthenticated', loginUrl: await buildLoginUrl(projectId, returnPathSuffix) };
   }
 
-  // Scope is derived from the SERVER session only. No active workspace ->
-  // treat as unauthenticated (bounce to login), never guess a workspace.
-  const scopeResult = resolveActiveScope(session);
+  // Scope is derived from the SERVER session only. No resolvable workspace ->
+  // send the user to pick one (never the login, never a guessed workspace).
+  const scopeResult = resolveActiveScope(
+    session,
+    jar.get(ACTIVE_WORKSPACE_COOKIE)?.value ?? null,
+  );
   if (!scopeResult.ok) {
-    return { status: 'unauthenticated', loginUrl: await buildLoginUrl(projectId, returnPathSuffix) };
+    return {
+      status: 'choose_workspace',
+      chooserUrl: chooserUrlFor(projectId, returnPathSuffix, { switchMode: false }),
+    };
   }
 
   try {
@@ -109,7 +146,27 @@ export async function loadProjectSnapshot(
     const snapshot = getSnapshot(project) as ProjectSnapshotOut;
     return { status: 'ok', snapshot };
   } catch (err) {
-    if (err instanceof SiteNotFoundError) return { status: 'not_found' };
+    if (err instanceof SiteNotFoundError) {
+      // The link may point at a project in ANOTHER of the caller's own
+      // workspaces (shared link, or the workspace was switched in another
+      // tab). Look only among the session's other workspaces; when it is
+      // there, offer the chooser (forced, with this path as `next`) instead
+      // of a 404. A site outside the session stays a plain 404: the lookup
+      // is restricted to the caller's workspaces, so nothing leaks.
+      const others = session.workspaces
+        .map((w) => w.id)
+        .filter((id) => id !== scopeResult.scope.workspaceId);
+      if (others.length > 0) {
+        const home = await getSiteRepository().findSiteWorkspaceAmong(projectId, others);
+        if (home) {
+          return {
+            status: 'choose_workspace',
+            chooserUrl: chooserUrlFor(projectId, returnPathSuffix, { switchMode: true }),
+          };
+        }
+      }
+      return { status: 'not_found' };
+    }
     // Any other failure is a genuine 500 — do not swallow it into a 404.
     throw err;
   }

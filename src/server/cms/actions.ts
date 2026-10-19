@@ -72,7 +72,7 @@ function distinctTableIds(inputs: CreateRowInput[]): string[] {
 
 export async function createTable(input: CreateTableInput): Promise<Table> {
   const scope = await requireWorkspaceScope('editSite');
-  // The new collection lands in the SESSION's active workspace, never a client-
+  // The new collection lands in the request's active workspace, never a client-
   // supplied or constant workspace id. Nothing exists yet to own-check.
   return getCmsAdapter().createTable({ ...input, workspaceId: scope.workspaceId });
 }

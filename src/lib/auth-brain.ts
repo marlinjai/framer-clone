@@ -19,9 +19,10 @@ export const authBrainClient = createAuthBrainClient({
   baseUrl: authBrainUrl,
   cookieName: 'lumitra_session',
   // 30s cache on session verify: the hot path for authenticated requests
-  // (middleware + every guarded route). The SDK maps timeouts and 5xx to null
-  // on verifySession (fail-closed) and throws on can() errors (also treated as
-  // a deny by every caller in this codebase).
+  // (every guarded route). verifySession returns null only for a 401 and
+  // THROWS on timeouts and non-OK statuses; callers go through
+  // src/lib/authBrainAvailability.ts so an outage is never mistaken for a
+  // signed-out user. can() errors are treated as a deny by every caller.
   cacheTtlMs: 30_000,
   openfgaUrl: process.env.OPENFGA_API_URL,
   openfgaStoreId: process.env.OPENFGA_STORE_ID,
