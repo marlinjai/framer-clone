@@ -22,8 +22,16 @@ export const authBrainClient = createAuthBrainClient({
   // (every guarded route). verifySession returns null only for a 401 and
   // THROWS on timeouts and non-OK statuses; callers go through
   // src/lib/authBrainAvailability.ts so an outage is never mistaken for a
-  // signed-out user. can() errors are treated as a deny by every caller.
+  // signed-out user. can() returns false only for a real deny; it THROWS when
+  // OpenFGA cannot answer, and src/lib/permissions.ts turns that throw into
+  // AuthzUnavailableError (a 503 `authz_unavailable`, never a 403).
   cacheTtlMs: 30_000,
   openfgaUrl: process.env.OPENFGA_API_URL,
   openfgaStoreId: process.env.OPENFGA_STORE_ID,
+  // The suite's OpenFGA runs with a pre-shared key: without this Bearer token
+  // every check answers 401. Unset for a local OpenFGA that runs without a key
+  // (src/instrumentation.ts warns at start when the URL is set but this is not).
+  openfgaToken: process.env.OPENFGA_API_TOKEN,
+  // Pins checks to one authorization model instead of the store's latest.
+  openfgaModelId: process.env.OPENFGA_AUTHORIZATION_MODEL_ID,
 });
