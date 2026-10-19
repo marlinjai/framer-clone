@@ -7,9 +7,10 @@ import 'server-only';
 // without rendering a server component.
 //
 // HARD ISOLATION: the workspace the project is loaded under is derived from the
-// SERVER-verified auth-brain session (the request's active workspace -> its
-// tenant -> tenant_group), never from a client-supplied scope or the loaded MST
-// tree. The app-local `framer_ws` selector only chooses among the workspaces
+// SERVER-verified auth-brain session (the request's active company, which must
+// hold the auth-brain app grant `sites` -> that company's workspace -> its
+// tenant_group), never from a client-supplied scope or the loaded MST tree. The
+// app-local `framer_company` selector only chooses among the granted companies
 // the verified session contains (resolveActiveScope). `loadProject` filters by `workspace_id`, so a `projectId`
 // that lives in ANOTHER workspace is indistinguishable from a missing one: it
 // throws `SiteNotFoundError`, which this loader maps to a `not_found` result the
@@ -19,10 +20,11 @@ import 'server-only';
 // resolves to `unauthenticated` carrying the auth-brain login URL. auth-brain
 // failing to answer (network error, 5xx) resolves to `auth_unavailable`: the
 // page shows a retry notice, never the login. A VALID session with no
-// resolvable workspace resolves to `choose_workspace` carrying the dashboard's
-// chooser URL (with this path as `next`), NEVER the login: auth-brain would see
-// the valid session and send the user straight back, the endless redirect loop
-// of 2026-10-19.
+// resolvable company (none picked, or none with Lumitra Sites) resolves to
+// `choose_company` carrying the dashboard URL (with this path as `next`), where
+// the chooser or the not-enabled page renders; NEVER the login: auth-brain
+// would see the valid session and send the user straight back, the endless
+// redirect loop of 2026-10-19.
 
 import { cookies, headers } from 'next/headers';
 import { getSnapshot } from 'mobx-state-tree';
@@ -30,9 +32,10 @@ import {
   AuthUnavailableError,
   verifySessionOrThrowUnavailable,
 } from '@/lib/authBrainAvailability';
-import { ACTIVE_WORKSPACE_COOKIE } from '@/lib/activeWorkspaceCookie';
+import { companySelectorsFromJar } from '@/lib/activeCompanyCookie';
 import {
   getSiteRepository,
+  listCompanyChoices,
   resolveActiveScope,
   SiteNotFoundError,
 } from '@/server/sites';
@@ -47,7 +50,7 @@ const SESSION_COOKIE = 'lumitra_session';
 export type ProjectLoadResult =
   | { status: 'unauthenticated'; loginUrl: string }
   | { status: 'auth_unavailable' }
-  | { status: 'choose_workspace'; chooserUrl: string }
+  | { status: 'choose_company'; chooserUrl: string }
   | { status: 'not_found' }
   | { status: 'ok'; snapshot: ProjectSnapshotOut };
 
@@ -73,9 +76,9 @@ async function buildLoginUrl(
 
 /**
  * The dashboard chooser URL that continues to this project (or its preview)
- * once a workspace is chosen. `switchMode` forces the chooser even though a
- * workspace is active (the project lives in another of the caller's
- * workspaces); without it the dashboard would forward straight back here.
+ * once a company is chosen. `switchMode` forces the chooser even though a
+ * company is active (the project lives in another of the caller's companies);
+ * without it the dashboard would forward straight back here.
  */
 function chooserUrlFor(
   projectId: string,
@@ -122,15 +125,13 @@ export async function loadProjectSnapshot(
     return { status: 'unauthenticated', loginUrl: await buildLoginUrl(projectId, returnPathSuffix) };
   }
 
-  // Scope is derived from the SERVER session only. No resolvable workspace ->
-  // send the user to pick one (never the login, never a guessed workspace).
-  const scopeResult = resolveActiveScope(
-    session,
-    jar.get(ACTIVE_WORKSPACE_COOKIE)?.value ?? null,
-  );
+  // Scope is derived from the SERVER session only. No resolvable company ->
+  // the dashboard (chooser or not-enabled page), never the login, never a
+  // guessed company.
+  const scopeResult = resolveActiveScope(session, companySelectorsFromJar(jar));
   if (!scopeResult.ok) {
     return {
-      status: 'choose_workspace',
+      status: 'choose_company',
       chooserUrl: chooserUrlFor(projectId, returnPathSuffix, { switchMode: false }),
     };
   }
@@ -147,20 +148,21 @@ export async function loadProjectSnapshot(
     return { status: 'ok', snapshot };
   } catch (err) {
     if (err instanceof SiteNotFoundError) {
-      // The link may point at a project in ANOTHER of the caller's own
-      // workspaces (shared link, or the workspace was switched in another
-      // tab). Look only among the session's other workspaces; when it is
-      // there, offer the chooser (forced, with this path as `next`) instead
-      // of a 404. A site outside the session stays a plain 404: the lookup
-      // is restricted to the caller's workspaces, so nothing leaks.
-      const others = session.workspaces
-        .map((w) => w.id)
-        .filter((id) => id !== scopeResult.scope.workspaceId);
+      // The link may point at a project of ANOTHER of the caller's companies
+      // with Lumitra Sites (shared link, or the company was switched in
+      // another tab). Look only among those companies' workspaces; when it is
+      // there, offer the chooser (forced, with this path as `next`) instead of
+      // a 404. A site of a company without the grant, or outside the session,
+      // stays a plain 404: there is no company to switch to, and the lookup is
+      // restricted to the caller's own companies, so nothing leaks.
+      const others = listCompanyChoices(session)
+        .filter((c) => c.id !== scopeResult.companyId)
+        .map((c) => c.workspaceId);
       if (others.length > 0) {
         const home = await getSiteRepository().findSiteWorkspaceAmong(projectId, others);
         if (home) {
           return {
-            status: 'choose_workspace',
+            status: 'choose_company',
             chooserUrl: chooserUrlFor(projectId, returnPathSuffix, { switchMode: true }),
           };
         }

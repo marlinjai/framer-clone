@@ -17,7 +17,7 @@
 import type { SessionVerifyResponse } from '@marlinjai/auth-brain-sdk';
 import { checkWorkspaceAccess } from './auth-check';
 import type { FramerAction } from './permissions';
-import { readRequestCookie as readCookie } from './activeWorkspaceCookie';
+import { readRequestCookie as readCookie } from './activeCompanyCookie';
 import { verifySessionOrThrowUnavailable } from './authBrainAvailability';
 
 type AuthSuccess = {

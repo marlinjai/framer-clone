@@ -4,7 +4,7 @@
 //
 // The "New project" affordance for the /projects dashboard (MT-09). A small
 // client island: it POSTs to /api/projects (MT-05), which mints an empty draft
-// in the caller's active workspace SERVER-SIDE and returns its id, then
+// in the caller's active company SERVER-SIDE and returns its id, then
 // navigates to that project's editor route.
 //
 // It is intentionally the ONLY client boundary on the dashboard — the page
@@ -31,14 +31,17 @@ export default function NewProjectButton() {
         body: JSON.stringify({}),
       });
       if (!res.ok) {
-        // Prefer the server's own explanation (e.g. `no_active_workspace` when
-        // the workspace was switched in another tab) over a bare status code.
+        // Prefer the server's own explanation (e.g. `no_active_company` when
+        // the company was switched in another tab) over a bare status code.
         let message = `Could not create a new project (${res.status}).`;
         try {
           const body: { error?: { code?: string; message?: string } } = await res.json();
           const code = body.error?.code;
-          if (code === 'no_active_workspace') {
-            message = 'No workspace is selected. Reload the page and choose a workspace.';
+          if (code === 'no_active_company') {
+            message = 'No company is selected. Reload the page and choose a company.';
+          } else if (code === 'sites_not_enabled') {
+            message =
+              'Could not create a new project: Lumitra Sites is not enabled for this company.';
           } else if (code === 'authz_unavailable') {
             // OpenFGA (the permission service) could not answer. Not a deny:
             // the user may well be allowed, so say it is temporary.

@@ -108,9 +108,14 @@ describe('CMS server actions — auth-brain workspace scope', () => {
     [new AuthError(401, 'authentication required'), 'unauthorized', /session has expired/],
     [new AuthError(403, 'forbidden'), 'forbidden', /do not have permission/],
     [
-      new AuthError(403, 'no active workspace', 'no_active_workspace'),
-      'no_active_workspace',
-      /No workspace is selected/,
+      new AuthError(403, 'no active company', 'no_active_company'),
+      'no_active_company',
+      /No company is selected/,
+    ],
+    [
+      new AuthError(403, 'Lumitra Sites is not enabled for this company', 'sites_not_enabled'),
+      'sites_not_enabled',
+      /Lumitra Sites is not enabled/,
     ],
     [
       new AuthError(503, 'sign-in service unavailable, retry'),

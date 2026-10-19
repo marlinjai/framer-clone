@@ -57,7 +57,7 @@ function sessionA() {
   return {
     user: { id: 'user-a' },
     session: {},
-    tenants: [{ id: 'tenant-a', group_id: 'tg_a' }],
+    tenants: [{ id: 'tenant-a', app_grants: ['sites'], group_id: 'tg_a' }],
     workspaces: [{ id: 'ws_a', tenant_id: 'tenant-a' }],
     active_tenant: { id: 'tenant-a' },
     active_workspace: { id: 'ws_a' },

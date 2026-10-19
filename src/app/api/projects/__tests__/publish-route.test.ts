@@ -64,7 +64,7 @@ function makeSession() {
   return {
     user: { id: 'user-1' },
     session: {},
-    tenants: [{ id: 'tenant-1', group_id: 'tg_lumitra' }],
+    tenants: [{ id: 'tenant-1', app_grants: ['sites'], group_id: 'tg_lumitra' }],
     workspaces: [{ id: 'ws_marlin', tenant_id: 'tenant-1' }],
     active_tenant: { id: 'tenant-1' },
     active_workspace: { id: 'ws_marlin' },

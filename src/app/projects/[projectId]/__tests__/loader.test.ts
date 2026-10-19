@@ -14,10 +14,13 @@
 //     tenant's project,
 //   - no session / invalid session fail-closed to the login bounce with a
 //     return_to of THIS project URL,
-//   - a VALID session with no resolvable workspace goes to the dashboard's
-//     chooser (with this path as `next`), NEVER the login (2026-10-19 loop),
-//   - the `framer_ws` selector scopes the load only when the session contains
-//     that workspace.
+//   - a VALID session with no resolvable company (none picked, or none holding
+//     the `sites` grant) goes to the dashboard (chooser or not-enabled page,
+//     with this path as `next`), NEVER the login (2026-10-19 loop),
+//   - the `framer_company` selector scopes the load only for a company of the
+//     session that holds the grant (its workspace),
+//   - a link to a project of another granted company offers the switch; one
+//     of a company without the grant stays a 404.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import ProjectModel from '@/models/ProjectModel';
@@ -56,19 +59,19 @@ vi.mock('next/headers', () => ({
 
 import { loadProjectSnapshot } from '../loader';
 
-// A session whose active workspace is ws_a (tenant_group tg_a).
+// A session whose only (granted) company is tenant-a, workspace ws_a, group tg_a.
 function sessionA() {
   return {
     user: { id: 'user-a' },
     session: {},
-    tenants: [{ id: 'tenant-a', group_id: 'tg_a' }],
+    tenants: [{ id: 'tenant-a', app_grants: ['sites'], group_id: 'tg_a' }],
     workspaces: [{ id: 'ws_a', tenant_id: 'tenant-a' }],
     active_tenant: { id: 'tenant-a' },
     active_workspace: { id: 'ws_a' },
   };
 }
 
-// A session that verifies but has no resolvable active workspace.
+// A session that verifies but has no company at all.
 function sessionNoWorkspace() {
   return {
     user: { id: 'user-a' },
@@ -205,7 +208,7 @@ describe('loadProjectSnapshot — fail-closed auth bounce', () => {
     expect((await loadProjectSnapshot('site-a1')).status).toBe('unauthenticated');
   });
 
-  it('sends a valid session with no resolvable workspace to the chooser, never the login', async () => {
+  it('sends a valid session with no company to the dashboard, never the login', async () => {
     mockCookieGet.mockReturnValue({ value: 'sess_a' });
     mockVerifySession.mockResolvedValue(sessionNoWorkspace());
 
@@ -213,7 +216,7 @@ describe('loadProjectSnapshot — fail-closed auth bounce', () => {
 
     expect(mockLoadProject).not.toHaveBeenCalled();
     expect(result).toEqual({
-      status: 'choose_workspace',
+      status: 'choose_company',
       chooserUrl: '/projects?next=%2Fprojects%2Fsite-a1',
     });
   });
@@ -232,20 +235,22 @@ describe('loadProjectSnapshot — fail-closed auth bounce', () => {
   });
 });
 
-// Two workspaces, active_workspace null: the production shape of 2026-10-19.
+// Two companies with Sites (a, b) and one without (c), no active company.
 function multiSession() {
   return {
     user: { id: 'user-m' },
     session: {},
     tenants: [
-      { id: 'tenant-a', group_id: 'tg_a' },
-      { id: 'tenant-b', group_id: 'tg_b' },
+      { id: 'tenant-a', app_grants: ['sites'], group_id: 'tg_a' },
+      { id: 'tenant-b', app_grants: ['sites'], group_id: 'tg_b' },
+      { id: 'tenant-c', app_grants: ['studio'], group_id: 'tg_c' },
     ],
     workspaces: [
       { id: 'ws_a', tenant_id: 'tenant-a' },
       { id: 'ws_b', tenant_id: 'tenant-b' },
+      { id: 'ws_c', tenant_id: 'tenant-c' },
     ],
-    active_tenant: { id: 'tenant-b' },
+    active_tenant: null,
     active_workspace: null,
   };
 }
@@ -256,20 +261,20 @@ function cookieJar(values: Record<string, string>) {
   );
 }
 
-describe('loadProjectSnapshot: app-local active workspace (framer_ws)', () => {
-  it('multi-workspace session without a selection goes to the chooser, never the login', async () => {
+describe('loadProjectSnapshot: app-local active company (framer_company)', () => {
+  it('several companies without a selection go to the chooser, never the login', async () => {
     cookieJar({ lumitra_session: 'sess' });
     mockVerifySession.mockResolvedValue(multiSession());
 
     const result = await loadProjectSnapshot('site-a1');
 
-    expect(result.status).toBe('choose_workspace');
+    expect(result.status).toBe('choose_company');
     expect(JSON.stringify(result)).not.toContain('/login');
     expect(mockLoadProject).not.toHaveBeenCalled();
   });
 
-  it('loads under the workspace the selector names when the session contains it', async () => {
-    cookieJar({ lumitra_session: 'sess', framer_ws: 'ws_b' });
+  it("loads under the selected company's workspace", async () => {
+    cookieJar({ lumitra_session: 'sess', framer_company: 'tenant-b' });
     mockVerifySession.mockResolvedValue(multiSession());
     mockLoadProject.mockResolvedValue(projectNode('site-b1'));
 
@@ -282,13 +287,13 @@ describe('loadProjectSnapshot: app-local active workspace (framer_ws)', () => {
     );
   });
 
-  it('ignores a forged selector (workspace outside the session)', async () => {
-    cookieJar({ lumitra_session: 'sess', framer_ws: 'ws_foreign' });
+  it('ignores a forged selector (company outside the session)', async () => {
+    cookieJar({ lumitra_session: 'sess', framer_company: 'tenant-foreign' });
     mockVerifySession.mockResolvedValue(multiSession());
 
     const result = await loadProjectSnapshot('site-a1');
 
-    expect(result.status).toBe('choose_workspace');
+    expect(result.status).toBe('choose_company');
     expect(mockLoadProject).not.toHaveBeenCalled();
   });
 
@@ -299,31 +304,32 @@ describe('loadProjectSnapshot: app-local active workspace (framer_ws)', () => {
     const result = await loadProjectSnapshot('site-a1', '/preview');
 
     expect(result).toEqual({
-      status: 'choose_workspace',
+      status: 'choose_company',
       chooserUrl: '/projects?next=%2Fprojects%2Fsite-a1%2Fpreview',
     });
   });
 });
 
-describe('loadProjectSnapshot: a project in another of the caller\'s workspaces', () => {
+describe('loadProjectSnapshot: a project in another of the caller\'s companies', () => {
   it('offers the forced chooser with this path as next (not a 404)', async () => {
-    cookieJar({ lumitra_session: 'sess', framer_ws: 'ws_a' });
+    cookieJar({ lumitra_session: 'sess', framer_company: 'tenant-a' });
     mockVerifySession.mockResolvedValue(multiSession());
     mockLoadProject.mockRejectedValue(new SiteNotFoundError('site-b1'));
     mockFindSiteWorkspaceAmong.mockResolvedValue('ws_b');
 
     const result = await loadProjectSnapshot('site-b1', '/preview');
 
-    // Only the caller's OTHER workspaces are searched.
+    // Only the workspaces of the caller's OTHER companies with Sites are
+    // searched: never ws_c, whose company lacks the grant.
     expect(mockFindSiteWorkspaceAmong).toHaveBeenCalledWith('site-b1', ['ws_b']);
     expect(result).toEqual({
-      status: 'choose_workspace',
+      status: 'choose_company',
       chooserUrl: '/projects?switch=1&next=%2Fprojects%2Fsite-b1%2Fpreview',
     });
   });
 
   it('keeps the 404 for a site outside the session (no leak)', async () => {
-    cookieJar({ lumitra_session: 'sess', framer_ws: 'ws_a' });
+    cookieJar({ lumitra_session: 'sess', framer_company: 'tenant-a' });
     mockVerifySession.mockResolvedValue(multiSession());
     mockLoadProject.mockRejectedValue(new SiteNotFoundError('site-x'));
     mockFindSiteWorkspaceAmong.mockResolvedValue(null);
@@ -331,12 +337,61 @@ describe('loadProjectSnapshot: a project in another of the caller\'s workspaces'
     expect(await loadProjectSnapshot('site-x')).toEqual({ status: 'not_found' });
   });
 
-  it('a single-workspace session does not look anywhere else', async () => {
+  it('a single-company session does not look anywhere else', async () => {
     mockCookieGet.mockReturnValue({ value: 'sess_a' });
     mockVerifySession.mockResolvedValue(sessionA());
     mockLoadProject.mockRejectedValue(new SiteNotFoundError('site-x'));
 
     expect(await loadProjectSnapshot('site-x')).toEqual({ status: 'not_found' });
     expect(mockFindSiteWorkspaceAmong).not.toHaveBeenCalled();
+  });
+});
+
+describe('loadProjectSnapshot: the sites grant', () => {
+  it('a session whose companies lack the grant goes to the dashboard (not-enabled page), never the login', async () => {
+    cookieJar({ lumitra_session: 'sess', framer_company: 'tenant-c' });
+    mockVerifySession.mockResolvedValue({
+      ...multiSession(),
+      tenants: multiSession().tenants.map((t) => ({ ...t, app_grants: [] })),
+      active_tenant: { id: 'tenant-c' },
+    });
+
+    const result = await loadProjectSnapshot('site-c1');
+
+    expect(result).toEqual({
+      status: 'choose_company',
+      chooserUrl: '/projects?next=%2Fprojects%2Fsite-c1',
+    });
+    expect(mockLoadProject).not.toHaveBeenCalled();
+  });
+
+  it('a selector naming a company without the grant is ignored', async () => {
+    cookieJar({ lumitra_session: 'sess', framer_company: 'tenant-c' });
+    mockVerifySession.mockResolvedValue(multiSession());
+
+    expect((await loadProjectSnapshot('site-c1')).status).toBe('choose_company');
+    expect(mockLoadProject).not.toHaveBeenCalled();
+  });
+
+  it('the retired framer_ws cookie still selects its company until it is migrated', async () => {
+    cookieJar({ lumitra_session: 'sess', framer_ws: 'ws_b' });
+    mockVerifySession.mockResolvedValue(multiSession());
+    mockLoadProject.mockResolvedValue(projectNode('site-b1'));
+
+    expect((await loadProjectSnapshot('site-b1')).status).toBe('ok');
+    expect(mockLoadProject).toHaveBeenCalledWith(
+      { workspaceId: 'ws_b', tenantGroupId: 'tg_b' },
+      'site-b1',
+    );
+  });
+
+  it('a project of a company without the grant stays a 404 (nothing to switch to)', async () => {
+    cookieJar({ lumitra_session: 'sess', framer_company: 'tenant-a' });
+    mockVerifySession.mockResolvedValue(multiSession());
+    mockLoadProject.mockRejectedValue(new SiteNotFoundError('site-c1'));
+    mockFindSiteWorkspaceAmong.mockResolvedValue(null);
+
+    expect(await loadProjectSnapshot('site-c1')).toEqual({ status: 'not_found' });
+    expect(mockFindSiteWorkspaceAmong).toHaveBeenCalledWith('site-c1', ['ws_b']);
   });
 });

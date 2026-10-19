@@ -10,8 +10,9 @@
 //
 // HARD ISOLATION (same contract as the publish route): the TenantScope this
 // writes under is resolved from the SERVER-VERIFIED auth-brain session (the
-// request's active workspace, chosen among the session's own workspaces by the
-// membership-checked `framer_ws` selector -> its tenant -> tenant_group), NEVER from anything
+// request's active company, one of the session's `sites`-granted companies
+// chosen by the `framer_company` selector -> that company's workspace -> its
+// tenant_group), NEVER from anything
 // the client sends. The client supplies only an OPTIONAL display name; which
 // workspace/tenant the row lands in is the server's decision, and the site id is
 // minted SERVER-SIDE (`crypto.randomUUID`) so the client can't choose or collide
@@ -35,12 +36,13 @@
 // adapter-prisma.
 
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
-import { readActiveWorkspaceCookie } from '@/lib/activeWorkspaceCookie';
+import { readCompanySelectors } from '@/lib/activeCompanyCookie';
 import { getSnapshot } from 'mobx-state-tree';
 import { z } from 'zod';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
 import {
   getSiteRepository,
+  activeScopeDenial,
   resolveActiveScope,
   siteRepositoryErrorResponse,
   SiteRepositoryError,
@@ -203,19 +205,17 @@ async function handlePOST(req: Request): Promise<Response> {
     return jsonError('unauthorized', 'authentication required', 401);
   }
 
-  // 2. Resolve the tenant scope from the request's active workspace (the
-  //    membership-checked `framer_ws` selector, else the session's own active
-  //    workspace, else its only workspace). A request with no resolvable
-  //    workspace cannot create anywhere -> 403 `no_active_workspace`.
-  const scopeResult = resolveActiveScope(session, readActiveWorkspaceCookie(req));
+  // 2. Resolve the tenant scope from the request's active company (the
+  //    `framer_company` selector, else the session's active_tenant, else its
+  //    only company; only companies with the `sites` grant count), mapped to
+  //    that company's workspace. No granted company -> 403 `sites_not_enabled`;
+  //    none resolvable -> 403 `no_active_company`. Nothing is created.
+  const scopeResult = resolveActiveScope(session, readCompanySelectors(req));
   if (!scopeResult.ok) {
-    return jsonError(
-      'no_active_workspace',
-      'no active workspace to create a project in',
-      403,
-    );
+    const denial = activeScopeDenial(scopeResult.error);
+    return jsonError(denial.code, denial.message, 403);
   }
-  const { scope } = scopeResult;
+  const { scope, companyId } = scopeResult;
 
   // 3. Admin guard: the real auth-brain `editSite` permission (workspace.admin)
   //    on the resolved workspace. 401 (no session) / 403 (not an admin).
@@ -251,10 +251,11 @@ async function handlePOST(req: Request): Promise<Response> {
 
   // 5. CM-11 onboard hook: ensure this tenant-group's `tg_<id>` commerce schema
   //    exists BEFORE the site row is written (idempotent, OWNER connection). A
-  //    failure returns its 500 here and nothing is persisted. The tenant slug
-  //    comes from the SERVER-verified session, never the client; fall back to
-  //    the tenant_group id alone if the tenant isn't on the session.
-  const tenantSlug = session.tenants.find((t) => t.group_id === scope.tenantGroupId)?.slug;
+  //    failure returns its 500 here and nothing is persisted. The tenant group
+  //    and the slug are the CHOSEN company's, from the SERVER-verified session,
+  //    never the client (with two companies in one group, the first tenant of
+  //    the group would name the wrong one).
+  const tenantSlug = session.tenants.find((t) => t.id === companyId)?.slug;
   const commerceFailure = await ensureCommerceProvisioned(scope.tenantGroupId, tenantSlug);
   if (commerceFailure) return commerceFailure;
 

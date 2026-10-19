@@ -17,7 +17,8 @@
 export type CmsActionErrorCode =
   | 'unauthorized'
   | 'forbidden'
-  | 'no_active_workspace'
+  | 'no_active_company'
+  | 'sites_not_enabled'
   | 'auth_unavailable'
   | 'authz_unavailable';
 
@@ -28,7 +29,8 @@ export type CmsActionResult<T> =
 const MESSAGES: Record<CmsActionErrorCode, string> = {
   unauthorized: 'Your session has expired. Sign in again to keep editing.',
   forbidden: 'You do not have permission to change this collection.',
-  no_active_workspace: 'No workspace is selected. Reload the page and choose a workspace.',
+  no_active_company: 'No company is selected. Reload the page and choose a company.',
+  sites_not_enabled: 'Lumitra Sites is not enabled for this company.',
   auth_unavailable: 'The sign-in service is temporarily unavailable, so the change was not saved.',
   authz_unavailable:
     'The permission service is temporarily unavailable, so the change was not saved.',

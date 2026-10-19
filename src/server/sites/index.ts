@@ -22,11 +22,21 @@ export {
 } from './errors';
 
 export {
+  SITES_APP,
   resolveScopeForWorkspace,
+  resolveScopeForCompanyWorkspace,
   resolveActiveScope,
-  resolveActiveWorkspaceId,
-  listWorkspaceChoices,
-  type WorkspaceChoice,
+  resolveActiveCompany,
+  companyWorkspaceId,
+  listCompanyChoices,
+  grantedCompaniesWithoutWorkspace,
+  sitesGrantedCompanyIds,
+  activeScopeDenial,
+  type CompanyChoice,
+  type CompanySelectors,
+  type CompanyResolution,
+  type CompanySource,
+  type ActiveScopeResult,
   type ScopeResult,
   type ScopeResolutionError,
 } from './scope';

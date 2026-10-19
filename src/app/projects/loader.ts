@@ -6,21 +6,28 @@ import 'server-only';
 // from the page so the isolation + auth contract is unit-testable without
 // rendering a server component.
 //
-// HARD ISOLATION: the workspace the listing is scoped to is derived from the
-// SERVER-verified auth-brain session. The app-local `framer_ws` selector cookie
-// only CHOOSES among the workspaces that session already contains
-// (resolveActiveScope -> resolveActiveWorkspaceId); a forged or stale id is
-// ignored and the scope still goes through resolveScopeForWorkspace.
+// HARD ISOLATION: the company (and so the workspace) the listing is scoped to
+// is derived from the SERVER-verified auth-brain session. The app-local
+// `framer_company` selector cookie only CHOOSES among the session's companies
+// that hold the auth-brain app grant `sites` (resolveActiveScope ->
+// resolveActiveCompany); a forged id, a company outside the session or one
+// without the grant is ignored, and the scope still goes through
+// resolveScopeForWorkspace on that company's workspace.
 //
-// FOUR OUTCOMES, and only one of them goes to the login:
+// SIX OUTCOMES, and only one of them goes to the login:
 //   - no cookie / an invalid or expired session (verify -> null) ->
 //     `unauthenticated` with the auth-brain login URL (the page redirects),
 //   - auth-brain could not answer (network error, 5xx) -> `auth_unavailable`
 //     (the page renders a retry notice, no redirect),
-//   - a VALID session with no resolvable workspace (several workspaces, none
-//     picked; or none at all) -> `choose_workspace` with the session's
-//     workspaces (the page renders the chooser, never a redirect),
-//   - otherwise -> `ok` with the active workspace's sites.
+//   - a VALID session that still carries the retired `framer_ws` cookie ->
+//     `migrate_legacy`, ONCE: the page redirects to the migration handler,
+//     which deletes that cookie in the same response and comes back with
+//     `migrated=1`, on which this outcome is never produced again,
+//   - a VALID session none of whose companies can use the editor ->
+//     `not_enabled` (the page explains it and links the auth-brain portal),
+//   - a VALID session with several usable companies and none picked ->
+//     `choose_company` (the page renders the chooser, never a redirect),
+//   - otherwise -> `ok` with the active company's sites.
 //
 // A valid session must NEVER be sent to the login: auth-brain sees the valid
 // session and sends the user straight back, which is the endless redirect loop
@@ -31,14 +38,15 @@ import {
   AuthUnavailableError,
   verifySessionOrThrowUnavailable,
 } from '@/lib/authBrainAvailability';
-import { ACTIVE_WORKSPACE_COOKIE } from '@/lib/activeWorkspaceCookie';
-import { safeEditorReturnPath } from '@/server/auth/activeWorkspace';
+import { companySelectorsFromJar } from '@/lib/activeCompanyCookie';
+import { safeEditorReturnPath } from '@/server/auth/activeCompany';
 import {
   getSiteRepository,
-  listWorkspaceChoices,
+  grantedCompaniesWithoutWorkspace,
+  listCompanyChoices,
   resolveActiveScope,
+  type CompanyChoice,
   type SiteSummary,
-  type WorkspaceChoice,
 } from '@/server/sites';
 
 // Same default + cookie name the rest of the app uses (auth-brain.ts /
@@ -49,17 +57,23 @@ const SESSION_COOKIE = 'lumitra_session';
 export type DashboardData =
   | { status: 'unauthenticated'; loginUrl: string }
   | { status: 'auth_unavailable' }
+  | { status: 'migrate_legacy'; migrateUrl: string }
   | {
-      status: 'choose_workspace';
-      workspaces: WorkspaceChoice[];
-      /** The workspace already active, when the chooser was opened to switch. */
-      activeWorkspaceId: string | null;
+      status: 'not_enabled';
+      /** Granted companies the user has no workspace in (named, not offered). */
+      grantedWithoutWorkspace: string[];
+    }
+  | {
+      status: 'choose_company';
+      companies: CompanyChoice[];
+      /** The company already active, when the chooser was opened to switch. */
+      activeCompanyId: string | null;
     }
   | {
       status: 'ok';
       sites: SiteSummary[];
-      workspaces: WorkspaceChoice[];
-      activeWorkspace: WorkspaceChoice;
+      companies: CompanyChoice[];
+      activeCompany: CompanyChoice;
     };
 
 /**
@@ -81,17 +95,28 @@ async function buildLoginUrl(next: string): Promise<string> {
   return loginUrl.toString();
 }
 
+/** The one-time legacy-cookie migration handler, continuing to `next`. */
+function migrateUrlFor(next: string): string {
+  return next === '/projects'
+    ? '/projects/migrate-company'
+    : `/projects/migrate-company?next=${encodeURIComponent(next)}`;
+}
+
 /**
  * Resolve the dashboard's data for the current request. The page is the only
- * thing that performs a redirect, and it does so only for `unauthenticated`.
+ * thing that performs a redirect: to the login for `unauthenticated`, and once
+ * to the migration handler for `migrate_legacy`.
  *
- * `opts.forceChooser` renders the chooser even when a workspace is active (the
- * "Switch workspace" link in the dashboard chrome); it never changes the scope.
+ * `opts.forceChooser` renders the chooser even when a company is active (the
+ * "Switch company" link in the dashboard chrome); it never changes the scope.
  * `opts.next` is a deep link to keep through the login (validated here with
- * safeEditorReturnPath, so it can never point off-site).
+ * safeEditorReturnPath, so it can never point off-site). `opts.legacyMigrated`
+ * is the `migrated=1` marker the migration handler returns with: with it the
+ * legacy cookie is only read, never migrated again, so even a browser that
+ * refuses to drop the cookie cannot loop.
  */
 export async function loadDashboard(
-  opts: { forceChooser?: boolean; next?: unknown } = {},
+  opts: { forceChooser?: boolean; next?: unknown; legacyMigrated?: boolean } = {},
 ): Promise<DashboardData> {
   const next = safeEditorReturnPath(opts.next);
   const jar = await cookies();
@@ -114,30 +139,38 @@ export async function loadDashboard(
   }
   if (!session) return { status: 'unauthenticated', loginUrl: await buildLoginUrl(next) };
 
-  const workspaces = listWorkspaceChoices(session);
-  const scopeResult = resolveActiveScope(
-    session,
-    jar.get(ACTIVE_WORKSPACE_COOKIE)?.value ?? null,
-  );
-  // A valid session with no resolvable workspace picks one; it is NOT sent to
-  // the login (that is the redirect loop this contract exists to prevent).
-  if (!scopeResult.ok) {
-    return { status: 'choose_workspace', workspaces, activeWorkspaceId: null };
+  const selectors = companySelectorsFromJar(jar);
+  if (selectors.legacyWorkspaceCookie && !opts.legacyMigrated && !opts.forceChooser) {
+    return { status: 'migrate_legacy', migrateUrl: migrateUrlFor(next) };
   }
-  if (opts.forceChooser) {
+
+  const companies = listCompanyChoices(session);
+  if (companies.length === 0) {
+    // No company of this session can use the editor (none holds `sites`, or
+    // the granted ones have no workspace for this user). A page, not a
+    // redirect: there is nothing to choose and nothing to log in to.
     return {
-      status: 'choose_workspace',
-      workspaces,
-      activeWorkspaceId: scopeResult.scope.workspaceId,
+      status: 'not_enabled',
+      grantedWithoutWorkspace: grantedCompaniesWithoutWorkspace(session),
     };
   }
 
-  const activeWorkspace = workspaces.find((w) => w.id === scopeResult.scope.workspaceId);
-  if (!activeWorkspace) {
-    // Unreachable: resolveActiveScope only returns a workspace of this session.
-    return { status: 'choose_workspace', workspaces, activeWorkspaceId: null };
+  const scopeResult = resolveActiveScope(session, selectors);
+  // A valid session with no resolvable company picks one; it is NOT sent to
+  // the login (that is the redirect loop this contract exists to prevent).
+  if (!scopeResult.ok) {
+    return { status: 'choose_company', companies, activeCompanyId: null };
+  }
+  if (opts.forceChooser) {
+    return { status: 'choose_company', companies, activeCompanyId: scopeResult.companyId };
+  }
+
+  const activeCompany = companies.find((c) => c.id === scopeResult.companyId);
+  if (!activeCompany) {
+    // Unreachable: resolveActiveScope only returns a usable company.
+    return { status: 'choose_company', companies, activeCompanyId: null };
   }
 
   const sites = await getSiteRepository().listSites(scopeResult.scope);
-  return { status: 'ok', sites, workspaces, activeWorkspace };
+  return { status: 'ok', sites, companies, activeCompany };
 }

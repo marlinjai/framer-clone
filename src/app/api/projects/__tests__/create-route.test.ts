@@ -57,15 +57,15 @@ function makeSession() {
   return {
     user: { id: 'user-1' },
     session: {},
-    tenants: [{ id: 'tenant-1', group_id: '018f9c10-0000-7000-8000-00000000c0de' }],
+    tenants: [{ id: 'tenant-1', app_grants: ['sites'], group_id: '018f9c10-0000-7000-8000-00000000c0de' }],
     workspaces: [{ id: 'ws_marlin', tenant_id: 'tenant-1' }],
     active_tenant: { id: 'tenant-1' },
     active_workspace: { id: 'ws_marlin' },
   };
 }
 
-// A session that authenticates but has no resolvable active workspace, so
-// resolveActiveScope (kept real) fails -> 403.
+// A session that authenticates but belongs to no company, so
+// resolveActiveScope (kept real) fails -> 403 sites_not_enabled.
 function makeSessionNoWorkspace() {
   return {
     user: { id: 'user-1' },
@@ -112,7 +112,7 @@ describe('POST /api/projects guard', () => {
     expect(save).not.toHaveBeenCalled();
   });
 
-  it('403s when the session has no resolvable active workspace', async () => {
+  it('403s sites_not_enabled when the session has no company with Lumitra Sites', async () => {
     mockVerifySession.mockResolvedValue(makeSessionNoWorkspace());
     const save = vi.fn();
     installRepo({ saveProject: save });
@@ -120,8 +120,25 @@ describe('POST /api/projects guard', () => {
     const res = await POST(createReq({ name: 'x' }));
 
     expect(res.status).toBe(403);
-    expect((await res.json()).error.code).toBe('no_active_workspace');
+    expect((await res.json()).error.code).toBe('sites_not_enabled');
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it('403s sites_not_enabled when the only company lacks the grant, and provisions nothing', async () => {
+    const s = makeSession();
+    mockVerifySession.mockResolvedValue({
+      ...s,
+      tenants: s.tenants.map((t: Record<string, unknown>) => ({ ...t, app_grants: ['studio'] })),
+    });
+    const save = vi.fn();
+    installRepo({ saveProject: save });
+
+    const res = await POST(createReq({ name: 'x' }));
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).error.code).toBe('sites_not_enabled');
+    expect(save).not.toHaveBeenCalled();
+    expect(mockCan).not.toHaveBeenCalled();
   });
 
   it('403s when the session is valid but the user is not a workspace admin', async () => {
@@ -213,6 +230,37 @@ describe('POST /api/projects (authorized)', () => {
       slug: '018f9c1000007000800000000000c0de',
     });
     expect(order).toEqual(['provision', 'save']);
+  });
+
+  it("provisions for the CHOSEN company's tenant group and slug when a group holds two companies", async () => {
+    const group = '018f9c10-0000-7000-8000-00000000c0de';
+    mockVerifySession.mockResolvedValue({
+      user: { id: 'user-1' },
+      session: {},
+      tenants: [
+        { id: 'tenant-1', app_grants: ['sites'], group_id: group, name: 'Alpha', slug: 'alpha' },
+        { id: 'tenant-2', app_grants: ['sites'], group_id: group, name: 'Beta', slug: 'beta' },
+      ],
+      workspaces: [
+        { id: 'ws_alpha', tenant_id: 'tenant-1', slug: 'main' },
+        { id: 'ws_beta', tenant_id: 'tenant-2', slug: 'main' },
+      ],
+      active_tenant: null,
+      active_workspace: null,
+    });
+    const save = vi.fn();
+    installRepo({ saveProject: save });
+
+    const res = await POST(createReq({ name: 'Shop' }, { cookie: 'lumitra_session=good; framer_company=tenant-2' }));
+
+    expect(res.status).toBe(200);
+    const [{ tenantGroupId, slug }] = mockProvision.mock.calls[0] as [{ tenantGroupId: string; slug: string }];
+    expect(tenantGroupId).toBe(group);
+    expect(slug).toMatch(/^beta/);
+    expect(save).toHaveBeenCalledWith(
+      { workspaceId: 'ws_beta', tenantGroupId: group },
+      expect.anything(),
+    );
   });
 
   it('500s with commerce_not_configured, logs, and writes nothing when the owner URL is unset', async () => {
