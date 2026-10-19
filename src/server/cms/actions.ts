@@ -162,7 +162,10 @@ export async function deleteTable(tableId: string): Promise<CmsActionResult<void
 
 // The client-sent workspace id is IGNORED: the list is always the request's
 // active workspace (the grid passes a constant id it does not control).
-export async function listTables(_workspaceId: string): Promise<CmsActionResult<Table[]>> {
+export async function listTables(clientWorkspaceId: string): Promise<CmsActionResult<Table[]>> {
+  // Deliberately unused (kept for the DatabaseAdapter signature); referenced so
+  // the unused-argument lint stays quiet, the same idiom as withTenant.ts.
+  void clientWorkspaceId;
   return guarded(async () => {
     const scope = await requireCmsEditorScope('viewSite');
     return getCmsAdapter().listTables(scope.workspaceId);
