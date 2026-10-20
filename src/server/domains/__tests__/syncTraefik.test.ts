@@ -27,7 +27,7 @@ function run(feed: string, opts: { status?: string; env?: Record<string, string>
       OUTPUT_FILE: join(dir, 'out.yml'),
       FETCH: `sh ${fetcher}`,
       ...opts.env,
-    },
+    } as unknown as NodeJS.ProcessEnv,
   });
 }
 
