@@ -1,0 +1,452 @@
+// src/lib/ai/pageGen/validate.ts
+//
+// Repair-or-reject for model output. The page generator NEVER applies what the
+// model sent as-is: every node is rebuilt from the rules in ./schema.ts.
+//
+//   Repaired (with a warning the user can see):
+//     - unknown style keys dropped (kebab-case keys converted first),
+//     - unsafe or malformed style values, links and image sources dropped,
+//     - props outside the per-tag allowlist dropped (handlers, raw HTML, ...),
+//     - a registry id used as `type` turned into its preset, a preset whose
+//       type disagrees with `type` wins, an unknown tag becomes a `div`,
+//     - forbidden tags (script, iframe, form, ...) dropped with their subtree,
+//     - text AND children on one node: the text becomes a leading text child,
+//     - children on a void tag dropped, missing labels and alt text filled,
+//     - responsive-map keys matched to the request's breakpoint keys
+//       (case-insensitive, label match), unknown keys dropped,
+//     - ids assigned fresh and `parentId` set on every nested node (a whole
+//       subtree applied as a snapshot bypasses addChild, and delete / move rely
+//       on parentId).
+//
+//   Rejected (the whole generation, with the reasons, so the route can ask the
+//   model for one repair round and otherwise fail loudly):
+//     - not an object / no `nodes` array / nothing left after repair,
+//     - more than GENERATION_LIMITS.maxNodes nodes or deeper than maxDepth,
+//     - anything MobX-State-Tree itself refuses (ComponentModel.create is the
+//       final gate, so an invalid snapshot can never reach the editor).
+//
+// Pure apart from the id factory; runs on the server (route) and is safe to run
+// in the browser.
+
+import { v4 as uuidv4 } from 'uuid';
+import ComponentModel, { ComponentTypeEnum, CSS_PROP_SET } from '@/models/ComponentModel';
+import { isVoidTag } from '@/lib/drag/voidTags';
+import {
+  BASE_KEY,
+  FORBIDDEN_TAGS,
+  GENERATION_LIMITS,
+  PLACEHOLDER_IMAGE_SRC,
+  allowedPropKeysFor,
+  getGenerationPreset,
+  isSafeHref,
+  isSafeSrc,
+  listGenerationTags,
+  type BreakpointKey,
+  type GenerationPreset,
+} from './schema';
+
+/** One validated node, ready for ComponentModel.create (responsive keys are still breakpoint KEYS). */
+export interface GeneratedNodeSnapshot {
+  id: string;
+  type: string;
+  componentType: ComponentTypeEnum.HOST;
+  label: string;
+  props: Record<string, unknown>;
+  children: GeneratedNodeSnapshot[];
+  parentId?: string;
+}
+
+export interface GenerationResult {
+  title?: string;
+  description?: string;
+  nodes: GeneratedNodeSnapshot[];
+  warnings: string[];
+  stats: { nodeCount: number; maxDepth: number };
+}
+
+export type ValidationOutcome =
+  | { ok: true; result: GenerationResult }
+  | { ok: false; errors: string[]; warnings: string[] };
+
+export interface ValidateContext {
+  /** The breakpoint keys the model was told about (see deriveBreakpointKeys). */
+  breakpoints: BreakpointKey[];
+  /** Id factory; defaults to uuid v4. Injectable for deterministic tests. */
+  newId?: () => string;
+}
+
+/** Keys the model may send that we silently ignore because the editor owns them. */
+const OWNED_KEYS = new Set(['id', 'componentType', 'canvasNodeType', 'parentId']);
+const NODE_KEYS = new Set(['type', 'preset', 'label', 'props', 'children']);
+
+const UNSAFE_STYLE_VALUE = /javascript:|vbscript:|expression\s*\(|<\s*\/?\s*script|@import|behavior\s*:|-moz-binding/i;
+/**
+ * Characters that let one style value escape into more CSS when a renderer or
+ * the publish path serializes styles to text: `;` ends the declaration (and
+ * starts another, e.g. "red;position:fixed;inset:0"), `{` `}` open or close
+ * rules, a backslash starts a CSS escape ("\75 rl(" reads as "url("), and
+ * control characters (newlines included) can break out of a declaration or
+ * hide content. No legitimate generated value needs any of them.
+ */
+const STYLE_BREAKOUT_CHARS = /[;{}\\\u0000-\u001f\u007f]/;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function kebabToCamel(key: string): string {
+  return key.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+}
+
+function cleanText(value: unknown, max: number): string | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value !== 'string') return undefined;
+  return value.length > max ? value.slice(0, max) : value;
+}
+
+class Validator {
+  readonly warnings: string[] = [];
+  readonly errors: string[] = [];
+  nodeCount = 0;
+  maxDepth = 0;
+  private readonly tags = new Set(listGenerationTags());
+  private readonly bpKeys: Map<string, string>;
+  /** Breakpoint keys, largest breakpoint first (the editor's primary breakpoint). */
+  private readonly orderedKeys: string[];
+  private readonly newId: () => string;
+
+  constructor(ctx: ValidateContext) {
+    this.newId = ctx.newId ?? uuidv4;
+    this.orderedKeys = [...ctx.breakpoints].sort((a, b) => b.minWidth - a.minWidth).map((b) => b.key);
+    // Accept the exact key, its lowercase, and the breakpoint's label, all
+    // mapping to the canonical key.
+    this.bpKeys = new Map<string, string>();
+    for (const bp of ctx.breakpoints) {
+      this.bpKeys.set(bp.key.toLowerCase(), bp.key);
+      this.bpKeys.set(bp.label.trim().toLowerCase(), bp.key);
+    }
+  }
+
+  private warn(path: string, message: string): void {
+    this.warnings.push(`${path}: ${message}`);
+  }
+
+  private fail(path: string, message: string): void {
+    this.errors.push(`${path}: ${message}`);
+  }
+
+  /** Validate a style value or a responsive map; returns undefined to drop it. */
+  private styleValue(path: string, key: string, raw: unknown): unknown {
+    if (isPlainObject(raw)) {
+      const out: Record<string, string | number> = {};
+      for (const [mapKey, v] of Object.entries(raw)) {
+        const lower = mapKey.trim().toLowerCase();
+        const canonical = lower === BASE_KEY ? BASE_KEY : this.bpKeys.get(lower);
+        if (!canonical) {
+          this.warn(path, `style.${key}: unknown breakpoint key "${mapKey}" dropped`);
+          continue;
+        }
+        const scalar = this.scalarStyleValue(path, `${key}.${mapKey}`, v);
+        if (scalar !== undefined) out[canonical] = scalar;
+      }
+      if (Object.keys(out).length === 0) {
+        this.warn(path, `style.${key}: responsive map had no usable value, dropped`);
+        return undefined;
+      }
+      // The editor resolves a breakpoint without its own value from the
+      // PRIMARY (largest) breakpoint first, then the nearest smaller one, and
+      // reads "base" last (ComponentModel.getResolvedProps). So "base" only
+      // means "every other breakpoint" if the primary key carries it: pin the
+      // primary to base, or to the largest breakpoint the model did give.
+      const primary = this.orderedKeys[0];
+      if (primary && out[primary] === undefined) {
+        const fallbackKey = out[BASE_KEY] !== undefined ? BASE_KEY : this.orderedKeys.find((k) => out[k] !== undefined);
+        if (fallbackKey) out[primary] = out[fallbackKey];
+      }
+      return out;
+    }
+    return this.scalarStyleValue(path, key, raw);
+  }
+
+  private scalarStyleValue(path: string, key: string, raw: unknown): string | number | undefined {
+    if (typeof raw === 'number') {
+      if (Number.isFinite(raw)) return raw;
+      this.warn(path, `style.${key}: non-finite number dropped`);
+      return undefined;
+    }
+    if (typeof raw !== 'string') {
+      this.warn(path, `style.${key}: value must be a string or number, dropped`);
+      return undefined;
+    }
+    const v = raw.trim();
+    if (v.length === 0) return undefined;
+    if (v.length > GENERATION_LIMITS.maxStyleValueChars) {
+      this.warn(path, `style.${key}: value longer than ${GENERATION_LIMITS.maxStyleValueChars} characters dropped`);
+      return undefined;
+    }
+    if (STYLE_BREAKOUT_CHARS.test(raw)) {
+      this.warn(path, `style.${key}: value contains ; { } \\ or a control character, dropped`);
+      return undefined;
+    }
+    if (UNSAFE_STYLE_VALUE.test(v)) {
+      this.warn(path, `style.${key}: unsafe value dropped`);
+      return undefined;
+    }
+    // url(...) only to http(s) or site paths, never data: or other schemes.
+    const urls = [...v.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gi)].map((m) => m[2]);
+    if (urls.some((u) => !isSafeSrc(u))) {
+      this.warn(path, `style.${key}: url() to a disallowed location dropped`);
+      return undefined;
+    }
+    return v;
+  }
+
+  private style(path: string, raw: unknown): Record<string, unknown> {
+    if (raw === undefined) return {};
+    if (!isPlainObject(raw)) {
+      this.warn(path, 'props.style must be an object, dropped');
+      return {};
+    }
+    const out: Record<string, unknown> = {};
+    for (const [rawKey, rawValue] of Object.entries(raw)) {
+      const key = CSS_PROP_SET.has(rawKey) ? rawKey : kebabToCamel(rawKey);
+      if (!CSS_PROP_SET.has(key)) {
+        this.warn(path, `style key "${rawKey}" is not supported by the editor, dropped`);
+        continue;
+      }
+      const value = this.styleValue(path, key, rawValue);
+      if (value !== undefined) out[key] = value;
+    }
+    return out;
+  }
+
+  /** Resolve type + preset. Returns null when the node must be dropped. */
+  private resolveType(
+    path: string,
+    rawType: unknown,
+    rawPreset: unknown,
+  ): { type: string; preset?: GenerationPreset } | null {
+    let preset: GenerationPreset | undefined;
+    if (rawPreset !== undefined) {
+      preset = typeof rawPreset === 'string' ? getGenerationPreset(rawPreset) : undefined;
+      if (!preset) this.warn(path, `unknown preset ${JSON.stringify(rawPreset)} ignored`);
+    }
+    let type = typeof rawType === 'string' ? rawType.trim().toLowerCase() : '';
+    if (!preset && type) {
+      // The model used a registry id ("card", "stack") as the tag.
+      const asPreset = getGenerationPreset(typeof rawType === 'string' ? rawType.trim() : '');
+      if (asPreset && !this.tags.has(type)) {
+        this.warn(path, `"${rawType}" is a preset, not a tag: using type "${asPreset.htmlType}" with preset "${asPreset.id}"`);
+        preset = asPreset;
+        type = asPreset.htmlType;
+      }
+    }
+    if (FORBIDDEN_TAGS.has(type)) {
+      this.warn(path, `tag "${type}" is not allowed, node and its children dropped`);
+      return null;
+    }
+    if (preset && type !== preset.htmlType) {
+      if (type) this.warn(path, `type "${type}" does not match preset "${preset.id}", using "${preset.htmlType}"`);
+      type = preset.htmlType;
+    }
+    if (!type) {
+      this.warn(path, 'missing type, using "div"');
+      type = 'div';
+    } else if (!this.tags.has(type)) {
+      this.warn(path, `tag "${type}" is not available in the editor, using "div"`);
+      type = 'div';
+    }
+    return { type, preset };
+  }
+
+  node(raw: unknown, path: string, depth: number, parentId?: string): GeneratedNodeSnapshot[] {
+    if (!isPlainObject(raw)) {
+      this.fail(path, 'node must be an object');
+      return [];
+    }
+    if (depth > GENERATION_LIMITS.maxDepth) {
+      this.fail(path, `nesting deeper than ${GENERATION_LIMITS.maxDepth} levels`);
+      return [];
+    }
+    for (const key of Object.keys(raw)) {
+      if (!NODE_KEYS.has(key) && !OWNED_KEYS.has(key)) this.warn(path, `unknown key "${key}" ignored`);
+    }
+
+    const resolved = this.resolveType(path, raw.type, raw.preset);
+    if (!resolved) return [];
+    const { type, preset } = resolved;
+    const id = `${preset?.id ?? type}-${this.newId()}`;
+    this.nodeCount += 1;
+    if (depth > this.maxDepth) this.maxDepth = depth;
+
+    // ---- props ----
+    const rawProps = raw.props === undefined ? {} : raw.props;
+    if (!isPlainObject(rawProps)) this.warn(path, 'props must be an object, ignored');
+    const modelProps = isPlainObject(rawProps) ? rawProps : {};
+    const allowed = new Set(allowedPropKeysFor(type));
+    const props: Record<string, unknown> = {};
+    let text: string | undefined;
+
+    for (const [key, value] of Object.entries(modelProps)) {
+      if (key === 'style') continue;
+      if (!allowed.has(key)) {
+        this.warn(path, `prop "${key}" is not allowed on <${type}>, dropped`);
+        continue;
+      }
+      if (key === 'children') {
+        const t = cleanText(value, GENERATION_LIMITS.maxTextChars);
+        if (t === undefined) {
+          this.warn(path, 'props.children must be text, dropped');
+        } else {
+          if (typeof value === 'string' && value.length > GENERATION_LIMITS.maxTextChars) {
+            this.warn(path, `text cut to ${GENERATION_LIMITS.maxTextChars} characters`);
+          }
+          text = t;
+        }
+      } else if (key === 'href') {
+        if (typeof value === 'string' && isSafeHref(value)) props.href = value.trim();
+        else this.warn(path, 'href dropped (only https, http, mailto, tel, # or a site path)');
+      } else if (key === 'src') {
+        if (typeof value === 'string' && isSafeSrc(value)) props.src = value.trim();
+        else this.warn(path, 'src dropped (only https, http or a site path)');
+      } else if (key === 'target') {
+        if (value === '_blank' || value === '_self') props.target = value;
+        else this.warn(path, 'target must be _blank or _self, dropped');
+      } else if (key === 'alt') {
+        const alt = cleanText(value, 300);
+        if (alt !== undefined) props.alt = alt;
+      }
+    }
+
+    // Merge preset defaults under the model's props; style merges key by key.
+    const presetDefaults = (preset?.defaultProps ?? {}) as Record<string, unknown>;
+    const presetStyle = isPlainObject(presetDefaults.style) ? presetDefaults.style : {};
+    const style = { ...presetStyle, ...this.style(path, modelProps.style) };
+    const merged: Record<string, unknown> = { ...presetDefaults, ...props };
+    delete merged.style;
+    if (Object.keys(style).length > 0) merged.style = style;
+    if (type === 'img') {
+      if (!(typeof merged.src === 'string' && isSafeSrc(merged.src))) {
+        // No src is the documented way to ask for a placeholder (the user
+        // swaps in a real image); only a broken src was already warned about.
+        merged.src = PLACEHOLDER_IMAGE_SRC;
+      }
+      if (typeof merged.alt !== 'string' || merged.alt.trim() === '') {
+        merged.alt = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : 'Image';
+      }
+      merged.draggable = false;
+    }
+
+    // ---- label ----
+    let label = typeof raw.label === 'string' ? raw.label.trim() : '';
+    if (label.length > GENERATION_LIMITS.maxLabelChars) label = label.slice(0, GENERATION_LIMITS.maxLabelChars);
+    if (!label) label = preset?.label ?? type.charAt(0).toUpperCase() + type.slice(1);
+
+    // ---- children ----
+    let rawChildren: unknown[] = [];
+    if (raw.children !== undefined) {
+      if (Array.isArray(raw.children)) rawChildren = raw.children;
+      else this.warn(path, 'children must be an array, ignored');
+    }
+    const children: GeneratedNodeSnapshot[] = [];
+    if (isVoidTag(type)) {
+      if (rawChildren.length > 0) this.warn(path, `<${type}> cannot have children, ${rawChildren.length} dropped`);
+      if (text !== undefined) this.warn(path, `<${type}> cannot have text, dropped`);
+      text = undefined;
+    } else if (preset?.dataComponentKind && rawChildren.length > 0) {
+      this.warn(path, `data component "${preset.id}" renders its own content, children dropped`);
+    } else {
+      if (text !== undefined && rawChildren.length > 0) {
+        // Both text and children: keep both by turning the text into a leading child.
+        this.warn(path, 'node had text and children, text moved into a leading text node');
+        rawChildren = [{ type: 'p', preset: 'text', label: 'Text', props: { children: text } }, ...rawChildren];
+        text = undefined;
+      }
+      rawChildren.forEach((child, i) => {
+        children.push(...this.node(child, `${path}.children[${i}]`, depth + 1, id));
+      });
+    }
+    if (text !== undefined) merged.children = text;
+    else delete merged.children;
+
+    const snapshot: GeneratedNodeSnapshot = {
+      id,
+      type,
+      componentType: ComponentTypeEnum.HOST,
+      label,
+      props: merged,
+      children,
+    };
+    if (parentId) snapshot.parentId = parentId;
+    return [snapshot];
+  }
+}
+
+/**
+ * Validate (and repair) one generation. `raw` is the model's tool input:
+ * `{ title?, description?, nodes: Node[] }`.
+ */
+export function validateGeneration(raw: unknown, ctx: ValidateContext): ValidationOutcome {
+  const v = new Validator(ctx);
+  if (!isPlainObject(raw)) {
+    return { ok: false, errors: ['output must be an object with a "nodes" array'], warnings: [] };
+  }
+  if (!Array.isArray(raw.nodes)) {
+    return { ok: false, errors: ['output must contain a "nodes" array'], warnings: [] };
+  }
+  if (raw.nodes.length === 0) {
+    return { ok: false, errors: ['"nodes" is empty: produce at least one node'], warnings: [] };
+  }
+
+  const nodes: GeneratedNodeSnapshot[] = [];
+  raw.nodes.forEach((n, i) => nodes.push(...v.node(n, `nodes[${i}]`, 1)));
+
+  if (v.nodeCount > GENERATION_LIMITS.maxNodes) {
+    v.errors.push(`${v.nodeCount} nodes exceed the limit of ${GENERATION_LIMITS.maxNodes}: produce a smaller page`);
+  }
+  if (v.errors.length === 0 && nodes.length === 0) {
+    v.errors.push('nothing usable was left after removing disallowed nodes');
+  }
+
+  // Ids must be unique across the whole forest: MST does not refuse a
+  // duplicate identifier inside one snapshot, but selection (safeReference)
+  // and the history patches resolve nodes by id, so a duplicate would corrupt
+  // the editor later instead of failing here.
+  if (v.errors.length === 0) {
+    const seen = new Set<string>();
+    const walk = (n: GeneratedNodeSnapshot): void => {
+      if (seen.has(n.id)) v.errors.push(`duplicate node id "${n.id}"`);
+      seen.add(n.id);
+      n.children.forEach(walk);
+    };
+    nodes.forEach(walk);
+  }
+
+  // Final gate: MobX-State-Tree must accept every snapshot as-is.
+  if (v.errors.length === 0) {
+    nodes.forEach((node, i) => {
+      try {
+        ComponentModel.create(node);
+      } catch (err) {
+        v.errors.push(`nodes[${i}]: rejected by the editor model (${err instanceof Error ? err.message.split('\n')[0] : 'invalid snapshot'})`);
+      }
+    });
+  }
+
+  if (v.errors.length > 0) return { ok: false, errors: v.errors, warnings: v.warnings };
+
+  const title = typeof raw.title === 'string' && raw.title.trim() ? raw.title.trim().slice(0, 120) : undefined;
+  const description =
+    typeof raw.description === 'string' && raw.description.trim() ? raw.description.trim().slice(0, 300) : undefined;
+
+  return {
+    ok: true,
+    result: {
+      ...(title ? { title } : {}),
+      ...(description ? { description } : {}),
+      nodes,
+      warnings: v.warnings,
+      stats: { nodeCount: v.nodeCount, maxDepth: v.maxDepth },
+    },
+  };
+}

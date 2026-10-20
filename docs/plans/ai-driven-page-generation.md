@@ -4,7 +4,7 @@ description: Plan for enabling AI agents to generate complete web pages by writi
 order: 0
 summary: AI agents generate pages by producing ComponentSnapshotIn JSON — no API layer needed. Pages are instantly editable in the visual editor and deployable. Outperforms tools like Sleek Design because output is not static mockups but fully editable, responsive, deployable pages.
 type: plan
-status: draft
+status: in-progress
 date: 2026-03-22
 tags: [framer-clone, ai, plan, mst, page-generation, snapshot]
 projects: [framer-clone]
@@ -184,3 +184,49 @@ The key differentiator: other tools treat AI generation as the end product. Here
 ## Reality update (2026-09-10)
 
 Status word "planned" was not one of the six shared values; reconciled to draft (no code evidence of full AI page generation via MST snapshots on main; the related wave-2 `ai-pattern-a-canvas-mutation-tools` spec was archived as an unbuilt draft in the same reconciliation). Kept live and linked from the root ROADMAP.md during work-down session 9b.
+
+## Reality update (2026-10-19)
+
+Marlin decided on 2026-10-19 to build this plan (draft, then decided, then in-progress the same
+day). Phases 1 to 3 are being built on branch `feat/ai-page-generation` as an in-editor feature
+rather than a separate Claude Code skill, because the editor already holds the project in MST and
+already talks to Anthropic through `/api/ai/*`:
+
+- **Phase 1 (schema documentation + validation)**: `src/lib/ai/pageGen/schemaDocs.ts` generates
+  the model-facing schema reference from the real component registry (`COMPONENT_REGISTRY`), the
+  editor's property-panel tag sets (`sectionConfig.ts`) and `CSS_PROP_SET`, never by hand; a golden
+  test fails when the registry and the docs drift apart. `src/lib/ai/pageGen/validate.ts` checks
+  every model output with zod, repairs what is unambiguous (unknown style keys, unsafe links, ids,
+  `parentId`), rejects what is not (limits, void tags with children, empty output), and runs the
+  result through `ComponentModel.is()` before anything reaches the editor. An invalid snapshot is
+  never applied. The paste-JSON import dialog of the original phase 1 is replaced by this path.
+- **Phase 2 (generation)**: `POST /api/ai/generate-page`, guarded exactly like the CMS agent
+  (session, active company with the Sites grant, `editSite`, 401/403/503), streams progress over
+  Server-Sent Events, with a size budget and a per-user rate limit per request, and one repair
+  round with the model before rejecting.
+- **Phase 3 (partial generation + composition)**: the same route generates a section that
+  replaces the selected component or is inserted into the selected container.
+- **Undo**: generation is applied on the client as one MST action, so Cmd+Z reverts it in one
+  step; the dialog's "Undo generation" button replays the recorded inverse (remove the page, or put
+  the replaced subtree back) and reports a conflict instead of guessing. This mirrors the CMS
+  agent's one-click run undo; no server-side run record is written, because nothing is persisted
+  until the user saves.
+- **Phase 4 (design intelligence)**: only the cheap part, page-pattern and spacing guidance in the
+  system prompt. Style references from URLs and the screenshot feedback loop stay open.
+
+### Models and cost (re-baselined 2026-10-20)
+
+The AI layer runs on the current models: Claude Sonnet 5.5 (`claude-sonnet-5-5`, $2 input / $10
+output per million tokens) is the page generator's default, Claude Haiku 5.5 (`claude-haiku-5-5`,
+$0.10 / $0.50) is its "Fast" option, and Claude Opus 5.5 (`claude-opus-5-5`, $4 / $20) stays the
+CMS content agent's default. The content agent runs at effort `medium` on Opus and Sonnet
+(multi-step tool work over real data, where a wrong write costs an undo) and `low` on Haiku, with a
+16,000-token cap per turn that thinking shares; its cost per run therefore depends mostly on how
+many tool turns a request takes. Opus is not offered for page generation (whether it should become a
+default anywhere is Marlin's call). Page generation runs at effort `medium` with adaptive thinking,
+so thinking shares the 32,000-token output cap per attempt. A typical page (about 8,000 output
+tokens plus a cached system prompt) costs roughly $0.08 to $0.10 on Sonnet 5.5 and well under one
+cent on Haiku 5.5; the worst case, two full attempts on Sonnet 5.5, is about $0.64. Sonnet and Opus
+requests carry the server-side fallback opt-in (`fallbacks: "default"`), so a classifier false
+positive is retried on another model instead of failing; Haiku 5.5 has no server-side fallback, so
+a refusal there is shown to the user.

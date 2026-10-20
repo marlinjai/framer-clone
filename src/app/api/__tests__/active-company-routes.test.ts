@@ -42,11 +42,10 @@ vi.mock('@/server/sites', async (importActual) => {
 });
 vi.mock('@/server/cms/adapterClient', () => ({ getCmsAdapter: () => ({}) }));
 vi.mock('@/server/db', () => ({ getPrismaClient: () => ({}) }));
-vi.mock('@/lib/ai/anthropicClient', () => ({
-  AI_MODELS: { HAIKU: 'h', SONNET: 's', OPUS: 'o' },
+vi.mock('@/lib/ai/anthropicClient', async (importActual) => ({
+  // Real registry and request helpers; the client is never reached here.
+  ...(await importActual<typeof import('@/lib/ai/anthropicClient')>()),
   getAnthropicClient: () => ({}),
-  MissingAnthropicKeyError: class extends Error {},
-  resolveModelId: () => 'o',
 }));
 
 import { AuthBrainError, AuthBrainNetworkError } from '@marlinjai/auth-brain-sdk';

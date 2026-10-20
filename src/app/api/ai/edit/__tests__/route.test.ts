@@ -19,36 +19,35 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 //
 // vi.mock is hoisted to the top of the file, so any locals it
 // references must be declared via vi.hoisted (which is also hoisted).
-const { mockGetAnthropicClient, mockMissingKey } = vi.hoisted(() => {
+const { mockGetAnthropicClient, streamCalls, streamOptions } = vi.hoisted(() => {
   return {
     mockGetAnthropicClient: vi.fn(),
-    mockMissingKey: class MissingAnthropicKeyError extends Error {
-      readonly code = 'missing_anthropic_key';
-    },
+    streamCalls: [] as Array<Record<string, unknown>>,
+    streamOptions: [] as Array<{ signal?: AbortSignal } | undefined>,
   };
 });
 
-vi.mock('@/lib/ai/anthropicClient', () => {
+vi.mock('@/lib/ai/anthropicClient', async (importActual) => {
+  // Real registry and request helpers; only the client is faked.
+  const actual = await importActual<typeof import('@/lib/ai/anthropicClient')>();
   return {
-    AI_MODELS: {
-      HAIKU: 'claude-haiku-4-5',
-      SONNET: 'claude-sonnet-4-6',
-      OPUS: 'claude-opus-4-7',
-    },
+    ...actual,
     getAnthropicClient: () => mockGetAnthropicClient(),
-    MissingAnthropicKeyError: mockMissingKey,
     getDefaultModelKey: () => 'HAIKU',
-    resolveModelId: () => 'claude-haiku-4-5',
   };
 });
 
 // Imported AFTER the mock declaration so the mock applies.
 import { POST } from '../route';
+import { MissingAnthropicKeyError } from '@/lib/ai/anthropicClient';
 import { __resetAiUsageForTests, getUsage } from '@/lib/ai/aiUsageStub';
 
 type Listener = (delta: string) => void;
 
-function fakeStreamingClient(deltas: string[]) {
+function fakeStreamingClient(
+  deltas: string[],
+  final: { stop_reason?: string; stop_details?: unknown; content?: unknown[]; gate?: Promise<void> } = {},
+) {
   // Build a minimal MessageStream-like object. The route uses:
   //   stream.on('text', cb)
   //   await stream.finalMessage()
@@ -58,8 +57,10 @@ function fakeStreamingClient(deltas: string[]) {
   // deltas when `finalMessage()` is awaited — by that point the route
   // has had a chance to attach its `.on('text')` listener.
   return {
-    messages: {
-      stream: () => {
+    beta: { messages: {
+      stream: (params: Record<string, unknown>, options?: { signal?: AbortSignal }) => {
+        streamCalls.push(params);
+        streamOptions.push(options);
         let textListener: Listener | null = null;
         return {
           on(event: string, cb: Listener) {
@@ -70,8 +71,26 @@ function fakeStreamingClient(deltas: string[]) {
             // Yield one microtask so any synchronous `.on(...)` call
             // after `.stream(...)` has registered before we emit.
             await Promise.resolve();
+            if (final.gate) {
+              // Like the SDK: an aborted signal rejects the pending stream.
+              const signal = options?.signal;
+              await Promise.race([
+                final.gate,
+                new Promise((_, reject) => {
+                  const abort = () => reject(Object.assign(new Error('aborted'), { name: 'APIUserAbortError' }));
+                  if (signal?.aborted) abort();
+                  signal?.addEventListener('abort', abort);
+                }),
+              ]);
+            }
             for (const d of deltas) textListener?.(d);
             return {
+              content: final.content ?? [
+                { type: 'thinking', thinking: '', signature: 's' },
+                { type: 'text', text: deltas.join('') },
+              ],
+              stop_reason: final.stop_reason ?? 'end_turn',
+              stop_details: final.stop_details ?? null,
               usage: {
                 input_tokens: 42,
                 output_tokens: 17,
@@ -82,7 +101,7 @@ function fakeStreamingClient(deltas: string[]) {
           },
         };
       },
-    },
+    } },
   };
 }
 
@@ -112,6 +131,8 @@ describe('POST /api/ai/edit', () => {
   beforeEach(() => {
     __resetAiUsageForTests();
     mockGetAnthropicClient.mockReset();
+    streamCalls.length = 0;
+    streamOptions.length = 0;
   });
 
   afterEach(() => {
@@ -139,7 +160,7 @@ describe('POST /api/ai/edit', () => {
 
   it('returns 401 when ANTHROPIC_API_KEY is missing', async () => {
     mockGetAnthropicClient.mockImplementation(() => {
-      throw new mockMissingKey();
+      throw new MissingAnthropicKeyError();
     });
     const res = await POST(
       makeReq({ prompt: 'hi', sessionId: 's1', pageId: 'p1' }),
@@ -208,10 +229,68 @@ describe('POST /api/ai/edit', () => {
     const parsed = JSON.parse(aiLogs[0].slice('[ai] '.length));
     expect(parsed).toMatchObject({
       sessionId: 's1',
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-5-5',
       inputTokens: 42,
       outputTokens: 17,
       status: 'ok',
+    });
+  });
+});
+
+describe('POST /api/ai/edit on current models', () => {
+  beforeEach(() => {
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    mockGetAnthropicClient.mockReset();
+    streamCalls.length = 0;
+    streamOptions.length = 0;
+    __resetAiUsageForTests();
+  });
+
+  it('sends the repo default model at low effort, no thinking or sampling fields, no fallback on Haiku', async () => {
+    mockGetAnthropicClient.mockReturnValue(fakeStreamingClient(['ok']));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await readSse(await POST(makeReq({ prompt: 'hi', sessionId: 's1', pageId: 'p1' })));
+    const params = streamCalls[0];
+    expect(params.model).toBe('claude-haiku-5-5');
+    expect(params.output_config).toEqual({ effort: 'low' });
+    expect(params.max_tokens).toBe(4096);
+    for (const banned of ['thinking', 'temperature', 'top_p', 'top_k', 'fallbacks', 'betas']) {
+      expect(params).not.toHaveProperty(banned);
+    }
+  });
+
+  it('surfaces a refusal as an error event, never as done', async () => {
+    mockGetAnthropicClient.mockReturnValue(
+      fakeStreamingClient([], { stop_reason: 'refusal', stop_details: { category: 'bio' }, content: [] }),
+    );
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const text = await readSse(await POST(makeReq({ prompt: 'hi', sessionId: 's1', pageId: 'p1' })));
+    expect(text).toContain('event: error');
+    expect(text).toContain('"code":"refused"');
+    expect(text).not.toContain('event: done');
+  });
+
+  it('surfaces a max_tokens stop as an error event, never as done', async () => {
+    mockGetAnthropicClient.mockReturnValue(fakeStreamingClient(['partial'], { stop_reason: 'max_tokens' }));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const text = await readSse(await POST(makeReq({ prompt: 'hi', sessionId: 's1', pageId: 'p1' })));
+    expect(text).toContain('"code":"truncated"');
+    expect(text).not.toContain('event: done');
+  });
+
+  it('aborts the Anthropic stream when the client disconnects, and ends without done', async () => {
+    mockGetAnthropicClient.mockReturnValue(fakeStreamingClient(['never'], { gate: new Promise(() => {}) }));
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    logSpy.mockClear(); // earlier tests in this file share the spy
+    const res = await POST(makeReq({ prompt: 'hi', sessionId: 's1', pageId: 'p1' }));
+    await vi.waitFor(() => expect(streamOptions).toHaveLength(1));
+    const signal = streamOptions[0]?.signal;
+    expect(signal?.aborted).toBe(false);
+    await res.body!.cancel();
+    expect(signal?.aborted).toBe(true);
+    await vi.waitFor(() => {
+      const line = logSpy.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith('[ai] '));
+      expect(line && JSON.parse(line.slice(5))).toMatchObject({ status: 'error', errorCode: 'aborted' });
     });
   });
 });

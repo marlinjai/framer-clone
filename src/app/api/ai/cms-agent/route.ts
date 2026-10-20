@@ -34,11 +34,23 @@ import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { readCompanySelectors } from '@/lib/activeCompanyCookie';
 import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
+import type {
+  BetaMessageParam,
+  BetaToolResultBlockParam,
+  BetaToolUseBlock,
+} from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import type { Prisma } from '@prisma/client';
 import {
   getAnthropicClient,
+  isToolInputParseError,
+  mergeBetas,
   MissingAnthropicKeyError,
+  modelRequestFields,
+  progressUpdateFields,
+  refusalMessage,
+  replayableAssistantContent,
   resolveModelId,
+  type AiModelKey,
 } from '@/lib/ai/anthropicClient';
 import { buildSystemPrompt } from '@/lib/ai/promptCache';
 import { createSseStream, SSE_HEADERS } from '@/lib/ai/sse';
@@ -231,9 +243,31 @@ async function handlePOST(request: Request): Promise<Response> {
   // ---- 5. Open the SSE stream and kick off the detached loop -------------
   const sse = createSseStream();
 
-  void runAgentLoop({ adapter, anthropic, prisma, body, workspaceId, modelId, runId, sse });
+  // Stop spending when the client goes away: the request is aborted, or the
+  // SSE stream was cancelled / a write hit a closed connection.
+  const signal = AbortSignal.any([request.signal, sse.signal]);
+  void runAgentLoop({ adapter, anthropic, prisma, body, workspaceId, modelKey: body.model, runId, sse, signal });
 
   return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
+}
+
+/** Strict JSON check of a raw streamed tool input (empty means `{}`: no fragments). */
+function isStrictJson(raw: string): boolean {
+  if (raw.trim() === '') return true;
+  try {
+    JSON.parse(raw);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A deliberate stop of the loop with a user-facing code (refusal, truncation, bad tool JSON). */
+class AgentStopError extends Error {
+  constructor(readonly code: 'refused' | 'truncated' | 'invalid_tool_input' | 'cancelled', message: string) {
+    super(message);
+    this.name = 'AgentStopError';
+  }
 }
 
 interface LoopArgs {
@@ -242,13 +276,15 @@ interface LoopArgs {
   prisma: ReturnType<typeof getPrismaClient>;
   body: Body;
   workspaceId: string;
-  modelId: string;
+  modelKey: AiModelKey;
   runId: string;
   sse: ReturnType<typeof createSseStream>;
+  /** Aborts when the client disconnected (see handlePOST). */
+  signal: AbortSignal;
 }
 
 async function runAgentLoop(args: LoopArgs): Promise<void> {
-  const { adapter, anthropic, prisma, body, workspaceId, modelId, runId, sse } = args;
+  const { adapter, anthropic, prisma, body, workspaceId, modelKey, runId, sse, signal } = args;
   const heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
 
   const changeSummaries: AgentChangeSummary[] = [];
@@ -303,37 +339,98 @@ async function runAgentLoop(args: LoopArgs): Promise<void> {
       collectionName,
     };
 
-    const messages: Anthropic.MessageParam[] = [{ role: 'user', content: body.prompt }];
+    const messages: BetaMessageParam[] = [{ role: 'user', content: body.prompt }];
+    // Effort is the thinking and spend control on current models. Opus and
+    // Sonnet run at `medium` (multi-step tool work over real data, where a
+    // wrong write costs an undo); Haiku stays at `low` (its fast, cheap tier).
+    // Sonnet and Opus also add the server-side fallback opt-in and
+    // progress-update narration.
+    const modelFields = modelRequestFields(modelKey, modelKey === 'HAIKU' ? 'low' : 'medium');
+    const progress = progressUpdateFields(modelKey);
+    const betas = mergeBetas<string>(modelFields.betas, progress.betas);
+
+    // Disconnect handling: the Anthropic stream is aborted at once, and the
+    // loop checks the signal before every tool call, so a tool that already
+    // started finishes and records its inverse (the run stays undoable) and
+    // nothing after it runs. A turn is never left half-applied mid-tool.
+    const stopIfDisconnected = (): void => {
+      if (signal.aborted) {
+        throw new AgentStopError('cancelled', 'The client disconnected; the run stopped and every change made so far can be undone.');
+      }
+    };
 
     let iterations = 0;
     while (iterations++ < MAX_ITERATIONS) {
-      const stream = anthropic.messages.stream({
-        model: modelId,
-        max_tokens: 4096,
+      stopIfDisconnected();
+      const stream = anthropic.beta.messages.stream({
+        ...modelFields,
+        ...(progress.thinking ? { thinking: progress.thinking } : {}),
+        ...(betas ? { betas } : {}),
+        // Thinking counts toward max_tokens on current models.
+        max_tokens: 16_000,
         system,
         tools: agentToolDefs,
         messages,
-      });
+      }, { signal });
       stream.on('text', (delta: string) => sse.send('agent:thinking', { text: delta }));
+      // Raw tool-input JSON per content block index. With eager input
+      // streaming the SDK parses inputs tolerantly, so malformed JSON can
+      // arrive as a silently SHORTER object (a cut-off string value) that
+      // still passes the executor's schema check. The raw text is parsed
+      // strictly below before any tool of the turn runs.
+      const rawToolInput = new Map<number, string>();
+      stream.on('streamEvent', (event) => {
+        if (event.type === 'content_block_delta' && event.delta.type === 'input_json_delta') {
+          rawToolInput.set(event.index, (rawToolInput.get(event.index) ?? '') + event.delta.partial_json);
+        }
+      });
+      // Progress-update notes between tool calls (display: "updates").
+      stream.on('thinking', (delta: string) => {
+        if (delta) sse.send('agent:thinking', { text: delta });
+      });
 
-      const final = await stream.finalMessage();
+      let final;
+      try {
+        final = await stream.finalMessage();
+      } catch (err) {
+        stopIfDisconnected(); // an abort is a cancellation, not an upstream error
+        if (!isToolInputParseError(err)) throw err;
+        throw new AgentStopError('invalid_tool_input', 'The agent produced an unreadable tool call. Nothing more was changed; run it again.');
+      }
       inputTokens += final.usage.input_tokens;
       outputTokens += final.usage.output_tokens;
       cacheReadTokens += final.usage.cache_read_input_tokens ?? 0;
 
-      messages.push({
-        role: 'assistant',
-        content: final.content as Anthropic.ContentBlockParam[],
-      });
+      // A classifier decline is an HTTP 200: stop before reading content or
+      // running any tool of this turn (a refusal can cut a tool call off).
+      const refusal = refusalMessage(final);
+      if (refusal) throw new AgentStopError('refused', refusal);
+
+      // Append the assistant turn unchanged (thinking blocks included).
+      messages.push({ role: 'assistant', content: replayableAssistantContent(final.content) });
 
       const toolUses = final.content.filter(
-        (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
+        (block): block is BetaToolUseBlock => block.type === 'tool_use',
       );
 
+      if (final.stop_reason === 'max_tokens' && toolUses.length > 0) {
+        // With eager input streaming a cut-off tool input can still parse as a
+        // partial object: never run it.
+        throw new AgentStopError('truncated', 'The agent ran out of output space mid tool call. Nothing more was changed; try a smaller request.');
+      }
       if (final.stop_reason !== 'tool_use' || toolUses.length === 0) break;
 
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      const toolResults: BetaToolResultBlockParam[] = [];
       for (const toolUse of toolUses) {
+        stopIfDisconnected();
+        const raw = rawToolInput.get(final.content.indexOf(toolUse));
+        if (raw !== undefined && !isStrictJson(raw)) {
+          // Run nothing from this block; tell the model so it can call again.
+          const summary = `INVALID_JSON: the input for ${toolUse.name} was not valid JSON, so nothing was run. Call the tool again with valid JSON.`;
+          sse.send('agent:tool_result', { tool: toolUse.name, success: false, summary });
+          toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: summary, is_error: true });
+          continue;
+        }
         sse.send('agent:tool_call', { tool: toolUse.name, input: toolUse.input });
         const result = await executeAgentTool(toolUse.name, toolUse.input, ctx);
         sse.send('agent:tool_result', {
@@ -365,7 +462,8 @@ async function runAgentLoop(args: LoopArgs): Promise<void> {
     } catch {
       // The run-status update is best-effort; the SSE error is the source of truth.
     }
-    sse.send('agent:error', { code: 'agent_error', message });
+    const code = err instanceof AgentStopError ? err.code : 'agent_error';
+    sse.send('agent:error', { code, message });
   } finally {
     clearInterval(heartbeat);
     sse.close();

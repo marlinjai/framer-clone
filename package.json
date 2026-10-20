@@ -29,7 +29,7 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.98.0",
+    "@anthropic-ai/sdk": "^0.135.0",
     "@edge-runtime/cookies": "6.0.0",
     "@hookform/resolvers": "^5.2.1",
     "@marlinjai/auth-brain-sdk": "^1.7.1",

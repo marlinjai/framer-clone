@@ -1,0 +1,390 @@
+// src/components/ai/GeneratePageDialog.tsx
+//
+// The editor's "Generate" action: a brief, a target (a new page, replace the
+// selected component, or insert into it), and a model choice. Streams progress
+// from POST /api/ai/generate-page, applies the validated result as ONE undoable
+// MST action, and offers a one-click "Undo generation" (the CMS agent's
+// pattern). Every failure is shown with an actionable message; nothing is ever
+// applied from an invalid result.
+//
+// The flow is the pure reducer in src/lib/ai/pageGen/flow.ts (keyed to the
+// inputs and the captured target), so a cancelled or stale run can never land.
+// The transport is injectable for tests.
+'use client';
+
+import React from 'react';
+import { observer } from 'mobx-react-lite';
+import { Sparkles, Loader2, Undo2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { useStore } from '@/hooks/useStore';
+import type { ComponentInstance } from '@/models/ComponentModel';
+import type { PageModelType } from '@/models/PageModel';
+import { fetchPageGenTransport, type PageGenTransport } from '@/lib/ai/pageGen/client';
+import {
+  applyResult,
+  buildRequest,
+  captureTarget,
+  describeTargetAvailability,
+  undoGeneration,
+  type TargetKind,
+} from '@/lib/ai/pageGen/editorBridge';
+import {
+  clearDraft,
+  describeError,
+  flowReducer,
+  initialFlow,
+  loadDraft,
+  makeRequestKey,
+  saveDraft,
+  type FlowInputs,
+} from '@/lib/ai/pageGen/flow';
+import { GENERATION_LIMITS } from '@/lib/ai/pageGen/schema';
+import type { PageGenModel, PageGenProgress } from '@/lib/ai/pageGen/protocol';
+
+const TARGETS: Array<{ kind: TargetKind; label: string }> = [
+  { kind: 'newPage', label: 'New page' },
+  { kind: 'replace', label: 'Replace selection' },
+  { kind: 'insert', label: 'Add to selection' },
+];
+
+const MODELS: Array<{ model: PageGenModel; label: string; hint: string }> = [
+  { model: 'SONNET', label: 'Best quality', hint: 'Slower, better layouts and copy' },
+  { model: 'HAIKU', label: 'Fast', hint: 'Quicker and cheaper drafts' },
+];
+
+function progressText(p: PageGenProgress): string {
+  const kb = (p.receivedChars / 1024).toFixed(1);
+  if (p.phase === 'validating') return 'Checking the result against the editor...';
+  if (p.phase === 'repairing') {
+    return p.receivedChars > 0 ? `Fixing problems in the first draft (${kb} KB)...` : 'Fixing problems in the first draft...';
+  }
+  return p.receivedChars > 0 ? `Designing (${kb} KB written)...` : 'Designing...';
+}
+
+function findComponent(page: PageModelType, id: string): ComponentInstance | undefined {
+  const walk = (n: ComponentInstance): ComponentInstance | undefined => {
+    if (n.id === id) return n;
+    for (const c of n.children) {
+      const hit = walk(c as ComponentInstance);
+      if (hit) return hit;
+    }
+    return undefined;
+  };
+  return walk(page.appComponentTree as ComponentInstance);
+}
+
+export interface GeneratePageDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  transport?: PageGenTransport;
+}
+
+export const GeneratePageDialog = observer(function GeneratePageDialog({
+  open,
+  onOpenChange,
+  transport = fetchPageGenTransport,
+}: GeneratePageDialogProps) {
+  const { editorUI } = useStore();
+  const project = editorUI.currentProject;
+  const page = editorUI.currentPage;
+  const selected = editorUI.selectedComponent as ComponentInstance | undefined;
+  const projectId = project?.id ?? '';
+
+  const [state, dispatch] = React.useReducer(flowReducer, undefined, () => initialFlow());
+  const abortRef = React.useRef<AbortController | null>(null);
+  const stateRef = React.useRef(state);
+  stateRef.current = state;
+
+  const inputs = state.inputs;
+  const availability = describeTargetAvailability(inputs.targetKind, page, selected);
+  const targetKey = `${page?.id ?? ''}|${inputs.targetKind === 'newPage' ? '' : (selected?.id ?? '')}`;
+
+  // Re-entry / resume: every open starts from the saved draft, never from a
+  // previous run or result.
+  React.useEffect(() => {
+    if (open && projectId) dispatch({ type: 'reset', inputs: loadDraft(projectId) });
+  }, [open, projectId]);
+
+  // Abort a running generation when the dialog unmounts.
+  React.useEffect(() => () => abortRef.current?.abort(), []);
+
+  const edit = (patch: Partial<FlowInputs>) => {
+    dispatch({ type: 'edit', inputs: patch, targetKey });
+    if (projectId) saveDraft(projectId, { ...inputs, ...patch });
+  };
+
+  const cancel = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    dispatch({ type: 'cancel' });
+  };
+
+  const handleOpenChange = (next: boolean) => {
+    if (!next && stateRef.current.phase === 'running') cancel();
+    onOpenChange(next);
+  };
+
+  const generate = async () => {
+    if (!project || !page || !availability.ok) return;
+    const brief = inputs.brief.trim();
+    if (!brief) return;
+    const target = captureTarget(inputs.targetKind, page, selected);
+    const requestKey = makeRequestKey(inputs, targetKey);
+    const request = buildRequest({ brief, model: inputs.model, pageTitle: inputs.pageTitle, target, project });
+    const controller = new AbortController();
+    abortRef.current?.abort();
+    abortRef.current = controller;
+    dispatch({ type: 'start', requestKey });
+
+    const isCurrent = () =>
+      abortRef.current === controller && stateRef.current.phase === 'running' && stateRef.current.requestKey === requestKey;
+
+    await transport(
+      request,
+      {
+        onProgress: (progress) => {
+          if (isCurrent()) dispatch({ type: 'progress', requestKey, progress });
+        },
+        onResult: (result) => {
+          if (!isCurrent()) return; // cancelled or superseded: never apply
+          const outcome = applyResult(project, target, result, inputs.targetKind === 'newPage' ? inputs.pageTitle : undefined);
+          if (!outcome.ok) {
+            dispatch({ type: 'failed', requestKey, error: { code: 'apply_failed', message: `Nothing was changed: ${outcome.reason}` } });
+            return;
+          }
+          const shownPage = project.getPage(outcome.value.pageId);
+          if (shownPage && editorUI.currentPage?.id !== shownPage.id) editorUI.setCurrentPage(shownPage);
+          const toSelect = shownPage && outcome.value.selectId ? findComponent(shownPage, outcome.value.selectId) : undefined;
+          if (toSelect) editorUI.selectComponent(toSelect);
+          clearDraft(projectId);
+          dispatch({
+            type: 'applied',
+            requestKey,
+            record: outcome.value.record,
+            nodeCount: result.stats.nodeCount,
+            warnings: result.warnings,
+          });
+        },
+        onError: (error) => {
+          if (error.code === 'aborted' || !isCurrent()) return;
+          dispatch({ type: 'failed', requestKey, error: describeError(error) });
+        },
+      },
+      controller.signal,
+    );
+    if (abortRef.current === controller) abortRef.current = null;
+  };
+
+  const undo = () => {
+    if (!project || state.phase !== 'applied') return;
+    const outcome = undoGeneration(project, state.record, (fallbackId) => {
+      const fallback = fallbackId ? project.getPage(fallbackId) : undefined;
+      if (fallback && editorUI.currentPage?.id === (state.record as { pageId: string }).pageId) {
+        editorUI.setCurrentPage(fallback);
+      }
+    });
+    dispatch(outcome.ok ? { type: 'undone' } : { type: 'undoFailed', reason: outcome.reason });
+  };
+
+  const running = state.phase === 'running';
+  const briefTooLong = inputs.brief.length > GENERATION_LIMITS.maxBriefChars;
+  const canGenerate = !running && !!project && availability.ok && inputs.brief.trim().length > 0 && !briefTooLong;
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-w-[520px]" data-editor-ui="true">
+        <DialogHeader>
+          <DialogTitle>Generate with AI</DialogTitle>
+          <DialogDescription>
+            Describe what you need. The result is made of normal components you can edit, and you can undo it in one step.
+          </DialogDescription>
+        </DialogHeader>
+
+        {state.phase === 'applied' ? (
+          <div className="grid gap-3" role="status" aria-live="polite">
+            <p className="text-sm">
+              {state.undone
+                ? 'The generation was undone.'
+                : `Added ${state.nodeCount} ${state.nodeCount === 1 ? 'component' : 'components'}${
+                    state.record.kind === 'newPage' ? ' on a new page' : ''
+                  }. Save the project to keep it.`}
+            </p>
+            {state.warnings.length > 0 && !state.undone && (
+              <details className="text-xs text-muted-foreground">
+                <summary>{state.warnings.length} automatic fixes were made to the AI output</summary>
+                <ul className="mt-1 max-h-32 list-disc overflow-y-auto pl-4">
+                  {state.warnings.slice(0, 50).map((w, i) => (
+                    <li key={i}>{w}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {state.undoError && (
+              <p role="alert" className="text-xs text-destructive">
+                Could not undo: {state.undoError}
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            <fieldset className="grid gap-2" disabled={running}>
+              <legend className="mb-1 text-xs font-medium text-muted-foreground">Where</legend>
+              <div className="flex flex-wrap gap-2">
+                {TARGETS.map((t) => (
+                  <Button
+                    key={t.kind}
+                    type="button"
+                    size="sm"
+                    variant={inputs.targetKind === t.kind ? 'default' : 'outline'}
+                    aria-pressed={inputs.targetKind === t.kind}
+                    onClick={() => edit({ targetKind: t.kind })}
+                  >
+                    {t.label}
+                  </Button>
+                ))}
+              </div>
+              <p className={`text-xs ${availability.ok ? 'text-muted-foreground' : 'text-destructive'}`}>
+                {availability.ok ? availability.label : availability.reason}
+              </p>
+            </fieldset>
+
+            {inputs.targetKind === 'newPage' && (
+              <div className="grid gap-1.5">
+                <Label htmlFor="pagegen-title">Page title (optional)</Label>
+                <Input
+                  id="pagegen-title"
+                  value={inputs.pageTitle}
+                  maxLength={120}
+                  disabled={running}
+                  onChange={(e) => edit({ pageTitle: e.target.value })}
+                  placeholder="The AI picks one if empty"
+                />
+              </div>
+            )}
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="pagegen-brief">Brief</Label>
+              <textarea
+                id="pagegen-brief"
+                className="min-h-[110px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                value={inputs.brief}
+                disabled={running}
+                onChange={(e) => edit({ brief: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canGenerate) void generate();
+                }}
+                placeholder="A landing page for a neighbourhood bakery: hero with opening hours, three signature breads, a short story, and a footer with the address."
+              />
+              <p className={`text-right text-[11px] ${briefTooLong ? 'text-destructive' : 'text-muted-foreground'}`}>
+                {inputs.brief.length} / {GENERATION_LIMITS.maxBriefChars}
+              </p>
+            </div>
+
+            <fieldset className="grid gap-2" disabled={running}>
+              <legend className="mb-1 text-xs font-medium text-muted-foreground">Model</legend>
+              <div className="flex gap-2">
+                {MODELS.map((m) => (
+                  <Button
+                    key={m.model}
+                    type="button"
+                    size="sm"
+                    variant={inputs.model === m.model ? 'default' : 'outline'}
+                    aria-pressed={inputs.model === m.model}
+                    title={m.hint}
+                    onClick={() => edit({ model: m.model })}
+                  >
+                    {m.label}
+                  </Button>
+                ))}
+              </div>
+            </fieldset>
+
+            {running && (
+              <p role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                {progressText(state.progress)}
+              </p>
+            )}
+
+            {state.phase === 'editing' && state.error && (
+              <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+                <p>{state.error.message}</p>
+                {state.error.details && (
+                  <ul className="mt-1 max-h-24 list-disc overflow-y-auto pl-4">
+                    {state.error.details.map((d, i) => (
+                      <li key={i}>{d}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          {state.phase === 'applied' ? (
+            <>
+              {!state.undone && (
+                <Button type="button" variant="outline" onClick={undo}>
+                  <Undo2 className="size-4" aria-hidden="true" />
+                  {state.record.kind === 'newPage' ? 'Undo (remove page)' : 'Undo generation'}
+                </Button>
+              )}
+              <Button type="button" onClick={() => dispatch({ type: 'reset', inputs: { ...inputs, brief: '' } })}>
+                Generate another
+              </Button>
+            </>
+          ) : running ? (
+            <Button type="button" variant="outline" onClick={cancel}>
+              Cancel
+            </Button>
+          ) : (
+            <Button type="button" onClick={() => void generate()} disabled={!canGenerate}>
+              <Sparkles className="size-4" aria-hidden="true" />
+              {state.phase === 'editing' && state.error ? 'Try again' : 'Generate'}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+});
+
+/** The top-bar entry point. */
+export const GeneratePageButton = observer(function GeneratePageButton({
+  transport,
+}: {
+  transport?: PageGenTransport;
+}) {
+  const { editorUI } = useStore();
+  const [open, setOpen] = React.useState(false);
+  return (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="mr-2"
+        onClick={() => setOpen(true)}
+        disabled={!editorUI.currentProject}
+        title="Generate a page or section with AI"
+      >
+        <Sparkles size={16} />
+        Generate
+      </Button>
+      <GeneratePageDialog open={open} onOpenChange={setOpen} transport={transport} />
+    </>
+  );
+});
+
+export default GeneratePageButton;

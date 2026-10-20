@@ -3,7 +3,7 @@
 import { types, Instance, SnapshotIn, SnapshotOut } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 import PageModel, { PageModelType } from './PageModel';
-import { createIntrinsicComponent, createViewportNode } from './ComponentModel';
+import { createIntrinsicComponent, createViewportNode, type ComponentSnapshotIn } from './ComponentModel';
 
 // ---- Lumitra Studio binding ---------------------------------------------
 //
@@ -169,6 +169,56 @@ export const ProjectModel = types
           [tablet.id]: tablet,
           [mobile.id]: mobile,
         },
+      }));
+      self.metadata.updatedAt = new Date();
+      return self.pages.get(pageId) as PageModelType;
+    },
+
+    // AI page generation: create a page whose app tree root holds the
+    // generated sections, with viewports that reuse the given breakpoint ids
+    // (the ids the generated responsive maps are keyed to). One action, so it
+    // is one history entry. Slug collision handling matches createPage.
+    addGeneratedPage(input: {
+      title: string;
+      description?: string;
+      sections: ComponentSnapshotIn[];
+      viewports: Array<{
+        breakpointId: string;
+        label: string;
+        minWidth: number;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      }>;
+    }): PageModelType {
+      const existingSlugs = new Set(Array.from(self.pages.values()).map(p => p.slug));
+      const title = input.title.trim() || `Page ${self.pages.size + 1}`;
+      let slug = slugify(title);
+      if (existingSlugs.has(slug) || slug === '') slug = `${slug || 'page'}-${uuidv4().slice(0, 6)}`;
+
+      const canvasNodes: Record<string, ReturnType<typeof createViewportNode>> = {};
+      for (const v of input.viewports) {
+        const node = createViewportNode(
+          `viewport-${uuidv4()}`, v.breakpointId, v.label, v.minWidth, v.x, v.y, v.width, v.height,
+        );
+        canvasNodes[node.id] = node;
+      }
+      const rootId = 'root-' + uuidv4();
+      const pageId = uuidv4();
+      self.pages.set(pageId, PageModel.create({
+        id: pageId,
+        slug,
+        metadata: { title, description: input.description ?? '' },
+        appComponentTree: {
+          id: rootId,
+          type: 'div',
+          componentType: 'host',
+          label: 'Page',
+          props: { style: { display: 'flex', flexDirection: 'column', width: '100%', fontFamily: 'Inter, sans-serif' } },
+          children: input.sections.map(s => ({ ...s, parentId: rootId })),
+        },
+        canvasNodes,
       }));
       self.metadata.updatedAt = new Date();
       return self.pages.get(pageId) as PageModelType;

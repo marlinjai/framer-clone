@@ -31,11 +31,19 @@ export type SseStream = {
    * instead of a bare disconnect.
    */
   close: (err?: { message: string; code: string }) => void;
+  /**
+   * Aborts when the client went away: the reader cancelled the stream (the
+   * browser closed the connection) or a write failed on a closed stream.
+   * Routes pass it to the Anthropic call so a dead connection stops spending.
+   * Not aborted by an ordinary close() from the server side.
+   */
+  signal: AbortSignal;
 };
 
 export function createSseStream(): SseStream {
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
   let closed = false;
+  const disconnected = new AbortController();
 
   const stream = new ReadableStream<Uint8Array>({
     start(c) {
@@ -44,6 +52,7 @@ export function createSseStream(): SseStream {
     cancel() {
       closed = true;
       controller = null;
+      disconnected.abort();
     },
   });
 
@@ -52,8 +61,9 @@ export function createSseStream(): SseStream {
     try {
       controller.enqueue(ENCODER.encode(s));
     } catch {
-      // Stream cancelled mid-write; mark closed and move on.
+      // Stream cancelled mid-write: the client is gone.
       closed = true;
+      disconnected.abort();
     }
   };
 
@@ -87,7 +97,7 @@ export function createSseStream(): SseStream {
     controller = null;
   };
 
-  return { stream, send, heartbeat, close };
+  return { stream, send, heartbeat, close, signal: disconnected.signal };
 }
 
 /**

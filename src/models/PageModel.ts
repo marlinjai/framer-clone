@@ -7,6 +7,7 @@ import {
   IAnyModelType,
   detach,
   getRoot,
+  getSnapshot,
 } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 import ComponentModel, {
@@ -17,6 +18,8 @@ import ComponentModel, {
   createFloatingCanvasComponent,
 } from './ComponentModel';
 import { getComponentEntry } from '@/lib/componentRegistry';
+import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
+import { isVoidTag } from '@/lib/drag/voidTags';
 
 export type InsertTarget =
   | { kind: 'appTree' }
@@ -205,6 +208,110 @@ const PageModel = PageWithComponents
     parent.addChild(child, insertIndex);
     self.updatedAt = new Date();
     return child;
+  },
+
+  // ---------- AI PAGE GENERATION (one action = one history entry) ----------
+  //
+  // Apply validated, breakpoint-id-keyed snapshots from /api/ai/generate-page.
+  // `replace` swaps the target for the generated nodes at the same position
+  // (the app-tree root keeps itself and swaps its children instead); `insert`
+  // appends them inside the target. Returns the record revertGeneration needs.
+  // Fails without mutating anything when the target is gone or unsuitable,
+  // so a selection that changed while the model was working can never
+  // receive nodes meant for another component.
+  applyGeneratedNodes(
+    mode: 'replace' | 'insert',
+    targetId: string,
+    snapshots: ComponentSnapshotIn[],
+    generationId: string,
+  ): ApplyOutcome<GenerationUndoRecord> {
+    if (snapshots.length === 0) return { ok: false, reason: 'Nothing to insert.' };
+    const target = findComponentInPage(self, targetId);
+    if (!target) {
+      return { ok: false, reason: 'The selected component no longer exists on this page.' };
+    }
+    if (target.isViewportNode) {
+      return { ok: false, reason: 'Select a component inside the page, not a breakpoint frame.' };
+    }
+    const appTree = self.appComponentTree as ComponentInstance;
+    const insertedIds = snapshots.map(s => s.id as string);
+
+    const createAll = (parentId: string) =>
+      snapshots.map(s => ComponentModel.create({ ...s, parentId }) as ComponentInstance);
+
+    if (mode === 'insert') {
+      if (isVoidTag(target.type) || target.props?.['data-component-kind']) {
+        return { ok: false, reason: 'The selected component cannot contain other components.' };
+      }
+      if (typeof target.props?.children === 'string') {
+        return { ok: false, reason: 'The selected component holds text; select a container instead.' };
+      }
+      createAll(target.id).forEach(child => target.addChild(child));
+      self.updatedAt = new Date();
+      return { ok: true, value: { kind: 'insert', generationId, pageId: self.id, parentId: target.id, insertedIds } };
+    }
+
+    if (target.id === appTree.id) {
+      const previousChildren = appTree.children.map(
+        (c: ComponentInstance) => getSnapshot(c) as ComponentSnapshotIn,
+      );
+      appTree.clearChildren();
+      createAll(appTree.id).forEach(child => appTree.addChild(child));
+      self.updatedAt = new Date();
+      return {
+        ok: true,
+        value: { kind: 'replaceRootChildren', generationId, pageId: self.id, rootId: appTree.id, previousChildren, insertedIds },
+      };
+    }
+
+    const parent = target.parentId ? findComponentInPage(self, target.parentId) : undefined;
+    if (!parent) {
+      return { ok: false, reason: 'Only components inside the page can be replaced; select one in a breakpoint frame.' };
+    }
+    const index = parent.children.findIndex((c: ComponentInstance) => c.id === target.id);
+    const previous = getSnapshot(target) as ComponentSnapshotIn;
+    parent.removeChild(target.id);
+    createAll(parent.id).forEach((child, i) => parent.addChild(child, index + i));
+    self.updatedAt = new Date();
+    return {
+      ok: true,
+      value: { kind: 'replace', generationId, pageId: self.id, parentId: parent.id, index, previous, insertedIds },
+    };
+  },
+
+  // Reverse applyGeneratedNodes. Refuses (and changes nothing) when the
+  // generated nodes are no longer where they were put, e.g. after Cmd+Z or a
+  // manual move: guessing would destroy the user's later work.
+  revertGeneration(record: GenerationUndoRecord): ApplyOutcome<null> {
+    if (record.kind === 'newPage') return { ok: false, reason: 'Use the project to remove a generated page.' };
+    const parentId = record.kind === 'replaceRootChildren' ? record.rootId : record.parentId;
+    const parent = findComponentInPage(self, parentId);
+    if (!parent) return { ok: false, reason: 'The generated components were already removed.' };
+    const childIds = parent.children.map((c: ComponentInstance) => c.id);
+    const missing = record.insertedIds.filter(id => !childIds.includes(id));
+    if (missing.length === record.insertedIds.length) {
+      return { ok: false, reason: 'This generation was already undone.' };
+    }
+    if (missing.length > 0) {
+      return { ok: false, reason: 'Some generated components were moved or deleted since; undo them by hand or with Cmd+Z.' };
+    }
+    if (record.kind === 'replaceRootChildren') {
+      const others = childIds.filter((id: string) => !record.insertedIds.includes(id));
+      if (others.length > 0) {
+        return { ok: false, reason: 'Components were added to the page since; undo them first or use Cmd+Z.' };
+      }
+    }
+    const insertAt = record.kind === 'replace'
+      ? parent.children.findIndex((c: ComponentInstance) => c.id === record.insertedIds[0])
+      : -1;
+    for (const id of record.insertedIds) parent.removeChild(id);
+    if (record.kind === 'replace') {
+      parent.addChild(ComponentModel.create({ ...record.previous, parentId: parent.id }), insertAt);
+    } else if (record.kind === 'replaceRootChildren') {
+      record.previousChildren.forEach(c => parent.addChild(ComponentModel.create({ ...c, parentId: parent.id })));
+    }
+    self.updatedAt = new Date();
+    return { ok: true, value: null };
   },
 
   // Delete any component on the page — tree child (removeChild on its parent) or

@@ -13,39 +13,69 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // --- Scriptable Anthropic client -------------------------------------------
 const anthropicState = vi.hoisted(() => ({
   // Each entry is the `finalMessage()` for one stream() call, in order.
-  turns: [] as Array<{ content: unknown[]; stop_reason: string }>,
+  turns: [] as Array<
+    | { content: unknown[]; stop_reason: string; stop_details?: unknown; rawInputs?: Record<number, string> }
+    | { throws: unknown }
+  >,
   // The inner non-streaming Haiku reply (translate/generate); JSON text.
   innerJson: '[]',
+  streamCalls: [] as Array<Record<string, unknown>>,
+  streamOptions: [] as Array<{ signal?: AbortSignal } | undefined>,
+  createCalls: [] as Array<Record<string, unknown>>,
 }));
 
 function makeClient() {
   let turnIndex = 0;
-  return {
-    messages: {
-      stream: () => ({
-        on() {
-          return this;
-        },
-        finalMessage: async () => {
-          const turn = anthropicState.turns[turnIndex++] ?? { content: [], stop_reason: 'end_turn' };
-          return {
-            ...turn,
-            usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 2 },
-          };
-        },
-      }),
-      create: async () => ({ content: [{ type: 'text', text: anthropicState.innerJson }] }),
-    },
+  const stream = (params: Record<string, unknown>, options?: { signal?: AbortSignal }) => {
+    anthropicState.streamCalls.push({ ...params, messages: structuredClone(params.messages) });
+    anthropicState.streamOptions.push(options);
+    const handlers: Record<string, (event: unknown) => void> = {};
+    return {
+      on(event: string, cb: (event: unknown) => void) {
+        handlers[event] = cb;
+        return this;
+      },
+      finalMessage: async () => {
+        const turn = anthropicState.turns[turnIndex++] ?? { content: [], stop_reason: 'end_turn' };
+        if ('throws' in turn) throw turn.throws;
+        // Replay the raw input_json deltas the real stream would have sent.
+        for (const [index, json] of Object.entries(turn.rawInputs ?? {})) {
+          handlers.streamEvent?.({
+            type: 'content_block_delta',
+            index: Number(index),
+            delta: { type: 'input_json_delta', partial_json: json },
+          });
+        }
+        const { rawInputs: _raw, ...message } = turn;
+        void _raw;
+        return {
+          stop_details: null,
+          ...message,
+          usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 2 },
+        };
+      },
+    };
   };
+  const create = async (params: Record<string, unknown>) => {
+    anthropicState.createCalls.push(params);
+    // A leading (empty) thinking block, as current models return.
+    return {
+      stop_reason: 'end_turn',
+      stop_details: null,
+      content: [
+        { type: 'thinking', thinking: '', signature: 's' },
+        { type: 'text', text: anthropicState.innerJson },
+      ],
+    };
+  };
+  return { beta: { messages: { stream, create } } };
 }
 
-vi.mock('@/lib/ai/anthropicClient', () => ({
-  AI_MODELS: { HAIKU: 'claude-haiku-4-5', SONNET: 'claude-sonnet-4-6', OPUS: 'claude-opus-4-8' },
-  getAnthropicClient: () => makeClient(),
-  MissingAnthropicKeyError: class extends Error {},
-  resolveModelId: (key: 'HAIKU' | 'SONNET' | 'OPUS') =>
-    ({ HAIKU: 'claude-haiku-4-5', SONNET: 'claude-sonnet-4-6', OPUS: 'claude-opus-4-8' })[key],
-}));
+vi.mock('@/lib/ai/anthropicClient', async (importActual) => {
+  // Real registry and request helpers; only the client is scripted.
+  const actual = await importActual<typeof import('@/lib/ai/anthropicClient')>();
+  return { ...actual, getAnthropicClient: () => makeClient() };
+});
 
 // --- Adapter mock ----------------------------------------------------------
 const adapter = vi.hoisted(() => ({
@@ -141,6 +171,9 @@ beforeEach(() => {
   mockCan.mockResolvedValue(true);
   anthropicState.turns = [{ content: [], stop_reason: 'end_turn' }];
   anthropicState.innerJson = '[]';
+  anthropicState.streamCalls = [];
+  anthropicState.streamOptions = [];
+  anthropicState.createCalls = [];
   // t1 is the session workspace's collection, t_b belongs to workspace B.
   adapter.getTable.mockImplementation(async (id: string) =>
     id === 't1'
@@ -397,5 +430,179 @@ describe('POST /api/ai/cms-agent: workspace isolation', () => {
     await readStream(res);
     expect(adapter.updateRow).not.toHaveBeenCalled();
     expect(adapter.createRow).not.toHaveBeenCalled();
+  });
+});
+
+// --- Current-model request surface (Opus 5.5 / Sonnet 5.5 / Haiku 5.5) -------
+describe('POST /api/ai/cms-agent on current models', () => {
+  const createTurn = {
+    content: [
+      { type: 'thinking', thinking: '', signature: 'sig-a' },
+      { type: 'tool_use', id: 'tu1', name: 'create_row', input: { tableId: 't1', cells: { c1: 'x' } } },
+    ],
+    stop_reason: 'tool_use',
+  };
+
+  it('defaults to Opus 5.5 at medium effort with fallbacks, progress updates and eager tool input', async () => {
+    await readStream(await POST(makeRequest(baseBody({ model: undefined }), { cookie: authCookie })));
+    const params = anthropicState.streamCalls[0];
+    expect(params.model).toBe('claude-opus-5-5');
+    expect(params.output_config).toEqual({ effort: 'medium' });
+    expect(params.fallbacks).toBe('default');
+    expect(params.betas).toEqual(['server-side-fallback-2026-07-01', 'thinking-display-updates-2026-08-18']);
+    expect(params.thinking).toEqual({ type: 'adaptive', display: 'updates' });
+    expect(params.max_tokens).toBe(16_000);
+    for (const banned of ['temperature', 'top_p', 'top_k', 'tool_choice']) expect(params).not.toHaveProperty(banned);
+    expect((params.tools as Array<{ eager_input_streaming?: boolean }>).every((t) => t.eager_input_streaming)).toBe(true);
+  });
+
+  it('Sonnet 5.5 also runs at medium effort', async () => {
+    await readStream(await POST(makeRequest(baseBody({ model: 'SONNET' }), { cookie: authCookie })));
+    expect(anthropicState.streamCalls[0]).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'medium' } });
+  });
+
+  it('Haiku 5.5: low effort, no fallbacks, no betas, adaptive thinking left at its default', async () => {
+    await readStream(await POST(makeRequest(baseBody({ model: 'HAIKU' }), { cookie: authCookie })));
+    const params = anthropicState.streamCalls[0];
+    expect(params.model).toBe('claude-haiku-5-5');
+    expect(params.output_config).toEqual({ effort: 'low' });
+    for (const absent of ['fallbacks', 'betas', 'thinking']) expect(params).not.toHaveProperty(absent);
+  });
+
+  it('sends the assistant turn back unchanged, thinking blocks included', async () => {
+    adapter.createRow.mockResolvedValue({ id: 'row1', tableId: 't1', cells: { c1: 'x' } });
+    anthropicState.turns = [createTurn, { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' }];
+    await readStream(await POST(makeRequest(baseBody(), { cookie: authCookie })));
+    const second = anthropicState.streamCalls[1].messages as Array<{ role: string; content: unknown }>;
+    expect(second[1]).toEqual({ role: 'assistant', content: createTurn.content });
+  });
+
+  it('a refusal stops the run before any tool of that turn runs', async () => {
+    anthropicState.turns = [{ ...createTurn, stop_reason: 'refusal', stop_details: { category: 'cyber' } }];
+    const body = await readStream(await POST(makeRequest(baseBody(), { cookie: authCookie })));
+    expect(adapter.createRow).not.toHaveBeenCalled();
+    expect(body).toContain('"code":"refused"');
+    expect(body).not.toContain('event: agent:done');
+    expect(prisma.agentRun.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'failed' }) }));
+  });
+
+  it('a turn cut off at max_tokens never runs its (possibly partial) tool call', async () => {
+    anthropicState.turns = [{ ...createTurn, stop_reason: 'max_tokens' }];
+    const body = await readStream(await POST(makeRequest(baseBody(), { cookie: authCookie })));
+    expect(adapter.createRow).not.toHaveBeenCalled();
+    expect(body).toContain('"code":"truncated"');
+  });
+
+  it('unparseable eager tool JSON stops with invalid_tool_input, not a generic failure', async () => {
+    const { AnthropicError } = await import('@anthropic-ai/sdk');
+    anthropicState.turns = [{ throws: new AnthropicError('Unable to parse tool parameter JSON from model. JSON: {"tab') }];
+    const body = await readStream(await POST(makeRequest(baseBody(), { cookie: authCookie })));
+    expect(body).toContain('"code":"invalid_tool_input"');
+  });
+
+  it('the inner Haiku call (generate_content) uses Haiku 5.5 at low effort and reads text past a thinking block', async () => {
+    adapter.getColumns.mockResolvedValue([{ id: 'c1', name: 'Title', type: 'text' }]);
+    adapter.bulkCreateRows.mockResolvedValue([{ id: 'r1' }]);
+    anthropicState.innerJson = '[{"c1":"Hello"}]';
+    anthropicState.turns = [
+      {
+        content: [
+          { type: 'tool_use', id: 'tu1', name: 'generate_content', input: { tableId: 't1', prompt: 'greetings', count: 1, targetColumns: ['c1'] } },
+        ],
+        stop_reason: 'tool_use',
+      },
+      { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+    ];
+    await readStream(await POST(makeRequest(baseBody(), { cookie: authCookie })));
+    const inner = anthropicState.createCalls[0];
+    expect(inner.model).toBe('claude-haiku-5-5');
+    expect(inner.output_config).toEqual({ effort: 'low' });
+    expect(inner).not.toHaveProperty('fallbacks');
+    expect(adapter.bulkCreateRows).toHaveBeenCalledWith([{ tableId: 't1', cells: { c1: 'Hello' } }]);
+  });
+
+  it('malformed raw tool JSON runs nothing from that block and answers INVALID_JSON', async () => {
+    // The raw stream is broken JSON; the tolerant parser handed over a
+    // shorter, schema-valid input (the cut-off string "say ").
+    anthropicState.turns = [
+      {
+        content: [
+          { type: 'thinking', thinking: '', signature: 's' },
+          { type: 'tool_use', id: 'tu1', name: 'create_row', input: { tableId: 't1', cells: { t: 'say ' } } },
+        ],
+        stop_reason: 'tool_use',
+        rawInputs: { 1: '{"tableId":"t1","cells":{"t":"say "hi" now"}}' },
+      },
+      { content: [{ type: 'text', text: 'sorry' }], stop_reason: 'end_turn' },
+    ];
+    const body = await readStream(await POST(makeRequest(baseBody(), { cookie: authCookie })));
+    expect(adapter.createRow).not.toHaveBeenCalled();
+    expect(prisma.agentChange.create).not.toHaveBeenCalled();
+    expect(body).toContain('INVALID_JSON');
+    const resultTurn = (anthropicState.streamCalls[1].messages as Array<{ role: string; content: unknown }>).at(-1)!;
+    expect(resultTurn.content).toEqual([
+      expect.objectContaining({ type: 'tool_result', tool_use_id: 'tu1', is_error: true, content: expect.stringContaining('INVALID_JSON') }),
+    ]);
+  });
+
+  it('valid raw tool JSON runs the tool as before', async () => {
+    adapter.createRow.mockResolvedValue({ id: 'row1', tableId: 't1', cells: { c1: 'x' } });
+    anthropicState.turns = [
+      { ...createTurn, rawInputs: { 1: '{"tableId":"t1","cells":{"c1":"x"}}' } },
+      { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+    ];
+    await readStream(await POST(makeRequest(baseBody(), { cookie: authCookie })));
+    expect(adapter.createRow).toHaveBeenCalledWith({ tableId: 't1', cells: { c1: 'x' } });
+  });
+
+  it('passes a disconnect signal to the Anthropic stream that aborts with the request', async () => {
+    const controller = new AbortController();
+    const req = new Request('http://localhost/api/ai/cms-agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: authCookie },
+      body: JSON.stringify(baseBody()),
+      signal: controller.signal,
+    });
+    const res = await POST(req);
+    await vi.waitFor(() => expect(anthropicState.streamOptions).toHaveLength(1));
+    const signal = anthropicState.streamOptions[0]?.signal;
+    expect(signal?.aborted).toBe(false);
+    controller.abort();
+    expect(signal?.aborted).toBe(true);
+    await readStream(res).catch(() => '');
+  });
+
+  it('on disconnect mid-turn: the running tool finishes and records its undo, nothing further runs', async () => {
+    const controller = new AbortController();
+    adapter.createRow.mockImplementation(async (input: { cells: Record<string, unknown> }) => {
+      controller.abort(); // the user closes the panel while the first tool runs
+      return { id: 'row1', tableId: 't1', cells: input.cells };
+    });
+    anthropicState.turns = [
+      {
+        content: [
+          { type: 'tool_use', id: 'tu1', name: 'create_row', input: { tableId: 't1', cells: { c1: 'a' } } },
+          { type: 'tool_use', id: 'tu2', name: 'create_row', input: { tableId: 't1', cells: { c1: 'b' } } },
+        ],
+        stop_reason: 'tool_use',
+      },
+      { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+    ];
+    const req = new Request('http://localhost/api/ai/cms-agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: authCookie },
+      body: JSON.stringify(baseBody()),
+      signal: controller.signal,
+    });
+    const res = await POST(req);
+    await readStream(res).catch(() => '');
+    await vi.waitFor(() =>
+      expect(prisma.agentRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'failed', errorMessage: expect.stringContaining('disconnected') }) }),
+      ),
+    );
+    expect(adapter.createRow).toHaveBeenCalledTimes(1); // the second tool never ran
+    expect(prisma.agentChange.create).toHaveBeenCalledTimes(1); // the first one is undoable
+    expect(anthropicState.streamCalls).toHaveLength(1); // no further model turn
   });
 });

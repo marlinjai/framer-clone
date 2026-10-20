@@ -11,8 +11,16 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import Anthropic from '@anthropic-ai/sdk';
+import type { BetaContentBlock } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import {
   AI_MODELS,
+  isToolInputParseError,
+  mergeBetas,
+  modelRequestFields,
+  progressUpdateFields,
+  refusalMessage,
+  replayableAssistantContent,
   __resetAnthropicClientForTests,
   getAnthropicClient,
   getDefaultModelKey,
@@ -74,10 +82,12 @@ describe('model registry', () => {
     }
   });
 
-  it('exposes Haiku / Sonnet / Opus keys', () => {
-    expect(AI_MODELS.HAIKU).toMatch(/^claude-haiku/);
-    expect(AI_MODELS.SONNET).toMatch(/^claude-sonnet/);
-    expect(AI_MODELS.OPUS).toMatch(/^claude-opus/);
+  it('maps the keys to the current-generation model ids (no date suffix)', () => {
+    expect(AI_MODELS).toEqual({
+      HAIKU: 'claude-haiku-5-5',
+      SONNET: 'claude-sonnet-5-5',
+      OPUS: 'claude-opus-5-5',
+    });
   });
 
   it('defaults to Haiku when AI_DEFAULT_MODEL is unset', () => {
@@ -101,5 +111,85 @@ describe('model registry', () => {
     process.env.AI_DEFAULT_MODEL = 'SONNET';
     expect(resolveModelId('HAIKU')).toBe(AI_MODELS.HAIKU);
     expect(resolveModelId('OPUS')).toBe(AI_MODELS.OPUS);
+  });
+});
+
+describe('modelRequestFields', () => {
+  it('Sonnet and Opus opt into server-side fallback with an explicit effort', () => {
+    for (const key of ['SONNET', 'OPUS'] as const) {
+      expect(modelRequestFields(key, 'medium')).toEqual({
+        model: AI_MODELS[key],
+        output_config: { effort: 'medium' },
+        betas: ['server-side-fallback-2026-07-01'],
+        fallbacks: 'default',
+      });
+    }
+  });
+
+  it('Haiku has no server-side fallback (a fallback list would 400)', () => {
+    expect(modelRequestFields('HAIKU', 'low')).toEqual({
+      model: 'claude-haiku-5-5',
+      output_config: { effort: 'low' },
+    });
+  });
+
+  it('never sends thinking or sampling fields', () => {
+    for (const key of ['HAIKU', 'SONNET', 'OPUS'] as const) {
+      const fields = modelRequestFields(key, 'low') as Record<string, unknown>;
+      for (const banned of ['thinking', 'temperature', 'top_p', 'top_k']) expect(fields).not.toHaveProperty(banned);
+    }
+  });
+});
+
+describe('progressUpdateFields / mergeBetas', () => {
+  it('turns on display "updates" for Sonnet and Opus only', () => {
+    expect(progressUpdateFields('OPUS')).toEqual({
+      thinking: { type: 'adaptive', display: 'updates' },
+      betas: ['thinking-display-updates-2026-08-18'],
+    });
+    expect(progressUpdateFields('HAIKU')).toEqual({});
+  });
+
+  it('merges beta lists without duplicates, undefined when empty', () => {
+    expect(mergeBetas(['a'], undefined, ['a', 'b'])).toEqual(['a', 'b']);
+    expect(mergeBetas(undefined, [])).toBeUndefined();
+  });
+});
+
+describe('refusalMessage', () => {
+  it('is null for every stop reason except refusal', () => {
+    for (const stop_reason of ['end_turn', 'tool_use', 'max_tokens'] as const) {
+      expect(refusalMessage({ stop_reason })).toBeNull();
+    }
+  });
+
+  it('names the category when the API gives one', () => {
+    expect(refusalMessage({ stop_reason: 'refusal', stop_details: { category: 'bio' } })).toContain('category: bio');
+    expect(refusalMessage({ stop_reason: 'refusal', stop_details: null })).toMatch(/declined/);
+  });
+});
+
+describe('replayableAssistantContent', () => {
+  const thinking = { type: 'thinking', thinking: '', signature: 's' };
+  const tool = { type: 'tool_use', id: 't', name: 'x', input: {} };
+  const text = { type: 'text', text: 'hi', citations: null };
+  const fallback = { type: 'fallback', from: { model: 'a' }, to: { model: 'b' } };
+
+  it('returns the content unchanged when no fallback happened', () => {
+    const content = [thinking, text, tool] as unknown as BetaContentBlock[];
+    expect(replayableAssistantContent(content)).toEqual(content);
+  });
+
+  it('drops thinking and tool_use blocks before the last fallback boundary only', () => {
+    const content = [thinking, text, tool, fallback, thinking, tool] as unknown as BetaContentBlock[];
+    expect(replayableAssistantContent(content).map((b) => b.type)).toEqual(['text', 'fallback', 'thinking', 'tool_use']);
+  });
+});
+
+describe('isToolInputParseError', () => {
+  it('matches only the SDK local tool-input JSON failure, never API errors', () => {
+    expect(isToolInputParseError(new Anthropic.AnthropicError('Unable to parse tool parameter JSON from model. x'))).toBe(true);
+    expect(isToolInputParseError(new Anthropic.AnthropicError('stream ended'))).toBe(false);
+    expect(isToolInputParseError(new Error('Unable to parse tool parameter JSON'))).toBe(false);
   });
 });
