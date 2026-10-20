@@ -17,10 +17,12 @@
 // unreachable) writes nothing and consumes no number: the document stays a
 // draft and a retry gets the number the failed attempt would have had.
 //
-// After a successful issue the document of record (the PDF) is rendered and
-// stored once (src/server/books/render). A rendering failure never undoes the
-// issue: the answer then carries `render: { stored: false }` and the download
-// renders and stores it on first request.
+// The document of record (the PDF) is rendered from the frozen data, checked
+// (every field drawable in the document font, every legally required field
+// present) and stored INSIDE the issue transaction (src/server/books/render).
+// If that fails, nothing is issued: 422 `undrawable_text` or
+// `render_incomplete` names the fields, the document stays a draft and no
+// number is taken.
 
 import { z } from 'zod';
 
@@ -29,7 +31,8 @@ import { booksRoute, readObject } from '@/server/books/http/route';
 import { documentDetail } from '@/server/books/http/views';
 import { getCustomer } from '@/server/books/repository/customers';
 import { issue } from '@/server/books/issue';
-import { storeRenderedDocument } from '@/server/books/render/store';
+import { getDocument } from '@/server/books/repository/read';
+import { storeBeforeCommit } from '@/server/books/render/store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -49,20 +52,19 @@ export const POST = booksRoute<{ id: string }>('write', async (ctx, req, { param
   if (!parsed.success) {
     return jsonError('bad_body', 'invalid request body', 400, { issues: parsed.error.issues });
   }
-  const result = await issue(ctx.scope, id, { ...parsed.data, actorUserId: ctx.userId });
-
-  let render: { stored: boolean; fileId: string | null };
-  try {
-    const stored = await storeRenderedDocument(ctx.scope, id);
-    render = { stored: true, fileId: stored.fileId };
-  } catch (err) {
-    console.error(`[books] document ${id}: rendering after issue failed; the download retries`, err);
-    render = { stored: false, fileId: null };
-  }
-
-  const detail = await documentDetail(ctx.contactBook, ctx.companyId, result.document, (cid) =>
-    getCustomer(ctx.scope, cid),
+  const result = await issue(
+    ctx.scope,
+    id,
+    { ...parsed.data, actorUserId: ctx.userId },
+    { beforeCommit: storeBeforeCommit(ctx.scope) },
   );
-  if (render.fileId) detail.document.renderedPdfFileId = render.fileId;
-  return Response.json({ document: detail, alreadyIssued: result.alreadyIssued, render });
+  // Re-read after the commit: the view carries the stored file's id.
+  const view = await getDocument(ctx.scope, id);
+  const detail = await documentDetail(ctx.contactBook, ctx.companyId, view, (cid) => getCustomer(ctx.scope, cid));
+  const fileId = view.document.renderedPdfFileId;
+  return Response.json({
+    document: detail,
+    alreadyIssued: result.alreadyIssued,
+    render: { stored: fileId !== null, fileId },
+  });
 });

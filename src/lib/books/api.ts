@@ -150,7 +150,8 @@ const MESSAGES: Record<string, string> = {
   duplicate_customer: 'This contact is already a customer.',
   duplicate_contact: 'A contact with this name already exists. Search for it instead.',
   template_in_use: 'Documents use this template, so it cannot be deleted.',
-  render_incomplete: 'The PDF would be missing a required field; nothing was stored.',
+  render_incomplete: 'The PDF would be missing a required field; nothing was issued or stored.',
+  undrawable_text: 'Some characters cannot be printed in the invoice font. Change these fields; nothing was issued.',
   tax_case_unsupported: 'Invoices to recipients outside the EU are not supported yet under regular taxation.',
   issue_date_out_of_order: 'The issue date is earlier than the last issued invoice.',
 };
@@ -189,7 +190,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (!res.ok) {
     const err = (json as { error?: { code?: string; message?: string; [k: string]: unknown } } | null)?.error;
     const code = err?.code ?? `http_${res.status}`;
-    const missing = Array.isArray(err?.missing) ? ` (${(err!.missing as string[]).join(', ')})` : '';
+    const named = Array.isArray(err?.missing) ? err!.missing : Array.isArray(err?.fields) ? err!.fields : null;
+    const missing = named ? ` (${(named as string[]).join(', ')})` : '';
     throw new BooksApiError(
       res.status,
       code,

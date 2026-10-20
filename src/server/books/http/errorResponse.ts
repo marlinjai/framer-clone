@@ -59,6 +59,7 @@ const STATUS: Record<BooksErrorCode, number> = {
   DOC_TYPE_NOT_SUPPORTED: 422,
   TOTALS_MISMATCH: 422,
   RENDER_INCOMPLETE: 422,
+  UNDRAWABLE_TEXT: 422,
   RECIPIENT_UNAVAILABLE: 503,
 };
 
@@ -76,6 +77,9 @@ const MESSAGES: Partial<Record<BooksErrorCode, string>> = {
   CUSTOMER_REQUIRED: 'pick a customer before issuing',
   NO_BILLABLE_LINES: 'add at least one line with a quantity before issuing',
   SERVICE_DATE_REQUIRED: 'enter a service date or a service period before issuing',
+  UNDRAWABLE_TEXT:
+    'some characters cannot be printed in the document font; change the named fields (nothing was issued)',
+  RENDER_INCOMPLETE: 'the PDF would lack a legally required field; nothing was issued or stored',
 };
 
 /** Lower snake case of a domain code, as the API answers it. */

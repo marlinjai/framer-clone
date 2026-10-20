@@ -36,7 +36,10 @@
 //      against the lines (BK005); the CHECKs check completeness.
 //   9. Insert the `issued` event. Commit.
 
+import type { Transaction } from 'kysely';
 import { z } from 'zod';
+
+import type { CommerceDB } from '../commerce/db-types';
 
 import { ReverseChargeNotAllowedError } from '../tax/germanVat';
 import { totalsExceedLimit } from './totals';
@@ -46,6 +49,7 @@ import { readRecipient } from './recipients';
 import { readPersistedView, selectDocumentRow, selectLineRows, type DocumentView } from './repository/read';
 import { profileFor, selectCustomerRow, syncDraftTaxState } from './repository/taxState';
 import { insertEvent } from './repository/events';
+import { templateSnapshotFor } from './repository/templates';
 import type { BooksScope } from './scope';
 import { requireSettings } from './settings';
 import {
@@ -81,6 +85,14 @@ export interface IssueOptions {
   beforeTransaction?: () => void | Promise<void>;
   /** The clock: "today" (Europe/Berlin) and `issued_at`. */
   now?: Date;
+  /**
+   * Runs inside the issue transaction after the document is frozen and its
+   * event written, before the commit, with the issued view. A throw rolls the
+   * whole issue back: the document stays a draft and no number is taken. The
+   * routes render, check and store the PDF of record here (render/store.ts), so
+   * an invoice is never issued without a complete document of record.
+   */
+  beforeCommit?: (trx: Transaction<CommerceDB>, view: DocumentView) => Promise<void>;
 }
 
 const ISSUED_OR_LATER = new Set(['issued', 'sent', 'accepted', 'rejected', 'paid', 'cancelled']);
@@ -218,11 +230,19 @@ export async function issue(
           vatId: customer.vat_id,
           taxNumber: customer.tax_number,
         });
+        // Reverse charge must name the recipient's VAT id (section 14a (1) UStG).
+        if (profile.reverseCharge && !customerSnapshot.vatId?.trim()) {
+          throw new BooksError('REVERSE_CHARGE_NOT_ALLOWED', 'REVERSE_CHARGE_NOT_ALLOWED: the recipient has no VAT id', {
+            missing: ['recipient.vatId'],
+          });
+        }
+        const templateSnapshot = await templateSnapshotFor(trx, scope, row.template_id);
         await trx
           .updateTable('sales_document')
           .set({
             ...fields,
             tax_summary: toJsonb(fields.tax_summary),
+            template_snapshot: toJsonb(templateSnapshot),
             status: 'issued',
             document_number: number.documentNumber,
             number_value: number.numberValue,
@@ -253,7 +273,9 @@ export async function issue(
             taxProfileKey: fields.tax_profile_key,
           },
         });
-        return { document: await readPersistedView(trx, scope, id), alreadyIssued: false };
+        const issued = await readPersistedView(trx, scope, id);
+        if (options.beforeCommit) await options.beforeCommit(trx, issued);
+        return { document: issued, alreadyIssued: false };
       }),
   );
 }

@@ -78,11 +78,12 @@ const JSON_COLUMNS: Record<string, string> = {
   'sales_document.tax_summary': 'TaxSummary',
   'sales_document.customer_snapshot': 'CustomerSnapshotV1',
   'sales_document.sender_snapshot': 'SenderSnapshotV1',
+  'sales_document.template_snapshot': 'TemplateSnapshotV1',
   'sales_document_event.payload': 'EventPayload',
 };
 
 /** The type-only imports the JSON shapes need. */
-const JSON_IMPORTS = "import type {\n  CustomerSnapshotV1,\n  EventPayload,\n  FooterBlocks,\n  SenderBlockV1,\n  SenderSnapshotV1,\n  TaxSummary,\n} from '../books/snapshots';";
+const JSON_IMPORTS = "import type {\n  CustomerSnapshotV1,\n  EventPayload,\n  FooterBlocks,\n  SenderBlockV1,\n  SenderSnapshotV1,\n  TaxSummary,\n  TemplateSnapshotV1,\n} from '../books/snapshots';";
 
 /** One doc comment per table (a table without one fails the run). */
 const TABLE_DOCS: Record<string, string> = {

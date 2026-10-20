@@ -19,7 +19,7 @@ import 'server-only';
 import { isBooksError } from '../errors';
 import type { ContactBook } from '../contactBook';
 import type { Customer } from '../repository/customers';
-import type { DocumentView, SalesDocument } from '../repository/read';
+import type { DocumentView, SalesDocument, SalesDocumentListItem } from '../repository/read';
 import type { RecipientContact } from '../snapshots';
 
 export type ContactStatus = 'ok' | 'missing' | 'unavailable';
@@ -136,7 +136,11 @@ export interface DocumentListItem {
   total: number;
   currencyCode: string;
   customerId: string | null;
-  /** The recipient's current contact name, or null (see `contactStatus`). */
+  /**
+   * The recipient's name: for an issued document the name it was issued to
+   * (frozen snapshot), for a draft the customer's current contact name; null
+   * when unknown (see `contactStatus`).
+   */
   customerName: string | null;
   contactStatus: ContactStatus | 'none';
   correctsDocumentId: string | null;
@@ -145,11 +149,22 @@ export interface DocumentListItem {
 }
 
 export function documentListItem(
-  doc: SalesDocument,
+  doc: SalesDocument & { recipientName?: string | null },
   customerContact: Map<string, string>,
   contactsReadable: boolean,
 ): DocumentListItem {
+  if (doc.recipientName) {
+    return { ...listFields(doc), customerName: doc.recipientName, contactStatus: 'ok' };
+  }
   const name = doc.customerId ? (customerContact.get(doc.customerId) ?? null) : null;
+  return {
+    ...listFields(doc),
+    customerName: name,
+    contactStatus: !doc.customerId ? 'none' : !contactsReadable ? 'unavailable' : name ? 'ok' : 'missing',
+  };
+}
+
+function listFields(doc: SalesDocument): Omit<DocumentListItem, 'customerName' | 'contactStatus'> {
   return {
     id: doc.id,
     docType: doc.docType,
@@ -160,8 +175,6 @@ export function documentListItem(
     total: doc.total,
     currencyCode: doc.currencyCode,
     customerId: doc.customerId,
-    customerName: name,
-    contactStatus: !doc.customerId ? 'none' : !contactsReadable ? 'unavailable' : name ? 'ok' : 'missing',
     correctsDocumentId: doc.correctsDocumentId,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
@@ -195,10 +208,13 @@ export async function documentDetail(
 export async function documentListItems(
   book: ContactBook,
   tenantId: string,
-  docs: readonly SalesDocument[],
+  docs: readonly SalesDocumentListItem[],
   loadCustomers: (ids: string[]) => Promise<Customer[]>,
 ): Promise<DocumentListItem[]> {
-  const customerIds = [...new Set(docs.map((d) => d.customerId).filter((x): x is string => x !== null))];
+  // Issued documents carry their frozen recipient name; only drafts need the contacts database.
+  const customerIds = [
+    ...new Set(docs.filter((d) => !d.recipientName).map((d) => d.customerId).filter((x): x is string => x !== null)),
+  ];
   const customers = customerIds.length > 0 ? await loadCustomers(customerIds) : [];
   const contacts = await contactsById(
     book,

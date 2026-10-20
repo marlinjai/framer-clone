@@ -25,7 +25,10 @@ import { z } from 'zod';
 
 import { BooksError, constraintName, invalid, sqlState, withDbErrors } from '../errors';
 import type { BooksScope } from '../scope';
-import { toJsonb } from '../snapshots';
+import type { Kysely, Transaction } from 'kysely';
+
+import type { CommerceDB } from '../../commerce/db-types';
+import { templateSnapshotV1Schema, toJsonb, type TemplateSnapshotV1 } from '../snapshots';
 
 /** One footer block: a short heading and a few lines of small print. */
 export const footerBlockSchema = z.object({
@@ -319,4 +322,33 @@ export async function deleteTemplate(scope: BooksScope, id: string): Promise<voi
     }
     throw err;
   }
+}
+
+/**
+ * The template layout to freeze on a document at issue (TemplateSnapshotV1):
+ * the template's accent colour, footer blocks and name, or the plain layout
+ * when the document has no template (or the template is gone). Reads through
+ * the caller's handle, so it runs inside the issue transaction.
+ */
+export async function templateSnapshotFor(
+  db: Kysely<CommerceDB> | Transaction<CommerceDB>,
+  scope: BooksScope,
+  templateId: string | null,
+): Promise<TemplateSnapshotV1> {
+  const row = templateId
+    ? await db
+        .selectFrom('document_template')
+        .select(['id', 'name', 'accent_color', 'footer_blocks'])
+        .where('tenant_id', '=', scope.tenantId)
+        .where('id', '=', templateId)
+        .executeTakeFirst()
+    : undefined;
+  if (!row) return { v: 1, templateId: null, name: null, accentColor: null, footerBlocks: [] };
+  return templateSnapshotV1Schema.parse({
+    v: 1,
+    templateId: row.id,
+    name: row.name,
+    accentColor: row.accent_color,
+    footerBlocks: parseFooterBlocks(row.footer_blocks).map((b) => ({ heading: b.heading ?? null, text: b.text })),
+  });
 }

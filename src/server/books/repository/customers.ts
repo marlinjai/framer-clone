@@ -228,3 +228,15 @@ export async function getCustomers(scope: BooksScope, ids: readonly string[]): P
     .execute();
   return rows.map(mapCustomer);
 }
+
+/** The company's customers (archived included) for the given contact ids. */
+export async function customersByContactIds(scope: BooksScope, contactIds: readonly string[]): Promise<Customer[]> {
+  if (contactIds.length === 0) return [];
+  const rows = await scope.db
+    .selectFrom('customer')
+    .select(CUSTOMER_COLUMNS)
+    .where('tenant_id', '=', scope.tenantId)
+    .where('contact_id', 'in', [...new Set(contactIds)])
+    .execute();
+  return rows.map(mapCustomer);
+}

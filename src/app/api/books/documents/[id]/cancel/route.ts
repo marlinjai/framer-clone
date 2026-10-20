@@ -13,8 +13,9 @@
 // Idempotent: a second call returns the existing credit note with
 // `alreadyCancelled: true`. A draft answers 409 `not_cancellable`.
 //
-// The credit note's PDF is rendered and stored right after, like an issued
-// invoice's (a failure there never undoes the cancellation).
+// The credit note's PDF is rendered, checked and stored inside the
+// cancellation's transaction, like an issued invoice's: if that fails, nothing
+// is cancelled and no credit note number is taken.
 
 import { z } from 'zod';
 
@@ -24,7 +25,7 @@ import { booksRoute, readObject } from '@/server/books/http/route';
 import { documentDetail } from '@/server/books/http/views';
 import { getCustomer } from '@/server/books/repository/customers';
 import { getDocument } from '@/server/books/repository/read';
-import { storeRenderedDocument } from '@/server/books/render/store';
+import { storeBeforeCommit } from '@/server/books/render/store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -44,22 +45,23 @@ export const POST = booksRoute<{ id: string }>('write', async (ctx, req, { param
   if (!parsed.success) {
     return jsonError('bad_body', 'invalid request body', 400, { issues: parsed.error.issues });
   }
-  const result = await cancelInvoice(ctx.scope, id, { ...parsed.data, actorUserId: ctx.userId });
+  const result = await cancelInvoice(
+    ctx.scope,
+    id,
+    { ...parsed.data, actorUserId: ctx.userId },
+    { beforeCommit: storeBeforeCommit(ctx.scope) },
+  );
   const creditNoteId = result.creditNote.document.id;
-
-  let render: { stored: boolean };
-  try {
-    await storeRenderedDocument(ctx.scope, creditNoteId);
-    render = { stored: true };
-  } catch (err) {
-    console.error(`[books] credit note ${creditNoteId}: rendering failed; the download retries`, err);
-    render = { stored: false };
-  }
 
   const load = (cid: string) => getCustomer(ctx.scope, cid);
   const [invoice, creditNote] = await Promise.all([
     getDocument(ctx.scope, id).then((v) => documentDetail(ctx.contactBook, ctx.companyId, v, load)),
     getDocument(ctx.scope, creditNoteId).then((v) => documentDetail(ctx.contactBook, ctx.companyId, v, load)),
   ]);
-  return Response.json({ invoice, creditNote, alreadyCancelled: result.alreadyCancelled, render });
+  return Response.json({
+    invoice,
+    creditNote,
+    alreadyCancelled: result.alreadyCancelled,
+    render: { stored: creditNote.document.renderedPdfFileId !== null },
+  });
 });

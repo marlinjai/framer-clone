@@ -46,6 +46,7 @@ import type {
   SenderBlockV1,
   SenderSnapshotV1,
   TaxSummary,
+  TemplateSnapshotV1,
 } from '../books/snapshots';
 
 // --- scalar aliases ------------------------------------------------------------
@@ -502,6 +503,7 @@ export interface SalesDocumentTable {
   issued_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
+  template_snapshot: JsonColumn<TemplateSnapshotV1> | null;
 }
 
 /**

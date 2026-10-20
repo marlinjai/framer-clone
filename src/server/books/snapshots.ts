@@ -72,6 +72,23 @@ export const customerSnapshotV1Schema = z.object({
 });
 export type CustomerSnapshotV1 = z.infer<typeof customerSnapshotV1Schema>;
 
+/**
+ * The template's layout as it stood at issue (phase 3), frozen on the document
+ * like the other snapshots, so a later template edit never changes how an
+ * issued document renders. The intro and outro texts are not here: they are the
+ * document's own columns, frozen with it.
+ */
+export const templateSnapshotV1Schema = z.object({
+  v: z.literal(1),
+  templateId: z.string().nullable(),
+  name: z.string().nullable(),
+  accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable(),
+  footerBlocks: z
+    .array(z.object({ heading: z.string().nullable(), text: z.string() }))
+    .max(4),
+});
+export type TemplateSnapshotV1 = z.infer<typeof templateSnapshotV1Schema>;
+
 /** One tax group of a document: the lines sharing a rate and a treatment. */
 export const taxSummaryEntrySchema = z.object({
   taxRate: z.number().int(),

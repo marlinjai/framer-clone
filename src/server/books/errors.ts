@@ -45,7 +45,8 @@ export type BooksErrorCode =
   | 'TEMPLATE_NOT_FOUND'
   | 'TEMPLATE_IN_USE'
   | 'NOT_RENDERABLE'
-  | 'RENDER_INCOMPLETE';
+  | 'RENDER_INCOMPLETE'
+  | 'UNDRAWABLE_TEXT';
 
 export class BooksError extends Error {
   readonly code: BooksErrorCode;

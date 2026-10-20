@@ -50,7 +50,10 @@ vi.mock('@/server/books/http/dependencies', () => ({
 import type { ContactBook, NewContactInput } from '@/server/books/contactBook';
 import { BooksError } from '@/server/books/errors';
 import { getDocument } from '@/server/books/repository/read';
-import { renderIssuedDocument } from '@/server/books/render/store';
+import { renderIssuedDocument, storeBeforeCommit } from '@/server/books/render/store';
+import { renderPdf } from '@/server/books/render/pdf';
+import { issue as issueDocument } from '@/server/books/issue';
+import * as contactsRoute from '../contacts/route';
 import { extractPdfText } from '@/server/books/render/extractText';
 import { missingFields } from '@/server/books/render/completeness';
 import { REVERSE_CHARGE_NOTICE } from '@/server/tax/germanVat';
@@ -267,7 +270,7 @@ describe('Books routes: the four stateful-flow paths', () => {
     const bytes = new Uint8Array(await res.arrayBuffer());
     const view = await getDocument(scopeFor(env.appDb, env.tgId, tenantId, dir), id);
     expect(view.document.renderedPdfFileId).toBe(issued.json.render.fileId);
-    expect(missingFields(view.document, view.lines, extractPdfText(bytes))).toEqual([]);
+    expect(missingFields(view.document, view.lines, await extractPdfText(bytes))).toEqual([]);
 
     // The list shows number, status and the customer's name.
     const listed = await api.listDocuments();
@@ -440,7 +443,7 @@ describe('Books routes: cancellation, rendering, templates', () => {
     expect(res.json.render.stored).toBe(true);
     const credit = await pdf(res.json.creditNote.document.id);
     expect(credit.headers.get('x-books-of-record')).toBe('true');
-    const text = extractPdfText(new Uint8Array(await credit.arrayBuffer()));
+    const text = await extractPdfText(new Uint8Array(await credit.arrayBuffer()));
     expect(text).toContain('Storno der Rechnung 62');
     const again = await api.cancel(id, { reason: 'issued in error' });
     expect(again.json.alreadyCancelled).toBe(true);
@@ -459,7 +462,7 @@ describe('Books routes: cancellation, rendering, templates', () => {
     const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
     const rerendered = await renderIssuedDocument(scope, await getDocument(scope, id));
     expect(Buffer.from(rerendered).equals(Buffer.from(stored))).toBe(true);
-    expect(extractPdfText(rerendered)).not.toContain('Renamed Customer AG');
+    expect(await extractPdfText(rerendered)).not.toContain('Renamed Customer AG');
   });
 
   it('a stored document of record cannot be changed or removed by any role', async () => {
@@ -490,7 +493,7 @@ describe('Books routes: cancellation, rendering, templates', () => {
     const res = await pdf(id);
     expect(res.status).toBe(200);
     expect(res.headers.get('x-books-of-record')).toBe('false');
-    expect(extractPdfText(new Uint8Array(await res.arrayBuffer()))).toContain('ENTWURF');
+    expect(await extractPdfText(new Uint8Array(await res.arrayBuffer()))).toContain('ENTWURF');
     const files = await env.ownerDb.selectFrom('sales_document_file').select('id').where('document_id', '=', id).execute();
     expect(files).toEqual([]);
   });
@@ -538,3 +541,101 @@ describe('Books routes: cancellation, rendering, templates', () => {
     expect(dup.json.error.code).toBe('duplicate_customer');
   });
 });
+
+describe('Books routes: review fixes', () => {
+  it('a document of record that fails its check rolls the issue back: still a draft, no number taken', async () => {
+    const customer = await newCustomer({ customerType: 'b2b' });
+    const id = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
+    // A writer that drops the recipient's address: the real completeness check refuses it.
+    const broken = storeBeforeCommit(scope, { renderPdf: (model) => renderPdf({ ...model, recipientBlock: [] }) });
+    const err = await issueDocument(scope, id, { actorUserId: 'user-books' }, { beforeCommit: broken }).catch((e) => e);
+    expect(err.code).toBe('RENDER_INCOMPLETE');
+    expect(err.details.missing).toEqual(expect.arrayContaining(['recipient.name', 'recipient.addressLine1']));
+    const after = await api.get(id);
+    expect(after.json.document.status).toBe('draft');
+    expect(after.json.document.documentNumber).toBeNull();
+    expect(after.json.events.map((e: Json) => e.eventType)).not.toContain('issued');
+    expect(await counter()).toBe(62);
+    const files = await env.ownerDb.selectFrom('sales_document_file').select('id').where('document_id', '=', id).execute();
+    expect(files).toEqual([]);
+    // The real route then issues it as 62, PDF stored in the same transaction.
+    const issued = await api.issue(id);
+    expect(issued.json.document.document.documentNumber).toBe('62');
+    expect(issued.json.render.stored).toBe(true);
+  });
+
+  it('text the document font cannot print is refused at issue, naming the field; nothing is issued', async () => {
+    const customer = await newCustomer({ customerType: 'b2b', name: '中文公司' });
+    const id = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    await api.addLine(id, { kind: 'service', title: 'Łódź Дмитрий workshop', quantity: 1000, unitPrice: 5000 });
+    const res = await api.issue(id);
+    expect(res.status).toBe(422);
+    expect(res.json.error.code).toBe('undrawable_text');
+    expect(res.json.error.fields).toEqual(['recipient.name']);
+    expect((await api.get(id)).json.document.status).toBe('draft');
+    expect(await counter()).toBe(62);
+  });
+
+  it('a name in Polish and Cyrillic is issued and printed exactly as written', async () => {
+    const customer = await newCustomer({ customerType: 'b2b', name: 'Żółć Дмитрий Sp. z o.o.' });
+    const id = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    expect((await api.issue(id)).status).toBe(200);
+    const text = await extractPdfText(new Uint8Array(await (await pdf(id)).arrayBuffer()));
+    expect(text).toContain('Żółć Дмитрий Sp. z o.o.');
+  });
+
+  it('the template is frozen at issue: editing it afterwards leaves the re-render byte-identical', async () => {
+    const tpl = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, {
+      name: 'Standard',
+      accentColor: '#2b4c7e',
+      footerBlocks: [{ heading: 'Hinweis', text: 'Original small print.' }],
+    });
+    const customer = await newCustomer({ customerType: 'b2b' });
+    const id = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    await api.issue(id);
+    const stored = new Uint8Array(await (await pdf(id)).arrayBuffer());
+    expect(await extractPdfText(stored)).toContain('Original small print.');
+
+    await call(templateRoute.PATCH, 'PATCH', `/api/books/templates/${tpl.json.id}`, { id: tpl.json.id }, {
+      accentColor: '#aa0000',
+      footerBlocks: [{ text: 'Changed small print.' }],
+    });
+    const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
+    const view = await getDocument(scope, id);
+    expect(view.document.templateSnapshot).toMatchObject({ templateId: tpl.json.id, accentColor: '#2b4c7e' });
+    const rerendered = await renderIssuedDocument(scope, view);
+    expect(Buffer.from(rerendered).equals(Buffer.from(stored))).toBe(true);
+    // And the snapshot is frozen for every role.
+    expect(
+      await rejectionCode(
+        env.ownerDb.updateTable('sales_document').set({ template_snapshot: null }).where('id', '=', id).execute(),
+      ),
+    ).toBe('BK001');
+  });
+
+  it('the document list shows the name an issued document was issued to, not the renamed contact', async () => {
+    const customer = await newCustomer({ customerType: 'b2b', name: 'Original Name GmbH' });
+    const id = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    const draftId = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    await api.issue(id);
+    dir.update(customer.contactId, { name: 'Renamed Later AG' });
+    const items = (await api.listDocuments()).json.items as Json[];
+    expect(items.find((d) => d.id === id)!.customerName).toBe('Original Name GmbH');
+    expect(items.find((d) => d.id === draftId)!.customerName).toBe('Renamed Later AG');
+  });
+
+  it('the contact picker marks contacts that are already customers', async () => {
+    const existing = await newCustomer({ customerType: 'b2b', name: 'Existing GmbH' });
+    const loose = await (state.contactBook as FakeContactBook).create(tenantId, { kind: 'organization', name: 'Loose GmbH' });
+    const res = await call(contactsRoute.GET, 'GET', '/api/books/contacts?search=');
+    const byId = new Map((res.json.items as Json[]).map((c) => [c.id, c.customerId]));
+    expect(byId.get(existing.contactId)).toBe(existing.id);
+    expect(byId.get(loose.id)).toBeNull();
+  });
+});
+

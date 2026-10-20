@@ -36,6 +36,12 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      content's length, `sha256` is a lowercase hex digest (the application
  *      computes it; the download sends it), `content_type` is a PDF.
  *
+ *   6. `sales_document.template_snapshot` (added here, while 008 is unreleased):
+ *      the template's layout (accent colour, footer blocks, name) frozen at
+ *      issue, so an issued document renders only from frozen data. NULL on a
+ *      draft (CHECK), an object otherwise; the 007 guard freezes it after issue
+ *      with every other column (it compares the whole row).
+ *
  * House style as 007: BARE names, ids TEXT minted by the application, trigger
  * functions `SET search_path FROM CURRENT`.
  */
@@ -68,6 +74,27 @@ export const booksFiles: Migration = {
               FOREIGN KEY ("tenant_id", "document_id") REFERENCES "sales_document" ("tenant_id", "id")
               ON DELETE RESTRICT ON UPDATE RESTRICT
       )
+    `;
+
+    // Guarantee 6: the frozen template layout.
+    await tx`ALTER TABLE "sales_document" ADD COLUMN IF NOT EXISTS "template_snapshot" JSONB`;
+    await tx`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+           WHERE conname = 'sales_document_template_snapshot_check'
+             AND conrelid = 'sales_document'::regclass
+        ) THEN
+          ALTER TABLE "sales_document"
+            ADD CONSTRAINT "sales_document_template_snapshot_check"
+            CHECK (
+              ("status" <> 'draft' OR "template_snapshot" IS NULL)
+              AND ("template_snapshot" IS NULL OR jsonb_typeof("template_snapshot") = 'object')
+            );
+        END IF;
+      END
+      $$
     `;
 
     // The document points at its file of the same company (guarantee 2).

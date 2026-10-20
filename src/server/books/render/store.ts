@@ -6,14 +6,20 @@
 //            -> stored once as the document of record (issued documents only)
 //
 // ISSUED documents (invoices and credit notes, any status after draft) are
-// rendered ONLY from their frozen data: the customer and sender snapshots, the
-// stored lines and totals, and for a credit note the frozen number and date of
-// the invoice it cancels. The contacts database, the customer row and the
-// company setting are never read for them, so nothing changed after issue can
-// change a re-render. The first render after issue is checked for completeness
-// (completeness.ts) and stored in `sales_document_file`; the document points at
-// it through `rendered_pdf_file_id`, which the 007 trigger lets go from NULL to
-// a value exactly once. Later downloads serve the stored bytes.
+// rendered ONLY from their frozen data: the customer, sender and template
+// snapshots, the stored lines and totals, and for a credit note the frozen
+// number and date of the invoice it cancels. The contacts database, the
+// customer row, the template table and the company setting are never read for
+// them, so nothing changed after issue can change a re-render.
+//
+// The document of record is rendered, checked (every printed field drawable by
+// the embedded fonts, every legally required field present in the drawn text)
+// and stored INSIDE the issue or cancel transaction (`storeRenderedIn`, passed
+// as their `beforeCommit`): a failure rolls the issue back, so the document
+// stays a draft and no number is taken. `rendered_pdf_file_id` then points at
+// the stored `sales_document_file`, set NULL to a value exactly once (the 007
+// trigger). Downloads serve the stored bytes; a document issued before this
+// existed is rendered and stored on its first download.
 //
 // DRAFTS get a preview rendered from live data (the company's sender block, the
 // customer's current contact), watermarked as a draft on every page, never
@@ -21,18 +27,24 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 
-import { BooksError, isBooksError, withDbErrors } from '../errors';
+import type { Kysely, Transaction } from 'kysely';
+
+import type { CommerceDB } from '../../commerce/db-types';
+import { BooksError, withDbErrors } from '../errors';
 import { readRecipient } from '../recipients';
 import { getDocument, selectDocumentRow, type DocumentView } from '../repository/read';
 import { selectCustomerRow } from '../repository/taxState';
-import { getTemplate, type DocumentTemplate } from '../repository/templates';
+import { templateSnapshotFor } from '../repository/templates';
 import type { BooksScope } from '../scope';
 import { readSettings } from '../settings';
 import { missingFields } from './completeness';
+import { assertDrawable, previewSafe } from './drawable';
 import { extractPdfText } from './extractText';
 import { fileNamePart } from './format';
-import { buildRenderModel, type RenderInput, type RenderRecipient } from './model';
+import { buildRenderModel, type RenderInput, type RenderModel, type RenderRecipient } from './model';
 import { RENDERER_ID, renderPdf } from './pdf';
+
+type Db = Kysely<CommerceDB> | Transaction<CommerceDB>;
 
 export interface RenderedPdf {
   bytes: Uint8Array;
@@ -47,30 +59,25 @@ function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-async function templateFor(scope: BooksScope, id: string | null): Promise<DocumentTemplate | null> {
-  if (!id) return null;
-  try {
-    return await getTemplate(scope, id);
-  } catch (err) {
-    if (isBooksError(err, 'TEMPLATE_NOT_FOUND')) return null;
-    throw err;
-  }
+function frozenTemplate(doc: DocumentView['document']): RenderInput['template'] {
+  const t = doc.templateSnapshot;
+  return t ? { accentColor: t.accentColor, footerBlocks: t.footerBlocks } : null;
 }
 
-/** The render input of an issued document: frozen data only (plus the template's layout). */
-async function issuedInput(scope: BooksScope, view: DocumentView): Promise<RenderInput> {
+/** The render input of an issued document: frozen data only. */
+async function issuedInput(db: Db, scope: BooksScope, view: DocumentView): Promise<RenderInput> {
   const doc = view.document;
   if (!doc.senderSnapshot || !doc.customerSnapshot) {
     throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: the document carries no snapshots', { documentId: doc.id });
   }
   let corrects: RenderInput['corrects'] = null;
   if (doc.correctsDocumentId) {
-    const original = await selectDocumentRow(scope.db, scope, doc.correctsDocumentId);
+    // The cancelled invoice's number and date are frozen with it.
+    const original = await selectDocumentRow(db, scope, doc.correctsDocumentId);
     if (original?.document_number && original.issue_date) {
       corrects = { documentNumber: original.document_number, issueDate: original.issue_date };
     }
   }
-  const template = await templateFor(scope, doc.templateId);
   const c = doc.customerSnapshot;
   return {
     draft: false,
@@ -90,7 +97,7 @@ async function issuedInput(scope: BooksScope, view: DocumentView): Promise<Rende
       vatId: c.vatId,
     },
     corrects,
-    template: template ? { accentColor: template.accentColor, footerBlocks: template.footerBlocks } : null,
+    template: frozenTemplate(doc),
   };
 }
 
@@ -119,16 +126,12 @@ async function draftInput(scope: BooksScope, view: DocumentView): Promise<Render
       }
     }
   }
-  const template = await templateFor(scope, doc.templateId);
-  return {
-    draft: true,
-    document: doc,
-    lines: view.lines,
-    sender: settings?.senderBlock ?? null,
-    recipient,
-    corrects: null,
-    template: template ? { accentColor: template.accentColor, footerBlocks: template.footerBlocks } : null,
-  };
+  let template: RenderInput['template'] = null;
+  if (doc.templateId) {
+    const t = await templateSnapshotFor(scope.db, scope, doc.templateId);
+    template = { accentColor: t.accentColor, footerBlocks: t.footerBlocks };
+  }
+  return { draft: true, document: doc, lines: view.lines, sender: settings?.senderBlock ?? null, recipient, corrects: null, template };
 }
 
 function fileNameFor(view: DocumentView, draft: boolean): string {
@@ -137,89 +140,119 @@ function fileNameFor(view: DocumentView, draft: boolean): string {
   return draft ? `${kind}-Entwurf-${doc.id.slice(0, 8)}.pdf` : `${kind}-${fileNamePart(doc.documentNumber ?? doc.id)}.pdf`;
 }
 
+/** Test seam: replace the PDF writer (a broken one proves a failed check rolls the issue back). */
+export interface RenderOptions {
+  renderPdf?: (model: RenderModel) => Promise<Uint8Array>;
+}
+
 /**
- * Render an issued document from its frozen data, and check it. Never stores.
- * Used to store the document of record and by the re-render tests.
+ * Render an issued document from its frozen data, and check it: every printed
+ * field drawable (UNDRAWABLE_TEXT otherwise), every legally required field in
+ * the drawn text (RENDER_INCOMPLETE otherwise). Never stores.
  */
-export async function renderIssuedDocument(scope: BooksScope, view: DocumentView): Promise<Uint8Array> {
+export async function renderIssuedDocument(
+  scope: BooksScope,
+  view: DocumentView,
+  options: RenderOptions & { db?: Db } = {},
+): Promise<Uint8Array> {
   if (view.document.status === 'draft') {
     throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: a draft is previewed, not rendered', {
       documentId: view.document.id,
     });
   }
-  const bytes = await renderPdf(buildRenderModel(await issuedInput(scope, view)));
-  const missing = missingFields(view.document, view.lines, extractPdfText(bytes));
+  const input = await issuedInput(options.db ?? scope.db, scope, view);
+  assertDrawable(input);
+  const bytes = await (options.renderPdf ?? renderPdf)(buildRenderModel(input));
+  const missing = missingFields(view.document, view.lines, await extractPdfText(bytes), { corrects: input.corrects });
   if (missing.length > 0) {
     throw new BooksError('RENDER_INCOMPLETE', `RENDER_INCOMPLETE: ${missing.join(', ')}`, { missing });
   }
   return bytes;
 }
 
-/** The stored file of a document, if any. */
-async function readStoredFile(scope: BooksScope, documentId: string) {
-  return scope.db
+export interface StoredFile {
+  fileId: string;
+  bytes: Uint8Array;
+  sha256: string;
+  created: boolean;
+}
+
+/**
+ * Inside the caller's transaction (the issue's or the cancellation's
+ * `beforeCommit`, or the lazy download path): lock the document, render, check
+ * and store its document of record once, and point the document at it. A throw
+ * rolls the caller's transaction back.
+ */
+export async function storeRenderedIn(
+  trx: Transaction<CommerceDB>,
+  scope: BooksScope,
+  view: DocumentView,
+  options: RenderOptions = {},
+): Promise<StoredFile> {
+  const documentId = view.document.id;
+  const row = await selectDocumentRow(trx, scope, documentId, { forUpdate: true });
+  if (!row) throw new BooksError('NOT_FOUND', 'NOT_FOUND: document', { documentId });
+  const stored = await trx
     .selectFrom('sales_document_file')
     .select(['id', 'content', 'sha256'])
     .where('tenant_id', '=', scope.tenantId)
     .where('document_id', '=', documentId)
     .executeTakeFirst();
+  if (stored) return { fileId: stored.id, bytes: new Uint8Array(stored.content), sha256: stored.sha256, created: false };
+
+  const bytes = await renderIssuedDocument(scope, view, { ...options, db: trx });
+  const digest = sha256(bytes);
+  const fileId = randomUUID();
+  await trx
+    .insertInto('sales_document_file')
+    .values({
+      id: fileId,
+      tenant_id: scope.tenantId,
+      document_id: documentId,
+      content_type: 'application/pdf',
+      byte_size: bytes.byteLength,
+      sha256: digest,
+      renderer: RENDERER_ID,
+      content: Buffer.from(bytes),
+    })
+    .execute();
+  await trx
+    .updateTable('sales_document')
+    .set({ rendered_pdf_file_id: fileId, updated_at: new Date() })
+    .where('tenant_id', '=', scope.tenantId)
+    .where('id', '=', documentId)
+    .where('rendered_pdf_file_id', 'is', null)
+    .execute();
+  return { fileId, bytes, sha256: digest, created: true };
 }
 
-/**
- * Render, check and store the document of record of an issued document, once.
- * Idempotent: when a file is stored already, that one is returned untouched.
- */
-export async function storeRenderedDocument(
-  scope: BooksScope,
-  documentId: string,
-): Promise<{ fileId: string; bytes: Uint8Array; sha256: string; created: boolean }> {
-  const existing = await readStoredFile(scope, documentId);
+/** The `beforeCommit` the issue and cancel routes pass: store the document of record in their transaction. */
+export function storeBeforeCommit(scope: BooksScope, options: RenderOptions = {}) {
+  return async (trx: Transaction<CommerceDB>, view: DocumentView): Promise<void> => {
+    await storeRenderedIn(trx, scope, view, options);
+  };
+}
+
+/** The stored document of record, rendering and storing it first when missing (documents issued before 008). */
+export async function storeRenderedDocument(scope: BooksScope, documentId: string): Promise<StoredFile> {
+  const existing = await scope.db
+    .selectFrom('sales_document_file')
+    .select(['id', 'content', 'sha256'])
+    .where('tenant_id', '=', scope.tenantId)
+    .where('document_id', '=', documentId)
+    .executeTakeFirst();
   if (existing) {
     return { fileId: existing.id, bytes: new Uint8Array(existing.content), sha256: existing.sha256, created: false };
   }
   const view = await getDocument(scope, documentId);
-  const bytes = await renderIssuedDocument(scope, view);
-  const digest = sha256(bytes);
-
+  if (view.document.status === 'draft') {
+    throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: a draft is previewed, not rendered', { documentId });
+  }
   return withDbErrors(() =>
     scope.db
       .transaction()
       .setIsolationLevel('read committed')
-      .execute(async (trx) => {
-        const row = await selectDocumentRow(trx, scope, documentId, { forUpdate: true });
-        if (!row) throw new BooksError('NOT_FOUND', 'NOT_FOUND: document', { documentId });
-        const stored = await trx
-          .selectFrom('sales_document_file')
-          .select(['id', 'content', 'sha256'])
-          .where('tenant_id', '=', scope.tenantId)
-          .where('document_id', '=', documentId)
-          .executeTakeFirst();
-        if (stored) {
-          return { fileId: stored.id, bytes: new Uint8Array(stored.content), sha256: stored.sha256, created: false };
-        }
-        const fileId = randomUUID();
-        await trx
-          .insertInto('sales_document_file')
-          .values({
-            id: fileId,
-            tenant_id: scope.tenantId,
-            document_id: documentId,
-            content_type: 'application/pdf',
-            byte_size: bytes.byteLength,
-            sha256: digest,
-            renderer: RENDERER_ID,
-            content: Buffer.from(bytes),
-          })
-          .execute();
-        await trx
-          .updateTable('sales_document')
-          .set({ rendered_pdf_file_id: fileId, updated_at: new Date() })
-          .where('tenant_id', '=', scope.tenantId)
-          .where('id', '=', documentId)
-          .where('rendered_pdf_file_id', 'is', null)
-          .execute();
-        return { fileId, bytes, sha256: digest, created: true };
-      }),
+      .execute((trx) => storeRenderedIn(trx, scope, view)),
   );
 }
 
@@ -231,7 +264,7 @@ export async function storeRenderedDocument(
 export async function documentPdf(scope: BooksScope, documentId: string): Promise<RenderedPdf> {
   const view = await getDocument(scope, documentId);
   if (view.document.status === 'draft') {
-    const bytes = await renderPdf(buildRenderModel(await draftInput(scope, view)));
+    const bytes = await renderPdf(previewSafe(buildRenderModel(await draftInput(scope, view))));
     return { bytes, fileName: fileNameFor(view, true), ofRecord: false, fileId: null, sha256: sha256(bytes) };
   }
   const stored = await storeRenderedDocument(scope, documentId);
