@@ -124,6 +124,8 @@ const TABLE_DOCS: Record<string, string> = {
   sales_document_line:
     '007_books: a document line. `tax_class` / `tax_rate_override` are inputs;\n`tax_rate`, `tax_amount`, `tax_treatment` are derived.',
   sales_document_event: '007_books: the append-only audit trail (no updated_at).',
+  sales_document_file:
+    '008_books_files: the stored document of record (the rendered PDF of an issued\ndocument), one per document, append-only (no updated_at).',
 };
 
 /** Inline notes printed above a column. */
@@ -218,6 +220,8 @@ const SCALARS: Record<string, string> = {
   timestamp: 'Timestamp',
   timestamptz: 'Timestamp',
   date: 'DateString',
+  // postgres.js reads BYTEA as a Node Buffer and writes a Buffer (or Uint8Array) as BYTEA.
+  bytea: 'Buffer',
 };
 
 function pascal(name: string): string {

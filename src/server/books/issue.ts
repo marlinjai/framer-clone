@@ -59,6 +59,10 @@ import {
 const issueInput = z.object({
   actorUserId: z.string().trim().min(1).max(200),
   issueDate: z.string().optional(),
+  // The draft version the caller confirmed (phase 2's editor shows the totals
+  // and asks for confirmation; a change made elsewhere in between must not be
+  // issued unseen). Checked before and again under the document lock.
+  expectedVersion: z.number().int().min(0).optional(),
 });
 export type IssueInput = z.input<typeof issueInput>;
 
@@ -100,6 +104,11 @@ export async function issue(
   if (ISSUED_OR_LATER.has(before.status)) {
     return { document: await readPersistedView(scope.db, scope, id), alreadyIssued: true };
   }
+  if (args.expectedVersion !== undefined && before.version !== args.expectedVersion) {
+    throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the draft changed since it was confirmed', {
+      documentId: id,
+    });
+  }
   if (before.doc_type !== 'invoice') {
     throw new BooksError('DOC_TYPE_NOT_SUPPORTED', `DOC_TYPE_NOT_SUPPORTED: ${before.doc_type}`, {
       docType: before.doc_type,
@@ -136,6 +145,11 @@ export async function issue(
         if (!row) throw new BooksError('NOT_FOUND', 'NOT_FOUND: document', { documentId: id });
         if (row.status !== 'draft') {
           return { document: await readPersistedView(trx, scope, id), alreadyIssued: true };
+        }
+        if (args.expectedVersion !== undefined && row.version !== args.expectedVersion) {
+          throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the draft changed since it was confirmed', {
+            documentId: id,
+          });
         }
         if (row.customer_id !== customerBefore.id) {
           throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the customer changed during the issue', {

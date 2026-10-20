@@ -38,7 +38,14 @@ export type BooksErrorCode =
   | 'ISSUE_DATE_OUT_OF_ORDER'
   | 'NOT_CANCELLABLE'
   | 'INVALID_TRANSITION'
-  | 'TOTALS_MISMATCH';
+  | 'TOTALS_MISMATCH'
+  // Phase 2 and 3 (routes, templates, rendering).
+  | 'DUPLICATE_CONTACT'
+  | 'DUPLICATE_TEMPLATE'
+  | 'TEMPLATE_NOT_FOUND'
+  | 'TEMPLATE_IN_USE'
+  | 'NOT_RENDERABLE'
+  | 'RENDER_INCOMPLETE';
 
 export class BooksError extends Error {
   readonly code: BooksErrorCode;

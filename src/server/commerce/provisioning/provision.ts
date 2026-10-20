@@ -79,7 +79,8 @@ import {
 /**
  * The commerce tables commerce_app may only INSERT into and SELECT from: the
  * stock ledger, the corrective documents, the placed order (an immutable
- * invoice) with its lines, and the Books audit trail (sales_document_event, 007).
+ * invoice) with its lines, the Books audit trail (sales_document_event, 007) and
+ * the Books stored documents of record (sales_document_file, 008).
  */
 export const APPEND_ONLY_TABLES = [
   'stock_movement',
@@ -88,6 +89,7 @@ export const APPEND_ONLY_TABLES = [
   'order',
   'order_line_item',
   'sales_document_event',
+  'sales_document_file',
 ] as const;
 
 /**

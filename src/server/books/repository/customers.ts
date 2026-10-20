@@ -216,3 +216,15 @@ export async function listCustomers(
     nextCursor: rows.length > args.limit ? (page[page.length - 1]?.id ?? null) : null,
   };
 }
+
+/** The company's customers among `ids` (unknown and foreign ids are simply absent). */
+export async function getCustomers(scope: BooksScope, ids: readonly string[]): Promise<Customer[]> {
+  if (ids.length === 0) return [];
+  const rows = await scope.db
+    .selectFrom('customer')
+    .select(CUSTOMER_COLUMNS)
+    .where('tenant_id', '=', scope.tenantId)
+    .where('id', 'in', [...new Set(ids)])
+    .execute();
+  return rows.map(mapCustomer);
+}

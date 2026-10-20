@@ -25,7 +25,7 @@ import { z } from 'zod';
 
 import type { CommerceDB, CompanyTaxStatus, SalesDocType } from '../commerce/db-types';
 import { BooksError, invalid, withDbErrors } from './errors';
-import { NUMBER_FORMAT } from './numbering';
+import { NUMBER_FORMAT, formatDocumentNumber } from './numbering';
 import type { BooksScope } from './scope';
 import { senderBlockV1Schema, toJsonb, type SenderBlockV1 } from './snapshots';
 
@@ -194,4 +194,27 @@ export async function initBooksCompany(
         return { settings, counters };
       }),
   );
+}
+
+/** One number series of the company, as the editor shows it. */
+export interface CounterView {
+  docType: SalesDocType;
+  format: string;
+  nextValue: number;
+  /** The number the next issue of this type receives, formatted. */
+  nextNumber: string;
+}
+
+/** The company's number series (read only; the init script sets them up). */
+export async function readCounters(db: Db, scope: BooksScope): Promise<CounterView[]> {
+  const rows = await db
+    .selectFrom('document_number_counter')
+    .select(['doc_type', 'format', 'next_value'])
+    .where('tenant_id', '=', scope.tenantId)
+    .orderBy('doc_type')
+    .execute();
+  return rows.map((r) => {
+    const nextValue = Number(r.next_value);
+    return { docType: r.doc_type, format: r.format, nextValue, nextNumber: formatDocumentNumber(r.format, nextValue) };
+  });
 }

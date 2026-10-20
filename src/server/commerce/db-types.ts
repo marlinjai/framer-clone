@@ -545,6 +545,22 @@ export interface SalesDocumentEventTable {
   created_at: Generated<Timestamp>;
 }
 
+/**
+ * 008_books_files: the stored document of record (the rendered PDF of an issued
+ * document), one per document, append-only (no updated_at).
+ */
+export interface SalesDocumentFileTable {
+  id: string;
+  tenant_id: string;
+  document_id: string;
+  content_type: string;
+  byte_size: number;
+  sha256: string;
+  renderer: string;
+  content: Buffer;
+  created_at: Generated<Timestamp>;
+}
+
 // =============================================================================
 // The Database interface. GLOBAL keys are `public.`-qualified; tenant tables
 // are BARE. The two namespaces are disjoint by construction.
@@ -581,6 +597,7 @@ export interface CommerceDB {
   sales_document: SalesDocumentTable;
   sales_document_line: SalesDocumentLineTable;
   sales_document_event: SalesDocumentEventTable;
+  sales_document_file: SalesDocumentFileTable;
 }
 
 // --- compile-time discipline guards (the package's brand types) --------------
