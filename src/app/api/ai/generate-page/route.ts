@@ -248,7 +248,12 @@ async function runGeneration(args: RunArgs): Promise<void> {
       },
     ]);
     const tools = [emitPageTool()];
-    const messages: BetaMessageParam[] = [{ role: 'user', content: briefMessage(body.brief) }];
+    const messages: BetaMessageParam[] = [
+      {
+        role: 'user',
+        content: briefMessage(body.brief, body.target.kind === 'newPage' ? undefined : body.target.context),
+      },
+    ];
 
     let lastProblems: string[] = [];
     while (attempts < MAX_ATTEMPTS) {
