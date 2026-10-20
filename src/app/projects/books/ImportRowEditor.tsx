@@ -203,6 +203,7 @@ export default function ImportRowEditor({
   onReadAgain,
   onClose,
   autoFocusHeading = false,
+  onHeadingFocused,
 }: {
   item: ImportItemView;
   busy: boolean;
@@ -212,6 +213,8 @@ export default function ImportRowEditor({
   onClose: () => void;
   /** Focus the heading when opening (the editor reopens on a new reading the user asked for). */
   autoFocusHeading?: boolean;
+  /** Told once the heading has the focus (so the owner does not ask again). */
+  onHeadingFocused?: () => void;
 }) {
   const [form, setForm] = useState<Form>(() => toForm(item.printed));
   const [formError, setFormError] = useState<string | null>(null);
@@ -219,8 +222,10 @@ export default function ImportRowEditor({
   const [confirmReread, setConfirmReread] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
-    if (autoFocusHeading) heading.current?.focus();
-  }, [autoFocusHeading]);
+    if (!autoFocusHeading) return;
+    heading.current?.focus();
+    onHeadingFocused?.();
+  }, [autoFocusHeading, onHeadingFocused]);
   const initial = useMemo(() => JSON.stringify(toForm(item.printed)), [item.printed]);
   const typedHere = item.corrected || item.extractionId?.startsWith('manual:') === true || JSON.stringify(form) !== initial;
   function readAgain() {

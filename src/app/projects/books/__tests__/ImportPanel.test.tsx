@@ -501,6 +501,69 @@ describe('ImportPanel', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Check the invoice as printed' })));
   });
 
+  it('after confirming an import or a discard the focus goes to the page heading (the row button is gone)', async () => {
+    server({
+      'GET /api/books/imports': () => ({
+        status: 200,
+        body: { items: [item({ id: 'i1', problems: [{ code: 'counter_raised', path: null, blocking: false, count: 71 }] }), item({ id: 'i2' })], importedTotal: 0, counter: null, limits: LIMITS },
+      }),
+      'POST /api/books/imports/i1/confirm': () => ({ status: 200, body: { item: item({ id: 'i1', status: 'imported', documentId: 'd1' }), documentId: 'd1', counterRaisedTo: 71 } }),
+      'POST /api/books/imports/i2/discard': () => ({ status: 200, body: item({ id: 'i2', status: 'discarded' }) }),
+    });
+    render(<ImportPanel />);
+    const heading = await screen.findByRole('heading', { name: 'Import past invoices', level: 1 });
+    fireEvent.click(within(screen.getByTestId('import-row-i1')).getByRole('button', { name: 'Import' }));
+    fireEvent.click(within(await screen.findByRole('alertdialog', { name: 'Confirm the new invoice number' })).getByRole('button', { name: 'Import and set the next number to 71' }));
+    await screen.findByText(/counter was raised to 71/);
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    fireEvent.click(within(screen.getByTestId('import-row-i2')).getByRole('button', { name: 'Discard' }));
+    fireEvent.click(within(await screen.findByRole('alertdialog', { name: 'Discard this file' })).getByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(screen.queryByTestId('import-row-i2')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+  });
+
+  it('a batch raise that grows while its dialog is open asks again with the new number, nothing imported', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const lists = [
+      { items: [item({ id: 'i1', problems: [{ code: 'counter_raised', path: null, blocking: false, count: 71 }] }), item({ id: 'i9', status: 'extracting' })], importedTotal: 0, counter: null, limits: LIMITS },
+      // Read meanwhile elsewhere: a second ready row that raises further.
+      {
+        items: [
+          item({ id: 'i1', problems: [{ code: 'counter_raised', path: null, blocking: false, count: 71 }] }),
+          item({ id: 'i9', problems: [{ code: 'counter_raised', path: null, blocking: false, count: 80 }] }),
+        ],
+        importedTotal: 0,
+        counter: null,
+        limits: LIMITS,
+      },
+    ];
+    server({ 'GET /api/books/imports': () => ({ status: 200, body: lists.length > 1 ? lists.shift()! : lists[0] }) });
+    render(<ImportPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Import all ready (1)' }));
+    await screen.findByRole('alertdialog', { name: 'Confirm the new invoice number' });
+    // The page refreshes while a row is being read elsewhere.
+    await vi.advanceTimersByTimeAsync(10_500);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Import and set the next number to 71' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Import and set the next number to 71' }));
+    expect(await screen.findByRole('button', { name: 'Import and set the next number to 80' })).toBeTruthy();
+    expect(calls.some((c) => c.url.endsWith('/confirm'))).toBe(false);
+  });
+
+  it('a row dialog whose row changed meanwhile closes and says so', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const lists = [
+      { items: [item({ id: 'i1', problems: [{ code: 'counter_raised', path: null, blocking: false, count: 71 }] }), item({ id: 'i9', status: 'extracting' })], importedTotal: 0, counter: null, limits: LIMITS },
+      { items: [item({ id: 'i9' })], importedTotal: 0, counter: null, limits: LIMITS },
+    ];
+    server({ 'GET /api/books/imports': () => ({ status: 200, body: lists.length > 1 ? lists.shift()! : lists[0] }) });
+    render(<ImportPanel />);
+    fireEvent.click(within(await screen.findByTestId('import-row-i1')).getByRole('button', { name: 'Import' }));
+    await screen.findByRole('alertdialog', { name: 'Confirm the new invoice number' });
+    await vi.advanceTimersByTimeAsync(10_500);
+    await screen.findByText(/changed meanwhile, so nothing was imported/);
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+
   it('shows how many imported invoices are not listed', async () => {
     server({ 'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ status: 'imported', documentId: 'd1' })], importedTotal: 140, counter: null, limits: LIMITS } }) });
     render(<ImportPanel />);

@@ -644,9 +644,15 @@ describe('unhappy paths of reading and importing', () => {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`books-import-extract:${tenantId}`}, 0))`.execute(trx);
       await new Promise<void>((r) => (unlock = r));
     });
+    // Exactly this company's ceiling lock in this database (the test Postgres may be shared by other files).
+    const key = `books-import-extract:${tenantId}`;
     const waiting = async (granted: boolean) => {
       for (let i = 0; i < 200; i += 1) {
-        const n = await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted = ${granted}`.execute(env.ownerDb);
+        const n = await sql<{ n: number }>`
+          SELECT count(*)::int AS n FROM pg_locks
+           WHERE locktype = 'advisory' AND objsubid = 1 AND granted = ${granted}
+             AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+             AND ((classid::bigint << 32) | objid::bigint) = hashtextextended(${key}, 0)`.execute(env.ownerDb);
         if (n.rows[0].n > 0) return;
         await new Promise((r) => setTimeout(r, 25));
       }

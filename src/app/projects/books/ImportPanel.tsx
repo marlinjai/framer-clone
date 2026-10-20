@@ -63,12 +63,16 @@ const staleReadings = (items: ImportItemView[]) =>
  */
 function focusOn(selector: string | null): (event: Event) => void {
   return (event) => {
-    const target = selector ? document.querySelector<HTMLElement>(selector) : null;
-    if (!target) return;
     event.preventDefault();
-    target.focus();
+    const target = selector ? document.querySelector<HTMLElement>(selector) : null;
+    // A button that is gone (imported, discarded) or waiting (disabled) cannot take the focus: the page heading does.
+    const usable = target && target.isConnected && !(target as HTMLButtonElement).disabled ? target : null;
+    (usable ?? document.getElementById(PAGE_HEADING_ID))?.focus();
   };
 }
+
+/** The page heading, where the focus goes when a dialog's own button cannot take it back. */
+const PAGE_HEADING_ID = 'import-past-invoices-heading';
 
 /** The new next invoice number importing this row would set, or null when it does not raise the counter. */
 function raiseOf(item: ImportItemView): number | null {
@@ -98,8 +102,18 @@ export default function ImportPanel() {
   const [discarding, setDiscarding] = useState<string | null>(null);
   /** The row whose dialog is open or closing: the focus returns to its button after the state is cleared. */
   const dialogRow = useRef<string | null>(null);
-  /** The row whose editor reopens on a reading the user asked for there. */
-  const headingFocus = useRef<string | null>(null);
+  /** The row whose editor reopens on a reading the user asked for there, and the reading it replaces. */
+  const headingFocus = useRef<{ id: string; from: string | null } | null>(null);
+  const clearHeadingFocus = useCallback(() => {
+    headingFocus.current = null;
+  }, []);
+  // What a closing dialog keeps showing while it fades out (its state is already cleared).
+  const lastRaise = useRef<{ id: string; to: number } | null>(null);
+  const lastBatchRaise = useRef<number | null>(null);
+  if (raising) lastRaise.current = raising;
+  if (batchRaise !== null) lastBatchRaise.current = batchRaise;
+  const shownRaise = raising ?? lastRaise.current;
+  const shownBatchRaise = batchRaise ?? lastBatchRaise.current;
   const queue = useRef<string[]>([]);
   /** Rows the user asked to read again although they hold what was typed or corrected. */
   const replacing = useRef<Set<string>>(new Set());
@@ -189,7 +203,6 @@ export default function ImportPanel() {
     [pump],
   );
 
-
   useEffect(() => {
     mounted.current = true;
     void reload();
@@ -218,6 +231,26 @@ export default function ImportPanel() {
     }, 10_000);
     return () => clearInterval(t);
   }, [reading, reload, enqueue]);
+
+  // A dialog about a row that left the list or changed meanwhile asks no more: it closes and says so.
+  useEffect(() => {
+    if (!list) return;
+    const find = (id: string) => list.items.find((i) => i.id === id);
+    if (raising) {
+      const row = find(raising.id);
+      if (!row || row.status !== 'ready' || raiseOf(row) !== raising.to) {
+        setRaising(null);
+        setNotice('That invoice changed meanwhile, so nothing was imported. Check it again.');
+      }
+    }
+    if (discarding) {
+      const row = find(discarding);
+      if (!row || row.status === 'imported' || row.status === 'extracting') {
+        setDiscarding(null);
+        setNotice('That file changed meanwhile, so it was not discarded.');
+      }
+    }
+  }, [list, raising, discarding]);
 
   async function addFiles(files: File[]) {
     setError(null);
@@ -301,6 +334,12 @@ export default function ImportPanel() {
     });
   }
 
+  /** Ask before discarding (the file is deleted at once). */
+  function askDiscard(id: string) {
+    dialogRow.current = id;
+    setDiscarding(id);
+  }
+
   /** Fill a row in by hand (no AI reading), then open it; it leaves the reading queue, so nothing replaces what is typed. */
   async function byHand(item: ImportItemView) {
     queue.current = queue.current.filter((id) => id !== item.id);
@@ -329,7 +368,6 @@ export default function ImportPanel() {
     if (wasStopped) queue.current = [];
     enqueue([id]);
   }
-
 
   /** Import every ready row; when any of them raises the counter, the highest new value is confirmed first. */
   async function confirmAllReady(confirmedRaise: number | null = null) {
@@ -417,7 +455,9 @@ export default function ImportPanel() {
           <Link href="/projects/books" className="text-sm text-muted-foreground underline-offset-4 hover:underline">
             Books
           </Link>
-          <h1 className="text-2xl font-semibold tracking-tight">Import past invoices</h1>
+          <h1 id={PAGE_HEADING_ID} tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none">
+            Import past invoices
+          </h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Add the PDFs of invoices you issued before using the Books. Each one is read by AI; you check and correct
             what was read, and confirmed invoices are imported with their original PDF as the document of record.
@@ -435,14 +475,14 @@ export default function ImportPanel() {
         title="Confirm the new invoice number"
         description={
           <>
-            <p className="font-medium text-foreground">Your next invoice number will become {batchRaise}. It cannot be lowered later.</p>
+            <p className="font-medium text-foreground">Your next invoice number will become {shownBatchRaise}. It cannot be lowered later.</p>
             <p className="mt-1">
               Importing the ready invoices raises the invoice counter past the highest imported number. Check that number
               against its PDF before you continue.
             </p>
           </>
         }
-        confirmLabel={`Import and set the next number to ${batchRaise ?? ''}`}
+        confirmLabel={`Import and set the next number to ${shownBatchRaise ?? ''}`}
         onConfirm={() => void confirmAllReady(batchRaise)}
         onCancel={() => setBatchRaise(null)}
         onCloseAutoFocus={focusOn('[data-import-all]')}
@@ -450,11 +490,13 @@ export default function ImportPanel() {
       <ImportConfirm
         open={raising !== null}
         title="Confirm the new invoice number"
-        description={<p className="font-medium text-foreground">Your next invoice number will become {raising?.to}. It cannot be lowered later.</p>}
-        confirmLabel={`Import and set the next number to ${raising?.to ?? ''}`}
+        description={<p className="font-medium text-foreground">Your next invoice number will become {shownRaise?.to}. It cannot be lowered later.</p>}
+        confirmLabel={`Import and set the next number to ${shownRaise?.to ?? ''}`}
         onConfirm={() => {
           const row = raising && list?.items.find((i) => i.id === raising.id);
-          if (row && raising) void importRow(row, raising.to);
+          if (row && raising) return void importRow(row, raising.to);
+          setRaising(null);
+          setNotice('That invoice changed meanwhile, so nothing was imported. Check it again.');
         }}
         onCancel={() => setRaising(null)}
         onCloseAutoFocus={(e) => focusOn(dialogRow.current ? `[data-import-row="${dialogRow.current}"]` : null)(e)}
@@ -633,10 +675,7 @@ export default function ImportPanel() {
                           </Button>
                         ) : null}
                         {item.status !== 'imported' ? (
-                          <Button variant="ghost" size="sm" data-discard-row={item.id} onClick={() => {
-                            dialogRow.current = item.id;
-                            setDiscarding(item.id);
-                          }} disabled={rowBusy}>
+                          <Button variant="ghost" size="sm" data-discard-row={item.id} onClick={() => askDiscard(item.id)} disabled={rowBusy}>
                             Discard
                           </Button>
                         ) : null}
@@ -666,10 +705,11 @@ export default function ImportPanel() {
           onRecheck={() => act(editing.id, () => importsApi.recheck(editing.id))}
           onReadAgain={() => {
             // The editor reopens on the new reading: its heading takes the focus then.
-            headingFocus.current = editing.id;
+            headingFocus.current = { id: editing.id, from: editing.extractionId };
             readOne(editing.id, true);
           }}
-          autoFocusHeading={headingFocus.current === editing.id}
+          autoFocusHeading={headingFocus.current?.id === editing.id && headingFocus.current.from !== editing.extractionId}
+          onHeadingFocused={clearHeadingFocus}
           onClose={() => {
             headingFocus.current = null;
             setOpen(null);

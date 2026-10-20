@@ -84,11 +84,11 @@ const REREAD_REASON: Record<string, string> = {
 
 /** What a failed import names, in words (the code an `import_failed:` problem carries). */
 const IMPORT_FAILED_REASON: Record<string, string> = {
-  import_conflict: 'an invoice with this number or this file is already in the Books. Check the number',
+  import_conflict: 'this number, or this same file under another number, is already in the Books. Check the number and the file',
   invalid_input: 'a field is not valid. Check the row',
   recipient_unavailable: 'the contacts database could not be reached. Nothing was imported; try again in a moment',
   recipient_ambiguous: 'more than one contact carries this recipient name. Make the name unique in the contacts first',
-  counter_missing: 'the Books are not set up for this company',
+  counter_missing: 'the Books are not set up for this company. Set up the Books first, then import',
   import_failed: 'the Books could not save it. Nothing was imported; try again',
   customer_not_found: 'the contact was removed meanwhile. Check the recipient and try again',
 };

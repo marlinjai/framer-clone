@@ -7,8 +7,12 @@
 // file): the shared alert dialog (components/ui/alert-dialog), so it keeps to
 // the viewport like every dialog of the editor, traps the focus, starts on
 // Cancel (the safe choice) and gives the focus back to what opened it.
+//
+// Confirming is never also a cancel: the owner closes the dialog through its
+// own state when it has acted, so a question that changed meanwhile (a new
+// number to confirm) stays open with the new question instead of closing.
 
-import React from 'react';
+import React, { useRef } from 'react';
 
 import {
   AlertDialog,
@@ -34,13 +38,25 @@ export default function ImportConfirm({
   title: string;
   description: React.ReactNode;
   confirmLabel: string;
+  /** Acts, and closes the dialog through the owner's state (or keeps it open with a new question). */
   onConfirm: () => void;
   onCancel: () => void;
   /** Where the focus goes when it closes (default: back to what opened it). */
   onCloseAutoFocus?: (event: Event) => void;
 }) {
+  const confirmed = useRef(false);
   return (
-    <AlertDialog open={open} onOpenChange={(next) => !next && onCancel()}>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next) return;
+        if (confirmed.current) {
+          confirmed.current = false;
+          return;
+        }
+        onCancel();
+      }}
+    >
       <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
@@ -50,7 +66,14 @@ export default function ImportConfirm({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>{confirmLabel}</AlertDialogAction>
+          <AlertDialogAction
+            onClick={() => {
+              confirmed.current = true;
+              onConfirm();
+            }}
+          >
+            {confirmLabel}
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
