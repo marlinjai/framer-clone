@@ -395,4 +395,29 @@ describe('POST /api/projects (authorized)', () => {
     expect((await res.json()).error.code).toBe('bad_body');
     expect(save).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['empty', ''],
+    ['101 characters', 'a'.repeat(101)],
+    ['a line break', 'two\nlines'],
+  ])('400s for a name that breaks the shared name rule (%s), like a rename would', async (_l, name) => {
+    const save = vi.fn();
+    installRepo({ saveProject: save });
+
+    const res = await POST(createReq({ name }));
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe('bad_body');
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('trims the name it creates with', async () => {
+    const save = vi.fn().mockResolvedValue(undefined);
+    installRepo({ saveProject: save });
+
+    const res = await POST(createReq({ name: '  Shop  ' }));
+
+    expect(res.status).toBe(200);
+    expect(save.mock.calls[0][1].metadata.title).toBe('Shop');
+  });
 });

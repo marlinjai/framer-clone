@@ -14,6 +14,7 @@ import ProjectModel from '@/models/ProjectModel';
 import { SiteRepository, type TenantScope } from '../repository';
 import {
   SiteNotFoundError,
+  SiteNameConflictError,
   InvalidTenantScopeError,
   SubdomainAllocationError,
 } from '../errors';
@@ -196,6 +197,85 @@ describe('SiteRepository.saveProject', () => {
 
     const upsertArg = prisma.site.upsert.mock.calls[0][0];
     expect(upsertArg.where).toEqual({ id: 'site_save' });
+  });
+});
+
+describe('SiteRepository.saveProject leaves the name to the rename action', () => {
+  it('writes the name on create but never on update', async () => {
+    prisma.site.findUnique.mockResolvedValue({ id: 'site_save', workspaceId: 'ws_marlin' });
+    prisma.site.upsert.mockResolvedValue({});
+    prisma.sitePage.upsert.mockResolvedValue({});
+    prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
+    const p = ProjectModel.create({
+      id: 'site_save',
+      metadata: { title: 'Stale title from an old editor tab', description: '' },
+      pages: {},
+    });
+
+    await repo.saveProject(SCOPE, p);
+
+    const upsertArg = prisma.site.upsert.mock.calls[0][0];
+    expect(upsertArg.create.name).toBe('Stale title from an old editor tab');
+    expect(upsertArg.update).not.toHaveProperty('name');
+  });
+});
+
+describe('SiteRepository.renameSite', () => {
+  it('renames scoped by id AND workspace_id', async () => {
+    prisma.site.updateMany.mockResolvedValue({ count: 1 });
+    const out = await repo.renameSite(SCOPE, 'site_1', 'New name');
+    const arg = prisma.site.updateMany.mock.calls[0][0];
+    expect(arg.where).toEqual({ id: 'site_1', workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra' });
+    expect(arg.data.name).toBe('New name');
+    expect(arg.data.projectUpdatedAt).toBeInstanceOf(Date);
+    expect(out.name).toBe('New name');
+  });
+
+  it('puts the expected name into the same UPDATE (no read-then-write window)', async () => {
+    prisma.site.updateMany.mockResolvedValue({ count: 1 });
+    await repo.renameSite(SCOPE, 'site_1', 'New name', 'Old name');
+    expect(prisma.site.updateMany.mock.calls[0][0].where).toEqual({
+      id: 'site_1',
+      workspaceId: 'ws_marlin',
+      tenantGroupId: 'tg_lumitra',
+      name: 'Old name',
+    });
+    expect(prisma.site.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('a lost race writes nothing and reports the current name (409)', async () => {
+    prisma.site.updateMany.mockResolvedValue({ count: 0 });
+    prisma.site.findFirst.mockResolvedValue({ name: 'Renamed by someone else' });
+    const err = await repo.renameSite(SCOPE, 'site_1', 'Mine', 'Old name').catch((e) => e);
+    expect(err).toBeInstanceOf(SiteNameConflictError);
+    expect(err.status).toBe(409);
+    expect(err.currentName).toBe('Renamed by someone else');
+    expect(prisma.site.findFirst.mock.calls[0][0].where).toEqual({
+      id: 'site_1',
+      workspaceId: 'ws_marlin',
+      tenantGroupId: 'tg_lumitra',
+    });
+  });
+
+  it('two tabs setting the same name is not a conflict', async () => {
+    prisma.site.updateMany.mockResolvedValue({ count: 0 });
+    const stored = new Date('2026-10-20T10:00:00Z');
+    prisma.site.findFirst.mockResolvedValue({ name: 'Same', projectUpdatedAt: stored });
+    // The stored timestamp, not a made-up "now": nothing was written.
+    await expect(repo.renameSite(SCOPE, 'site_1', 'Same', 'Old')).resolves.toEqual({ name: 'Same', updatedAt: stored });
+  });
+
+  it('a missing or foreign site is a 404, indistinguishable', async () => {
+    prisma.site.updateMany.mockResolvedValue({ count: 0 });
+    prisma.site.findFirst.mockResolvedValue(null);
+    await expect(repo.renameSite(SCOPE, 'site_x', 'Name')).rejects.toBeInstanceOf(SiteNotFoundError);
+  });
+
+  it('rejects an empty scope', async () => {
+    await expect(
+      repo.renameSite({ workspaceId: '', tenantGroupId: 'tg' }, 'site_1', 'Name'),
+    ).rejects.toBeInstanceOf(InvalidTenantScopeError);
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
   });
 });
 

@@ -30,6 +30,7 @@ import { redirect } from 'next/navigation';
 import { safeEditorReturnPath } from '@/server/auth/activeCompany';
 import { loadDashboard } from './loader';
 import NewProjectButton from './NewProjectButton';
+import ProjectCard from './ProjectCard';
 import CompanyChooser from './CompanyChooser';
 import SitesNotEnabled from './SitesNotEnabled';
 import AuthUnavailable from './AuthUnavailable';
@@ -160,22 +161,12 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
         <ul className="flex flex-col gap-2">
           {sites.map((site) => (
             <li key={site.siteId}>
-              <Link
-                href={`/projects/${site.siteId}`}
-                className="flex items-center justify-between gap-4 rounded-lg border p-4 transition-colors hover:bg-accent"
-              >
-                <span className="min-w-0">
-                  <span className="block truncate font-medium">
-                    {site.name || 'Untitled Project'}
-                  </span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
-                    Updated {formatUpdated(site.updatedAt)}
-                  </span>
-                </span>
-                <span className="shrink-0 rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                  {site.status}
-                </span>
-              </Link>
+              <ProjectCard
+                siteId={site.siteId}
+                name={site.name}
+                status={site.status}
+                updatedLabel={formatUpdated(site.updatedAt)}
+              />
             </li>
           ))}
         </ul>

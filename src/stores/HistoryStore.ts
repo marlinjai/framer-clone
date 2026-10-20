@@ -84,6 +84,14 @@ const HistoryStore = types
     };
 
     return {
+      // Run a change to the project that must NOT become an undo step: the
+      // project rename is a server-side action (PATCH /api/projects/<id>)
+      // mirrored into the working copy, so Cmd+Z reverting only the local
+      // title would show a name the database does not have.
+      runUntracked<T>(fn: () => T): T {
+        return withoutRecording(fn);
+      },
+
       // Wire the middleware onto `target`. Only actions under this subtree are
       // recorded. Safe to call again (disposes the previous middleware first).
       setTargetStore(target: IAnyStateTreeNode) {

@@ -50,6 +50,7 @@ import {
 import ProjectModel, { type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { createIntrinsicComponent } from '@/models/ComponentModel';
 import { jsonError } from '@/lib/api/respond';
+import { projectNameSchema } from '@/lib/projectName';
 import {
   commerceSlugFor,
   CommerceTenantSuspendedError,
@@ -160,7 +161,8 @@ async function ensureCommerceProvisioned(
 // The only thing the client may influence: a display name. Everything else
 // (id, workspace scope, status, page structure) is server-derived. The body is
 // OPTIONAL — a bare POST with no body creates "Untitled Project".
-const createBodySchema = z.object({ name: z.string().optional() });
+// The name follows the same rule as a rename (src/lib/projectName.ts).
+const createBodySchema = z.object({ name: projectNameSchema.optional() });
 
 /**
  * Build a MINIMAL valid draft ProjectModel snapshot: one home page (`slug: ''`)
