@@ -47,7 +47,7 @@ function sender(overrides: Record<string, unknown> = {}) {
 function record(overrides: Record<string, unknown> = {}): HistoricalInvoiceInput {
   return {
     origin: 'upload_extracted',
-    numberValue: 12,
+    documentNumber: '12',
     issueDate: '2021-03-04',
     serviceDate: null,
     servicePeriod: null,
@@ -100,7 +100,7 @@ describe('parseHistoricalInvoice', () => {
   it('refuses what an issued small-business invoice cannot be, naming fields only', () => {
     expect(refusedPaths(record({ origin: 'guessed' }))).toEqual(['origin']);
     expect(refusedPaths(record({ total: 12001 }))).toEqual(['total']);
-    expect(refusedPaths(record({ taxTreatment: 'regular' }))).toEqual(['taxTreatment']);
+    expect(refusedPaths(record({ taxTreatment: 'flat_rate' }))).toEqual(['taxTreatment']);
     expect(refusedPaths(record({ issueDate: '2027-01-01', dueDate: null }))).toEqual(['issueDate']);
     expect(refusedPaths(record({ issueDate: '2021-02-30', dueDate: null }))).toEqual(['issueDate']);
     expect(refusedPaths(record({ dueDate: '2021-03-01' }))).toEqual(['dueDate']);

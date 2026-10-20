@@ -105,11 +105,18 @@ const lineSchema = z
     unitPrice: z.number().int().min(-MAX_CENTS).max(MAX_CENTS),
     /** Basis points as printed (0 when none); `subtotal` is the printed line total, authoritative even when it is not the arithmetic of the three. */
     discountBp: z.number().int().min(0).max(10000),
-    /** Cents, the printed line total; negative on a printed discount line. */
+    /** Cents, the printed line total (net); negative on a printed discount line. */
     subtotal: z.number().int().min(-MAX_CENTS).max(MAX_CENTS),
+    /** Basis points as printed (1900 = 19 %); 0 under section 19 and reverse charge. */
+    taxRate: z.number().int().min(0).max(10000).default(0),
+    /** Cents of VAT on the line as printed (or as derived from the printed tax groups); negative on a discount line. */
+    taxAmount: z.number().int().min(-MAX_CENTS).max(MAX_CENTS).default(0),
   })
   .superRefine((l, ctx) => {
-    if (l.kind === 'text' && (l.quantity !== 0 || l.unitPrice !== 0 || l.subtotal !== 0 || l.discountBp !== 0)) {
+    if (
+      l.kind === 'text' &&
+      (l.quantity !== 0 || l.unitPrice !== 0 || l.subtotal !== 0 || l.discountBp !== 0 || l.taxRate !== 0 || l.taxAmount !== 0)
+    ) {
       ctx.addIssue({ code: 'custom', message: 'a text line carries no quantity or amount' });
     }
     if (l.kind === 'service' && l.quantity === 0) ctx.addIssue({ code: 'custom', path: ['quantity'], message: 'a billable line has a quantity' });
@@ -172,20 +179,38 @@ const provenanceSchema = z
     linesPriceDerived: z.number().int().min(0).max(500),
     /** Lines whose printed discount could not be read: kept at 0, the printed line total stands (warned). */
     linesDiscountUnparsed: z.number().int().min(0).max(500),
+    /** Billable lines whose VAT amount was derived from their rate and the printed tax groups (regular taxation). */
+    linesTaxDerived: z.number().int().min(0).max(500),
+    /** Sender fields the PDF does not show, filled from the company's current sender block (upload). */
+    senderFieldsFromCompany: z.number().int().min(0).max(30),
     confidence: z.enum(['high', 'medium', 'low']),
   })
   .partial()
   .strict();
 
+/** How the invoice was taxed, as printed. */
+export const HISTORICAL_TAX_TREATMENTS = ['small_business', 'regular', 'reverse_charge'] as const;
+export type HistoricalTaxTreatment = (typeof HISTORICAL_TAX_TREATMENTS)[number];
+
+/**
+ * The German VAT rates an imported line may carry (basis points): 19 and 7 %,
+ * the 16 and 5 % of the second half of 2020, and 0. Another rate is a named
+ * problem, never guessed.
+ */
+export const HISTORICAL_VAT_RATES: ReadonlySet<number> = new Set([0, 500, 700, 1600, 1900]);
+
 /**
  * One historical invoice, ready to be imported. Money in cents, quantities in
- * thousandths, dates `YYYY-MM-DD`. Only small-business invoices (section 19)
- * are supported; the lines must sum to the total.
+ * thousandths, dates `YYYY-MM-DD`. Small business (section 19), regular
+ * taxation (net lines with their printed rate and tax) and reverse charge
+ * (section 13b, tax 0) are supported; the lines' net plus their tax must equal
+ * the printed total.
  */
 export const historicalInvoiceSchema = z
   .object({
     origin: z.enum(IMPORT_ORIGINS),
-    numberValue: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    /** The number exactly as printed ("62", "RE-2021-0012"). */
+    documentNumber: z.string().trim().min(1).max(40).regex(/^[^\u0000-\u001f]+$/, 'printable characters only'),
     issueDate: isoDate,
     serviceDate: isoDate.nullable(),
     servicePeriod: z.object({ start: isoDate, end: isoDate }).nullable(),
@@ -202,16 +227,33 @@ export const historicalInvoiceSchema = z
      */
     // Required, never defaulted: a missed extraction must not become a wrong currency.
     currency: z.string().refine(isIsoCurrency, 'expected an ISO 4217 currency code'),
-    taxTreatment: z.literal('small_business'),
-    /** The small-business note as printed. */
-    taxNote: text(500),
+    taxTreatment: z.enum(HISTORICAL_TAX_TREATMENTS),
+    /** The tax note as printed (the section 19 or the reverse-charge notice); null when none is printed (warned where the law wants one). */
+    taxNote: z.string().trim().min(1).max(500).nullable(),
     provenance: provenanceSchema.default({}),
   })
   .strict()
   .superRefine((r, ctx) => {
     if (!r.lines.some((l) => l.kind !== 'text')) ctx.addIssue({ code: 'custom', path: ['lines'], message: 'at least one billable line' });
-    if (r.lines.reduce((acc, l) => acc + l.subtotal, 0) !== r.total) {
-      ctx.addIssue({ code: 'custom', path: ['total'], message: 'the lines do not sum to the total' });
+    const net = r.lines.reduce((acc, l) => acc + l.subtotal, 0);
+    const tax = r.lines.reduce((acc, l) => acc + l.taxAmount, 0);
+    if (net + tax !== r.total) {
+      ctx.addIssue({ code: 'custom', path: ['total'], message: 'the lines (net plus tax) do not sum to the total' });
+    }
+    if (net < 0 || tax < 0) ctx.addIssue({ code: 'custom', path: ['total'], message: 'the net or the tax of the invoice is negative' });
+    r.lines.forEach((l, i) => {
+      if (l.kind === 'text') return;
+      if (r.taxTreatment !== 'regular' && (l.taxRate !== 0 || l.taxAmount !== 0)) {
+        ctx.addIssue({ code: 'custom', path: ['lines', i, 'taxRate'], message: 'no VAT under section 19 or reverse charge' });
+      }
+      if (r.taxTreatment === 'regular' && !HISTORICAL_VAT_RATES.has(l.taxRate)) {
+        ctx.addIssue({ code: 'custom', path: ['lines', i, 'taxRate'], message: 'not a German VAT rate (19, 16, 7, 5 or 0 %)' });
+      }
+    });
+    if (r.taxTreatment === 'reverse_charge') {
+      // The database twin refuses it too (sales_document_reverse_charge_check).
+      if (r.recipient.vatId === null) ctx.addIssue({ code: 'custom', path: ['recipient', 'vatId'], message: 'reverse charge needs the recipient VAT id' });
+      if (r.recipient.kind !== 'organization') ctx.addIssue({ code: 'custom', path: ['recipient', 'kind'], message: 'reverse charge applies to a business' });
     }
     if (r.servicePeriod && r.servicePeriod.start > r.servicePeriod.end) {
       ctx.addIssue({ code: 'custom', path: ['servicePeriod'], message: 'the period ends before it starts' });
@@ -284,6 +326,49 @@ export async function checkImportCounter(
   return { format: counter.format, nextValue };
 }
 
+/** The counter row as the import reads it (FOR SHARE to hold a check, FOR UPDATE to raise it). */
+async function readCounter(db: Db, scope: BooksScope, lock: 'none' | 'share' | 'update'): Promise<ImportCounter> {
+  let q = db
+    .selectFrom('document_number_counter')
+    .select(['next_value', 'format'])
+    .where('tenant_id', '=', scope.tenantId)
+    .where('doc_type', '=', 'invoice');
+  if (lock === 'share') q = q.forShare();
+  if (lock === 'update') q = q.forUpdate();
+  const counter = await q.executeTakeFirst();
+  if (!counter) {
+    throw new BooksError('COUNTER_MISSING', 'COUNTER_MISSING: no invoice counter for this company (run books:init-company first)', {
+      docType: 'invoice',
+    });
+  }
+  return { format: counter.format, nextValue: Number(counter.next_value) };
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The counter value a printed number stands for, when it is written in the
+ * company's own number format (`{n}` the number, `{n:4}` at least four
+ * digits, literal text around it): "62" under `{n}`, "RE-0012" under
+ * `RE-{n:4}`. null for a number in another format ("2021-0012" under `{n}`):
+ * it is imported with its printed text and takes no part in the counter.
+ */
+export function numberValueFor(documentNumber: string, format: string): number | null {
+  const m = /^(.*)\{n(?::([1-9]))?\}(.*)$/.exec(format);
+  if (!m) return null;
+  const digits = m[2] ? `(\\d{${m[2]},})` : '(\\d+)';
+  const re = new RegExp(`^${escapeRegExp(m[1])}${digits}${escapeRegExp(m[3])}$`);
+  const hit = re.exec(documentNumber.trim());
+  if (!hit) return null;
+  const value = Number(hit[1]);
+  return Number.isSafeInteger(value) && value >= 1 ? value : null;
+}
+
+/** How an import treats the invoice counter: the CLI refuses a number at or above it, the upload raises it. */
+export type CounterPolicy = 'refuse' | 'raise';
+
 // --- what is there already ---------------------------------------------------------
 
 export type ExistingNumber =
@@ -291,8 +376,17 @@ export type ExistingNumber =
   | { state: 'imported'; documentId: string; sha256: string | null; total: number; issueDate: string | null; currency: string }
   | { state: 'other'; documentId: string };
 
-/** What the company's books hold under an invoice number. */
-export async function existingInvoice(db: Db, scope: BooksScope, numberValue: number): Promise<ExistingNumber> {
+/**
+ * What the company's books hold under an invoice number: the printed text, and
+ * (given) the counter value it stands for. Accepts a plain integer for the
+ * operator import's whole-run checks (its numbers are printed as integers).
+ */
+export async function existingInvoice(
+  db: Db,
+  scope: BooksScope,
+  number: number | { documentNumber: string; numberValue: number | null },
+): Promise<ExistingNumber> {
+  const n = typeof number === 'number' ? { documentNumber: String(number), numberValue: number } : number;
   const row = await db
     .selectFrom('sales_document')
     .leftJoin('sales_document_file', (join) =>
@@ -310,7 +404,14 @@ export async function existingInvoice(db: Db, scope: BooksScope, numberValue: nu
     ])
     .where('sales_document.tenant_id', '=', scope.tenantId)
     .where('sales_document.doc_type', '=', 'invoice')
-    .where('sales_document.number_value', '=', String(numberValue))
+    .where((eb) =>
+      n.numberValue === null
+        ? eb('sales_document.document_number', '=', n.documentNumber)
+        : eb.or([
+            eb('sales_document.document_number', '=', n.documentNumber),
+            eb('sales_document.number_value', '=', String(n.numberValue)),
+          ]),
+    )
     .executeTakeFirst();
   if (!row) return { state: 'absent' };
   if (row.source !== 'import') return { state: 'other', documentId: row.id };
@@ -369,7 +470,15 @@ export async function importedCancelled(db: Db, scope: BooksScope): Promise<Arra
 }
 
 export type ImportResult =
-  | { status: 'imported'; documentId: string; warnings: ImportWarning[] }
+  | {
+      status: 'imported';
+      documentId: string;
+      warnings: ImportWarning[];
+      /** The counter value of the printed number, null when it is not in the company's format. */
+      numberValue: number | null;
+      /** The counter's new next value when the import raised it (counter policy `raise`), else null. */
+      counterRaisedTo: number | null;
+    }
   | {
       status: 'already_imported';
       documentId: string;
@@ -381,9 +490,9 @@ export type ImportResult =
       differs: boolean;
     };
 
-function conflict(numberValue: number, documentId: string, why: string): BooksError {
-  return new BooksError('IMPORT_CONFLICT', `IMPORT_CONFLICT: invoice ${numberValue} ${why}; nothing was changed`, {
-    numberValue,
+function conflict(number: string | number, documentId: string, why: string): BooksError {
+  return new BooksError('IMPORT_CONFLICT', `IMPORT_CONFLICT: invoice ${number} ${why}; nothing was changed`, {
+    documentNumber: String(number),
     documentId,
   });
 }
@@ -391,7 +500,7 @@ function conflict(numberValue: number, documentId: string, why: string): BooksEr
 /** Decide what an existing number means for an original with this digest (and, given the record, whether its data still agrees). */
 export function judgeExisting(
   existing: ExistingNumber,
-  numberValue: number,
+  numberValue: string | number,
   sha256: string,
   record?: Pick<HistoricalInvoice, 'total' | 'issueDate' | 'currency'>,
 ): ImportResult | null {
@@ -615,20 +724,48 @@ export function printedCustomerType(record: HistoricalInvoice): CustomerType {
 }
 
 /**
- * The document's frozen tax fields, from THIS invoice's printed recipient (never
- * from today's customer row, which may have changed since): business or
- * consumer, VAT id, country, and the small-business profile key they give.
+ * The document's frozen tax fields, from THIS invoice's print (never from
+ * today's customer row, which may have changed since): business or consumer,
+ * VAT id, the treatment flags and the profile key they give, and the tax
+ * summary grouped by rate and treatment from the printed lines.
  */
 export function importTaxFields(record: HistoricalInvoice) {
   const customerType = printedCustomerType(record);
   const profile = resolveTaxProfile({
-    companyTaxStatus: 'small_business',
-    exemptionNote: record.taxNote,
+    companyTaxStatus: record.taxTreatment === 'small_business' ? 'small_business' : 'regular',
+    exemptionNote: record.taxNote ?? '',
     customerType,
     vatId: record.recipient.vatId,
     countryCode: record.recipient.country,
   });
-  return { customerType, vatId: record.recipient.vatId, taxProfileKey: profile.key };
+  const groups = new Map<string, TaxSummary[number]>();
+  for (const l of record.lines) {
+    if (l.kind === 'text') continue;
+    const treatment = lineTreatment(record.taxTreatment, l.taxRate);
+    const key = `${l.taxRate}|${treatment}`;
+    const g = groups.get(key) ?? { taxRate: l.taxRate, taxTreatment: treatment, net: 0, tax: 0 };
+    g.net += l.subtotal;
+    g.tax += l.taxAmount;
+    groups.set(key, g);
+  }
+  return {
+    customerType,
+    vatId: record.recipient.vatId,
+    taxProfileKey: profile.key,
+    kleinunternehmer: record.taxTreatment === 'small_business',
+    reverseCharge: record.taxTreatment === 'reverse_charge',
+    subtotal: record.lines.reduce((acc, l) => acc + l.subtotal, 0),
+    taxAmount: record.lines.reduce((acc, l) => acc + l.taxAmount, 0),
+    taxSummary: [...groups.values()].sort((a, b) => b.taxRate - a.taxRate),
+  };
+}
+
+/** The stored treatment of a billable line: section 19, reverse charge, or the rate's class (5 and 7 % reduced). */
+export function lineTreatment(treatment: HistoricalTaxTreatment, rate: number): TaxSummary[number]['taxTreatment'] {
+  if (treatment === 'small_business') return 'kleinunternehmer';
+  if (treatment === 'reverse_charge') return 'reverse_charge';
+  if (rate === 0) return 'zero';
+  return rate === 500 || rate === 700 ? 'reduced' : 'standard';
 }
 
 /** `issued_at` of an imported invoice: noon UTC of its issue date, the same calendar day in every European time zone. */
@@ -654,9 +791,21 @@ export function importIssuedAt(issueDate: string): Date {
  *   - `sender_address_missing`, `recipient_address_incomplete`: an address the
  *     record does not carry in full; stored empty, never invented.
  *   - `recipient_country_assumed`: neither printed nor inferred, DE assumed.
+ *   - `line_tax_not_rate_times_net`: a line's printed VAT is more than a cent
+ *     off its rate times its net. Stored as printed.
+ *   - `tax_note_missing`: a section 19 or reverse-charge invoice without its
+ *     printed notice. A historical record: reported, never blocking.
+ *   - `line_tax_derived`: lines without a printed VAT amount, derived from their
+ *     rate and adjusted to the printed tax group.
+ *   - `sender_from_company`: sender fields the PDF did not show, taken from
+ *     the company's current sender block.
  */
 export type ImportWarning =
   | { code: 'line_not_quantity_times_price'; count: number }
+  | { code: 'line_tax_not_rate_times_net'; count: number }
+  | { code: 'tax_note_missing' }
+  | { code: 'line_tax_derived'; count: number }
+  | { code: 'sender_from_company'; count: number }
   | { code: 'line_price_derived'; count: number }
   | { code: 'discount_unparsed'; count: number }
   | { code: 'issue_date_out_of_number_order' }
@@ -673,12 +822,21 @@ export function linesNotQuantityTimesPrice(record: Pick<HistoricalInvoice, 'line
   ).length;
 }
 
-async function issueDateOutOfOrder(db: Db, scope: BooksScope, record: HistoricalInvoice): Promise<boolean> {
+/** Lines whose printed VAT is more than a cent off their rate times their net. */
+export function linesTaxNotRateTimesNet(record: Pick<HistoricalInvoice, 'lines'>): number {
+  return record.lines.filter(
+    (l) => l.kind !== 'text' && Math.abs(Math.round((l.subtotal * l.taxRate) / 10000) - l.taxAmount) > 1,
+  ).length;
+}
+
+async function issueDateOutOfOrder(db: Db, scope: BooksScope, record: HistoricalInvoice, numberValue: number | null): Promise<boolean> {
+  // Only a number in the company's format has neighbours in the series.
+  if (numberValue === null) return false;
   const row = await db
     .selectFrom('sales_document')
     .select([
-      sql<string | null>`max(issue_date) FILTER (WHERE number_value < ${String(record.numberValue)})::text`.as('before'),
-      sql<string | null>`min(issue_date) FILTER (WHERE number_value > ${String(record.numberValue)})::text`.as('after'),
+      sql<string | null>`max(issue_date) FILTER (WHERE number_value < ${String(numberValue)})::text`.as('before'),
+      sql<string | null>`min(issue_date) FILTER (WHERE number_value > ${String(numberValue)})::text`.as('after'),
     ])
     .where('tenant_id', '=', scope.tenantId)
     .where('doc_type', '=', 'invoice')
@@ -701,19 +859,26 @@ export function recordWarnings(record: HistoricalInvoice): ImportWarning[] {
   const r = record.recipient;
   if (blank(r.addressLine1) || blank(r.postalCode) || blank(r.city)) out.push({ code: 'recipient_address_incomplete' });
   if (record.provenance.recipientCountryAssumed) out.push({ code: 'recipient_country_assumed' });
+  const taxOff = linesTaxNotRateTimesNet(record);
+  if (taxOff > 0) out.push({ code: 'line_tax_not_rate_times_net', count: taxOff });
+  if (record.taxTreatment !== 'regular' && record.taxNote === null) out.push({ code: 'tax_note_missing' });
+  const taxDerived = record.provenance.linesTaxDerived ?? 0;
+  if (taxDerived > 0) out.push({ code: 'line_tax_derived', count: taxDerived });
+  const fromCompany = record.provenance.senderFieldsFromCompany ?? 0;
+  if (fromCompany > 0) out.push({ code: 'sender_from_company', count: fromCompany });
   return out;
 }
 
-async function warningsFor(db: Db, scope: BooksScope, record: HistoricalInvoice): Promise<ImportWarning[]> {
+async function warningsFor(db: Db, scope: BooksScope, record: HistoricalInvoice, numberValue: number | null): Promise<ImportWarning[]> {
   const out = recordWarnings(record);
-  if (await issueDateOutOfOrder(db, scope, record)) out.push({ code: 'issue_date_out_of_number_order' });
+  if (await issueDateOutOfOrder(db, scope, record, numberValue)) out.push({ code: 'issue_date_out_of_number_order' });
   return out;
 }
 
 // --- the same original under another number -------------------------------------------
 
-/** The number of another imported invoice that already holds these exact bytes, if any. */
-async function otherNumberWithOriginal(db: Db, scope: BooksScope, sha256: string, numberValue: number): Promise<number | null> {
+/** The printed number of another imported invoice that already holds these exact bytes, if any. */
+async function otherNumberWithOriginal(db: Db, scope: BooksScope, sha256: string, documentNumber: string): Promise<string | null> {
   const row = await db
     .selectFrom('sales_document_file')
     .innerJoin('sales_document', (join) =>
@@ -721,37 +886,82 @@ async function otherNumberWithOriginal(db: Db, scope: BooksScope, sha256: string
         .onRef('sales_document.tenant_id', '=', 'sales_document_file.tenant_id')
         .onRef('sales_document.id', '=', 'sales_document_file.document_id'),
     )
-    .select('sales_document.number_value')
+    .select('sales_document.document_number')
     .where('sales_document_file.tenant_id', '=', scope.tenantId)
     .where('sales_document_file.renderer', '=', IMPORT_RENDERER)
     .where('sales_document_file.sha256', '=', sha256)
-    .where('sales_document.number_value', '<>', String(numberValue))
+    .where('sales_document.document_number', '<>', documentNumber)
     .executeTakeFirst();
-  return row?.number_value == null ? null : Number(row.number_value);
+  return row?.document_number ?? null;
 }
 
-function sameOriginalConflict(numberValue: number, other: number): BooksError {
+function sameOriginalConflict(documentNumber: string, other: string): BooksError {
   return new BooksError(
     'IMPORT_CONFLICT',
-    `IMPORT_CONFLICT: invoice ${numberValue}: the same original is already stored as invoice ${other}; nothing was changed`,
-    { numberValue, otherNumberValue: other },
+    `IMPORT_CONFLICT: invoice ${documentNumber}: the same original is already stored as invoice ${other}; nothing was changed`,
+    { documentNumber, otherDocumentNumber: other },
   );
 }
 
 // --- preview and import ------------------------------------------------------------
 
 export type PreviewResult =
-  | { status: 'would_import'; record: HistoricalInvoice; warnings: ImportWarning[] }
+  | {
+      status: 'would_import';
+      record: HistoricalInvoice;
+      warnings: ImportWarning[];
+      numberValue: number | null;
+      /** The counter's next value after this import under the `raise` policy, when it would move; else null. */
+      counterRaisedTo: number | null;
+    }
   | { status: 'already_imported'; differs: boolean; record: HistoricalInvoice };
 
+/** Options of the preview and the import. */
+export interface ImportOptions {
+  now?: Date;
+  /** `refuse` (default, the operator import) or `raise` (the upload: the counter moves past the number, upwards only). */
+  counterPolicy?: CounterPolicy;
+  /**
+   * Runs inside the import's transaction after the document and its original
+   * are written, before the commit (the upload marks its staging row imported
+   * here); a throw rolls the whole import back.
+   */
+  inTransaction?: (trx: Transaction<CommerceDB>, documentId: string) => Promise<void>;
+}
+
+/** The counter value of the record's number and what the counter policy makes of it. */
+function counterEffect(
+  counter: ImportCounter,
+  documentNumber: string,
+  policy: CounterPolicy,
+): { numberValue: number | null; raiseTo: number | null } {
+  const numberValue = numberValueFor(documentNumber, counter.format);
+  if (numberValue === null || numberValue < counter.nextValue) return { numberValue, raiseTo: null };
+  if (policy === 'refuse') {
+    throw new BooksError(
+      'IMPORT_COUNTER_TOO_LOW',
+      `IMPORT_COUNTER_TOO_LOW: the invoice counter is at ${counter.nextValue}, but the import holds number ${numberValue}`,
+      { nextValue: counter.nextValue, highest: numberValue, count: 1 },
+    );
+  }
+  return { numberValue, raiseTo: numberValue + 1 };
+}
+
 /** The checks both the preview and the import make before anything is created. */
-async function checkBefore(scope: BooksScope, record: HistoricalInvoice, sha256: string): Promise<ImportResult | null> {
-  await checkImportCounter(scope.db, scope, [record.numberValue]);
-  const existing = judgeExisting(await existingInvoice(scope.db, scope, record.numberValue), record.numberValue, sha256, record);
-  if (existing) return existing;
-  const other = await otherNumberWithOriginal(scope.db, scope, sha256, record.numberValue);
-  if (other !== null) throw sameOriginalConflict(record.numberValue, other);
-  return null;
+async function checkBefore(
+  scope: BooksScope,
+  record: HistoricalInvoice,
+  sha256: string,
+  policy: CounterPolicy,
+): Promise<{ done: ImportResult | null; numberValue: number | null; raiseTo: number | null }> {
+  const counter = await readCounter(scope.db, scope, 'none');
+  const effect = counterEffect(counter, record.documentNumber, policy);
+  const number = { documentNumber: record.documentNumber, numberValue: effect.numberValue };
+  const existing = judgeExisting(await existingInvoice(scope.db, scope, number), record.documentNumber, sha256, record);
+  if (existing) return { done: existing, ...effect };
+  const other = await otherNumberWithOriginal(scope.db, scope, sha256, record.documentNumber);
+  if (other !== null) throw sameOriginalConflict(record.documentNumber, other);
+  return { done: null, ...effect };
 }
 
 /**
@@ -768,12 +978,12 @@ export async function previewHistoricalInvoice(
   input: unknown,
   pdf: Uint8Array,
   session: ImportSession,
-  opts: { now?: Date } = {},
+  opts: ImportOptions = {},
 ): Promise<PreviewResult> {
   const record = parseHistoricalInvoice(input, opts.now);
   const original = checkOriginal(pdf);
-  const before = await checkBefore(scope, record, original.sha256);
-  if (before?.status === 'already_imported') return { status: 'already_imported', differs: before.differs, record };
+  const before = await checkBefore(scope, record, original.sha256, opts.counterPolicy ?? 'refuse');
+  if (before.done?.status === 'already_imported') return { status: 'already_imported', differs: before.done.differs, record };
   importSenderSnapshot(record);
   importCustomerSnapshot(record, 'preview');
   const key = recipientKey(record.recipient);
@@ -783,7 +993,13 @@ export async function previewHistoricalInvoice(
     if (!contact) session.stats.contactsCreated += 1;
     else countFound(session, contact, record.recipient);
   }
-  return { status: 'would_import', record, warnings: await warningsFor(scope.db, scope, record) };
+  return {
+    status: 'would_import',
+    record,
+    warnings: await warningsFor(scope.db, scope, record, before.numberValue),
+    numberValue: before.numberValue,
+    counterRaisedTo: before.raiseTo,
+  };
 }
 
 /**
@@ -815,17 +1031,17 @@ export async function importHistoricalInvoice(
   input: unknown,
   pdf: Uint8Array,
   session: ImportSession = newImportSession(),
-  opts: { now?: Date } = {},
+  opts: ImportOptions = {},
 ): Promise<ImportResult> {
+  const policy = opts.counterPolicy ?? 'refuse';
   const record = parseHistoricalInvoice(input, opts.now);
   const original = checkOriginal(pdf);
-  const before = await checkBefore(scope, record, original.sha256);
-  if (before) return before;
+  const before = await checkBefore(scope, record, original.sha256, policy);
+  if (before.done) return before.done;
   // Both snapshots are built before any contact is created, so a record they refuse creates nothing.
   importCustomerSnapshot(record, 'probe');
   const senderSnapshot = importSenderSnapshot(record);
   const tax = importTaxFields(record);
-  const taxSummary: TaxSummary = [{ taxRate: 0, taxTreatment: 'kleinunternehmer', net: record.total, tax: 0 }];
 
   const contact = await resolveImportContact(scope, book, record.recipient, session, {
     countryAssumed: record.provenance.recipientCountryAssumed === true,
@@ -843,14 +1059,17 @@ export async function importHistoricalInvoice(
           // One import of these bytes at a time for the company, so two numbers can
           // never both store the same original (there is no unique index on it).
           await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`books-import:${scope.tenantId}:${original.sha256}`}, 0))`.execute(trx);
-          // The counter row FOR SHARE: the number check holds until commit (the
-          // counter only ever moves up, and an issue would wait for this lock).
-          await checkImportCounter(trx, scope, [record.numberValue], { forShare: true });
-          const judged = judgeExisting(await existingInvoice(trx, scope, record.numberValue), record.numberValue, original.sha256, record);
+          // The counter row: FOR SHARE holds the number check until commit (the
+          // counter only ever moves up, and an issue would wait for this lock);
+          // FOR UPDATE when this import may raise it.
+          const counter = await readCounter(trx, scope, policy === 'raise' ? 'update' : 'share');
+          const effect = counterEffect(counter, record.documentNumber, policy);
+          const number = { documentNumber: record.documentNumber, numberValue: effect.numberValue };
+          const judged = judgeExisting(await existingInvoice(trx, scope, number), record.documentNumber, original.sha256, record);
           if (judged) return { result: judged, customerCreated: false };
-          const other = await otherNumberWithOriginal(trx, scope, original.sha256, record.numberValue);
-          if (other !== null) throw sameOriginalConflict(record.numberValue, other);
-          const warnings = await warningsFor(trx, scope, record);
+          const other = await otherNumberWithOriginal(trx, scope, original.sha256, record.documentNumber);
+          if (other !== null) throw sameOriginalConflict(record.documentNumber, other);
+          const warnings = await warningsFor(trx, scope, record, effect.numberValue);
 
           const customer = await ensureCustomerIn(trx, scope, contact, latest);
           const documentId = randomUUID();
@@ -876,9 +1095,9 @@ export async function importHistoricalInvoice(
                 subtotal: line.subtotal,
                 tax_class: null,
                 tax_rate_override: null,
-                tax_rate: 0,
-                tax_amount: 0,
-                tax_treatment: line.kind === 'text' ? null : 'kleinunternehmer',
+                tax_rate: line.taxRate,
+                tax_amount: line.taxAmount,
+                tax_treatment: line.kind === 'text' ? null : lineTreatment(record.taxTreatment, line.taxRate),
                 variant_ref: null,
                 variant_ref_source: 'none',
                 updated_at: now,
@@ -886,7 +1105,7 @@ export async function importHistoricalInvoice(
               .execute();
           }
 
-          const documentNumber = String(record.numberValue);
+          const documentNumber = record.documentNumber;
           await trx
             .insertInto('sales_document')
             .values({
@@ -897,9 +1116,10 @@ export async function importHistoricalInvoice(
               source: 'import',
               customer_id: customer.customerId,
               template_id: null,
-              // The number exactly as printed (the historical series is plain integers).
+              // The number exactly as printed; its counter value only when it is in
+              // the company's format (else it takes no part in the series, 010).
               document_number: documentNumber,
-              number_value: String(record.numberValue),
+              number_value: effect.numberValue === null ? null : String(effect.numberValue),
               issue_date: record.issueDate,
               service_date: record.serviceDate,
               service_period_start: record.servicePeriod?.start ?? null,
@@ -910,15 +1130,15 @@ export async function importHistoricalInvoice(
               tax_region: 'DE',
               customer_type: tax.customerType,
               vat_id: tax.vatId,
-              reverse_charge: false,
+              reverse_charge: tax.reverseCharge,
               net_or_gross: 'net',
-              kleinunternehmer: true,
+              kleinunternehmer: tax.kleinunternehmer,
               tax_note: record.taxNote,
               tax_profile_key: tax.taxProfileKey,
-              subtotal: record.total,
-              tax_amount: 0,
+              subtotal: tax.subtotal,
+              tax_amount: tax.taxAmount,
               total: record.total,
-              tax_summary: toJsonb(taxSummary),
+              tax_summary: toJsonb(tax.taxSummary),
               customer_snapshot: toJsonb(customerSnapshot),
               sender_snapshot: toJsonb(senderSnapshot),
               // No template: the stored original carries its own layout.
@@ -949,6 +1169,19 @@ export async function importHistoricalInvoice(
             .where('id', '=', documentId)
             .execute();
 
+          // The counter past the number (policy `raise`), upwards only: BK003 refuses a lowering.
+          let counterRaisedTo: number | null = null;
+          if (effect.raiseTo !== null) {
+            const raised = await trx
+              .updateTable('document_number_counter')
+              .set({ next_value: String(effect.raiseTo), updated_at: now })
+              .where('tenant_id', '=', scope.tenantId)
+              .where('doc_type', '=', 'invoice')
+              .where('next_value', '<', String(effect.raiseTo))
+              .executeTakeFirst();
+            if (Number(raised.numUpdatedRows) > 0) counterRaisedTo = effect.raiseTo;
+          }
+
           // The editor's `issued` event fields, plus how the import came about.
           await insertEvent(trx, scope, {
             documentId,
@@ -963,7 +1196,8 @@ export async function importHistoricalInvoice(
               taxProfileKey: tax.taxProfileKey,
               source: 'import',
               importOrigin: record.origin,
-              numberValue: record.numberValue,
+              numberValue: effect.numberValue,
+              counterRaisedTo,
               fileSha256: original.sha256,
               lineCount: record.lines.length,
               warnings: warnings.map((w) => w.code),
@@ -971,13 +1205,18 @@ export async function importHistoricalInvoice(
               ...record.provenance,
             },
           });
-          return { result: { status: 'imported' as const, documentId, warnings }, customerCreated: customer.created };
+          if (opts.inTransaction) await opts.inTransaction(trx, documentId);
+          return {
+            result: { status: 'imported' as const, documentId, warnings, numberValue: effect.numberValue, counterRaisedTo },
+            customerCreated: customer.created,
+          };
         }),
     );
   } catch (err) {
     // Two runs racing on one number: the loser sees the winner's row.
     if (sqlState(err) === '23505' && String(constraintName(err)).startsWith('sales_document_number')) {
-      const judged = judgeExisting(await existingInvoice(scope.db, scope, record.numberValue), record.numberValue, original.sha256, record);
+      const number = { documentNumber: record.documentNumber, numberValue: before.numberValue };
+      const judged = judgeExisting(await existingInvoice(scope.db, scope, number), record.documentNumber, original.sha256, record);
       if (judged) return judged;
     }
     if (isBooksError(err)) throw err;

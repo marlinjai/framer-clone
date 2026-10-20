@@ -471,7 +471,7 @@ describe('importHistoricalInvoice: the core the planned upload calls', () => {
     const settings = await readSettings(scope.db, scope);
     const record: HistoricalInvoiceInput = {
       origin: 'upload_extracted',
-      numberValue: 40,
+      documentNumber: '40',
       issueDate: '2025-04-01',
       serviceDate: null,
       servicePeriod: null,
@@ -515,10 +515,10 @@ describe('importHistoricalInvoice: the core the planned upload calls', () => {
     expect(dir.contactsOf(tenantId).map((c) => c.name)).toEqual(['Example Client GmbH']);
     // An invalid record or a non-PDF is refused before anything is read or written.
     await expect(importHistoricalInvoice(scope, book, { ...record, total: 1 }, pdf)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
-    await expect(importHistoricalInvoice(scope, book, { ...record, numberValue: 41 }, new Uint8Array(Buffer.from('no pdf')))).rejects.toMatchObject({
+    await expect(importHistoricalInvoice(scope, book, { ...record, documentNumber: '41' }, new Uint8Array(Buffer.from('no pdf')))).rejects.toMatchObject({
       code: 'INVALID_INPUT',
     });
-    await expect(importHistoricalInvoice(scope, book, { ...record, numberValue: 62 }, pdf)).rejects.toMatchObject({ code: 'IMPORT_COUNTER_TOO_LOW' });
+    await expect(importHistoricalInvoice(scope, book, { ...record, documentNumber: '62' }, pdf)).rejects.toMatchObject({ code: 'IMPORT_COUNTER_TOO_LOW' });
     expect((await countRows(tenantId)).docs).toBe(1);
   });
 });
@@ -527,7 +527,7 @@ describe('importHistoricalInvoice against what is already in the books', () => {
   function record(numberValue: number, name = 'Example Client GmbH', kind: 'person' | 'organization' = 'organization'): HistoricalInvoiceInput {
     return {
       origin: 'upload_extracted',
-      numberValue,
+      documentNumber: String(numberValue),
       issueDate: '2025-04-01',
       serviceDate: null,
       servicePeriod: null,
