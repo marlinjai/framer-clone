@@ -282,7 +282,10 @@ describe('POST /api/ai/generate-page validation and budget', () => {
 
 describe('POST /api/ai/generate-page generation', () => {
   it('streams progress then a validated result, then usage', async () => {
-    anthropicState.turns = [toolTurn(VALID_PAGE, { inputJson: ['x'.repeat(1600), 'y'.repeat(10)] })];
+    // A realistic eager stream: the input's JSON, padded past the progress
+    // threshold with whitespace, split across fragments.
+    const json = JSON.stringify(VALID_PAGE) + ' '.repeat(1600);
+    anthropicState.turns = [toolTurn(VALID_PAGE, { inputJson: [json.slice(0, 40), json.slice(40)] })];
     const res = await POST(makeRequest(baseBody({ projectName: 'Crumb', existingPageTitles: ['Home'] })));
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/event-stream');
@@ -389,6 +392,21 @@ describe('POST /api/ai/generate-page generation', () => {
     const repair = (anthropicState.calls[1].params.messages as Array<{ role: string; content: unknown }>).at(-1)!;
     expect(repair.role).toBe('user');
     expect(String(repair.content)).toContain('not valid JSON');
+  });
+
+  it('malformed eager JSON that the SDK parsed tolerantly into a smaller page is repaired, not applied', async () => {
+    // The raw fragments are broken JSON, but the tolerant parser handed over a
+    // plausible one-section page with stop_reason tool_use.
+    const partial = { nodes: [{ type: 'section', label: 'Hero' }] };
+    anthropicState.turns = [
+      toolTurn(partial, { inputJson: ['{"nodes":[{"type":"section","label":"Hero"}', ',{"type":"p","props":{"children":"say "hi""}}]}'] }),
+      toolTurn(VALID_PAGE),
+    ];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    const result = evs.find((e) => e.event === 'gen:result')!.data as { title: string };
+    expect(result.title).toBe('Bakery'); // the repaired second attempt, not the partial
+    const repair = (anthropicState.calls[1].params.messages as Array<{ content: unknown }>).at(-1)!;
+    expect(JSON.stringify(repair.content)).toContain('not valid JSON');
   });
 
   it('a truncated eager tool input that still parses is never applied', async () => {

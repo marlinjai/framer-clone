@@ -274,7 +274,10 @@ async function runGeneration(args: RunArgs): Promise<void> {
       );
       let received = 0;
       let lastReported = 0;
+      // The raw tool-input fragments, kept for a strict parse below.
+      let rawInput = '';
       stream.on('inputJson', (partialJson: string) => {
+        rawInput += partialJson;
         received += partialJson.length;
         if (received - lastReported >= PROGRESS_EVERY_CHARS) {
           lastReported = received;
@@ -300,6 +303,20 @@ async function runGeneration(args: RunArgs): Promise<void> {
       cacheReadTokens += final.usage.cache_read_input_tokens ?? 0;
       cacheWriteTokens += final.usage.cache_creation_input_tokens ?? 0;
 
+      // With eager input streaming the SDK parses the tool input tolerantly:
+      // malformed JSON (an unescaped quote, a missing bracket) can come back
+      // as a SHORTER but well-formed object that would pass validation as a
+      // smaller page. Parse the raw fragments strictly; if they are not valid
+      // JSON, the parsed input is not trusted.
+      let malformedInput = false;
+      if (rawInput.length > 0) {
+        try {
+          JSON.parse(rawInput);
+        } catch {
+          malformedInput = true;
+        }
+      }
+
       // A classifier decline (after any server-side fallback) is an HTTP 200:
       // checked before content, never repaired (a refusal can also cut the
       // tool input off mid-way).
@@ -322,6 +339,8 @@ async function runGeneration(args: RunArgs): Promise<void> {
         problems = [`the output was cut off at ${MAX_OUTPUT_TOKENS} tokens (too long)`];
       } else if (!toolUse) {
         problems = [`no ${EMIT_TOOL_NAME} call was made`];
+      } else if (malformedInput) {
+        problems = [`the ${EMIT_TOOL_NAME} input was not valid JSON`];
       } else {
         const outcome = validateGeneration(toolUse.input, { breakpoints });
         if (outcome.ok) {
