@@ -55,6 +55,7 @@ function run(feed: Feed, env: Record<string, string> = {}) {
       FEED_URL: 'https://app.lumitra.co/api/internal/custom-domains/hostnames',
       TRAEFIK_SERVICE: 'http-0-abc123@docker',
       OUTPUT_FILE: join(dir, 'out.yml'),
+      STATE_DIR: join(dir, 'state'),
       FETCH: `sh ${fetcher}`,
       ...env,
     } as unknown as NodeJS.ProcessEnv,
@@ -191,32 +192,77 @@ describe('sync-traefik.sh: refusing what is not the feed', () => {
   });
 });
 
-describe('sync-traefik.sh: suspicious drops', () => {
-  const ten = Array.from({ length: 10 }, (_, i) => `site${i}.example.com`);
+describe('sync-traefik.sh: drop protection', () => {
+  const hosts = (n: number, prefix = 'site') => Array.from({ length: n }, (_, i) => `${prefix}${i}.example.com`);
+  const stateFile = () => join(dir, 'state', 'high-water');
+  const forceFile = () => join(dir, 'state', 'force-once');
 
-  it('refuses a drop to zero from a non-zero count unless forced', () => {
-    run({ body: lines(...ten) });
-    const before = out();
-    expectRefusedKeepingFile(run({ body: '' }), before, /remove all 10 routes/);
-    const forced = run({ body: '' }, { FORCE: '1' });
-    expect(forced.status).toBe(0);
+  it('holds a large drop but still applies additions (the union is written, exit 3)', () => {
+    run({ body: lines(...hosts(20)) });
+    const r = run({ body: lines(...hosts(4), 'brand-new.example.com') });
+    expect(r.status).toBe(3);
+    expect(r.stderr).toMatch(/HELD: the feed would drop from 20 to 5/);
+    const written = rules();
+    expect(written).toHaveLength(21);
+    expect(written).toContain('Host(`brand-new.example.com`)');
+    expect(written).toContain('Host(`site19.example.com`)');
+  });
+
+  it('applies drops of DROP_FLOOR routes or fewer, even to zero', () => {
+    run({ body: lines(...hosts(5)) });
+    const r = run({ body: '' });
+    expect(r.status).toBe(0);
     expect(out()).not.toContain('routers:');
   });
 
-  it('refuses a drop of more than half the routes unless forced', () => {
-    run({ body: lines(...ten) });
-    const before = out();
-    expectRefusedKeepingFile(run({ body: lines(...ten.slice(0, 4)) }), before, /from 10 to 4/);
-    expect(run({ body: lines(...ten.slice(0, 4)) }, { FORCE: '1' }).status).toBe(0);
-    expect(rules()).toHaveLength(4);
+  it('applies drops of half or less (ordinary disconnects)', () => {
+    run({ body: lines(...hosts(20)) });
+    expect(run({ body: lines(...hosts(10)) }).status).toBe(0);
+    expect(rules()).toHaveLength(10);
   });
 
-  it('accepts a drop of half or less (ordinary disconnects)', () => {
-    run({ body: lines(...ten) });
-    expect(run({ body: lines(...ten.slice(0, 5)) }).status).toBe(0);
-    expect(rules()).toHaveLength(5);
-    expect(run({ body: lines(...ten.slice(0, 4)) }).status).toBe(0);
-    expect(rules()).toHaveLength(4);
+  it('compares against the 24 h high-water mark, not only the previous run', () => {
+    run({ body: lines(...hosts(20)) });
+    expect(run({ body: lines(...hosts(12)) }).status).toBe(0); // 20 -> 12: fine
+    const r = run({ body: lines(...hosts(8)) }); // 12 -> 8 looks small, but 20 -> 8 is not
+    expect(r.status).toBe(3);
+    expect(r.stderr).toMatch(/from 20 to 8/);
+    expect(rules()).toHaveLength(12);
+  });
+
+  it('an expired high-water mark no longer counts', () => {
+    run({ body: lines(...hosts(20)) });
+    expect(run({ body: lines(...hosts(12)) }).status).toBe(0);
+    writeFileSync(stateFile(), `20 ${Math.floor(Date.now() / 1000) - 90_000}\n`);
+    expect(run({ body: lines(...hosts(8)) }).status).toBe(0);
+    expect(rules()).toHaveLength(8);
+    expect(readFileSync(stateFile(), 'utf8').split(' ')[0]).toBe('8');
+  });
+
+  it('a held drop leaves the high-water mark alone; force-once confirms it once and is deleted', () => {
+    run({ body: lines(...hosts(20)) });
+    expect(run({ body: '' }).status).toBe(3);
+    expect(rules()).toHaveLength(20);
+    expect(readFileSync(stateFile(), 'utf8').split(' ')[0]).toBe('20');
+
+    writeFileSync(forceFile(), '');
+    const forced = run({ body: '' });
+    expect(forced.status).toBe(0);
+    expect(forced.stderr).toContain('force-once flag found and consumed');
+    expect(existsSync(forceFile())).toBe(false);
+    expect(out()).not.toContain('routers:');
+    expect(readFileSync(stateFile(), 'utf8').split(' ')[0]).toBe('0');
+
+    // The confirmation was one-shot: from 20 again, the next big drop is held.
+    run({ body: lines(...hosts(20)) });
+    expect(run({ body: lines(...hosts(2)) }).status).toBe(3);
+  });
+
+  it('a refused feed never touches the high-water mark', () => {
+    run({ body: lines(...hosts(10)) });
+    const before = readFileSync(stateFile(), 'utf8');
+    run({ body: '<html></html>\n', contentType: 'text/html' });
+    expect(readFileSync(stateFile(), 'utf8')).toBe(before);
   });
 });
 

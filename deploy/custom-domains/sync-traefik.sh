@@ -18,16 +18,22 @@
 #     an alphabetic or punycode top-level label, not a reserved test or local
 #     ending, not under lumitra.co or a BLOCKED_ZONES entry); one bad line
 #     refuses the WHOLE feed, since it means the source is not the app's feed;
-#   - a drop to zero routes from a non-zero count, or a drop of more than half
-#     of the current routes, is refused unless FORCE=1 (a buggy or hostile
-#     feed cannot take every customer offline in one minute).
+#   - a large DROP in routes is held back: when the feed has more than
+#     DROP_FLOOR (5) fewer routes than the high-water mark AND fewer than half
+#     of it, the removals are not applied. The high-water mark is the largest
+#     route count written in the last HWM_WINDOW seconds (24 h), kept in
+#     $STATE_DIR/high-water, so a slow drip of small drops cannot add up to an
+#     outage either. While a drop is held, ADDITIONS still go live: the file
+#     gets the union of the current and the new routes, and the script exits 3
+#     so the journal shows it. An operator confirms a genuine drop once by
+#     creating $STATE_DIR/force-once, which the next run consumes and deletes.
 #
-# On any refusal the current file stays as it is (the routes that work keep
-# working) and the reason is logged; the exit code is non-zero so the systemd
-# journal and any monitor see it. A hostname that passes cannot carry Traefik
-# rule syntax, so the app can never write arbitrary proxy configuration: at
-# worst it adds Host() routes to its own service, at priority 1 so every
-# router Coolify defines (whose default priority is its rule length) wins.
+# On any refusal of the feed itself the current file stays as it is (the
+# routes that work keep working), the reason is logged and the exit code is 1.
+# A hostname that passes cannot carry Traefik rule syntax, so the app can never
+# write arbitrary proxy configuration: at worst it adds Host() routes to its
+# own service, at priority 1 so every router Coolify defines (whose default
+# priority is its rule length) wins.
 #
 # The file is written to a temporary name in the same directory and renamed,
 # and only when its content changed. The staged name ends in .tmp on purpose:
@@ -46,7 +52,11 @@
 #   MAX_HOSTNAMES    default 1000
 #   BLOCKED_ZONES    optional, comma-separated zones never routed (besides
 #                    lumitra.co), e.g. other products' domains on this server
-#   FORCE            1 accepts a large drop once (an operator decision)
+#   STATE_DIR        default /var/lib/framer-clone-custom-domains (systemd
+#                    StateDirectory): high-water mark and the force-once flag.
+#                    Not under /etc on purpose: the unit keeps /etc read-only.
+#   HWM_WINDOW       seconds a high-water mark counts, default 86400 (24 h)
+#   DROP_FLOOR       drops of this many routes or fewer always apply, default 5
 #   FETCH            tests only: a command that writes the body to $1 and the
 #                    response headers to $2 and prints the HTTP status
 
@@ -62,7 +72,11 @@ OUTPUT_FILE="${OUTPUT_FILE:-/data/coolify/proxy/dynamic/framer-clone-custom-doma
 CERT_RESOLVER="${CERT_RESOLVER:-letsencrypt}"
 MAX_HOSTNAMES="${MAX_HOSTNAMES:-1000}"
 BLOCKED_ZONES="${BLOCKED_ZONES:-}"
-FORCE="${FORCE:-0}"
+STATE_DIR="${STATE_DIR:-/var/lib/framer-clone-custom-domains}"
+HWM_WINDOW="${HWM_WINDOW:-86400}"
+DROP_FLOOR="${DROP_FLOOR:-5}"
+STATE_FILE="$STATE_DIR/high-water"
+FORCE_FILE="$STATE_DIR/force-once"
 TOKEN_OWNER_UID="${TOKEN_OWNER_UID:-0}"
 
 if ! [[ "$TRAEFIK_SERVICE" =~ ^[A-Za-z0-9._-]+@[a-z]+$ ]]; then
@@ -71,9 +85,9 @@ fi
 if ! [[ "$CERT_RESOLVER" =~ ^[A-Za-z0-9_-]+$ ]]; then
   log "CERT_RESOLVER has an unexpected shape, refusing"; exit 2
 fi
-if ! [[ "$MAX_HOSTNAMES" =~ ^[0-9]+$ ]]; then
-  log "MAX_HOSTNAMES must be a number, refusing"; exit 2
-fi
+for n in MAX_HOSTNAMES HWM_WINDOW DROP_FLOOR; do
+  if ! [[ "${!n}" =~ ^[0-9]+$ ]]; then log "$n must be a number, refusing"; exit 2; fi
+done
 
 # The zones never routed: the platform's own, plus the operator's list.
 zones="lumitra.co"
@@ -175,37 +189,66 @@ done < "$body"
 (( ${#hosts[@]} == want_count )) || refuse "x-hostname-count says $want_count, the body has ${#hosts[@]}"
 (( ${#hosts[@]} <= MAX_HOSTNAMES )) || refuse "${#hosts[@]} hostnames exceed MAX_HOSTNAMES ($MAX_HOSTNAMES)"
 
-# The current route count, from the marker lines this script writes.
-current=0
+# The current routes, from the marker lines this script writes.
+current_hosts=()
 if [[ -f "$OUTPUT_FILE" ]]; then
-  current="$(grep -c '^# hostname: ' "$OUTPUT_FILE" || true)"
+  while IFS= read -r m; do current_hosts+=("${m#\# hostname: }"); done \
+    < <(grep '^# hostname: ' "$OUTPUT_FILE" || true)
 fi
+current=${#current_hosts[@]}
 new=${#hosts[@]}
-if [[ "$FORCE" != "1" ]]; then
-  if (( current > 0 && new == 0 )); then
-    refuse "the feed would remove all $current routes (set FORCE=1 to accept)"
-  fi
-  if (( current > 0 && new * 2 < current )); then
-    refuse "the feed would drop from $current to $new routes, more than half (set FORCE=1 to accept)"
+
+# The high-water mark: the largest count written within HWM_WINDOW.
+now_epoch="$(date +%s)"
+hwm=0
+if [[ -f "$STATE_FILE" ]]; then
+  read -r hwm_count hwm_epoch < "$STATE_FILE" || true
+  if [[ "${hwm_count:-}" =~ ^[0-9]+$ && "${hwm_epoch:-}" =~ ^[0-9]+$ ]] \
+     && (( now_epoch - hwm_epoch <= HWM_WINDOW )); then
+    hwm=$hwm_count
   fi
 fi
+baseline=$(( current > hwm ? current : hwm ))
+
+forced=0
+if [[ -e "$FORCE_FILE" ]]; then
+  forced=1
+  rm -f "$FORCE_FILE"
+  log "force-once flag found and consumed: any drop is accepted this run"
+fi
+
+held=0
+final_hosts=(${hosts[@]+"${hosts[@]}"})
+drop=$(( baseline - new ))
+if (( forced == 0 && drop > DROP_FLOOR && new * 2 < baseline )); then
+  held=1
+  # Keep every current route (the removals wait for confirmation), add the new ones.
+  joined=$'\n'
+  for h in ${hosts[@]+"${hosts[@]}"}; do joined+="$h"$'\n'; done
+  for h in ${current_hosts[@]+"${current_hosts[@]}"}; do
+    [[ "$joined" == *$'\n'"$h"$'\n'* ]] && continue
+    joined+="$h"$'\n'
+    final_hosts+=("$h")
+  done
+fi
+final=${#final_hosts[@]}
 
 router_id() { printf 'fc-cd-%s' "$(sha256_text "$1" | cut -c1-16)"; }
 
 tmp="$workdir/out.yml"
 {
   printf '# Generated by framer-clone deploy/custom-domains/sync-traefik.sh. Do not edit.\n'
-  printf '# %d custom hostname(s).\n' "$new"
-  for h in ${hosts[@]+"${hosts[@]}"}; do printf '# hostname: %s\n' "$h"; done
+  printf '# %d custom hostname(s).\n' "$final"
+  for h in ${final_hosts[@]+"${final_hosts[@]}"}; do printf '# hostname: %s\n' "$h"; done
   printf 'http:\n'
   printf '  middlewares:\n'
   printf '    fc-cd-redirect-https:\n'
   printf '      redirectScheme:\n'
   printf '        scheme: https\n'
   printf '        permanent: true\n'
-  if (( new > 0 )); then
+  if (( final > 0 )); then
     printf '  routers:\n'
-    for h in ${hosts[@]+"${hosts[@]}"}; do
+    for h in ${final_hosts[@]+"${final_hosts[@]}"}; do
       id="$(router_id "$h")"
       printf '    %s-http:\n' "$id"
       printf '      rule: "Host(`%s`)"\n' "$h"
@@ -224,10 +267,22 @@ tmp="$workdir/out.yml"
   fi
 } > "$tmp"
 
-if [[ -f "$OUTPUT_FILE" ]] && cmp -s "$tmp" "$OUTPUT_FILE"; then
-  exit 0
+if ! { [[ -f "$OUTPUT_FILE" ]] && cmp -s "$tmp" "$OUTPUT_FILE"; }; then
+  staged="${OUTPUT_FILE}.tmp"
+  install -m 0644 "$tmp" "$staged"
+  mv -f "$staged" "$OUTPUT_FILE"
+  log "wrote $final hostname(s) to $OUTPUT_FILE (was $current)"
 fi
-staged="${OUTPUT_FILE}.tmp"
-install -m 0644 "$tmp" "$staged"
-mv -f "$staged" "$OUTPUT_FILE"
-log "wrote $new hostname(s) to $OUTPUT_FILE (was $current)"
+
+# Record the high-water mark: reset by a confirmed drop or an expired window,
+# raised by a larger count, untouched while a drop is held.
+if (( held == 0 )) && { (( forced == 1 )) || (( hwm == 0 )) || (( final >= hwm )); }; then
+  mkdir -p "$STATE_DIR"
+  printf '%d %d\n' "$final" "$now_epoch" > "$STATE_FILE.tmp"
+  mv -f "$STATE_FILE.tmp" "$STATE_FILE"
+fi
+
+if (( held == 1 )); then
+  log "HELD: the feed would drop from $baseline to $new routes (more than $DROP_FLOOR and more than half of the 24 h high-water mark); kept the $((final - new)) missing route(s), applied additions. If the drop is genuine: touch $FORCE_FILE"
+  exit 3
+fi

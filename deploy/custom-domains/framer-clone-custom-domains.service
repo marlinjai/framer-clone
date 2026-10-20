@@ -1,10 +1,11 @@
 # /etc/systemd/system/framer-clone-custom-domains.service
 #
-# Every minute (see the .timer): first asks framer-clone to re-check the live
-# custom domains that are due (POST .../recheck, at most 20 per call, a failure
-# here never blocks the sync), then renders the verified hostnames into a
-# Traefik file-provider configuration (deploy/custom-domains/sync-traefik.sh in
-# the framer-clone repo, installed as /usr/local/bin/framer-clone-sync-traefik.sh).
+# Every minute (see the .timer): renders framer-clone's verified custom
+# hostnames into a Traefik file-provider configuration
+# (deploy/custom-domains/sync-traefik.sh in the framer-clone repo, installed as
+# /usr/local/bin/framer-clone-sync-traefik.sh). The scheduled re-check of live
+# domains is a separate unit (framer-clone-custom-domains-recheck), so it can
+# never delay or block this sync.
 #
 # Runs as root WITHOUT capabilities, in a read-only system: root only because
 # Coolify owns /data/coolify/proxy/dynamic (root) and the token file must be
@@ -12,10 +13,14 @@
 # Coolify-managed proxy directory, which Coolify may reset on an upgrade, so
 # the unit confines root instead: empty capability set (no DAC override, so it
 # reads and writes only what root owns), the whole file system read-only except
-# the one dynamic directory, private /tmp, no home directories, no privilege
-# escalation.
+# the dynamic directory and its own state directory, private /tmp, no home
+# directories, no privilege escalation.
+#
+# Exit codes: 0 written or unchanged, 1 feed refused (file untouched), 2
+# configuration refused, 3 a large drop held (additions applied; confirm a
+# genuine drop with: touch /var/lib/framer-clone-custom-domains/force-once).
 [Unit]
-Description=framer-clone custom domains: re-check due domains, sync Traefik routes
+Description=framer-clone custom domains: sync Traefik routes
 Wants=network-online.target
 After=network-online.target
 
@@ -28,15 +33,17 @@ Environment=TRAEFIK_SERVICE=REPLACE_WITH_APP_SERVICE@docker
 Environment=OUTPUT_FILE=/data/coolify/proxy/dynamic/framer-clone-custom-domains.yml
 # Other products' zones on this server that must never get a framer-clone route.
 Environment=BLOCKED_ZONES=
-ExecStart=-/usr/bin/curl --silent --show-error --fail --max-time 120 --proto =https -X POST -H @/etc/framer-clone/custom-domains.header -o /dev/null https://app.lumitra.co/api/internal/custom-domains/recheck
+Environment=STATE_DIR=/var/lib/framer-clone-custom-domains
+StateDirectory=framer-clone-custom-domains
+StateDirectoryMode=0700
 ExecStart=/usr/local/bin/framer-clone-sync-traefik.sh
 
+ReadWritePaths=/data/coolify/proxy/dynamic
 User=root
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=
 ProtectSystem=strict
-ReadWritePaths=/data/coolify/proxy/dynamic
 PrivateTmp=yes
 ProtectHome=yes
 PrivateDevices=yes
