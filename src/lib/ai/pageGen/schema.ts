@@ -40,7 +40,18 @@ export const GENERATION_LIMITS = {
   maxStyleValueChars: 400,
   /** Longest layer label, in characters. */
   maxLabelChars: 80,
+  /** Longest stock-photo search query of one image, in characters. */
+  maxImageQueryChars: 80,
+  /** Most images one generation resolves to stock photos (the rest keep the placeholder). */
+  maxStockImages: 12,
 } as const;
+
+/**
+ * The img-only prop that asks for a stock photo: a short English search query.
+ * The validator takes it OUT of the props (it never reaches the editor) and the
+ * route resolves it to a hotlinked Unsplash photo (./stockImages.ts).
+ */
+export const IMAGE_QUERY_PROP = 'imageQuery';
 
 /** One registry entry as the generator sees it: a named starting point for a node. */
 export interface GenerationPreset {
@@ -100,7 +111,7 @@ export function listGenerationStyleKeys(): string[] {
 export function allowedPropKeysFor(tag: string): string[] {
   const keys: string[] = [];
   if (!isVoidTag(tag)) keys.push('children');
-  if (tag === 'img') keys.push('src', 'alt');
+  if (tag === 'img') keys.push('src', 'alt', IMAGE_QUERY_PROP);
   if (tag === 'a') keys.push('href', 'target');
   return keys;
 }

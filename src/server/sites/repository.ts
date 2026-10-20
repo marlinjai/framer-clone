@@ -34,6 +34,7 @@ import {
 import {
   InvalidPageSlugError,
   InvalidTenantScopeError,
+  SiteNameConflictError,
   SiteNotFoundError,
   SubdomainAllocationError,
 } from './errors';
@@ -292,8 +293,12 @@ export class SiteRepository {
           projectUpdatedAt: new Date(persisted.projectUpdatedAt),
           redirects: redirects as unknown as Prisma.InputJsonValue,
         },
+        // `name` is written on create only. After that the rename action
+        // (renameSite, PATCH /api/projects/<id>) is its only writer: an editor
+        // tab opened before a rename still carries the old title in its
+        // snapshot, and a later Save or Publish from it must not silently undo
+        // the rename.
         update: {
-          name: persisted.name,
           description: persisted.description,
           analyticsProjectId: persisted.analyticsProjectId,
           ingestionEndpoint: persisted.ingestionEndpoint,
@@ -341,6 +346,58 @@ export class SiteRepository {
             : { siteId: persisted.siteId },
       });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
+  }
+
+  /**
+   * Rename a site, scoped to the caller's workspace. The ONLY writer of
+   * `Site.name` after creation (saveProject leaves it alone on update).
+   *
+   * Concurrency: there is no version column, so the name itself is the
+   * precondition. With `expectedName` the update matches only while the stored
+   * name still equals it, in the same UPDATE statement (no read-then-write
+   * window); a lost race writes nothing and throws SiteNameConflictError with
+   * the current name. Without it, last write wins.
+   *
+   * The published address never changes here: a site's subdomain is a random
+   * label allocated on first publish (ensureSiteDomain) and custom domains are
+   * separate rows; neither is derived from the name.
+   *
+   * A site in another workspace matches zero rows and is reported exactly like
+   * a missing one (SiteNotFoundError), so existence never leaks.
+   */
+  async renameSite(
+    scope: TenantScope,
+    siteId: string,
+    name: string,
+    expectedName?: string,
+  ): Promise<{ name: string; updatedAt: Date }> {
+    assertScope(scope);
+    const updatedAt = new Date();
+    const result = await this.prisma.site.updateMany({
+      where: {
+        id: siteId,
+        workspaceId: scope.workspaceId,
+        // Defence in depth, as the per-project guards do: the row must also
+        // carry the tenant group the session names for this workspace.
+        tenantGroupId: scope.tenantGroupId,
+        ...(expectedName !== undefined ? { name: expectedName } : {}),
+      },
+      data: { name, projectUpdatedAt: updatedAt },
+    });
+    if (result.count === 1) return { name, updatedAt };
+
+    // Nothing matched: tell a missing (or foreign) site from a lost race.
+    const current = await this.prisma.site.findFirst({
+      where: { id: siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId },
+      select: { name: true, projectUpdatedAt: true },
+    });
+    if (!current) throw new SiteNotFoundError(siteId);
+    if (current.name === name) {
+      // Someone (often this same user in another tab) already set exactly this
+      // name: the outcome the caller asked for, so it is not a conflict.
+      return { name, updatedAt: current.projectUpdatedAt };
+    }
+    throw new SiteNameConflictError(siteId, current.name);
   }
 
   /**

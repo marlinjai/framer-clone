@@ -218,15 +218,111 @@ already talks to Anthropic through `/api/ai/*`:
 
 The AI layer runs on the current models: Claude Sonnet 5.5 (`claude-sonnet-5-5`, $2 input / $10
 output per million tokens) is the page generator's default, Claude Haiku 5.5 (`claude-haiku-5-5`,
-$0.10 / $0.50) is its "Fast" option, and Claude Opus 5.5 (`claude-opus-5-5`, $4 / $20) stays the
+$0.10 / $0.50) is its "Fast" step, and Claude Opus 5.5 (`claude-opus-5-5`, $4 / $20) stays the
 CMS content agent's default. The content agent runs at effort `medium` on Opus and Sonnet
 (multi-step tool work over real data, where a wrong write costs an undo) and `low` on Haiku, with a
 16,000-token cap per turn that thinking shares; its cost per run therefore depends mostly on how
-many tool turns a request takes. Opus is not offered for page generation (whether it should become a
-default anywhere is Marlin's call). Page generation runs at effort `medium` with adaptive thinking,
+many tool turns a request takes. Since 2026-10-20 Opus is offered for page generation too, as the
+"Best" step of the model slider (see the build notes below), but it is not the default. Page generation runs at effort `medium` with adaptive thinking,
 so thinking shares the 32,000-token output cap per attempt. A typical page (about 8,000 output
 tokens plus a cached system prompt) costs roughly $0.08 to $0.10 on Sonnet 5.5 and well under one
 cent on Haiku 5.5; the worst case, two full attempts on Sonnet 5.5, is about $0.64. Sonnet and Opus
 requests carry the server-side fallback opt-in (`fallbacks: "default"`), so a classifier false
 positive is retried on another model instead of failing; Haiku 5.5 has no server-side fallback, so
 a refusal there is shown to the user.
+
+## Build notes (2026-10-20): stock images and model choice
+
+Two owner decisions of 2026-10-20, built on branch `feat/ai-stock-images`.
+
+### Real stock photos from Unsplash
+
+Before this, every generated image was the placeholder `/images/sample-image.jpg`.
+
+- **What the model gives**: for every image it places without a URL from the brief, an
+  `imageQuery` prop (a short English search query, 2 to 6 words) and an `alt` text in the page's
+  language. The schema docs (`schemaDocs.ts`, golden-tested) and the system prompt say so. The
+  validator stays authoritative: it checks the query (plain words, at most 80 characters, no URLs
+  or markup), takes it OUT of the props (it never reaches the editor), and collects it with the
+  image box's shape (`orientation` from px width and height) and width into a server-side list.
+  A src the brief provided wins over a query.
+- **Resolving** (`src/lib/ai/pageGen/stockImages.ts`, server-only): after a valid generation and
+  before the result is sent, the route searches Unsplash (`GET /search/photos` with
+  `Authorization: Client-ID <key>`, `content_filter=high`, the orientation when the box says),
+  once per distinct query and orientation, at most 4 searches in flight. Photos are distinct per
+  page (a photo is never placed twice). At most 12 images are resolved per generation; the rest
+  keep the placeholder. Results are cached in memory per query for 30 minutes (successful
+  searches only), and two generations asking for the same search at once share one request.
+  Every request has a 5 second timeout. Logs carry a query's length, never its text (it comes
+  from the user's brief).
+- **Failure handling**: the first 401/403 (`auth`), 429 (`rate_limited`), 5xx or network error
+  (`unavailable`) or timeout stops further searches for that generation; every unresolved image
+  keeps the placeholder and the result carries a count per reason. The dialog shows one line per
+  reason ("3 images use the placeholder: the hourly stock photo limit is used up") as a note,
+  never an error: the page itself was generated. A 429, or Unsplash reporting zero requests
+  left (`X-Ratelimit-Remaining: 0`), pauses searching for the whole server for 10 minutes, and a
+  refused key (401/403) for 5 minutes, so later generations answer at once instead of waiting on
+  requests that will fail. An image whose query the validator refused is counted too
+  (`invalid_query`). Without `UNSPLASH_ACCESS_KEY` the feature is off
+  and the note says stock photos are not set up on this server.
+- **Unsplash API guidelines**: photos are hotlinked from images.unsplash.com (`raw` sized to twice
+  the box width with `w`, `q`, `fit`, `auto` when the width is known, else `regular`), never
+  re-hosted. Each placed photo's `links.download_location` is called once, server-side,
+  fire-and-forget with error logging, when the result carrying it is sent to the editor (not when
+  the client already went away). It is not taken back if the user then undoes the generation:
+  the photo was used in a page the user saw, which is what the trigger reports. Attribution with `utm_source=<app name>&utm_medium=referral`
+  (app name from `UNSPLASH_APP_NAME`, default `lumitra`).
+- **Where the attribution lives** (decided): the editor's image is a plain `<img>`, and both the
+  canvas and the published-site renderer pass string props through as HTML attributes, so the
+  credit is stored as attributes on the image with no renderer change: `title` ("Photo by
+  <name> on Unsplash", the visible hover credit), `data-credit-name`, `data-credit-url` (the
+  photographer's profile) and `data-credit-source-url` (unsplash.com). The Generate dialog also
+  lists every placed photo's credit with real links. When the user points an image at a different
+  picture (a new URL in the properties panel, or a CMS binding on `src`), the credit is removed
+  with the same edit (`stockCredit.ts`, `ComponentModel.setBinding`), so a user's own photo never
+  ships with a stranger's credit; changing only the same photo's size parameters, or clearing the
+  field mid-edit, keeps it. In replace and insert mode the selected component goes to the model
+  with its photos' credit attributes: the validator keeps an images.unsplash.com src only together
+  with a complete, well-formed credit (host-checked links, plain-text name) and otherwise drops the
+  src, so an Unsplash photo is never shown unattributed. A visible caption on the published page
+  was not built: it would change the layout of every generated design.
+- **Decided (owner, 2026-10-20): no visible credit on published sites by default.** The Unsplash
+  License does not require attribution for using a photo on a website; the API guidelines'
+  attribution duty concerns the app that searches and displays Unsplash photos, which the
+  Generate dialog's linked credit list and the hover title satisfy. The `data-credit-*`
+  attributes stay on the image so a visible credit can later be added as an opt-in site setting
+  if a customer wants one. The referral `utm_source` stays `lumitra`.
+- **Rate limit**: the production key is live with 1,000 requests per hour (`x-ratelimit-limit`,
+  checked 2026-10-20), so the 12-image cap per generation allows roughly 80 photo-rich
+  generations an hour before the 10-minute pause applies.
+- **Image domains and CSP**: nothing to change. `next.config.ts` already allows every https host
+  for `next/image`, generated images render as plain `<img>` (not `next/image`) in the canvas,
+  preview and published site, and the app sets no Content-Security-Policy.
+- **Key handling**: `UNSPLASH_ACCESS_KEY` is read server-side only (framer-clone's Infisical
+  project, dev and prod), never sent to the browser and never logged.
+
+### Model choice as a slider
+
+- A three-step slider, Fast = Claude Haiku 5.5, Balanced = Claude Sonnet 5.5, Best = Claude Opus
+  5.5, with a one-line hint on speed and relative cost (Haiku about 1/20 of Sonnet's price, Opus
+  about 2x), in the Generate dialog (replacing the old "Fast" / "Best quality" toggle) and in the
+  CMS agent's input bar (replacing its dropdown). Defaults unchanged: Balanced for page generation,
+  Best for the content agent. Shared component `src/components/ai/ModelSlider.tsx`: a native range
+  input (keyboard and screen-reader semantics from the platform) whose `aria-valuetext` reads out
+  the step and model name.
+- **Allowlist** (decided): the wire format stays the model KEY (`HAIKU`, `SONNET`, `OPUS`,
+  `src/lib/ai/modelChoice.ts`), validated by a zod enum on both routes; a raw model id or an
+  unknown step answers 400 before any model call, and the generate-page body refuses unknown
+  fields. The server maps the key to the configured id (`AI_MODELS` in `anthropicClient.ts`;
+  `AI_DEFAULT_MODEL` stays the only env override, untouched).
+- **Effort per model** (decided): page generation runs every step at `medium`, as before (one
+  design pass behind a validation gate). The content agent keeps `low` on Haiku and `medium` on
+  Sonnet and Opus. Worst case per page generation request (two full attempts of 32,000 output
+  tokens): about $0.03 on Haiku, $0.64 on Sonnet, $1.28 on Opus.
+- **Remembered per browser** (decided): the editor has no user id on the client, so the last
+  choice per surface is kept in `localStorage` (inside try/catch, a nicety only) and is therefore
+  per browser profile. For page generation the remembered choice wins over a project's saved
+  draft, so it carries across projects. It is read after the first render (the components are server-rendered, and
+  reading storage during that render would make server and client HTML differ), so the agent's
+  slider can show the default for one frame before the remembered step.
+

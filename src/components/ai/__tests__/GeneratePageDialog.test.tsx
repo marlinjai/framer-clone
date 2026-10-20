@@ -13,6 +13,8 @@ import type { PageGenRequest, PageGenResultPayload } from '@/lib/ai/pageGen/prot
 import { validateGeneration } from '@/lib/ai/pageGen/validate';
 import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
 
+const NO_IMAGES = { requested: 0, resolved: 0, fellBack: {}, credits: [] };
+
 let store: RootStoreType;
 let initialPages = 0;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
@@ -32,7 +34,10 @@ function manualTransport() {
 function resultFor(req: PageGenRequest, raw: unknown, generationId = 'gen-1'): PageGenResultPayload {
   const out = validateGeneration(raw, { breakpoints: deriveBreakpointKeys(req.breakpoints) });
   if (!out.ok) throw new Error(out.errors.join('; '));
-  return { generationId, model: 'claude-sonnet-5-5', ...out.result };
+  // The image requests are server-side data the route never sends.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { imageRequests, ...result } = out.result;
+  return { generationId, model: 'claude-sonnet-5-5', ...result, images: NO_IMAGES };
 }
 
 const PAGE = {
@@ -222,11 +227,11 @@ describe('GeneratePageDialog resume and re-entry', () => {
     const { transport } = manualTransport();
     const { unmount } = setup(transport);
     typeBrief('Half-written brief');
-    fireEvent.click(screen.getByRole('button', { name: 'Fast' }));
+    fireEvent.change(screen.getByRole('slider', { name: 'Model' }), { target: { value: '0' } });
     unmount();
     setup(transport);
     expect(screen.getByLabelText('Brief')).toHaveValue('Half-written brief');
-    expect(screen.getByRole('button', { name: 'Fast' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('slider', { name: 'Model' })).toHaveAttribute('aria-valuetext', 'Fast: Claude Haiku 5.5');
   });
 
   it('re-opening after a completed generation starts clean (no stale result, draft cleared)', async () => {
@@ -250,5 +255,74 @@ describe('GeneratePageDialog resume and re-entry', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Generate another' }));
     expect(screen.getByLabelText('Brief')).toHaveValue('');
     expect(screen.queryByText(/Added/)).not.toBeInTheDocument();
+  });
+});
+
+describe('GeneratePageDialog model slider and stock photos', () => {
+  it('sends the slider choice and remembers it for the next project', () => {
+    const { transport, calls } = manualTransport();
+    const first = setup(transport);
+    fireEvent.change(screen.getByRole('slider', { name: 'Model' }), { target: { value: '2' } });
+    typeBrief('A bakery');
+    fireEvent.click(screen.getByRole('button', { name: /^Generate$/ }));
+    expect(calls[0].req.model).toBe('OPUS');
+    first.unmount();
+
+    store.projectStore.createProject('Other');
+    const other = store.projectStore.findProjectByTitle('Other')!;
+    store.editorUI.setCurrentProject(other);
+    store.editorUI.setCurrentPage(other.createPage('Home'));
+    setup(transport);
+    expect(screen.getByRole('slider', { name: 'Model' })).toHaveAttribute('aria-valuetext', 'Best: Claude Opus 5.5');
+  });
+
+  it('shows the Unsplash credits and a note for images that kept the placeholder', async () => {
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    typeBrief('A bakery');
+    fireEvent.click(screen.getByRole('button', { name: /^Generate$/ }));
+    act(() => calls[0].handlers.onProgress?.({ phase: 'images', receivedChars: 10, attempt: 1 }));
+    expect(screen.getByText('Finding photos...')).toBeInTheDocument();
+    await act(async () => {
+      calls[0].handlers.onResult?.({
+        ...resultFor(calls[0].req, PAGE),
+        images: {
+          requested: 3,
+          resolved: 1,
+          fellBack: { rate_limited: 2 },
+          credits: [
+            {
+              photoId: 'a',
+              photographerName: 'Ana Example',
+              photographerUrl: 'https://unsplash.com/@ana?utm_source=lumitra&utm_medium=referral',
+              unsplashUrl: 'https://unsplash.com/?utm_source=lumitra&utm_medium=referral',
+            },
+          ],
+        },
+      });
+      calls[0].finish();
+    });
+    expect(screen.getByText(/2 images use the placeholder: the hourly stock photo limit is used up/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Ana Example' })).toHaveAttribute(
+      'href',
+      'https://unsplash.com/@ana?utm_source=lumitra&utm_medium=referral',
+    );
+    expect(screen.getByRole('link', { name: 'Unsplash' })).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  it('says so when stock photos are off on the server', async () => {
+    const { transport, calls } = manualTransport();
+    setup(transport);
+    typeBrief('A bakery');
+    fireEvent.click(screen.getByRole('button', { name: /^Generate$/ }));
+    await act(async () => {
+      calls[0].handlers.onResult?.({
+        ...resultFor(calls[0].req, PAGE),
+        images: { requested: 2, resolved: 0, fellBack: { disabled: 2 }, credits: [] },
+      });
+      calls[0].finish();
+    });
+    expect(screen.getByText(/stock photos are not set up on this server/)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });

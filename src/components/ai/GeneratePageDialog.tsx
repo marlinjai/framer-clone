@@ -38,9 +38,12 @@ import {
   undoGeneration,
   type TargetKind,
 } from '@/lib/ai/pageGen/editorBridge';
+import { ModelSlider } from '@/components/ai/ModelSlider';
+import { saveModelChoice } from '@/lib/ai/modelChoice';
 import {
   clearDraft,
   describeError,
+  describeImageFallbacks,
   flowReducer,
   initialFlow,
   loadDraft,
@@ -49,7 +52,7 @@ import {
   type FlowInputs,
 } from '@/lib/ai/pageGen/flow';
 import { GENERATION_LIMITS } from '@/lib/ai/pageGen/schema';
-import type { PageGenModel, PageGenProgress } from '@/lib/ai/pageGen/protocol';
+import type { PageGenProgress, StockImageSummary } from '@/lib/ai/pageGen/protocol';
 
 const TARGETS: Array<{ kind: TargetKind; label: string }> = [
   { kind: 'newPage', label: 'New page' },
@@ -57,14 +60,10 @@ const TARGETS: Array<{ kind: TargetKind; label: string }> = [
   { kind: 'insert', label: 'Add to selection' },
 ];
 
-const MODELS: Array<{ model: PageGenModel; label: string; hint: string }> = [
-  { model: 'SONNET', label: 'Best quality', hint: 'Slower, better layouts and copy' },
-  { model: 'HAIKU', label: 'Fast', hint: 'Quicker and cheaper drafts' },
-];
-
 function progressText(p: PageGenProgress): string {
   const kb = (p.receivedChars / 1024).toFixed(1);
   if (p.phase === 'validating') return 'Checking the result against the editor...';
+  if (p.phase === 'images') return 'Finding photos...';
   if (p.phase === 'repairing') {
     return p.receivedChars > 0 ? `Fixing problems in the first draft (${kb} KB)...` : 'Fixing problems in the first draft...';
   }
@@ -121,6 +120,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
   const edit = (patch: Partial<FlowInputs>) => {
     dispatch({ type: 'edit', inputs: patch, targetKey });
     if (projectId) saveDraft(projectId, { ...inputs, ...patch });
+    if (patch.model) saveModelChoice('page-gen', patch.model);
   };
 
   const cancel = () => {
@@ -173,6 +173,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
             record: outcome.value.record,
             nodeCount: result.stats.nodeCount,
             warnings: result.warnings,
+            images: result.images,
           });
         },
         onError: (error) => {
@@ -219,6 +220,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                     state.record.kind === 'newPage' ? ' on a new page' : ''
                   }. Save the project to keep it.`}
             </p>
+            {!state.undone && <StockImageNote images={state.images} />}
             {state.warnings.length > 0 && !state.undone && (
               <details className="text-xs text-muted-foreground">
                 <summary>{state.warnings.length} automatic fixes were made to the AI output</summary>
@@ -290,24 +292,12 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
               </p>
             </div>
 
-            <fieldset className="grid gap-2" disabled={running}>
-              <legend className="mb-1 text-xs font-medium text-muted-foreground">Model</legend>
-              <div className="flex gap-2">
-                {MODELS.map((m) => (
-                  <Button
-                    key={m.model}
-                    type="button"
-                    size="sm"
-                    variant={inputs.model === m.model ? 'default' : 'outline'}
-                    aria-pressed={inputs.model === m.model}
-                    title={m.hint}
-                    onClick={() => edit({ model: m.model })}
-                  >
-                    {m.label}
-                  </Button>
-                ))}
-              </div>
-            </fieldset>
+            <ModelSlider
+              id="pagegen-model"
+              value={inputs.model}
+              disabled={running}
+              onChange={(model) => edit({ model })}
+            />
 
             {running && (
               <p role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -359,6 +349,49 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
     </Dialog>
   );
 });
+
+/**
+ * After a generation: which photos came from Unsplash (credit with links, as
+ * the Unsplash guidelines ask) and, when some images kept the placeholder, how
+ * many and why. A note, never an error: the page itself was generated.
+ */
+function StockImageNote({ images }: { images?: StockImageSummary }) {
+  if (!images || images.requested === 0) return null;
+  const fallbacks = describeImageFallbacks(images);
+  return (
+    <div className="grid gap-1 text-xs" data-testid="pagegen-image-note">
+      {fallbacks && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2 text-foreground">
+          {fallbacks.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+          <p className="text-muted-foreground">Select an image to set your own picture.</p>
+        </div>
+      )}
+      {images.credits.length > 0 && (
+        <details className="text-muted-foreground">
+          <summary>
+            {images.credits.length} {images.credits.length === 1 ? 'photo' : 'photos'} from Unsplash
+          </summary>
+          <ul className="mt-1 max-h-32 list-disc overflow-y-auto pl-4">
+            {images.credits.map((c) => (
+              <li key={c.photoId}>
+                Photo by{' '}
+                <a href={c.photographerUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                  {c.photographerName}
+                </a>{' '}
+                on{' '}
+                <a href={c.unsplashUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                  Unsplash
+                </a>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
 
 /** The top-bar entry point. */
 export const GeneratePageButton = observer(function GeneratePageButton({

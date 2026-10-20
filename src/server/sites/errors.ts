@@ -88,9 +88,31 @@ export class InvalidPageSlugError extends SiteRepositoryError {
 }
 
 /**
+ * A rename lost a race: the caller named the project it expected to rename
+ * (`expectedName`), and the stored name is different, because someone renamed
+ * it in the meantime. Nothing was written. Carries the current name so the
+ * caller can show it. 409.
+ */
+export class SiteNameConflictError extends SiteRepositoryError {
+  readonly currentName: string;
+
+  constructor(siteId: string, currentName: string) {
+    super(
+      'name_conflict',
+      `site "${siteId}" was renamed in the meantime; reload to see the current name`,
+      409,
+    );
+    this.currentName = currentName;
+  }
+}
+
+/**
  * Map any {@link SiteRepositoryError} to its Track-0 error envelope. A route
  * matches `instanceof SiteRepositoryError` once and returns this.
  */
 export function siteRepositoryErrorResponse(err: SiteRepositoryError): Response {
+  if (err instanceof SiteNameConflictError) {
+    return jsonError(err.code, err.message, err.status, { currentName: err.currentName });
+  }
   return jsonError(err.code, err.message, err.status);
 }

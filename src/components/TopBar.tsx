@@ -26,6 +26,7 @@ import PublishButton from '@/components/PublishButton';
 import DomainsButton from '@/components/domains/DomainsButton';
 import SaveButton from '@/components/SaveButton';
 import GeneratePageButton from '@/components/ai/GeneratePageDialog';
+import EditableProjectTitle from './EditableProjectTitle';
 
 function relativeTime(ts: number, now: number): string {
   const s = Math.max(0, Math.round((now - ts) / 1000));
@@ -178,9 +179,7 @@ const TopBar = observer(() => {
         >
           <ChevronLeft size={18} />
         </Link>
-        <div className="text-sm font-semibold text-foreground truncate max-w-[180px]">
-          {project?.metadata.title ?? 'Untitled Project'}
-        </div>
+        <EditableProjectTitle project={project} />
         {currentPage && (
           <>
             <span className="text-muted-foreground">/</span>

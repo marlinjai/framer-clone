@@ -17,6 +17,7 @@ export {
 export {
   SiteRepositoryError,
   SiteNotFoundError,
+  SiteNameConflictError,
   InvalidTenantScopeError,
   InvalidPageSlugError,
   siteRepositoryErrorResponse,

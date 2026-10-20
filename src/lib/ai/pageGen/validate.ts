@@ -29,12 +29,14 @@
 // in the browser.
 
 import { v4 as uuidv4 } from 'uuid';
+import { STOCK_CREDIT_ATTRS, stockCreditProps } from './stockCredit';
 import ComponentModel, { ComponentTypeEnum, CSS_PROP_SET } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import {
   BASE_KEY,
   FORBIDDEN_TAGS,
   GENERATION_LIMITS,
+  IMAGE_QUERY_PROP,
   PLACEHOLDER_IMAGE_SRC,
   allowedPropKeysFor,
   getGenerationPreset,
@@ -56,12 +58,35 @@ export interface GeneratedNodeSnapshot {
   parentId?: string;
 }
 
+/** Unsplash's orientation filter values. */
+export type ImageOrientation = 'landscape' | 'portrait' | 'squarish';
+
+/**
+ * One image the model described for a stock photo. Server-side data only: the
+ * route resolves it and writes the photo into the node's props; it is never
+ * sent to the editor.
+ */
+export interface ImageRequest {
+  /** The img node's (fresh) id. */
+  nodeId: string;
+  /** The search query, trimmed, whitespace collapsed. */
+  query: string;
+  /** From the box's width and height, when both are px. */
+  orientation?: ImageOrientation;
+  /** The box's width in px on the largest breakpoint, when known (sizes the hotlinked photo). */
+  widthPx?: number;
+}
+
 export interface GenerationResult {
   title?: string;
   description?: string;
   nodes: GeneratedNodeSnapshot[];
   warnings: string[];
   stats: { nodeCount: number; maxDepth: number };
+  /** Images to resolve to stock photos, in page order. */
+  imageRequests: ImageRequest[];
+  /** Images whose imageQuery was unusable (they keep the placeholder). */
+  invalidImageQueries: number;
 }
 
 export type ValidationOutcome =
@@ -98,6 +123,68 @@ function kebabToCamel(key: string): string {
   return key.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
+/**
+ * A usable stock-photo query: printable text, at least two letters, at most
+ * GENERATION_LIMITS.maxImageQueryChars after collapsing whitespace. Anything
+ * else (markup, a URL, control characters) is not a description of a photo.
+ */
+export function cleanImageQuery(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const q = value.replace(/\s+/g, ' ').trim();
+  if (q.length < 2 || q.length > GENERATION_LIMITS.maxImageQueryChars) return undefined;
+  if (/[<>{}\\\u0000-\u001f\u007f]|:\/\//.test(q)) return undefined;
+  if ((q.match(/\p{L}/gu) ?? []).length < 2) return undefined;
+  return q;
+}
+
+function isUnsplashPhotoUrl(value: string): boolean {
+  try {
+    return new URL(value).hostname === 'images.unsplash.com';
+  } catch {
+    return false;
+  }
+}
+
+function isUnsplashPage(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    const u = new URL(value);
+    return u.protocol === 'https:' && u.hostname === 'unsplash.com';
+  } catch {
+    return false;
+  }
+}
+
+/** The credit attributes of an existing stock photo, when complete and well-formed. */
+function unsplashCredit(props: Record<string, unknown>) {
+  const name = props['data-credit-name'];
+  const photographerUrl = props['data-credit-url'];
+  const unsplashUrl = props['data-credit-source-url'];
+  if (typeof name !== 'string' || !name.trim() || name.length > 120 || /[\u0000-\u001f\u007f<>]/.test(name)) {
+    return undefined;
+  }
+  if (!isUnsplashPage(photographerUrl) || !isUnsplashPage(unsplashUrl)) return undefined;
+  return { photoId: '', photographerName: name.trim(), photographerUrl, unsplashUrl };
+}
+
+/** A px length ("640px", "640", 640) as a number, else undefined. */
+function pxLength(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? value : undefined;
+  if (typeof value !== 'string') return undefined;
+  const m = /^(\d+(?:\.\d+)?)(px)?$/.exec(value.trim());
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return n > 0 ? n : undefined;
+}
+
+/** Orientation from a width / height ratio (10% either side of square counts as square). */
+export function orientationFor(ratio: number | undefined): ImageOrientation | undefined {
+  if (ratio === undefined) return undefined;
+  if (ratio > 1.1) return 'landscape';
+  if (ratio < 0.9) return 'portrait';
+  return 'squarish';
+}
+
 function cleanText(value: unknown, max: number): string | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   if (typeof value !== 'string') return undefined;
@@ -107,6 +194,8 @@ function cleanText(value: unknown, max: number): string | undefined {
 class Validator {
   readonly warnings: string[] = [];
   readonly errors: string[] = [];
+  readonly imageRequests: ImageRequest[] = [];
+  invalidImageQueries = 0;
   nodeCount = 0;
   maxDepth = 0;
   private readonly tags = new Set(listGenerationTags());
@@ -125,6 +214,27 @@ class Validator {
       this.bpKeys.set(bp.key.toLowerCase(), bp.key);
       this.bpKeys.set(bp.label.trim().toLowerCase(), bp.key);
     }
+  }
+
+  /** A style value on the largest breakpoint: the scalar, or the map's primary / base entry. */
+  private primaryStyleValue(value: unknown): unknown {
+    if (!isPlainObject(value)) return value;
+    const primary = this.orderedKeys[0];
+    if (primary && value[primary] !== undefined) return value[primary];
+    return value[BASE_KEY];
+  }
+
+  /** The box geometry of an img, for the photo's orientation and size. */
+  private imageGeometry(style: Record<string, unknown>): { orientation?: ImageOrientation; widthPx?: number } {
+    const width = pxLength(this.primaryStyleValue(style.width));
+    const height = pxLength(this.primaryStyleValue(style.height));
+    // Only px boxes say their shape (aspectRatio is not an editor style key).
+    const ratio = width !== undefined && height !== undefined ? width / height : undefined;
+    const orientation = orientationFor(ratio);
+    return {
+      ...(orientation ? { orientation } : {}),
+      ...(width !== undefined ? { widthPx: Math.round(width) } : {}),
+    };
   }
 
   private warn(path: string, message: string): void {
@@ -286,9 +396,14 @@ class Validator {
     const allowed = new Set(allowedPropKeysFor(type));
     const props: Record<string, unknown> = {};
     let text: string | undefined;
+    let imageQuery: string | undefined;
+    let invalidQuery = false;
 
+    // An Unsplash photo's credit (an earlier generation's image, sent back in
+    // replace / insert context) is read separately below, never warned about.
+    const creditKeys = new Set<string>(type === 'img' ? ['title', ...STOCK_CREDIT_ATTRS] : []);
     for (const [key, value] of Object.entries(modelProps)) {
-      if (key === 'style') continue;
+      if (key === 'style' || creditKeys.has(key)) continue;
       if (!allowed.has(key)) {
         this.warn(path, `prop "${key}" is not allowed on <${type}>, dropped`);
         continue;
@@ -315,6 +430,13 @@ class Validator {
       } else if (key === 'alt') {
         const alt = cleanText(value, 300);
         if (alt !== undefined) props.alt = alt;
+      } else if (key === IMAGE_QUERY_PROP) {
+        // Kept out of the props: the route resolves it to a stock photo.
+        imageQuery = cleanImageQuery(value);
+        if (imageQuery === undefined) {
+          invalidQuery = true;
+          this.warn(path, `${IMAGE_QUERY_PROP} must be a short plain-text photo description, dropped`);
+        }
       }
     }
 
@@ -325,7 +447,25 @@ class Validator {
     const merged: Record<string, unknown> = { ...presetDefaults, ...props };
     delete merged.style;
     if (Object.keys(style).length > 0) merged.style = style;
+    if (type === 'img' && typeof props.src === 'string' && isUnsplashPhotoUrl(props.src)) {
+      // An Unsplash photo is only ever shown with its credit: keep the credit
+      // the context carried, or drop the photo (the query or placeholder
+      // path below takes over).
+      const credit = unsplashCredit(modelProps);
+      if (credit) Object.assign(merged, stockCreditProps(credit));
+      else {
+        this.warn(path, 'an Unsplash photo without its credit cannot be kept, src dropped');
+        delete props.src;
+        delete merged.src;
+      }
+    }
     if (type === 'img') {
+      // A src the model was given in the brief wins over a stock-photo query.
+      if (imageQuery !== undefined && typeof props.src !== 'string') {
+        this.imageRequests.push({ nodeId: id, query: imageQuery, ...this.imageGeometry(style) });
+      } else if (invalidQuery && typeof props.src !== 'string') {
+        this.invalidImageQueries += 1;
+      }
       if (!(typeof merged.src === 'string' && isSafeSrc(merged.src))) {
         // No src is the documented way to ask for a placeholder (the user
         // swaps in a real image); only a broken src was already warned about.
@@ -447,6 +587,8 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
       nodes,
       warnings: v.warnings,
       stats: { nodeCount: v.nodeCount, maxDepth: v.maxDepth },
+      imageRequests: v.imageRequests,
+      invalidImageQueries: v.invalidImageQueries,
     },
   };
 }

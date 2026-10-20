@@ -14,9 +14,11 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
 - [ ] AI-driven page generation: let AI agents write pages directly as MST (MobX-State-Tree, the
   in-memory tree that backs the editor) snapshot JSON, so the data format is the API. Decided and
   in progress since 2026-10-19: phases 1 to 3 (registry-generated schema docs with validation, the
-  guarded `/api/ai/generate-page` route, the editor's "Generate page" dialog with undo) are being
-  built on `feat/ai-page-generation`; phase 4's style references and screenshot loop stay open.
-  See [plan](docs/plans/ai-driven-page-generation.md). (2026-10-19)
+  guarded `/api/ai/generate-page` route, the editor's "Generate page" dialog with undo) shipped;
+  real Unsplash stock photos instead of the placeholder and a Fast / Balanced / Best model slider
+  (dialog and CMS agent) built on `feat/ai-stock-images` (2026-10-20, live once
+  `UNSPLASH_ACCESS_KEY` reaches the deployed app); phase 4's style references and screenshot loop
+  stay open. See [plan](docs/plans/ai-driven-page-generation.md). (2026-10-20)
 - [ ] Custom domains (Option B): let a site owner connect their own domain to a published site
   (TXT ownership check, per-domain Let's Encrypt certificates through Traefik's file provider,
   a Domains panel in the editor). Decided 2026-10-19 and built on branch `feat/custom-domains`;

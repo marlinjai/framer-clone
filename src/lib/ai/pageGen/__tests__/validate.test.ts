@@ -234,3 +234,110 @@ describe('validateGeneration output shape', () => {
     );
   });
 });
+
+describe('validateGeneration: stock-photo queries', () => {
+  it('collects an img query with the box shape and keeps it out of the props', () => {
+    const result = ok({
+      nodes: [
+        {
+          type: 'section',
+          children: [
+            { type: 'img', props: { imageQuery: '  fresh   sourdough loaves ', alt: 'Brote', style: { width: '600px', height: '400px' } } },
+            { type: 'img', props: { imageQuery: 'baker portrait', style: { width: { desktop: '300px', mobile: '200px' }, height: '450px' } } },
+            { type: 'img', preset: 'image', props: { imageQuery: 'flour on a table' } },
+            { type: 'img', props: { imageQuery: 'wide shot', style: { width: '100%', height: '400px' } } },
+          ],
+        },
+      ],
+    });
+    const imgs = result.nodes[0].children;
+    expect(result.imageRequests).toEqual([
+      { nodeId: imgs[0].id, query: 'fresh sourdough loaves', orientation: 'landscape', widthPx: 600 },
+      { nodeId: imgs[1].id, query: 'baker portrait', orientation: 'portrait', widthPx: 300 },
+      // The Image preset's 240 x 160 box.
+      { nodeId: imgs[2].id, query: 'flour on a table', orientation: 'landscape', widthPx: 240 },
+      // A fluid width says nothing about the shape.
+      { nodeId: imgs[3].id, query: 'wide shot' },
+    ]);
+    for (const img of imgs) {
+      expect(img.props).not.toHaveProperty('imageQuery');
+      expect(img.props.src).toBe(PLACEHOLDER_IMAGE_SRC); // until the route resolves it
+    }
+    expect(imgs[0].props.alt).toBe('Brote');
+  });
+
+  it('a src from the brief wins over a query', () => {
+    const result = ok({ nodes: [{ type: 'img', props: { src: 'https://example.com/a.jpg', imageQuery: 'bread', alt: 'A' } }] });
+    expect(result.imageRequests).toEqual([]);
+    expect(result.nodes[0].props.src).toBe('https://example.com/a.jpg');
+  });
+
+  it('a broken src still lets the query resolve', () => {
+    const result = ok({ nodes: [{ type: 'img', props: { src: 'javascript:alert(1)', imageQuery: 'bread', alt: 'A' } }] });
+    expect(result.imageRequests.map((r) => r.query)).toEqual(['bread']);
+  });
+
+  it.each([
+    ['a URL', 'https://example.com/photo'],
+    ['markup', '<b>bread</b>'],
+    ['too long', 'bread '.repeat(GENERATION_LIMITS.maxImageQueryChars)],
+    ['no letters', '1234'],
+    ['not a string', 42],
+  ])('drops an unusable query (%s) with a warning', (_label, imageQuery) => {
+    const result = ok({ nodes: [{ type: 'img', props: { imageQuery, alt: 'A' } }] });
+    expect(result.imageRequests).toEqual([]);
+    expect(result.warnings.some((w) => w.includes('imageQuery'))).toBe(true);
+  });
+
+  it('never accepts a query on anything but an img', () => {
+    const result = ok({ nodes: [{ type: 'div', props: { imageQuery: 'bread' } }] });
+    expect(result.imageRequests).toEqual([]);
+    expect(result.warnings.some((w) => w.includes('"imageQuery" is not allowed'))).toBe(true);
+  });
+});
+
+describe('validateGeneration: existing stock photos (replace / insert context)', () => {
+  const credit = {
+    title: 'anything the model wrote',
+    'data-credit-name': 'Ana',
+    'data-credit-url': 'https://unsplash.com/@ana?utm_source=lumitra&utm_medium=referral',
+    'data-credit-source-url': 'https://unsplash.com/?utm_source=lumitra&utm_medium=referral',
+  };
+  const src = 'https://images.unsplash.com/photo-1?w=480';
+
+  it('keeps an Unsplash photo that comes back with its credit (title rebuilt from the name)', () => {
+    const result = ok({ nodes: [{ type: 'img', props: { src, alt: 'A', ...credit } }] });
+    expect(result.nodes[0].props).toMatchObject({ src, title: 'Photo by Ana on Unsplash', 'data-credit-name': 'Ana' });
+    expect(result.warnings).toEqual([]);
+    expect(result.imageRequests).toEqual([]);
+  });
+
+  it('drops an Unsplash photo without a valid credit, so it is never shown unattributed', () => {
+    for (const props of [
+      { src, alt: 'A' },
+      { src, alt: 'A', ...credit, 'data-credit-url': 'https://evil.example/@ana' },
+      { src, alt: 'A', ...credit, 'data-credit-name': '<img onerror=x>' },
+    ]) {
+      const result = ok({ nodes: [{ type: 'img', props: { ...props, imageQuery: 'bread' } }] });
+      expect(result.nodes[0].props.src).toBe(PLACEHOLDER_IMAGE_SRC);
+      expect(result.nodes[0].props).not.toHaveProperty('data-credit-name');
+      expect(result.imageRequests.map((r) => r.query)).toEqual(['bread']); // resolved afresh
+    }
+  });
+
+  it('never keeps credit attributes on an image that is not an Unsplash photo', () => {
+    const result = ok({ nodes: [{ type: 'img', props: { src: 'https://example.com/a.jpg', alt: 'A', ...credit } }] });
+    expect(result.nodes[0].props).not.toHaveProperty('data-credit-name');
+    expect(result.nodes[0].props).not.toHaveProperty('title');
+  });
+
+  it('counts images whose query was unusable', () => {
+    const result = ok({
+      nodes: [
+        { type: 'img', props: { imageQuery: '<b>', alt: 'A' } },
+        { type: 'img', props: { imageQuery: '<b>', src: 'https://example.com/a.jpg', alt: 'B' } },
+      ],
+    });
+    expect(result.invalidImageQueries).toBe(1);
+  });
+});

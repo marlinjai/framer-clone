@@ -1,10 +1,12 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import '@testing-library/jest-dom/vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 
 import AgentInput from '../AgentInput';
 
 afterEach(() => cleanup());
+beforeEach(() => window.localStorage.clear());
 
 describe('AgentInput', () => {
   it('limits the file picker to .csv', () => {
@@ -50,5 +52,31 @@ describe('AgentInput', () => {
     render(<AgentInput isRunning onSend={vi.fn()} />);
     fireEvent.change(screen.getByTestId('agent-textarea'), { target: { value: 'hi' } });
     expect((screen.getByTestId('agent-send') as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('AgentInput model slider', () => {
+  it('defaults to Best (Opus 5.5) and sends the chosen step', () => {
+    const onSend = vi.fn();
+    render(<AgentInput isRunning={false} onSend={onSend} />);
+    const slider = screen.getByRole('slider', { name: 'Agent model' });
+    expect(slider).toHaveAttribute('aria-valuetext', 'Best: Claude Opus 5.5');
+    fireEvent.change(slider, { target: { value: '0' } });
+    fireEvent.change(screen.getByTestId('agent-textarea'), { target: { value: 'Tidy up' } });
+    fireEvent.click(screen.getByTestId('agent-send'));
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ model: 'HAIKU' }));
+  });
+
+  it('remembers the choice across mounts', () => {
+    const first = render(<AgentInput isRunning={false} onSend={vi.fn()} />);
+    fireEvent.change(screen.getByRole('slider', { name: 'Agent model' }), { target: { value: '1' } });
+    first.unmount();
+    render(<AgentInput isRunning={false} onSend={vi.fn()} />);
+    expect(screen.getByRole('slider', { name: 'Agent model' })).toHaveAttribute('aria-valuetext', 'Balanced: Claude Sonnet 5.5');
+  });
+
+  it('locks the slider while a run is in flight', () => {
+    render(<AgentInput isRunning onSend={vi.fn()} />);
+    expect(screen.getByRole('slider', { name: 'Agent model' })).toBeDisabled();
   });
 });
