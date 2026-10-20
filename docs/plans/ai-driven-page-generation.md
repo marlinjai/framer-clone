@@ -286,11 +286,15 @@ Before this, every generated image was the placeholder `/images/sample-image.jpg
   with a complete, well-formed credit (host-checked links, plain-text name) and otherwise drops the
   src, so an Unsplash photo is never shown unattributed. A visible caption on the published page
   was not built: it would change the layout of every generated design.
-- **Open, for Marlin**: whether published sites should also show a visible, linked credit (a
-  small caption or a "Photos from Unsplash" footer line listing the photographers). Today the
-  published page carries the hover title and the credit attributes, and the editor dialog shows
-  the linked credit. This is an outward-facing compliance and design call, so it is not decided
-  here.
+- **Decided (owner, 2026-10-20): no visible credit on published sites by default.** The Unsplash
+  License does not require attribution for using a photo on a website; the API guidelines'
+  attribution duty concerns the app that searches and displays Unsplash photos, which the
+  Generate dialog's linked credit list and the hover title satisfy. The `data-credit-*`
+  attributes stay on the image so a visible credit can later be added as an opt-in site setting
+  if a customer wants one. The referral `utm_source` stays `lumitra`.
+- **Rate limit**: the production key is live with 1,000 requests per hour (`x-ratelimit-limit`,
+  checked 2026-10-20), so the 12-image cap per generation allows roughly 80 photo-rich
+  generations an hour before the 10-minute pause applies.
 - **Image domains and CSP**: nothing to change. `next.config.ts` already allows every https host
   for `next/image`, generated images render as plain `<img>` (not `next/image`) in the canvas,
   preview and published site, and the app sets no Content-Security-Policy.
