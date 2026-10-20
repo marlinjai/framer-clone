@@ -18,9 +18,14 @@ import {
   ExtractModelConfigError,
   extractModelKey,
   extractPrintedInvoice,
+  printedFromToolInput,
   recordInvoiceTool,
   RECORD_TOOL_NAME,
+  STRICT_UNION_LIMIT,
+  strictSchemaProblems,
+  type ToolInput,
 } from '../extract';
+import { classifyFailure, describeApiError } from '../service';
 import { fakeAnthropic, pdfBytes, toolInput, toolTurn } from './fakeAnthropic';
 
 const read = (fake: ReturnType<typeof fakeAnthropic>, signal = new AbortController().signal) =>
@@ -138,6 +143,77 @@ describe('extractPrintedInvoice', () => {
     await expect(extractPrintedInvoice(fake.client, pdfBytes('x'), { modelKey: 'SONNET', signal: new AbortController().signal, usage })).rejects.toThrow('overloaded');
     expect(usage).toEqual({ inputTokens: 1200, outputTokens: 300 });
     expect(fake.calls[0].options).toMatchObject({ timeout: EXTRACT_REQUEST_TIMEOUT_MS, maxRetries: 1 });
+  });
+
+  it('the request the extractor really sends meets the API constraints that once refused it with a 400', async () => {
+    const fake = fakeAnthropic([toolTurn(toolInput())]);
+    await read(fake);
+    const { params } = fake.calls[0];
+    const tools = params.tools as Array<{ strict?: boolean; input_schema: unknown }>;
+    expect(tools).toHaveLength(1);
+    // The API compiles a strict schema and refuses more than 16 union-typed parameters (it refused 24).
+    expect(strictSchemaProblems(tools[0].input_schema)).toEqual([]);
+    expect(tools[0].strict).toBe(true);
+    // Forced tool use is a 400 on this model; thinking cannot be disabled or budgeted.
+    expect((params.tool_choice as { type: string }).type).toBe('auto');
+    expect(params).not.toHaveProperty('thinking');
+    // The default fallback needs its own beta.
+    expect(params).toMatchObject({ fallbacks: 'default', betas: ['server-side-fallback-2026-07-01'] });
+  });
+
+  it('the strict-schema check counts unions as the API does and names what it would refuse', () => {
+    const nullable = Object.fromEntries(Array.from({ length: STRICT_UNION_LIMIT + 1 }, (_, i) => [`f${i}`, { type: ['string', 'null'] }]));
+    const tooMany = { type: 'object', additionalProperties: false, required: Object.keys(nullable), properties: nullable };
+    expect(strictSchemaProblems(tooMany)).toEqual([`${STRICT_UNION_LIMIT + 1} parameters with union types (limit ${STRICT_UNION_LIMIT})`]);
+    expect(strictSchemaProblems({ type: 'object', properties: { a: { anyOf: [{ type: 'string' }, { type: 'null' }] } } })).toEqual([
+      '(root): additionalProperties must be false',
+      'a: not required',
+    ]);
+  });
+
+  it('turns the wire format back into the shared shape: empty text is null, an empty party is no party', () => {
+    const wire = toolInput({
+      recipient: { name: '', addressLines: [], country: '', countryInferred: '', customerNumber: '' },
+      sender: { name: '', addressLines: [], country: '', taxNumber: '', vatId: '' },
+      currency: '',
+    }) as unknown as ToolInput;
+    const { printed } = printedFromToolInput(wire);
+    expect(printed).toMatchObject({ recipient: null, sender: null, currency: null, serviceDate: null, recipientVatId: null });
+    expect((printed.lines as Array<{ unit: unknown; discount: unknown }>)[1]).toMatchObject({ unit: null, discount: '10 %' });
+    const full = printedFromToolInput(toolInput() as unknown as ToolInput).printed;
+    expect(full).toMatchObject({ recipient: { country: null, countryInferred: 'DE' }, sender: { vatId: null, taxNumberPresent: true, vatIdPresent: false } });
+  });
+
+  it('names whose side a provider error is on, and logs the API type and message', () => {
+    const api = (status: number, type: string, message: string) => Object.assign(new Error(message), { status, error: { type: 'error', error: { type, message } } });
+    expect(classifyFailure(api(400, 'invalid_request_error', 'Schemas contains too many parameters with union types'))).toEqual({ outcome: 'error', reason: 'request' });
+    expect(classifyFailure(api(400, 'invalid_request_error', 'The PDF specified was not valid.'))).toEqual({ outcome: 'unreadable', reason: 'unreadable' });
+    expect(classifyFailure(api(413, 'request_too_large', 'Request exceeds the maximum size'))).toEqual({ outcome: 'unreadable', reason: 'unreadable' });
+    expect(classifyFailure(api(401, 'authentication_error', 'invalid x-api-key'))).toEqual({ outcome: 'error', reason: 'config' });
+    expect(classifyFailure(api(403, 'permission_error', 'not allowed'))).toEqual({ outcome: 'error', reason: 'config' });
+    expect(classifyFailure(api(429, 'rate_limit_error', 'slow down'))).toEqual({ outcome: 'error', reason: 'busy' });
+    expect(classifyFailure(api(529, 'overloaded_error', 'Overloaded'))).toEqual({ outcome: 'error', reason: 'busy' });
+    expect(classifyFailure(api(500, 'api_error', 'Internal'))).toEqual({ outcome: 'error', reason: 'unavailable' });
+    expect(classifyFailure(new Error('socket hang up'))).toEqual({ outcome: 'error', reason: 'unavailable' });
+    expect(describeApiError(api(400, 'invalid_request_error', 'Schemas contains\ntoo many'))).toBe('400, invalid_request_error, Schemas contains too many');
+  });
+
+  it('a real reading by the API (recorded 2026-10-20 from a synthetic PDF) parses into the shared shape', async () => {
+    // What claude-sonnet-5-5 returned for this tool through the real API, unedited.
+    const recorded = {"number": "17", "issueDate": "", "serviceDate": "", "servicePeriod": "", "recipient": {"name": "Example Client GmbH", "addressLines": [], "country": "", "countryInferred": "", "customerNumber": ""}, "recipientVatId": "", "sender": {"name": "Sample Studio", "addressLines": [], "country": "", "taxNumber": "", "vatId": ""}, "lines": [{"description": "Design", "quantity": null, "unit": "", "unitPrice": null, "discount": "", "lineTotal": 800, "taxRate": null, "taxAmount": null}], "total": 800, "currency": "EUR", "taxTreatment": "other", "taxAmounts": [], "pricesIncludeVat": false, "taxNote": "", "paymentTerms": "", "uncertainFields": []};
+    const result = await read(fakeAnthropic([toolTurn(recorded)]));
+    if (!result.ok) throw new Error(result.outcome);
+    expect(rawInvoiceSchema.safeParse(result.printed).success).toBe(true);
+    expect(result.printed).toMatchObject({
+      number: '17',
+      issueDate: null,
+      recipient: { name: 'Example Client GmbH', country: null, customerNumber: null },
+      sender: { name: 'Sample Studio', taxNumber: null, taxNumberPresent: false },
+      lines: [{ description: 'Design', unit: null, discount: null, lineTotal: 800 }],
+      total: 800,
+      currency: 'EUR',
+      taxNote: null,
+    });
   });
 
   it('the strict tool schema requires every property and allows nothing else', () => {

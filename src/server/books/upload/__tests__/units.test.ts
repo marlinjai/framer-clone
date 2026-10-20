@@ -18,7 +18,7 @@ import { pathLabel, problemText } from '@/lib/books/importProblems';
 import { describeError } from '@/server/books/http/route';
 
 import { createCompanySlots, dailyExtractLimit, dailyExtractLimitShown } from '../limits';
-import { cleanFileName, failureOutcome } from '../service';
+import { cleanFileName, FAILURE_REASONS, failureOutcome } from '../service';
 import { withoutNul } from '../staging';
 import { valueAt, withCompanySender } from '../validate';
 
@@ -215,10 +215,12 @@ describe('every problem the server writes has a text', () => {
     }
     // zod's own issue kind, not a problem code.
     codes.delete('custom');
+    // Failure reasons are the suffix of extraction_failed: and reread_failed:, checked below.
+    for (const r of FAILURE_REASONS) codes.delete(r);
     expect(codes.size).toBeGreaterThan(30);
     const missing = [...codes].filter((code) => problemText({ code, path: null, blocking: true, count: null }) === code);
     expect(missing).toEqual([]);
-    for (const outcome of ['refused', 'invalid_output', 'max_tokens', 'unreadable', 'error']) {
+    for (const outcome of [...FAILURE_REASONS, 'error']) {
       expect(problemText({ code: `extraction_failed:${outcome}`, path: null, blocking: true, count: null })).not.toBe(`extraction_failed:${outcome}`);
       expect(problemText({ code: `reread_failed:${outcome}`, path: null, blocking: false, count: null })).toMatch(/earlier reading is kept/);
     }

@@ -70,25 +70,28 @@ export function fakeAnthropic(turns: Turn[] = []): FakeAnthropic {
   return state;
 }
 
-/** A complete synthetic tool input: a small-business invoice of an invented client. */
+/**
+ * A complete synthetic tool input in the wire format the API returns for the
+ * strict tool: text that is not printed is an empty string, numbers null.
+ */
 export function toolInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     number: '17',
     issueDate: '2022-05-03',
-    serviceDate: null,
+    serviceDate: '',
     servicePeriod: '01.04.2022 - 30.04.2022',
     recipient: {
       name: 'Example Client GmbH',
       addressLines: ['Beispielweg 2', '20095 Hamburg'],
-      country: null,
+      country: '',
       countryInferred: 'DE',
       customerNumber: '1003',
     },
-    recipientVatId: null,
-    sender: { name: 'Sample Studio', addressLines: ['Musterstrasse 1', '10115 Berlin'], country: null, taxNumber: '12/345/67890', vatId: null },
+    recipientVatId: '',
+    sender: { name: 'Sample Studio', addressLines: ['Musterstrasse 1', '10115 Berlin'], country: '', taxNumber: '12/345/67890', vatId: '' },
     lines: [
-      { description: 'Design work', quantity: 10, unit: 'h', unitPrice: 80, discount: null, lineTotal: 800, taxRate: null, taxAmount: null },
-      { description: 'Rabatt 10 %', quantity: null, unit: null, unitPrice: null, discount: '10 %', lineTotal: -80, taxRate: null, taxAmount: null },
+      { description: 'Design work', quantity: 10, unit: 'h', unitPrice: 80, discount: '', lineTotal: 800, taxRate: null, taxAmount: null },
+      { description: 'Rabatt 10 %', quantity: null, unit: '', unitPrice: null, discount: '10 %', lineTotal: -80, taxRate: null, taxAmount: null },
     ],
     total: 720,
     currency: 'EUR',
