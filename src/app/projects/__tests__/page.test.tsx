@@ -36,7 +36,7 @@ import ProjectsPage from '../page';
 
 const ACME = { id: 't-a', name: 'Acme', slug: 'acme', workspaceId: 'ws_a' };
 const BETA = { id: 't-b', name: 'Beta', slug: 'beta', workspaceId: 'ws_b' };
-const OK = { status: 'ok', sites: [], companies: [ACME], activeCompany: ACME };
+const OK = { status: 'ok', sites: [], companies: [ACME], activeCompany: ACME, booksEnabled: false };
 
 async function run(query: Record<string, string>) {
   try {
@@ -56,6 +56,13 @@ function html(element: React.ReactElement | null): string {
 beforeEach(() => vi.clearAllMocks());
 
 describe('ProjectsPage', () => {
+  it('links the Books only for a company holding the books grant', async () => {
+    mockLoadDashboard.mockResolvedValue(OK);
+    expect(html((await run({})).element)).not.toContain('/projects/books');
+    mockLoadDashboard.mockResolvedValue({ ...OK, booksEnabled: true });
+    expect(html((await run({})).element)).toContain('href="/projects/books"');
+  });
+
   it('passes the validated next, the switch flag and the migrated marker to the loader', async () => {
     mockLoadDashboard.mockResolvedValue(OK);
     await run({ next: 'https://evil.example', switch: '1', migrated: '1' });

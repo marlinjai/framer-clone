@@ -12,7 +12,8 @@
 // stateful-flow standard). Optional starting values: `customerId`, `templateId`,
 // `netOrGross`, `serviceDate`, `servicePeriod`, `contractReference`,
 // `introText`, `outroText`. Without a template the company's default template
-// (if any) is put on the draft. A draft that is never issued consumes nothing:
+// (if any) is put on the draft, and its default intro and outro texts fill
+// whatever the request leaves out. A draft that is never issued consumes nothing:
 // numbers are allocated at issue only. There is no DELETE: a draft is never
 // deleted (it carries its audit event), an abandoned one simply stays a draft.
 
@@ -24,7 +25,7 @@ import { documentDetail, documentListItems } from '@/server/books/http/views';
 import { getCustomer, getCustomers } from '@/server/books/repository/customers';
 import { createDraft } from '@/server/books/repository/documents';
 import { listDocuments } from '@/server/books/repository/read';
-import { defaultTemplateId } from '@/server/books/repository/templates';
+import { defaultTemplateId, getTemplate } from '@/server/books/repository/templates';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -75,8 +76,12 @@ export const POST = booksRoute('write', async (ctx, req) => {
     return jsonError('bad_body', 'invalid request body', 400, { issues: parsed.error.issues });
   }
   const templateId = parsed.data.templateId ?? (await defaultTemplateId(ctx.scope)) ?? undefined;
+  // The template's default texts fill what the request leaves out.
+  const template = templateId ? await getTemplate(ctx.scope, templateId) : null;
   const view = await createDraft(ctx.scope, {
     ...parsed.data,
+    introText: parsed.data.introText !== undefined ? parsed.data.introText : (template?.defaultIntroText ?? undefined),
+    outroText: parsed.data.outroText !== undefined ? parsed.data.outroText : (template?.defaultOutroText ?? undefined),
     templateId,
     docType: 'invoice',
     actorUserId: ctx.userId,
