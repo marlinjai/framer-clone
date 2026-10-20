@@ -61,7 +61,6 @@ export const MAX_OPEN_ITEMS = 500;
 /** A file name as the review table shows it: the last path segment, control characters out, at most 255 characters. */
 export function cleanFileName(raw: string | null | undefined): string {
   const base = (raw ?? '').split(/[\\/]/).pop() ?? '';
-  // eslint-disable-next-line no-control-regex
   const clean = base.replace(/[\u0000-\u001f\u007f]/g, '').trim();
   return (clean === '' ? 'invoice.pdf' : clean).slice(0, 255);
 }
