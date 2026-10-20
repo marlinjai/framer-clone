@@ -20,6 +20,7 @@ vi.mock('next/link', async () => {
 });
 
 import ProjectCard from '../ProjectCard';
+import { expectViewportFitPanel } from '@/components/ui/__tests__/viewportFit';
 
 const fetchMock = vi.fn();
 beforeEach(() => {
@@ -262,12 +263,13 @@ describe('Delete project dialog in a small window', () => {
     const dialog = await openDelete();
     const classes = (el: Element | null) => (el?.getAttribute('class') ?? '').split(/\s+/);
 
-    expect(classes(dialog)).toEqual(
-      expect.arrayContaining(['max-h-[calc(100dvh-2rem)]', 'flex', 'flex-col', 'overflow-y-auto']),
-    );
+    expectViewportFitPanel(dialog);
     const header = dialog.querySelector('[data-slot="alert-dialog-header"]');
-    expect(classes(header)).toEqual(expect.arrayContaining(['min-h-0', 'flex-1', 'overflow-y-auto']));
-    expect(header!.textContent).toContain('shop-29.bakery.de');
+    // The title stays; the explanation with the domain list is what scrolls.
+    const message = dialog.querySelector('[data-slot="alert-dialog-description"]');
+    expect(classes(message)).toEqual(expect.arrayContaining(['min-h-0', 'flex-1', 'overflow-y-auto']));
+    expect(message!.textContent).toContain('shop-29.bakery.de');
+    expect(message!.contains(within(dialog).getByRole('heading'))).toBe(false);
 
     const actions = within(dialog).getByTestId('delete-project-actions');
     expect(classes(actions)).toContain('shrink-0');

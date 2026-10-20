@@ -43,9 +43,9 @@ function AlertDialogContent({
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         className={cn(
-          DIALOG_VIEWPORT_FIT_CLASSES,
           "bg-popover data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-1/2 left-1/2 z-[1110] max-w-[400px] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border p-5 shadow-xl duration-200",
           className,
+          DIALOG_VIEWPORT_FIT_CLASSES,
         )}
         {...props}
       />
@@ -57,9 +57,10 @@ function AlertDialogHeader({ className, ...props }: React.ComponentProps<"div">)
   return (
     <div
       data-slot="alert-dialog-header"
-      // Title and description scroll if a long message meets a short window;
-      // the footer's buttons below always stay on screen.
-      className={cn("flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto", className)}
+      // In a short window the title stays put, the description below it
+      // scrolls (AlertDialogDescription), and the footer's buttons stay on
+      // screen.
+      className={cn("flex min-h-0 flex-1 flex-col gap-1.5", className)}
       {...props}
     />
   )
@@ -88,14 +89,52 @@ function AlertDialogTitle({
   )
 }
 
+/**
+ * The message of an alert dialog. It takes the height the title and buttons
+ * leave and scrolls when the message is longer (a list of domains in a short
+ * window). While it actually overflows it is also a keyboard stop (tabIndex 0,
+ * a labelled region), because some browsers do not let the keyboard scroll a
+ * container that holds nothing focusable.
+ */
 function AlertDialogDescription({
   className,
+  ref,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Description>) {
+  const ownRef = React.useRef<HTMLParagraphElement | null>(null)
+  const [scrollable, setScrollable] = React.useState(false)
+
+  React.useEffect(() => {
+    const el = ownRef.current
+    if (!el) return
+    const measure = () => setScrollable(el.scrollHeight > el.clientHeight + 1)
+    measure()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  const setRefs = React.useCallback(
+    (node: HTMLParagraphElement | null) => {
+      ownRef.current = node
+      if (typeof ref === "function") ref(node)
+      else if (ref) ref.current = node
+    },
+    [ref],
+  )
+
   return (
     <AlertDialogPrimitive.Description
+      ref={setRefs}
       data-slot="alert-dialog-description"
-      className={cn("text-muted-foreground text-[13px] leading-relaxed", className)}
+      tabIndex={scrollable ? 0 : undefined}
+      role={scrollable ? "region" : undefined}
+      aria-label={scrollable ? "Details" : undefined}
+      className={cn(
+        "text-muted-foreground min-h-0 flex-1 overflow-y-auto rounded-sm text-[13px] leading-relaxed focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+        className,
+      )}
       {...props}
     />
   )

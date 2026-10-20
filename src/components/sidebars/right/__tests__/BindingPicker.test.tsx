@@ -89,6 +89,23 @@ describe('visibleSectionsForHint', () => {
 });
 
 describe('BindingPicker', () => {
+  it('caps its height and scrolls, so a long source list never runs off a short window', () => {
+    const provider = new InMemoryDataSourceProvider(EVENTS_SEED);
+    const node = collectionWithText().children[0];
+    renderWithProvider(
+      <BindingPicker node={node} slot="children" meta={TEXT_META} onCommit={() => {}} onClose={() => {}} />,
+      provider,
+    );
+    const classes = (screen.getByTestId('binding-picker').getAttribute('class') ?? '').split(/\s+/);
+    expect(classes).toEqual(
+      expect.arrayContaining([
+        'max-h-[min(28rem,calc(100vh-10rem))]',
+        'supports-[height:100dvh]:max-h-[min(28rem,calc(100dvh-10rem))]',
+        'overflow-y-auto',
+      ]),
+    );
+  });
+
   it('shows Page>params and the bound collection LIVE columns as {{row.<col>}}', async () => {
     const provider = new InMemoryDataSourceProvider(EVENTS_SEED);
     const node = collectionWithText().children[0];

@@ -68,19 +68,26 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
 
   // Opened near the bottom or right edge of a small window, the menu moves
   // back inside it before it is painted, so every item stays clickable.
+  // Measured again when the window is resized or the items change.
+  const itemCount = items.length;
   React.useLayoutEffect(() => {
-    const el = rootRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    setPosition(
-      clampMenuPosition(
-        x,
-        y,
-        { width: rect.width, height: rect.height },
-        { width: window.innerWidth, height: window.innerHeight },
-      ),
-    );
-  }, [x, y]);
+    const clamp = () => {
+      const el = rootRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      setPosition(
+        clampMenuPosition(
+          x,
+          y,
+          { width: rect.width, height: rect.height },
+          { width: window.innerWidth, height: window.innerHeight },
+        ),
+      );
+    };
+    clamp();
+    window.addEventListener('resize', clamp);
+    return () => window.removeEventListener('resize', clamp);
+  }, [x, y, itemCount]);
 
   React.useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -133,7 +140,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
       onKeyDown={onMenuKeyDown}
       data-editor-ui="true"
       style={{ left: position.left, top: position.top }}
-      className="fixed z-[200] min-w-[160px] max-h-[calc(100dvh-1rem)] overflow-y-auto bg-background border border-border rounded-md shadow-lg py-1"
+      className="fixed z-[200] min-w-[160px] max-h-[calc(100vh-1rem)] supports-[height:100dvh]:max-h-[calc(100dvh-1rem)] overflow-y-auto bg-background border border-border rounded-md shadow-lg py-1"
     >
       {items.map(item => (
         <button

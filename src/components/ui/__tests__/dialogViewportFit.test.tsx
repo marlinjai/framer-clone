@@ -1,11 +1,11 @@
 // Every modal dialog fits the viewport (a live check found the page settings
 // dialog overflowing an 800x480 window with Save and Cancel off screen). jsdom
-// cannot lay out, so these assert the classes that do the fitting: the panel is
-// capped at the viewport height and width and is a column, the header and
-// footer never shrink, and the body takes the rest and scrolls.
+// cannot lay out, so the classes that do the fitting are asserted, plus the
+// behaviour that does not need layout (a consumer cannot undo the fit; a long
+// alert message becomes a keyboard stop only while it overflows).
 import React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import {
   Dialog,
   DialogBody,
@@ -23,24 +23,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../alert-dialog';
-import { DIALOG_VIEWPORT_FIT_CLASSES } from '../dialog-fit';
+import { classesOf, expectBodyScrollsFooterFixed, expectViewportFitPanel } from './viewportFit';
 
 afterEach(() => cleanup());
-
-function classesOf(el: Element | null): string[] {
-  return (el?.getAttribute('class') ?? '').split(/\s+/);
-}
-
-/** The panel fits the viewport: capped height and width, a column, scroll fallback. */
-function expectViewportFit(panel: Element | null) {
-  const classes = classesOf(panel);
-  expect(classes).toContain('max-h-[calc(100dvh-2rem)]');
-  expect(classes).toContain('w-[calc(100vw-2rem)]');
-  expect(classes).toContain('flex');
-  expect(classes).toContain('flex-col');
-  expect(classes).toContain('overflow-y-auto');
-  expect(classes).not.toContain('grid');
-}
 
 describe('DialogContent', () => {
   it('fits the viewport, with a fixed header and footer around a scrolling body', () => {
@@ -51,43 +36,87 @@ describe('DialogContent', () => {
             <DialogTitle>Title</DialogTitle>
             <DialogDescription>Description</DialogDescription>
           </DialogHeader>
-          <DialogBody data-testid="body">Long content</DialogBody>
-          <DialogFooter data-testid="footer">Buttons</DialogFooter>
+          <DialogBody>
+            <p data-testid="content">Long content</p>
+          </DialogBody>
+          <DialogFooter>Buttons</DialogFooter>
         </DialogContent>
       </Dialog>,
     );
     const panel = screen.getByTestId('panel');
-    expectViewportFit(panel);
+    expectBodyScrollsFooterFixed(panel, screen.getByTestId('content'));
     // A consumer's own width still applies on top of the viewport cap.
     expect(classesOf(panel)).toContain('max-w-[520px]');
     expect(classesOf(screen.getByTestId('header'))).toContain('shrink-0');
-    expect(classesOf(screen.getByTestId('footer'))).toContain('shrink-0');
-    const body = classesOf(screen.getByTestId('body'));
-    expect(body).toEqual(expect.arrayContaining(['min-h-0', 'flex-1', 'overflow-y-auto']));
   });
 
-  it('exposes the shared class list', () => {
-    expect(DIALOG_VIEWPORT_FIT_CLASSES).toContain('max-h-[calc(100dvh-2rem)]');
+  it('cannot be undone by a consumer className', () => {
+    render(
+      <Dialog open>
+        <DialogContent data-testid="panel" className="grid w-full max-h-[85vh]">
+          <DialogTitle>Title</DialogTitle>
+          <DialogDescription>Description</DialogDescription>
+        </DialogContent>
+      </Dialog>,
+    );
+    const classes = classesOf(screen.getByTestId('panel'));
+    expectViewportFitPanel(screen.getByTestId('panel'));
+    expect(classes).not.toContain('w-full');
+    expect(classes).not.toContain('max-h-[85vh]');
   });
 });
 
 describe('AlertDialogContent', () => {
-  it('fits the viewport; a long message scrolls and the buttons stay on screen', () => {
+  function renderAlert() {
     render(
       <AlertDialog open>
         <AlertDialogContent data-testid="panel">
           <AlertDialogHeader data-testid="header">
-            <AlertDialogTitle>Delete?</AlertDialogTitle>
-            <AlertDialogDescription>Long message</AlertDialogDescription>
+            <AlertDialogTitle data-testid="title">Delete?</AlertDialogTitle>
+            <AlertDialogDescription data-testid="message">Long message</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter data-testid="footer">Buttons</AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>,
     );
-    expectViewportFit(screen.getByTestId('panel'));
+  }
+
+  it('fits the viewport; the title and buttons stay, the message scrolls', () => {
+    renderAlert();
+    expectViewportFitPanel(screen.getByTestId('panel'));
     expect(classesOf(screen.getByTestId('header'))).toEqual(
+      expect.arrayContaining(['min-h-0', 'flex-1', 'flex-col']),
+    );
+    expect(classesOf(screen.getByTestId('header'))).not.toContain('overflow-y-auto');
+    expect(classesOf(screen.getByTestId('message'))).toEqual(
       expect.arrayContaining(['min-h-0', 'flex-1', 'overflow-y-auto']),
     );
     expect(classesOf(screen.getByTestId('footer'))).toContain('shrink-0');
+  });
+
+  it('makes the message a keyboard stop only while it overflows', () => {
+    renderAlert();
+    const message = screen.getByTestId('message');
+    expect(message.getAttribute('tabindex')).toBeNull();
+    expect(message.getAttribute('role')).toBeNull();
+
+    // jsdom has no layout: simulate a message taller than its box, then let
+    // the description measure again (the ResizeObserver path is not available
+    // in jsdom, so remount it).
+    cleanup();
+    const scrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight');
+    const clientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => 600 });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 120 });
+    try {
+      act(() => renderAlert());
+      const overflowing = screen.getByTestId('message');
+      expect(overflowing.getAttribute('tabindex')).toBe('0');
+      expect(overflowing.getAttribute('role')).toBe('region');
+      expect(overflowing.getAttribute('aria-label')).toBe('Details');
+    } finally {
+      if (scrollHeight) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeight);
+      if (clientHeight) Object.defineProperty(HTMLElement.prototype, 'clientHeight', clientHeight);
+    }
   });
 });

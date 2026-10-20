@@ -4,7 +4,8 @@
 // the owner when old links will redirect.
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, fireEvent, screen, within, waitFor } from '@testing-library/react';
+import { render, cleanup, fireEvent, screen, within, waitFor, act } from '@testing-library/react';
+import { expectBodyScrollsFooterFixed } from '@/components/ui/__tests__/viewportFit';
 import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
 import type { PageModelType } from '@/models/PageModel';
 import { SiteAddressProvider, type SiteAddress } from '@/contexts/SiteAddressContext';
@@ -344,8 +345,7 @@ describe('fits a small window', () => {
   it('keeps the fields in the scrolling body and Save / Cancel outside it', () => {
     renderPanel();
     const dialog = openSettingsFor('About');
-    const classes = (dialog.getAttribute('class') ?? '').split(/\s+/);
-    expect(classes).toEqual(expect.arrayContaining(['max-h-[calc(100dvh-2rem)]', 'flex', 'flex-col']));
+    expectBodyScrollsFooterFixed(dialog, within(dialog).getByLabelText('URL slug'));
     const body = screen.getByTestId('page-settings-body');
     expect(body.getAttribute('data-slot')).toBe('dialog-body');
     expect(within(body).getByLabelText('URL slug')).toBeTruthy();
@@ -401,7 +401,40 @@ describe('context menu near the window edge', () => {
     renderPanel();
     fireEvent.contextMenu(screen.getByTestId(`page-row-${about.id}`), { clientX: 10, clientY: 10 });
     const classes = (screen.getByRole('menu').getAttribute('class') ?? '').split(/\s+/);
-    expect(classes).toEqual(expect.arrayContaining(['max-h-[calc(100dvh-1rem)]', 'overflow-y-auto']));
+    expect(classes).toEqual(
+      expect.arrayContaining([
+        'max-h-[calc(100vh-1rem)]',
+        'supports-[height:100dvh]:max-h-[calc(100dvh-1rem)]',
+        'overflow-y-auto',
+      ]),
+    );
+  });
+
+  it('opened at the bottom-right corner of an 800x480 window, it moves inside, and again on resize', () => {
+    const rect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ width: 160, height: 90, top: 0, left: 0, right: 160, bottom: 90, x: 0, y: 0, toJSON: () => ({}) });
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 480 });
+    try {
+      renderPanel();
+      fireEvent.contextMenu(screen.getByTestId(`page-row-${about.id}`), { clientX: 790, clientY: 470 });
+      const menu = screen.getByRole('menu');
+      expect(menu.style.left).toBe('632px');
+      expect(menu.style.top).toBe('382px');
+
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 300 });
+      act(() => {
+        window.dispatchEvent(new Event('resize'));
+      });
+      expect(menu.style.top).toBe('202px');
+    } finally {
+      rect.mockRestore();
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
+    }
   });
 });
 

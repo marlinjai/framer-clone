@@ -42,9 +42,9 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          DIALOG_VIEWPORT_FIT_CLASSES,
           "bg-popover data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-1/2 left-1/2 z-[1110] max-w-[440px] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border p-5 shadow-xl duration-200",
           className,
+          DIALOG_VIEWPORT_FIT_CLASSES,
         )}
         {...props}
       >
@@ -65,14 +65,14 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
 /**
  * The scrolling middle of a dialog, between DialogHeader and DialogFooter: it
  * takes the height the viewport leaves and scrolls on its own, so the header
- * and the buttons stay visible. `-mx-1 px-1` keeps focus rings from being
- * clipped at the scroll edges.
+ * and the buttons stay visible. `-mx-1 px-1 -my-1 py-1` leaves room for the
+ * 3px focus rings of the first and last field at the scroll edges.
  */
 function DialogBody({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-body"
-      className={cn("-mx-1 min-h-0 flex-1 overflow-y-auto px-1 py-0.5", className)}
+      className={cn("-mx-1 -my-1 min-h-0 flex-1 overflow-y-auto px-1 py-1", className)}
       {...props}
     />
   )

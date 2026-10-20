@@ -6,6 +6,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import CollectionSettingsDialog from '@/components/cms/CollectionSettingsDialog';
+import { expectBodyScrollsFooterFixed } from './viewportFit';
 
 vi.mock('@/hooks/useStore', () => ({
   useStore: () => ({ editorUI: { currentProject: { id: 'site_1' } } }),
@@ -18,17 +19,6 @@ import DomainsButton from '@/components/domains/DomainsButton';
 
 afterEach(() => cleanup());
 
-function expectFitted(dialog: HTMLElement, insideBody: HTMLElement) {
-  expect((dialog.getAttribute('class') ?? '').split(/\s+/)).toEqual(
-    expect.arrayContaining(['max-h-[calc(100dvh-2rem)]', 'flex', 'flex-col', 'overflow-y-auto']),
-  );
-  const body = dialog.querySelector('[data-slot="dialog-body"]');
-  expect(body).not.toBeNull();
-  expect(body!.contains(insideBody)).toBe(true);
-  const footer = dialog.querySelector('[data-slot="dialog-footer"]');
-  if (footer) expect(body!.contains(footer)).toBe(false);
-}
-
 describe('dialogs fit a small window', () => {
   it('collection settings: fields scroll, Save / Cancel stay on screen', () => {
     render(
@@ -40,7 +30,7 @@ describe('dialogs fit a small window', () => {
       />,
     );
     const dialog = screen.getByTestId('cms-settings-dialog');
-    expectFitted(dialog, screen.getByLabelText('Name'));
+    expectBodyScrollsFooterFixed(dialog, screen.getByLabelText('Name'));
     expect(dialog.querySelector('[data-slot="dialog-footer"]')).not.toBeNull();
   });
 
@@ -48,7 +38,24 @@ describe('dialogs fit a small window', () => {
     render(<DomainsButton />);
     fireEvent.click(screen.getByRole('button', { name: 'Domains' }));
     const dialog = screen.getByRole('dialog');
-    expectFitted(dialog, screen.getByTestId('domains-panel'));
+    expectBodyScrollsFooterFixed(dialog, screen.getByTestId('domains-panel'));
     expect(dialog.getAttribute('class')).not.toContain('max-h-[85vh]');
+  });
+});
+
+describe('menus and pickers fit a small window', () => {
+  it('dropdown menus cap their height at the space Radix reports and scroll', async () => {
+    const { DropdownMenu, DropdownMenuContent, DropdownMenuItem } = await import('@/components/ui/dropdown-menu');
+    render(
+      <DropdownMenu open>
+        <DropdownMenuContent data-testid="menu">
+          <DropdownMenuItem>One</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+    const classes = (screen.getByTestId('menu').getAttribute('class') ?? '').split(/\s+/);
+    expect(classes).toEqual(
+      expect.arrayContaining(['max-h-(--radix-dropdown-menu-content-available-height)', 'overflow-y-auto']),
+    );
   });
 });
