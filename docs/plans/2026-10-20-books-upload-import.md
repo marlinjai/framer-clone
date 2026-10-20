@@ -239,7 +239,8 @@ Books home.
     `reverse_charge_outside_eu` (a customer outside the EU: "VAT charged" at 0 %, not taxable in
     Germany) and `reverse_charge_domestic` (a German customer under domestic section 13b: not
     supported by this import, the row says to keep the invoice outside the Books and discard it;
-    supporting it is a product and tax decision for the lead). VAT that does not add up is named,
+    the lead decided on 2026-10-20 not to support it now: the Books cannot issue such documents
+    either, so the import must not hold them; tracked as ROADMAP line 6). VAT that does not add up is named,
     never absorbed: a VAT summary off from the lines by more than rounding, off at all where every
     line prints its VAT, or naming a rate no line carries (`tax_summary_mismatch`), VAT on a 0 % line (`line_tax_on_zero_rate`, also refused by the
     record schema), and a summary row in the editor with its rate or VAT left empty.

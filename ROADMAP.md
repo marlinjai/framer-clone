@@ -81,6 +81,12 @@ connections to the suite. The four lines below are in that order.
   set `AI_INVOICE_EXTRACT_MODEL` and `BOOKS_IMPORT_DAILY_LIMIT`, and prove the first real upload
   in the editor. See [plan](docs/plans/2026-10-20-books-upload-import.md), "Build notes".
   (2026-10-20)
+- [ ] 6. Domestic reverse charge (section 13b UStG) for Books documents and the import, when a
+  company needs it. Not supported now (lead's decision of 2026-10-20): the Books cannot issue such
+  documents, so the import refuses them too (`reverse_charge_domestic`, the row says to keep the
+  invoice outside the Books); Whiz-Art Media is never affected (section 13b does not apply to a
+  small-business supplier). See [plan](docs/plans/2026-10-20-books-upload-import.md), Build notes
+  item 15. (2026-10-20)
 - [x] The framer-clone Coolify Postgres database with the published port 5439: checked on
   2026-10-15, there is no framer-clone database or app in Coolify any more and port 5439 is closed
   on both servers, so nothing is left to restart. Done 2026-10-15.
