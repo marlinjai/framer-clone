@@ -254,3 +254,27 @@ describe('Delete project dialog', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ confirmName: '' });
   });
 });
+
+describe('Delete project dialog in a small window', () => {
+  it('scrolls the explanation (a long domain list) while the confirmation and buttons stay on screen', async () => {
+    const domains = Array.from({ length: 30 }, (_, i) => `shop-${i}.bakery.de`);
+    renderCard({ customDomains: domains });
+    const dialog = await openDelete();
+    const classes = (el: Element | null) => (el?.getAttribute('class') ?? '').split(/\s+/);
+
+    expect(classes(dialog)).toEqual(
+      expect.arrayContaining(['max-h-[calc(100dvh-2rem)]', 'flex', 'flex-col', 'overflow-y-auto']),
+    );
+    const header = dialog.querySelector('[data-slot="alert-dialog-header"]');
+    expect(classes(header)).toEqual(expect.arrayContaining(['min-h-0', 'flex-1', 'overflow-y-auto']));
+    expect(header!.textContent).toContain('shop-29.bakery.de');
+
+    const actions = within(dialog).getByTestId('delete-project-actions');
+    expect(classes(actions)).toContain('shrink-0');
+    expect(header!.contains(actions)).toBe(false);
+    expect(within(actions).getByRole('button', { name: 'Delete project' })).toBeTruthy();
+    expect(within(actions).getByRole('button', { name: 'Cancel' })).toBeTruthy();
+    expect(within(actions).getByLabelText(/to confirm/)).toBeTruthy();
+  });
+});
+
