@@ -107,14 +107,66 @@ export function isWellFormedHostname(hostname: string): boolean {
 }
 
 /**
- * True when `hostname` (lowercase ASCII) may be a custom domain: well formed
- * and not one of the platform's zones.
+ * Characters that look like Latin letters or digits, mapped to the ASCII they
+ * imitate. A small curated subset of Unicode's confusables data (UTS #39),
+ * covering the scripts a lookalike of `lumitra` realistically uses: Cyrillic,
+ * Greek, and Latin variants. Applied only to internationalized names.
+ */
+const CONFUSABLES: Record<string, string> = {
+  // Cyrillic
+  'а': 'a', 'в': 'b', 'с': 'c', 'ԁ': 'd', 'е': 'e', 'ё': 'e', 'һ': 'h', 'і': 'i', 'ї': 'i',
+  'ј': 'j', 'к': 'k', 'ӏ': 'l', 'м': 'm', 'н': 'h', 'о': 'o', 'р': 'p', 'ԛ': 'q', 'г': 'r',
+  'ѕ': 's', 'т': 't', 'ս': 'u', 'ц': 'u', 'ѵ': 'v', 'ԝ': 'w', 'х': 'x', 'у': 'y', 'з': '3',
+  // Greek
+  'α': 'a', 'β': 'b', 'ε': 'e', 'η': 'n', 'ι': 'i', 'κ': 'k', 'μ': 'u', 'ν': 'v', 'ο': 'o',
+  'ρ': 'p', 'τ': 't', 'υ': 'u', 'χ': 'x', 'γ': 'y',
+  // Latin variants and digits that read as letters
+  'ı': 'i', 'ł': 'l', 'ƚ': 'l', 'ɩ': 'i', 'ɑ': 'a', 'ɡ': 'g', 'ʟ': 'l', 'ᴍ': 'm', 'ᴜ': 'u',
+  'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i', 'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u', 'á': 'a',
+  'à': 'a', 'â': 'a', 'ä': 'a', 'å': 'a', 'ã': 'a', 'ó': 'o', 'ò': 'o', 'ô': 'o', 'ö': 'o',
+  'õ': 'o', 'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e', 'ṁ': 'm', 'ṃ': 'm', 'ŗ': 'r', 'ř': 'r',
+  'ţ': 't', 'ť': 't', 'ľ': 'l', 'ĺ': 'l', 'ç': 'c', '1': 'l', '0': 'o',
+};
+
+/** The skeleton of a name: every confusable replaced by what it imitates. */
+export function confusableSkeleton(name: string): string {
+  let out = '';
+  for (const ch of name.normalize('NFKC').toLowerCase()) out += CONFUSABLES[ch] ?? ch;
+  return out;
+}
+
+/**
+ * True when `hostname` (ASCII, punycode for IDN labels) is an internationalized
+ * name whose Unicode form LOOKS like a platform zone or a name under one, e.g.
+ * `lumіtra.co` with a Cyrillic `і`. Plain ASCII names are judged by
+ * isUnderZone alone (a digit lookalike such as `1umitra.co` is a different,
+ * visibly ASCII name and stays claimable).
+ */
+export function isConfusableWithZone(hostname: string, zones: readonly string[]): boolean {
+  if (!hostname.split('.').some((label) => label.startsWith('xn--'))) return false;
+  const unicode = domainToUnicode(hostname);
+  if (!unicode) return true; // undecodable punycode: refuse rather than guess
+  const skeleton = confusableSkeleton(unicode);
+  return zones.some((zone) => {
+    const z = confusableSkeleton(zone);
+    return skeleton === z || skeleton.endsWith(`.${z}`);
+  });
+}
+
+/**
+ * True when `hostname` (lowercase ASCII) may be a custom domain: well formed,
+ * not one of the platform's zones, and not an internationalized lookalike of
+ * one.
  */
 export function isClaimableHostname(
   hostname: string,
   zones: readonly string[] = platformZones(),
 ): boolean {
-  return isWellFormedHostname(hostname) && !isUnderZone(hostname, zones);
+  return (
+    isWellFormedHostname(hostname) &&
+    !isUnderZone(hostname, zones) &&
+    !isConfusableWithZone(hostname, zones)
+  );
 }
 
 /**
@@ -171,11 +223,11 @@ export function normalizeHostnameInput(
       'That is not a public domain name. Use letters, digits and hyphens, with a dot before the ending (for example www.example.com).',
     );
   }
-  if (isUnderZone(hostname, zones)) {
+  if (isUnderZone(hostname, zones) || isConfusableWithZone(hostname, zones)) {
     return {
       ok: false,
       code: 'reserved_hostname',
-      message: 'This domain belongs to the platform and cannot be connected to a site.',
+      message: 'This domain belongs to the platform (or imitates it) and cannot be connected to a site.',
     };
   }
   return { ok: true, hostname };

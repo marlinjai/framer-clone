@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   hostnameForDisplay,
+  confusableSkeleton,
   isClaimableHostname,
   isWellFormedHostname,
   looksLikeApex,
@@ -77,6 +78,34 @@ describe('normalizeHostnameInput', () => {
 
   it('does not treat a lookalike outside the zone as reserved', () => {
     expect(claim('notlumitra.co')).toEqual({ ok: true, hostname: 'notlumitra.co' });
+  });
+});
+
+describe('confusable lookalikes of a platform zone', () => {
+  it.each([
+    ['a Cyrillic i', 'lumіtra.co'],
+    ['a Cyrillic a under the zone', 'shop.lumitrа.co'],
+    ['a Greek omicron in the ending', 'lumitra.cο'],
+    ['a dotless i', 'lumıtra.co'],
+    ['an accented u', 'lümitra.co'],
+  ])('refuses %s as reserved', (_why, input) => {
+    expect(claim(input)).toMatchObject({ ok: false, code: 'reserved_hostname' });
+  });
+
+  it('refuses the lookalike in the predicate the resolver and feed use too', () => {
+    const ascii = (claim('lumіtra.co.evil.com') as { ok: boolean }).ok;
+    expect(ascii).toBe(true); // a lookalike as a SUBDOMAIN of someone else's zone is theirs
+    expect(isClaimableHostname('xn--lumtra-rvf.co', ZONES)).toBe(false);
+  });
+
+  it('keeps unrelated internationalized and plain ASCII names claimable', () => {
+    expect(claim('bücher.de')).toEqual({ ok: true, hostname: 'xn--bcher-kva.de' });
+    expect(claim('1umitra.co')).toEqual({ ok: true, hostname: '1umitra.co' });
+    expect(claim('lumitra.com')).toEqual({ ok: true, hostname: 'lumitra.com' });
+  });
+
+  it('builds skeletons', () => {
+    expect(confusableSkeleton('lumіtra.cο')).toBe('lumitra.co');
   });
 });
 
