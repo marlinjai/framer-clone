@@ -247,7 +247,7 @@ export function commerceSlugFor(tenantGroupId: string, displaySlug?: string | nu
 
 /**
  * Run the full provision on an already open OWNER session, under the global
- * provisioning lock (bounded by the session's lock_timeout).
+ * provisioning lock (waiting as long as its queue moves, see PROVISION_TIMEOUTS).
  */
 async function provisionUnderLock(
   sql: postgres.Sql,

@@ -57,6 +57,7 @@ import {
   ensureCommerceTenant,
 } from '@/server/commerce/provisioning/provision';
 import { AppRoleSearchPathError } from '@marlinjai/tenant-db';
+import { CommerceLockTimeoutError } from '@/server/commerce/provisioning/ownerSql';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -74,7 +75,9 @@ export const dynamic = 'force-dynamic';
  * request's app-role pool. Every later project of an already provisioned company
  * costs one registry read and nothing else (`ensureCommerceTenant`: no lock, no
  * DDL, no role check); only a miss runs the full provision, under the global
- * provisioning lock with bounded waits (10 s lock, 30 s statement).
+ * provisioning lock with bounded waits (as long as the queue of companies
+ * provisioning moves, at most about 40 s, but 10 s behind one stuck provision;
+ * 30 s per statement).
  *
  * The registry slug is `commerceSlugFor(tenant group, display slug)`: the
  * display slug plus the tenant-group id, so two companies whose auth-brain slugs
@@ -99,8 +102,11 @@ export const dynamic = 'force-dynamic';
  *    container start step refuses to start on the same condition, so this
  *    catches a value changed after the start.
  *  - 500 `commerce_provision_failed` when provisioning throws anything else (database down, a
- *    tenant group id that is not a UUID, a migration error, a provisioning lock
- *    not granted within 10 s).
+ *    tenant group id that is not a UUID, a migration error).
+ *  - 503 `commerce_busy` with Retry-After when the provisioning lock was not
+ *    granted (CommerceLockTimeoutError: one provision held it too long, or the
+ *    queue of companies provisioning outlasted the wait): nothing is broken and
+ *    the same request succeeds a moment later.
  * Provisioning first means a failure leaves NOTHING behind: no site row whose
  * company has no commerce schema, no "created but broken" project, and a retry
  * of the same request is clean. The connection details stay out of the
@@ -145,6 +151,16 @@ async function ensureCommerceProvisioned(
         'the shop database on this server needs an administrator to fix it; no project was created',
         500,
       );
+    }
+    if (err instanceof CommerceLockTimeoutError) {
+      console.error(`[commerce] provisioning for tenant_group ${tenantGroupId} waited too long: ${err.message}`);
+      const busy = jsonError(
+        'commerce_busy',
+        'several companies are setting up their shop right now; no project was created, try again in a moment',
+        503,
+      );
+      busy.headers.set('retry-after', '10');
+      return busy;
     }
     console.error(
       `[commerce] ensureCommerceTenant failed for tenant_group ${tenantGroupId}:`,

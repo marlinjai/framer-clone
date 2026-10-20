@@ -43,7 +43,15 @@
 //     wait is therefore sized to the queue: `lockTimeoutMs` bounds how long ONE
 //     holder may keep the lock while we wait (longer is a stuck provision: fail
 //     fast with a retryable error), and as long as the holder keeps changing
-//     the queue is moving and we keep waiting, up to `queueWaitMs` in all.
+//     the queue is moving and we keep waiting, up to `queueWaitMs` in all. A
+//     waiter that times out rejoins at the back of the queue: right for a burst
+//     of companies at once (the incident); under arrivals that never stop it
+//     fails at `queueWaitMs`, retryably. A holder is told apart by its pid AND
+//     a name it sets when it takes the lock (a session-mode pooler can hand the
+//     same backend to the next client). A stuck holder is noticed within two
+//     waits at most (one when the holder was known when the wait began).
+
+import { randomUUID } from 'node:crypto';
 
 import postgres from 'postgres';
 
@@ -156,46 +164,57 @@ export async function acquireAdvisoryLock(
   what: string,
   timeouts: OwnerTimeouts,
   onBusy?: () => void,
-  now: () => number = Date.now,
 ): Promise<void> {
   const [{ locked }] = await sql<{ locked: boolean }[]>`SELECT pg_try_advisory_lock(${key}) AS locked`;
-  if (locked) return;
+  if (locked) return markHolder(sql);
   onBusy?.();
-  const started = now();
+  const started = Date.now();
   let holder = await advisoryLockHolder(sql, key);
   for (;;) {
     try {
       await sql`SELECT pg_advisory_lock(${key})`;
-      return;
+      return markHolder(sql);
     } catch (err) {
       if (!isLockTimeout(err)) throw err;
       if (timeouts.queueWaitMs === undefined) throw new CommerceLockTimeoutError(what, timeouts.lockTimeoutMs, { cause: err });
       // The queue moved when the lock changed hands (or was free a moment) during this wait.
-      const now_ = await advisoryLockHolder(sql, key);
-      const moved = holder === null || now_ === null || now_ !== holder;
+      const current = await advisoryLockHolder(sql, key);
+      const moved = holder === null || current === null || current !== holder;
       if (!moved) throw new CommerceLockTimeoutError(what, timeouts.lockTimeoutMs, { cause: err });
-      if (now() - started >= timeouts.queueWaitMs) {
-        throw new CommerceLockTimeoutError(what, timeouts.queueWaitMs, { cause: err, queued: true });
-      }
-      holder = now_;
+      const waited = Date.now() - started;
+      if (waited >= timeouts.queueWaitMs) throw new CommerceLockTimeoutError(what, waited, { cause: err, queued: true });
+      holder = current;
     }
   }
 }
 
 /**
- * The backend that holds a session advisory lock on `key` in this database
- * (null when nobody holds it). `pg_advisory_lock(bigint)` keys are stored as
- * their high and low 32 bits in classid and objid, with objsubid 1.
+ * Give this session an identity of its own while it holds a lock: behind a
+ * session-mode pooler the next client can get the same server backend (the
+ * same pid) right after the previous holder left, so a waiter compares the pid
+ * AND this name, and sees a new holder as one.
  */
-async function advisoryLockHolder(sql: postgres.Sql, key: number): Promise<number | null> {
-  const rows = await sql<{ pid: number }[]>`
-    SELECT pid FROM pg_locks
-     WHERE locktype = 'advisory' AND objsubid = 1 AND granted
-       AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
-       AND ((classid::bigint << 32) | objid::bigint) = ${key}::bigint
+async function markHolder(sql: postgres.Sql): Promise<void> {
+  await sql`SELECT set_config('application_name', ${`framer-clone-commerce-owner:${randomUUID()}`}, false)`;
+}
+
+/**
+ * Who holds a session advisory lock on `key` in this database (null when
+ * nobody does): the backend pid and its application name (see markHolder).
+ * `pg_advisory_lock(bigint)` keys are stored as their high and low 32 bits in
+ * classid and objid, with objsubid 1.
+ */
+async function advisoryLockHolder(sql: postgres.Sql, key: number): Promise<string | null> {
+  const rows = await sql<{ holder: string }[]>`
+    SELECT l.pid::text || ':' || COALESCE(a.application_name, '') AS holder
+      FROM pg_locks l
+      LEFT JOIN pg_stat_activity a ON a.pid = l.pid
+     WHERE l.locktype = 'advisory' AND l.objsubid = 1 AND l.granted
+       AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+       AND ((l.classid::bigint << 32) | l.objid::bigint) = ${key}::bigint
      LIMIT 1
   `;
-  return rows[0]?.pid ?? null;
+  return rows[0]?.holder ?? null;
 }
 
 /** Release a session advisory lock; never masks the caller's own error. */

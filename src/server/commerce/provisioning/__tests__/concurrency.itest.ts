@@ -175,39 +175,67 @@ describe('commerce advisory locks', () => {
   });
 
   describe('a wait sized to the queue (queueWaitMs)', () => {
-    // A key of its own, so these holders never meet a real provision.
+    // A key of its own, so these holders never meet a real provision. Each holder keeps the lock
+    // well under one wait (200 ms of 600 ms), and the queue as a whole well over one wait.
     const KEY = 74_610_099;
-    const QUEUED = { lockTimeoutMs: 300, statementTimeoutMs: 5_000, queueWaitMs: 5_000 };
+    const HOLD_MS = 200;
+    const QUEUED = { lockTimeoutMs: 600, statementTimeoutMs: 5_000, queueWaitMs: 5_000 };
+    const SINGLE = { lockTimeoutMs: 600, statementTimeoutMs: 5_000 };
 
-    /** Sessions all queued for the lock before the waiter arrives, each holding it `holdMs`: a queue that moves. */
-    async function movingQueue(holders: number, holdMs: number) {
+    /** Sessions all queued for the lock before the waiter arrives, each holding it HOLD_MS: a queue that moves. */
+    async function movingQueue(holders: number) {
       const sessions = Array.from({ length: holders }, () => postgres(superUrl, { max: 1, prepare: false }));
+      // Connected first, so no handshake eats into a hold.
+      await Promise.all(sessions.map((s) => s`SELECT 1`));
       await sessions[0]`SELECT pg_advisory_lock(${KEY})`;
+      let release!: () => void;
+      const go = new Promise<void>((r) => (release = r));
       const runs = sessions.map(async (s, i) => {
         if (i > 0) await s`SELECT pg_advisory_lock(${KEY})`;
-        await new Promise((r) => setTimeout(r, holdMs));
+        await go;
+        await new Promise((r) => setTimeout(r, HOLD_MS));
         await s`SELECT pg_advisory_unlock(${KEY})`;
       });
-      // Every other holder is in the queue (Postgres grants a waiting lock in arrival order).
-      for (let i = 0; i < 200; i += 1) {
+      for (let i = 0; ; i += 1) {
         const [{ n }] = await su!<{ n: number }[]>`
           SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = ${KEY}`;
         if (n >= holders - 1) break;
+        if (i >= 500) throw new Error(`the queue never formed (${n} of ${holders - 1} waiting)`);
         await new Promise((r) => setTimeout(r, 10));
       }
-      return { done: Promise.all(runs), end: () => Promise.all(sessions.map((s) => s.end())) };
+      const done = Promise.all(runs);
+      return {
+        /** Start the holders' clocks once the waiter is in the queue too. */
+        start: async () => {
+          for (let i = 0; ; i += 1) {
+            const [{ n }] = await su!<{ n: number }[]>`
+              SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = ${KEY}`;
+            if (n >= holders) break;
+            if (i >= 500) throw new Error('the waiter never queued');
+            await new Promise((r) => setTimeout(r, 10));
+          }
+          release();
+        },
+        done,
+        end: async () => {
+          release();
+          await done.catch(() => undefined);
+          await Promise.all(sessions.map((s) => s.end()));
+        },
+      };
     }
 
     it('keeps waiting while the lock changes hands, far beyond one lock wait', async () => {
-      const queue = await movingQueue(5, 200);
+      const queue = await movingQueue(6);
       const waiter = await openOwnerSql(ownerUrl, QUEUED);
       try {
         const started = Date.now();
-        await acquireAdvisoryLock(waiter, KEY, 'test lock', QUEUED);
-        // Five holders of 200 ms: well past the 300 ms a single wait would have allowed.
-        expect(Date.now() - started).toBeGreaterThan(600);
+        const acquired = acquireAdvisoryLock(waiter, KEY, 'test lock', QUEUED);
+        await queue.start();
+        await acquired;
+        // Six holders of 200 ms: well past the 600 ms a single wait would have allowed.
+        expect(Date.now() - started).toBeGreaterThan(QUEUED.lockTimeoutMs);
         await releaseAdvisoryLock(waiter, KEY);
-        await queue.done;
       } finally {
         await waiter.end();
         await queue.end();
@@ -215,11 +243,12 @@ describe('commerce advisory locks', () => {
     });
 
     it('a single wait (no queueWaitMs) still fails after one lock wait, the old contract', async () => {
-      const queue = await movingQueue(5, 200);
-      const waiter = await openOwnerSql(ownerUrl, SHORT);
+      const queue = await movingQueue(6);
+      const waiter = await openOwnerSql(ownerUrl, SINGLE);
       try {
-        await expect(acquireAdvisoryLock(waiter, KEY, 'test lock', SHORT)).rejects.toThrow(/not granted within 300 ms \(lock_timeout\)/);
-        await queue.done;
+        const acquired = acquireAdvisoryLock(waiter, KEY, 'test lock', SINGLE);
+        await queue.start();
+        await expect(acquired).rejects.toThrow(/not granted within 600 ms \(lock_timeout\)/);
       } finally {
         await waiter.end();
         await queue.end();
@@ -231,30 +260,33 @@ describe('commerce advisory locks', () => {
       const waiter = await openOwnerSql(ownerUrl, QUEUED);
       try {
         const started = Date.now();
-        await expect(acquireAdvisoryLock(waiter, KEY, 'test lock', QUEUED)).rejects.toThrow(/not granted within 300 ms \(lock_timeout\)/);
-        expect(Date.now() - started).toBeLessThan(2_000);
+        await expect(acquireAdvisoryLock(waiter, KEY, 'test lock', QUEUED)).rejects.toThrow(/not granted within 600 ms \(lock_timeout\)/);
+        expect(Date.now() - started).toBeLessThan(3 * QUEUED.lockTimeoutMs);
       } finally {
         await su!`SELECT pg_advisory_unlock(${KEY})`;
         await waiter.end();
       }
     });
 
-    it('gives up when the queue keeps moving longer than queueWaitMs in all, with its own message', async () => {
-      const queue = await movingQueue(8, 200);
-      const capped = { ...QUEUED, queueWaitMs: 600 };
+    it('gives up when the queue keeps moving longer than queueWaitMs, saying how long it queued', async () => {
+      const queue = await movingQueue(12);
+      const capped = { ...QUEUED, queueWaitMs: 700 };
       const waiter = await openOwnerSql(ownerUrl, capped);
       try {
-        await expect(acquireAdvisoryLock(waiter, KEY, 'test lock', capped)).rejects.toThrow(/within 600 ms of queueing/);
-        await queue.done;
+        const acquired = acquireAdvisoryLock(waiter, KEY, 'test lock', capped);
+        await queue.start();
+        await expect(acquired).rejects.toThrow(/within \d+ ms of queueing/);
       } finally {
         await waiter.end();
         await queue.end();
       }
     });
 
-    it('the provisioning budget sizes its wait to the queue', () => {
-      expect(PROVISION_TIMEOUTS.queueWaitMs).toBeGreaterThan(PROVISION_TIMEOUTS.lockTimeoutMs);
-      expect(PROVISION_TIMEOUTS.lockTimeoutMs + PROVISION_TIMEOUTS.queueWaitMs!).toBeGreaterThan(0);
+    it('the provisioning budget: a wait is never cancelled as a statement, and the whole wait fits a request', () => {
+      // Each lock wait is one statement: the statement budget must outlast it.
+      expect(PROVISION_TIMEOUTS.statementTimeoutMs).toBeGreaterThan(PROVISION_TIMEOUTS.lockTimeoutMs);
+      // The longest a "New project" request waits for the lock: the queue budget plus one last wait.
+      expect(PROVISION_TIMEOUTS.queueWaitMs! + PROVISION_TIMEOUTS.lockTimeoutMs).toBeLessThanOrEqual(45_000);
     });
   });
 
