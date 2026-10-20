@@ -108,6 +108,33 @@ describe('validateGeneration: repairs', () => {
     expect(result.warnings.length).toBeGreaterThanOrEqual(5);
   });
 
+  it('drops style values that could break out into more CSS (; { } backslash, control characters)', () => {
+    const result = ok({
+      nodes: [
+        {
+          type: 'div',
+          props: {
+            style: {
+              color: 'red;position:fixed;inset:0;z-index:99999',
+              backgroundImage: '\\75 rl(https://evil.example/x.png)',
+              background: 'red} body{display:none',
+              fontFamily: 'Inter\nposition: fixed',
+              border: '1px solid\u0000red',
+              padding: { base: '8px', mobile: '4px;margin:0' },
+              margin: '0 auto',
+            },
+          },
+        },
+      ],
+    });
+    // Only the clean value survives; the responsive map keeps its clean entries.
+    expect(result.nodes[0].props.style).toEqual({
+      margin: '0 auto',
+      padding: { base: '8px', desktop: '8px' },
+    });
+    expect(result.warnings.filter((w) => w.includes('control character'))).toHaveLength(6);
+  });
+
   it('drops event handlers, raw HTML, unsafe links and image sources', () => {
     const result = ok({
       nodes: [

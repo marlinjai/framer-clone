@@ -80,6 +80,15 @@ const OWNED_KEYS = new Set(['id', 'componentType', 'canvasNodeType', 'parentId']
 const NODE_KEYS = new Set(['type', 'preset', 'label', 'props', 'children']);
 
 const UNSAFE_STYLE_VALUE = /javascript:|vbscript:|expression\s*\(|<\s*\/?\s*script|@import|behavior\s*:|-moz-binding/i;
+/**
+ * Characters that let one style value escape into more CSS when a renderer or
+ * the publish path serializes styles to text: `;` ends the declaration (and
+ * starts another, e.g. "red;position:fixed;inset:0"), `{` `}` open or close
+ * rules, a backslash starts a CSS escape ("\75 rl(" reads as "url("), and
+ * control characters (newlines included) can break out of a declaration or
+ * hide content. No legitimate generated value needs any of them.
+ */
+const STYLE_BREAKOUT_CHARS = /[;{}\\\u0000-\u001f\u007f]/;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
@@ -173,6 +182,10 @@ class Validator {
     if (v.length === 0) return undefined;
     if (v.length > GENERATION_LIMITS.maxStyleValueChars) {
       this.warn(path, `style.${key}: value longer than ${GENERATION_LIMITS.maxStyleValueChars} characters dropped`);
+      return undefined;
+    }
+    if (STYLE_BREAKOUT_CHARS.test(raw)) {
+      this.warn(path, `style.${key}: value contains ; { } \\ or a control character, dropped`);
       return undefined;
     }
     if (UNSAFE_STYLE_VALUE.test(v)) {
