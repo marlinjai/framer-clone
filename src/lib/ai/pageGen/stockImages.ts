@@ -14,7 +14,8 @@
 //     per photo actually placed in a page (triggerStockDownloads), server-side,
 //     fire-and-forget with error logging.
 //
-// Budget (a demo key allows 50 requests per hour): one search per distinct
+// Budget (the production key allows 1,000 requests per hour, a demo key 50):
+// one search per distinct
 // query and orientation, search results cached in memory for CACHE_TTL_MS, at
 // most GENERATION_LIMITS.maxStockImages images resolved per generation, and
 // every request time-limited, identical searches running at the same time
@@ -49,7 +50,7 @@ const CACHE_MAX_ENTRIES = 500;
 /** The hotlinked photo is at most this wide (2x the box, for sharp high-density screens). */
 const MAX_PHOTO_WIDTH = 2400;
 const DEFAULT_APP_NAME = 'lumitra';
-/** Pause after a rate limit: the demo limit is per hour, so retrying sooner mostly fails. */
+/** Pause after a rate limit: Unsplash limits per hour, so retrying sooner mostly fails. */
 export const RATE_LIMIT_PAUSE_MS = 10 * 60 * 1000;
 /** Pause after the key was refused: long enough to stop hammering, short enough for a fixed key to take. */
 export const AUTH_PAUSE_MS = 5 * 60 * 1000;
