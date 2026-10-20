@@ -224,6 +224,13 @@ describe('009_books_import over a schema already holding issued documents (as pr
       await code(owner`INSERT INTO ${s}.sales_document_line (id, tenant_id, document_id, position, title, quantity, unit_price, subtotal, tax_rate, tax_amount, tax_treatment, updated_at)
                        VALUES (${randomUUID()}, ${tenantId}, ${randomUUID()}, 1, 'Orphan line', 1000, 1, 1, 0, 0, 'kleinunternehmer', now())`),
     ).toBe('23503');
+    // A negative line on an editor draft: refused by the guard that replaced 007's CHECKs.
+    const draftId = randomUUID();
+    await owner`INSERT INTO ${s}.sales_document (id, tenant_id, doc_type, payment_terms_days, updated_at) VALUES (${draftId}, ${tenantId}, 'invoice', 14, now())`;
+    expect(
+      await code(owner`INSERT INTO ${s}.sales_document_line (id, tenant_id, document_id, position, title, quantity, unit_price, subtotal, tax_rate, tax_amount, tax_treatment, updated_at)
+                       VALUES (${randomUUID()}, ${tenantId}, ${draftId}, 1, 'Negative line', 1000, -1, -1, 0, 0, 'kleinunternehmer', now())`),
+    ).toBe('BK008');
     // The issued document itself: still frozen.
     expect(await code(owner`UPDATE ${s}.sales_document SET total = 1, subtotal = 1 WHERE id = ${docId}`)).toBe('BK001');
   });

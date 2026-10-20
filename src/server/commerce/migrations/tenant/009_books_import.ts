@@ -32,6 +32,16 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      that file belonging to this very document) (BK007). An imported invoice
  *      without its document of record never commits, so the download can never
  *      fall back to rendering one.
+ *   4. A printed discount line carries a NEGATIVE amount (the historical
+ *      invoices print a discount as a line of its own, "Rabatt 10 %" with a
+ *      minus amount). 007's static CHECKs (unit price and subtotal not
+ *      negative) are replaced by the line guard, which allows a negative unit
+ *      price or subtotal only on an imported document (its lines are written
+ *      before it exists, and the document's insert then requires
+ *      `source = 'import'`) and on the draft credit note that cancels an
+ *      imported invoice (it copies the lines). Everywhere else a negative line
+ *      is refused as before (BK008, mapped to INVALID_LINE). The document totals
+ *      stay non-negative (007's CHECKs, untouched).
  *
  * House style as 007: BARE names, trigger functions `SET search_path FROM
  * CURRENT`, custom SQLSTATEs.
@@ -73,6 +83,15 @@ export const booksImport: Migration = {
               IF NEW."status" <> 'draft' AND NEW."source" <> 'import' THEN
                   RAISE EXCEPTION 'sales_document %: a document is created as a draft (got %)', NEW."id", NEW."status"
                       USING ERRCODE = 'BK004';
+              END IF;
+              -- Negative lines written before their document (change 4) belong to an import only.
+              IF NEW."source" <> 'import' AND EXISTS (
+                  SELECT 1 FROM "sales_document_line"
+                   WHERE "tenant_id" = NEW."tenant_id" AND "document_id" = NEW."id"
+                     AND ("unit_price" < 0 OR "subtotal" < 0)
+              ) THEN
+                  RAISE EXCEPTION 'sales_document %: a negative line amount is only allowed on an imported document', NEW."id"
+                      USING ERRCODE = 'BK008';
               END IF;
               -- An issued import writes its lines first (009, the deferred line
               -- foreign key); they must already be there and sum to the totals.
@@ -162,6 +181,64 @@ export const booksImport: Migration = {
              AND NEW."rendered_pdf_file_id" IS DISTINCT FROM OLD."rendered_pdf_file_id" THEN
               RAISE EXCEPTION 'sales_document %: rendered_pdf_file_id is set once and never changed', OLD."id"
                   USING ERRCODE = 'BK001';
+          END IF;
+          RETURN NEW;
+      END;
+      $$
+    `;
+
+    // Change 4: negative (discount) lines, on imports and their cancellations only.
+    await tx`ALTER TABLE "sales_document_line" DROP CONSTRAINT IF EXISTS "sales_document_line_unit_price_check"`;
+    await tx`ALTER TABLE "sales_document_line" DROP CONSTRAINT IF EXISTS "sales_document_line_subtotal_check"`;
+    await tx`
+      CREATE OR REPLACE FUNCTION "sales_document_line_guard"()
+      RETURNS TRIGGER
+      LANGUAGE plpgsql
+      SET search_path FROM CURRENT
+      AS $$
+      DECLARE
+          parent_status "SalesDocStatus";
+          parent_type "SalesDocType";
+          parent_corrects TEXT;
+      BEGIN
+          IF TG_OP IN ('INSERT', 'UPDATE') THEN
+              SELECT "status", "doc_type", "corrects_document_id"
+                INTO parent_status, parent_type, parent_corrects
+                FROM "sales_document"
+               WHERE "tenant_id" = NEW."tenant_id" AND "id" = NEW."document_id"
+                 FOR SHARE;
+              IF FOUND AND parent_status <> 'draft' THEN
+                  RAISE EXCEPTION 'sales_document % is not a draft (status %): its lines are frozen',
+                      NEW."document_id", parent_status
+                      USING ERRCODE = 'BK001';
+              END IF;
+              -- A negative amount (a printed discount line): only while the parent
+              -- does not exist yet (the import writes its lines first; the
+              -- document's insert then requires source = 'import'), or on the
+              -- draft credit note cancelling an imported invoice.
+              IF (NEW."unit_price" < 0 OR NEW."subtotal" < 0) AND FOUND AND NOT (
+                  parent_type = 'credit_note' AND EXISTS (
+                      SELECT 1 FROM "sales_document" o
+                       WHERE o."tenant_id" = NEW."tenant_id" AND o."id" = parent_corrects AND o."source" = 'import'
+                  )
+              ) THEN
+                  RAISE EXCEPTION 'sales_document_line: a negative amount is only allowed on an imported document'
+                      USING ERRCODE = 'BK008';
+              END IF;
+          END IF;
+          IF TG_OP IN ('UPDATE', 'DELETE') THEN
+              SELECT "status" INTO parent_status
+                FROM "sales_document"
+               WHERE "tenant_id" = OLD."tenant_id" AND "id" = OLD."document_id"
+                 FOR SHARE;
+              IF FOUND AND parent_status <> 'draft' THEN
+                  RAISE EXCEPTION 'sales_document % is not a draft (status %): its lines are frozen',
+                      OLD."document_id", parent_status
+                      USING ERRCODE = 'BK001';
+              END IF;
+          END IF;
+          IF TG_OP = 'DELETE' THEN
+              RETURN OLD;
           END IF;
           RETURN NEW;
       END;

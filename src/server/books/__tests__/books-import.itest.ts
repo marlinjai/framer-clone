@@ -774,6 +774,37 @@ describe('009_books_import: what holds for every role', () => {
     expect(code).toBe('BK007');
   });
 
+  it('negative (discount) lines: allowed on an import, refused on every editor document (BK008)', async () => {
+    const lineFor = (documentId: string, amount: number, position = 1) => ({
+      id: randomUUID(), tenant_id: tenantId, document_id: documentId, position, kind: 'service' as const, title: 'Rabatt',
+      quantity: 1000, unit_price: amount, subtotal: amount, tax_rate: 0, tax_amount: 0, tax_treatment: 'kleinunternehmer' as const, updated_at: new Date(),
+    });
+    // The import path takes a discount line (the lines sum to a positive total).
+    expect(await ownerImport({ lines: [500, -100], total: 400, withFile: true })).toBe('ok');
+    // An editor draft: a negative line straight into it, or written first and the draft inserted after.
+    const draftId = randomUUID();
+    await env.ownerDb
+      .insertInto('sales_document')
+      .values({ id: draftId, tenant_id: tenantId, doc_type: 'invoice', payment_terms_days: 0, updated_at: new Date() } as never)
+      .execute();
+    expect(await rejectionCode(env.ownerDb.insertInto('sales_document_line').values(lineFor(draftId, -100)).execute())).toBe('BK008');
+    const lateDraft = randomUUID();
+    expect(
+      await rejectionCode(
+        env.ownerDb.transaction().execute(async (trx) => {
+          await sql`SET CONSTRAINTS ALL DEFERRED`.execute(trx);
+          await trx.insertInto('sales_document_line').values(lineFor(lateDraft, -100)).execute();
+          await trx
+            .insertInto('sales_document')
+            .values({ id: lateDraft, tenant_id: tenantId, doc_type: 'invoice', payment_terms_days: 0, updated_at: new Date() } as never)
+            .execute();
+        }),
+      ),
+    ).toBe('BK008');
+    // And a positive line on the draft is still fine.
+    await env.ownerDb.insertInto('sales_document_line').values(lineFor(draftId, 100)).execute();
+  });
+
   it('an editor document is still born a draft (BK004), deferred foreign key or not', async () => {
     const code = await rejectionCode(
       env.ownerDb.transaction().execute(async (trx) => {

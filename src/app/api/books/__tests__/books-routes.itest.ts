@@ -612,7 +612,10 @@ describe('Books routes: imported historical invoices', () => {
   }
 
   /** Import one synthetic invoice through the domain core the CLI and the planned upload use. */
-  async function importOne(number: number, opts: { sender?: string[]; issueDate?: string } = {}) {
+  async function importOne(
+    number: number,
+    opts: { sender?: string[]; issueDate?: string; lines?: Array<Record<string, unknown>>; total?: number } = {},
+  ) {
     const bytes = original(`${tenantId}-${number}`);
     const plan = planInvoice(
       number,
@@ -624,8 +627,8 @@ describe('Books routes: imported historical invoices', () => {
         recipient: { name: 'Example Client GmbH', addressLines: ['Beispielweg 2', '20095 Hamburg'], country: 'DE', customerNumber: null },
         recipientVatId: null,
         sender: { name: 'Sample Studio', addressLines: opts.sender ?? ['Musterstrasse 1', '10115 Berlin'], country: 'DE' },
-        lines: [{ description: 'Design work', quantity: 2, unit: 'h', unitPrice: 60, discount: null, lineTotal: 120 }],
-        total: 120,
+        lines: opts.lines ?? [{ description: 'Design work', quantity: 2, unit: 'h', unitPrice: 60, discount: null, lineTotal: 120 }],
+        total: opts.total ?? 120,
         currency: 'EUR',
         taxTreatment: 'small_business',
         taxAmounts: null,
@@ -709,6 +712,24 @@ describe('Books routes: imported historical invoices', () => {
     // Each imported document keeps the sender printed on it.
     expect(after.json.document.senderSnapshot).toMatchObject({ addressLine1: 'Musterstrasse 1', city: 'Berlin' });
     expect((await api.get(second.id)).json.document.senderSnapshot).toMatchObject({ addressLine1: 'Neue Allee 9', city: 'München' });
+  });
+
+  it('an imported invoice with a printed discount line (a minus amount) is cancelled through a credit note too', async () => {
+    const { id } = await importOne(14, {
+      lines: [
+        { description: 'Design work', quantity: 2, unit: 'h', unitPrice: 60, discount: null, lineTotal: 120 },
+        { description: 'Rabatt 10 %', quantity: null, unitPrice: null, discount: '10 %', lineTotal: -12 },
+      ],
+      total: 108,
+    });
+    expect((await api.get(id)).json.lines.map((l: Json) => l.subtotal)).toEqual([12000, -1200]);
+    const res = await api.cancel(id, { reason: 'issued in error' });
+    expect(res.status).toBe(200);
+    expect(res.json.creditNote.document.total).toBe(10800);
+    expect(res.json.creditNote.lines.map((l: Json) => l.subtotal)).toEqual([12000, -1200]);
+    const credit = await pdf(res.json.creditNote.document.id);
+    expect(credit.headers.get('x-books-of-record')).toBe('true');
+    expect(await extractPdfText(new Uint8Array(await credit.arrayBuffer()))).toContain('Storno der Rechnung 14');
   });
 
   it('an imported invoice is cancelled through a credit note like any other', async () => {

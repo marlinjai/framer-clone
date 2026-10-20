@@ -45,8 +45,9 @@ import { booksImport } from './009_books_import';
  *   009_books_import       : the historical import: the line's document foreign key
  *                            becomes deferrable (lines first, then the issued import
  *                            document), an import's lines must sum to its totals
- *                            (BK005), and an import commits only with its stored
- *                            original (BK007)
+ *                            (BK005), an import commits only with its stored
+ *                            original (BK007), and negative (discount) lines are
+ *                            allowed on imports and their cancellations only (BK008)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,

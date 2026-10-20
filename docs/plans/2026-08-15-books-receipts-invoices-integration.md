@@ -1162,7 +1162,15 @@ Every choice below follows from the plan, the code or the law; decided, say so i
    requires at least one line and the lines summing exactly to the subtotal and tax (BK005, the
    check `draft -> issued` makes for editor documents). A deferred constraint trigger refuses
    the commit of an import without its stored original, pointed at and belonging to it (BK007,
-   mapped to `IMPORT_INCOMPLETE`).
+   mapped to `IMPORT_INCOMPLETE`). A fourth change, made after checking the real data (decision 18): the historical invoices
+   print a discount as a line of its own with a minus amount, so 007's static CHECKs that a
+   line's unit price and subtotal are not negative move into the line guard, which allows a
+   negative line only on an imported document (written before its document exists, whose
+   insert then requires `source = 'import'`) and on the draft credit note cancelling an
+   imported invoice; everywhere else a negative line is refused as before (BK008, mapped to
+   `INVALID_LINE`). Document totals stay non-negative (007's CHECKs, untouched). Tested: an
+   import with a discount line, its cancellation and the rendered credit note, and the refusal
+   on editor drafts, deferred or not.
 3. **Exactly one file, the original, never a render.** The JSON's `file` is stored in
    `sales_document_file` with its size and SHA-256 (renderer `import:original-pdf`) and pointed
    at by `rendered_pdf_file_id`, through the same file table the editor's documents use.
@@ -1236,7 +1244,13 @@ Every choice below follows from the plan, the code or the law; decided, say so i
    into `addressLine2`; a first line repeating the name is dropped. Both snapshots also keep
    the printed lines verbatim in a new optional `addressLines` field (optional, so every earlier
    snapshot stays valid); a customer number that is not a plain integer is kept as
-   `customerNumberText`.
+   `customerNumberText`. Addresses the extraction did not carry stay EMPTY, never invented, and are warned: a sender
+   printed without address lines (`sender_address_missing`), a recipient without street,
+   postal code or city (`recipient_address_incomplete`). A sender without a printed country is
+   German (section 19 UStG is German law; flagged `senderCountryInferred`, no warning); a
+   recipient with neither a printed nor an inferred country is assumed German and warned
+   (`recipient_country_assumed`). The recipient's VAT id is also found inside a longer printed
+   line ("UID ...; USt-IdNr ...") when exactly one EU VAT id is in it.
 10. **The sender's tax number and VAT id.** The input holds only whether they were printed
     (`taxNumberPresent`, `vatIdPresent`), not the values. The snapshot records null for both and
     the event records the two booleans; the stored original is the document of record for the
@@ -1250,18 +1264,24 @@ Every choice below follows from the plan, the code or the law; decided, say so i
     (tested).
 12. **Amounts: the printed figures are authoritative.** Money in cents and quantities in
     thousandths, exact (a value with finer digits is an error, never rounded). Lines are stored
-    as printed: quantity, unit price and the printed line total as the subtotal (discount 0,
-    since the input carries no reliable discount). The lines must sum exactly to the printed
-    total (else an error for that number). A line whose printed total is not quantity times
-    price (a rounding cent, as the real fixed fee of 3 x 1166.67 printed 3500.00; a discount
-    the extraction did not carry) is NEVER refused: the import reports the warning
-    `line_not_quantity_times_price` with the count and records it in the event (owner's rule
-    of 2026-10-20). A second warning, `issue_date_out_of_number_order`, flags an issue date
-    before an imported lower number's or after an imported higher number's (a swapped day and
-    month, typically, which the upload's extraction can produce). A line without quantity and
-    amount is a text line. A text longer than 300 characters becomes a 300-character title (cut
-    between whole characters, an emoji is never split) with the full text as the description.
-    The record's postal code is required for a German address and may be empty abroad.
+    as printed, with the printed line total as the subtotal; the lines must sum exactly to the
+    printed total (else an error for that number). What the print did not carry is derived and
+    warned, never refused (owner's rules of 2026-10-20):
+    - a line with a total but without a unit price gets the price from the total (divided by
+      the quantity when one is printed, else the quantity is 1): warning `line_price_derived`;
+    - a printed discount string is read when it is a percentage ("10 %") or an amount
+      ("50,00 EUR", relative to quantity times price) and kept as `discount_bp`; when it cannot
+      be read it stays 0, the printed line total stands: warning `discount_unparsed`;
+    - a printed discount LINE (a minus amount, the shape the real data uses) is a line of its
+      own at its printed amount (009, decision 2);
+    - a line whose printed total is not quantity times price less the discount (a rounding
+      cent, as the real fixed fee of 3 x 1166.67 printed 3500.00) is stored as printed:
+      warning `line_not_quantity_times_price`; a total above the arithmetic is never refused;
+    - an issue date before an imported lower number's or after an imported higher number's:
+      warning `issue_date_out_of_number_order` (a swapped day and month, typically).
+    A line without quantity, price and amount is a text line. A text longer than 300 characters
+    becomes a 300-character title (cut between whole characters) with the full text as the
+    description.
 13. **Dates and terms.** `issued_at` is noon UTC of the printed issue date (the same calendar
     day in every European time zone). A service date or period is taken when it is a real date;
     otherwise it is left empty and the event records `serviceDateUnparsed`. Payment terms in
@@ -1316,6 +1336,17 @@ Every choice below follows from the plan, the code or the law; decided, say so i
     input** of the record: the CLI passes the sender printed on that invoice, the upload will
     default it to the company's current sender block. A number already present is judged before
     any contact is created, so a re-run or a conflicting upload never adds contacts.
+
+18. **Checked against the real input (2026-10-20), without reading any value.** The mapping
+    was run over the private JSON and the PDFs, printing per number only the status, the reason
+    code and the warning codes. Result: **60 of 61 ready, 1 error.** The error is invoice 23,
+    `currency_unsupported`: it is billed in CHF, and the Books hold EUR only (007's currency
+    CHECK). Converting it would invent a EUR amount, so it is not imported; how to book it is the
+    owner's decision (roadmap line 4). Warnings on the 60 (counts of invoices): a unit price
+    derived from the printed total 32, sender address not in the extraction 12, recipient
+    address incomplete 2, recipient country assumed 1, a line not quantity times price 1 (the
+    fixed fee). Flags recorded in the events only: payment terms not readable 15, service date
+    or period not readable 9, a printed VAT-like identifier that is not an EU VAT id 2.
 
 **Operator steps** (live actions, not done here): after the deploy rolls `009_books_import` out
 and `pnpm books:init-company` has set the invoice counter to 62 for Whiz-Art Media (done in

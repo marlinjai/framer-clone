@@ -93,12 +93,12 @@ const lineSchema = z
     /** Thousandths (1.5 hours = 1500); 0 on a text line. */
     quantity: z.number().int().min(0).max(MAX_CENTS),
     unitLabel: text(40),
-    /** Cents. */
-    unitPrice: cents,
+    /** Cents; negative on a printed discount line. */
+    unitPrice: z.number().int().min(-MAX_CENTS).max(MAX_CENTS),
     /** Basis points as printed (0 when none); `subtotal` is the printed line total, authoritative even when it is not the arithmetic of the three. */
     discountBp: z.number().int().min(0).max(10000),
-    /** Cents, the printed line total. */
-    subtotal: cents,
+    /** Cents, the printed line total; negative on a printed discount line. */
+    subtotal: z.number().int().min(-MAX_CENTS).max(MAX_CENTS),
   })
   .superRefine((l, ctx) => {
     if (l.kind === 'text' && (l.quantity !== 0 || l.unitPrice !== 0 || l.subtotal !== 0 || l.discountBp !== 0)) {
@@ -113,11 +113,12 @@ const recipientSchema = z
     name: text(160),
     /** The printed address lines, verbatim, when known. */
     addressLines: printedLines,
-    addressLine1: text(300),
+    /** Empty when the print carries no street (warned: recipient_address_incomplete). */
+    addressLine1: z.string().trim().max(300),
     addressLine2: z.string().trim().max(300).nullable(),
-    /** Required for a German address; may be empty abroad, where some countries have none. */
+    /** Empty when the print carries none (abroad, or an incomplete print; warned). */
     postalCode: z.string().trim().max(20),
-    city: text(120),
+    city: z.string().trim().max(120),
     /** ISO 3166-1 alpha-2. */
     country: z.string().regex(/^[A-Z]{2}$/, 'expected an ISO 3166-1 alpha-2 code'),
     customerNumber: z.number().int().min(1).max(999_999_999).nullable(),
@@ -128,14 +129,17 @@ const recipientSchema = z
   .superRefine((r, ctx) => {
     // The contacts package's limit for a person's name (an organization's is 160).
     if (r.kind === 'person' && r.name.length > 120) ctx.addIssue({ code: 'custom', path: ['name'], message: 'a person name has at most 120 characters' });
-    if (r.country === 'DE' && r.postalCode === '') ctx.addIssue({ code: 'custom', path: ['postalCode'], message: 'a German address has a postal code' });
   });
 
-/** The issuer as printed on the invoice: the sender block's fields, plus the printed lines when known. */
+/**
+ * The issuer as printed on the invoice: the sender block's fields, plus the
+ * printed lines when known. The name is required; an address the extraction
+ * did not carry stays empty (warned: sender_address_missing), never invented:
+ * the stored original is the document of record for it.
+ */
 const senderSchema = senderBlockV1Schema.extend({ addressLines: printedLines }).superRefine((s, ctx) => {
-  for (const f of ['legalName', 'addressLine1', 'postalCode', 'city', 'countryCode'] as const) {
-    if (s[f] == null || s[f]!.trim() === '') ctx.addIssue({ code: 'custom', path: [f], message: 'required on an issued invoice' });
-  }
+  if (s.legalName == null || s.legalName.trim() === '') ctx.addIssue({ code: 'custom', path: ['legalName'], message: 'required' });
+  if (s.countryCode != null && !/^[A-Z]{2}$/.test(s.countryCode)) ctx.addIssue({ code: 'custom', path: ['countryCode'], message: 'expected an ISO 3166-1 alpha-2 code' });
 });
 
 /** Non-personal facts about the source, recorded in the `issued` event (counts and flags only). */
@@ -152,6 +156,14 @@ const provenanceSchema = z
     recipientVatIdUnparsed: z.boolean(),
     /** The recipient's country was not printed; the record's country was inferred. */
     recipientCountryInferred: z.boolean(),
+    /** Neither a printed nor an inferred recipient country: DE was assumed (warned). */
+    recipientCountryAssumed: z.boolean(),
+    /** No sender country printed: DE, since only a German business can invoice under section 19 UStG. */
+    senderCountryInferred: z.boolean(),
+    /** Billable lines printed without a unit price (and maybe without a quantity): derived from the printed line total (warned). */
+    linesPriceDerived: z.number().int().min(0).max(500),
+    /** Lines whose printed discount could not be read: kept at 0, the printed line total stands (warned). */
+    linesDiscountUnparsed: z.number().int().min(0).max(500),
     confidence: z.enum(['high', 'medium', 'low']),
   })
   .partial()
@@ -472,10 +484,10 @@ export async function resolveImportContact(
       contact = await book.create(scope.tenantId, {
         kind: latest.kind,
         name: latest.name,
-        addressLine1: latest.addressLine1,
+        addressLine1: latest.addressLine1 === '' ? null : latest.addressLine1,
         addressLine2: latest.addressLine2,
         postalCode: latest.postalCode === '' ? null : latest.postalCode,
-        city: latest.city,
+        city: latest.city === '' ? null : latest.city,
         country: latest.country,
         vatId: latest.vatId,
       });
@@ -602,10 +614,21 @@ export function importIssuedAt(issueDate: string): Date {
  *   - `issue_date_out_of_number_order`: the issue date lies before an imported
  *     lower number's date or after an imported higher number's (a swapped day
  *     and month, typically). Stored as given.
+ *   - `line_price_derived`, `discount_unparsed`: the source said so in the
+ *     record's provenance (a unit price taken from the line total, a printed
+ *     discount that could not be read).
+ *   - `sender_address_missing`, `recipient_address_incomplete`: an address the
+ *     record does not carry in full; stored empty, never invented.
+ *   - `recipient_country_assumed`: neither printed nor inferred, DE assumed.
  */
 export type ImportWarning =
   | { code: 'line_not_quantity_times_price'; count: number }
-  | { code: 'issue_date_out_of_number_order' };
+  | { code: 'line_price_derived'; count: number }
+  | { code: 'discount_unparsed'; count: number }
+  | { code: 'issue_date_out_of_number_order' }
+  | { code: 'sender_address_missing' }
+  | { code: 'recipient_address_incomplete' }
+  | { code: 'recipient_country_assumed' };
 
 /** The lines whose printed total is not their arithmetic (any difference, a rounding cent included). */
 export function linesNotQuantityTimesPrice(record: Pick<HistoricalInvoice, 'lines'>): number {
@@ -630,10 +653,25 @@ async function issueDateOutOfOrder(db: Db, scope: BooksScope, record: Historical
   return (row?.before != null && record.issueDate < row.before) || (row?.after != null && record.issueDate > row.after);
 }
 
-async function warningsFor(db: Db, scope: BooksScope, record: HistoricalInvoice): Promise<ImportWarning[]> {
+/** The warnings that follow from the record alone (no database). */
+export function recordWarnings(record: HistoricalInvoice): ImportWarning[] {
   const out: ImportWarning[] = [];
   const lines = linesNotQuantityTimesPrice(record);
   if (lines > 0) out.push({ code: 'line_not_quantity_times_price', count: lines });
+  const derived = record.provenance.linesPriceDerived ?? 0;
+  if (derived > 0) out.push({ code: 'line_price_derived', count: derived });
+  const discounts = record.provenance.linesDiscountUnparsed ?? 0;
+  if (discounts > 0) out.push({ code: 'discount_unparsed', count: discounts });
+  const blank = (v: string | null | undefined) => v == null || v.trim() === '';
+  if (blank(record.sender.addressLine1) || blank(record.sender.city)) out.push({ code: 'sender_address_missing' });
+  const r = record.recipient;
+  if (blank(r.addressLine1) || blank(r.postalCode) || blank(r.city)) out.push({ code: 'recipient_address_incomplete' });
+  if (record.provenance.recipientCountryAssumed) out.push({ code: 'recipient_country_assumed' });
+  return out;
+}
+
+async function warningsFor(db: Db, scope: BooksScope, record: HistoricalInvoice): Promise<ImportWarning[]> {
+  const out = recordWarnings(record);
   if (await issueDateOutOfOrder(db, scope, record)) out.push({ code: 'issue_date_out_of_number_order' });
   return out;
 }

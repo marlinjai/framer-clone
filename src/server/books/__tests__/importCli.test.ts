@@ -14,6 +14,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   countryCode,
   cutWhole,
+  discountBp,
+  extractVatId,
+  servicePeriodOf,
   errorCode,
   euros,
   inferKind,
@@ -27,7 +30,7 @@ import {
   type PlannedInvoice,
 } from '../importCli';
 import { BooksError } from '../errors';
-import { linesNotQuantityTimesPrice } from '../importInvoices';
+import { linesNotQuantityTimesPrice, recordWarnings } from '../importInvoices';
 
 const NOW = new Date('2026-10-20T10:00:00Z');
 const FILE = new Uint8Array(Buffer.from('%PDF-1.4 synthetic', 'latin1'));
@@ -143,6 +146,10 @@ describe('planInvoice: forward mapping', () => {
       paymentTermsUnparsed: false,
       recipientVatIdUnparsed: false,
       recipientCountryInferred: true,
+      recipientCountryAssumed: false,
+      senderCountryInferred: false,
+      linesPriceDerived: 0,
+      linesDiscountUnparsed: 0,
       confidence: 'high',
     });
   });
@@ -191,7 +198,7 @@ describe('planInvoice: forward mapping', () => {
     expect(linesNotQuantityTimesPrice(fee)).toBe(1);
     // A printed discount the extraction did not carry, and a total above the arithmetic: stored as printed too.
     const below = ready(planInvoice(7, entry({ lines: [{ description: 'Workshop', quantity: 2, unit: 'Tag', unitPrice: 500, discount: { percent: 10 }, lineTotal: 900 }], total: 900 }), FILE, NOW));
-    expect(below.lines[0]).toMatchObject({ subtotal: 90000, discountBp: 0 });
+    expect(below.lines[0]).toMatchObject({ subtotal: 90000, discountBp: 1000 });
     const above = ready(planInvoice(7, entry({ lines: [{ description: 'x', quantity: 1, unit: 'h', unitPrice: 100, lineTotal: 150.5 }] }), FILE, NOW));
     expect(above.lines[0].subtotal).toBe(15050);
     expect(linesNotQuantityTimesPrice(ready(planInvoice(7, entry(), FILE, NOW)))).toBe(0);
@@ -259,10 +266,8 @@ describe('planInvoice: skipped (missing) before error (inconsistent)', () => {
     ['tax_amounts_present', { taxAmounts: [{ rate: 19, amount: 1 }] }],
     ['issue_date_invalid', { issueDate: '2021-02-30' }],
     ['issue_date_in_future', { issueDate: '2027-01-01' }],
-    ['recipient_address_unparsed', { recipient: { name: 'Example Client GmbH', addressLines: ['Somewhere'], country: 'DE', customerNumber: null } }],
     ['recipient_country_unknown', { recipient: { name: 'Example Client GmbH', addressLines: ['Beispielweg 2', '20095 Hamburg'], country: 'Atlantis', customerNumber: null } }],
-    ['sender_address_unparsed', { sender: { name: 'Sample Studio', addressLines: ['10115 Berlin'], country: 'DE' } }],
-    ['sender_country_unknown', { sender: { name: 'Sample Studio', addressLines: ['Musterstrasse 1', '10115 Berlin'], country: null } }],
+    ['sender_country_unknown', { sender: { name: 'Sample Studio', addressLines: ['Musterstrasse 1', '10115 Berlin'], country: 'Atlantis' } }],
     ['small_business_note_missing', { smallBusinessNote: '' }],
     ['line_quantity_invalid', { lines: [{ description: 'x', quantity: 0.0005, unit: 'h', unitPrice: 1, lineTotal: 150.5 }] }],
     ['line_amount_invalid', { lines: [{ description: 'x', quantity: 1, unit: 'h', unitPrice: 1.005, lineTotal: 150.5 }] }],
@@ -284,10 +289,13 @@ describe('the small parsers', () => {
       addressLine2: 'c/o Office, z. Hd. Accounting',
       postalCode: '20095',
       city: 'Hamburg',
+      complete: true,
     });
-    expect(splitAddress('X', ['Hauptstrasse 5', '1010 Wien'])).toMatchObject({ postalCode: '1010', city: 'Wien' });
-    expect(splitAddress('X', ['20095 Hamburg'])).toBeNull();
-    expect(splitAddress('X', [])).toBeNull();
+    expect(splitAddress('X', ['Hauptstrasse 5', '1010 Wien'])).toMatchObject({ postalCode: '1010', city: 'Wien', complete: true });
+    // What the print does not carry stays empty, never invented.
+    expect(splitAddress('X', ['20095 Hamburg'])).toMatchObject({ addressLine1: '', postalCode: '20095', complete: false });
+    expect(splitAddress('X', ['Somewhere'])).toMatchObject({ addressLine1: 'Somewhere', postalCode: '', city: '', complete: false });
+    expect(splitAddress('X', [])).toEqual({ addressLines: [], addressLine1: '', addressLine2: null, postalCode: '', city: '', complete: false });
   });
 
   it('countryCode accepts codes and the common names, nothing else', () => {
@@ -359,9 +367,7 @@ describe('the report never carries input values', () => {
         number: 9, issueDate: '2021-01-01', total: 350000, status: 'imported', reason: null, otherFilesSkipped: 0,
         warnings: [{ code: 'line_not_quantity_times_price', count: 1 }, { code: 'issue_date_out_of_number_order' }],
       }),
-    ).toBe(
-      'invoice    9  2021-01-01     3500.00 EUR  imported [warning: 1 line(s) not quantity x price, stored as printed] [warning: issue date out of order with the neighbouring numbers]',
-    );
+    ).toBe('invoice    9  2021-01-01     3500.00 EUR  imported [warning: line_not_quantity_times_price x1] [warning: issue_date_out_of_number_order]');
   });
 
   it('a report line holds number, date, total and status only', () => {
@@ -410,5 +416,94 @@ describe('scriptErrorLine: what the script prints when the whole run is refused'
       'books:import: refused (ECONNREFUSED)',
     );
     expect(scriptErrorLine(new TypeError('Example Client GmbH'))).toBe('books:import: failed (TypeError)');
+  });
+});
+
+describe('the shapes of the real historical data, imported as printed', () => {
+  const line = (over: Record<string, unknown>) => ({ description: 'Design work', quantity: 2, unit: 'h', unitPrice: 500, discount: null, lineTotal: 1000, ...over });
+  const one = (lines: Array<Record<string, unknown>>, total: number, over: Record<string, unknown> = {}) =>
+    ready(planInvoice(7, entry({ lines, total, ...over }), FILE, NOW));
+
+  it('a discount printed as a percentage string', () => {
+    const inv = one([line({ discount: '10 %', lineTotal: 900 })], 900);
+    expect(inv.lines[0]).toMatchObject({ quantity: 2000, unitPrice: 50000, discountBp: 1000, subtotal: 90000 });
+    expect(inv.provenance.linesDiscountUnparsed).toBe(0);
+    expect(recordWarnings(inv)).toEqual([]);
+  });
+
+  it('a discount printed as an amount string', () => {
+    const inv = one([line({ discount: '50,00 €', lineTotal: 950 })], 950);
+    expect(inv.lines[0]).toMatchObject({ discountBp: 500, subtotal: 95000 });
+    expect(recordWarnings(inv)).toEqual([]);
+    expect(discountBp('EUR 1.000,50', 1000, 200000)).toBe(5003);
+  });
+
+  it('a discount it cannot read: kept at 0, the printed total stands, warned', () => {
+    const inv = one([line({ discount: 'Sonderrabatt', lineTotal: 900 })], 900);
+    expect(inv.lines[0]).toMatchObject({ discountBp: 0, subtotal: 90000 });
+    expect(inv.provenance.linesDiscountUnparsed).toBe(1);
+    expect(recordWarnings(inv)).toEqual([
+      { code: 'line_not_quantity_times_price', count: 1 },
+      { code: 'discount_unparsed', count: 1 },
+    ]);
+  });
+
+  it('a line without a unit price: the price comes from the printed total, warned', () => {
+    const inv = one([line({ quantity: 3, unitPrice: null, lineTotal: 300 })], 300);
+    expect(inv.lines[0]).toMatchObject({ kind: 'service', quantity: 3000, unitPrice: 10000, subtotal: 30000 });
+    expect(recordWarnings(inv)).toEqual([{ code: 'line_price_derived', count: 1 }]);
+  });
+
+  it('a line without quantity and unit price: once, at the printed total, warned', () => {
+    const inv = one([line({ quantity: null, unitPrice: null, unit: null, lineTotal: 250 })], 250);
+    expect(inv.lines[0]).toMatchObject({ kind: 'service', quantity: 1000, unitPrice: 25000, subtotal: 25000, unitLabel: 'Stk' });
+    expect(recordWarnings(inv)).toEqual([{ code: 'line_price_derived', count: 1 }]);
+  });
+
+  it('a line without quantity but with a unit price counts once at that price, warned', () => {
+    const inv = one([line({ quantity: null, unitPrice: 250, lineTotal: 250 })], 250);
+    expect(inv.lines[0]).toMatchObject({ quantity: 1000, unitPrice: 25000 });
+    expect(inv.provenance.linesPriceDerived).toBe(1);
+  });
+
+  it('a printed discount line with a minus amount is a line of its own, as printed', () => {
+    const inv = one([line({ lineTotal: 1000 }), line({ description: 'Rabatt 10 %', quantity: null, unitPrice: null, discount: '10 %', lineTotal: -100 })], 900);
+    expect(inv.lines[1]).toMatchObject({ kind: 'service', quantity: 1000, unitPrice: -10000, subtotal: -10000, discountBp: 0 });
+    expect(inv.total).toBe(90000);
+    expect(recordWarnings(inv)).toEqual([]);
+  });
+
+  it('a line with neither quantity, price nor amount is a text line', () => {
+    const inv = one([line({ quantity: null, unitPrice: null, lineTotal: 0, description: 'Phase one' }), line({})], 1000);
+    expect(inv.lines[0]).toMatchObject({ kind: 'text', quantity: 0, subtotal: 0 });
+  });
+
+  it('a sender printed without address or country: German (section 19), the address left empty, warned', () => {
+    const inv = one([line({})], 1000, { sender: { name: 'Sample Studio', addressLines: [], country: null } });
+    expect(inv.sender).toMatchObject({ legalName: 'Sample Studio', addressLine1: null, postalCode: null, city: null, countryCode: 'DE' });
+    expect(inv.provenance.senderCountryInferred).toBe(true);
+    expect(recordWarnings(inv)).toEqual([{ code: 'sender_address_missing' }]);
+  });
+
+  it('a recipient without postal line, printed or inferred country: kept as far as printed, DE assumed, warned', () => {
+    const inv = one([line({})], 1000, {
+      recipient: { name: 'Example Client GmbH', addressLines: ['Beispielweg 2'], country: null, countryInferred: null, customerNumber: null },
+    });
+    expect(inv.recipient).toMatchObject({ addressLine1: 'Beispielweg 2', postalCode: '', city: '', country: 'DE' });
+    expect(recordWarnings(inv)).toEqual([{ code: 'recipient_address_incomplete' }, { code: 'recipient_country_assumed' }]);
+  });
+
+  it('a VAT id inside a longer printed line is found; other identifiers are not taken for one', () => {
+    expect(extractVatId('de 123 456 789')).toBe('DE123456789');
+    expect(extractVatId('UID: CHE-123.456.789; USt-IdNr: DE123456789')).toBe('DE123456789');
+    expect(extractVatId('CHE-123.456.789 MWST')).toBeNull();
+    expect(extractVatId('DE123456789 / ATU12345678')).toBeNull();
+  });
+
+  it('a service period printed as text with two dates is read; anything else is flagged', () => {
+    expect(servicePeriodOf('2023-01-01 bis 2023-01-31')).toEqual({ start: '2023-01-01', end: '2023-01-31' });
+    expect(servicePeriodOf('01.02.2023 - 28.02.2023')).toEqual({ start: '2023-02-01', end: '2023-02-28' });
+    expect(servicePeriodOf('März 2023')).toBeNull();
+    expect(one([line({})], 1000, { servicePeriod: 'März 2023' }).provenance.serviceDateUnparsed).toBe(true);
   });
 });

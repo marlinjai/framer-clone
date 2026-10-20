@@ -13,6 +13,7 @@ import {
   judgeExisting,
   linesNotQuantityTimesPrice,
   parseHistoricalInvoice,
+  recordWarnings,
   recipientKey,
   type HistoricalInvoiceInput,
 } from '../importInvoices';
@@ -103,7 +104,8 @@ describe('parseHistoricalInvoice', () => {
     expect(refusedPaths(record({ issueDate: '2021-02-30', dueDate: null }))).toEqual(['issueDate']);
     expect(refusedPaths(record({ dueDate: '2021-03-01' }))).toEqual(['dueDate']);
     expect(refusedPaths(record({ servicePeriod: { start: '2021-03-01', end: '2021-02-01' } }))).toEqual(['servicePeriod']);
-    expect(refusedPaths(record({ sender: sender({ city: ' ' }) }))).toEqual(['sender.city']);
+    expect(refusedPaths(record({ sender: sender({ legalName: ' ' }) }))).toEqual(['sender.legalName']);
+    expect(refusedPaths(record({ sender: sender({ countryCode: 'Germany' }) }))).toEqual(['sender.countryCode']);
     expect(refusedPaths(record({ recipient: { ...record().recipient, country: 'Deutschland' } }))).toEqual(['recipient.country']);
     expect(refusedPaths(record({ recipient: { ...record().recipient, vatId: 'de 123' } }))).toEqual(['recipient.vatId']);
     expect(
@@ -129,9 +131,18 @@ describe('parseHistoricalInvoice', () => {
     expect(parseHistoricalInvoice(record({ recipient: { ...record().recipient, name: 'x'.repeat(160) } }), NOW).recipient.name).toHaveLength(160);
   });
 
-  it('a postal code is required in Germany and may be empty abroad', () => {
-    expect(refusedPaths(record({ recipient: { ...record().recipient, postalCode: '' } }))).toEqual(['recipient.postalCode']);
-    expect(parseHistoricalInvoice(record({ recipient: { ...record().recipient, postalCode: '', country: 'IE' } }), NOW).recipient.postalCode).toBe('');
+  it('an address the print does not carry stays empty and is warned, never refused or invented', () => {
+    const parsed = parseHistoricalInvoice(record({ recipient: { ...record().recipient, postalCode: '', city: '' }, sender: sender({ addressLine1: null, city: null }) }), NOW);
+    expect(recordWarnings(parsed)).toEqual([{ code: 'sender_address_missing' }, { code: 'recipient_address_incomplete' }]);
+  });
+
+  it('a printed discount line may carry a negative amount; the total may not', () => {
+    const lines = [
+      { kind: 'service', title: 'Design work', description: null, quantity: 1000, unitLabel: 'Stk', unitPrice: 10000, discountBp: 0, subtotal: 10000 },
+      { kind: 'service', title: 'Rabatt', description: null, quantity: 1000, unitLabel: 'Stk', unitPrice: -1000, discountBp: 0, subtotal: -1000 },
+    ];
+    expect(parseHistoricalInvoice(record({ lines, total: 9000 }), NOW).total).toBe(9000);
+    expect(refusedPaths(record({ lines: [lines[1]], total: -1000 }))).toContain('total');
   });
 
   it('takes any line arithmetic as printed (the warnings report it), but the lines must sum to the total', () => {

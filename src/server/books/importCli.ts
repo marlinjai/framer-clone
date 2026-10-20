@@ -96,9 +96,11 @@ const senderSchema = addressBlock.extend({
 
 const lineSchema = z.object({
   description: z.string(),
-  quantity: z.number().finite(),
+  /** Missing on some prints (a fixed fee): the line then counts once. */
+  quantity: z.number().finite().nullable().optional(),
   unit: z.string().nullable().optional(),
-  unitPrice: z.number().finite(),
+  /** Missing on many prints: derived from the printed line total. */
+  unitPrice: z.number().finite().nullable().optional(),
   discount: z.unknown().optional(),
   lineTotal: z.number().finite(),
 });
@@ -201,6 +203,16 @@ export function countryCode(value: string | null | undefined): string | null {
 /** A postal code line: optional country prefix (`D-`, `A-`), four or five digits, the city. */
 const POSTAL_LINE = /^(?:[A-Z]{1,2}[- ])?(\d{4,5})\s+(\S.*)$/;
 
+/** The snapshot's address fields from printed lines; `complete` says whether street, postal code and city were all found. */
+export interface SplitAddress {
+  addressLines: string[];
+  addressLine1: string;
+  addressLine2: string | null;
+  postalCode: string;
+  city: string;
+  complete: boolean;
+}
+
 /**
  * Split printed address lines into the snapshot's fields. The LAST line that
  * reads as postal code plus city gives `postalCode` and `city`; the line right
@@ -209,13 +221,12 @@ const POSTAL_LINE = /^(?:[A-Z]{1,2}[- ])?(\d{4,5})\s+(\S.*)$/;
  * line, a department) are joined into `addressLine2`; a first line repeating
  * the name is dropped; lines after the postal line (a country line) are left
  * out (the country is its own field). The printed lines are kept verbatim in
- * `addressLines`. Null when no line reads as postal code plus city, or no
- * street line precedes it.
+ * `addressLines`. What the print does not carry stays empty and `complete` is
+ * false (the import warns, it never invents an address): no postal line puts
+ * the last street-like line into `addressLine1`; no lines at all leave every
+ * field empty.
  */
-export function splitAddress(
-  name: string,
-  lines: readonly string[],
-): { addressLines: string[]; addressLine1: string; addressLine2: string | null; postalCode: string; city: string } | null {
+export function splitAddress(name: string, lines: readonly string[]): SplitAddress {
   const clean = lines.map((l) => l.trim()).filter((l) => l !== '');
   let at = -1;
   for (let i = clean.length - 1; i >= 0; i -= 1) {
@@ -224,17 +235,16 @@ export function splitAddress(
       break;
     }
   }
-  if (at < 0) return null;
-  const m = POSTAL_LINE.exec(clean[at])!;
-  const street = clean.slice(0, at);
+  const street = (at < 0 ? clean : clean.slice(0, at)).slice();
   if (street.length > 0 && street[0].toLowerCase() === name.trim().toLowerCase()) street.shift();
-  if (street.length === 0) return null;
+  const m = at < 0 ? null : POSTAL_LINE.exec(clean[at]);
   return {
     addressLines: clean,
-    addressLine1: street[street.length - 1],
+    addressLine1: street.length > 0 ? street[street.length - 1] : '',
     addressLine2: street.length > 1 ? street.slice(0, -1).join(', ') : null,
-    postalCode: m[1],
-    city: m[2].trim(),
+    postalCode: m ? m[1] : '',
+    city: m ? m[2].trim() : '',
+    complete: m !== null && street.length > 0,
   };
 }
 
@@ -258,12 +268,52 @@ export function paymentTermsDays(text: string | null | undefined): number | null
   return null;
 }
 
-function servicePeriodOf(value: unknown): { start: string; end: string } | null {
+/** `DD.MM.YYYY` or `YYYY-MM-DD` to `YYYY-MM-DD`; null when neither. */
+function isoOf(value: string): string | null {
+  const de = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(value);
+  const iso = de ? `${de[3]}-${de[2].padStart(2, '0')}-${de[1].padStart(2, '0')}` : value;
+  return isIsoDate(iso) ? iso : null;
+}
+
+/**
+ * A service period from an object (`start`/`end` or `from`/`to`) or from text
+ * naming exactly two dates ("2023-01-01 bis 2023-01-31", "01.01.2023 - 31.01.2023").
+ */
+export function servicePeriodOf(value: unknown): { start: string; end: string } | null {
+  if (typeof value === 'string') {
+    const dates = [...value.matchAll(/\d{4}-\d{2}-\d{2}|\d{1,2}\.\d{1,2}\.\d{4}/g)].map((m) => isoOf(m[0]));
+    if (dates.length !== 2 || dates.some((d) => d === null)) return null;
+    const [start, end] = dates as string[];
+    return start <= end ? { start, end } : null;
+  }
   const p = periodSchema.safeParse(value);
   if (!p.success) return null;
   const start = 'start' in p.data ? p.data.start : p.data.from;
   const end = 'end' in p.data ? p.data.end : p.data.to;
   return isIsoDate(start) && isIsoDate(end) && start <= end ? { start, end } : null;
+}
+
+/** The country prefixes of EU VAT ids (Greece is EL, Northern Ireland XI). */
+const EU_VAT_PREFIXES = new Set([
+  'AT', 'BE', 'BG', 'CY', 'CZ', 'DE', 'DK', 'EE', 'EL', 'ES', 'FI', 'FR', 'HR', 'HU', 'IE', 'IT', 'LT', 'LU', 'LV', 'MT', 'NL', 'PL',
+  'PT', 'RO', 'SE', 'SI', 'SK', 'XI',
+]);
+const VAT_SHAPE = /^[A-Z]{2}[A-Z0-9+*]{2,13}$/;
+
+/**
+ * The recipient's VAT id from the printed text: the whole text when it is one
+ * (spaces removed), otherwise the ONE token in it that is an EU VAT id (a
+ * printed line such as "UID: CHE-123.456.789; USt-IdNr: DE123456789" holds
+ * other identifiers too). null when none or more than one.
+ */
+export function extractVatId(text: string): string | null {
+  const whole = normalizeVatId(text);
+  if (VAT_SHAPE.test(whole) && EU_VAT_PREFIXES.has(whole.slice(0, 2)) && /\d/.test(whole)) return whole;
+  const tokens = text
+    .toUpperCase()
+    .split(/[\s;,:()]+/)
+    .filter((t) => VAT_SHAPE.test(t) && EU_VAT_PREFIXES.has(t.slice(0, 2)) && /\d/.test(t));
+  return new Set(tokens).size === 1 ? tokens[0] : null;
 }
 
 /** The longest prefix of whole code points within `max` UTF-16 units: an emoji is never cut in half. */
@@ -276,8 +326,61 @@ export function cutWhole(value: string, max: number): string {
   return out;
 }
 
-function mapLines(raw: NonNullable<RawInvoice['lines']>): HistoricalLine[] | PlanIssue {
+/** A decimal written either way ("10", "10.5", "10,5", "1.234,50"); null when it is not one. */
+function decimal(text: string): number | null {
+  const t = text.trim();
+  const normalized = t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t;
+  return /^\d+(\.\d+)?$/.test(normalized) ? Number(normalized) : null;
+}
+
+/**
+ * A printed discount as basis points of the line's quantity times price: a
+ * percentage ("10 %", "10%", "-10 %", {percent: 10}) directly, an amount
+ * ("50 EUR", "50,00 €", {amount: 50}) relative to quantity times price. null
+ * when it is something else. The printed line total stays authoritative either
+ * way; this only records what the print said.
+ */
+export function discountBp(discount: unknown, quantity: number, unitPrice: number): number | null {
+  const gross = Math.round((quantity * unitPrice) / 1000);
+  const fromPercent = (pct: number) => (pct >= 0 && pct <= 100 ? Math.round(pct * 100) : null);
+  const fromAmount = (euros: number) => {
+    const cents = Math.round(euros * 100);
+    return gross > 0 && cents >= 0 && cents <= gross ? Math.round((cents * 10000) / gross) : null;
+  };
+  if (typeof discount === 'string') {
+    const text = discount.trim().replace(/^-\s*/, '');
+    const pct = /^(.+?)\s*%$/.exec(text);
+    if (pct) {
+      const v = decimal(pct[1]);
+      return v === null ? null : fromPercent(v);
+    }
+    const amount = /^(?:€|EUR)?\s*(.+?)\s*(?:€|EUR)?$/i.exec(text);
+    if (amount && /€|EUR/i.test(text)) {
+      const v = decimal(amount[1]);
+      return v === null ? null : fromAmount(v);
+    }
+    return null;
+  }
+  if (typeof discount === 'object' && discount !== null) {
+    const d = discount as { percent?: unknown; amount?: unknown };
+    if (typeof d.percent === 'number') return fromPercent(Math.abs(d.percent));
+    if (typeof d.amount === 'number') return fromAmount(Math.abs(d.amount));
+  }
+  return null;
+}
+
+interface MappedLines {
+  lines: HistoricalLine[];
+  /** Billable lines whose unit price (and maybe quantity) was taken from the printed line total. */
+  priceDerived: number;
+  /** Lines with a printed discount that could not be read. */
+  discountUnparsed: number;
+}
+
+function mapLines(raw: NonNullable<RawInvoice['lines']>): MappedLines | PlanIssue {
   const out: HistoricalLine[] = [];
+  let priceDerived = 0;
+  let discountUnparsed = 0;
   for (const l of raw) {
     const text = l.description.trim();
     if (text === '') return { kind: 'error', reason: 'line_text_missing' };
@@ -285,25 +388,58 @@ function mapLines(raw: NonNullable<RawInvoice['lines']>): HistoricalLine[] | Pla
     const title = text.length <= 300 ? text : `${cutWhole(text, 299)}…`;
     const description = text.length <= 300 ? null : text;
     const unitLabel = cutWhole((l.unit ?? '').trim(), 40) || 'Stk';
-    const quantity = scaled(l.quantity, 1000);
-    const unitPrice = scaled(l.unitPrice, 100);
     const lineTotal = scaled(l.lineTotal, 100);
-    if (quantity === null || quantity < 0) return { kind: 'error', reason: 'line_quantity_invalid' };
-    if (unitPrice === null || lineTotal === null || unitPrice < 0 || lineTotal < 0 || unitPrice > MAX_CENTS || lineTotal > MAX_CENTS) {
-      return { kind: 'error', reason: 'line_amount_invalid' };
+    if (lineTotal === null || Math.abs(lineTotal) > MAX_CENTS) return { kind: 'error', reason: 'line_amount_invalid' };
+    let quantity = l.quantity == null ? null : scaled(l.quantity, 1000);
+    let unitPrice = l.unitPrice == null ? null : scaled(l.unitPrice, 100);
+    if (l.quantity != null && (quantity === null || quantity < 0)) return { kind: 'error', reason: 'line_quantity_invalid' };
+    if (l.unitPrice != null && (unitPrice === null || Math.abs(unitPrice) > MAX_CENTS)) return { kind: 'error', reason: 'line_amount_invalid' };
+    if (lineTotal < 0) {
+      // A printed discount line ("Rabatt 10 %" with a minus amount): stored as
+      // printed, once, at its printed amount. Its discount text is the label of
+      // the line, already expressed by the negative amount.
+      const q = quantity ?? 1000;
+      if (q === 0) return { kind: 'error', reason: 'line_quantity_invalid' };
+      out.push({
+        kind: 'service',
+        title,
+        description,
+        quantity: q,
+        unitLabel,
+        unitPrice: unitPrice ?? Math.round((lineTotal * 1000) / q),
+        discountBp: 0,
+        subtotal: lineTotal,
+      });
+      continue;
     }
-    if (quantity === 0) {
-      // A line without quantity is a text line, and carries no amount.
-      if (unitPrice !== 0 || lineTotal !== 0) return { kind: 'error', reason: 'line_quantity_invalid' };
+    if (unitPrice !== null && unitPrice < 0) return { kind: 'error', reason: 'line_amount_invalid' };
+
+    // No quantity, no price and no amount (or an explicit zero quantity without amount): a text line.
+    if ((quantity === null || quantity === 0) && lineTotal === 0 && (unitPrice === null || unitPrice === 0)) {
       out.push({ kind: 'text', title, description, quantity: 0, unitLabel, unitPrice: 0, discountBp: 0, subtotal: 0 });
       continue;
     }
-    // Stored as printed: the printed line total is authoritative. When it is not
-    // quantity times price (a rounding cent, a fixed fee, a discount the
-    // extraction did not carry) the import reports a warning, never refuses.
-    out.push({ kind: 'service', title, description, quantity, unitLabel, unitPrice, discountBp: 0, subtotal: lineTotal });
+    if (quantity === 0) return { kind: 'error', reason: 'line_quantity_invalid' };
+    // A printed amount without a quantity or a unit price: imported as printed,
+    // the quantity once when missing, the unit price from the line total.
+    if (quantity === null) quantity = 1000;
+    if (unitPrice === null) {
+      unitPrice = Math.min(MAX_CENTS, Math.round((lineTotal * 1000) / quantity));
+      priceDerived += 1;
+    } else if (l.quantity == null) {
+      priceDerived += 1;
+    }
+    let bp = 0;
+    if (l.discount != null && l.discount !== '') {
+      const parsed = discountBp(l.discount, quantity, unitPrice);
+      if (parsed === null) discountUnparsed += 1;
+      else bp = parsed;
+    }
+    // Stored as printed: the printed line total is authoritative. When it is
+    // not the arithmetic of the line, the core warns (line_not_quantity_times_price).
+    out.push({ kind: 'service', title, description, quantity, unitLabel, unitPrice, discountBp: bp, subtotal: lineTotal });
   }
-  return out;
+  return { lines: out, priceDerived, discountUnparsed };
 }
 
 /**
@@ -357,18 +493,22 @@ export function planInvoice(
   if (totalCents === null || totalCents < 0 || totalCents > MAX_CENTS) return issue('error', 'total_invalid');
 
   const recipientAddress = splitAddress(r.recipient.name, r.recipient.addressLines);
-  if (!recipientAddress) return issue('error', 'recipient_address_unparsed');
-  const countryInferred = r.recipient.country == null || r.recipient.country.trim() === '';
-  const recipientCountry = countryCode(countryInferred ? r.recipient.countryInferred : r.recipient.country);
+  const blank = (v: string | null | undefined) => v == null || v.trim() === '';
+  // The printed country, else the extraction's inference, else DE assumed (flagged, warned).
+  const countryInferred = blank(r.recipient.country);
+  const countryAssumed = countryInferred && blank(r.recipient.countryInferred);
+  const recipientCountry = countryAssumed ? 'DE' : countryCode(countryInferred ? r.recipient.countryInferred : r.recipient.country);
   if (!recipientCountry) return issue('error', 'recipient_country_unknown');
   const senderAddress = splitAddress(r.sender.name, r.sender.addressLines);
-  if (!senderAddress) return issue('error', 'sender_address_unparsed');
-  const senderCountry = countryCode(r.sender.country);
+  // Section 19 UStG is German law: an issuer without a printed country is in Germany (flagged).
+  const senderCountryInferred = blank(r.sender.country);
+  const senderCountry = senderCountryInferred ? 'DE' : countryCode(r.sender.country);
   if (!senderCountry) return issue('error', 'sender_country_unknown');
   if (!r.smallBusinessNote || r.smallBusinessNote.trim() === '') return issue('error', 'small_business_note_missing');
 
-  const lines = mapLines(r.lines);
-  if (!Array.isArray(lines)) return issue(lines.kind, lines.reason);
+  const mapped = mapLines(r.lines);
+  if ('reason' in mapped) return issue(mapped.kind, mapped.reason);
+  const lines = mapped.lines;
   if (!lines.some((l) => l.kind !== 'text')) return issue('skipped', 'lines_missing');
   const sum = lines.reduce((acc, l) => acc + l.subtotal, 0);
   if (sum !== totalCents) return issue('error', 'lines_do_not_sum_to_total');
@@ -377,8 +517,7 @@ export function planInvoice(
   // A printed VAT id that is not a valid one is not frozen, but recorded as such (never silently dropped).
   let vatIdUnparsed = false;
   if (r.recipientVatId && r.recipientVatId.trim() !== '') {
-    const v = normalizeVatId(r.recipientVatId);
-    vatId = /^[A-Z]{2}[A-Z0-9+*]{2,13}$/.test(v) ? v : null;
+    vatId = extractVatId(r.recipientVatId);
     vatIdUnparsed = vatId === null;
   }
   const rawNumber = r.recipient.customerNumber;
@@ -387,10 +526,11 @@ export function planInvoice(
 
   const sender: SenderBlockV1 & { addressLines: string[] } = {
     legalName: r.sender.name.trim(),
-    addressLine1: senderAddress.addressLine1,
+    // What the extraction did not carry stays empty (warned), never invented.
+    addressLine1: senderAddress.addressLine1 || null,
     addressLine2: senderAddress.addressLine2,
-    postalCode: senderAddress.postalCode,
-    city: senderAddress.city,
+    postalCode: senderAddress.postalCode || null,
+    city: senderAddress.city || null,
     countryCode: senderCountry,
     // The input says only whether these were printed; the original is the record of their values.
     taxNumber: null,
@@ -449,7 +589,11 @@ export function planInvoice(
           paidOnPresent: r.paidOn != null && r.paidOn.trim() !== '',
           paymentTermsUnparsed: terms === null,
           recipientVatIdUnparsed: vatIdUnparsed,
-          recipientCountryInferred: countryInferred,
+          recipientCountryInferred: countryInferred && !countryAssumed,
+          recipientCountryAssumed: countryAssumed,
+          senderCountryInferred,
+          linesPriceDerived: mapped.priceDerived,
+          linesDiscountUnparsed: mapped.discountUnparsed,
           confidence: r.confidence ?? 'low',
         },
       },
@@ -560,11 +704,7 @@ export function reportLine(row: ReportRow): string {
             ? 'would import'
             : 'imported';
   const other = row.otherFilesSkipped > 0 ? ` (${row.otherFilesSkipped} other file(s) not stored)` : '';
-  const warned = row.warnings.map((w) =>
-    w.code === 'line_not_quantity_times_price'
-      ? ` [warning: ${w.count} line(s) not quantity x price, stored as printed]`
-      : ' [warning: issue date out of order with the neighbouring numbers]',
-  );
+  const warned = row.warnings.map((w) => ` [warning: ${w.code}${'count' in w ? ` x${w.count}` : ''}]`);
   return `invoice ${String(row.number).padStart(4)}  ${row.issueDate ?? '????-??-??'}  ${euros(row.total).padStart(14)}  ${status}${other}${warned.join('')}`;
 }
 
