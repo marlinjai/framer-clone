@@ -53,6 +53,7 @@ import {
   type AiModelKey,
 } from '@/lib/ai/anthropicClient';
 import { buildSystemPrompt } from '@/lib/ai/promptCache';
+import { MODEL_CHOICES } from '@/lib/ai/modelChoice';
 import { createSseStream, SSE_HEADERS } from '@/lib/ai/sse';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
 import { activeScopeDenial, resolveActiveScope } from '@/server/sites';
@@ -82,7 +83,9 @@ const BodySchema = z.object({
   collectionId: z.string().min(1, 'collectionId is required'),
   workspaceId: z.string().min(1, 'workspaceId is required'),
   prompt: z.string().min(1, 'prompt must not be empty'),
-  model: z.enum(['HAIKU', 'SONNET', 'OPUS']).default('OPUS'),
+  // The slider's allowlist of model KEYS (never a raw model id); the key maps
+  // to the configured id on the server (resolveModelId / AI_MODELS).
+  model: z.enum(MODEL_CHOICES).default('OPUS'),
   runId: z.string().optional(),
   csvPayload: z
     .object({ name: z.string(), content: z.string() })

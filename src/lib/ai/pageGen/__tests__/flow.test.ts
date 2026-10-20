@@ -7,6 +7,7 @@ import {
   EMPTY_INPUTS,
   clearDraft,
   describeError,
+  describeImageFallbacks,
   flowReducer,
   initialFlow,
   loadDraft,
@@ -16,6 +17,7 @@ import {
   type FlowState,
 } from '../flow';
 import type { GenerationUndoRecord } from '../apply';
+import { saveModelChoice } from '@/lib/ai/modelChoice';
 
 const inputs: FlowInputs = { brief: 'A bakery page', targetKind: 'newPage', model: 'SONNET', pageTitle: '' };
 const record: GenerationUndoRecord = { kind: 'newPage', generationId: 'g1', pageId: 'p2', previousPageId: 'p1' };
@@ -113,7 +115,7 @@ describe('resume', () => {
   it('sanitises restored values', () => {
     window.localStorage.setItem(
       'framer-clone:page-gen-draft:proj-a',
-      JSON.stringify({ v: 1, projectId: 'proj-a', inputs: { brief: 4, targetKind: 'nuke', model: 'OPUS' } }),
+      JSON.stringify({ v: 1, projectId: 'proj-a', inputs: { brief: 4, targetKind: 'nuke', model: 'claude-opus-5-5' } }),
     );
     expect(loadDraft('proj-a')).toEqual(EMPTY_INPUTS);
   });
@@ -154,5 +156,42 @@ describe('describeError', () => {
     });
     expect(describeError({ code: 'rate_limited', message: 'Wait 30 seconds.' }).message).toBe('Wait 30 seconds.');
     expect(describeError({ code: 'weird', message: 'raw' }).message).toBe('raw');
+  });
+});
+
+describe('model choice across drafts', () => {
+  beforeEach(() => window.localStorage.clear());
+
+  it('the remembered slider choice wins over the draft, in every project', () => {
+    saveDraft('proj-a', { ...inputs, model: 'SONNET' });
+    saveModelChoice('page-gen', 'OPUS');
+    expect(loadDraft('proj-a').model).toBe('OPUS');
+    expect(loadDraft('proj-without-draft')).toEqual({ ...EMPTY_INPUTS, model: 'OPUS' });
+  });
+
+  it('without a remembered choice the draft (or the default) counts', () => {
+    saveDraft('proj-a', { ...inputs, model: 'HAIKU' });
+    expect(loadDraft('proj-a').model).toBe('HAIKU');
+    expect(loadDraft('proj-b').model).toBe('SONNET');
+  });
+});
+
+describe('describeImageFallbacks', () => {
+  it('is quiet when every image got a photo or none was asked for', () => {
+    expect(describeImageFallbacks(undefined)).toBeNull();
+    expect(describeImageFallbacks({ requested: 0, resolved: 0, fellBack: {}, credits: [] })).toBeNull();
+    expect(describeImageFallbacks({ requested: 2, resolved: 2, fellBack: {}, credits: [] })).toBeNull();
+  });
+
+  it('says how many images kept the placeholder, and why', () => {
+    expect(
+      describeImageFallbacks({ requested: 5, resolved: 1, fellBack: { rate_limited: 3, no_results: 1 }, credits: [] }),
+    ).toEqual([
+      '3 images use the placeholder: the hourly stock photo limit is used up, try again later.',
+      '1 image uses the placeholder: no matching photo was found.',
+    ]);
+    expect(describeImageFallbacks({ requested: 2, resolved: 0, fellBack: { disabled: 2 }, credits: [] })).toEqual([
+      '2 images use the placeholder: stock photos are not set up on this server.',
+    ]);
   });
 });

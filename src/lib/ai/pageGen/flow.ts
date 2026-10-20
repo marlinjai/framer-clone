@@ -15,7 +15,9 @@
 // (keeping the same input keeps it). The applied change itself stays in the
 // editor: Cmd+Z and the history panel still reach it.
 
-import type { PageGenErrorPayload, PageGenModel, PageGenProgress } from './protocol';
+import type { PageGenErrorPayload, PageGenModel, PageGenProgress, StockImageSummary } from './protocol';
+import { isModelChoice, loadModelChoice } from '@/lib/ai/modelChoice';
+import { GENERATION_LIMITS } from './schema';
 import type { GenerationUndoRecord } from './apply';
 import type { TargetKind } from './editorBridge';
 
@@ -42,6 +44,8 @@ export type FlowState =
       record: GenerationUndoRecord;
       nodeCount: number;
       warnings: string[];
+      /** Stock photos placed and images that kept the placeholder (with why). */
+      images?: StockImageSummary;
       undone: boolean;
       undoError?: string;
     };
@@ -50,7 +54,14 @@ export type FlowAction =
   | { type: 'edit'; inputs: Partial<FlowInputs>; targetKey: string }
   | { type: 'start'; requestKey: string }
   | { type: 'progress'; requestKey: string; progress: PageGenProgress }
-  | { type: 'applied'; requestKey: string; record: GenerationUndoRecord; nodeCount: number; warnings: string[] }
+  | {
+      type: 'applied';
+      requestKey: string;
+      record: GenerationUndoRecord;
+      nodeCount: number;
+      warnings: string[];
+      images?: StockImageSummary;
+    }
   | { type: 'failed'; requestKey: string; error: FlowError }
   | { type: 'cancel' }
   | { type: 'undone' }
@@ -100,6 +111,7 @@ export function flowReducer(state: FlowState, action: FlowAction): FlowState {
         record: action.record,
         nodeCount: action.nodeCount,
         warnings: action.warnings,
+        ...(action.images ? { images: action.images } : {}),
         undone: false,
       };
     case 'failed':
@@ -146,6 +158,36 @@ export function describeError(error: PageGenErrorPayload): FlowError {
   };
 }
 
+// ---------- stock photo note ----------
+
+const FALLBACK_REASON_TEXT: Record<string, string> = {
+  disabled: 'stock photos are not set up on this server',
+  auth: 'the stock photo service refused this server\'s key',
+  rate_limited: 'the hourly stock photo limit is used up, try again later',
+  unavailable: 'the stock photo service is unavailable',
+  timeout: 'the stock photo service did not answer in time',
+  no_results: 'no matching photo was found',
+  cap: `only the first ${GENERATION_LIMITS.maxStockImages} images of a generation get photos`,
+  invalid_query: 'the AI did not describe the picture usably',
+};
+
+/**
+ * The dialog's note about images that kept the placeholder, one line per
+ * reason, or null when every requested image got a photo (or none was asked
+ * for). Never an error: the generation itself succeeded.
+ */
+export function describeImageFallbacks(images: StockImageSummary | undefined): string[] | null {
+  if (!images) return null;
+  const lines = Object.entries(images.fellBack)
+    .filter(([, n]) => typeof n === 'number' && n > 0)
+    .map(([reason, n]) => {
+      const count = n as number;
+      const what = `${count} ${count === 1 ? 'image uses' : 'images use'} the placeholder`;
+      return `${what}: ${FALLBACK_REASON_TEXT[reason] ?? 'the photo could not be loaded'}.`;
+    });
+  return lines.length > 0 ? lines : null;
+}
+
 // ---------- draft persistence (resume) ----------
 
 const DRAFT_PREFIX = 'framer-clone:page-gen-draft:';
@@ -164,7 +206,17 @@ export function saveDraft(projectId: string, inputs: FlowInputs): void {
   }
 }
 
+/**
+ * The saved draft for a project, with the model the user last chose on the
+ * slider (remembered per browser across projects; the draft's own model only
+ * counts when no choice was remembered yet).
+ */
 export function loadDraft(projectId: string): FlowInputs {
+  const draft = readDraft(projectId);
+  return { ...draft, model: loadModelChoice('page-gen', draft.model) };
+}
+
+function readDraft(projectId: string): FlowInputs {
   try {
     const raw = window.localStorage.getItem(DRAFT_PREFIX + projectId);
     if (!raw) return EMPTY_INPUTS;
@@ -175,7 +227,7 @@ export function loadDraft(projectId: string): FlowInputs {
     return {
       brief: typeof i.brief === 'string' ? i.brief : '',
       targetKind: i.targetKind === 'replace' || i.targetKind === 'insert' ? i.targetKind : 'newPage',
-      model: i.model === 'HAIKU' ? 'HAIKU' : 'SONNET',
+      model: isModelChoice(i.model) ? i.model : EMPTY_INPUTS.model,
       pageTitle: typeof i.pageTitle === 'string' ? i.pageTitle : '',
     };
   } catch {
