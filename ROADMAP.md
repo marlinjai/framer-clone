@@ -16,15 +16,20 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   in progress since 2026-10-19: phases 1 to 3 (registry-generated schema docs with validation, the
   guarded `/api/ai/generate-page` route, the editor's "Generate page" dialog with undo) shipped;
   real Unsplash stock photos instead of the placeholder and a Fast / Balanced / Best model slider
-  (dialog and CMS agent) built on `feat/ai-stock-images` (2026-10-20, live once
-  `UNSPLASH_ACCESS_KEY` reaches the deployed app); phase 4's style references and screenshot loop
-  stay open. See [plan](docs/plans/ai-driven-page-generation.md). (2026-10-20)
-- [ ] Custom domains (Option B): let a site owner connect their own domain to a published site
+  (dialog and CMS agent) live since 2026-10-20 (#112, verified on app.lumitra.co: 4 photos from
+  images.unsplash.com with credits in the canvas and on the published page); phase 4's style
+  references and screenshot loop stay open. See [plan](docs/plans/ai-driven-page-generation.md).
+  (2026-10-20)
+- [x] Custom domains (Option B): a site owner connects their own domain to a published site
   (TXT ownership check, per-domain Let's Encrypt certificates through Traefik's file provider,
-  a Domains panel in the editor). Decided 2026-10-19 and built on branch `feat/custom-domains`;
-  goes live once the infra steps in the plan's reality section are applied on the shared server
-  (DNS-only target record, Infisical values, the sync timer) and one real domain is proven end to
-  end. See [plan](docs/plans/2026-06-25-framer-custom-domains.md). (2026-10-20)
+  a Domains panel in the editor; code in #103). Live since 2026-10-20: `domains.lumitra.co`
+  (DNS only, IPv4 only) is the CNAME target, the `CUSTOM_DOMAIN_*` values are set, and the sync
+  and re-check timers run on the shared server. Proven end to end with
+  `fc-cd-test.marlinjai.com`: verified in the Domains panel, route written within a minute, Let's
+  Encrypt certificate, `HTTP/2 200` with the site's page, `active` in the panel; then
+  disconnected, its records deleted and the route gone again. The infra side is recorded in
+  infra's deployments/framer-clone/RUNBOOK.md, phase 4. See
+  [plan](docs/plans/2026-06-25-framer-custom-domains.md). Done 2026-10-20.
 Build order decided by Marlin on 2026-10-15: finish the per-company schemas, get the app running
 again, then the invoicing tier on top, then the import of the existing invoices and the
 connections to the suite. The four lines below are in that order.
