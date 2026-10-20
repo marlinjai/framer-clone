@@ -154,11 +154,19 @@ describe('extractPrintedInvoice', () => {
     // The API compiles a strict schema and refuses more than 16 union-typed parameters (it refused 24).
     expect(strictSchemaProblems(tools[0].input_schema)).toEqual([]);
     expect(tools[0].strict).toBe(true);
-    // Forced tool use is a 400 on this model; thinking cannot be disabled or budgeted.
-    expect((params.tool_choice as { type: string }).type).toBe('auto');
-    expect(params).not.toHaveProperty('thinking');
-    // The default fallback needs its own beta.
-    expect(params).toMatchObject({ fallbacks: 'default', betas: ['server-side-fallback-2026-07-01'] });
+    // Exactly the request that returned 200 from the live API on 2026-10-20 (besides tools,
+    // system and messages): tool choice NOT forced (auto; forced any/tool is a 400 on this
+    // model), NO thinking parameter (adaptive by default; disabled or budgeted is a 400),
+    // effort low, the default fallback with its beta.
+    const rest = Object.fromEntries(Object.entries(params).filter(([k]) => !['tools', 'system', 'messages'].includes(k)));
+    expect(rest).toEqual({
+      model: 'claude-sonnet-5-5',
+      output_config: { effort: 'low' },
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      max_tokens: 16_000,
+      tool_choice: { type: 'auto', disable_parallel_tool_use: true },
+    });
   });
 
   it('the strict-schema check counts unions as the API does and names what it would refuse', () => {
