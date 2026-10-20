@@ -251,6 +251,12 @@ model Site {
   projectCreatedAt DateTime @map("project_created_at")
   projectUpdatedAt DateTime @map("project_updated_at")
 
+  // Old-slug redirects (src/lib/pages/redirects.ts): a JSON list of
+  // { from, pageId, createdAt }. Maintained by SiteRepository.saveProject when
+  // a page of an ever-published site changes its slug; the published router
+  // answers `from` with a 308 to the page's current path. Capped, never chained.
+  redirects Json @default("[]")
+
   // Persistence-layer timestamps (when the ROW was written), set by the DB.
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

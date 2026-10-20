@@ -1,24 +1,26 @@
 // src/components/sidebars/left/PagesPanel.tsx
 // Project page navigation. Lives in the top half of LeftSidebar's split pane.
-// Each row is click-to-switch; hover reveals a delete X (disabled when the
-// project has a single page so the editor never ends up with no current page).
+// Each row is click-to-switch; hover reveals a settings button and a delete X
+// (delete is unavailable for the home page, which the published site serves at
+// its root, and when the project has a single page so the editor never ends up
+// with no current page).
 //
-// Right-click any row for a context menu with Rename title, Edit slug, and
-// Delete. Rename / Edit slug become inline text inputs — commit on Enter or
-// blur, revert on Escape. Slug edits are rejected (row flashes red, revert)
-// if the slug is already taken within the project.
+// Page settings (name, URL slug, meta description) open in PageSettingsDialog,
+// from the row's settings button, a double-click on the row, or the "Page
+// settings" item of the row's context menu (right-click, or the context-menu
+// key / Shift+F10 on a focused row). The dialog is the one place a slug is
+// edited, so the slug rules and their explanations live in one spot.
 //
 // Improvements over Framer's equivalent list:
 //   - Slug shown inline under the title in muted text, always visible.
 //   - Layers remains visible in the bottom pane while navigating pages.
-//   - Rename/slug edit are inline and immediate, no modal.
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
-import { Plus, X, FileText, Search, Pencil, Link2, Trash2 } from 'lucide-react';
+import { Plus, X, FileText, Search, Settings2, Trash2, Home } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import type { PageModelType } from '@/models/PageModel';
-import type { ProjectModelType } from '@/models/ProjectModel';
+import PageSettingsDialog from './PageSettingsDialog';
 
 // --- Context menu ----------------------------------------------------------
 // Lightweight self-contained floating menu. Positions at (x, y) in viewport
@@ -31,11 +33,14 @@ interface MenuItem {
   disabled?: boolean;
 }
 
+/** Why the menu closed: Escape and choosing an item hand focus back to the row. */
+type MenuCloseReason = 'escape' | 'item' | 'outside';
+
 interface ContextMenuProps {
   x: number;
   y: number;
   items: MenuItem[];
-  onClose: () => void;
+  onClose: (reason: MenuCloseReason) => void;
 }
 
 const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
@@ -44,11 +49,13 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
   React.useEffect(() => {
     const onDown = (e: MouseEvent) => {
       if (!rootRef.current) return;
-      if (!rootRef.current.contains(e.target as Node)) onClose();
+      if (!rootRef.current.contains(e.target as Node)) onClose('outside');
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onClose('escape');
     };
+    // Keyboard users land on the first item.
+    rootRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not([disabled])')?.focus();
     // Register on the next tick so the click that opened the menu doesn't
     // immediately close it.
     const t = setTimeout(() => {
@@ -62,9 +69,32 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
     };
   }, [onClose]);
 
+  // Up and Down move between the enabled items, wrapping around; Escape
+  // closes. No key pressed inside the menu travels further, so Delete or
+  // Cmd+Z on a focused item never reaches the editor's canvas shortcuts.
+  const onMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose('escape');
+      return;
+    }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const buttons = Array.from(
+      rootRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled])') ?? [],
+    );
+    if (buttons.length === 0) return;
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const step = e.key === 'ArrowDown' ? 1 : -1;
+    buttons[(at + step + buttons.length) % buttons.length].focus();
+  };
+
   return (
     <div
       ref={rootRef}
+      role="menu"
+      onKeyDown={onMenuKeyDown}
       data-editor-ui="true"
       style={{ left: x, top: y }}
       className="fixed z-[200] min-w-[160px] bg-background border border-border rounded-md shadow-lg py-1"
@@ -73,11 +103,12 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
         <button
           key={item.label}
           type="button"
+          role="menuitem"
           disabled={item.disabled}
           onClick={() => {
             if (item.disabled) return;
             item.onClick();
-            onClose();
+            onClose('item');
           }}
           className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left transition-colors ${
             item.disabled
@@ -96,170 +127,85 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
 };
 
 // --- PageRow ---------------------------------------------------------------
-type EditField = null | 'title' | 'slug';
-
 interface PageRowProps {
   page: PageModelType;
-  project: ProjectModelType;
   isActive: boolean;
   canDelete: boolean;
-  editingField: EditField;
   onSelect: () => void;
   onDelete: () => void;
-  onBeginEdit: (field: Exclude<EditField, null>) => void;
-  onEndEdit: () => void;
+  /** `returnTo` gets the focus back when the dialog closes. */
+  onOpenSettings: (returnTo: HTMLElement | null) => void;
   onContextMenu: (event: React.MouseEvent) => void;
 }
 
 const PageRow = observer(({
   page,
-  project,
   isActive,
   canDelete,
-  editingField,
   onSelect,
   onDelete,
-  onBeginEdit,
-  onEndEdit,
+  onOpenSettings,
   onContextMenu,
 }: PageRowProps) => {
-  const [draft, setDraft] = React.useState('');
-  const [invalid, setInvalid] = React.useState(false);
-  const inputRef = React.useRef<HTMLInputElement>(null);
-
-  // Reset draft when editing mode toggles on.
-  React.useEffect(() => {
-    if (editingField === 'title') setDraft(page.metadata.title);
-    else if (editingField === 'slug') setDraft(page.slug);
-    setInvalid(false);
-    // Focus + select-all on the next frame so the input is actually mounted.
-    if (editingField !== null) {
-      const t = setTimeout(() => {
-        inputRef.current?.focus();
-        inputRef.current?.select();
-      }, 0);
-      return () => clearTimeout(t);
-    }
-  }, [editingField, page.metadata.title, page.slug]);
-
-  const commit = () => {
-    if (!editingField) return;
-    const value = draft.trim();
-    if (editingField === 'title') {
-      if (!value || value === page.metadata.title) {
-        onEndEdit();
-        return;
-      }
-      project.renamePage(page.id, value);
-      onEndEdit();
-    } else if (editingField === 'slug') {
-      if (!value || value === page.slug) {
-        onEndEdit();
-        return;
-      }
-      const ok = project.setPageSlug(page.id, value);
-      if (!ok) {
-        // Flash red and keep the field open so the user can try again.
-        setInvalid(true);
-        return;
-      }
-      onEndEdit();
-    }
-  };
-
-  const cancel = () => {
-    setInvalid(false);
-    onEndEdit();
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      commit();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      cancel();
-    }
-    // Stop global editor shortcuts (Delete = remove component etc.) from
-    // firing while the input has focus.
-    e.stopPropagation();
-  };
-
+  const title = page.metadata.title;
   return (
     <div
-      className={`group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
+      data-testid={`page-row-${page.id}`}
+      className={`group flex items-center gap-1 pr-1 rounded transition-colors ${
         isActive ? 'bg-brand/10 border-l-2 border-brand' : 'hover:bg-accent border-l-2 border-transparent'
       }`}
-      onClick={() => {
-        if (editingField) return;
-        onSelect();
-      }}
       onContextMenu={onContextMenu}
+      onDoubleClick={e => {
+        e.stopPropagation();
+        onOpenSettings(
+          e.currentTarget.querySelector<HTMLElement>('[data-page-settings-button]'),
+        );
+      }}
+      // Delete and Backspace on a focused row control must not reach the
+      // editor's "delete the selected element" shortcut.
+      onKeyDown={e => {
+        if (e.key === 'Delete' || e.key === 'Backspace') e.stopPropagation();
+      }}
     >
-      <FileText size={12} className={`shrink-0 ${isActive ? 'text-brand' : 'text-muted-foreground'}`} />
-      <div className="flex-1 min-w-0">
-        {editingField === 'title' ? (
-          <input
-            ref={inputRef}
-            type="text"
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={onKeyDown}
-            onClick={e => e.stopPropagation()}
-            className="w-full bg-background border border-brand rounded px-1 py-[1px] text-sm text-foreground outline-none"
-          />
-        ) : (
-          <div
-            className={`text-sm truncate ${isActive ? 'font-medium text-foreground' : 'text-foreground'}`}
-            onDoubleClick={e => {
-              e.stopPropagation();
-              onBeginEdit('title');
-            }}
-          >
-            {page.metadata.title}
-          </div>
-        )}
-        {editingField === 'slug' ? (
-          <div className="flex items-center gap-0.5">
-            <span className="text-[10px] text-muted-foreground">/</span>
-            <input
-              ref={inputRef}
-              type="text"
-              value={draft}
-              onChange={e => setDraft(e.target.value)}
-              onBlur={commit}
-              onKeyDown={onKeyDown}
-              onClick={e => e.stopPropagation()}
-              className={`flex-1 min-w-0 bg-background border rounded px-1 py-[1px] text-[10px] text-foreground outline-none ${
-                invalid ? 'border-destructive' : 'border-brand'
-              }`}
-              title={invalid ? 'Slug already in use' : undefined}
-            />
-          </div>
-        ) : (
-          page.slug && (
-            <div
-              className="text-[10px] text-muted-foreground truncate leading-tight"
-              onDoubleClick={e => {
-                e.stopPropagation();
-                onBeginEdit('slug');
-              }}
-            >
-              /{page.slug}
-            </div>
-          )
-        )}
-      </div>
-      {canDelete && editingField === null && (
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-current={isActive ? 'page' : undefined}
+        className="flex flex-1 min-w-0 items-center gap-2 px-2 py-1.5 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <FileText size={12} className={`shrink-0 ${isActive ? 'text-brand' : 'text-muted-foreground'}`} />
+        <span className="flex-1 min-w-0">
+          <span className={`block text-sm truncate text-foreground ${isActive ? 'font-medium' : ''}`}>
+            {title}
+          </span>
+          <span className="block text-[10px] text-muted-foreground truncate leading-tight">
+            /{page.slug}
+          </span>
+        </span>
+      </button>
+      <button
+        type="button"
+        data-page-settings-button=""
+        onClick={e => {
+          e.stopPropagation();
+          onOpenSettings(e.currentTarget);
+        }}
+        aria-label={`Page settings for ${title}`}
+        title="Page settings"
+        className="p-0.5 rounded text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground hover:bg-accent transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <Settings2 size={12} />
+      </button>
+      {canDelete && (
         <button
           type="button"
           onClick={e => {
             e.stopPropagation();
             onDelete();
           }}
+          aria-label={`Delete page ${title}`}
           title="Delete page"
-          className="p-0.5 rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground hover:bg-accent transition-opacity"
+          className="p-0.5 rounded text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground hover:bg-accent transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <X size={12} />
         </button>
@@ -274,8 +220,9 @@ const PagesPanel = observer(() => {
   const { editorUI } = useStore();
   const project = editorUI.currentProject;
   const [query, setQuery] = React.useState('');
-  const [editingPageId, setEditingPageId] = React.useState<string | null>(null);
-  const [editingField, setEditingField] = React.useState<EditField>(null);
+  const [settingsPageId, setSettingsPageId] = React.useState<string | null>(null);
+  // The row control focus returns to when the menu or the dialog closes.
+  const returnFocusRef = React.useRef<HTMLElement | null>(null);
   const [menu, setMenu] = React.useState<{ x: number; y: number; pageId: string } | null>(null);
 
   if (!project) {
@@ -301,8 +248,13 @@ const PagesPanel = observer(() => {
     editorUI.setCurrentPage(page);
   };
 
+  // The home page (empty slug) is what the published site serves at its root,
+  // so deleting it would leave the site's address answering 404. It cannot be
+  // deleted (an extra empty-slug page in an older project can).
+  const canDeletePage = (pageId: string) =>
+    project.pages.size > 1 && !project.isSlugLocked(pageId);
   const handleDelete = (pageId: string) => {
-    if (project.pages.size <= 1) return;
+    if (!canDeletePage(pageId)) return;
     if (editorUI.currentPage?.id === pageId) {
       const next = pages.find(p => p.id !== pageId);
       if (next) editorUI.setCurrentPage(next);
@@ -313,19 +265,33 @@ const PagesPanel = observer(() => {
   const openMenu = (pageId: string) => (event: React.MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    setMenu({ x: event.clientX, y: event.clientY, pageId });
+    // The context-menu key (or Shift+F10) on a focused row fires this with no
+    // pointer position: anchor the menu to the row instead.
+    let { clientX: x, clientY: y } = event;
+    if (x === 0 && y === 0) {
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      x = rect.left + 16;
+      y = rect.bottom;
+    }
+    returnFocusRef.current =
+      (event.currentTarget as HTMLElement).querySelector<HTMLElement>('button') ?? null;
+    setMenu({ x, y, pageId });
   };
 
-  const beginEdit = (pageId: string, field: Exclude<EditField, null>) => {
-    setEditingPageId(pageId);
-    setEditingField(field);
+  const openSettings = (pageId: string, returnTo: HTMLElement | null) => {
+    returnFocusRef.current = returnTo;
+    setSettingsPageId(pageId);
   };
-  const endEdit = () => {
-    setEditingPageId(null);
-    setEditingField(null);
+
+  // Escape or choosing an item hands focus back to the row the menu came
+  // from; a click elsewhere leaves focus where that click put it.
+  const closeMenu = (reason: MenuCloseReason) => {
+    setMenu(null);
+    if (reason !== 'outside') returnFocusRef.current?.focus();
   };
 
   const menuPage = menu ? project.getPage(menu.pageId) : undefined;
+  const settingsPage = settingsPageId ? project.getPage(settingsPageId) ?? null : null;
 
   return (
     <div className="flex flex-col h-full">
@@ -384,14 +350,11 @@ const PagesPanel = observer(() => {
             <PageRow
               key={page.id}
               page={page}
-              project={project}
               isActive={editorUI.currentPage?.id === page.id}
-              canDelete={pages.length > 1}
-              editingField={editingPageId === page.id ? editingField : null}
+              canDelete={canDeletePage(page.id)}
               onSelect={() => editorUI.setCurrentPage(page)}
               onDelete={() => handleDelete(page.id)}
-              onBeginEdit={field => beginEdit(page.id, field)}
-              onEndEdit={endEdit}
+              onOpenSettings={returnTo => openSettings(page.id, returnTo)}
               onContextMenu={openMenu(page.id)}
             />
           ))
@@ -402,28 +365,39 @@ const PagesPanel = observer(() => {
         <ContextMenu
           x={menu.x}
           y={menu.y}
-          onClose={() => setMenu(null)}
+          onClose={closeMenu}
           items={[
             {
-              label: 'Rename',
-              icon: <Pencil size={14} />,
-              onClick: () => beginEdit(menu.pageId, 'title'),
+              label: 'Page settings',
+              icon: <Settings2 size={14} />,
+              onClick: () => setSettingsPageId(menu.pageId),
             },
-            {
-              label: 'Edit slug',
-              icon: <Link2 size={14} />,
-              onClick: () => beginEdit(menu.pageId, 'slug'),
-            },
+            // A project without a home page (older projects could delete it)
+            // answers 404 at its root; any page can take that place.
+            ...(project.hasHomePage
+              ? []
+              : [{
+                  label: 'Make home page',
+                  icon: <Home size={14} />,
+                  onClick: () => project.makeHomePage(menu.pageId),
+                }]),
             {
               label: 'Delete',
               icon: <Trash2 size={14} />,
               onClick: () => handleDelete(menu.pageId),
               destructive: true,
-              disabled: pages.length <= 1,
+              disabled: !canDeletePage(menuPage.id),
             },
           ]}
         />
       )}
+
+      <PageSettingsDialog
+        page={settingsPage}
+        project={project}
+        onClose={() => setSettingsPageId(null)}
+        returnFocusTo={returnFocusRef}
+      />
     </div>
   );
 });

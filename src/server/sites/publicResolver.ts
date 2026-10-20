@@ -30,6 +30,7 @@ import type { PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
 import type { PageSnapshotOut } from '@/models/PageModel';
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
+import { parseSiteRedirects, type SiteRedirect } from '@/lib/pages/redirects';
 import { RFC1035_LABEL } from '@/server/sites/subdomain';
 import {
   isClaimableHostname,
@@ -62,6 +63,8 @@ export interface PublishedSite {
   apiKeyRef: string | null;
   lumitraEnabled: boolean;
   pages: PublishedPageRow[];
+  /** Old-slug redirects (src/lib/pages/redirects.ts), applied when no page matches. */
+  redirects: SiteRedirect[];
 }
 
 /**
@@ -204,6 +207,7 @@ export async function resolvePublishedSiteByKey(
       ingestionEndpoint: true,
       apiKeyRef: true,
       lumitraEnabled: true,
+      redirects: true,
       pages: { select: { pageId: true, slug: true, snapshot: true } },
     },
   });
@@ -223,6 +227,7 @@ export async function resolvePublishedSiteByKey(
       slug: p.slug,
       snapshot: p.snapshot as unknown as PageSnapshotOut,
     })),
+    redirects: parseSiteRedirects(site.redirects),
   };
 }
 
@@ -283,7 +288,8 @@ function matchOne(pattern: string[], request: string[]): Record<string, string> 
 
 /**
  * Match the request slug (the catch-all segments) to a page. Empty segments
- * resolve the HOME page (a page whose slug is empty / `/` / `index` / `home`).
+ * resolve the HOME page (the page whose slug is empty, else one slugged
+ * `index` / `home`).
  * EXACT (static) matches win over dynamic (`:param`) matches, so a literal
  * `/products/sale` page beats a `/products/:handle` page. Returns null when no
  * page matches (the route 404s).
@@ -303,10 +309,15 @@ export function matchPageBySlug(
   }
 
   if (request.length === 0) {
-    const home = pages.find((p) => {
-      const segs = slugSegments(p.slug);
-      return segs.length === 0 || segs.join('/') === 'index' || segs.join('/') === 'home';
-    });
+    // The page with the empty slug IS the home page; the `index` / `home`
+    // aliases only stand in when no such page exists, so a page slugged `home`
+    // can never shadow the real home page whatever the row order.
+    const home =
+      pages.find((p) => slugSegments(p.slug).length === 0) ??
+      pages.find((p) => {
+        const joined = slugSegments(p.slug).join('/').toLowerCase();
+        return joined === 'index' || joined === 'home';
+      });
     return home ? { page: home, params: {} } : null;
   }
 

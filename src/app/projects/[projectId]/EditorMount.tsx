@@ -11,17 +11,26 @@
 // no server-only code ever reaches the client bundle.
 //
 // The snapshot is passed straight through to EditorApp's `projectSnapshot`
-// prop, which hydrates THAT project (MT-08) instead of seeding the demo.
+// prop, which hydrates THAT project (MT-08) instead of seeding the demo. The
+// site's address goes into SiteAddressProvider for the page settings panel.
 
 import dynamic from 'next/dynamic';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
+import { SiteAddressProvider, type SiteAddress } from '@/contexts/SiteAddressContext';
 
 const EditorApp = dynamic(() => import('@/components/EditorApp'), { ssr: false });
 
 export default function EditorMount({
   projectSnapshot,
+  site,
 }: {
   projectSnapshot: ProjectSnapshotOut;
+  /** Where the published site lives (page settings URL preview). */
+  site?: SiteAddress;
 }) {
-  return <EditorApp projectSnapshot={projectSnapshot} />;
+  return (
+    <SiteAddressProvider initial={site}>
+      <EditorApp projectSnapshot={projectSnapshot} />
+    </SiteAddressProvider>
+  );
 }

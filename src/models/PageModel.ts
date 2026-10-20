@@ -119,8 +119,9 @@ const PageModel = PageWithComponents
     self.updatedAt = new Date();
   },
 
-  // Set the URL slug. Caller is responsible for collision checks within the
-  // project — ProjectModel.setPageSlug wraps this with that guarantee.
+  // Set the URL slug. Caller is responsible for the slug rules and collision
+  // checks within the project: ProjectModel.setPageSlug and
+  // ProjectModel.updatePageSettings wrap this with that guarantee.
   setSlug(slug: string) {
     self.slug = slug;
     self.updatedAt = new Date();
@@ -460,6 +461,12 @@ const PageModel = PageWithComponents
   // Get page URL based on slug
   get url() {
     return `/${self.slug}`;
+  },
+
+  // The home page is the page with the empty slug: the published router
+  // serves it at the site root, so its slug is never editable.
+  get isHome() {
+    return self.slug === '';
   },
   
   // Get full page title (with site name if needed)

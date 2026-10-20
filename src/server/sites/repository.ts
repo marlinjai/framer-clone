@@ -32,11 +32,14 @@ import {
   type SiteRowData,
 } from './snapshot';
 import {
+  InvalidPageSlugError,
   InvalidTenantScopeError,
   SiteNameConflictError,
   SiteNotFoundError,
   SubdomainAllocationError,
 } from './errors';
+import { findProjectSlugProblem } from '@/lib/pages/slug';
+import { nextSiteRedirects, parseSiteRedirects } from '@/lib/pages/redirects';
 import { generateSubdomain } from './subdomain';
 
 /**
@@ -48,6 +51,26 @@ import { generateSubdomain } from './subdomain';
  * to never loop forever — exhaustion throws a loud 500 rather than spinning.
  */
 const SUBDOMAIN_ALLOCATION_ATTEMPTS = 5;
+
+/** How often a save that lost a serialization conflict (P2034) is retried. */
+const SERIALIZATION_ATTEMPTS = 4;
+
+/**
+ * Run a SERIALIZABLE transaction, retrying when Postgres aborted it because a
+ * concurrent transaction touched the same rows (Prisma code P2034). Any other
+ * error, or the last conflict, is rethrown unchanged.
+ */
+async function withSerializationRetry<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run();
+    } catch (err) {
+      const conflict =
+        err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034';
+      if (!conflict || attempt >= SERIALIZATION_ATTEMPTS) throw err;
+    }
+  }
+}
 
 /**
  * The tenant scope every repository call is bound to. Resolved by the caller
@@ -197,17 +220,60 @@ export class SiteRepository {
     assertScope(scope);
     const persisted: PersistedSite = projectToPersisted(project);
 
-    await this.prisma.$transaction(async (tx) => {
+    // SERIALIZABLE: the redirect list is read, changed and written back, so
+    // two overlapping saves of one site must not each write a list missing
+    // the other's entry. Postgres aborts one of them (P2034) instead; it is
+    // retried a few times, then surfaces loudly as a failed save.
+    await withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
       // Guard: if this site id already exists, it MUST be in the caller's
       // workspace. A row in another workspace means a cross-tenant collision —
       // refuse rather than overwrite or leak.
       const existing = await tx.site.findUnique({
         where: { id: persisted.siteId },
-        select: { id: true, workspaceId: true },
+        select: { id: true, workspaceId: true, redirects: true },
       });
       if (existing && existing.workspaceId !== scope.workspaceId) {
         throw new SiteNotFoundError(persisted.siteId);
       }
+
+      // Slug rules (src/lib/pages/slug.ts), checked against the slugs stored
+      // today: an unchanged slug is grandfathered, a new or changed one must be
+      // valid and unique, the home page's empty slug never changes. A request
+      // that breaks them writes nothing (400).
+      const storedRows = existing
+        ? await tx.sitePage.findMany({
+            where: { siteId: persisted.siteId },
+            select: { pageId: true, slug: true },
+          })
+        : [];
+      const storedSlugs = new Map(storedRows.map((r) => [r.pageId, r.slug]));
+      const problem = findProjectSlugProblem(
+        persisted.pages.map((p) => ({
+          pageId: p.pageId,
+          slug: p.slug,
+          title: (p.snapshot as { metadata?: { title?: unknown } }).metadata?.title as string | undefined,
+        })),
+        storedSlugs,
+      );
+      if (problem) throw new InvalidPageSlugError(problem.pageId, problem.code, problem.message);
+
+      // Old-slug redirects (src/lib/pages/redirects.ts): once a site has been
+      // published (it holds a platform subdomain), a changed slug keeps its old
+      // path as a redirect to the page. Cleaned on every save: entries for
+      // deleted pages, or whose path a page now claims, are dropped.
+      const everPublished = existing
+        ? (await tx.siteDomain.findFirst({
+            where: { siteId: persisted.siteId, subdomain: { not: null } },
+            select: { id: true },
+          })) !== null
+        : false;
+      const redirects = nextSiteRedirects({
+        previous: parseSiteRedirects(existing?.redirects),
+        storedSlugs,
+        pages: persisted.pages,
+        everPublished,
+        now: new Date(),
+      });
 
       // Upsert the site row. On create, status defaults to `draft` (the DB
       // default); on update, status is left untouched (publish/archive own it).
@@ -225,6 +291,7 @@ export class SiteRepository {
           lumitraEnabled: persisted.lumitraEnabled,
           projectCreatedAt: new Date(persisted.projectCreatedAt),
           projectUpdatedAt: new Date(persisted.projectUpdatedAt),
+          redirects: redirects as unknown as Prisma.InputJsonValue,
         },
         // `name` is written on create only. After that the rename action
         // (renameSite, PATCH /api/projects/<id>) is its only writer: an editor
@@ -240,6 +307,7 @@ export class SiteRepository {
           // projectCreatedAt is immutable (set on create); only the
           // application "last edited" time advances on update.
           projectUpdatedAt: new Date(persisted.projectUpdatedAt),
+          redirects: redirects as unknown as Prisma.InputJsonValue,
         },
       });
 
@@ -277,7 +345,7 @@ export class SiteRepository {
             ? { siteId: persisted.siteId, pageId: { notIn: keepPageIds } }
             : { siteId: persisted.siteId },
       });
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
   }
 
   /**
@@ -432,6 +500,56 @@ export class SiteRepository {
     // Every attempt collided — astronomically unlikely, so a real occurrence is
     // a loud signal, never a silent publish-with-no-URL.
     throw new SubdomainAllocationError(siteId, SUBDOMAIN_ALLOCATION_ATTEMPTS);
+  }
+
+  /**
+   * Where a site lives for its owner's eyes (the page settings URL preview),
+   * scoped to the caller's workspace. `host` is the address visitors use: a
+   * connected custom domain that serves the site (verified or active, the one
+   * connected first), else `<subdomain>.<baseHost>`, else null when the site
+   * has never been published or no base host is configured. `everPublished`
+   * is true once a platform subdomain was allocated (the first publish), which
+   * is also when changed slugs start keeping redirects. A missing or foreign
+   * site throws SiteNotFoundError.
+   */
+  async getSiteAddress(
+    scope: TenantScope,
+    siteId: string,
+    baseHost: string | null | undefined = process.env.PUBLIC_SITE_BASE_HOST,
+  ): Promise<{ host: string | null; everPublished: boolean }> {
+    assertScope(scope);
+    const site = await this.prisma.site.findFirst({
+      where: { id: siteId, workspaceId: scope.workspaceId },
+      select: {
+        domains: {
+          select: {
+            subdomain: true,
+            customHostname: true,
+            verificationStatus: true,
+            activatedAt: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+    if (!site) throw new SiteNotFoundError(siteId);
+
+    const platform = site.domains.find((d) => d.subdomain);
+    const custom = site.domains
+      .filter(
+        (d) =>
+          d.customHostname &&
+          (d.verificationStatus === 'verified' || d.verificationStatus === 'active'),
+      )
+      .sort(
+        (a, b) =>
+          (a.activatedAt ?? a.createdAt).getTime() - (b.activatedAt ?? b.createdAt).getTime(),
+      )[0];
+    const base = baseHost?.trim().toLowerCase().replace(/\.$/, '');
+    const host =
+      custom?.customHostname ??
+      (platform?.subdomain && base ? `${platform.subdomain}.${base}` : null);
+    return { host, everPublished: Boolean(platform) };
   }
 
   /**
