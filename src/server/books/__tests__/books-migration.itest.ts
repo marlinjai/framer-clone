@@ -7,6 +7,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { sql } from 'kysely';
 import { provisionTenant } from '@marlinjai/tenant-db';
 
 import { commerceProvisionOptions } from '../../commerce/provisioning/provision';
@@ -79,6 +80,8 @@ describe('007_books structure', () => {
       'sales_document_event_append_only',
       'sales_document_event_no_truncate',
       'sales_document_guard',
+      // 009_books_import: an import commits only with its stored original.
+      'sales_document_import_complete',
       'sales_document_line_guard',
       'sales_document_line_no_truncate',
       'sales_document_no_truncate',
@@ -160,10 +163,23 @@ describe('007_books structure', () => {
 
   it('an import carries its number and snapshots and is never a draft', async () => {
     const tenantId = newTenantId();
-    // Issued import without number or snapshots.
+    // Issued import without number or snapshots. Since 009 an issued import writes
+    // its lines first (the line's foreign key deferred), so the line is there and
+    // the CHECK is what refuses it.
+    const id = randomUUID();
     expect(
       await rejectionCode(
-        env.ownerDb.insertInto('sales_document').values(rawDraft(tenantId, { status: 'issued', source: 'import' })).execute(),
+        env.ownerDb.transaction().execute(async (trx) => {
+          await sql`SET CONSTRAINTS ALL DEFERRED`.execute(trx);
+          await trx
+            .insertInto('sales_document_line')
+            .values({
+              id: randomUUID(), tenant_id: tenantId, document_id: id, position: 1, kind: 'service', title: 'Synthetic line',
+              quantity: 1000, unit_price: 0, subtotal: 0, tax_rate: 0, tax_amount: 0, tax_treatment: 'kleinunternehmer', updated_at: new Date(),
+            })
+            .execute();
+          await trx.insertInto('sales_document').values(rawDraft(tenantId, { id, status: 'issued', source: 'import' })).execute();
+        }),
       ),
     ).toBe('23514');
     // An import that claims to be a draft.

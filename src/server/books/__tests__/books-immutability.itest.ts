@@ -6,7 +6,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
-import type { Kysely, UpdateObject } from 'kysely';
+import { sql, type Kysely, type UpdateObject } from 'kysely';
 
 import type { CommerceDB } from '../../commerce/db-types';
 import { createDraft } from '../repository/documents';
@@ -225,8 +225,31 @@ describe.each(roles)('documents and counters keep their identity (as %s)', (_rol
     expect(
       await rejectionCode(db().insertInto('sales_document').values({ ...base, id: randomUUID(), status: 'issued' }).execute()),
     ).toBe('BK004');
-    // The import path: allowed when it carries its number and snapshots.
-    await db().insertInto('sales_document').values({ ...base, id: randomUUID(), status: 'issued', source: 'import' }).execute();
+    // The import path: allowed when it carries its number and snapshots, and
+    // (009_books_import) its lines written first and its stored original, all in
+    // one transaction.
+    const importId = randomUUID();
+    await db().transaction().execute(async (trx) => {
+      await sql`SET CONSTRAINTS ALL DEFERRED`.execute(trx);
+      await trx
+        .insertInto('sales_document_line')
+        .values({
+          id: randomUUID(), tenant_id: scope.tenantId, document_id: importId, position: 1, kind: 'service', title: 'Synthetic line',
+          quantity: 1000, unit_price: 0, subtotal: 0, tax_rate: 0, tax_amount: 0, tax_treatment: 'kleinunternehmer', updated_at: new Date(),
+        })
+        .execute();
+      await trx.insertInto('sales_document').values({ ...base, id: importId, status: 'issued', source: 'import' }).execute();
+      const bytes = Buffer.from('%PDF-1.4\n% synthetic original\n%%EOF\n', 'latin1');
+      const fileId = randomUUID();
+      await trx
+        .insertInto('sales_document_file')
+        .values({
+          id: fileId, tenant_id: scope.tenantId, document_id: importId, content_type: 'application/pdf', byte_size: bytes.byteLength,
+          sha256: createHash('sha256').update(bytes).digest('hex'), renderer: 'import:original-pdf', content: bytes,
+        })
+        .execute();
+      await trx.updateTable('sales_document').set({ rendered_pdf_file_id: fileId }).where('id', '=', importId).execute();
+    });
   });
 
   it('a draft cannot become an import, change its type or move to another company', async () => {

@@ -16,6 +16,8 @@ import { addLine } from '../repository/lines';
 import { getDocument } from '../repository/read';
 import { contactsRecipientDirectory, type RecipientDirectory } from '../recipients';
 import { issue } from '../issue';
+import { contactsContactBook } from '../contactBook';
+import { importHistoricalInvoice, newImportSession, type HistoricalInvoiceInput } from '../importInvoices';
 import { ACTOR, initCompany, newTenantId, openBooksEnv, scopeFor, type BooksEnv } from './booksFixtures';
 
 let env: BooksEnv;
@@ -136,6 +138,59 @@ describe('Books with the real contacts database', () => {
       code: 'RECIPIENT_INCOMPLETE',
       details: { missing: ['addressLine1', 'postalCode', 'city'] },
     });
+  });
+
+  it('the import lookups on the real package: findSame ignores case and spacing, personsNamed any company or role, archived included', async () => {
+    const tenantId = newTenantId();
+    const handle = contacts!;
+    const book = contactsContactBook(() => handle);
+    const db = contactsFor(handle, tenantId);
+    const org = await db.create(organization('Example Client GmbH'));
+    expect((await book.findSame(tenantId, { kind: 'organization', name: '  example   client gmbh ' }))?.id).toBe(org.id);
+    const person = await db.create({ kind: 'person', name: 'Erika Beispiel', companyOrRole: 'Studio A' });
+    await db.archive(person.id);
+    expect((await book.personsNamed(tenantId, 'erika  beispiel')).map((c) => c.id)).toEqual([person.id]);
+    expect(await book.personsNamed(tenantId, 'Erika')).toEqual([]);
+    // Another company's contact is never found.
+    expect(await book.findSame(newTenantId(), { kind: 'organization', name: 'Example Client GmbH' })).toBeNull();
+  });
+
+  it('an import through the real package creates the client once and reuses it for the next number', async () => {
+    const handle = contacts!;
+    const book = contactsContactBook(() => handle);
+    const scope = await companyWith(directory);
+    const record = (numberValue: number): HistoricalInvoiceInput => ({
+      origin: 'upload_extracted',
+      numberValue,
+      issueDate: '2025-04-01',
+      serviceDate: null,
+      servicePeriod: null,
+      paymentTermsDays: 0,
+      dueDate: null,
+      recipient: {
+        kind: 'organization', name: 'Sample Customer GmbH', addressLine1: 'Beispielweg 2', addressLine2: null, postalCode: '20095',
+        city: 'Hamburg', country: 'DE', customerNumber: null, customerNumberText: null, vatId: null,
+      },
+      sender: {
+        legalName: 'Example Studio', addressLine1: 'Musterstrasse 1', addressLine2: null, postalCode: '10115', city: 'Berlin', countryCode: 'DE',
+        taxNumber: null, vatId: null, smallBusinessId: null, email: null, phone: null, website: null, bankName: null, iban: null, bic: null,
+        registerCourt: null, registerNumber: null, managingDirector: null,
+      },
+      lines: [{ kind: 'service', title: 'Design work', description: null, quantity: 1000, unitLabel: 'Stk', unitPrice: 5000, discountBp: 0, subtotal: 5000 }],
+      total: 5000,
+      currency: 'EUR',
+      taxTreatment: 'small_business',
+      taxNote: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
+    });
+    const pdf = (n: number) => new Uint8Array(Buffer.from(`%PDF-1.4\n% synthetic ${scope.tenantId} ${n}\n%%EOF\n`, 'latin1'));
+    const session = newImportSession();
+    const a = await importHistoricalInvoice(scope, book, record(20), pdf(20), session);
+    const b = await importHistoricalInvoice(scope, book, record(21), pdf(21), newImportSession());
+    expect([a.status, b.status]).toEqual(['imported', 'imported']);
+    const docA = (await getDocument(scope, a.documentId)).document;
+    const docB = (await getDocument(scope, b.documentId)).document;
+    expect(docA.customerId).toBe(docB.customerId);
+    expect((await contactsFor(handle, scope.tenantId).list({ search: 'Sample Customer' })).map((c) => c.id)).toEqual([docA.customerSnapshot!.contactId]);
   });
 
   it('a stopped contacts container gives RECIPIENT_UNAVAILABLE and writes nothing', async () => {

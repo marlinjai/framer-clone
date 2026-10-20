@@ -14,12 +14,20 @@
 //   2. Read the setting and build a fresh sender snapshot (the credit note is a
 //      document the company issues today). The customer snapshot is copied from
 //      the invoice, so a cancellation never depends on the contacts database
-//      and always names the invoice's recipient.
+//      and always names the invoice's recipient. One exception, for an
+//      IMPORTED invoice whose printed recipient address was incomplete (the
+//      historical import keeps what was printed, never invents): the missing
+//      street, postal code or city of the credit note, a document issued today,
+//      are taken from the recipient's current contact, read before the
+//      transaction. If the contact lacks them too, the credit note's
+//      completeness check refuses and names the fields, and completing the
+//      contact lets the cancellation through.
 //   3. Insert the credit note as a draft with the invoice's customer, currency,
 //      net_or_gross, payment terms, tax fields and key, and copies of its lines
 //      with the same derived values (no recompute: a cancellation offsets
-//      exactly what was invoiced). Amounts stay non-negative; the document type
-//      carries the sign. A credit note has no due date and no payment reference.
+//      exactly what was invoiced). The document type carries the sign; the
+//      totals stay non-negative, a line may be negative only as the copy of an
+//      imported invoice's printed discount line (009). A credit note has no due date and no payment reference.
 //   4. Lock the credit_note counter, allocate (the credit note's issue date is
 //      never earlier than the invoice's), issue the credit note; write its
 //      `draft_created` and `issued` events.
@@ -37,7 +45,8 @@ import { insertEvent } from './repository/events';
 import { readPersistedView, selectDocumentRow, selectLineRows, type DocumentView } from './repository/read';
 import type { BooksScope } from './scope';
 import { requireSettings } from './settings';
-import { buildSenderSnapshot, senderMissingFields, toJsonb } from './snapshots';
+import { readRecipient } from './recipients';
+import { buildSenderSnapshot, senderMissingFields, toJsonb, type CustomerSnapshotV1 } from './snapshots';
 
 const cancelInput = z.object({
   actorUserId: z.string().trim().min(1).max(200),
@@ -58,6 +67,29 @@ export interface CancelResult {
   alreadyCancelled: boolean;
 }
 
+/**
+ * For an imported invoice whose printed recipient address is incomplete: its
+ * customer snapshot with the missing street, postal code and city taken from
+ * the recipient's current contact (null when nothing is missing or it is not
+ * an import). Read before the cancellation's transaction: a network read must
+ * not hold the document locks.
+ */
+async function completeImportedRecipient(scope: BooksScope, invoiceId: string): Promise<CustomerSnapshotV1 | null> {
+  const row = await selectDocumentRow(scope.db, scope, invoiceId);
+  const snapshot = row?.source === 'import' ? row.customer_snapshot : null;
+  if (!snapshot) return null;
+  const blank = (v: string | null | undefined) => v == null || v.trim() === '';
+  if (!blank(snapshot.addressLine1) && !blank(snapshot.postalCode) && !blank(snapshot.city)) return null;
+  const contact = await readRecipient(scope, snapshot.contactId);
+  if (!contact) return null;
+  return {
+    ...snapshot,
+    addressLine1: blank(snapshot.addressLine1) ? (contact.addressLine1 ?? '') : snapshot.addressLine1,
+    postalCode: blank(snapshot.postalCode) ? (contact.postalCode ?? '') : snapshot.postalCode,
+    city: blank(snapshot.city) ? (contact.city ?? '') : snapshot.city,
+  };
+}
+
 export async function cancelInvoice(
   scope: BooksScope,
   invoiceId: string,
@@ -76,6 +108,7 @@ export async function cancelInvoice(
   if (!parsed.success) throw invalid('INVALID_INPUT', parsed.error.issues);
   const args = parsed.data;
   const issueDate = resolveIssueDate(args.issueDate, options.now);
+  const completedRecipient = await completeImportedRecipient(scope, invoiceId);
 
   return withDbErrors(() =>
     scope.db
@@ -207,7 +240,7 @@ export async function cancelInvoice(
             document_number: number.documentNumber,
             number_value: number.numberValue,
             issue_date: issueDate,
-            customer_snapshot: toJsonb(invoice.customer_snapshot),
+            customer_snapshot: toJsonb(completedRecipient ?? invoice.customer_snapshot),
             // The credit note keeps the invoice's frozen layout (or the plain one
             // for an invoice issued before 008).
             template_snapshot: toJsonb(

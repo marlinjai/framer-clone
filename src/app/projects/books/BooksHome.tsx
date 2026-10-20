@@ -31,7 +31,7 @@ import { date, money } from '@/lib/books/units';
 
 import CustomerForm from './CustomerForm';
 import TemplatesPanel from './TemplatesPanel';
-import { ErrorAlert, StatusBadge, errorText } from './ui';
+import { ErrorAlert, ImportedBadge, StatusBadge, errorText } from './ui';
 
 type Tab = 'documents' | 'customers' | 'templates';
 
@@ -191,8 +191,9 @@ export default function BooksHome() {
                     </span>
                   </span>
                   <span className="flex shrink-0 items-center gap-3">
-                    <span className="text-sm tabular-nums">{money(d.docType === 'credit_note' ? -d.total : d.total)}</span>
+                    <span className="text-sm tabular-nums">{money(d.docType === 'credit_note' ? -d.total : d.total, d.currencyCode)}</span>
                     <StatusBadge status={d.status} />
+                    {d.source === 'import' ? <ImportedBadge /> : null}
                   </span>
                 </Link>
               </li>

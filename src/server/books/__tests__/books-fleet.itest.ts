@@ -114,7 +114,7 @@ function expectedPrivileges() {
 async function fleetMigrate(schema: string) {
   const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
   const mine = result.schemas.find((s) => s.schema === schema);
-  expect(mine?.applied).toEqual(['007_books', '008_books_files']);
+  expect(mine?.applied).toEqual(['007_books', '008_books_files', '009_books_import']);
 }
 
 describe('007_books through the fleet runner', () => {
@@ -169,10 +169,71 @@ describe('007_books through the fleet runner', () => {
     const { tgId, schema } = await provisionAt006WithId();
     const first = await ensureCommerceTenant({ tenantGroupId: tgId, slug: `fleet-${tgId.slice(0, 8)}`, connectionString: ownerUrl });
     expect(first.provisioned).toBe(true);
-    expect(first.applied).toEqual(['007_books', '008_books_files']);
+    expect(first.applied).toEqual(['007_books', '008_books_files', '009_books_import']);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     expect(await readCommerceTenantState(owner, tgId, schema)).toBe('ready');
     const second = await ensureCommerceTenant({ tenantGroupId: tgId, slug: `fleet-${tgId.slice(0, 8)}`, connectionString: ownerUrl });
     expect(second).toMatchObject({ provisioned: false, applied: [] });
+  });
+});
+
+describe('009_books_import over a schema already holding issued documents (as production at 008)', () => {
+  it('leaves the documents and lines as they are, and every guarantee they had still holds', async () => {
+    const tgId = assertTenantGroupId(randomUUID());
+    const schema = tenantSchema(tgId);
+    await provisionTenant(owner, {
+      ...commerceProvisionOptions(tgId, `at008-${tgId.slice(0, 8)}`),
+      tenantMigrations: COMMERCE_TENANT_MIGRATIONS.filter((m) => m.id < '009'),
+    });
+    const s = owner(schema);
+    const tenantId = randomUUID();
+    const customerId = randomUUID();
+    const docId = randomUUID();
+    await owner`INSERT INTO ${s}.customer (id, tenant_id, contact_id, updated_at) VALUES (${customerId}, ${tenantId}, ${randomUUID()}, now())`;
+    await owner`INSERT INTO ${s}.sales_document (id, tenant_id, doc_type, payment_terms_days, customer_id, updated_at)
+                VALUES (${docId}, ${tenantId}, 'invoice', 14, ${customerId}, now())`;
+    await owner`INSERT INTO ${s}.sales_document_line (id, tenant_id, document_id, position, title, quantity, unit_price, subtotal, tax_rate, tax_amount, tax_treatment, updated_at)
+                VALUES (${randomUUID()}, ${tenantId}, ${docId}, 1, 'Synthetic line', 1000, 5000, 5000, 0, 0, 'kleinunternehmer', now())`;
+    await owner`UPDATE ${s}.sales_document
+                   SET status = 'issued', document_number = '62', number_value = 62, issue_date = '2026-10-01', issued_at = now(),
+                       customer_type = 'b2c', tax_profile_key = 'small_business|b2c||DE', subtotal = 5000, total = 5000,
+                       customer_snapshot = '{"v":1}'::jsonb, sender_snapshot = '{"v":1}'::jsonb, template_snapshot = '{"v":1}'::jsonb
+                 WHERE id = ${docId}`;
+    const snapshot = async () =>
+      owner`SELECT to_jsonb(d) AS doc, (SELECT jsonb_agg(to_jsonb(l)) FROM ${s}.sales_document_line l WHERE l.document_id = d.id) AS lines
+              FROM ${s}.sales_document d WHERE d.id = ${docId}`;
+    const before = await snapshot();
+
+    const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['009_books_import']);
+
+    expect(await snapshot()).toEqual(before);
+    const [fk] = await owner<{ condeferrable: boolean; condeferred: boolean }[]>`
+      SELECT c.condeferrable, c.condeferred FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+       WHERE n.nspname = ${schema} AND c.conname = 'sales_document_line_document_fkey'`;
+    // Deferrable on request only: every writer that does not ask is checked per statement, as before.
+    expect(fk).toEqual({ condeferrable: true, condeferred: false });
+    const code = async (p: Promise<unknown>) => p.then(() => 'ok', (e: { code?: string }) => e.code);
+    // A line into the issued document: still frozen.
+    expect(
+      await code(owner`INSERT INTO ${s}.sales_document_line (id, tenant_id, document_id, position, title, quantity, unit_price, subtotal, tax_rate, tax_amount, tax_treatment, updated_at)
+                       VALUES (${randomUUID()}, ${tenantId}, ${docId}, 2, 'Late line', 1000, 1, 1, 0, 0, 'kleinunternehmer', now())`),
+    ).toBe('BK001');
+    // A line without its document, not deferred: refused at once, as before 009.
+    expect(
+      await code(owner`INSERT INTO ${s}.sales_document_line (id, tenant_id, document_id, position, title, quantity, unit_price, subtotal, tax_rate, tax_amount, tax_treatment, updated_at)
+                       VALUES (${randomUUID()}, ${tenantId}, ${randomUUID()}, 1, 'Orphan line', 1000, 1, 1, 0, 0, 'kleinunternehmer', now())`),
+    ).toBe('23503');
+    // A negative line on an editor draft: refused by the guard that replaced 007's CHECKs.
+    const draftId = randomUUID();
+    await owner`INSERT INTO ${s}.sales_document (id, tenant_id, doc_type, payment_terms_days, updated_at) VALUES (${draftId}, ${tenantId}, 'invoice', 14, now())`;
+    expect(
+      await code(owner`INSERT INTO ${s}.sales_document_line (id, tenant_id, document_id, position, title, quantity, unit_price, subtotal, tax_rate, tax_amount, tax_treatment, updated_at)
+                       VALUES (${randomUUID()}, ${tenantId}, ${draftId}, 1, 'Negative line', 1000, -1, -1, 0, 0, 'kleinunternehmer', now())`),
+    ).toBe('BK008');
+    // A currency other than EUR on an editor draft: refused by the guard that replaced the EUR CHECK.
+    expect(await code(owner`UPDATE ${s}.sales_document SET currency_code = 'CHF' WHERE id = ${draftId}`)).toBe('BK009');
+    // The issued document itself: still frozen.
+    expect(await code(owner`UPDATE ${s}.sales_document SET total = 1, subtotal = 1 WHERE id = ${docId}`)).toBe('BK001');
   });
 });

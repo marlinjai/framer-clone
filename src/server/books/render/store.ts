@@ -21,6 +21,12 @@
 // trigger). Downloads serve the stored bytes; a document issued before this
 // existed is rendered and stored on its first download.
 //
+// IMPORTED documents (`source = 'import'`, the historical invoices) carry the
+// original PDF as their stored file from the moment they exist (009 refuses
+// the commit otherwise). They are never rendered: renderIssuedDocument refuses
+// them with NOT_RENDERABLE, so a missing file would surface as an error, never
+// as a drawn substitute.
+//
 // DRAFTS get a preview rendered from live data (the company's sender block, the
 // customer's current contact), watermarked as a draft on every page, never
 // checked as a document of record and never stored.
@@ -159,6 +165,15 @@ export async function renderIssuedDocument(
     throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: a draft is previewed, not rendered', {
       documentId: view.document.id,
     });
+  }
+  if (view.document.source === 'import') {
+    // The original PDF is the document of record of an imported invoice (009
+    // makes it commit only together with it); this system never draws one.
+    throw new BooksError(
+      'NOT_RENDERABLE',
+      'NOT_RENDERABLE: an imported document is served from its stored original, never rendered',
+      { documentId: view.document.id },
+    );
   }
   const input = await issuedInput(options.db ?? scope.db, scope, view);
   assertDrawable(input);

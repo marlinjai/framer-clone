@@ -8,6 +8,7 @@ import { minimalOrders } from './005_minimal_orders';
 import { inventoryPolicy } from './006_inventory_policy';
 import { books } from './007_books';
 import { booksFiles } from './008_books_files';
+import { booksImport } from './009_books_import';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -41,6 +42,14 @@ import { booksFiles } from './008_books_files';
  *   008_books_files        : the stored document of record (the rendered PDF of an
  *                            issued document), append-only (BK006), one per
  *                            document, pointed at by sales_document.rendered_pdf_file_id
+ *   009_books_import       : the historical import: the line's document foreign key
+ *                            becomes deferrable (lines first, then the issued import
+ *                            document), an import's lines must sum to its totals
+ *                            (BK005), an import commits only with its stored
+ *                            original (BK007), negative (discount) lines are
+ *                            allowed on imports and their cancellations only
+ *                            (BK008), a currency other than EUR only on imports
+ *                            (BK009)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -52,4 +61,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   inventoryPolicy,
   books,
   booksFiles,
+  booksImport,
 ];

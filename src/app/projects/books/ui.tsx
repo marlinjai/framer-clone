@@ -71,3 +71,15 @@ export function Field({
 export function errorText(err: unknown): string {
   return err instanceof Error ? err.message : 'Something went wrong. Try again.';
 }
+
+/** The marker of a historical invoice brought in by `pnpm books:import`. */
+export function ImportedBadge() {
+  return (
+    <span
+      className="shrink-0 rounded-full border border-dashed px-2 py-0.5 text-xs text-muted-foreground"
+      title="Imported from the earlier invoices: the original PDF is the document of record"
+    >
+      Imported
+    </span>
+  );
+}

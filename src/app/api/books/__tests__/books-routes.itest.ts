@@ -23,7 +23,7 @@
 // changed by any role; a draft preview is never stored; templates.
 // All data is synthetic.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
@@ -47,18 +47,18 @@ vi.mock('@/server/books/http/dependencies', () => ({
   booksDependencies: () => ({ recipients: state.directory, contactBook: state.contactBook }),
 }));
 
-import type { ContactBook, NewContactInput } from '@/server/books/contactBook';
-import { BooksError } from '@/server/books/errors';
 import { getDocument } from '@/server/books/repository/read';
 import { renderIssuedDocument, storeBeforeCommit } from '@/server/books/render/store';
+import { planInvoice } from '@/server/books/importCli';
+import { importHistoricalInvoice } from '@/server/books/importInvoices';
 import { renderPdf } from '@/server/books/render/pdf';
 import { issue as issueDocument } from '@/server/books/issue';
 import * as contactsRoute from '../contacts/route';
 import { extractPdfText } from '@/server/books/render/extractText';
 import { missingFields } from '@/server/books/render/completeness';
 import { REVERSE_CHARGE_NOTICE } from '@/server/tax/germanVat';
-import type { RecipientContact } from '@/server/books/snapshots';
 import {
+  FakeContactBook,
   FakeDirectory,
   initCompany,
   newTenantId,
@@ -82,41 +82,6 @@ import * as pdfRoute from '../documents/[id]/pdf/route';
 import * as templatesRoute from '../templates/route';
 import * as templateRoute from '../templates/[id]/route';
 import * as settingsRoute from '../settings/route';
-
-/** The contact book over the fake directory (create, getMany, search). */
-class FakeContactBook implements ContactBook {
-  constructor(private readonly dir: FakeDirectory) {}
-  readonly created: RecipientContact[] = [];
-  async search(tenantId: string): Promise<RecipientContact[]> {
-    return this.created.filter((c) => (c as RecipientContact & { tenantId?: string }).tenantId === tenantId);
-  }
-  async getMany(tenantId: string, ids: readonly string[]): Promise<RecipientContact[]> {
-    // As the production book does: any failure of the database is RECIPIENT_UNAVAILABLE.
-    if (this.dir.failing) throw new BooksError('RECIPIENT_UNAVAILABLE', 'synthetic contacts outage');
-    const out: RecipientContact[] = [];
-    for (const id of ids) {
-      const c = await this.dir.getContact(tenantId, id);
-      if (c) out.push(c);
-    }
-    return out;
-  }
-  async create(tenantId: string, input: NewContactInput): Promise<RecipientContact> {
-    const c = this.dir.add(tenantId, {
-      kind: input.kind,
-      name: input.name,
-      companyOrRole: input.companyOrRole ?? '',
-      legalForm: input.legalForm ?? null,
-      addressLine1: input.addressLine1 ?? null,
-      addressLine2: input.addressLine2 ?? null,
-      postalCode: input.postalCode ?? null,
-      city: input.city ?? null,
-      country: input.country ?? null,
-      vatId: input.vatId ?? null,
-    });
-    this.created.push({ ...c, tenantId } as RecipientContact);
-    return c;
-  }
-}
 
 let env: BooksEnv;
 let tenantId: string;
@@ -639,3 +604,192 @@ describe('Books routes: review fixes', () => {
   });
 });
 
+
+describe('Books routes: imported historical invoices', () => {
+  /** A synthetic original: PDF header, label, trailer. Never a render of this system. */
+  function original(label: string): Buffer {
+    return Buffer.from(`%PDF-1.4\n% synthetic historical original ${label}\n%%EOF\n`, 'latin1');
+  }
+
+  /** Import one synthetic invoice through the domain core the CLI and the planned upload use. */
+  async function importOne(
+    number: number,
+    opts: {
+      sender?: string[];
+      issueDate?: string;
+      lines?: Array<Record<string, unknown>>;
+      total?: number;
+      currency?: string;
+      recipientLines?: string[];
+    } = {},
+  ) {
+    const bytes = original(`${tenantId}-${number}`);
+    const plan = planInvoice(
+      number,
+      {
+        number,
+        file: `${number}.pdf`,
+        otherFiles: [],
+        issueDate: opts.issueDate ?? '2021-03-04',
+        recipient: { name: 'Example Client GmbH', addressLines: opts.recipientLines ?? ['Beispielweg 2', '20095 Hamburg'], country: 'DE', customerNumber: null },
+        recipientVatId: null,
+        sender: { name: 'Sample Studio', addressLines: opts.sender ?? ['Musterstrasse 1', '10115 Berlin'], country: 'DE' },
+        lines: opts.lines ?? [{ description: 'Design work', quantity: 2, unit: 'h', unitPrice: 60, discount: null, lineTotal: 120 }],
+        total: opts.total ?? 120,
+        currency: opts.currency ?? 'EUR',
+        taxTreatment: 'small_business',
+        taxAmounts: null,
+        smallBusinessNote: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
+        paymentTerms: null,
+        paidOn: null,
+        confidence: 'high',
+      },
+      new Uint8Array(bytes),
+    );
+    if (plan.issue !== null) throw new Error(`synthetic invoice not importable: ${plan.issue.reason}`);
+    const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
+    const result = await importHistoricalInvoice(scope, state.contactBook as FakeContactBook, plan.record, plan.pdf);
+    expect(result.status).toBe('imported');
+    return { id: result.documentId, bytes };
+  }
+
+  it('the download serves the stored original byte for byte and never renders one', async () => {
+    const { id, bytes } = await importOne(12);
+    const res = await pdf(id);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-books-of-record')).toBe('true');
+    expect(res.headers.get('content-disposition')).toBe('attachment; filename="Rechnung-12.pdf"');
+    expect(res.headers.get('x-books-sha256')).toBe(createHash('sha256').update(bytes).digest('hex'));
+    expect(Buffer.from(await res.arrayBuffer()).equals(bytes)).toBe(true);
+    // Asked to render one, the pipeline refuses: the original is the only document of record.
+    const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
+    await expect(renderIssuedDocument(scope, await getDocument(scope, id))).rejects.toMatchObject({ code: 'NOT_RENDERABLE' });
+    const files = await env.ownerDb.selectFrom('sales_document_file').select('renderer').where('document_id', '=', id).execute();
+    expect(files).toEqual([{ renderer: 'import:original-pdf' }]);
+  });
+
+  it('the lists and the document show number, date, total, the printed recipient and the import marker', async () => {
+    const { id } = await importOne(12);
+    dir.update((await getDocument(scopeFor(env.appDb, env.tgId, tenantId, dir), id)).document.customerSnapshot!.contactId, { name: 'Renamed Later AG' });
+    const items = (await api.listDocuments()).json.items as Json[];
+    expect(items.find((d) => d.id === id)).toMatchObject({
+      documentNumber: '12',
+      issueDate: '2021-03-04',
+      total: 12000,
+      status: 'issued',
+      source: 'import',
+      customerName: 'Example Client GmbH',
+      contactStatus: 'ok',
+    });
+    const detail = await api.get(id);
+    expect(detail.status).toBe(200);
+    expect(detail.json.document).toMatchObject({ source: 'import', documentNumber: '12', status: 'issued' });
+    expect(detail.json.document.customerSnapshot.name).toBe('Example Client GmbH');
+    expect(detail.json.lines).toHaveLength(1);
+  });
+
+  it('an imported document cannot be edited, given lines, re-numbered or re-pointed; its own sender stays', async () => {
+    const first = await importOne(12);
+    const second = await importOne(13, { sender: ['Neue Allee 9', '80331 München'], issueDate: '2022-01-10' });
+    const before = await api.get(first.id);
+    const lineId = before.json.lines[0].id as string;
+    for (const res of [
+      await api.patch(first.id, { introText: 'changed', expectedVersion: before.json.document.version }),
+      await api.addLine(first.id, { kind: 'service', title: 'Extra', quantity: 1000, unitPrice: 100 }),
+      await api.editLine(first.id, lineId, { title: 'Changed' }),
+      await api.removeLine(first.id, lineId),
+      await api.setCustomer(first.id, { customerId: before.json.document.customerId }),
+    ]) {
+      expect(res.status).toBe(409);
+    }
+    // Issue answers as for any issued document: already issued, same number, nothing allocated.
+    const reissue = await api.issue(first.id);
+    expect(reissue.status).toBe(200);
+    expect(reissue.json.alreadyIssued).toBe(true);
+    expect(reissue.json.document.document.documentNumber).toBe('12');
+    expect(await counter()).toBe(62);
+    expect(
+      await rejectionCode(
+        env.ownerDb.updateTable('sales_document').set({ rendered_pdf_file_id: randomUUID() }).where('id', '=', first.id).execute(),
+      ),
+    ).toBe('BK001');
+    const after = await api.get(first.id);
+    expect(after.json.document).toEqual(before.json.document);
+    expect(after.json.lines).toEqual(before.json.lines);
+    // Each imported document keeps the sender printed on it.
+    expect(after.json.document.senderSnapshot).toMatchObject({ addressLine1: 'Musterstrasse 1', city: 'Berlin' });
+    expect((await api.get(second.id)).json.document.senderSnapshot).toMatchObject({ addressLine1: 'Neue Allee 9', city: 'München' });
+  });
+
+  it('an imported invoice with a printed discount line (a minus amount) is cancelled through a credit note too', async () => {
+    const { id } = await importOne(14, {
+      lines: [
+        { description: 'Design work', quantity: 2, unit: 'h', unitPrice: 60, discount: null, lineTotal: 120 },
+        { description: 'Rabatt 10 %', quantity: null, unitPrice: null, discount: '10 %', lineTotal: -12 },
+      ],
+      total: 108,
+    });
+    expect((await api.get(id)).json.lines.map((l: Json) => l.subtotal)).toEqual([12000, -1200]);
+    const res = await api.cancel(id, { reason: 'issued in error' });
+    expect(res.status).toBe(200);
+    expect(res.json.creditNote.document.total).toBe(10800);
+    expect(res.json.creditNote.lines.map((l: Json) => l.subtotal)).toEqual([12000, -1200]);
+    const credit = await pdf(res.json.creditNote.document.id);
+    expect(credit.headers.get('x-books-of-record')).toBe('true');
+    expect(await extractPdfText(new Uint8Array(await credit.arrayBuffer()))).toContain('Storno der Rechnung 14');
+  });
+
+  it('an imported invoice printed in CHF keeps CHF in the list, the document and its credit note', async () => {
+    const { id, bytes } = await importOne(15, { currency: 'CHF' });
+    await importOne(16);
+    const items = (await api.listDocuments()).json.items as Json[];
+    expect(items.find((d) => d.id === id)).toMatchObject({ currencyCode: 'CHF', total: 12000 });
+    expect(items.filter((d) => d.currencyCode === 'EUR').map((d) => d.documentNumber)).toEqual(['16']);
+    expect((await api.get(id)).json.document.currencyCode).toBe('CHF');
+    expect(Buffer.from(await (await pdf(id)).arrayBuffer()).equals(bytes)).toBe(true);
+    const res = await api.cancel(id, { reason: 'issued in error' });
+    expect(res.status).toBe(200);
+    expect(res.json.creditNote.document).toMatchObject({ currencyCode: 'CHF', total: 12000 });
+    const text = await extractPdfText(new Uint8Array(await (await pdf(res.json.creditNote.document.id)).arrayBuffer()));
+    expect(text).toContain('CHF');
+    expect(text).not.toContain('€');
+  });
+
+  it('an import printed without a recipient address can still be cancelled: the credit note takes it from the contact', async () => {
+    const { id } = await importOne(17, { recipientLines: [] });
+    const snapshot = (await api.get(id)).json.document.customerSnapshot as Json;
+    expect(snapshot).toMatchObject({ addressLine1: '', postalCode: '', city: '' });
+    // The contact has no address either: refused, naming what is missing, nothing written.
+    const refused = await api.cancel(id, { reason: 'issued in error' });
+    expect(refused.status).toBe(422);
+    expect(refused.json.error.code).toBe('render_incomplete');
+    expect((await api.get(id)).json.document.status).toBe('issued');
+    // Once the contact has the address, the cancellation goes through with it.
+    dir.update(snapshot.contactId, { addressLine1: 'Neue Strasse 9', postalCode: '20095', city: 'Hamburg' });
+    const res = await api.cancel(id, { reason: 'issued in error' });
+    expect(res.status).toBe(200);
+    expect(res.json.creditNote.document.customerSnapshot).toMatchObject({ addressLine1: 'Neue Strasse 9', postalCode: '20095', city: 'Hamburg' });
+    // The imported invoice keeps what was printed.
+    expect((await api.get(id)).json.document.customerSnapshot).toMatchObject({ addressLine1: '' });
+  });
+
+  it('an editor draft cannot be put into another currency', async () => {
+    const id = (await api.createDraft({})).json.document.id as string;
+    expect(
+      await rejectionCode(env.appDb.updateTable('sales_document').set({ currency_code: 'CHF' }).where('id', '=', id).execute()),
+    ).toBe('BK009');
+  });
+
+  it('an imported invoice is cancelled through a credit note like any other', async () => {
+    const { id, bytes } = await importOne(12);
+    const res = await api.cancel(id, { reason: 'issued in error' });
+    expect(res.status).toBe(200);
+    expect(res.json.invoice.document.status).toBe('cancelled');
+    expect(res.json.creditNote.document.documentNumber).toBe('GS-1');
+    const credit = await pdf(res.json.creditNote.document.id);
+    expect(credit.headers.get('x-books-of-record')).toBe('true');
+    expect(await extractPdfText(new Uint8Array(await credit.arrayBuffer()))).toContain('Storno der Rechnung 12');
+    // The cancelled original is still served unchanged.
+    expect(Buffer.from(await (await pdf(id)).arrayBuffer()).equals(bytes)).toBe(true);
+  });
+});

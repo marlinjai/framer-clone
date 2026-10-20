@@ -20,7 +20,7 @@
 // other refusal of the package (an invalid or too long field) is INVALID_INPUT
 // with the field name only.
 
-import { contactsFor, type ContactsDb } from '@marlinjai/contacts-core';
+import { contactIdentityKey, contactsFor, type ContactsDb } from '@marlinjai/contacts-core';
 
 import { BooksError, isBooksError } from './errors';
 import { contactsDb, toRecipientContact } from './recipients';
@@ -48,7 +48,26 @@ export interface ContactBook {
   getMany(tenantId: string, ids: readonly string[]): Promise<RecipientContact[]>;
   /** Create a contact for the company. */
   create(tenantId: string, input: NewContactInput): Promise<RecipientContact>;
+  /**
+   * The company's contact with the same identity (the package's duplicate key:
+   * kind plus name, and for a person also company or role; case and repeated
+   * whitespace do not count), archived included; null when there is none.
+   */
+  findSame(
+    tenantId: string,
+    identity: { kind: 'person' | 'organization'; name: string; companyOrRole?: string | null },
+  ): Promise<RecipientContact | null>;
+  /**
+   * Every person contact of the company whose name is this one (case and
+   * repeated whitespace ignored), whatever their company or role, archived
+   * included (like findSame). Refuses with RECIPIENT_AMBIGUOUS rather than
+   * return a cut list.
+   */
+  personsNamed(tenantId: string, name: string): Promise<RecipientContact[]>;
 }
+
+/** How many contacts one name lookup reads at most; more hits than this cannot be told apart and are refused. */
+export const NAME_LOOKUP_LIMIT = 1000;
 
 function errorCode(err: unknown): string | undefined {
   if (typeof err !== 'object' || err === null) return undefined;
@@ -67,6 +86,24 @@ function unavailable(err: unknown): BooksError {
 
 /** The package refusals a create can produce that are the caller's input, mapped by field name only. */
 const INPUT_CODES = new Set(['invalid_name', 'invalid_field', 'too_long', 'invalid_organization']);
+
+/**
+ * A refusal of the package that is the caller's input (an invalid or too long
+ * field) becomes INVALID_INPUT naming the field only; anything else means the
+ * database could not be used (RECIPIENT_UNAVAILABLE).
+ */
+function inputOrUnavailable(err: unknown): BooksError {
+  if (isBooksError(err)) return err;
+  const code = errorCode(err);
+  if (code && INPUT_CODES.has(code)) {
+    const field = (err as { field?: unknown }).field;
+    const path = typeof field === 'string' ? field : code === 'invalid_name' ? 'name' : '(contact)';
+    return new BooksError('INVALID_INPUT', `INVALID_INPUT: ${path}`, {
+      issues: [{ path: `contact.${path}`, message: code }],
+    });
+  }
+  return unavailable(err);
+}
 
 /** The production contact book over a contacts handle (defaults to the shared one). */
 export function contactsContactBook(handle: () => ContactsDb = contactsDb): ContactBook {
@@ -102,6 +139,33 @@ export function contactsContactBook(handle: () => ContactsDb = contactsDb): Cont
         throw unavailable(err);
       }
     },
+    async findSame(tenantId, identity) {
+      const db = await open();
+      try {
+        const found = await contactsFor(db, tenantId).findSame({
+          kind: identity.kind,
+          name: identity.name,
+          companyOrRole: identity.companyOrRole ?? null,
+        });
+        return found ? toRecipientContact(found) : null;
+      } catch (err) {
+        throw inputOrUnavailable(err);
+      }
+    },
+    async personsNamed(tenantId, name) {
+      const db = await open();
+      let rows;
+      try {
+        rows = await contactsFor(db, tenantId).list({ kind: 'person', includeArchived: true, search: name.trim().replace(/\s+/g, ' '), limit: NAME_LOOKUP_LIMIT });
+      } catch (err) {
+        throw inputOrUnavailable(err);
+      }
+      if (rows.length >= NAME_LOOKUP_LIMIT) {
+        throw new BooksError('RECIPIENT_AMBIGUOUS', 'RECIPIENT_AMBIGUOUS: too many contacts match this name to tell them apart');
+      }
+      const key = contactIdentityKey('person', name, '');
+      return rows.filter((c) => contactIdentityKey('person', c.name, '') === key).map(toRecipientContact);
+    },
     async create(tenantId, input) {
       const db = await open();
       try {
@@ -128,14 +192,7 @@ export function contactsContactBook(handle: () => ContactsDb = contactsDb): Cont
             existingContactId: typeof existing?.id === 'string' ? existing.id : null,
           });
         }
-        if (code && INPUT_CODES.has(code)) {
-          const field = (err as { field?: unknown }).field;
-          const path = typeof field === 'string' ? field : code === 'invalid_name' ? 'name' : '(contact)';
-          throw new BooksError('INVALID_INPUT', `INVALID_INPUT: ${path}`, {
-            issues: [{ path: `contact.${path}`, message: code }],
-          });
-        }
-        throw unavailable(err);
+        throw inputOrUnavailable(err);
       }
     },
   };

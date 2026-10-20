@@ -58,6 +58,10 @@ export interface DocumentView {
   id: string;
   docType: 'invoice' | 'credit_note' | 'offer';
   status: 'draft' | 'issued' | 'sent' | 'accepted' | 'rejected' | 'paid' | 'cancelled';
+  /** `import` for the historical invoices: their stored original PDF is the document of record. */
+  source: 'editor' | 'import';
+  /** ISO 4217; EUR except on an imported invoice printed in another currency (never converted). */
+  currencyCode: string;
   version: number;
   customerId: string | null;
   templateId: string | null;
@@ -96,6 +100,8 @@ export interface DocumentListItem {
   id: string;
   docType: DocumentView['docType'];
   status: DocumentView['status'];
+  source: DocumentView['source'];
+  currencyCode: string;
   documentNumber: string | null;
   issueDate: string | null;
   dueDate: string | null;

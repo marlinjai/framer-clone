@@ -23,6 +23,10 @@ import {
   type StorefrontFixtures,
 } from '../../commerce/__tests__/storefrontFixtures';
 import { createCustomer, type Customer } from '../repository/customers';
+import { contactIdentityKey } from '@marlinjai/contacts-core';
+
+import type { ContactBook, NewContactInput } from '../contactBook';
+import { BooksError } from '../errors';
 import type { RecipientContact, RecipientDirectory } from '../recipients';
 import { booksScope, type BooksScope } from '../scope';
 import { initBooksCompany } from '../settings';
@@ -103,6 +107,81 @@ export class FakeDirectory implements RecipientDirectory {
     if (this.failing) throw new Error('synthetic contacts outage');
     const entry = this.contacts.get(contactId);
     return entry && entry.tenantId === tenantId ? { ...entry.contact } : null;
+  }
+
+  /** The company's contacts (tests only). */
+  contactsOf(tenantId: string): RecipientContact[] {
+    return [...this.contacts.values()].filter((e) => e.tenantId === tenantId).map((e) => ({ ...e.contact }));
+  }
+}
+
+/**
+ * The contact book over the fake directory (create, getMany, search,
+ * findSame), with the package's identity rule: one contact per kind and
+ * normalized name (plus company or role for a person) and company.
+ */
+export class FakeContactBook implements ContactBook {
+  constructor(private readonly dir: FakeDirectory) {}
+  readonly created: RecipientContact[] = [];
+  private outage(): void {
+    // As the production book does: any failure of the database is RECIPIENT_UNAVAILABLE.
+    if (this.dir.failing) throw new BooksError('RECIPIENT_UNAVAILABLE', 'synthetic contacts outage');
+  }
+  /** As the package does: the company's contacts whose name contains the search (case ignored), archived left out. */
+  async search(tenantId: string, opts: { search?: string; limit: number } = { limit: 50 }): Promise<RecipientContact[]> {
+    this.outage();
+    const needle = (opts.search ?? '').trim().toLowerCase();
+    return this.dir
+      .contactsOf(tenantId)
+      .filter((c) => !c.archived && (needle === '' || c.name.toLowerCase().includes(needle)))
+      .slice(0, opts.limit);
+  }
+  async getMany(tenantId: string, ids: readonly string[]): Promise<RecipientContact[]> {
+    this.outage();
+    const out: RecipientContact[] = [];
+    for (const id of ids) {
+      const c = await this.dir.getContact(tenantId, id);
+      if (c) out.push(c);
+    }
+    return out;
+  }
+  async findSame(
+    tenantId: string,
+    identity: { kind: 'person' | 'organization'; name: string; companyOrRole?: string | null },
+  ): Promise<RecipientContact | null> {
+    this.outage();
+    const key = contactIdentityKey(identity.kind, identity.name, identity.companyOrRole ?? '');
+    return (
+      this.dir.contactsOf(tenantId).find((c) => c.kind === identity.kind && contactIdentityKey(c.kind, c.name, c.companyOrRole) === key) ?? null
+    );
+  }
+  async personsNamed(tenantId: string, name: string): Promise<RecipientContact[]> {
+    this.outage();
+    const key = contactIdentityKey('person', name, '');
+    return this.dir.contactsOf(tenantId).filter((c) => c.kind === 'person' && contactIdentityKey('person', c.name, '') === key);
+  }
+  async create(tenantId: string, input: NewContactInput): Promise<RecipientContact> {
+    this.outage();
+    const same = await this.findSame(tenantId, { kind: input.kind, name: input.name, companyOrRole: input.companyOrRole ?? '' });
+    if (same) {
+      throw new BooksError('DUPLICATE_CONTACT', 'DUPLICATE_CONTACT: a contact with this name already exists', {
+        existingContactId: same.id,
+      });
+    }
+    const c = this.dir.add(tenantId, {
+      kind: input.kind,
+      name: input.name,
+      companyOrRole: input.companyOrRole ?? '',
+      legalForm: input.legalForm ?? null,
+      addressLine1: input.addressLine1 ?? null,
+      addressLine2: input.addressLine2 ?? null,
+      postalCode: input.postalCode ?? null,
+      city: input.city ?? null,
+      country: input.country ?? null,
+      vatId: input.vatId ?? null,
+    });
+    this.created.push({ ...c, tenantId } as RecipientContact);
+    return c;
   }
 }
 

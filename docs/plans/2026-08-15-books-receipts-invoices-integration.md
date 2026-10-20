@@ -44,6 +44,11 @@ Decided with Marlin on 2026-10-15; supersedes the body where they conflict.
    import from (number, date, amount, payment day; no client names) is in the owner's tax folder,
    `Finanzen/Steuern/2026/ausgangsrechnungen-2024-2026.md`. The numbering counter starts after
    the highest imported number.
+   **Reality note (2026-10-20):** the scope is invoices **1 to 61**, the full series from the
+   first invoice, by the owner's later decision (the totals were verified against the filed
+   returns 2019 to 2025). The import is built as `pnpm books:import` with migration
+   `009_books_import`; it reads a private JSON extraction of the 61 invoices plus their PDFs
+   (never committed). See "Historical import build notes (2026-10-20)".
 6. **Connections** (after the import): the read-only machine endpoint receipt-ocr-app pulls
    issued documents from (section 3's pull model, service-account key, company-scoped),
    storage-brain for PDFs, the shared contacts database for recipients.
@@ -824,7 +829,7 @@ parity over the mocked boundary):
 Out of scope: routes and the editor interface (phase 2, with the `books` grant check and the
 route-level 403 tests), template CRUD, rendering, the PDF and the section 34a completeness check
 on rendered output (phase 3), the historical import of invoices 28 to 61 (after phase 3,
-amendment item 5), the machine endpoint receipt-ocr-app pulls from, storage-brain and the
+amendment item 5; since widened to 1 to 61), the machine endpoint receipt-ocr-app pulls from, storage-brain and the
 production wiring of `CONTACTS_DATABASE_URL` into a deployed app (roadmap line 4), offers and
 partial credit notes (receipts plan section 6 item 6), a draft discard action (phase 2 decides
 whether the editor needs one).
@@ -1119,6 +1124,263 @@ and grant it to Whiz-Art Media and Lumitra; scaffold `CONTACTS_DATABASE_URL` in
 framer-clone's Infisical project and copy the value from the receipts project with
 `copy_secret`; deploy, which rolls `008_books_files` across every tenant schema at boot; run
 `pnpm books:init-company` for Whiz-Art Media (P1.8). No other secret or variable is new.
+
+## Historical import build notes (2026-10-20)
+
+Reality note for amendment item 5, built on branch `feat/books-import`. Scope: the owner's
+invoices **1 to 61**, the full series (amendment item 5 named 28 to 61; the owner later decided
+on the whole series from 1, with the totals verified against the filed returns 2019 to 2025).
+Every choice below follows from the plan, the code or the law; decided, say so if you disagree.
+
+**What exists now.**
+
+- `pnpm books:import --tenant-group <uuid> --tenant <uuid> --input <private JSON> --files-dir
+  <dir> [--dry-run]` (`scripts/books-import.ts`, logic in `src/server/books/importCli.ts`, no
+  `server-only` imports, like `books:init-company`). Environment: `COMMERCE_APP_DATABASE_URL`
+  (the app role) and `CONTACTS_DATABASE_URL`.
+- The domain core `src/server/books/importInvoices.ts`: `importHistoricalInvoice(scope,
+  contactBook, record, pdfBytes, session)` imports ONE historical invoice record (a zod-validated
+  shape independent of any input layout, `historicalInvoiceSchema`) with its original PDF, doing
+  every check and write itself; `previewHistoricalInvoice` is the same without writing (the dry
+  run). The CLI only maps the private JSON to records and loops.
+- Migration `009_books_import` (007 and 008 are deployed and stay untouched).
+- Tests: `importCli.test.ts` (parsing, mapping, every skip and error reason, the originals on
+  disk, the report lines carrying no input value), `books-import.itest.ts` (dry run, forward,
+  re-run, changed file, resume, the whole-run refusals, what 009 guarantees for every role) and
+  a block in `books-routes.itest.ts` (the download serves the stored bytes, lists, freeze,
+  cancellation of an imported invoice), plus the editor's imported marker.
+
+**Decisions.**
+
+1. **Lines first, then the issued document (009).** An import is born issued, and 007's line
+   guard refuses a line whose document exists and is not a draft, while the line's foreign key
+   to its document was checked immediately: an imported invoice could never carry its lines.
+   009 makes that foreign key `DEFERRABLE INITIALLY IMMEDIATE` (no change for any other writer);
+   the import transaction alone defers it, writes the lines, then the document. Once committed,
+   no line can ever be added (BK001, tested for the owner too).
+2. **The database checks an import like an issue.** On the insert of an import the guard
+   requires at least one line and the lines summing exactly to the subtotal and tax (BK005, the
+   check `draft -> issued` makes for editor documents). A deferred constraint trigger refuses
+   the commit of an import without its stored original, pointed at and belonging to it (BK007,
+   mapped to `IMPORT_INCOMPLETE`). A fourth change, made after checking the real data (decision 18): the historical invoices
+   print a discount as a line of its own with a minus amount, so 007's static CHECKs that a
+   line's unit price and subtotal are not negative move into the line guard, which allows a
+   negative line only on an imported document (written before its document exists, whose
+   insert then requires `source = 'import'`) and on the draft credit note cancelling an
+   imported invoice; everywhere else a negative line is refused as before (BK008, mapped to
+   `INVALID_LINE`). Document totals stay non-negative (007's CHECKs, untouched). Tested: an
+   import with a discount line, its cancellation and the rendered credit note, and the refusal
+   on editor drafts, deferred or not. The negative line on such a credit note must be the exact copy of one of the imported
+   invoice's lines (position, quantity, price, amount), and (009) a credit note's
+   `corrects_document_id` is fixed like its type and source, so a draft credit note can never
+   be re-pointed to an editor invoice with copied discount lines or a foreign currency. These
+   rules live in triggers like 007's freeze: they bind every role, and like all of 007's
+   invariants they do not hold for a session that disables triggers (a superuser setting the
+   application never uses).
+3. **Exactly one file, the original, never a render.** The JSON's `file` is stored in
+   `sales_document_file` with its size and SHA-256 (renderer `import:original-pdf`) and pointed
+   at by `rendered_pdf_file_id`, through the same file table the editor's documents use.
+   `render/store.ts` already served a stored file before rendering, so no storage step had to
+   be factored out; what was added is the refusal: `renderIssuedDocument` answers
+   `NOT_RENDERABLE` for an import, so a missing original could never be replaced by a drawn
+   one. `otherFiles` (an earlier version, the second document numbered 10) are not stored; the
+   run reports how many per number, and the count is in the event.
+4. **Numbers as printed, the counter untouched.** The document number is stored exactly as
+   printed, the plain integer, never reformatted through the counter's format (a prefix or
+   padding there would make it differ from the original). Every number in the input must be
+   below the invoice counter's `next_value` (62, set by `books:init-company`); a missing
+   counter (`COUNTER_MISSING`) or one too low (`IMPORT_COUNTER_TOO_LOW`) fails the whole run
+   before anything is written, and each invoice's transaction re-checks it with the counter row
+   held `FOR SHARE`. The counter is never moved.
+5. **Whole run or one number.** Refused for the whole run, before the first write: input that
+   is not JSON or not the expected shape, duplicate numbers, an original that cannot be used
+   (missing, outside `--files-dir` also through a link, empty, over 25 MB, not starting with
+   `%PDF-`), the counter, and the contacts database not answering. Per number, with the others
+   going on: **skipped** when something is not there yet (no file, as for 60 until its PDF is
+   saved from the mail; no recipient; no sender; no lines), and **error** when what is there is
+   inconsistent (lines not summing to the total, an address or country that cannot be read, a
+   tax treatment other than section 19, a currency other than EUR, an issue date that is not a
+   date or lies in the future, a line amount with more than cent precision). Exit code 1 when any
+   number ended in an error. Also refused for the whole run: the same original named by two numbers (one revenue
+   stored twice), and an unset `CONTACTS_DATABASE_URL` (said as such, not as an outage).
+6. **Idempotent and resumable.** A number already imported whose stored file has the same
+   SHA-256 is "already imported"; the same number with a different file, or a number the editor
+   issued, is `IMPORT_CONFLICT` for that number and nothing is overwritten. A skipped number is
+   imported by a later run once the input is complete. Each invoice is one transaction (lines,
+   document, file, pointer, event), so a failure never leaves half a document. Two runs racing
+   on a number: the loser re-reads and reports what the winner wrote. The same original stored under another number is `IMPORT_CONFLICT` too, checked before
+   anything is created and again inside the transaction under an advisory lock on the
+   original's digest, so two imports racing with one PDF can never both store it.
+7. **Payment day: not stored in the Books.** 007 has no column for it, and the receipts plan
+   (`receipt-ocr-app` `docs/plans/2026-10-14-invoicing-and-income.md`, D6 and the mirror
+   section) keeps payments, links and the cash-basis income in the receipts app, which mirrors
+   issued documents read-only. A Books status `paid` would be a second truth, so imported
+   invoices stay `issued`. Not dropped silently either: the event records whether a payment
+   day was present, and the run prints how many imported invoices carried one, with the note
+   that payment state stays in receipt-ocr-app.
+8. **Recipients.** Matched by the contacts package's own identity (name, case and repeated
+   whitespace ignored; an organization first, then a person without a company or role), because
+   that package cannot hold two contacts of one identity: "exact name plus address" would have
+   had nowhere to put a second contact of the same name. A matching name with a different
+   address is the same client at another address: the contact is reused unchanged and counted
+   ("with a different current address"). A person whose contact carries a company or role (part
+   of a person's identity, which the print does not tell) is matched when exactly ONE person of
+   that name exists; two or more are `RECIPIENT_AMBIGUOUS` for that number, never a guess. A new
+   contact (application name `books`) gets the address of that client's highest-numbered
+   invoice in the input; it is an organization when the name carries a legal form (GmbH, UG, AG,
+   e.V., Ltd and others), otherwise a person, unless the entry says `recipient.kind`. The Books
+   customer is the existing one of that contact, else a new one (business for an organization)
+   with the printed VAT id when it is a valid one. Repeat clients are therefore one customer. A
+   number already in the books is judged before any contact is looked up or created, so a
+   re-run or a conflict never adds contacts. The contact lives in another database and is created outside the Books transaction (a
+   network call must not hold the document locks), after every refusal that can be known
+   before; the customer row is written INSIDE the transaction, so a failed write leaves no
+   customer, and at worst a contact without invoices that a retry reuses. A person of a given
+   name is looked up with an exact-name listing of the package (up to 1000 hits; more cannot be
+   told apart and are `RECIPIENT_AMBIGUOUS`), archived included, like `findSame`.
+9. **Snapshots and tax fields from the invoice's own print.** The customer snapshot is built
+   from that invoice's printed recipient (frozen as printed, not today's contact), the sender
+   snapshot from that invoice's printed sender (six sender blocks over the years; the current
+   company setting is never used by the CLI). The document's frozen tax fields (business or
+   consumer, VAT id, the tax profile key) come from the same printed recipient, never from
+   today's customer row, so the columns agree with the snapshot and the original. Printed
+   address lines are split by one rule: the last line reading as postal code plus city gives
+   those two; the line right before it is the street (`addressLine1`, what a new contact gets
+   as its street); lines between the name and the street (a "c/o" or "z. Hd." line) are joined
+   into `addressLine2`; a first line repeating the name is dropped. Both snapshots also keep
+   the printed lines verbatim in a new optional `addressLines` field (optional, so every earlier
+   snapshot stays valid); a customer number that is not a plain integer is kept as
+   `customerNumberText`. Addresses the extraction did not carry stay EMPTY, never invented, and are warned: a sender
+   printed without address lines (`sender_address_missing`), a recipient without street,
+   postal code or city (`recipient_address_incomplete`). A sender without a printed country is
+   German (section 19 UStG is German law; flagged `senderCountryInferred`, no warning); a
+   recipient with neither a printed nor an inferred country is assumed German and warned
+   (`recipient_country_assumed`). The recipient's VAT id is also found inside a longer printed
+   line ("UID ...; USt-IdNr ...") when exactly one EU VAT id is in it. An assumed recipient country stays in the Books only: the contact created in the shared
+   contacts database gets no country rather than a guess, and on an invoice in another currency
+   than EUR no country is assumed at all (`recipient_country_unknown`). A VAT id pulled out of a
+   longer line must match its country's format (the VIES formats), so a stray token is never
+   taken for one.
+10. **The sender's tax number and VAT id.** The input holds only whether they were printed
+    (`taxNumberPresent`, `vatIdPresent`), not the values. The snapshot records null for both and
+    the event records the two booleans; the stored original is the document of record for the
+    values. Nothing is invented, and the current setting's values are not back-filled into old
+    documents (the number may have changed with the moves).
+11. **Small business only, as printed.** Every line carries treatment `kleinunternehmer`, rate
+    0, tax 0; the document `kleinunternehmer = true`, its tax note the printed small-business
+    note, one tax summary entry. The tax profile key is derived as for an editor document of a
+    small business with that printed recipient, so an imported row satisfies the full issued
+    check and an imported invoice can be cancelled through a credit note like any other
+    (tested).
+12. **Amounts: the printed figures are authoritative.** Money in cents and quantities in
+    thousandths, exact (a value with finer digits is an error, never rounded). Lines are stored
+    as printed, with the printed line total as the subtotal; the lines must sum exactly to the
+    printed total (else an error for that number). What the print did not carry is derived and
+    warned, never refused (owner's rules of 2026-10-20):
+    - a line with a total but without a unit price gets the price from the total (divided by
+      the quantity when one is printed, else the quantity is 1): warning `line_price_derived`;
+    - a printed discount string is read when it is a percentage ("10 %") or an amount
+      ("50,00 EUR", relative to quantity times price) and kept as `discount_bp`; when it cannot
+      be read it stays 0, the printed line total stands: warning `discount_unparsed`;
+    - a printed discount LINE (a minus amount, the shape the real data uses) is a line of its
+      own at its printed amount (009, decision 2);
+    - a line whose printed total is not quantity times price less the discount (a rounding
+      cent, as the real fixed fee of 3 x 1166.67 printed 3500.00) is stored as printed:
+      warning `line_not_quantity_times_price`; a total above the arithmetic is never refused;
+    - an issue date before an imported lower number's or after an imported higher number's:
+      warning `issue_date_out_of_number_order` (a swapped day and month, typically).
+    A line without quantity, price and amount is a text line. A text longer than 300 characters
+    becomes a 300-character title (cut between whole characters) with the full text as the
+    description.    When the unit price is derived and a discount is printed, the discount is put back into the
+    price (the printed total is after the discount), so the stored line reads consistently on
+    any credit note; an amount discount is read in the invoice's own currency. Numbers that read
+    two ways ("1.234", "1,234.50") are never taken: the discount stays unread and warned. A line
+    whose printed price and total have opposite signs is an error (`line_sign_mismatch`); a
+    derived price beyond the money range is refused, never clamped.
+13. **Dates and terms.** `issued_at` is noon UTC of the printed issue date (the same calendar
+    day in every European time zone). A service date or period is taken when it is a real date;
+    otherwise it is left empty and the event records `serviceDateUnparsed`. Payment terms in
+    days are read from the printed text ("14 Tagen", "sofort" as 0) and give the due date;
+    otherwise `payment_terms_days` is 0 (the column cannot be empty), there is no due date, and
+    the event records `paymentTermsUnparsed`, so the fallback is never mistaken for the print.
+    In the same way a printed recipient VAT id that is not a valid one is not frozen but
+    recorded as `recipientVatIdUnparsed`, and a country taken from the extraction's inference
+    instead of the print is recorded as `recipientCountryInferred`.
+14. **The audit trail.** Each import writes one `issued` event (from nothing to issued, no
+    actor) whose payload holds only counts and flags: source, `importOrigin` (decision 17),
+    number, file digest, line count, other files skipped, the two sender booleans,
+    `serviceDateUnparsed`, `paidOnPresent`, the three flags of decision 13 and the extraction's
+    confidence. The provenance is a strict schema of exactly these flags and counts, so no name,
+    address or text can reach the payload. The event also carries the fields of the editor's `issued` event (document number,
+    issue date, total, tax profile key) and the warnings, so every consumer of events sees one
+    shape.
+15. **Logging.** A report line carries the number, the issue date, the total and the status
+    (imported, already imported, would import, skipped with the reason, error with a code). The
+    summary: counts, the untouched counter, the recipients (created, reused, with a different
+    address), the payment-day count, and the totals per issue year of what the import holds in
+    the books, read from the books themselves (in a dry run plus what it would add), to compare
+    with the filed returns. A number already imported whose stored total or issue date differs
+    from the input (same original, data corrected since) is reported as "already imported,
+    BUT ... differs", with an ATTENTION line in the summary and exit code 1; it never changes
+    the books. Errors are shown by code, SQLSTATE and constraint name, never by message, because
+    a message can quote a value; an unreadable file by its system code (ENOENT, EACCES). File
+    names, paths and connection strings are never printed. Warnings are printed per number by kind and count, with a summary line. Imported invoices
+    cancelled since (through a credit note) are left out of the yearly totals and reported apart.
+    "Differs" compares the total and the issue date only (what the returns are checked against);
+    other corrections to an imported number are not detected. An unexpected database error of the
+    write is reported as `IMPORT_FAILED` with its SQLSTATE and constraint name only: postgres puts
+    the failing row (snapshots, names) into its message, so the original error is deliberately
+    not passed on, not even as a cause.
+16. **The editor.** Lists show number, date, total and the printed recipient name with an
+    "Imported" marker; the document view says "imported, the original PDF is the document of
+    record" and offers "Download original PDF", which serves the stored bytes (the route already
+    preferred a stored file; tested byte for byte). Issue on an imported document answers
+    "already issued" as for any issued document; every edit answers 409. An imported invoice whose printed recipient address is incomplete can still be cancelled:
+    the credit note, a document issued today, takes the missing street, postal code or city from
+    the recipient's current contact (read before the cancellation's transaction); the imported
+    invoice keeps what was printed. If the contact lacks them too, the credit note's
+    completeness check refuses and names the fields, nothing is written, and completing the
+    contact lets the cancellation through (tested).
+17. **One core for the CLI now and the in-editor upload next.** The owner's next step is an
+    upload in `/projects/books`: many past-invoice PDFs at once, their data extracted by Claude,
+    reviewed and corrected in a table, then imported (a separate pull request on top of this
+    one). So the import core takes a record, not the private JSON: `historicalInvoiceSchema`
+    (origin, number, dates, terms, recipient, sender, lines in cents and thousandths, total,
+    small-business note, and a strict provenance of counts and flags, so no personal value can
+    reach the event payload) plus the PDF bytes, and finds or creates the contact and customer
+    itself (`resolveImportRecipient`, the rule of decision 8). **How the data was obtained** is
+    recorded per document as `importOrigin` in its `issued` event: `operator_file` for this CLI,
+    `upload_extracted` for the upload. The event payload is the natural place (the audit trail
+    of how the document came to exist, append-only), so 009 adds no column. **The sender is an
+    input** of the record: the CLI passes the sender printed on that invoice, the upload will
+    default it to the company's current sender block. A number already present is judged before
+    any contact is created, so a re-run or a conflicting upload never adds contacts.
+
+18. **Checked against the real input (2026-10-20), without reading any value.** The mapping
+    was run over the private JSON and the PDFs, printing per number only the status, the reason
+    code and the warning codes. Warnings on the invoices (counts of invoices): a unit price
+    derived from the printed total 39, sender address not in the extraction 12, recipient
+    address incomplete 2, recipient country assumed 1, a line not quantity times price 1 (the
+    fixed fee). Flags recorded in the events only: payment terms not readable 15, service date
+    or period not readable 9, a printed VAT-like identifier that is not an EU VAT id 2.
+    **Imported documents keep the currency they were printed in** (decided 2026-10-20; invoice
+    23 is billed in CHF). 009 replaces 007's `currency_code = 'EUR'` CHECK by a shape CHECK
+    (ISO 4217) and lets the document guard allow a currency other than EUR only on an import;
+    a credit note always carries the currency of the invoice it corrects, so the one cancelling
+    a CHF import is in CHF; editor documents stay EUR only (BK009, `CURRENCY_NOT_SUPPORTED`).
+    Amounts are stored as printed in that currency and never converted: there is no exchange
+    rate in the Books, the EUR value of a foreign-currency invoice belongs to the receipts app's
+    income mirror, which owns payment matching (receipts plan D6). Nothing that sums money
+    mixes currencies: the CLI's yearly totals are per year and currency ("2023: EUR x, CHF y"),
+    the editor shows every amount in its document's currency and adds none across documents,
+    and the rendered credit note of a CHF import prints CHF. With this, all 61 map.
+
+**Operator steps** (live actions, not done here): after the deploy rolls `009_books_import` out
+and `pnpm books:init-company` has set the invoice counter to 62 for Whiz-Art Media (done in
+production on 2026-10-20), run
+`pnpm books:import --dry-run` with the private input, fix what it reports, run it for real,
+and compare the printed yearly totals with the filed returns. All 61 originals are in hand
+(invoice 60's PDF was saved from the mail and its entry completed on 2026-10-20).
 
 ## 1. Audit: what actually exists today
 

@@ -36,11 +36,11 @@ function group(digits: string): string {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 }
 
-/** 123456 -> "1.234,56 €". */
-export function money(cents: number): string {
+/** 123456 -> "1.234,56 €"; another currency (an imported invoice) prints its code: "1.234,56 CHF". */
+export function money(cents: number, currency = 'EUR'): string {
   const sign = cents < 0 ? '-' : '';
   const abs = Math.abs(cents);
-  return `${sign}${group(String(Math.floor(abs / 100)))},${String(abs % 100).padStart(2, '0')} €`;
+  return `${sign}${group(String(Math.floor(abs / 100)))},${String(abs % 100).padStart(2, '0')} ${currency === 'EUR' ? '€' : currency}`;
 }
 
 /** 1500 -> "1,5". */

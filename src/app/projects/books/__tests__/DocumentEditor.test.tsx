@@ -52,6 +52,7 @@ function detail(over: { document?: Json; lines?: Json[]; stale?: boolean; custom
       id: 'doc-1',
       docType: 'invoice',
       status: 'draft',
+      source: 'editor',
       version: 3,
       customerId: 'cust-de',
       templateId: null,
@@ -257,6 +258,33 @@ describe('DocumentEditor', () => {
   });
 });
 
+describe('DocumentEditor: an imported invoice', () => {
+  it('is marked, offers its original for download and nothing to edit or issue', async () => {
+    const imported = detail({
+      document: {
+        status: 'issued',
+        source: 'import',
+        currencyCode: 'CHF',
+        documentNumber: '12',
+        issueDate: '2021-03-04',
+        kleinunternehmer: true,
+        taxAmount: 0,
+        total: 12000,
+        customerSnapshot: { name: 'Example Client GmbH', addressLine1: 'Beispielweg 2', postalCode: '20095', city: 'Hamburg', country: 'DE' },
+      },
+    });
+    server(base(() => imported));
+    render(<DocumentEditor id="doc-1" />);
+    expect((await screen.findByRole('heading', { level: 1 })).textContent).toContain('Imported');
+    expect(screen.getByText(/imported, the original PDF is the document of record/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Download original PDF' }).getAttribute('href')).toBe('/api/books/documents/doc-1/pdf');
+    expect(screen.queryByRole('button', { name: 'Issue…' })).toBeNull();
+    expect(screen.queryByRole('form', { name: 'Add line' })).toBeNull();
+    expect(screen.getAllByText(/CHF/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/€/)).toBeNull();
+  });
+});
+
 describe('BooksHome', () => {
   it('re-entry: "New invoice" creates a fresh draft on the server and opens it', async () => {
     server({
@@ -273,6 +301,30 @@ describe('BooksHome', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New invoice' }));
     await waitFor(() => expect(push).toHaveBeenCalledWith('/projects/books/documents/doc-2'));
     expect(calls.find((c) => c.method === 'POST')!.body).toEqual({});
+  });
+
+  it('marks imported invoices in the list', async () => {
+    server({
+      'GET /api/books/settings': () => ({ status: 200, body: SETTINGS }),
+      'GET /api/books/customers': () => ({ status: 200, body: CUSTOMERS }),
+      'GET /api/books/documents': () => ({
+        status: 200,
+        body: {
+          items: [
+            { id: 'doc-1', docType: 'invoice', status: 'issued', source: 'import', currencyCode: 'CHF', documentNumber: '12', issueDate: '2021-03-04', dueDate: null, total: 12000, customerName: 'Example Client GmbH', contactStatus: 'ok', correctsDocumentId: null, createdAt: '' },
+            { id: 'doc-2', docType: 'invoice', status: 'issued', source: 'editor', currencyCode: 'EUR', documentNumber: '62', issueDate: '2026-10-19', dueDate: null, total: 14280, customerName: 'Alex Example', contactStatus: 'ok', correctsDocumentId: null, createdAt: '' },
+          ],
+        },
+      }),
+    });
+    render(<BooksHome />);
+    const imported = (await screen.findByText('Invoice 12')).closest('a')!;
+    expect(within(imported).getByText('Imported')).toBeTruthy();
+    expect(imported.textContent).toContain('Example Client GmbH');
+    // Each document in its own currency, never converted.
+    expect(imported.textContent).toContain('120,00 CHF');
+    expect(screen.getByText('Invoice 62').closest('a')!.textContent).toContain('142,80 €');
+    expect(within(screen.getByText('Invoice 62').closest('a')!).queryByText('Imported')).toBeNull();
   });
 
   it('a company without the Books grant gets a page that says so', async () => {

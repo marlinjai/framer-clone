@@ -38,7 +38,7 @@ import {
 } from '@/lib/books/api';
 import { date, money, moneyInput, parseMoney, parseQuantity, quantity, rate } from '@/lib/books/units';
 
-import { ErrorAlert, Field, StatusBadge, errorText } from './ui';
+import { ErrorAlert, Field, ImportedBadge, StatusBadge, errorText } from './ui';
 
 interface LineDraft {
   kind: 'service' | 'product' | 'text';
@@ -212,6 +212,7 @@ export default function DocumentEditor({ id }: { id: string }) {
 
   const doc = detail.document;
   const draft = doc.status === 'draft';
+  const imported = doc.source === 'import';
   const version = doc.version;
   const regular = !doc.kleinunternehmer;
   const nextNumber = settings?.counters.find((c) => c.docType === doc.docType)?.nextNumber ?? null;
@@ -290,16 +291,19 @@ export default function DocumentEditor({ id }: { id: string }) {
           <h1 className="flex items-center gap-3 text-2xl font-semibold tracking-tight">
             {TYPE_LABELS[doc.docType]} {doc.documentNumber ?? ''}
             <StatusBadge status={doc.status} />
+            {imported ? <ImportedBadge /> : null}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {draft
               ? `Draft: the number is given when you issue it${nextNumber ? ` (next: ${nextNumber})` : ''}.`
-              : `${STATUS_LABELS[doc.status]} on ${date(doc.issueDate)}${doc.dueDate ? ` · due ${date(doc.dueDate)}` : ''}`}
+              : `${STATUS_LABELS[doc.status]} on ${date(doc.issueDate)}${doc.dueDate ? ` · due ${date(doc.dueDate)}` : ''}${
+                  imported ? ' · imported, the original PDF is the document of record' : ''
+                }`}
           </p>
         </div>
         <div className="flex gap-2">
           <a href={pdfUrl(id)} className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium hover:bg-accent">
-            {draft ? 'Preview PDF' : 'Download PDF'}
+            {draft ? 'Preview PDF' : imported ? 'Download original PDF' : 'Download PDF'}
           </a>
           {draft ? (
             <Button onClick={() => setConfirming(true)} disabled={busy || detail.lines.length === 0}>
@@ -326,7 +330,7 @@ export default function DocumentEditor({ id }: { id: string }) {
         <section role="dialog" aria-label="Confirm issue" className="mb-6 rounded-lg border p-4">
           <h2 className="font-medium">Issue this invoice?</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            To {recipientName ?? 'no customer'}, total {money(doc.total)}
+            To {recipientName ?? 'no customer'}, total {money(doc.total, doc.currencyCode)}
             {nextNumber ? `, as number ${nextNumber}` : ''}. An issued invoice can no longer be changed; it can only be
             cancelled with a credit note.
           </p>
@@ -440,13 +444,13 @@ export default function DocumentEditor({ id }: { id: string }) {
                 <tr key={l.id} className="border-b align-top" data-testid="line">
                   <td className={`py-2 pr-2 ${l.kind === 'text' ? 'italic text-muted-foreground' : ''}`}>{l.title}</td>
                   <td className="py-2 pr-2 text-right tabular-nums">{l.kind === 'text' ? '' : `${quantity(l.quantity)} ${l.unitLabel}`}</td>
-                  <td className="py-2 pr-2 text-right tabular-nums">{l.kind === 'text' ? '' : money(l.unitPrice)}</td>
+                  <td className="py-2 pr-2 text-right tabular-nums">{l.kind === 'text' ? '' : money(l.unitPrice, doc.currencyCode)}</td>
                   {regular ? (
                     <td className="py-2 pr-2 text-right tabular-nums" data-testid="line-tax">
                       {l.kind === 'text' ? '' : l.taxTreatment === 'reverse_charge' ? 'reverse charge' : rate(l.taxRate)}
                     </td>
                   ) : null}
-                  <td className="py-2 text-right tabular-nums">{l.kind === 'text' ? '' : money(sign * l.subtotal)}</td>
+                  <td className="py-2 text-right tabular-nums">{l.kind === 'text' ? '' : money(sign * l.subtotal, doc.currencyCode)}</td>
                   {draft ? (
                     <td className="whitespace-nowrap py-1 pl-2 text-right">
                       <Button size="sm" variant="ghost" aria-label={`Move ${l.title} up`} disabled={busy || i === 0} onClick={() => move(i, -1)}>
@@ -493,22 +497,22 @@ export default function DocumentEditor({ id }: { id: string }) {
           ? doc.taxSummary.map((g) => (
               <div key={`${g.taxRate}-${g.taxTreatment}`} className="flex justify-between py-0.5 text-muted-foreground">
                 <span>
-                  {g.taxTreatment === 'reverse_charge' ? 'Reverse charge' : `VAT ${rate(g.taxRate)} on ${money(sign * g.net)}`}
+                  {g.taxTreatment === 'reverse_charge' ? 'Reverse charge' : `VAT ${rate(g.taxRate)} on ${money(sign * g.net, doc.currencyCode)}`}
                 </span>
-                <span className="tabular-nums">{money(sign * g.tax)}</span>
+                <span className="tabular-nums">{money(sign * g.tax, doc.currencyCode)}</span>
               </div>
             ))
           : null}
         {regular ? (
           <div className="flex justify-between py-0.5">
             <span>Net</span>
-            <span className="tabular-nums">{money(sign * doc.subtotal)}</span>
+            <span className="tabular-nums">{money(sign * doc.subtotal, doc.currencyCode)}</span>
           </div>
         ) : null}
         <div className="flex justify-between border-t py-1 font-semibold">
           <span>Total</span>
           <span className="tabular-nums" data-testid="total">
-            {money(sign * doc.total)}
+            {money(sign * doc.total, doc.currencyCode)}
           </span>
         </div>
         {doc.taxNote ? <p className="mt-2 text-xs text-muted-foreground">{doc.taxNote}</p> : null}
