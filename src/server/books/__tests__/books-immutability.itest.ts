@@ -5,7 +5,7 @@
 // proven independent of grants. Each case runs once per role.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Kysely, UpdateObject } from 'kysely';
 
 import type { CommerceDB } from '../../commerce/db-types';
@@ -129,9 +129,25 @@ describe.each(roles)('an issued document is frozen (as %s)', (_role, db) => {
   it('rendered_pdf_file_id may be set once and never changed', async () => {
     const { scope, issued } = await company();
     const id = issued.document.id;
+    // Since 008 the id must name a stored file of the same company (composite FK).
+    const content = Buffer.from('%PDF-1.7 synthetic');
+    const fileId = randomUUID();
+    await db()
+      .insertInto('sales_document_file')
+      .values({
+        id: fileId,
+        tenant_id: scope.tenantId,
+        document_id: id,
+        content_type: 'application/pdf',
+        byte_size: content.byteLength,
+        sha256: createHash('sha256').update(content).digest('hex'),
+        renderer: 'test',
+        content,
+      })
+      .execute();
     await db()
       .updateTable('sales_document')
-      .set({ rendered_pdf_file_id: 'file-1', updated_at: new Date() })
+      .set({ rendered_pdf_file_id: fileId, updated_at: new Date() })
       .where('tenant_id', '=', scope.tenantId)
       .where('id', '=', id)
       .execute();
