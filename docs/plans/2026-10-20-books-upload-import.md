@@ -213,8 +213,14 @@ Books home.
     codes, never extracted values, file names or model output. An unexpected error on any Books
     route is logged by its kind, SQLSTATE, constraint, table and column and its stack frames,
     never its message (a database error's message can quote the row). The PDF beside the form is
-    served same-origin only, not embeddable elsewhere, never sniffed or cached; it is not
-    sandboxed, because browsers refuse to display a PDF in a sandboxed document.
+    not sandboxed (browsers refuse to display a PDF in a sandboxed document), so it is served
+    only under all of these (lead's conditions of 2026-10-20): behind the full Books guard for
+    the row's company; only bytes that start with `%PDF-`, checked at upload and again when
+    served; `Content-Type: application/pdf` always (never from the upload's name or type),
+    `X-Content-Type-Options: nosniff`, `Content-Disposition: inline; filename="document.pdf"`
+    (no user text), `Cache-Control: private, no-store`, `Cross-Origin-Resource-Policy:
+    same-origin`, `X-Frame-Options: SAMEORIGIN` and `frame-ancestors 'self'`. A file that is
+    really HTML or SVG never renders as a document of the editor's origin.
 14. **Time stamps compared in SQL.** A staging claim's age is compared in the database against a
     parameter of the same kind it was written with: a `TIMESTAMP` without time zone read back
     into JavaScript can carry the machine's offset, so comparing there took a fresh claim for a

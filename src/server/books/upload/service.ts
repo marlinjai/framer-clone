@@ -90,7 +90,7 @@ export async function stageUpload(scope: BooksScope, file: { fileName: string; b
       issues: [{ path: 'file', message: `a PDF of at most ${MAX_UPLOAD_BYTES} bytes` }],
     });
   }
-  if (Buffer.from(bytes.subarray(0, 5)).toString('latin1') !== '%PDF-') {
+  if (!isPdfBytes(bytes)) {
     throw new BooksError('INVALID_INPUT', 'INVALID_INPUT: file (not a PDF)', { issues: [{ path: 'file', message: 'not a PDF' }] });
   }
   const sha256 = createHash('sha256').update(bytes).digest('hex');
@@ -531,11 +531,25 @@ export async function listImportItems(scope: BooksScope): Promise<{ items: Impor
   return { items: [...open, ...imported.items], importedTotal: imported.total };
 }
 
-/** The PDF of a row: the uploaded bytes, or, once imported, the stored original of its document. */
-export async function itemPdf(scope: BooksScope, itemId: string): Promise<{ bytes: Uint8Array; fileName: string }> {
+/** Whether bytes start like a PDF (`%PDF-`), the check every upload passed. */
+export function isPdfBytes(bytes: Uint8Array): boolean {
+  return Buffer.from(bytes.subarray(0, 5)).toString('latin1') === '%PDF-';
+}
+
+/**
+ * The PDF of a row: the uploaded bytes, or, once imported, the stored original
+ * of its document. Served on the editor's origin, so bytes that do not start
+ * like a PDF are never served (checked again here, not only at upload): a file
+ * that is really HTML or SVG must never render as a page of the editor.
+ */
+export async function itemPdf(scope: BooksScope, itemId: string): Promise<{ bytes: Uint8Array }> {
   const item = await getItem(scope.db, scope, itemId);
+  const pdf = (bytes: Uint8Array) => {
+    if (!isPdfBytes(bytes)) throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: the stored file is not a PDF', { itemId });
+    return { bytes };
+  };
   const staged = await itemContent(scope.db, scope, itemId);
-  if (staged) return { bytes: staged, fileName: item.fileName };
+  if (staged) return pdf(staged);
   if (item.documentId) {
     const file = await scope.db
       .selectFrom('sales_document_file')
@@ -543,7 +557,7 @@ export async function itemPdf(scope: BooksScope, itemId: string): Promise<{ byte
       .where('tenant_id', '=', scope.tenantId)
       .where('document_id', '=', item.documentId)
       .executeTakeFirst();
-    if (file) return { bytes: new Uint8Array(file.content), fileName: item.fileName };
+    if (file) return pdf(new Uint8Array(file.content));
   }
   throw new BooksError('NOT_FOUND', 'NOT_FOUND: the file of this row is no longer stored', { itemId });
 }

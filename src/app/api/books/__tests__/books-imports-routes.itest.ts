@@ -177,6 +177,22 @@ describe('the guard chain on the import routes', () => {
     expect((await env.ownerDb.selectFrom('historical_import_item').select('status').where('id', '=', id).executeTakeFirstOrThrow()).status).toBe('uploaded');
   });
 
+  it('bytes that are not a PDF are never served, even if they reached the table some other way', async () => {
+    // An upload that is really HTML is refused before staging.
+    const html = Buffer.from('<html><script>alert(1)</script></html>');
+    expect((await upload(html, { name: 'invoice.pdf' })).json.error.code).toBe('invalid_input');
+    // A row holding HTML bytes (written past the upload, as the owner role) is not served as a document.
+    const id = crypto.randomUUID();
+    await env.ownerDb
+      .insertInto('historical_import_item')
+      .values({ id, tenant_id: tenantId, file_name: 'x.pdf', content: html, byte_size: html.byteLength, sha256: 'f'.repeat(64), updated_at: new Date() })
+      .execute();
+    const res = await itemPdfRoute.GET(new Request(`http://localhost:3000/api/books/imports/${id}/pdf`, { headers: HEADERS }), { params: Promise.resolve({ id }) });
+    expect(res.status).not.toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    expect(await res.text()).not.toContain('<script>');
+  });
+
   it("another company's row answers 404", async () => {
     const staged = (await upload(pdfBytes(`own-${tenantId}`))).json.item.id as string;
     state.session = sessionFor(newTenantId());
@@ -217,7 +233,16 @@ describe('read, correct, import', () => {
     expect(read.json).toMatchObject({ status: 'ready', printed: { number: '18' }, confidence: { 'recipient.name': 'medium' } });
 
     const pdf = await itemPdfRoute.GET(new Request(`http://localhost:3000/api/books/imports/${id}/pdf`, { headers: HEADERS }), { params: Promise.resolve({ id }) });
-    expect(pdf.headers.get('content-type')).toBe('application/pdf');
+    expect(Object.fromEntries(['content-type', 'x-content-type-options', 'content-disposition', 'cache-control', 'cross-origin-resource-policy', 'x-frame-options', 'content-security-policy'].map((h) => [h, pdf.headers.get(h)]))).toEqual({
+      'content-type': 'application/pdf',
+      'x-content-type-options': 'nosniff',
+      // A fixed name: the uploaded file name never reaches a header.
+      'content-disposition': 'inline; filename="document.pdf"',
+      'cache-control': 'private, no-store',
+      'cross-origin-resource-policy': 'same-origin',
+      'x-frame-options': 'SAMEORIGIN',
+      'content-security-policy': "frame-ancestors 'self'",
+    });
     expect(Buffer.from(await pdf.arrayBuffer()).equals(Buffer.from(bytes))).toBe(true);
 
     // A correction keyed to this reading.
