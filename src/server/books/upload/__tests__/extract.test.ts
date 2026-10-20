@@ -179,6 +179,16 @@ describe('extractPrintedInvoice', () => {
     ]);
   });
 
+  it('a party printed without a name is no party (the recipient is then missing, the sender comes from the settings)', () => {
+    const wire = toolInput({
+      recipient: { name: '', addressLines: ['Beispielweg 2', '20095 Hamburg'], country: '', countryInferred: 'DE', customerNumber: '1003' },
+      sender: { name: '', addressLines: ['Musterstrasse 1'], country: '', taxNumber: '12/345/67890', vatId: '' },
+    }) as unknown as ToolInput;
+    const { printed } = printedFromToolInput(wire);
+    expect(printed).toMatchObject({ recipient: null, sender: null });
+    expect(rawInvoiceSchema.safeParse(printed).success).toBe(true);
+  });
+
   it('turns the wire format back into the shared shape: empty text is null, an empty party is no party', () => {
     const wire = toolInput({
       recipient: { name: '', addressLines: [], country: '', countryInferred: '', customerNumber: '' },
@@ -204,6 +214,17 @@ describe('extractPrintedInvoice', () => {
     expect(classifyFailure(api(500, 'api_error', 'Internal'))).toEqual({ outcome: 'error', reason: 'unavailable' });
     expect(classifyFailure(new Error('socket hang up'))).toEqual({ outcome: 'error', reason: 'unavailable' });
     expect(describeApiError(api(400, 'invalid_request_error', 'Schemas contains\ntoo many'))).toBe('400, invalid_request_error, Schemas contains too many');
+    // The account is configuration, not our request; a retired model id too.
+    expect(classifyFailure(api(400, 'invalid_request_error', 'Your credit balance is too low to access the Anthropic API.'))).toEqual({ outcome: 'error', reason: 'config' });
+    expect(classifyFailure(api(404, 'not_found_error', 'model: claude-x'))).toEqual({ outcome: 'error', reason: 'config' });
+    // A request bug that names the document's place in the request is still our request, not an unreadable PDF.
+    expect(classifyFailure(api(400, 'invalid_request_error', 'messages.0.content.0.document.source: Field required'))).toEqual({ outcome: 'error', reason: 'request' });
+    // An error inside the stream carries no status, only its type.
+    const inStream = (type: string) => Object.assign(new Error(type), { status: undefined, error: { type: 'error', error: { type, message: type } } });
+    expect(classifyFailure(inStream('overloaded_error'))).toEqual({ outcome: 'error', reason: 'busy' });
+    expect(classifyFailure(inStream('authentication_error'))).toEqual({ outcome: 'error', reason: 'config' });
+    // Only an API error's own message is ever logged, never another error's.
+    expect(describeApiError(new Error('Example Client GmbH owes 800'))).toBe('no status');
   });
 
   it('a real reading by the API (recorded 2026-10-20 from a synthetic PDF) parses into the shared shape', async () => {

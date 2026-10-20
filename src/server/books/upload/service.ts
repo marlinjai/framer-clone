@@ -28,6 +28,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type Anthropic from '@anthropic-ai/sdk';
+import { APIError } from '@anthropic-ai/sdk';
 import { sql } from 'kysely';
 
 import type { AiModelKey } from '@/lib/ai/anthropicClient';
@@ -359,7 +360,7 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
       );
     } catch (err) {
       // The reading could not be stored: the row says so instead of staying claimed.
-      await failRow('unavailable');
+      await failRow('store');
       throw err;
     }
     // Discarded, or taken over by another call, while being read: this reading is not attached.
@@ -377,9 +378,10 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
  *   request      the API refused the request (any other 400: our side, a bug);
  *   config       the API key or account is not accepted (401, 403);
  *   busy         rate limited or overloaded (429, 529);
- *   unavailable  no answer: a 5xx, a timeout, the network.
+ *   unavailable  no answer: a 5xx, a timeout, the network;
+ *   store        the reading came back but could not be stored here.
  */
-export const FAILURE_REASONS = ['refused', 'invalid_output', 'max_tokens', 'unreadable', 'request', 'config', 'busy', 'unavailable'] as const;
+export const FAILURE_REASONS = ['refused', 'invalid_output', 'max_tokens', 'unreadable', 'request', 'config', 'busy', 'unavailable', 'store'] as const;
 export type FailureReason = (typeof FAILURE_REASONS)[number];
 
 /**
@@ -388,15 +390,23 @@ export type FailureReason = (typeof FAILURE_REASONS)[number];
  */
 export function classifyFailure(err: unknown): { outcome: ExtractionOutcome; reason: FailureReason } {
   const status = (err as { status?: unknown })?.status;
+  const { type, message = '' } = apiErrorBody(err);
   if (status === 413) return { outcome: 'unreadable', reason: 'unreadable' };
   if (status === 400) {
-    const message = apiErrorBody(err).message ?? '';
-    return /\b(pdf|document)\b/i.test(message) && !/credit|billing|balance|api key/i.test(message)
-      ? { outcome: 'unreadable', reason: 'unreadable' }
-      : { outcome: 'error', reason: 'request' };
+    // The account (credit, billing) is configuration; the PDF itself is unreadable; anything else is our request.
+    if (/credit|billing|balance|api key/i.test(message)) return { outcome: 'error', reason: 'config' };
+    if (/\bpdf\b/i.test(message)) return { outcome: 'unreadable', reason: 'unreadable' };
+    return { outcome: 'error', reason: 'request' };
   }
-  if (status === 401 || status === 403) return { outcome: 'error', reason: 'config' };
+  // 404: an unknown or retired model id, a setting.
+  if (status === 401 || status === 403 || status === 404) return { outcome: 'error', reason: 'config' };
   if (status === 429 || status === 529) return { outcome: 'error', reason: 'busy' };
+  // An error that arrives inside the stream has no status, only its type.
+  if (typeof status !== 'number') {
+    if (type === 'overloaded_error' || type === 'rate_limit_error') return { outcome: 'error', reason: 'busy' };
+    if (type === 'authentication_error' || type === 'permission_error' || type === 'not_found_error') return { outcome: 'error', reason: 'config' };
+    if (type === 'invalid_request_error') return { outcome: 'error', reason: 'request' };
+  }
   return { outcome: 'error', reason: 'unavailable' };
 }
 
@@ -408,8 +418,8 @@ export function failureOutcome(err: unknown): ExtractionOutcome {
 /** The API's own error type and message (the SDK keeps the response body on `error`). */
 function apiErrorBody(err: unknown): { type?: string; message?: string } {
   const body = (err as { error?: { error?: { type?: unknown; message?: unknown } } })?.error?.error;
-  // Without a parsed body (a proxy's answer, another client), the error's own message stands in.
-  const own = (err as { message?: unknown })?.message;
+  // Without a parsed body (a proxy's answer), the API error's own message stands in; never another error's.
+  const own = err instanceof APIError ? err.message : undefined;
   return {
     type: typeof body?.type === 'string' ? body.type : undefined,
     message: typeof body?.message === 'string' ? body.message : typeof own === 'string' ? own : undefined,

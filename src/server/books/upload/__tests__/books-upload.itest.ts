@@ -52,6 +52,7 @@ import {
   stageUpload,
   type ExtractDeps,
 } from '../service';
+import { printedFromToolInput, type ToolInput } from '../extract';
 import { getItem, itemContent } from '../staging';
 import { fakeAnthropic, pdfBytes, toolInput, toolTurn, type Turn } from './fakeAnthropic';
 
@@ -99,11 +100,9 @@ async function staged(scope: Parameters<typeof stageUpload>[0], label: string) {
 
 const codes = (item: { problems: Array<{ code: string }> }) => item.problems.map((p) => p.code).sort();
 
-/** A printed invoice as the user types it in the form: the model's tool input without its unsure fields. */
+/** A printed invoice as the user submits it from the form: the shared printed shape (nulls, no wire format). */
 function typedByUser(input: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...input };
-  delete out.uncertainFields;
-  return out;
+  return printedFromToolInput(input as unknown as ToolInput).printed;
 }
 
 describe('forward', () => {
@@ -439,7 +438,11 @@ describe('unhappy paths of reading and importing', () => {
     const { tenantId, book, scope } = await company();
     const item = await staged(scope, `hand-${tenantId}`);
     // The API refuses the PDF itself: unreadable, not offered again.
-    const unreadable = await extractItem(scope, item.id, deps([{ throws: Object.assign(new Error('bad pdf'), { status: 400 }) }], book).deps);
+    const pdfRefused = Object.assign(new Error('400 pdf'), {
+      status: 400,
+      error: { type: 'error', error: { type: 'invalid_request_error', message: 'The PDF specified was not valid.' } },
+    });
+    const unreadable = await extractItem(scope, item.id, deps([{ throws: pdfRefused }], book).deps);
     expect(unreadable.problems).toEqual([{ code: 'extraction_failed:unreadable', path: null, blocking: true, count: null }]);
     expect(unreadable.extractionId).toBeNull();
 

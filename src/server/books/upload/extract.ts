@@ -309,13 +309,15 @@ export function printedFromToolInput(input: ToolInput): { printed: Record<string
     paymentTerms: t(wire.paymentTerms),
     lines: wire.lines.map((l) => ({ ...l, unit: t(l.unit), discount: t(l.discount) })),
   };
+  // A party is there when it has a name (the rule of the review editor too): without one the
+  // recipient is missing (named, the user fills it in) and the sender comes from the company settings.
   const r = wire.recipient;
   const recipient =
-    r && (t(r.name) !== null || r.addressLines.some((x) => x.trim() !== '') || t(r.customerNumber) !== null)
+    r && t(r.name) !== null
       ? { ...r, country: t(r.country), countryInferred: t(r.countryInferred), customerNumber: t(r.customerNumber) }
       : null;
   const s = wire.sender;
-  const senderPrinted = s && (t(s.name) !== null || s.addressLines.some((x) => x.trim() !== '') || t(s.taxNumber) !== null || t(s.vatId) !== null);
+  const senderPrinted = s && t(s.name) !== null;
   // The model may report `other` as the tax treatment; the mapping refuses anything it does not know by name.
   const printed: Record<string, unknown> = {
     ...rest,

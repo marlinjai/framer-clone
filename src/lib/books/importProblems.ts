@@ -16,6 +16,7 @@ const TEXT: Record<string, string> = {
   'extraction_failed:request': 'The AI service refused the request. This is a fault on our side, not in your PDF; read it again later, or fill it in by hand.',
   'extraction_failed:config': 'The AI service is not set up correctly on this server (its key or account was not accepted). Tell your administrator, then read it again; or fill it in by hand.',
   'extraction_failed:busy': 'The AI service is busy right now. Read it again in a moment.',
+  'extraction_failed:store': 'The invoice was read, but the reading could not be saved here. Read it again.',
   'extraction_failed:unavailable': 'Reading failed (the AI service did not answer). Read it again, or fill it in by hand.',
   // Rows read before the finer reasons: no answer.
   'extraction_failed:error': 'Reading failed (the AI service did not answer). Read it again, or fill it in by hand.',
@@ -89,6 +90,7 @@ const REREAD_REASON: Record<string, string> = {
   busy: 'the AI service is busy. The earlier reading is kept; try again in a moment',
   request: 'the AI service refused the request (a fault on our side). The earlier reading is kept',
   config: 'the AI service is not set up correctly on this server. The earlier reading is kept',
+  store: 'the new reading could not be saved here. The earlier reading is kept; try again',
 };
 
 /** What a failed import names, in words (the code an `import_failed:` problem carries). */
