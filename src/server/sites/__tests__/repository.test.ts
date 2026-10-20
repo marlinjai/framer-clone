@@ -64,9 +64,8 @@ function makeFakePrisma() {
     site,
     sitePage,
     siteDomain,
-    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>, _opts?: unknown) =>
-      fn(prisma),
-    ),
+    // Typed with the options argument (tests read it from the calls); the fake only runs the callback.
+    $transaction: vi.fn<(fn: (tx: unknown) => Promise<unknown>, opts?: unknown) => Promise<unknown>>(async (fn): Promise<unknown> => fn(prisma)),
   };
   return prisma;
 }
