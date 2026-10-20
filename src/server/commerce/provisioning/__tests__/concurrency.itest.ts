@@ -48,7 +48,7 @@ import {
   provisionCommerceTenant,
 } from '../provision';
 import { COMMERCE_DEPLOY_LOCK_KEY, runCommerceDeployMigrations } from '../deploy';
-import { CommerceLockTimeoutError, openOwnerSql } from '../ownerSql';
+import { acquireAdvisoryLock, CommerceLockTimeoutError, openOwnerSql, PROVISION_TIMEOUTS, releaseAdvisoryLock } from '../ownerSql';
 
 const provisionSpy = vi.mocked(provisionTenant);
 /** Short waits for the timeout cases, so the suite stays fast. */
@@ -172,6 +172,90 @@ describe('commerce advisory locks', () => {
     } finally {
       await su!`SELECT pg_advisory_unlock(${COMMERCE_PROVISION_LOCK_KEY})`;
     }
+  });
+
+  describe('a wait sized to the queue (queueWaitMs)', () => {
+    // A key of its own, so these holders never meet a real provision.
+    const KEY = 74_610_099;
+    const QUEUED = { lockTimeoutMs: 300, statementTimeoutMs: 5_000, queueWaitMs: 5_000 };
+
+    /** Sessions all queued for the lock before the waiter arrives, each holding it `holdMs`: a queue that moves. */
+    async function movingQueue(holders: number, holdMs: number) {
+      const sessions = Array.from({ length: holders }, () => postgres(superUrl, { max: 1, prepare: false }));
+      await sessions[0]`SELECT pg_advisory_lock(${KEY})`;
+      const runs = sessions.map(async (s, i) => {
+        if (i > 0) await s`SELECT pg_advisory_lock(${KEY})`;
+        await new Promise((r) => setTimeout(r, holdMs));
+        await s`SELECT pg_advisory_unlock(${KEY})`;
+      });
+      // Every other holder is in the queue (Postgres grants a waiting lock in arrival order).
+      for (let i = 0; i < 200; i += 1) {
+        const [{ n }] = await su!<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = ${KEY}`;
+        if (n >= holders - 1) break;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      return { done: Promise.all(runs), end: () => Promise.all(sessions.map((s) => s.end())) };
+    }
+
+    it('keeps waiting while the lock changes hands, far beyond one lock wait', async () => {
+      const queue = await movingQueue(5, 200);
+      const waiter = await openOwnerSql(ownerUrl, QUEUED);
+      try {
+        const started = Date.now();
+        await acquireAdvisoryLock(waiter, KEY, 'test lock', QUEUED);
+        // Five holders of 200 ms: well past the 300 ms a single wait would have allowed.
+        expect(Date.now() - started).toBeGreaterThan(600);
+        await releaseAdvisoryLock(waiter, KEY);
+        await queue.done;
+      } finally {
+        await waiter.end();
+        await queue.end();
+      }
+    });
+
+    it('a single wait (no queueWaitMs) still fails after one lock wait, the old contract', async () => {
+      const queue = await movingQueue(5, 200);
+      const waiter = await openOwnerSql(ownerUrl, SHORT);
+      try {
+        await expect(acquireAdvisoryLock(waiter, KEY, 'test lock', SHORT)).rejects.toThrow(/not granted within 300 ms \(lock_timeout\)/);
+        await queue.done;
+      } finally {
+        await waiter.end();
+        await queue.end();
+      }
+    });
+
+    it('fails fast behind one holder that keeps the lock (a stuck provision), queue or not', async () => {
+      await su!`SELECT pg_advisory_lock(${KEY})`;
+      const waiter = await openOwnerSql(ownerUrl, QUEUED);
+      try {
+        const started = Date.now();
+        await expect(acquireAdvisoryLock(waiter, KEY, 'test lock', QUEUED)).rejects.toThrow(/not granted within 300 ms \(lock_timeout\)/);
+        expect(Date.now() - started).toBeLessThan(2_000);
+      } finally {
+        await su!`SELECT pg_advisory_unlock(${KEY})`;
+        await waiter.end();
+      }
+    });
+
+    it('gives up when the queue keeps moving longer than queueWaitMs in all, with its own message', async () => {
+      const queue = await movingQueue(8, 200);
+      const capped = { ...QUEUED, queueWaitMs: 600 };
+      const waiter = await openOwnerSql(ownerUrl, capped);
+      try {
+        await expect(acquireAdvisoryLock(waiter, KEY, 'test lock', capped)).rejects.toThrow(/within 600 ms of queueing/);
+        await queue.done;
+      } finally {
+        await waiter.end();
+        await queue.end();
+      }
+    });
+
+    it('the provisioning budget sizes its wait to the queue', () => {
+      expect(PROVISION_TIMEOUTS.queueWaitMs).toBeGreaterThan(PROVISION_TIMEOUTS.lockTimeoutMs);
+      expect(PROVISION_TIMEOUTS.lockTimeoutMs + PROVISION_TIMEOUTS.queueWaitMs!).toBeGreaterThan(0);
+    });
   });
 
   it('a start step behind a held migration lock logs that it waits, then fails with CommerceLockTimeoutError', async () => {
