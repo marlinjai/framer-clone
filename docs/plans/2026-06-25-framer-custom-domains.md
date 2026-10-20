@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: completed
 date: 2026-06-25
 title: Framer-clone custom domains (B): connect a customer-owned domain to a published site
 summary: The "Option B" upgrade over the demo's default subdomain hosting (Option A). Let a site owner connect their own domain (demo-custom-domain.com) to a published framer-clone site, with domain-control validation, automatic per-domain TLS, and an in-editor onboarding flow. The host-aware routing and the SiteDomain.customHostname model already exist; this plan wires resolution, certs, and UX on top. Background work, sequenced AFTER the hosted-demo (Option A) is live.
@@ -194,8 +194,15 @@ publish and unpublish revalidate every host of the site.
 status, disconnect). Routes under `/api/projects/<id>/domains` use the editor guard chain (editor
 host, session, `sites` grant, tenant group, `viewSite` / `manageDomain`, 503 on outages).
 
-**Open until the infra change is applied** (steps for `infra/deployments/framer-clone/RUNBOOK.md`,
-not applied by the build session): a DNS-only `domains.lumitra.co` A record, the five
-`CUSTOM_DOMAIN_*` values and the sync token in Infisical, the token header file and the systemd
-units on the server, a check that the proxy's file provider watches `/data/coolify/proxy/dynamic/`,
-then one real domain end to end.
+**Infra applied and proven, 2026-10-20** (Marlin's yes the same day; every command, the
+operating notes and the rollback are in `infra/deployments/framer-clone/RUNBOOK.md`, phase 4):
+`domains.lumitra.co` A record, DNS only, in Terraform; `CUSTOM_DOMAIN_TARGET_HOST`,
+`CUSTOM_DOMAIN_TARGET_IPV4`, `CUSTOM_DOMAIN_DNS_SERVERS` and the minted `CUSTOM_DOMAIN_SYNC_TOKEN`
+in Infisical; the token header file (root, 0600, written source to sink) and the four systemd
+units on the server, with `BLOCKED_ZONES` set to the other products' zones on that server; the
+proxy's file provider already watched `/data/coolify/proxy/dynamic/`, so no proxy restart.
+Decided on the way: IPv4 only (`CUSTOM_DOMAIN_TARGET_IPV6` unset, no AAAA record), because
+Traefik's IPv6 reachability is unproven and Let's Encrypt tries IPv6 first. End to end with
+`fc-cd-test.marlinjai.com`: verified in the Domains panel, route written within a minute, Let's
+Encrypt certificate, `HTTP/2 200` with the site's page, `active`; then disconnected and its
+records and route removed.
