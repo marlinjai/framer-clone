@@ -1,0 +1,248 @@
+// src/app/projects/books/__tests__/ImportPanel.test.tsx
+//
+// "Import past invoices" against a scripted /api/books/imports server (fetch
+// stubbed). The interface states of the plan and the four stateful-flow paths
+// at the interface:
+//   - empty: says what happens, nothing imported without confirmation;
+//   - forward: chosen PDFs upload one per request as the body, are read, show
+//     ready, import on Import; the counter notice is shown;
+//   - backtrack and revise: a correction is sent keyed to the reading and the
+//     version, the answer's problems are shown; reading again resets the form
+//     to the new reading;
+//   - resume: a row uploaded but not read yet is read on load;
+//   - re-entry and failure: a duplicate says so and is not read; a failed
+//     upload offers a retry; a busy answer is retried; the daily limit stops
+//     the queue with a notice; "Import all ready" confirms every ready row.
+// All data is synthetic.
+
+import React from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+
+import ImportPanel from '../ImportPanel';
+
+type Json = Record<string, unknown>;
+
+function printed(over: Json = {}): Json {
+  return {
+    number: '17',
+    issueDate: '2022-05-03',
+    serviceDate: null,
+    servicePeriod: null,
+    recipient: { name: 'Example Client GmbH', addressLines: ['Beispielweg 2', '20095 Hamburg'], country: null, countryInferred: 'DE', customerNumber: null },
+    recipientVatId: null,
+    sender: { name: 'Sample Studio', addressLines: ['Musterstrasse 1', '10115 Berlin'], country: null, taxNumber: null, vatId: null },
+    lines: [{ description: 'Design work', quantity: 10, unit: 'h', unitPrice: 80, discount: null, lineTotal: 800, taxRate: null, taxAmount: null }],
+    total: 800,
+    currency: 'EUR',
+    taxTreatment: 'small_business',
+    taxAmounts: [],
+    pricesIncludeVat: false,
+    taxNote: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
+    paymentTerms: null,
+    ...over,
+  };
+}
+
+function item(over: Json = {}): Json {
+  return {
+    id: 'i1',
+    fileName: 'Rechnung 17.pdf',
+    byteSize: 1000,
+    status: 'ready',
+    version: 3,
+    extractionId: 'x1',
+    printed: printed(),
+    extractedPrinted: printed(),
+    confidence: {},
+    corrected: false,
+    problems: [],
+    extractionError: null,
+    model: 'claude-sonnet-5-5',
+    documentId: null,
+    createdAt: '2026-10-20T10:00:00.000Z',
+    updatedAt: '2026-10-20T10:00:00.000Z',
+    ...over,
+  };
+}
+
+const LIMITS = { maxFileBytes: 10 * 1024 * 1024, maxFilesAtOnce: 50, parallel: 4, perDay: 500 };
+
+type Handler = (call: { body: unknown; headers: Record<string, string>; url: string }) => { status: number; body: unknown };
+let calls: Array<{ method: string; url: string; body: unknown; headers: Record<string, string> }>;
+
+function server(routes: Record<string, Handler | Handler[]>) {
+  calls = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      const raw = init?.body;
+      const body = typeof raw === 'string' ? JSON.parse(raw) : raw ?? null;
+      calls.push({ method, url, body, headers });
+      const route = routes[`${method} ${url.split('?')[0]}`];
+      const handler = Array.isArray(route) ? (route.length > 1 ? route.shift()! : route[0]) : route;
+      if (!handler) return new Response(JSON.stringify({ error: { code: 'not_found', message: 'nf' } }), { status: 404 });
+      const res = handler({ body, headers, url });
+      return new Response(JSON.stringify(res.body), { status: res.status });
+    }),
+  );
+}
+
+function pdfFile(name: string): File {
+  return new File([new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31])], name, { type: 'application/pdf' });
+}
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+describe('ImportPanel', () => {
+  it('empty: says what happens and that nothing imports without confirmation', async () => {
+    server({ 'GET /api/books/imports': () => ({ status: 200, body: { items: [], counter: { format: '{n}', nextValue: 62 }, limits: LIMITS } }) });
+    render(<ImportPanel />);
+    expect((await screen.findByLabelText('No past invoices yet')).textContent).toMatch(/Nothing is imported without your confirmation/);
+    expect(screen.getByText(/Next invoice number: 62/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Import all ready' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('forward: each PDF uploads as the body, is read, shows ready, and imports', async () => {
+    let n = 0;
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: { items: [], counter: null, limits: LIMITS } }),
+      'POST /api/books/imports': () => {
+        n += 1;
+        return { status: 201, body: { status: 'staged', item: item({ id: `i${n}`, status: 'uploaded', printed: null, extractionId: null, fileName: `f${n}.pdf` }) } };
+      },
+      'POST /api/books/imports/i1/extract': () => ({ status: 200, body: item({ id: 'i1' }) }),
+      'POST /api/books/imports/i2/extract': () => ({ status: 200, body: item({ id: 'i2', printed: printed({ number: '18' }), fileName: 'f2.pdf' }) }),
+      'POST /api/books/imports/i1/confirm': () => ({
+        status: 200,
+        body: { item: item({ id: 'i1', status: 'imported', documentId: 'doc-1' }), documentId: 'doc-1', counterRaisedTo: 71 },
+      }),
+    });
+    render(<ImportPanel />);
+    await screen.findByLabelText('No past invoices yet');
+    fireEvent.change(screen.getByLabelText('Choose invoice PDFs'), { target: { files: [pdfFile('Rechnung 17.pdf'), pdfFile('Rechnung 18.pdf')] } });
+    await waitFor(() => expect(screen.getAllByText('Ready to check')).toHaveLength(2));
+    const ups = calls.filter((c) => c.method === 'POST' && c.url === '/api/books/imports');
+    expect(ups).toHaveLength(2);
+    expect(ups[0].headers).toMatchObject({ 'content-type': 'application/pdf', 'x-file-name': encodeURIComponent('Rechnung 17.pdf') });
+    expect(ups[0].body).toBeInstanceOf(File);
+    const row = screen.getByTestId('import-row-i1');
+    expect(row.textContent).toContain('Example Client GmbH');
+    expect(row.textContent).toContain('800,00 €');
+    fireEvent.click(within(row).getByRole('button', { name: 'Import' }));
+    await screen.findByText(/counter was raised to 71/);
+    expect(calls.find((c) => c.url.endsWith('/i1/confirm'))!.body).toEqual({ expectedVersion: 3 });
+    expect(within(screen.getByTestId('import-row-i1')).getByRole('link', { name: 'Open' }).getAttribute('href')).toBe('/projects/books/documents/doc-1');
+  });
+
+  it('resume: a row uploaded but not read yet is read on load', async () => {
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ status: 'uploaded', printed: null, extractionId: null })], counter: null, limits: LIMITS } }),
+      'POST /api/books/imports/i1/extract': () => ({ status: 200, body: item() }),
+    });
+    render(<ImportPanel />);
+    await screen.findByText('Ready to check');
+    expect(calls.filter((c) => c.url.endsWith('/i1/extract'))).toHaveLength(1);
+    expect(calls.some((c) => c.method === 'POST' && c.url === '/api/books/imports')).toBe(false);
+  });
+
+  it('backtrack and revise: the correction is keyed to the reading and the version; reading again resets the form', async () => {
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ confidence: { 'recipient.name': 'medium' } })], counter: null, limits: LIMITS } }),
+      'PATCH /api/books/imports/i1': ({ body }) => ({
+        status: 200,
+        body: item({
+          version: 4,
+          corrected: true,
+          printed: (body as { printed: Json }).printed,
+          status: 'needs_attention',
+          problems: [{ code: 'number_taken', path: 'number', blocking: true, count: null }],
+        }),
+      }),
+      'POST /api/books/imports/i1/extract': () => ({ status: 200, body: item({ version: 5, extractionId: 'x2', printed: printed({ number: '99' }) }) }),
+    });
+    render(<ImportPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Check' }));
+    const form = screen.getByRole('form', { name: 'Invoice as printed' });
+    // The field the AI was unsure about is marked.
+    expect((within(form).getByLabelText('Name', { selector: '#i1-rname' }) as HTMLInputElement).className).toContain('amber');
+    fireEvent.change(within(form).getByLabelText('Invoice number'), { target: { value: '20' } });
+    fireEvent.click(within(form).getByRole('button', { name: 'Save corrections' }));
+    await within(await screen.findByLabelText('Problems')).findByText(/already in the Books/);
+    expect(within(screen.getByTestId('import-row-i1')).getByText(/already in the Books/)).toBeTruthy();
+    const patch = calls.find((c) => c.method === 'PATCH')!;
+    expect(patch.body).toMatchObject({ extractionId: 'x1', expectedVersion: 3, printed: { number: '20', total: 800, currency: 'EUR' } });
+    // Reading again: the form shows the new reading, not the old edit.
+    fireEvent.click(within(screen.getByRole('form', { name: 'Invoice as printed' })).getByRole('button', { name: 'Read again with AI' }));
+    await waitFor(() =>
+      expect((within(screen.getByRole('form', { name: 'Invoice as printed' })).getByLabelText('Invoice number') as HTMLInputElement).value).toBe('99'),
+    );
+  });
+
+  it('re-entry and failures: duplicate, failed upload with retry, busy retried, daily limit stops', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const uploads = [
+      { status: 200, body: { status: 'duplicate', item: null, documentId: 'doc-9' } },
+      { status: 500, body: { error: { code: 'books_failed', message: 'the request failed' } } },
+      { status: 201, body: { status: 'staged', item: item({ id: 'i2', status: 'uploaded', printed: null, fileName: 'b.pdf' }) } },
+      { status: 201, body: { status: 'staged', item: item({ id: 'i3', status: 'uploaded', printed: null, fileName: 'c.pdf' }) } },
+    ];
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: { items: [], counter: null, limits: LIMITS } }),
+      'POST /api/books/imports': () => uploads.shift()!,
+      'POST /api/books/imports/i2/extract': [
+        () => ({ status: 429, body: { error: { code: 'extract_busy', message: 'busy', retryAfterSec: 1 } } }),
+        () => ({ status: 200, body: item({ id: 'i2', fileName: 'b.pdf' }) }),
+      ],
+      'POST /api/books/imports/i3/extract': () => ({ status: 429, body: { error: { code: 'import_limit', message: 'limit' } } }),
+    });
+    render(<ImportPanel />);
+    await screen.findByLabelText('No past invoices yet');
+    fireEvent.change(screen.getByLabelText('Choose invoice PDFs'), { target: { files: [pdfFile('a.pdf'), pdfFile('b.pdf')] } });
+    await screen.findByText('Duplicate: Already imported.');
+    const failed = await screen.findByText(/Failed:/);
+    fireEvent.click(within(failed.closest('li')!).getByRole('button', { name: 'Retry' }));
+    await vi.advanceTimersByTimeAsync(1500);
+    await waitFor(() => expect(within(screen.getByTestId('import-row-i2')).getByText('Ready to check')).toBeTruthy());
+    expect(calls.filter((c) => c.url.endsWith('/i2/extract'))).toHaveLength(2);
+    fireEvent.change(screen.getByLabelText('Choose invoice PDFs'), { target: { files: [pdfFile('c.pdf')] } });
+    await screen.findByText(/daily limit of invoices read/);
+    expect(calls.filter((c) => c.url.endsWith('/extract')).map((c) => c.url)).not.toContain('/api/books/imports/i1/extract');
+  });
+
+  it('"Import all ready" confirms every ready row and leaves the others', async () => {
+    server({
+      'GET /api/books/imports': () => ({
+        status: 200,
+        body: {
+          items: [
+            item({ id: 'i1' }),
+            item({ id: 'i2', problems: [{ code: 'number_missing', path: null, blocking: true, count: null }], status: 'needs_attention' }),
+            item({ id: 'i3' }),
+          ],
+          counter: null,
+          limits: LIMITS,
+        },
+      }),
+      'POST /api/books/imports/i1/confirm': () => ({ status: 200, body: { item: item({ id: 'i1', status: 'imported', documentId: 'd1' }), documentId: 'd1', counterRaisedTo: null } }),
+      'POST /api/books/imports/i3/confirm': () => ({ status: 200, body: { item: item({ id: 'i3', status: 'imported', documentId: 'd3' }), documentId: 'd3', counterRaisedTo: null } }),
+    });
+    render(<ImportPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Import all ready (2)' }));
+    await waitFor(() => expect(screen.getAllByText('Imported')).toHaveLength(2));
+    expect(calls.filter((c) => c.url.endsWith('/confirm')).map((c) => c.url)).toEqual(['/api/books/imports/i1/confirm', '/api/books/imports/i3/confirm']);
+    expect(within(screen.getByTestId('import-row-i2')).getByText('The invoice number is missing.')).toBeTruthy();
+  });
+
+  it('everything imported: says so', async () => {
+    server({ 'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ status: 'imported', documentId: 'd1' })], counter: null, limits: LIMITS } }) });
+    render(<ImportPanel />);
+    expect((await screen.findByLabelText('Everything imported')).textContent).toMatch(/marked imported/);
+  });
+});

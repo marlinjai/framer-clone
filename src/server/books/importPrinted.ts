@@ -118,7 +118,7 @@ export const rawInvoiceSchema = z.object({
 export type RawInvoice = z.infer<typeof rawInvoiceSchema>;
 
 
-const LEGAL_FORM = /(^|[\s,(])(GmbH|gGmbH|mbH|UG|AG|SE|KG|KGaA|OHG|GbR|PartG|PartGmbB|eG|e\.\s?V\.|e\.\s?K\.|Ltd\.?|LLC|Inc\.?|S\.A\.|S\.L\.|B\.V\.|N\.V\.|S\.r\.l\.|Sp\. z o\.o\.)(?=$|[\s,.)])/;
+const LEGAL_FORM = /(^|[\s,(])(GmbH|gGmbH|mbH|UG|AG|SE|KG|KGaA|OHG|GbR|PartG|PartGmbB|eG|e\.\s?V\.|e\.\s?K\.|Ltd\.?|LLC|LLP|PLC|plc|Inc\.?|Corp\.?|S\.A\.|SA|S\.L\.|SL|SARL|Sàrl|SAS|SASU|S\.p\.A\.|SpA|S\.r\.l\.|Srl|B\.V\.|BV|N\.V\.|NV|AB|AS|A\/S|ApS|Oy|Oyj|Sp\. z o\.o\.|s\.r\.o\.|a\.s\.|Kft\.?|d\.o\.o\.)(?=$|[\s,.)])/;
 
 /** The contact kind: the explicit override, otherwise an organization when the name carries a legal form. */
 export function inferKind(name: string, explicit?: 'person' | 'organization'): 'person' | 'organization' {
@@ -612,7 +612,8 @@ export function mapPrintedInvoice(
         paymentTermsDays: terms ?? 0,
         dueDate: terms === null ? null : addDays(issueDate, terms),
         recipient: {
-          kind: inferKind(r.recipient.name, r.recipient.kind),
+          // A recipient with a VAT id is a business (only businesses have one).
+          kind: inferKind(r.recipient.name, r.recipient.kind ?? (vatId !== null ? 'organization' : undefined)),
           name: r.recipient.name.trim(),
           addressLines: recipientAddress.addressLines,
           addressLine1: recipientAddress.addressLine1,

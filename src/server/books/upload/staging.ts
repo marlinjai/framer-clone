@@ -246,7 +246,17 @@ export async function updateItem(
   scope: BooksScope,
   id: string,
   change: ItemUpdate,
-  cond: { expectedVersion?: number; whenStatus?: readonly HistoricalImportStatus[] } = {},
+  cond: {
+    expectedVersion?: number;
+    whenStatus?: readonly HistoricalImportStatus[];
+    /**
+     * Only when the claim is older than this. Compared IN SQL against the same
+     * kind of parameter the claim was written with: a TIMESTAMP without time
+     * zone read back into JavaScript can carry the machine's offset, so a
+     * comparison there could take a fresh claim for a stale one.
+     */
+    claimedBefore?: Date;
+  } = {},
 ): Promise<ImportItem | null> {
   let q = db
     .updateTable('historical_import_item')
@@ -273,6 +283,7 @@ export async function updateItem(
     .where('id', '=', id);
   if (cond.expectedVersion !== undefined) q = q.where('version', '=', cond.expectedVersion);
   if (cond.whenStatus) q = q.where('status', 'in', [...cond.whenStatus]);
+  if (cond.claimedBefore) q = q.where('claimed_at', '<', cond.claimedBefore);
   const row = await q.returning(ITEM_COLUMNS).executeTakeFirst();
   return row ? mapItem(row as ItemRow) : null;
 }

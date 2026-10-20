@@ -5,7 +5,7 @@ summary: >
   the user checks and corrects the extracted data in a table, and the confirmed rows are imported
   as historical documents with the original PDF as the document of record.
 type: plan
-status: decided
+status: in-progress
 date: 2026-10-20
 tags: [framer-clone, books, invoices, import, ai]
 projects: [framer-clone]
@@ -95,6 +95,113 @@ imported in one transaction with every check), so both paths write identical doc
   staged again; a failed import leaves the row in `ready` with the problem named.
 - Plus: guard chain, daily ceiling, parallelism limit, prompt-injection text in a PDF does not
   change the output shape, counter raised upwards only.
+
+## Build notes (2026-10-20)
+
+Built on branch `feat/books-upload-import`. Where the code showed a better way than the
+decisions above, the refinement is below with its reason; decided, say so if you disagree.
+
+**What exists now.** Migration `010_books_upload_import`; the shared mapping from a printed
+invoice to the import record (`src/server/books/importPrinted.ts`, used by `pnpm books:import`
+and by the upload); the import core extended (`src/server/books/importInvoices.ts`); the upload
+domain in `src/server/books/upload/` (`staging.ts` the staging rows and the extraction ledger,
+`extract.ts` the model call, `validate.ts` the problems, `limits.ts` the spend bounds,
+`service.ts` the operations, `views.ts` the JSON); the routes under `/api/books/imports`
+(list and upload, `[id]` read and correct, `extract`, `recheck`, `confirm`, `discard`, `pdf`);
+the page `/projects/books/import` (`ImportPanel.tsx`, `ImportRowEditor.tsx`), linked from the
+Books home.
+
+1. **009 is deployed, so the schema changes are `010_books_upload_import`.** It holds: imports
+   may keep a printed number outside the company's number format (decision 4 needs it); a
+   discount line may carry negative VAT on a VAT invoice (007's `tax_amount >= 0` CHECK moves into
+   the line guard exactly as 009 moved the unit price and subtotal CHECKs, BK008); the staging
+   table `historical_import_item` (decision 1); and an extraction ledger
+   `historical_import_extraction`, one row per model call, which the daily ceiling counts
+   (decision 2) and which records the spend. An imported staging row is frozen for every role,
+   bytes are only ever cleared, never replaced, and a ledger row is finished once and never
+   deleted (BK010, plus the house REVOKE of DELETE for the app role).
+2. **Numbers (decision 4).** The import record carries the printed `documentNumber`; its counter
+   value is derived from the company's own format (`{n}`, `RE-{n:4}`), and a number in another
+   format is imported with its printed text and `number_value` NULL. Uniqueness holds on the
+   printed text (007's index) and on the value. The counter policy is a mode of the core:
+   `refuse` for `pnpm books:import` (unchanged), `raise` for the upload, which locks the counter
+   row FOR UPDATE and raises it to the number plus one in the same transaction, upwards only
+   (BK003 refuses a lowering). The review table shows the effect before the import
+   (`counter_raised` with the new value) and the page says so after it.
+3. **Tax treatments (decision 3, "one the Books know").** Every company, not only section 19
+   ones, uploads past invoices, so the record now takes small business (section 19, tax 0),
+   regular taxation (net lines with their printed rate and VAT; rates 19, 16, 7, 5 and 0 %, the
+   2020 rates included) and reverse charge (section 13b, tax 0, the recipient's VAT id and a
+   business required, the database twin agrees). Where a line prints no VAT, it is derived from
+   its rate (the invoice's only printed rate when the line shows none) and adjusted to the
+   printed VAT summary per rate; such lines and a VAT more than a cent off rate times net are
+   warnings, never refusals. Invoices whose line prices include VAT are a named problem
+   (`gross_priced_lines`): the user enters the net amounts per line in the table and imports
+   it, so there is a way forward; reading gross prices back into nets would invent figures. The
+   section 19 or reverse-charge notice missing from a PDF is a warning (`tax_note_missing`), as
+   decided ("reported, not blocking").
+4. **Staging and the bytes (decision 1).** The core gained an in-transaction hook: the upload marks
+   its staging row `imported` (document id set, bytes cleared) inside the import's own
+   transaction, so a failure leaves neither a document without its row nor the reverse. The
+   repository has no scheduler, so the bytes of rows discarded more than 30 days ago are
+   cleared whenever the company's import list is read, which is the only place they are seen.
+5. **Upload transport.** One PDF per request, sent as the request body (`content-type:
+   application/pdf`, its name in `x-file-name`): fifty files of 10 MB are not one request. The
+   edge middleware keeps a body only up to `middlewareClientMaxBodySize` (default 10 MB, so a
+   10 MB file would have arrived cut off without an error); it is raised to 12 MB, and the route
+   refuses a body shorter than its declared length (`upload_truncated`) instead of staging it.
+6. **The model call (decision 2).** Claude Sonnet 5.5 by default; `AI_INVOICE_EXTRACT_MODEL` names
+   a model id, mapped to the AI layer's model key, and an unknown id is refused as a
+   configuration error (500 `extract_model_unknown`), never silently replaced. The PDF is a
+   `document` block; the model answers through one strict tool whose input is the printed invoice
+   plus the fields it was unsure about; the input is parsed again with zod whatever the model
+   sent, so text inside a PDF can change transcribed values but never the shape or the action
+   (tested with an injected field and another tool). Effort `low`: transcription of a short
+   document that a person and the code check afterwards. Output ceiling 16k tokens, one repair
+   turn for output of the wrong shape, a refusal and the token ceiling are named failures of the
+   row ("read again" offered), and the call is aborted when the client disconnects, the row then
+   free to be read again. The model also reads the sender's printed tax number and VAT id, which
+   the operator's JSON never had.
+7. **Spend bounds (decision 2).** Four extractions in flight per company (process local, like the
+   AI routes' per-user slot; the plan's unit is the company, so the per-company slot replaces the
+   per-user one: one user uploading fifty files gets four in parallel, and a colleague of the same
+   company shares them). One extraction per file at a time, durable: a claim on the staging row,
+   taken over after five minutes so a crashed call is retried, not lost. The daily ceiling
+   (`BOOKS_IMPORT_DAILY_LIMIT`, default 500) counts the ledger's calls of the last 24 hours, a
+   rolling window rather than a calendar day: no time-zone edge, a restart does not reset it, and
+   a retry counts like a first attempt.
+8. **Validation (decision 3) is the import core's own preview.** A staged row is mapped with the
+   shared mapping and previewed by the core with the `raise` policy, so the table refuses exactly
+   what the import would (the record's rules, a number already in the books, the same original
+   under another number, an ambiguous recipient, the counter); only the staging table adds the
+   same number on two staged rows. The outcome is a list of named problems (codes, field paths,
+   counts; never values), blocking or not; the row is `ready` without a blocking one. Fields the
+   model was unsure about are marked until the user changes them.
+9. **Sender (decision 6).** The printed sender, with the company's current sender block filling the
+   name, address, country, tax number and VAT id where the PDF shows none; the number of filled
+   fields is a warning (`sender_from_company`) and recorded in the document's event.
+10. **Duplicates (decision 5).** One live staging row per file (a partial unique index on the
+    SHA-256, discarded rows excepted, so a discarded file can be staged again); a file imported
+    before, by an upload or by `pnpm books:import`, is found by the stored original's SHA-256. In
+    both cases the upload answers `duplicate` and the model is never called.
+11. **Recipients (decision 7).** The core's rule, unchanged; the legal-form list knows the common
+    European forms (SARL, SAS, BV, AB, Oy and others), and a recipient with a VAT id is a business.
+    The Books customer row is now written inside the import transaction.
+12. **The stateful-flow keying.** A correction is stored with the extraction it corrects and the
+    row's version; a correction of an older reading is refused (`stale_extraction`), reading again
+    drops the old correction, a row loaded from storage shows a correction only when its key
+    matches the current reading, and a correction identical to what is stored changes nothing.
+13. **Privacy (decision 9).** Logs carry item ids, sizes, statuses, problem counts and HTTP status
+    codes, never extracted values, file names or model output.
+14. **Time stamps compared in SQL.** A staging claim's age is compared in the database against a
+    parameter of the same kind it was written with: a `TIMESTAMP` without time zone read back
+    into JavaScript can carry the machine's offset, so comparing there took a fresh claim for a
+    stale one (found by the resume test).
+
+**Operator steps** (live actions, not done here): deploy, which rolls `010_books_upload_import`
+across every tenant schema at boot; optionally set `AI_INVOICE_EXTRACT_MODEL` and
+`BOOKS_IMPORT_DAILY_LIMIT` (defaults: Sonnet 5.5, 500); prove the first real upload in the
+editor.
 
 ## Out of scope
 

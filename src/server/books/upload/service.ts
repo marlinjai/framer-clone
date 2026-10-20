@@ -164,16 +164,16 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
     // The durable claim: one extraction per file at a time; a stale claim (crash) may be taken over.
     const stale = new Date(started.getTime() - CLAIM_TIMEOUT_MS);
     const claimed =
-      (await updateItem(scope.db, scope, itemId, { status: 'extracting', claimedAt: started }, {
-        expectedVersion: item.version,
-        whenStatus: ['uploaded', 'ready', 'needs_attention'],
-      })) ??
-      (item.status === 'extracting' && item.claimedAt !== null && item.claimedAt < stale
+      item.status === 'extracting'
         ? await updateItem(scope.db, scope, itemId, { status: 'extracting', claimedAt: started }, {
             expectedVersion: item.version,
             whenStatus: ['extracting'],
+            claimedBefore: stale,
           })
-        : null);
+        : await updateItem(scope.db, scope, itemId, { status: 'extracting', claimedAt: started }, {
+            expectedVersion: item.version,
+            whenStatus: ['uploaded', 'ready', 'needs_attention'],
+          });
     if (!claimed) {
       throw new BooksError('EXTRACTION_RUNNING', 'EXTRACTION_RUNNING: this invoice is being read already', { itemId });
     }

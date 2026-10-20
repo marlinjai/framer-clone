@@ -83,8 +83,13 @@ connections to the suite. The four lines below are in that order.
   PDFs, Claude Sonnet 5.5 reads each one into the historical-import record, the user checks and
   corrects the rows in a review table beside the PDF, and confirmed rows import through the same
   core as `pnpm books:import` (original PDF as the document of record, counter raised upwards
-  only). Being built on `feat/books-upload-import`. See
-  [plan](docs/plans/2026-10-20-books-upload-import.md). (2026-10-20)
+  only). Built 2026-10-20 on `feat/books-upload-import`: migration `010_books_upload_import`
+  (staging rows, an extraction ledger for the daily ceiling, printed numbers outside the
+  company format, VAT discount lines), small-business, regular VAT and reverse-charge invoices,
+  the review table beside the PDF. Open, the operator steps: deploy (rolls 010 out), optionally
+  set `AI_INVOICE_EXTRACT_MODEL` and `BOOKS_IMPORT_DAILY_LIMIT`, and prove the first real upload
+  in the editor. See [plan](docs/plans/2026-10-20-books-upload-import.md), "Build notes".
+  (2026-10-20)
 - [x] The framer-clone Coolify Postgres database with the published port 5439: checked on
   2026-10-15, there is no framer-clone database or app in Coolify any more and port 5439 is closed
   on both servers, so nothing is left to restart. Done 2026-10-15.
