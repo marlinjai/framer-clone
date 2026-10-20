@@ -43,8 +43,44 @@ interface ContextMenuProps {
   onClose: (reason: MenuCloseReason) => void;
 }
 
+/** Keep at least this much space between the menu and the window edge. */
+const MENU_EDGE_MARGIN = 8;
+
+/**
+ * Where a menu of `size` opened at (x, y) must sit to stay fully inside a
+ * `viewport`: shifted left / up when it would cross the right / bottom edge,
+ * never past the top-left margin.
+ */
+export function clampMenuPosition(
+  x: number,
+  y: number,
+  size: { width: number; height: number },
+  viewport: { width: number; height: number },
+): { left: number; top: number } {
+  const left = Math.max(MENU_EDGE_MARGIN, Math.min(x, viewport.width - size.width - MENU_EDGE_MARGIN));
+  const top = Math.max(MENU_EDGE_MARGIN, Math.min(y, viewport.height - size.height - MENU_EDGE_MARGIN));
+  return { left, top };
+}
+
 const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
   const rootRef = React.useRef<HTMLDivElement>(null);
+  const [position, setPosition] = React.useState({ left: x, top: y });
+
+  // Opened near the bottom or right edge of a small window, the menu moves
+  // back inside it before it is painted, so every item stays clickable.
+  React.useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setPosition(
+      clampMenuPosition(
+        x,
+        y,
+        { width: rect.width, height: rect.height },
+        { width: window.innerWidth, height: window.innerHeight },
+      ),
+    );
+  }, [x, y]);
 
   React.useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -96,8 +132,8 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
       role="menu"
       onKeyDown={onMenuKeyDown}
       data-editor-ui="true"
-      style={{ left: x, top: y }}
-      className="fixed z-[200] min-w-[160px] bg-background border border-border rounded-md shadow-lg py-1"
+      style={{ left: position.left, top: position.top }}
+      className="fixed z-[200] min-w-[160px] max-h-[calc(100dvh-1rem)] overflow-y-auto bg-background border border-border rounded-md shadow-lg py-1"
     >
       {items.map(item => (
         <button

@@ -326,3 +326,20 @@ describe('GeneratePageDialog model slider and stock photos', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });
+
+describe('GeneratePageDialog fits a small window', () => {
+  it('scrolls its body between a fixed header and the action footer', () => {
+    setup(vi.fn() as unknown as PageGenTransport);
+    const dialog = screen.getByRole('dialog');
+    expect((dialog.getAttribute('class') ?? '').split(/\s+/)).toEqual(
+      expect.arrayContaining(['max-h-[calc(100dvh-2rem)]', 'flex', 'flex-col']),
+    );
+    const body = dialog.querySelector('[data-slot="dialog-body"]');
+    expect(body).not.toBeNull();
+    expect(body!.contains(screen.getByLabelText('Brief'))).toBe(true);
+    const footer = dialog.querySelector('[data-slot="dialog-footer"]');
+    expect(footer).not.toBeNull();
+    expect(body!.contains(footer)).toBe(false);
+  });
+});
+

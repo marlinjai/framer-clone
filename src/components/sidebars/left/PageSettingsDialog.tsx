@@ -27,6 +27,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogBody,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -81,7 +82,8 @@ const PageSettingsForm = observer(({
   const [slugTouched, setSlugTouched] = React.useState(false);
   const nameRef = React.useRef<HTMLInputElement>(null);
   const slugRef = React.useRef<HTMLInputElement>(null);
-  // Announced by the always-mounted live region below after a failed save.
+  // Announced by the always-mounted live region below after a failed save,
+  // and cleared as soon as any field changes, so it never outlives the problem.
   const [announcement, setAnnouncement] = React.useState('');
   const [description, setDescription] = React.useState(page.metadata.description ?? '');
   // Errors show once a field was left or a save was attempted, never while the
@@ -139,156 +141,166 @@ const PageSettingsForm = observer(({
     const taken = otherPages.filter((p) => p.id !== page.id).map((p) => p.slug);
     setSlug(suggestSlug(name || page.metadata.title, taken));
     setSlugTouched(true);
+    setAnnouncement('');
     setSaveErrors((e) => ({ ...e, slug: undefined }));
     setShowErrors((s) => ({ ...s, slug: true }));
   };
 
   return (
-    <form onSubmit={submit} noValidate className="flex flex-col gap-4">
+    // The form fills the dialog: its fields scroll in DialogBody while the
+    // Save / Cancel footer stays on screen, however short the window.
+    <form onSubmit={submit} noValidate className="flex min-h-0 flex-1 flex-col gap-4">
       <div className="sr-only" role="status" aria-live="polite" data-testid="page-settings-announcement">
         {announcement}
       </div>
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="page-settings-name" className={fieldLabel}>
-          Page name
-        </label>
-        <input
-          id="page-settings-name"
-          ref={nameRef}
-          value={name}
-          autoComplete="off"
-          onChange={(e) => {
-            setName(e.target.value);
-            setSaveErrors((s) => ({ ...s, title: undefined }));
-          }}
-          onBlur={() => setShowErrors((s) => ({ ...s, name: true }))}
-          aria-invalid={visibleNameError ? true : undefined}
-          aria-describedby={visibleNameError ? 'page-settings-name-error' : 'page-settings-name-hint'}
-          className={`${inputBase} ${visibleNameError ? inputBad : inputOk}`}
-        />
-        {visibleNameError ? (
-          <p id="page-settings-name-error" className="text-[11px] text-destructive" aria-live="polite">
-            {visibleNameError}
-          </p>
-        ) : (
-          <p id="page-settings-name-hint" className="text-[11px] text-muted-foreground">
-            Also the title in the browser tab and in search results.
-          </p>
-        )}
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-between">
-          <label htmlFor="page-settings-slug" className={fieldLabel}>
-            URL slug
+      <DialogBody className="flex flex-col gap-4" data-testid="page-settings-body">
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="page-settings-name" className={fieldLabel}>
+            Page name
           </label>
-          {!isHome && (
-            <button
-              type="button"
-              onClick={fillSlugFromName}
-              className="inline-flex items-center gap-1 rounded px-1 text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <Wand2 size={12} aria-hidden="true" /> Use page name
-            </button>
+          <input
+            id="page-settings-name"
+            ref={nameRef}
+            value={name}
+            autoComplete="off"
+            onChange={(e) => {
+              setName(e.target.value);
+              setAnnouncement('');
+              setSaveErrors((s) => ({ ...s, title: undefined }));
+            }}
+            onBlur={() => setShowErrors((s) => ({ ...s, name: true }))}
+            aria-invalid={visibleNameError ? true : undefined}
+            aria-describedby={visibleNameError ? 'page-settings-name-error' : 'page-settings-name-hint'}
+            className={`${inputBase} ${visibleNameError ? inputBad : inputOk}`}
+          />
+          {visibleNameError ? (
+            <p id="page-settings-name-error" className="text-[11px] text-destructive" aria-live="polite">
+              {visibleNameError}
+            </p>
+          ) : (
+            <p id="page-settings-name-hint" className="text-[11px] text-muted-foreground">
+              Also the title in the browser tab and in search results.
+            </p>
           )}
         </div>
-        {isHome ? (
-          <>
-            <input
-              id="page-settings-slug"
-              value="/"
-              readOnly
-              aria-readonly="true"
-              aria-describedby="page-settings-slug-home"
-              className={`${inputBase} ${inputOk} bg-muted font-mono text-muted-foreground`}
-            />
-            <p id="page-settings-slug-home" className="text-[11px] text-muted-foreground">
-              This is the home page. It always lives at the root of your site, so visitors who type
-              just your address land here. Its URL cannot change.
-            </p>
-          </>
-        ) : (
-          <>
-            <div className="relative">
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-mono text-sm text-muted-foreground"
+
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <label htmlFor="page-settings-slug" className={fieldLabel}>
+              URL slug
+            </label>
+            {!isHome && (
+              <button
+                type="button"
+                onClick={fillSlugFromName}
+                className="inline-flex items-center gap-1 rounded px-1 text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                /
-              </span>
+                <Wand2 size={12} aria-hidden="true" /> Use page name
+              </button>
+            )}
+          </div>
+          {isHome ? (
+            <>
               <input
                 id="page-settings-slug"
-                ref={slugRef}
-                value={slug}
-                autoComplete="off"
-                spellCheck={false}
-                maxLength={SLUG_MAX_LENGTH + 20}
-                onChange={(e) => {
-                  setSlug(typingTidy(e.target.value));
-                  setSlugTouched(true);
-                  setSaveErrors((s) => ({ ...s, slug: undefined }));
-                }}
-                onBlur={() => setShowErrors((s) => ({ ...s, slug: true }))}
-                aria-invalid={visibleSlugError ? true : undefined}
-                aria-describedby={`page-settings-slug-preview ${visibleSlugError ? 'page-settings-slug-error' : 'page-settings-slug-hint'}`}
-                className={`${inputBase} ${visibleSlugError ? inputBad : inputOk} pl-6 font-mono`}
+                value="/"
+                readOnly
+                aria-readonly="true"
+                aria-describedby="page-settings-slug-home"
+                className={`${inputBase} ${inputOk} bg-muted font-mono text-muted-foreground`}
               />
-            </div>
-            {visibleSlugError ? (
-              <p id="page-settings-slug-error" className="text-[11px] text-destructive" aria-live="polite">
-                {visibleSlugError}
+              <p id="page-settings-slug-home" className="text-[11px] text-muted-foreground">
+                This is the home page. It always lives at the root of your site, so visitors who type
+                just your address land here. Its URL cannot change.
               </p>
-            ) : (
-              <p id="page-settings-slug-hint" className="text-[11px] text-muted-foreground">
-                Lowercase letters, digits and hyphens. Use a slash for a nested path, like
-                blog/first-post.
+            </>
+          ) : (
+            <>
+              <div className="relative">
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-mono text-sm text-muted-foreground"
+                >
+                  /
+                </span>
+                <input
+                  id="page-settings-slug"
+                  ref={slugRef}
+                  value={slug}
+                  autoComplete="off"
+                  spellCheck={false}
+                  maxLength={SLUG_MAX_LENGTH + 20}
+                  onChange={(e) => {
+                    setSlug(typingTidy(e.target.value));
+                    setSlugTouched(true);
+                    setAnnouncement('');
+                    setSaveErrors((s) => ({ ...s, slug: undefined }));
+                  }}
+                  onBlur={() => setShowErrors((s) => ({ ...s, slug: true }))}
+                  aria-invalid={visibleSlugError ? true : undefined}
+                  aria-describedby={`page-settings-slug-preview ${visibleSlugError ? 'page-settings-slug-error' : 'page-settings-slug-hint'}`}
+                  className={`${inputBase} ${visibleSlugError ? inputBad : inputOk} pl-6 font-mono`}
+                />
+              </div>
+              {visibleSlugError ? (
+                <p id="page-settings-slug-error" className="text-[11px] text-destructive" aria-live="polite">
+                  {visibleSlugError}
+                </p>
+              ) : (
+                <p id="page-settings-slug-hint" className="text-[11px] text-muted-foreground">
+                  Lowercase letters, digits and hyphens. Use a slash for a nested path, like
+                  blog/first-post.
+                </p>
+              )}
+            </>
+          )}
+          <div className="rounded-md bg-muted px-3 py-2">
+            <div className={fieldLabel}>Page URL</div>
+            <div
+              id="page-settings-slug-preview"
+              data-testid="page-settings-url-preview"
+              className="mt-0.5 break-all font-mono text-[12px] text-foreground"
+            >
+              {hostLabel}
+              {previewPath}
+            </div>
+            {!address.host && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {address.everPublished
+                  ? 'Your site is published, but no public address is configured for this environment yet.'
+                  : 'Your site gets its address when you publish it for the first time.'}
               </p>
             )}
-          </>
-        )}
-        <div className="rounded-md bg-muted px-3 py-2">
-          <div className={fieldLabel}>Page URL</div>
-          <div
-            id="page-settings-slug-preview"
-            data-testid="page-settings-url-preview"
-            className="mt-0.5 break-all font-mono text-[12px] text-foreground"
-          >
-            {hostLabel}
-            {previewPath}
+            {slugChanged && slugResult.ok && page.slug && address.everPublished && (
+              <p className="mt-1 text-[11px] text-foreground" data-testid="page-settings-redirect-note">
+                Old links will redirect: /{page.slug} will lead to {previewPath} after your next
+                publish.
+              </p>
+            )}
           </div>
-          {!address.host && (
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              {address.everPublished
-                ? 'Your site is published, but no public address is configured for this environment yet.'
-                : 'Your site gets its address when you publish it for the first time.'}
-            </p>
-          )}
-          {slugChanged && slugResult.ok && page.slug && address.everPublished && (
-            <p className="mt-1 text-[11px] text-foreground" data-testid="page-settings-redirect-note">
-              Old links will redirect: /{page.slug} will lead to {previewPath} after your next
-              publish.
-            </p>
-          )}
         </div>
-      </div>
 
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="page-settings-description" className={fieldLabel}>
-          Meta description
-        </label>
-        <textarea
-          id="page-settings-description"
-          value={description}
-          rows={3}
-          onChange={(e) => setDescription(e.target.value)}
-          aria-describedby="page-settings-description-hint"
-          className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none transition-shadow focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
-        />
-        <p id="page-settings-description-hint" className="text-[11px] text-muted-foreground">
-          Shown by search engines under the title. About {DESCRIPTION_HINT_LENGTH} characters fit
-          ({description.trim().length} now).
-        </p>
-      </div>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="page-settings-description" className={fieldLabel}>
+            Meta description
+          </label>
+          <textarea
+            id="page-settings-description"
+            value={description}
+            rows={3}
+            onChange={(e) => {
+              setDescription(e.target.value);
+              setAnnouncement('');
+            }}
+            aria-describedby="page-settings-description-hint"
+            className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none transition-shadow focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
+          />
+          <p id="page-settings-description-hint" className="text-[11px] text-muted-foreground">
+            Shown by search engines under the title. About {DESCRIPTION_HINT_LENGTH} characters fit
+            ({description.trim().length} now).
+          </p>
+        </div>
+      </DialogBody>
 
       <DialogFooter>
         <Button type="button" variant="outline" size="sm" onClick={onClose}>

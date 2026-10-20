@@ -13,6 +13,7 @@ import {
   Dialog,
   DialogContent,
   DialogHeader,
+  DialogBody,
   DialogFooter,
   DialogTitle,
   DialogDescription,
@@ -69,7 +70,7 @@ const CollectionSettingsDialog: React.FC<CollectionSettingsDialogProps> = ({
             <DialogDescription>Name, icon, and slug for this collection.</DialogDescription>
           </DialogHeader>
 
-          <div className="flex flex-col gap-4">
+          <DialogBody className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <label
                 htmlFor="cms-settings-name"
@@ -128,7 +129,7 @@ const CollectionSettingsDialog: React.FC<CollectionSettingsDialogProps> = ({
                 Generated from the name. Used by bindings and storefront URLs.
               </p>
             </div>
-          </div>
+          </DialogBody>
 
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={onClose}>

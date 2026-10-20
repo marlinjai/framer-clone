@@ -5,6 +5,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { XIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { DIALOG_VIEWPORT_FIT_CLASSES } from "@/components/ui/dialog-fit"
 
 function Dialog(props: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
@@ -41,7 +42,8 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "bg-popover data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-1/2 left-1/2 z-[1110] grid w-full max-w-[440px] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border p-5 shadow-xl duration-200",
+          DIALOG_VIEWPORT_FIT_CLASSES,
+          "bg-popover data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-1/2 left-1/2 z-[1110] max-w-[440px] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border p-5 shadow-xl duration-200",
           className,
         )}
         {...props}
@@ -57,12 +59,28 @@ function DialogContent({
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="dialog-header" className={cn("flex flex-col gap-1.5", className)} {...props} />
+  return <div data-slot="dialog-header" className={cn("flex shrink-0 flex-col gap-1.5", className)} {...props} />
+}
+
+/**
+ * The scrolling middle of a dialog, between DialogHeader and DialogFooter: it
+ * takes the height the viewport leaves and scrolls on its own, so the header
+ * and the buttons stay visible. `-mx-1 px-1` keeps focus rings from being
+ * clipped at the scroll edges.
+ */
+function DialogBody({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="dialog-body"
+      className={cn("-mx-1 min-h-0 flex-1 overflow-y-auto px-1 py-0.5", className)}
+      {...props}
+    />
+  )
 }
 
 function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
-    <div data-slot="dialog-footer" className={cn("flex justify-end gap-2", className)} {...props} />
+    <div data-slot="dialog-footer" className={cn("flex shrink-0 justify-end gap-2", className)} {...props} />
   )
 }
 
@@ -98,6 +116,7 @@ export {
   DialogOverlay,
   DialogContent,
   DialogHeader,
+  DialogBody,
   DialogFooter,
   DialogTitle,
   DialogDescription,

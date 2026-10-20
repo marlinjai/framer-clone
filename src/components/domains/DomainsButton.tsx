@@ -11,6 +11,7 @@ import { observer } from 'mobx-react-lite';
 import { Globe } from 'lucide-react';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -36,17 +37,14 @@ const DomainsButton = observer(() => {
         <Globe size={16} />
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent
-          data-editor-ui="true"
-          className="max-h-[85vh] max-w-[560px] overflow-y-auto"
-        >
+        <DialogContent data-editor-ui="true" className="max-w-[560px]">
           <DialogHeader>
             <DialogTitle>Domains</DialogTitle>
             <DialogDescription>
               Connect your own domain to this site. Add the DNS records shown, then verify.
             </DialogDescription>
           </DialogHeader>
-          {open && <DomainsPanel projectId={project.id} />}
+          <DialogBody>{open && <DomainsPanel projectId={project.id} />}</DialogBody>
         </DialogContent>
       </Dialog>
     </>
