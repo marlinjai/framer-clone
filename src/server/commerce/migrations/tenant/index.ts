@@ -9,6 +9,7 @@ import { inventoryPolicy } from './006_inventory_policy';
 import { books } from './007_books';
 import { booksFiles } from './008_books_files';
 import { booksImport } from './009_books_import';
+import { booksUploadImport } from './010_books_upload_import';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -50,6 +51,12 @@ import { booksImport } from './009_books_import';
  *                            allowed on imports and their cancellations only
  *                            (BK008), a currency other than EUR only on imports
  *                            (BK009)
+ *   010_books_upload_import: importing past invoices by uploading PDFs: an import
+ *                            may keep a printed number without a number value, a
+ *                            negative tax amount on its discount lines (BK008), and
+ *                            the staging and ledger tables of the upload
+ *                            (historical_import_item, historical_import_extraction,
+ *                            BK010)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -62,4 +69,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   books,
   booksFiles,
   booksImport,
+  booksUploadImport,
 ];

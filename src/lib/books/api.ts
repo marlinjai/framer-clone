@@ -160,6 +160,17 @@ const MESSAGES: Record<string, string> = {
   undrawable_text: 'Some characters cannot be printed in the invoice font. Change these fields; nothing was issued.',
   tax_case_unsupported: 'Invoices to recipients outside the EU are not supported yet under regular taxation.',
   issue_date_out_of_order: 'The issue date is earlier than the last issued invoice.',
+  extract_busy: 'Four invoices are being read for this company right now. The rest follow automatically.',
+  import_limit: 'The daily limit of invoices read for this company is reached. Try again tomorrow.',
+  extraction_running: 'This invoice is being read already.',
+  stale_extraction: 'This invoice was read again meanwhile. The table shows the new reading; check it again.',
+  import_not_ready: 'This row has a problem to fix before it can be imported.',
+  reading_would_be_replaced: 'This row holds what you entered. Open it with "Check" and use "Read again with AI" there to replace it with a new reading.',
+  counter_raise_unconfirmed: 'The invoice number this import would set has changed. Check the row again and confirm the new value.',
+  file_too_large: 'The file is larger than 10 MB.',
+  upload_truncated: 'The file did not arrive whole. Upload it again.',
+  missing_anthropic_key: 'Reading invoices is not set up on this server (no AI key). Ask an administrator.',
+  extract_model_unknown: 'Reading invoices is not set up on this server (unknown model). Ask an administrator.',
 };
 
 export class BooksApiError extends Error {
@@ -248,6 +259,152 @@ export const booksApi = {
   updateTemplate: (id: string, body: unknown) => request<TemplateView>('PATCH', `/api/books/templates/${id}`, body),
   deleteTemplate: (id: string) => request<void>('DELETE', `/api/books/templates/${id}`),
 };
+
+// --- the upload import of past invoices (/api/books/imports) -------------------------
+
+export type ImportStatus = 'uploaded' | 'extracting' | 'ready' | 'needs_attention' | 'imported' | 'discarded';
+
+/** One named problem of a staged row (codes and paths, never values). */
+export interface ImportProblem {
+  code: string;
+  path: string | null;
+  blocking: boolean;
+  count: number | null;
+}
+
+/** One staged past invoice as the review table shows it. */
+export interface ImportItemView {
+  id: string;
+  fileName: string;
+  byteSize: number;
+  status: ImportStatus;
+  version: number;
+  extractionId: string | null;
+  /** The printed invoice the row stands for now (the correction, else what was read). */
+  printed: PrintedInvoice | null;
+  extractedPrinted: PrintedInvoice | null;
+  confidence: Record<string, 'high' | 'medium' | 'low'>;
+  corrected: boolean;
+  problems: ImportProblem[];
+  extractionError: string | null;
+  model: string | null;
+  documentId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A printed invoice as read from a PDF (amounts in the printed currency, dot decimals). */
+export interface PrintedInvoice {
+  number: string | number | null;
+  issueDate: string | null;
+  serviceDate: string | null;
+  servicePeriod: string | null;
+  recipient: {
+    name: string;
+    addressLines: string[];
+    country: string | null;
+    countryInferred?: string | null;
+    customerNumber: string | null;
+  } | null;
+  recipientVatId: string | null;
+  sender: {
+    name: string;
+    addressLines: string[];
+    country: string | null;
+    taxNumber?: string | null;
+    vatId?: string | null;
+    taxNumberPresent?: boolean;
+    vatIdPresent?: boolean;
+  } | null;
+  lines: PrintedLine[];
+  total: number | null;
+  currency: string | null;
+  taxTreatment: string | null;
+  taxAmounts: Array<{ rate: number; net: number | null; tax: number }>;
+  pricesIncludeVat: boolean;
+  taxNote: string | null;
+  paymentTerms: string | null;
+  [key: string]: unknown;
+}
+
+export interface PrintedLine {
+  description: string;
+  quantity: number | null;
+  unit: string | null;
+  unitPrice: number | null;
+  discount: string | null;
+  lineTotal: number;
+  taxRate: number | null;
+  taxAmount: number | null;
+}
+
+export interface ImportList {
+  /** Every open row, then the newest imported ones. */
+  items: ImportItemView[];
+  /** How many rows are imported in all (the list shows the newest of them). */
+  importedTotal: number;
+  counter: { format: string; nextValue: number } | null;
+  /** `perDay` is null when the server's setting is not valid (reading is refused until it is fixed). */
+  limits: { maxFileBytes: number; maxFilesAtOnce: number; parallel: number; perDay: number | null };
+}
+
+export type UploadResult =
+  | { status: 'staged'; item: ImportItemView }
+  | { status: 'duplicate'; item: ImportItemView | null; documentId: string | null };
+
+/** Upload one PDF as the request body (one request per file). */
+async function uploadPdf(file: File): Promise<UploadResult> {
+  let res: Response;
+  try {
+    res = await fetch('/api/books/imports', {
+      method: 'POST',
+      headers: { 'content-type': 'application/pdf', 'x-file-name': encodeURIComponent(file.name) },
+      body: file,
+      cache: 'no-store',
+    });
+  } catch {
+    throw new BooksApiError(0, 'network', 'The file could not be sent. Check your connection and try again.');
+  }
+  let json: unknown = null;
+  try {
+    json = await res.json();
+  } catch {
+    // reported by status below
+  }
+  if (!res.ok) {
+    const err = (json as { error?: { code?: string; message?: string } } | null)?.error;
+    const code = err?.code ?? `http_${res.status}`;
+    throw new BooksApiError(res.status, code, MESSAGES[code] ?? err?.message ?? `The upload failed (${res.status}).`, err ?? {});
+  }
+  return json as UploadResult;
+}
+
+export const importsApi = {
+  list: () => request<ImportList>('GET', '/api/books/imports'),
+  upload: uploadPdf,
+  /** `replace`: read again although the row holds what the user typed or corrected (the user asked for it). */
+  extract: (id: string, replace = false) => request<ImportItemView>('POST', `/api/books/imports/${id}/extract${replace ? '?replace=1' : ''}`),
+  correct: (id: string, printed: PrintedInvoice, extractionId: string, expectedVersion: number) =>
+    request<ImportItemView>('PATCH', `/api/books/imports/${id}`, { printed, extractionId, expectedVersion }),
+  recheck: (id: string) => request<ImportItemView>('POST', `/api/books/imports/${id}/recheck`),
+  /** An empty manual reading for a row the AI could not read, to fill in by hand. */
+  byHand: (id: string, expectedVersion: number) => request<ImportItemView>('POST', `/api/books/imports/${id}/by-hand`, { expectedVersion }),
+  /** `confirmCounterRaiseTo`: the new next invoice number the user was shown and confirmed (required when the import raises the counter). */
+  confirm: (id: string, expectedVersion: number, confirmCounterRaiseTo: number | null = null) =>
+    request<{ item: ImportItemView; documentId: string | null; counterRaisedTo: number | null }>(
+      'POST',
+      `/api/books/imports/${id}/confirm`,
+      { expectedVersion, confirmCounterRaiseTo },
+    ),
+  confirmNumber: (id: string, documentNumber: string, expectedVersion: number) =>
+    request<ImportItemView>('POST', `/api/books/imports/${id}/confirm-number`, { documentNumber, expectedVersion }),
+  discard: (id: string) => request<ImportItemView>('POST', `/api/books/imports/${id}/discard`),
+};
+
+/** The URL of a staged row's PDF (shown beside the review form). */
+export function importPdfUrl(id: string): string {
+  return `/api/books/imports/${id}/pdf`;
+}
 
 /** The download URL of a document's PDF (the stored one when issued, a preview for a draft). */
 export function pdfUrl(id: string): string {

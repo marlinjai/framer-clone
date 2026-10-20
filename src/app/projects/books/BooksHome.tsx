@@ -135,9 +135,17 @@ export default function BooksHome() {
             </p>
           ) : null}
         </div>
-        <Button onClick={newInvoice} disabled={creating || !initialised}>
-          {creating ? 'Creating…' : 'New invoice'}
-        </Button>
+        <span className="flex flex-wrap gap-2">
+          <Link
+            href="/projects/books/import"
+            className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium hover:bg-accent"
+          >
+            Import past invoices
+          </Link>
+          <Button onClick={newInvoice} disabled={creating || !initialised}>
+            {creating ? 'Creating…' : 'New invoice'}
+          </Button>
+        </span>
       </header>
 
       {!initialised ? (

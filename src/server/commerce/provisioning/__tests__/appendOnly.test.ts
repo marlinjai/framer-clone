@@ -48,7 +48,7 @@ describe('APPEND_ONLY_TABLES', () => {
 
   it('NO_DELETE_TABLES lists exactly the tables the tenant migrations REVOKE DELETE (only) on', () => {
     const revoked = noDeleteTablesInMigrations();
-    expect(revoked).toEqual(['document_number_counter']);
+    expect(revoked).toEqual(['document_number_counter', 'historical_import_extraction', 'historical_import_item']);
     expect([...NO_DELETE_TABLES].sort()).toEqual(revoked);
   });
 });

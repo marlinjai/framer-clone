@@ -161,7 +161,7 @@ describe('Books with the real contacts database', () => {
     const scope = await companyWith(directory);
     const record = (numberValue: number): HistoricalInvoiceInput => ({
       origin: 'upload_extracted',
-      numberValue,
+      documentNumber: String(numberValue),
       issueDate: '2025-04-01',
       serviceDate: null,
       servicePeriod: null,

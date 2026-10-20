@@ -12,25 +12,27 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
-  countryCode,
-  cutWhole,
-  discountBp,
-  extractVatId,
-  parseDiscount,
-  servicePeriodOf,
   errorCode,
   amount,
-  currencyCode,
-  inferKind,
   parseImportFile,
-  paymentTermsDays,
   planInvoice,
   readOriginal,
   reportLine,
   scriptErrorLine,
-  splitAddress,
   type PlannedInvoice,
 } from '../importCli';
+import {
+  countryCode,
+  currencyCode,
+  cutWhole,
+  discountBp,
+  extractVatId,
+  inferKind,
+  parseDiscount,
+  paymentTermsDays,
+  servicePeriodOf,
+  splitAddress,
+} from '../importPrinted';
 import { BooksError } from '../errors';
 import { linesNotQuantityTimesPrice, recordWarnings } from '../importInvoices';
 
@@ -106,7 +108,7 @@ describe('parseImportFile', () => {
 describe('planInvoice: forward mapping', () => {
   it('maps a complete entry to cents, thousandths, the split address and the printed note', () => {
     const inv = ready(planInvoice(7, entry(), FILE, NOW));
-    expect(inv.numberValue).toBe(7);
+    expect(inv.documentNumber).toBe('7');
     expect(inv.total).toBe(15050);
     expect(inv.lines).toEqual([
       expect.objectContaining({ kind: 'service', title: 'Design work', quantity: 1500, unitPrice: 8000, subtotal: 12000, discountBp: 0, unitLabel: 'h' }),
@@ -152,6 +154,8 @@ describe('planInvoice: forward mapping', () => {
       senderCountryInferred: false,
       linesPriceDerived: 0,
       linesDiscountUnparsed: 0,
+      linesTaxDerived: 0,
+      linesTaxAdjusted: 0,
       confidence: 'high',
     });
   });
@@ -264,13 +268,13 @@ describe('planInvoice: skipped (missing) before error (inconsistent)', () => {
   const errors: Array<[string, Record<string, unknown>]> = [
     ['lines_do_not_sum_to_total', { total: 150.51 }],
     ['currency_invalid', { currency: 'Taler' }],
-    ['tax_treatment_unsupported', { taxTreatment: 'regular' }],
-    ['tax_amounts_present', { taxAmounts: [{ rate: 19, amount: 1 }] }],
+    ['tax_treatment_unsupported', { taxTreatment: 'flat_rate' }],
+    ['tax_on_untaxed_invoice', { taxAmounts: [{ rate: 19, tax: 1 }] }],
+    ['gross_priced_lines', { taxTreatment: 'regular', pricesIncludeVat: true }],
     ['issue_date_invalid', { issueDate: '2021-02-30' }],
     ['issue_date_in_future', { issueDate: '2027-01-01' }],
     ['recipient_country_unknown', { recipient: { name: 'Example Client GmbH', addressLines: ['Beispielweg 2', '20095 Hamburg'], country: 'Atlantis', customerNumber: null } }],
     ['sender_country_unknown', { sender: { name: 'Sample Studio', addressLines: ['Musterstrasse 1', '10115 Berlin'], country: 'Atlantis' } }],
-    ['small_business_note_missing', { smallBusinessNote: '' }],
     ['line_quantity_invalid', { lines: [{ description: 'x', quantity: 0.0005, unit: 'h', unitPrice: 1, lineTotal: 150.5 }] }],
     ['line_amount_invalid', { lines: [{ description: 'x', quantity: 1, unit: 'h', unitPrice: 1.005, lineTotal: 150.5 }] }],
     ['line_sign_mismatch', { lines: [{ description: 'x', quantity: 1, unit: 'h', unitPrice: -5, lineTotal: 150.5 }] }],
@@ -521,11 +525,17 @@ describe('the shapes of the real historical data, imported as printed', () => {
     expect(extractVatId('DE123456789 / ATU12345678')).toBeNull();
   });
 
-  it('a service period printed as text with two dates is read; anything else is flagged', () => {
+  it('a service period printed as text with two dates or as one month is read; anything else is flagged and warned', () => {
     expect(servicePeriodOf('2023-01-01 bis 2023-01-31')).toEqual({ start: '2023-01-01', end: '2023-01-31' });
     expect(servicePeriodOf('01.02.2023 - 28.02.2023')).toEqual({ start: '2023-02-01', end: '2023-02-28' });
-    expect(servicePeriodOf('März 2023')).toBeNull();
-    expect(one([line({})], 1000, { servicePeriod: 'März 2023' }).provenance.serviceDateUnparsed).toBe(true);
+    expect(servicePeriodOf('März 2023')).toEqual({ start: '2023-03-01', end: '2023-03-31' });
+    expect(servicePeriodOf('Leistungszeitraum: Februar 2024')).toEqual({ start: '2024-02-01', end: '2024-02-29' });
+    expect(servicePeriodOf('02/2023')).toEqual({ start: '2023-02-01', end: '2023-02-28' });
+    expect(servicePeriodOf('2023-11')).toEqual({ start: '2023-11-01', end: '2023-11-30' });
+    expect(servicePeriodOf('13/2023')).toBeNull();
+    const unread = one([line({})], 1000, { servicePeriod: 'erstes Quartal laut Vertrag' });
+    expect(unread.provenance.serviceDateUnparsed).toBe(true);
+    expect(recordWarnings(unread)).toContainEqual({ code: 'service_date_unparsed' });
   });
 });
 

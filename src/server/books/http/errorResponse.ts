@@ -67,6 +67,13 @@ const STATUS: Record<BooksErrorCode, number> = {
   CURRENCY_NOT_SUPPORTED: 422,
   RECIPIENT_UNAVAILABLE: 503,
   IMPORT_FAILED: 500,
+  IMPORT_LIMIT: 429,
+  EXTRACT_BUSY: 429,
+  EXTRACTION_RUNNING: 409,
+  STALE_EXTRACTION: 409,
+  COUNTER_RAISE_UNCONFIRMED: 409,
+  READING_WOULD_BE_REPLACED: 409,
+  IMPORT_NOT_READY: 422,
 };
 
 /** The two codes that mean "this company was never set up for the Books". */

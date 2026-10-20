@@ -55,7 +55,15 @@ export type BooksErrorCode =
   | 'IMPORT_COUNTER_TOO_LOW'
   | 'RECIPIENT_AMBIGUOUS'
   | 'IMPORT_FAILED'
-  | 'CURRENCY_NOT_SUPPORTED';
+  | 'CURRENCY_NOT_SUPPORTED'
+  // The upload import (src/server/books/upload).
+  | 'IMPORT_LIMIT'
+  | 'IMPORT_NOT_READY'
+  | 'EXTRACT_BUSY'
+  | 'EXTRACTION_RUNNING'
+  | 'STALE_EXTRACTION'
+  | 'COUNTER_RAISE_UNCONFIRMED'
+  | 'READING_WOULD_BE_REPLACED';
 
 export class BooksError extends Error {
   readonly code: BooksErrorCode;

@@ -563,6 +563,54 @@ export interface SalesDocumentFileTable {
   created_at: Generated<Timestamp>;
 }
 
+/**
+ * 010_books_upload_import: the staging row of one uploaded past-invoice PDF.
+ * Mutable until `imported` (then frozen by trigger, BK010). The JSONB columns
+ * are parsed with zod on read (src/server/books/upload/staging.ts); they hold
+ * the extracted printed invoice, the user's corrected record (keyed to the
+ * extraction it corrects) and the named problems.
+ */
+export interface HistoricalImportItemTable {
+  id: string;
+  tenant_id: string;
+  file_name: string;
+  content: Buffer | null;
+  byte_size: number;
+  sha256: string;
+  status: Generated<HistoricalImportStatus>;
+  version: Generated<number>;
+  extraction_id: string | null;
+  extracted: JsonColumn<Record<string, unknown>> | null;
+  extraction_error: string | null;
+  corrected: JsonColumn<Record<string, unknown>> | null;
+  corrected_extraction_id: string | null;
+  number_confirmed: string | null;
+  claim_id: string | null;
+  problems: Generated<JsonColumn<Array<Record<string, unknown>>>>;
+  model: string | null;
+  claimed_at: Timestamp | null;
+  document_id: string | null;
+  discarded_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
+}
+
+/** The status of a staging row (a CHECK, not an enum type). */
+export type HistoricalImportStatus = 'uploaded' | 'extracting' | 'ready' | 'needs_attention' | 'imported' | 'discarded';
+
+/** 010_books_upload_import: one model call of the upload import (the daily ceiling counts these). */
+export interface HistoricalImportExtractionTable {
+  id: string;
+  tenant_id: string;
+  item_id: string;
+  model: string;
+  started_at: Timestamp;
+  finished_at: Timestamp | null;
+  outcome: 'ok' | 'refused' | 'invalid_output' | 'max_tokens' | 'unreadable' | 'error' | 'aborted' | null;
+  input_tokens: Generated<number>;
+  output_tokens: Generated<number>;
+}
+
 // =============================================================================
 // The Database interface. GLOBAL keys are `public.`-qualified; tenant tables
 // are BARE. The two namespaces are disjoint by construction.
@@ -600,6 +648,8 @@ export interface CommerceDB {
   sales_document_line: SalesDocumentLineTable;
   sales_document_event: SalesDocumentEventTable;
   sales_document_file: SalesDocumentFileTable;
+  historical_import_item: HistoricalImportItemTable;
+  historical_import_extraction: HistoricalImportExtractionTable;
 }
 
 // --- compile-time discipline guards (the package's brand types) --------------

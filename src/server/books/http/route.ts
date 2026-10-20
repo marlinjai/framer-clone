@@ -44,6 +44,7 @@ import { activeScopeDenial, resolveActiveScope } from '@/server/sites/scope';
 
 import { companyHasBooksGrant } from '../access';
 import type { ContactBook } from '../contactBook';
+import { describeError } from './describeError';
 import { booksDependencies } from './dependencies';
 import { booksErrorResponse } from './errorResponse';
 import { booksScope, type BooksScope } from '../scope';
@@ -140,9 +141,11 @@ export async function resolveBooksRequest(req: Request, access: BooksAccess): Pr
   };
 }
 
-/** The 500 every Books route answers for an unexpected error (logged, never swallowed). */
+export { describeError };
+
+/** The 500 every Books route answers for an unexpected error (logged without its message, never swallowed). */
 function internalError(err: unknown): Response {
-  console.error('[books] request failed', err);
+  console.error(`[books] request failed: ${describeError(err)}`);
   return jsonError('books_failed', 'the request failed; nothing was changed by a failed write', 500);
 }
 

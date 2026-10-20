@@ -58,27 +58,35 @@ connections to the suite. The four lines below are in that order.
   Whiz-Art Media. Then the first real invoice from the editor closes this line. See
   [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md), sections "Phase 1 build
   specification" and "Phase 2 and 3 build notes (2026-10-20)". (2026-10-20)
-- [ ] 4. Existing invoices and the suite. Built 2026-10-20: the historical import of invoices
-  1 to 61 (the full series, totals checked against the filed returns 2019 to 2025), `pnpm
-  books:import`, which writes each invoice as an issued document with `source = 'import'`, its
-  printed number, its own printed sender and recipient, and its original PDF stored as the
-  document of record (never re-rendered); migration `009_books_import` makes the lines-first
-  insert possible and refuses an import without its original. The core takes one validated
-  record plus its PDF, so the planned in-editor upload of past-invoice PDFs (Claude extracts,
-  the user reviews in a table) builds on it in its own pull request. Open, the operator step
-  (`pnpm books:init-company` already set the counter to 62 in production): `pnpm books:import
-  --dry-run` and the real run
-  for Whiz-Art Media with the private input file, compare the printed yearly totals with the
-  returns (all 61 originals are in hand, invoice 60's saved from the mail). The mapping was
-  checked against the real input: all 61 ready; imports keep their printed currency (invoice 23
-  is in CHF, never converted; its EUR value belongs to the receipts app's income mirror), and
-  the yearly totals are printed per currency. Then connect: the
-  read-only endpoint receipt-ocr-app pulls issued invoices from (carrying each document's
-  `currency_code`, since imports keep their printed currency; service-account key from
-  auth-brain; the receipts session gets the contract when it exists), storage-brain for the
-  PDFs, the shared contacts database for recipients in production. After the import the
-  receipts app's register rows map to the mirror by invoice number. See the Books plan's
-  amendment of 2026-10-15 and "Historical import build notes (2026-10-20)". (2026-10-20)
+- [ ] 4. Existing invoices and the suite. The historical import is DONE: invoices 1 to 61 (the
+  full series) were imported live on 2026-10-20 at 15:08 with `pnpm books:import` for Whiz-Art
+  Media, 61 imported and 0 errors, the printed yearly totals matching the filed returns 2019 to
+  2025, the invoice counter still at 62; checked in the live editor (61 documents numbered 1 to
+  61, the PDFs of invoices 1, 23 and 60 byte-identical to the originals). Imports keep their
+  printed currency (invoice 23 is in CHF, never converted). Open, the connections: the read-only
+  endpoint receipt-ocr-app pulls issued invoices from (carrying each document's
+  `currency_code`; service-account key from auth-brain; the receipts session gets the contract
+  when it exists), storage-brain for the PDFs, the shared contacts database for recipients in
+  production. Then the receipts app's register rows map to the mirror by invoice number. See the
+  Books plan's amendment of 2026-10-15 and "Historical import build notes (2026-10-20)".
+  (2026-10-20)
+- [ ] 5. Importing past invoices by uploading PDFs in the Books: a company drops up to 50 invoice
+  PDFs, Claude Sonnet 5.5 reads each one into the historical-import record, the user checks and
+  corrects the rows in a review table beside the PDF, and confirmed rows import through the same
+  core as `pnpm books:import` (original PDF as the document of record, counter raised upwards
+  only). Built 2026-10-20 on `feat/books-upload-import`: migration `010_books_upload_import`
+  (staging rows, an extraction ledger for the daily ceiling, printed numbers outside the
+  company format, VAT discount lines), small-business, regular VAT and reverse-charge invoices,
+  the review table beside the PDF. Open, the operator steps: deploy (rolls 010 out), optionally
+  set `AI_INVOICE_EXTRACT_MODEL` and `BOOKS_IMPORT_DAILY_LIMIT`, and prove the first real upload
+  in the editor. See [plan](docs/plans/2026-10-20-books-upload-import.md), "Build notes".
+  (2026-10-20)
+- [ ] 6. Domestic reverse charge (section 13b UStG) for Books documents and the import, when a
+  company needs it. Not supported now (lead's decision of 2026-10-20): the Books cannot issue such
+  documents, so the import refuses them too (`reverse_charge_domestic`, the row says to keep the
+  invoice outside the Books); Whiz-Art Media is never affected (section 13b does not apply to a
+  small-business supplier). See [plan](docs/plans/2026-10-20-books-upload-import.md), Build notes
+  item 15. (2026-10-20)
 - [x] The framer-clone Coolify Postgres database with the published port 5439: checked on
   2026-10-15, there is no framer-clone database or app in Coolify any more and port 5439 is closed
   on both servers, so nothing is left to restart. Done 2026-10-15.

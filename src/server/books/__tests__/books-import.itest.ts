@@ -471,7 +471,7 @@ describe('importHistoricalInvoice: the core the planned upload calls', () => {
     const settings = await readSettings(scope.db, scope);
     const record: HistoricalInvoiceInput = {
       origin: 'upload_extracted',
-      numberValue: 40,
+      documentNumber: '40',
       issueDate: '2025-04-01',
       serviceDate: null,
       servicePeriod: null,
@@ -515,10 +515,10 @@ describe('importHistoricalInvoice: the core the planned upload calls', () => {
     expect(dir.contactsOf(tenantId).map((c) => c.name)).toEqual(['Example Client GmbH']);
     // An invalid record or a non-PDF is refused before anything is read or written.
     await expect(importHistoricalInvoice(scope, book, { ...record, total: 1 }, pdf)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
-    await expect(importHistoricalInvoice(scope, book, { ...record, numberValue: 41 }, new Uint8Array(Buffer.from('no pdf')))).rejects.toMatchObject({
+    await expect(importHistoricalInvoice(scope, book, { ...record, documentNumber: '41' }, new Uint8Array(Buffer.from('no pdf')))).rejects.toMatchObject({
       code: 'INVALID_INPUT',
     });
-    await expect(importHistoricalInvoice(scope, book, { ...record, numberValue: 62 }, pdf)).rejects.toMatchObject({ code: 'IMPORT_COUNTER_TOO_LOW' });
+    await expect(importHistoricalInvoice(scope, book, { ...record, documentNumber: '62' }, pdf)).rejects.toMatchObject({ code: 'IMPORT_COUNTER_TOO_LOW' });
     expect((await countRows(tenantId)).docs).toBe(1);
   });
 });
@@ -527,7 +527,7 @@ describe('importHistoricalInvoice against what is already in the books', () => {
   function record(numberValue: number, name = 'Example Client GmbH', kind: 'person' | 'organization' = 'organization'): HistoricalInvoiceInput {
     return {
       origin: 'upload_extracted',
-      numberValue,
+      documentNumber: String(numberValue),
       issueDate: '2025-04-01',
       serviceDate: null,
       servicePeriod: null,
@@ -818,8 +818,17 @@ describe('009_books_import: what holds for every role', () => {
         }),
       ),
     ).toBe('BK008');
+    // A negative VAT amount alone (010 moved 007's CHECK into the guard): refused on a draft too,
+    // inserted or updated, for every role.
+    expect(
+      await rejectionCode(env.ownerDb.insertInto('sales_document_line').values({ ...lineFor(draftId, 100, 2), tax_rate: 1900, tax_amount: -19, tax_treatment: 'standard' as const }).execute()),
+    ).toBe('BK008');
     // And a positive line on the draft is still fine.
-    await env.ownerDb.insertInto('sales_document_line').values(lineFor(draftId, 100)).execute();
+    const positive = lineFor(draftId, 100);
+    await env.ownerDb.insertInto('sales_document_line').values(positive).execute();
+    expect(
+      await rejectionCode(env.ownerDb.updateTable('sales_document_line').set({ tax_rate: 1900, tax_amount: -19, tax_treatment: 'standard' }).where('id', '=', positive.id).execute()),
+    ).toBe('BK008');
   });
 
   it('a currency other than EUR: only on an import and on the credit note of its own invoice (BK009)', async () => {

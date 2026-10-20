@@ -11,6 +11,13 @@ const nextConfig: NextConfig = {
   // Keep Prisma's generated client (which loads a native query engine binary)
   // out of the bundler so `next build` treats it as an external require.
   serverExternalPackages: ['@prisma/client'],
+  experimental: {
+    // The Books upload import sends each past-invoice PDF (at most 10 MB) as
+    // the request body, through the edge middleware, which keeps a body only up
+    // to this size (default 10 MB: a 10 MB file would arrive cut off). The
+    // route refuses a body shorter than its declared length.
+    middlewareClientMaxBodySize: '12mb',
+  },
   // The Books render their PDFs in embedded fonts read from assets/fonts at run
   // time (src/server/books/render/fonts.ts); the standalone output only copies
   // traced files, so the font files are traced in explicitly for every Books route.

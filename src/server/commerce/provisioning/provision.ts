@@ -131,7 +131,7 @@ export const COMMERCE_APP_ROLE_BOOTSTRAP = 'verify' as const satisfies AppRoleBo
  * one would restart a document series; the 007 trigger refuses it for every
  * role (BK003), this REVOKE refuses it for the app role before it gets there.
  */
-export const NO_DELETE_TABLES = ['document_number_counter'] as const;
+export const NO_DELETE_TABLES = ['document_number_counter', 'historical_import_extraction', 'historical_import_item'] as const;
 
 /**
  * REVOKE UPDATE, DELETE, TRUNCATE on every append-only table of `schema`, and
