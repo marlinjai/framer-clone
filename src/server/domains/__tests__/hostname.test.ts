@@ -88,6 +88,11 @@ describe('confusable lookalikes of a platform zone', () => {
     ['a Greek omicron in the ending', 'lumitra.cο'],
     ['a dotless i', 'lumıtra.co'],
     ['an accented u', 'lümitra.co'],
+    ['a dot below', 'lumitrạ.co'],
+    ['a small capital T', 'lumiᴛra.co'],
+    ['a small capital R', 'lumitʀa.co'],
+    ['a small capital I', 'lumɪtra.co'],
+    ['a barred l', 'łumitra.co'],
   ])('refuses %s as reserved', (_why, input) => {
     expect(claim(input)).toMatchObject({ ok: false, code: 'reserved_hostname' });
   });
@@ -100,12 +105,17 @@ describe('confusable lookalikes of a platform zone', () => {
 
   it('keeps unrelated internationalized and plain ASCII names claimable', () => {
     expect(claim('bücher.de')).toEqual({ ok: true, hostname: 'xn--bcher-kva.de' });
+    expect(claim('münchen.de')).toEqual({ ok: true, hostname: 'xn--mnchen-3ya.de' });
+    expect(claim('café.fr')).toEqual({ ok: true, hostname: 'xn--caf-dma.fr' });
+    expect(claim('straße.de')).toEqual({ ok: true, hostname: 'xn--strae-oqa.de' });
     expect(claim('1umitra.co')).toEqual({ ok: true, hostname: '1umitra.co' });
     expect(claim('lumitra.com')).toEqual({ ok: true, hostname: 'lumitra.com' });
   });
 
   it('builds skeletons', () => {
     expect(confusableSkeleton('lumіtra.cο')).toBe('lumitra.co');
+    expect(confusableSkeleton('lumiᴛʀạ.co')).toBe('lumitra.co');
+    expect(confusableSkeleton('münchen')).toBe('munchen');
   });
 });
 

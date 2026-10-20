@@ -109,29 +109,42 @@ export function isWellFormedHostname(hostname: string): boolean {
 /**
  * Characters that look like Latin letters or digits, mapped to the ASCII they
  * imitate. A small curated subset of Unicode's confusables data (UTS #39),
- * covering the scripts a lookalike of `lumitra` realistically uses: Cyrillic,
- * Greek, and Latin variants. Applied only to internationalized names.
+ * covering what a lookalike of `lumitra` realistically uses: Cyrillic, Greek,
+ * the Latin small capitals block, dotless and barred letters, and digits that
+ * read as letters. Accented Latin letters need no entry: the skeleton strips
+ * combining marks after NFKD decomposition (so `ạ`, `ü`, `é` become `a`, `u`,
+ * `e` before this map is consulted).
  */
 const CONFUSABLES: Record<string, string> = {
   // Cyrillic
-  'а': 'a', 'в': 'b', 'с': 'c', 'ԁ': 'd', 'е': 'e', 'ё': 'e', 'һ': 'h', 'і': 'i', 'ї': 'i',
-  'ј': 'j', 'к': 'k', 'ӏ': 'l', 'м': 'm', 'н': 'h', 'о': 'o', 'р': 'p', 'ԛ': 'q', 'г': 'r',
-  'ѕ': 's', 'т': 't', 'ս': 'u', 'ц': 'u', 'ѵ': 'v', 'ԝ': 'w', 'х': 'x', 'у': 'y', 'з': '3',
+  'а': 'a', 'в': 'b', 'с': 'c', 'ԁ': 'd', 'е': 'e', 'һ': 'h', 'і': 'i', 'ј': 'j', 'к': 'k',
+  'ӏ': 'l', 'м': 'm', 'н': 'h', 'о': 'o', 'р': 'p', 'ԛ': 'q', 'г': 'r', 'ѕ': 's', 'т': 't',
+  'ս': 'u', 'ц': 'u', 'ѵ': 'v', 'ԝ': 'w', 'х': 'x', 'у': 'y', 'з': '3',
   // Greek
   'α': 'a', 'β': 'b', 'ε': 'e', 'η': 'n', 'ι': 'i', 'κ': 'k', 'μ': 'u', 'ν': 'v', 'ο': 'o',
   'ρ': 'p', 'τ': 't', 'υ': 'u', 'χ': 'x', 'γ': 'y',
-  // Latin variants and digits that read as letters
-  'ı': 'i', 'ł': 'l', 'ƚ': 'l', 'ɩ': 'i', 'ɑ': 'a', 'ɡ': 'g', 'ʟ': 'l', 'ᴍ': 'm', 'ᴜ': 'u',
-  'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i', 'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u', 'á': 'a',
-  'à': 'a', 'â': 'a', 'ä': 'a', 'å': 'a', 'ã': 'a', 'ó': 'o', 'ò': 'o', 'ô': 'o', 'ö': 'o',
-  'õ': 'o', 'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e', 'ṁ': 'm', 'ṃ': 'm', 'ŗ': 'r', 'ř': 'r',
-  'ţ': 't', 'ť': 't', 'ľ': 'l', 'ĺ': 'l', 'ç': 'c', '1': 'l', '0': 'o',
+  // Latin small capitals (U+1D00 block and the IPA small capitals)
+  'ᴀ': 'a', 'ʙ': 'b', 'ᴄ': 'c', 'ᴅ': 'd', 'ᴇ': 'e', 'ꜰ': 'f', 'ɢ': 'g', 'ʜ': 'h', 'ɪ': 'i',
+  'ᴊ': 'j', 'ᴋ': 'k', 'ʟ': 'l', 'ᴍ': 'm', 'ɴ': 'n', 'ᴏ': 'o', 'ᴘ': 'p', 'ʀ': 'r', 'ꜱ': 's',
+  'ᴛ': 't', 'ᴜ': 'u', 'ᴠ': 'v', 'ᴡ': 'w', 'ʏ': 'y', 'ᴢ': 'z',
+  // Dotless, barred and other single-codepoint Latin variants (no NFKD split)
+  'ı': 'i', 'ȷ': 'j', 'ł': 'l', 'ƚ': 'l', 'ɫ': 'l', 'ɩ': 'i', 'ɨ': 'i', 'ɑ': 'a', 'ɡ': 'g',
+  'đ': 'd', 'ħ': 'h', 'ŧ': 't', 'ø': 'o', 'ɵ': 'o', 'ƀ': 'b', 'ʉ': 'u',
+  // Digits that read as letters
+  '1': 'l', '0': 'o',
 };
 
-/** The skeleton of a name: every confusable replaced by what it imitates. */
+/** Combining marks (accents, dots below, ...), stripped after NFKD. */
+const COMBINING_MARKS = /\p{M}/gu;
+
+/**
+ * The skeleton of a name: NFKD-decomposed, combining marks stripped,
+ * lowercased, then every confusable replaced by what it imitates.
+ */
 export function confusableSkeleton(name: string): string {
+  const base = name.normalize('NFKD').replace(COMBINING_MARKS, '').toLowerCase();
   let out = '';
-  for (const ch of name.normalize('NFKC').toLowerCase()) out += CONFUSABLES[ch] ?? ch;
+  for (const ch of base) out += CONFUSABLES[ch] ?? ch;
   return out;
 }
 
