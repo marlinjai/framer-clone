@@ -1,0 +1,38 @@
+# /etc/systemd/system/framer-clone-custom-domains-recheck.service
+#
+# Every 10 minutes (see the .timer): asks framer-clone to re-check the live
+# custom domains that are due (POST .../recheck: at most 20 per call, routing
+# only, every six hours per domain). A non-2xx answer fails this unit, so the
+# journal and any monitor see it: 503 recheck_circuit_open means most live
+# domains failed at once and nothing was counted (check the
+# CUSTOM_DOMAIN_TARGET_* values). Separate from the Traefik sync on purpose,
+# so a slow re-check never delays route updates.
+[Unit]
+Description=framer-clone custom domains: re-check live domains that are due
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/curl --silent --show-error --fail-with-body --max-time 60 --proto =https -X POST -H @/etc/framer-clone/custom-domains.header https://app.lumitra.co/api/internal/custom-domains/recheck
+User=root
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+PrivateTmp=yes
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+UMask=0022

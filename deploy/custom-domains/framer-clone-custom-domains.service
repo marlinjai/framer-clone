@@ -1,0 +1,62 @@
+# /etc/systemd/system/framer-clone-custom-domains.service
+#
+# Every minute (see the .timer): renders framer-clone's verified custom
+# hostnames into a Traefik file-provider configuration
+# (deploy/custom-domains/sync-traefik.sh in the framer-clone repo, installed as
+# /usr/local/bin/framer-clone-sync-traefik.sh). The scheduled re-check of live
+# domains is a separate unit (framer-clone-custom-domains-recheck), so it can
+# never delay or block this sync.
+#
+# Runs as root WITHOUT capabilities, in a read-only system: root only because
+# Coolify owns /data/coolify/proxy/dynamic (root) and the token file must be
+# root-owned 0600. A dedicated user would need ownership changes inside the
+# Coolify-managed proxy directory, which Coolify may reset on an upgrade, so
+# the unit confines root instead: empty capability set (no DAC override, so it
+# reads and writes only what root owns), the whole file system read-only except
+# the dynamic directory and its own state directory, private /tmp, no home
+# directories, no privilege escalation.
+#
+# Exit codes: 0 written or unchanged, 1 feed refused (file untouched), 2
+# configuration refused, 3 a large drop held (additions applied; confirm a
+# genuine drop with: touch /var/lib/framer-clone-custom-domains/force-once).
+[Unit]
+Description=framer-clone custom domains: sync Traefik routes
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=FEED_URL=https://app.lumitra.co/api/internal/custom-domains/hostnames
+Environment=TOKEN_FILE=/etc/framer-clone/custom-domains.header
+# The app's Traefik service, from its labels in Coolify (http-0-<app-uuid>).
+Environment=TRAEFIK_SERVICE=REPLACE_WITH_APP_SERVICE@docker
+Environment=OUTPUT_FILE=/data/coolify/proxy/dynamic/framer-clone-custom-domains.yml
+# Other products' zones on this server that must never get a framer-clone route.
+Environment=BLOCKED_ZONES=
+Environment=STATE_DIR=/var/lib/framer-clone-custom-domains
+StateDirectory=framer-clone-custom-domains
+StateDirectoryMode=0700
+ExecStart=/usr/local/bin/framer-clone-sync-traefik.sh
+
+ReadWritePaths=/data/coolify/proxy/dynamic
+User=root
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+PrivateTmp=yes
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+UMask=0022

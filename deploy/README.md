@@ -236,12 +236,54 @@ says where each comes from.
 | `ANALYTICS_INGESTION_ENDPOINT` | for analytics | Where published sites send events |
 | `ANALYTICS_TRACKER_SCRIPT_URL` | for analytics | The tracker script published pages load; without it pages publish their config but emit nothing |
 | `ANALYTICS_PROJECT_ID` | no | Analytics project id tagged onto events |
+| `CUSTOM_DOMAIN_TARGET_HOST` | for custom domains | The DNS-only (never Cloudflare-proxied) name customers CNAME their domain to, e.g. `domains.lumitra.co`. Unset (or without an IPv4 below) means custom domains are off: the editor lists existing domains and adding or verifying answers 503 `custom_domains_not_configured` |
+| `CUSTOM_DOMAIN_TARGET_IPV4` | for custom domains | Comma-separated public IPv4 address(es) of the shared server, shown as the A record for a root domain and the only addresses a domain may resolve to. Also the address the certificate probe connects to |
+| `CUSTOM_DOMAIN_TARGET_IPV6` | no | Comma-separated IPv6 address(es) Traefik answers on. Unset means "no AAAA record allowed": a customer AAAA record pointing elsewhere is reported, because Let's Encrypt would try it first and fail |
+| `CUSTOM_DOMAIN_DNS_SERVERS` | no, recommended | Resolver IPs for the ownership check, e.g. `1.1.1.1,8.8.8.8`, so a TXT record a customer just added is not hidden by the container resolver's negative cache |
+| `CUSTOM_DOMAIN_TLS_PROBE` | no | `off` skips the certificate probe that moves a domain from verified to active (it then stays verified) |
+| `CUSTOM_DOMAIN_SYNC_TOKEN` | for custom domains | Bearer token (at least 32 characters, generated) the host timer presents to `GET /api/internal/custom-domains/hostnames` and `POST /api/internal/custom-domains/recheck`. Unset means both answer 503, the proxy keeps its last file and live domains are not re-checked |
 
 A published site only injects analytics when its `lumitraEnabled` flag is set.
 
 **One-off, for the demo seed only** (never stored): `DEMO_BASE_HOST`,
 `DEMO_PUBLISHED_SUBDOMAIN`, `DEMO_DRAFT_SUBDOMAIN`, `DEMO_TENANT_GROUP_ID` (all
 optional with defaults; see `scripts/seed-demo.ts`).
+
+## Custom domains: what the server side needs
+
+Published sites can answer on a customer's own domain (plan
+`docs/plans/2026-06-25-framer-custom-domains.md`). The app verifies ownership
+over DNS and serves verified hostnames; certificates come from Traefik on the
+shared server. The app never writes proxy configuration: the host runs
+`deploy/custom-domains/sync-traefik.sh` every minute (systemd units next to it),
+which fetches the verified hostnames from the token-guarded feed, re-validates
+each line, and writes `framer-clone-custom-domains.yml` into Traefik's watched
+file-provider directory (`/data/coolify/proxy/dynamic/`) with one http redirect
+router and one https router (`certResolver: letsencrypt`, priority 1) per
+hostname. The script refuses the feed (and keeps the current file, exit 1) when
+the answer is not text/plain, does not match its `x-content-sha256` /
+`x-hostname-count` headers, or contains one invalid or blocked line.
+
+**Drop protection.** A drop is held when the feed has more than 5 fewer routes
+than the high-water mark (the largest count written in the last 24 hours) AND
+fewer than half of it. While held, removals wait but additions still go live
+(the file gets the union of current and new routes) and the run exits 3, which
+the journal shows. If the drop is genuine (many domains really disconnected),
+confirm it once on the server:
+
+    touch /var/lib/framer-clone-custom-domains/force-once
+
+The next run (within a minute) applies the drop, deletes the flag and resets the
+high-water mark. The flag lives in the unit's state directory, not under /etc,
+because the unit keeps /etc read-only.
+
+**Re-check.** A separate unit and timer (`framer-clone-custom-domains-recheck`,
+every 10 minutes) calls `POST /api/internal/custom-domains/recheck`, which
+re-checks live domains that are due (routing only, every six hours, three
+definitive failures in a row release a domain). If more than half of a pass
+fails at once (at least 5 checked), nothing is counted and the call answers 503
+`recheck_circuit_open`, which fails the unit: check the `CUSTOM_DOMAIN_TARGET_*`
+values. The ordered operator steps live in the infra RUNBOOK.
 
 ## Operator commands (from a checkout, against a forwarded database)
 

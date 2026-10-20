@@ -42,10 +42,12 @@ vi.mock('@/server/sites', async (importActual) => {
 vi.mock('@/server/sites/cachedResolver', () => ({
   revalidateSiteCache: vi.fn(),
   resolveSubdomainForSiteId: vi.fn(),
+  revalidateCustomHostsForSiteId: vi.fn(async () => []),
 }));
 
 import { getSiteRepository, SiteNotFoundError } from '@/server/sites';
 import {
+  revalidateCustomHostsForSiteId,
   revalidateSiteCache,
   resolveSubdomainForSiteId,
 } from '@/server/sites/cachedResolver';
@@ -187,6 +189,27 @@ describe('POST /api/projects/unpublish (authorized)', () => {
     expect(res.status).toBe(200);
     expect(resolveSubdomainMock).toHaveBeenCalledWith('site_1');
     expect(revalidateMock).toHaveBeenCalledWith('demo-abc123');
+  });
+
+  it('also revalidates every custom domain of the site, so none keeps serving it', async () => {
+    installRepo({ unpublishProject: vi.fn().mockResolvedValue(undefined) });
+    resolveSubdomainMock.mockResolvedValue(null);
+
+    const res = await POST(unpublishReq({ siteId: 'site_1' }));
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(revalidateCustomHostsForSiteId)).toHaveBeenCalledWith('site_1');
+  });
+
+  it('reports a failed custom-domain revalidation so the caller retries', async () => {
+    installRepo({ unpublishProject: vi.fn().mockResolvedValue(undefined) });
+    resolveSubdomainMock.mockResolvedValue(null);
+    vi.mocked(revalidateCustomHostsForSiteId).mockRejectedValueOnce(new Error('db hiccup'));
+
+    const res = await POST(unpublishReq({ siteId: 'site_1' }));
+
+    expect(res.status).toBe(500);
+    expect((await res.json()).error.code).toBe('unpublish_failed');
   });
 
   it('does not revalidate when the site has no allocated subdomain', async () => {

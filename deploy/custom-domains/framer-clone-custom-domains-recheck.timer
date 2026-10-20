@@ -1,0 +1,12 @@
+# /etc/systemd/system/framer-clone-custom-domains-recheck.timer
+[Unit]
+Description=framer-clone custom domains: re-check live domains every 10 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+RandomizedDelaySec=60
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

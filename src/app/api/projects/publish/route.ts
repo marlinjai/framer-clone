@@ -34,7 +34,10 @@ import {
 } from '@/server/sites';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 import { jsonError, parseBody } from '@/lib/api/respond';
-import { revalidateSiteCache } from '@/server/sites/cachedResolver';
+import {
+  revalidateCustomHostsForSiteId,
+  revalidateSiteCache,
+} from '@/server/sites/cachedResolver';
 import { projectBodySchema as publishBodySchema } from '../_schema';
 
 export const runtime = 'nodejs';
@@ -94,6 +97,15 @@ async function handlePOST(req: Request): Promise<Response> {
     // storefront request re-reads and serves the freshly-published content. The
     // tag matches the subdomain the resolver keys on (`site:<subdomain>`).
     revalidateSiteCache(subdomain);
+    // The site's custom domains (verified or not) are revalidated too, so a
+    // connected domain serves the new content on its next request as well.
+    // The write already committed: a failure to read the site's hosts here must
+    // not turn it into a reported failure. Logged; cached custom-host hits do
+    // not expire on their own, so those hosts may serve the previous content
+    // until the next publish or a domain lifecycle event revalidates them.
+    await revalidateCustomHostsForSiteId(project.id).catch((err: unknown) => {
+      console.error('[sites] custom-domain cache revalidation failed for ' + project.id, err);
+    });
   } catch (err) {
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
     return jsonError(

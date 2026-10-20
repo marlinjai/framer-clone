@@ -11,15 +11,31 @@ import 'server-only';
 // is globally unique). So this resolver keys on subdomain, serves ONLY published
 // sites, and never touches the tenant-scoped repository or its barrel.
 //
-// Resolution: Host header -> subdomain label -> SiteDomain.siteId -> the
-// published Site + its SitePage snapshots. A draft / archived / unknown
-// subdomain resolves to null (the route 404s). No write surface here.
+// Resolution: Host header -> lookup key -> SiteDomain.siteId -> the published
+// Site + its SitePage snapshots. A draft / archived / unknown host resolves to
+// null (the route 404s). No write surface here.
+//
+// Two kinds of lookup key (hostLookupKeys):
+//   - a SUBDOMAIN label of PUBLIC_SITE_BASE_HOST (`<label>.sites.lumitra.co`),
+//     looked up on SiteDomain.subdomain;
+//   - a CUSTOM hostname (plan 2026-06-25-framer-custom-domains): any other host
+//     that passes the custom-domain contract (src/server/domains/hostname.ts),
+//     looked up on SiteDomain.customHostname, the LIVE claim that is only set
+//     once DNS ownership was verified. The row must also be `verified` or
+//     `active`; a pending, failed or disconnected domain never serves a site.
+// The host is normalized first: port and trailing dot dropped, lowercased, an
+// internationalized name converted to punycode (browsers already send that).
 
 import type { PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
 import type { PageSnapshotOut } from '@/models/PageModel';
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
 import { RFC1035_LABEL } from '@/server/sites/subdomain';
+import {
+  isClaimableHostname,
+  normalizeRequestHost,
+  platformZones,
+} from '@/server/domains/hostname';
 
 // Re-exported so resolver consumers can import the sentinel from one barrel; the
 // canonical, dependency-free source is `homeSentinel.ts` (edge-safe for the
@@ -100,27 +116,85 @@ function usableLabel(label: string | undefined): string | null {
   return label;
 }
 
-/**
- * Resolve the published site for a request Host. Returns null when the host has
- * no subdomain, the subdomain maps to no SiteDomain, or the mapped site is not
- * `published` (draft / archived / missing). A public, anonymous read.
- */
-export async function resolvePublishedSite(
-  host: string | null | undefined,
-  prisma: PrismaClient = getPrismaClient(),
-  baseHost?: string | null,
-): Promise<PublishedSite | null> {
-  const subdomain = parseSubdomain(host, baseHost);
-  if (!subdomain) return null;
+/** One way a request host can name a site (see the file header). */
+export type SiteHostKey =
+  | { kind: 'subdomain'; value: string }
+  | { kind: 'custom'; value: string };
 
+/** The custom-domain statuses that serve a site (DNS ownership proven). */
+export const SERVING_DOMAIN_STATUSES = ['verified', 'active'] as const;
+
+/**
+ * The lookup keys for a request Host, in the order they are tried.
+ *
+ * - With a base host (production): a host under it is a SUBDOMAIN (and only
+ *   that); any other host is a CUSTOM hostname when it passes the custom-domain
+ *   contract (which also excludes every platform zone), else nothing.
+ * - Without a base host (local development, tests): a valid custom hostname is
+ *   tried first, then the legacy first-label subdomain parse, so the
+ *   unconfigured behaviour of `parseSubdomain` is unchanged.
+ *
+ * A host that yields no key resolves to null without any database work.
+ */
+export function hostLookupKeys(
+  host: string | null | undefined,
+  baseHost: string | null | undefined = process.env.PUBLIC_SITE_BASE_HOST,
+): SiteHostKey[] {
+  const hostname = normalizeRequestHost(host);
+  if (!hostname) return [];
+  const zones = platformZones();
+  const base = baseHost?.trim().toLowerCase().replace(/\.$/, '');
+  if (base) {
+    if (hostname === base || hostname.endsWith(`.${base}`)) {
+      // The label is parsed from the RAW host, exactly as before custom domains
+      // existed: a non-ASCII label is refused, not converted to punycode, since
+      // the allocator only ever hands out [a-z0-9] labels.
+      const label = parseSubdomain(host, base);
+      return label ? [{ kind: 'subdomain', value: label }] : [];
+    }
+    return isClaimableHostname(hostname, [...zones, base])
+      ? [{ kind: 'custom', value: hostname }]
+      : [];
+  }
+  const keys: SiteHostKey[] = [];
+  if (isClaimableHostname(hostname, zones)) keys.push({ kind: 'custom', value: hostname });
+  const label = parseSubdomain(host, null);
+  if (label) keys.push({ kind: 'subdomain', value: label });
+  return keys;
+}
+
+/** The site id a lookup key names, or null (custom: only a serving claim). */
+async function siteIdForKey(key: SiteHostKey, prisma: PrismaClient): Promise<string | null> {
+  if (key.kind === 'subdomain') {
+    const domain = await prisma.siteDomain.findUnique({
+      where: { subdomain: key.value },
+      select: { siteId: true },
+    });
+    return domain?.siteId ?? null;
+  }
   const domain = await prisma.siteDomain.findUnique({
-    where: { subdomain },
-    select: { siteId: true },
+    where: { customHostname: key.value },
+    select: { siteId: true, verificationStatus: true },
   });
   if (!domain) return null;
+  return (SERVING_DOMAIN_STATUSES as readonly string[]).includes(domain.verificationStatus)
+    ? domain.siteId
+    : null;
+}
+
+/**
+ * Resolve the published site one lookup key names. Null when the key maps to no
+ * (serving) SiteDomain or the site is not `published`.
+ */
+export async function resolvePublishedSiteByKey(
+  key: SiteHostKey,
+  prisma: PrismaClient = getPrismaClient(),
+): Promise<PublishedSite | null> {
+  const siteId = await siteIdForKey(key, prisma);
+  if (!siteId) return null;
 
   const site = await prisma.site.findFirst({
-    where: { id: domain.siteId, status: 'published' },
+    where: { id: siteId, status: 'published' },
     select: {
       id: true,
       workspaceId: true,
@@ -150,6 +224,25 @@ export async function resolvePublishedSite(
       snapshot: p.snapshot as unknown as PageSnapshotOut,
     })),
   };
+}
+
+/**
+ * Resolve the published site for a request Host: each lookup key in order
+ * (hostLookupKeys), the first published site wins. Returns null when the host
+ * yields no key, no key maps to a serving SiteDomain, or the site is not
+ * `published` (draft / archived / missing). A public, anonymous read.
+ */
+export async function resolvePublishedSite(
+  host: string | null | undefined,
+  prisma: PrismaClient = getPrismaClient(),
+  baseHost?: string | null,
+): Promise<PublishedSite | null> {
+  const keys = hostLookupKeys(host, baseHost === undefined ? process.env.PUBLIC_SITE_BASE_HOST : baseHost);
+  for (const key of keys) {
+    const site = await resolvePublishedSiteByKey(key, prisma);
+    if (site) return site;
+  }
+  return null;
 }
 
 /** A page matched against a request path, with any dynamic params captured. */

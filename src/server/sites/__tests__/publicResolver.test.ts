@@ -4,6 +4,7 @@ import type { PrismaClient } from '@prisma/client';
 import {
   parseSubdomain,
   resolvePublishedSite,
+  hostLookupKeys,
   matchPageBySlug,
   resolvePublicIngestionKey,
   resolveTrackerScriptSrc,
@@ -72,9 +73,30 @@ function fakePrisma(): PrismaClient {
   ];
   return {
     siteDomain: {
-      findUnique: async ({ where }: { where: { subdomain: string } }) => {
+      findUnique: async ({
+        where,
+      }: {
+        where: { subdomain?: string; customHostname?: string };
+      }) => {
         if (where.subdomain === 'demo') return { siteId: 's1' };
         if (where.subdomain === 'draft') return { siteId: 's2' };
+        // Custom domains: the live claim column, with its status.
+        if (where.customHostname === 'shop.example.com') {
+          return { siteId: 's1', verificationStatus: 'active' };
+        }
+        if (where.customHostname === 'xn--bcher-kva.example') return null;
+        if (where.customHostname === 'xn--bcher-kva.de') {
+          return { siteId: 's1', verificationStatus: 'verified' };
+        }
+        if (where.customHostname === 'pending.example.com') {
+          return { siteId: 's1', verificationStatus: 'pending' };
+        }
+        if (where.customHostname === 'failed.example.com') {
+          return { siteId: 's1', verificationStatus: 'failed' };
+        }
+        if (where.customHostname === 'draft-site.example.com') {
+          return { siteId: 's2', verificationStatus: 'active' };
+        }
         return null;
       },
     },
@@ -129,6 +151,79 @@ describe('resolvePublishedSite', () => {
   it('returns null when the host has no usable subdomain', async () => {
     const site = await resolvePublishedSite('lumitra.site', fakePrisma(), 'lumitra.site');
     expect(site).toBeNull();
+  });
+});
+
+describe('resolvePublishedSite: custom hostnames', () => {
+  it('resolves an active custom hostname to its published site', async () => {
+    const site = await resolvePublishedSite('shop.example.com', fakePrisma(), 'lumitra.site');
+    expect(site?.siteId).toBe('s1');
+  });
+
+  it('normalizes case, port and a trailing dot before the lookup', async () => {
+    const site = await resolvePublishedSite('SHOP.Example.com.:443', fakePrisma(), 'lumitra.site');
+    expect(site?.siteId).toBe('s1');
+  });
+
+  it('serves a verified (certificate pending) internationalized domain by its punycode', async () => {
+    expect((await resolvePublishedSite('bücher.de', fakePrisma(), 'lumitra.site'))?.siteId).toBe('s1');
+    expect(
+      (await resolvePublishedSite('xn--bcher-kva.de', fakePrisma(), 'lumitra.site'))?.siteId,
+    ).toBe('s1');
+  });
+
+  it('never serves a pending or failed domain', async () => {
+    expect(await resolvePublishedSite('pending.example.com', fakePrisma(), 'lumitra.site')).toBeNull();
+    expect(await resolvePublishedSite('failed.example.com', fakePrisma(), 'lumitra.site')).toBeNull();
+  });
+
+  it('never serves an unknown (or disconnected) hostname', async () => {
+    expect(await resolvePublishedSite('gone.example.com', fakePrisma(), 'lumitra.site')).toBeNull();
+  });
+
+  it('never serves a custom domain whose site is not published', async () => {
+    expect(
+      await resolvePublishedSite('draft-site.example.com', fakePrisma(), 'lumitra.site'),
+    ).toBeNull();
+  });
+});
+
+describe('hostLookupKeys', () => {
+  it('a host under the base host is only ever a subdomain', () => {
+    expect(hostLookupKeys('demo.lumitra.site', 'lumitra.site')).toEqual([
+      { kind: 'subdomain', value: 'demo' },
+    ]);
+    expect(hostLookupKeys('lumitra.site', 'lumitra.site')).toEqual([]);
+  });
+
+  it('any other well-formed public host is a custom hostname', () => {
+    expect(hostLookupKeys('www.example.com', 'lumitra.site')).toEqual([
+      { kind: 'custom', value: 'www.example.com' },
+    ]);
+  });
+
+  it('platform zones, IP literals, local names and junk yield no key', () => {
+    for (const host of [
+      'app.lumitra.co',
+      'lumitra.co',
+      '10.0.0.1',
+      '[::1]:3000',
+      'localhost:3000',
+      'shop.local',
+      'bad_label.example.com',
+      '',
+      null,
+    ]) {
+      expect(hostLookupKeys(host, 'lumitra.site')).toEqual([]);
+    }
+  });
+
+  it('without a base host: custom first, then the legacy first-label parse', () => {
+    expect(hostLookupKeys('demo.lumitra.site', null)).toEqual([
+      { kind: 'custom', value: 'demo.lumitra.site' },
+      { kind: 'subdomain', value: 'demo' },
+    ]);
+    expect(hostLookupKeys('app.lumitra.co', null)).toEqual([{ kind: 'subdomain', value: 'app' }]);
   });
 });
 

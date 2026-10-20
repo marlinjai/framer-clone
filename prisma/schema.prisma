@@ -14,7 +14,7 @@
 // placeholder value is enough for `next build`.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   // Runtime is node:20-bookworm-slim (Debian 12, openssl 3.0.x) on linux/arm64.
   // Pin the engine target explicitly so the generated client always carries the
   // matching query engine, even if the builder mis-detects openssl. "native"
@@ -197,10 +197,15 @@ enum SiteStatus {
   @@schema("public")
 }
 
+/// `active` doubles as the state of a platform subdomain row (always active).
+/// A custom hostname walks pending -> verified (DNS ownership and routing
+/// proven, served over HTTP, certificate being issued) -> active (a valid
+/// certificate answers for it); `failed` carries the reason in `last_error`.
 enum DomainVerificationStatus {
   pending
   active
   failed
+  verified
 
   @@schema("public")
 }
@@ -296,11 +301,17 @@ model SitePage {
   @@schema("public")
 }
 
-/// The subdomain-by-default + custom-hostname state for a site. Edge hosting
-/// (P3) consumes this; P1b only persists it. `subdomain` is the
-/// <name>.framer-host zone label; `customHostname` is the connected apex/www
-/// the site owner points at us (Cloudflare for SaaS custom hostname, verified
-/// out of band). One active custom hostname per row.
+/// The subdomain-by-default + custom-hostname state for a site. Two kinds of
+/// row, never mixed:
+///
+///   - the platform subdomain row: `subdomain` set (the <label>.sites.lumitra.co
+///     label), status `active`, every custom-domain column null;
+///   - one row per custom domain (plan 2026-06-25-framer-custom-domains):
+///     `hostname` is what the owner asked for (ASCII, punycode for IDNs, not
+///     unique, so a pending claim can never block the real owner), and
+///     `customHostname` is the LIVE claim, set only once DNS ownership was
+///     verified and cleared when the claim is lost. The unique index on
+///     `customHostname` is what makes a domain belong to exactly one site.
 model SiteDomain {
   id String @id @default(uuid())
 
@@ -315,6 +326,24 @@ model SiteDomain {
   verificationStatus DomainVerificationStatus @default(pending) @map("verification_status")
   isPrimary          Boolean                  @default(false) @map("is_primary")
 
+  // --- custom domains only (null on the platform subdomain row) ---
+  // The hostname the owner asked for, normalized (lowercase ASCII).
+  hostname            String?   @map("hostname")
+  // The random token the owner publishes as TXT `_lumitra-verify.<hostname>`.
+  // Minted fresh for every claim and never reused (unique across all rows).
+  verificationToken   String?   @map("verification_token")
+  verifiedAt          DateTime? @map("verified_at")
+  activatedAt         DateTime? @map("activated_at")
+  lastCheckedAt       DateTime? @map("last_checked_at")
+  // Why the last check did not succeed: a stable code plus a sentence for the
+  // owner. Cleared by a successful check.
+  lastErrorCode       String?   @map("last_error_code")
+  lastError           String?   @map("last_error")
+  // Definitive routing failures in a row seen by the scheduled re-check of a
+  // live domain; the claim is released at RECHECK_RELEASE_AFTER. Transient
+  // DNS errors never count; any success resets it.
+  consecutiveFailures Int       @default(0) @map("consecutive_failures")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -325,6 +354,10 @@ model SiteDomain {
   // times) is Postgres-default for @@unique on nullable columns.
   @@unique([subdomain])
   @@unique([customHostname])
+  @@unique([verificationToken])
+  @@unique([siteId, hostname])
+  @@index([hostname])
+  @@index([customHostname, lastCheckedAt])
   @@index([workspaceId])
   @@index([tenantGroupId])
   @@index([siteId])

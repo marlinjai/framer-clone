@@ -17,9 +17,11 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   built on `feat/ai-page-generation`; phase 4's style references and screenshot loop stay open.
   See [plan](docs/plans/ai-driven-page-generation.md). (2026-10-19)
 - [ ] Custom domains (Option B): let a site owner connect their own domain to a published site
-  (domain-control validation, per-domain TLS, in-editor onboarding), on top of the default
-  subdomain hosting that already shipped. Background work, still wanted, not started. See
-  [plan](docs/plans/2026-06-25-framer-custom-domains.md). (2026-10-14)
+  (TXT ownership check, per-domain Let's Encrypt certificates through Traefik's file provider,
+  a Domains panel in the editor). Decided 2026-10-19 and built on branch `feat/custom-domains`;
+  goes live once the infra steps in the plan's reality section are applied on the shared server
+  (DNS-only target record, Infisical values, the sync timer) and one real domain is proven end to
+  end. See [plan](docs/plans/2026-06-25-framer-custom-domains.md). (2026-10-20)
 Build order decided by Marlin on 2026-10-15: finish the per-company schemas, get the app running
 again, then the invoicing tier on top, then the import of the existing invoices and the
 connections to the suite. The four lines below are in that order.
