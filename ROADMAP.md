@@ -87,6 +87,10 @@ connections to the suite. The four lines below are in that order.
   invoice outside the Books); Whiz-Art Media is never affected (section 13b does not apply to a
   small-business supplier). See [plan](docs/plans/2026-10-20-books-upload-import.md), Build notes
   item 15. (2026-10-20)
+- [ ] 7. Production on Node 24 before Node 22 leaves support (2027-04-30): the Dockerfile's
+  NODE_IMAGE, `.nvmrc`, package.json engines and `@types/node` move together, as in the move to
+  Node 22 of 2026-10-20 (pinned by digest, Dependabot proposes patch and minor releases but never a
+  new major). (2026-10-20)
 - [x] The framer-clone Coolify Postgres database with the published port 5439: checked on
   2026-10-15, there is no framer-clone database or app in Coolify any more and port 5439 is closed
   on both servers, so nothing is left to restart. Done 2026-10-15.

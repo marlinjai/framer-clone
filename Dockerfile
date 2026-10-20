@@ -24,10 +24,12 @@
 # openssl-3.0.x). schema.prisma also pins binaryTargets to linux-arm64-openssl-3.0.x
 # as a backstop.
 
-# Node 22 (the release CI tests on, see .nvmrc), pinned to major.minor so a
-# rebuild never jumps a minor unseen while patch releases (security fixes)
-# still arrive. Every stage uses it. Bump with .nvmrc and package.json engines.
-ARG NODE_IMAGE=node:22.23-bookworm-slim
+# Node 22.23 on Debian bookworm, pinned by digest: a rebuild gives exactly the
+# image that was tested, never a newer minor or base layer unseen. Updates do
+# not stop: Dependabot (.github/dependabot.yml) opens a pull request for each
+# new Node or Debian release, which CI then tests. Every stage uses it. Bump
+# with .nvmrc (the same minor) and package.json engines.
+ARG NODE_IMAGE=node:22.23-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
 ARG PNPM_VERSION=9.15.0
 # Pin matches "prisma" in package.json (6.19.3). Bump both together.
 ARG PRISMA_VERSION=6.19.3

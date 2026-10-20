@@ -28,7 +28,7 @@ A high-performance, production-ready design tool built with Next.js, TypeScript,
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 22 (the version in `.nvmrc`; production runs the same minor, see the Dockerfile)
 - pnpm 9+
 
 ### Installation
