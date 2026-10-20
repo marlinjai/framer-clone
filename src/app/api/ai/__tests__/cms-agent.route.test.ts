@@ -20,13 +20,15 @@ const anthropicState = vi.hoisted(() => ({
   // The inner non-streaming Haiku reply (translate/generate); JSON text.
   innerJson: '[]',
   streamCalls: [] as Array<Record<string, unknown>>,
+  streamOptions: [] as Array<{ signal?: AbortSignal } | undefined>,
   createCalls: [] as Array<Record<string, unknown>>,
 }));
 
 function makeClient() {
   let turnIndex = 0;
-  const stream = (params: Record<string, unknown>) => {
+  const stream = (params: Record<string, unknown>, options?: { signal?: AbortSignal }) => {
     anthropicState.streamCalls.push({ ...params, messages: structuredClone(params.messages) });
+    anthropicState.streamOptions.push(options);
     const handlers: Record<string, (event: unknown) => void> = {};
     return {
       on(event: string, cb: (event: unknown) => void) {
@@ -170,6 +172,7 @@ beforeEach(() => {
   anthropicState.turns = [{ content: [], stop_reason: 'end_turn' }];
   anthropicState.innerJson = '[]';
   anthropicState.streamCalls = [];
+  anthropicState.streamOptions = [];
   anthropicState.createCalls = [];
   // t1 is the session workspace's collection, t_b belongs to workspace B.
   adapter.getTable.mockImplementation(async (id: string) =>
@@ -550,5 +553,56 @@ describe('POST /api/ai/cms-agent on current models', () => {
     ];
     await readStream(await POST(makeRequest(baseBody(), { cookie: authCookie })));
     expect(adapter.createRow).toHaveBeenCalledWith({ tableId: 't1', cells: { c1: 'x' } });
+  });
+
+  it('passes a disconnect signal to the Anthropic stream that aborts with the request', async () => {
+    const controller = new AbortController();
+    const req = new Request('http://localhost/api/ai/cms-agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: authCookie },
+      body: JSON.stringify(baseBody()),
+      signal: controller.signal,
+    });
+    const res = await POST(req);
+    await vi.waitFor(() => expect(anthropicState.streamOptions).toHaveLength(1));
+    const signal = anthropicState.streamOptions[0]?.signal;
+    expect(signal?.aborted).toBe(false);
+    controller.abort();
+    expect(signal?.aborted).toBe(true);
+    await readStream(res).catch(() => '');
+  });
+
+  it('on disconnect mid-turn: the running tool finishes and records its undo, nothing further runs', async () => {
+    const controller = new AbortController();
+    adapter.createRow.mockImplementation(async (input: { cells: Record<string, unknown> }) => {
+      controller.abort(); // the user closes the panel while the first tool runs
+      return { id: 'row1', tableId: 't1', cells: input.cells };
+    });
+    anthropicState.turns = [
+      {
+        content: [
+          { type: 'tool_use', id: 'tu1', name: 'create_row', input: { tableId: 't1', cells: { c1: 'a' } } },
+          { type: 'tool_use', id: 'tu2', name: 'create_row', input: { tableId: 't1', cells: { c1: 'b' } } },
+        ],
+        stop_reason: 'tool_use',
+      },
+      { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+    ];
+    const req = new Request('http://localhost/api/ai/cms-agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: authCookie },
+      body: JSON.stringify(baseBody()),
+      signal: controller.signal,
+    });
+    const res = await POST(req);
+    await readStream(res).catch(() => '');
+    await vi.waitFor(() =>
+      expect(prisma.agentRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'failed', errorMessage: expect.stringContaining('disconnected') }) }),
+      ),
+    );
+    expect(adapter.createRow).toHaveBeenCalledTimes(1); // the second tool never ran
+    expect(prisma.agentChange.create).toHaveBeenCalledTimes(1); // the first one is undoable
+    expect(anthropicState.streamCalls).toHaveLength(1); // no further model turn
   });
 });

@@ -243,7 +243,10 @@ async function handlePOST(request: Request): Promise<Response> {
   // ---- 5. Open the SSE stream and kick off the detached loop -------------
   const sse = createSseStream();
 
-  void runAgentLoop({ adapter, anthropic, prisma, body, workspaceId, modelKey: body.model, runId, sse });
+  // Stop spending when the client goes away: the request is aborted, or the
+  // SSE stream was cancelled / a write hit a closed connection.
+  const signal = AbortSignal.any([request.signal, sse.signal]);
+  void runAgentLoop({ adapter, anthropic, prisma, body, workspaceId, modelKey: body.model, runId, sse, signal });
 
   return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
 }
@@ -261,7 +264,7 @@ function isStrictJson(raw: string): boolean {
 
 /** A deliberate stop of the loop with a user-facing code (refusal, truncation, bad tool JSON). */
 class AgentStopError extends Error {
-  constructor(readonly code: 'refused' | 'truncated' | 'invalid_tool_input', message: string) {
+  constructor(readonly code: 'refused' | 'truncated' | 'invalid_tool_input' | 'cancelled', message: string) {
     super(message);
     this.name = 'AgentStopError';
   }
@@ -276,10 +279,12 @@ interface LoopArgs {
   modelKey: AiModelKey;
   runId: string;
   sse: ReturnType<typeof createSseStream>;
+  /** Aborts when the client disconnected (see handlePOST). */
+  signal: AbortSignal;
 }
 
 async function runAgentLoop(args: LoopArgs): Promise<void> {
-  const { adapter, anthropic, prisma, body, workspaceId, modelKey, runId, sse } = args;
+  const { adapter, anthropic, prisma, body, workspaceId, modelKey, runId, sse, signal } = args;
   const heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
 
   const changeSummaries: AgentChangeSummary[] = [];
@@ -344,8 +349,19 @@ async function runAgentLoop(args: LoopArgs): Promise<void> {
     const progress = progressUpdateFields(modelKey);
     const betas = mergeBetas<string>(modelFields.betas, progress.betas);
 
+    // Disconnect handling: the Anthropic stream is aborted at once, and the
+    // loop checks the signal before every tool call, so a tool that already
+    // started finishes and records its inverse (the run stays undoable) and
+    // nothing after it runs. A turn is never left half-applied mid-tool.
+    const stopIfDisconnected = (): void => {
+      if (signal.aborted) {
+        throw new AgentStopError('cancelled', 'The client disconnected; the run stopped and every change made so far can be undone.');
+      }
+    };
+
     let iterations = 0;
     while (iterations++ < MAX_ITERATIONS) {
+      stopIfDisconnected();
       const stream = anthropic.beta.messages.stream({
         ...modelFields,
         ...(progress.thinking ? { thinking: progress.thinking } : {}),
@@ -355,7 +371,7 @@ async function runAgentLoop(args: LoopArgs): Promise<void> {
         system,
         tools: agentToolDefs,
         messages,
-      });
+      }, { signal });
       stream.on('text', (delta: string) => sse.send('agent:thinking', { text: delta }));
       // Raw tool-input JSON per content block index. With eager input
       // streaming the SDK parses inputs tolerantly, so malformed JSON can
@@ -377,6 +393,7 @@ async function runAgentLoop(args: LoopArgs): Promise<void> {
       try {
         final = await stream.finalMessage();
       } catch (err) {
+        stopIfDisconnected(); // an abort is a cancellation, not an upstream error
         if (!isToolInputParseError(err)) throw err;
         throw new AgentStopError('invalid_tool_input', 'The agent produced an unreadable tool call. Nothing more was changed; run it again.');
       }
@@ -405,6 +422,7 @@ async function runAgentLoop(args: LoopArgs): Promise<void> {
 
       const toolResults: BetaToolResultBlockParam[] = [];
       for (const toolUse of toolUses) {
+        stopIfDisconnected();
         const raw = rawToolInput.get(final.content.indexOf(toolUse));
         if (raw !== undefined && !isStrictJson(raw)) {
           // Run nothing from this block; tell the model so it can call again.

@@ -136,6 +136,10 @@ export async function POST(req: Request): Promise<Response> {
   const modelFields = modelRequestFields(getDefaultModelKey(), 'low');
   const modelId = modelFields.model;
 
+  // Abort the Anthropic stream when the client goes away (request aborted, or
+  // the SSE stream cancelled / a write hit a closed connection).
+  const disconnect = AbortSignal.any([req.signal, sse.signal]);
+
   // Heartbeat keeper. Cleared in finally below.
   const heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
 
@@ -158,7 +162,7 @@ export async function POST(req: Request): Promise<Response> {
         max_tokens: 4096,
         system,
         messages: [{ role: 'user', content: body.prompt }],
-      });
+      }, { signal: disconnect });
 
       // Only text deltas are forwarded; thinking blocks (empty text by
       // default) never reach the client as tokens.
@@ -204,7 +208,7 @@ export async function POST(req: Request): Promise<Response> {
         cachedWriteTokens,
       });
     } catch (err: unknown) {
-      const code = getErrorCode(err);
+      const code = disconnect.aborted ? 'aborted' : getErrorCode(err);
       status = mapStatus(code);
       errorCode = code;
       const message =
