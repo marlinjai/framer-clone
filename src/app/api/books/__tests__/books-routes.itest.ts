@@ -49,8 +49,8 @@ vi.mock('@/server/books/http/dependencies', () => ({
 
 import { getDocument } from '@/server/books/repository/read';
 import { renderIssuedDocument, storeBeforeCommit } from '@/server/books/render/store';
-import { planInvoice, resolveRecipient } from '@/server/books/importCli';
-import { importInvoice } from '@/server/books/importInvoices';
+import { planInvoice } from '@/server/books/importCli';
+import { importHistoricalInvoice } from '@/server/books/importInvoices';
 import { renderPdf } from '@/server/books/render/pdf';
 import { issue as issueDocument } from '@/server/books/issue';
 import * as contactsRoute from '../contacts/route';
@@ -611,7 +611,7 @@ describe('Books routes: imported historical invoices', () => {
     return Buffer.from(`%PDF-1.4\n% synthetic historical original ${label}\n%%EOF\n`, 'latin1');
   }
 
-  /** Import one synthetic invoice through the domain path the CLI uses. */
+  /** Import one synthetic invoice through the domain core the CLI and the planned upload use. */
   async function importOne(number: number, opts: { sender?: string[]; issueDate?: string } = {}) {
     const bytes = original(`${tenantId}-${number}`);
     const plan = planInvoice(
@@ -634,13 +634,11 @@ describe('Books routes: imported historical invoices', () => {
         paidOn: null,
         confidence: 'high',
       },
-      { bytes: new Uint8Array(bytes), sha256: createHash('sha256').update(bytes).digest('hex') },
+      new Uint8Array(bytes),
     );
     if (plan.issue !== null) throw new Error(`synthetic invoice not importable: ${plan.issue.reason}`);
     const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
-    const stats = { contactsCreated: 0, contactsReused: 0, customersCreated: 0, addressDiffers: 0 };
-    const customer = await resolveRecipient(scope, state.contactBook as FakeContactBook, plan.invoice.recipient, plan.invoice.recipient, stats, new Map());
-    const result = await importInvoice(scope, plan.invoice, customer);
+    const result = await importHistoricalInvoice(scope, state.contactBook as FakeContactBook, plan.record, plan.pdf);
     expect(result.status).toBe('imported');
     return { id: result.documentId, bytes };
   }

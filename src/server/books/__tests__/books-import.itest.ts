@@ -18,6 +18,8 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { runBooksImport, type Env, type ImportReport } from '../importCli';
+import { importHistoricalInvoice, newImportSession, type HistoricalInvoiceInput } from '../importInvoices';
+import { readSettings } from '../settings';
 import { getDocument, listDocuments } from '../repository/read';
 import {
   FakeContactBook,
@@ -288,7 +290,7 @@ describe('books:import, the run in order: dry run, forward, re-run, changed file
     expect(stored.renderer).toBe('import:original-pdf');
     // The audit event: issued by the import, counts and flags only.
     expect(two.events.map((e) => [e.eventType, e.fromStatus, e.toStatus, e.actorUserId])).toEqual([['issued', null, 'issued', null]]);
-    expect(two.events[0].payload).toMatchObject({ source: 'import', numberValue: 2, otherFilesSkipped: 1, paidOnPresent: false, senderTaxNumberPrinted: true });
+    expect(two.events[0].payload).toMatchObject({ source: 'import', importOrigin: 'operator_file', numberValue: 2, otherFilesSkipped: 1, paidOnPresent: false, senderTaxNumberPrinted: true });
     const payload = JSON.stringify(two.events[0].payload);
     for (const v of PRIVATE_VALUES) expect(payload).not.toContain(v);
   });
@@ -377,6 +379,67 @@ describe('books:import refuses the whole run and writes nothing', () => {
     dir.failing = true;
     await expect(run(fixture('nocontacts'), tenantId, new FakeContactBook(dir), dir)).rejects.toMatchObject({ code: 'RECIPIENT_UNAVAILABLE' });
     expect(await countRows(tenantId)).toEqual({ docs: 0, files: 0, customers: 0 });
+  });
+});
+
+describe('importHistoricalInvoice: the core the planned upload calls', () => {
+  it('takes the sender as an input (here the company sender block), records the origin, and creates nothing for a conflict', async () => {
+    const tenantId = newTenantId();
+    const dir = new FakeDirectory();
+    const book = new FakeContactBook(dir);
+    const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
+    await initCompany(scope, { invoiceNext: 62 });
+    const settings = await readSettings(scope.db, scope);
+    const record: HistoricalInvoiceInput = {
+      origin: 'upload_extracted',
+      numberValue: 40,
+      issueDate: '2025-04-01',
+      serviceDate: null,
+      servicePeriod: null,
+      paymentTermsDays: 0,
+      dueDate: null,
+      recipient: {
+        kind: 'organization',
+        name: 'Example Client GmbH',
+        addressLine1: 'Beispielweg 2',
+        addressLine2: null,
+        postalCode: '20095',
+        city: 'Hamburg',
+        country: 'DE',
+        customerNumber: null,
+        customerNumberText: null,
+        vatId: null,
+      },
+      sender: settings!.senderBlock,
+      lines: [{ kind: 'service', title: 'Design work', description: null, quantity: 1000, unitLabel: 'Stk', unitPrice: 5000, discountBp: 0, subtotal: 5000 }],
+      total: 5000,
+      taxTreatment: 'small_business',
+      taxNote: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
+    };
+    const session = newImportSession();
+    const pdf = new Uint8Array(pdfBytes(`upload-${tenantId}`));
+    const first = await importHistoricalInvoice(scope, book, record, pdf, session);
+    expect(first.status).toBe('imported');
+    const view = await getDocument(scope, first.documentId);
+    expect(view.document.senderSnapshot).toMatchObject({ ...settings!.senderBlock, v: 1 });
+    expect(view.events[0].payload).toMatchObject({ source: 'import', importOrigin: 'upload_extracted', numberValue: 40 });
+    expect(session.stats).toEqual({ contactsCreated: 1, contactsReused: 0, customersCreated: 1, addressDiffers: 0 });
+
+    // The same original again: already imported, nothing looked up or created.
+    expect((await importHistoricalInvoice(scope, book, record, pdf, session)).status).toBe('already_imported');
+    // Another original under the same number, for a client never seen: refused before any contact is created.
+    const other = { ...record, recipient: { ...record.recipient, name: 'Another Example AG' } };
+    await expect(importHistoricalInvoice(scope, book, other, new Uint8Array(pdfBytes('different')), newImportSession())).rejects.toMatchObject({
+      code: 'IMPORT_CONFLICT',
+    });
+    expect(dir.contactsOf(tenantId).map((c) => c.name)).toEqual(['Example Client GmbH']);
+    // An invalid record or a non-PDF is refused before anything is read or written.
+    await expect(importHistoricalInvoice(scope, book, { ...record, total: 1 }, pdf)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(importHistoricalInvoice(scope, book, { ...record, numberValue: 41 }, new Uint8Array(Buffer.from('no pdf')))).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+    });
+    await expect(importHistoricalInvoice(scope, book, { ...record, numberValue: 62 }, pdf)).rejects.toMatchObject({ code: 'IMPORT_COUNTER_TOO_LOW' });
+    expect((await countRows(tenantId)).docs).toBe(1);
   });
 });
 

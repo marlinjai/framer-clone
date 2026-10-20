@@ -27,7 +27,7 @@ import {
 import { BooksError } from '../errors';
 
 const NOW = new Date('2026-10-20T10:00:00Z');
-const FILE = { bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]), sha256: 'a'.repeat(64) };
+const FILE = new Uint8Array(Buffer.from('%PDF-1.4 synthetic', 'latin1'));
 
 /** A complete synthetic entry in the shape of the private input. */
 function entry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -76,7 +76,7 @@ function entry(overrides: Record<string, unknown> = {}): Record<string, unknown>
 
 function ready(p: PlannedInvoice) {
   if (p.issue !== null) throw new Error(`expected a ready invoice, got ${p.issue.kind}: ${p.issue.reason}`);
-  return p.invoice;
+  return p.record;
 }
 
 describe('parseImportFile', () => {
@@ -117,7 +117,18 @@ describe('planInvoice: forward mapping', () => {
       customerNumberText: null,
       vatId: null,
     });
-    expect(inv.sender).toMatchObject({ legalName: 'Sample Studio', addressLine1: 'Musterstrasse 1', postalCode: '10115', city: 'Berlin', countryCode: 'DE' });
+    expect(inv.origin).toBe('operator_file');
+    expect(inv.taxTreatment).toBe('small_business');
+    expect(inv.sender).toMatchObject({
+      legalName: 'Sample Studio',
+      addressLine1: 'Musterstrasse 1',
+      postalCode: '10115',
+      city: 'Berlin',
+      countryCode: 'DE',
+      taxNumber: null,
+      vatId: null,
+      addressLines: ['Musterstrasse 1', '10115 Berlin'],
+    });
     expect(inv.paymentTermsDays).toBe(14);
     expect(inv.dueDate).toBe('2021-03-18');
     expect(inv.provenance).toEqual({
@@ -197,7 +208,7 @@ describe('planInvoice: forward mapping', () => {
 });
 
 describe('planInvoice: skipped (missing) before error (inconsistent)', () => {
-  const skipped: Array<[string, Record<string, unknown>, typeof FILE | null]> = [
+  const skipped: Array<[string, Record<string, unknown>, Uint8Array | null]> = [
     ['file_missing', { file: null, fileRole: 'missing', recipient: null, sender: null, lines: [] }, null],
     ['recipient_missing', { recipient: null }, FILE],
     ['sender_missing', { sender: null }, FILE],
@@ -291,11 +302,10 @@ describe('readOriginal', () => {
     rmSync(outside, { recursive: true, force: true });
   });
 
-  it('reads a PDF under the directory with its SHA-256', () => {
+  it('reads a PDF under the directory', () => {
     const r = readOriginal(dir, 'a/ok.pdf');
     if (typeof r === 'string') throw new Error(r);
-    expect(r.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(Buffer.from(r.bytes).toString('latin1')).toBe('%PDF-1.4 synthetic');
+    expect(Buffer.from(r).toString('latin1')).toBe('%PDF-1.4 synthetic');
   });
 
   it('refuses a path that leaves the directory, also through a link, and anything that is not a usable PDF', () => {

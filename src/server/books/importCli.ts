@@ -21,13 +21,18 @@
 // every number, the contacts database reachable. Then each invoice is imported
 // in its own transaction (importInvoices.ts); a problem with one number is
 // reported for that number and the others go on.
+//
+// MAPPING ONLY. This file maps each entry of the private JSON to the domain's
+// historical invoice record (origin `operator_file`, the sender printed on that
+// invoice) and loops; every check and write of one invoice, the recipient's
+// contact and customer included, is importHistoricalInvoice in
+// importInvoices.ts, the core the in-editor upload will call too.
 
-import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { contactIdentityKey, createContactsDb, type ContactsDb } from '@marlinjai/contacts-core';
+import { createContactsDb, type ContactsDb } from '@marlinjai/contacts-core';
 import { createNodeDb } from '@marlinjai/tenant-db/node';
 import { tenantDb } from '@marlinjai/tenant-db';
 import { z } from 'zod';
@@ -38,25 +43,26 @@ import { constraintName, isBooksError, sqlState } from './errors';
 import {
   checkImportCounter,
   existingInvoice,
-  importInvoice,
-  judgeExisting,
+  importHistoricalInvoice,
   MAX_CENTS,
-  type ImportCustomerRef,
-  type ImportInvoice,
-  type ImportLine,
-  type ImportRecipient,
-  type ImportSender,
+  MAX_ORIGINAL_BYTES,
+  newImportSession,
+  parseHistoricalInvoice,
+  previewHistoricalInvoice,
+  recipientKey,
+  type HistoricalInvoice,
+  type HistoricalLine,
+  type RecipientStats,
 } from './importInvoices';
 import { addDays, berlinToday, isIsoDate } from './numbering';
 import { contactsRecipientDirectory, type RecipientDirectory } from './recipients';
-import { createCustomer, customersByContactIds, normalizeVatId } from './repository/customers';
-import { booksScope, type BooksScope } from './scope';
+import { normalizeVatId } from './repository/customers';
+import { booksScope } from './scope';
+import type { SenderBlockV1 } from './snapshots';
 
 /** The environment the run reads (process.env in the script, a plain object in tests). */
 export type Env = Record<string, string | undefined>;
 
-/** The largest original accepted (the stored bytes live in the tenant schema). */
-export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
 function fail(message: string): never {
   throw new Error(`books:import: ${message}`);
@@ -161,7 +167,7 @@ export type PlanIssue = { kind: 'skipped' | 'error'; reason: string };
 /** What the plan holds for one number. */
 export type PlannedInvoice =
   | { number: number; issueDate: string | null; total: number | null; otherFiles: number; issue: PlanIssue }
-  | { number: number; issueDate: string; total: number; otherFiles: number; issue: null; invoice: ImportInvoice };
+  | { number: number; issueDate: string; total: number; otherFiles: number; issue: null; record: HistoricalInvoice; pdf: Uint8Array };
 
 const LEGAL_FORM = /(^|[\s,(])(GmbH|gGmbH|mbH|UG|AG|SE|KG|KGaA|OHG|GbR|PartG|PartGmbB|eG|e\.\s?V\.|e\.\s?K\.|Ltd\.?|LLC|Inc\.?|S\.A\.|S\.L\.|B\.V\.|N\.V\.|S\.r\.l\.|Sp\. z o\.o\.)(?=$|[\s,.)])/;
 
@@ -252,8 +258,8 @@ function servicePeriodOf(value: unknown): { start: string; end: string } | null 
   return isIsoDate(start) && isIsoDate(end) && start <= end ? { start, end } : null;
 }
 
-function mapLines(raw: NonNullable<RawInvoice['lines']>): ImportLine[] | PlanIssue {
-  const out: ImportLine[] = [];
+function mapLines(raw: NonNullable<RawInvoice['lines']>): HistoricalLine[] | PlanIssue {
+  const out: HistoricalLine[] = [];
   for (const l of raw) {
     const text = l.description.trim();
     if (text === '') return { kind: 'error', reason: 'line_text_missing' };
@@ -295,15 +301,18 @@ function mapLines(raw: NonNullable<RawInvoice['lines']>): ImportLine[] | PlanIss
 }
 
 /**
- * Map one raw entry to what will be written, or say why it cannot be. `file` is
- * the original's bytes and digest when the entry names one (read by the caller);
- * the order of checks puts what is merely missing (skipped) before what is
- * inconsistent (error), so an incomplete entry reads as "not there yet".
+ * Map one entry of the private JSON to the domain's historical invoice record
+ * (origin `operator_file`, the sender printed on THIS invoice), or say why it
+ * cannot be. `file` is the original's bytes when the entry names one (read by
+ * the caller). The order of checks puts what is merely missing (skipped)
+ * before what is inconsistent (error), so an incomplete entry reads as "not
+ * there yet". The mapped record is parsed by the domain's own schema here, so
+ * a dry run refuses exactly what the import would.
  */
 export function planInvoice(
   number: number,
   rawValue: unknown,
-  file: { bytes: Uint8Array; sha256: string } | null,
+  file: Uint8Array | null,
   now: Date = new Date(),
 ): PlannedInvoice {
   const parsed = rawInvoiceSchema.safeParse(rawValue);
@@ -366,62 +375,78 @@ export function planInvoice(
   const numberText = rawNumber == null ? null : String(rawNumber).trim() || null;
   const numberInt = numberText !== null && /^\d{1,9}$/.test(numberText) ? Number(numberText) : null;
 
-  const recipient: ImportRecipient = {
-    kind: inferKind(r.recipient.name, r.recipient.kind),
-    name: r.recipient.name.trim(),
-    addressLines: recipientAddress.addressLines,
-    addressLine1: recipientAddress.addressLine1,
-    addressLine2: recipientAddress.addressLine2,
-    postalCode: recipientAddress.postalCode,
-    city: recipientAddress.city,
-    country: recipientCountry,
-    customerNumber: numberInt,
-    customerNumberText: numberInt === null ? numberText : null,
-    vatId,
-  };
-  const sender: ImportSender = {
+  const sender: SenderBlockV1 & { addressLines: string[] } = {
     legalName: r.sender.name.trim(),
-    addressLines: senderAddress.addressLines,
     addressLine1: senderAddress.addressLine1,
     addressLine2: senderAddress.addressLine2,
     postalCode: senderAddress.postalCode,
     city: senderAddress.city,
     countryCode: senderCountry,
+    // The input says only whether these were printed; the original is the record of their values.
+    taxNumber: null,
+    vatId: null,
+    smallBusinessId: null,
+    email: null,
+    phone: null,
+    website: null,
+    bankName: null,
+    iban: null,
+    bic: null,
+    registerCourt: null,
+    registerNumber: null,
+    managingDirector: null,
+    addressLines: senderAddress.addressLines,
   };
   const serviceDate = r.serviceDate && isIsoDate(r.serviceDate) ? r.serviceDate : null;
   const servicePeriod = r.servicePeriod == null ? null : servicePeriodOf(r.servicePeriod);
   const terms = paymentTermsDays(r.paymentTerms);
 
-  return {
-    number,
-    issueDate,
-    total: totalCents,
-    otherFiles,
-    issue: null,
-    invoice: {
-      numberValue: number,
-      issueDate,
-      serviceDate,
-      servicePeriod,
-      paymentTermsDays: terms ?? 0,
-      dueDate: terms === null ? null : addDays(issueDate, terms),
-      recipient,
-      sender,
-      lines,
-      total: totalCents,
-      taxNote: r.smallBusinessNote.trim(),
-      file,
-      provenance: {
-        otherFilesSkipped: otherFiles,
-        senderTaxNumberPrinted: r.sender.taxNumberPresent === true,
-        senderVatIdPrinted: r.sender.vatIdPresent === true,
-        serviceDateUnparsed:
-          (r.serviceDate != null && serviceDate === null) || (r.servicePeriod != null && servicePeriod === null),
-        paidOnPresent: r.paidOn != null && r.paidOn.trim() !== '',
-        confidence: r.confidence ?? 'low',
+  let record: HistoricalInvoice;
+  try {
+    record = parseHistoricalInvoice(
+      {
+        origin: 'operator_file',
+        numberValue: number,
+        issueDate,
+        serviceDate,
+        servicePeriod,
+        paymentTermsDays: terms ?? 0,
+        dueDate: terms === null ? null : addDays(issueDate, terms),
+        recipient: {
+          kind: inferKind(r.recipient.name, r.recipient.kind),
+          name: r.recipient.name.trim(),
+          addressLines: recipientAddress.addressLines,
+          addressLine1: recipientAddress.addressLine1,
+          addressLine2: recipientAddress.addressLine2,
+          postalCode: recipientAddress.postalCode,
+          city: recipientAddress.city,
+          country: recipientCountry,
+          customerNumber: numberInt,
+          customerNumberText: numberInt === null ? numberText : null,
+          vatId,
+        },
+        sender,
+        lines,
+        total: totalCents,
+        taxTreatment: 'small_business',
+        taxNote: r.smallBusinessNote.trim(),
+        provenance: {
+          otherFilesSkipped: otherFiles,
+          senderTaxNumberPrinted: r.sender.taxNumberPresent === true,
+          senderVatIdPrinted: r.sender.vatIdPresent === true,
+          serviceDateUnparsed:
+            (r.serviceDate != null && serviceDate === null) || (r.servicePeriod != null && servicePeriod === null),
+          paidOnPresent: r.paidOn != null && r.paidOn.trim() !== '',
+          confidence: r.confidence ?? 'low',
+        },
       },
-    },
-  };
+      now,
+    );
+  } catch (err) {
+    const paths = isBooksError(err) ? ((err.details?.issues as Array<{ path: string }> | undefined) ?? []).map((i) => i.path) : [];
+    return issue('error', `invalid_record:${paths.join(',') || 'record'}`);
+  }
+  return { number, issueDate, total: totalCents, otherFiles, issue: null, record, pdf: file };
 }
 
 // --- the originals -------------------------------------------------------------------
@@ -431,7 +456,7 @@ export function planInvoice(
  * leaves the directory (also through a symbolic link), a file that cannot be
  * read, an empty or oversized file, and anything that is not a PDF.
  */
-export function readOriginal(filesDir: string, rel: string): { bytes: Uint8Array; sha256: string } | string {
+export function readOriginal(filesDir: string, rel: string): Uint8Array | string {
   if (isAbsolute(rel)) return 'file_path_absolute';
   let root: string;
   let full: string;
@@ -451,126 +476,9 @@ export function readOriginal(filesDir: string, rel: string): { bytes: Uint8Array
     return 'file_unreadable';
   }
   if (bytes.byteLength === 0) return 'file_empty';
-  if (bytes.byteLength > MAX_FILE_BYTES) return 'file_too_large';
+  if (bytes.byteLength > MAX_ORIGINAL_BYTES) return 'file_too_large';
   if (bytes.subarray(0, 5).toString('latin1') !== '%PDF-') return 'file_not_pdf';
-  return { bytes: new Uint8Array(bytes), sha256: createHash('sha256').update(bytes).digest('hex') };
-}
-
-// --- recipients ----------------------------------------------------------------------
-
-/** How the run met its recipients (counts only). */
-export interface RecipientStats {
-  contactsCreated: number;
-  contactsReused: number;
-  customersCreated: number;
-  /** Reused contacts whose current address differs from the printed one (the snapshot keeps the printed one). */
-  addressDiffers: number;
-}
-
-function sameAddress(a: { addressLine1: string | null; postalCode: string | null; city: string | null }, b: ImportRecipient): boolean {
-  const n = (v: string | null) => (v ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
-  return n(a.addressLine1) === n(b.addressLine1) && n(a.postalCode) === n(b.postalCode) && n(a.city) === n(b.city);
-}
-
-/**
- * Find or create the recipient's contact and the company's customer for it.
- *
- * The rule (decided in the plan): a contact is the same client when the
- * contacts package's own identity matches (kind plus name, case and repeated
- * whitespace ignored); an organization is looked up first, then a person. Two
- * contacts of one identity cannot exist in that package, so a matching name
- * with a different address is the same client at another address: the contact
- * is reused unchanged and only counted. A new contact gets the address of the
- * client's most recent invoice in the input (`latest`). The customer row is the
- * existing one for that contact, else a new one (business when the contact is
- * an organization) with the printed VAT id.
- */
-export async function resolveRecipient(
-  scope: BooksScope,
-  book: ContactBook,
-  recipient: ImportRecipient,
-  latest: ImportRecipient,
-  stats: RecipientStats,
-  cache: Map<string, ImportCustomerRef>,
-): Promise<ImportCustomerRef> {
-  const key = contactIdentityKey(recipient.kind, recipient.name, '');
-  const cached = cache.get(key);
-  if (cached) return cached;
-
-  let contact =
-    (await book.findSame(scope.tenantId, { kind: 'organization', name: recipient.name })) ??
-    (await book.findSame(scope.tenantId, { kind: 'person', name: recipient.name, companyOrRole: '' }));
-  if (contact) {
-    stats.contactsReused += 1;
-    if (!sameAddress(contact, recipient)) stats.addressDiffers += 1;
-  } else {
-    try {
-      contact = await book.create(scope.tenantId, {
-        kind: latest.kind,
-        name: latest.name,
-        addressLine1: latest.addressLine1,
-        addressLine2: latest.addressLine2,
-        postalCode: latest.postalCode,
-        city: latest.city,
-        country: latest.country,
-        vatId: latest.vatId,
-      });
-      stats.contactsCreated += 1;
-    } catch (err) {
-      if (!isBooksError(err, 'DUPLICATE_CONTACT')) throw err;
-      contact = await book.findSame(scope.tenantId, { kind: latest.kind, name: latest.name, companyOrRole: '' });
-      if (!contact) throw err;
-      stats.contactsReused += 1;
-    }
-  }
-
-  let [customer] = await customersByContactIds(scope, [contact.id]);
-  if (!customer) {
-    try {
-      customer = await createCustomer(scope, {
-        contactId: contact.id,
-        customerType: contact.kind === 'organization' ? 'b2b' : 'b2c',
-        vatId: latest.vatId,
-        countryCode: latest.country,
-      });
-      stats.customersCreated += 1;
-    } catch (err) {
-      if (!isBooksError(err, 'DUPLICATE_CUSTOMER')) throw err;
-      [customer] = await customersByContactIds(scope, [contact.id]);
-      if (!customer) throw err;
-    }
-  }
-  const ref: ImportCustomerRef = {
-    customerId: customer.id,
-    contactId: contact.id,
-    customerType: customer.customerType,
-    vatId: customer.vatId,
-    countryCode: customer.countryCode,
-  };
-  cache.set(key, ref);
-  return ref;
-}
-
-/** The dry run's read-only view of {@link resolveRecipient}: counts what would be created or reused, once per client. */
-export async function previewRecipient(
-  scope: BooksScope,
-  book: ContactBook,
-  recipient: ImportRecipient,
-  stats: RecipientStats,
-  seen: Set<string>,
-): Promise<void> {
-  const key = contactIdentityKey(recipient.kind, recipient.name, '');
-  if (seen.has(key)) return;
-  seen.add(key);
-  const contact =
-    (await book.findSame(scope.tenantId, { kind: 'organization', name: recipient.name })) ??
-    (await book.findSame(scope.tenantId, { kind: 'person', name: recipient.name, companyOrRole: '' }));
-  if (!contact) {
-    stats.contactsCreated += 1;
-    return;
-  }
-  stats.contactsReused += 1;
-  if (!sameAddress(contact, recipient)) stats.addressDiffers += 1;
+  return new Uint8Array(bytes);
 }
 
 // --- the run -------------------------------------------------------------------------
@@ -677,7 +585,7 @@ export async function runBooksImport(
   const fileProblems: string[] = [];
   const plans: PlannedInvoice[] = entries.map(({ number, raw }) => {
     const rel = (raw as { file?: unknown }).file;
-    let file: { bytes: Uint8Array; sha256: string } | null = null;
+    let file: Uint8Array | null = null;
     if (typeof rel === 'string' && rel.trim() !== '') {
       const read = readOriginal(filesDir, rel);
       if (typeof read === 'string') fileProblems.push(`${number} (${read})`);
@@ -708,14 +616,12 @@ export async function runBooksImport(
     // 3. The contacts database answers (a real query, not only a configured handle).
     await book.search(tenantId, { limit: 1 });
 
-    // 4. Each number in turn.
-    const latestByKey = new Map<string, ImportRecipient>();
+    // 4. Each number in turn. A client's new contact gets its most recent invoice's data.
+    const session = newImportSession();
     for (const p of plans) {
-      if (p.issue === null) latestByKey.set(contactIdentityKey(p.invoice.recipient.kind, p.invoice.recipient.name, ''), p.invoice.recipient);
+      if (p.issue === null) session.newContactData.set(recipientKey(p.record.recipient), p.record.recipient);
     }
-    const stats: RecipientStats = { contactsCreated: 0, contactsReused: 0, customersCreated: 0, addressDiffers: 0 };
-    const cache = new Map<string, ImportCustomerRef>();
-    const previewed = new Set<string>();
+    const stats: RecipientStats = session.stats;
     const rows: ReportRow[] = [];
     const inBooks: Array<{ issueDate: string; total: number }> = [];
     let paidOnPresent = 0;
@@ -737,18 +643,12 @@ export async function runBooksImport(
         if (existing.state !== 'absent' && p.issue.kind === 'skipped') row.reason = `${p.issue.reason} (number ${p.number} is already in the books)`;
       } else {
         try {
-          if (dryRun) {
-            const judged = judgeExisting(await existingInvoice(scope.db, scope, p.number), p.invoice);
-            row.status = judged ? 'already_imported' : 'would_import';
-            await previewRecipient(scope, book, p.invoice.recipient, stats, previewed);
-          } else {
-            const key = contactIdentityKey(p.invoice.recipient.kind, p.invoice.recipient.name, '');
-            const customer = await resolveRecipient(scope, book, p.invoice.recipient, latestByKey.get(key) ?? p.invoice.recipient, stats, cache);
-            const result = await importInvoice(scope, p.invoice, customer);
-            row.status = result.status;
-          }
-          inBooks.push({ issueDate: p.invoice.issueDate, total: p.invoice.total });
-          if (p.invoice.provenance.paidOnPresent) paidOnPresent += 1;
+          const result = dryRun
+            ? await previewHistoricalInvoice(scope, book, p.record, p.pdf, session, { now })
+            : await importHistoricalInvoice(scope, book, p.record, p.pdf, session, { now });
+          row.status = result.status;
+          inBooks.push({ issueDate: p.record.issueDate, total: p.record.total });
+          if (p.record.provenance.paidOnPresent) paidOnPresent += 1;
         } catch (err) {
           row.status = 'error';
           row.reason = errorCode(err);

@@ -60,8 +60,11 @@ connections to the suite. The four lines below are in that order.
   books:import`, which writes each invoice as an issued document with `source = 'import'`, its
   printed number, its own printed sender and recipient, and its original PDF stored as the
   document of record (never re-rendered); migration `009_books_import` makes the lines-first
-  insert possible and refuses an import without its original. Open, the operator step: run
-  `pnpm books:init-company` (counter at 62), then `pnpm books:import --dry-run` and the real run
+  insert possible and refuses an import without its original. The core takes one validated
+  record plus its PDF, so the planned in-editor upload of past-invoice PDFs (Claude extracts,
+  the user reviews in a table) builds on it in its own pull request. Open, the operator step
+  (`pnpm books:init-company` already set the counter to 62 in production): `pnpm books:import
+  --dry-run` and the real run
   for Whiz-Art Media with the private input file, compare the printed yearly totals with the
   returns, and import invoice 60 once its PDF is saved from the mail. Then connect: the
   read-only endpoint receipt-ocr-app pulls issued invoices from (service-account key from

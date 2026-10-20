@@ -1138,9 +1138,11 @@ Every choice below follows from the plan, the code or the law; decided, say so i
   <dir> [--dry-run]` (`scripts/books-import.ts`, logic in `src/server/books/importCli.ts`, no
   `server-only` imports, like `books:init-company`). Environment: `COMMERCE_APP_DATABASE_URL`
   (the app role) and `CONTACTS_DATABASE_URL`.
-- The domain path `src/server/books/importInvoices.ts`: the counter check, the lookup of a
-  number already in the books, the snapshots built from the printed data, and the one
-  transaction per invoice.
+- The domain core `src/server/books/importInvoices.ts`: `importHistoricalInvoice(scope,
+  contactBook, record, pdfBytes, session)` imports ONE historical invoice record (a zod-validated
+  shape independent of any input layout, `historicalInvoiceSchema`) with its original PDF, doing
+  every check and write itself; `previewHistoricalInvoice` is the same without writing (the dry
+  run). The CLI only maps the private JSON to records and loops.
 - Migration `009_books_import` (007 and 008 are deployed and stay untouched).
 - Tests: `importCli.test.ts` (parsing, mapping, every skip and error reason, the originals on
   disk, the report lines carrying no input value), `books-import.itest.ts` (dry run, forward,
@@ -1239,7 +1241,8 @@ Every choice below follows from the plan, the code or the law; decided, say so i
     days are read from the printed text ("14 Tagen", "sofort" as 0) and give the due date;
     otherwise `payment_terms_days` is 0 and there is no due date.
 14. **The audit trail.** Each import writes one `issued` event (from nothing to issued, no
-    actor) whose payload holds only counts and flags: source, number, file digest, line count,
+    actor) whose payload holds only counts and flags: source, `importOrigin` (decision 17),
+    number, file digest, line count,
     other files skipped, the two sender booleans, `serviceDateUnparsed`, `paidOnPresent` and the
     extraction's confidence. No name, address or text.
 15. **Logging.** A report line carries the number, the issue date, the total and the status
@@ -1255,8 +1258,24 @@ Every choice below follows from the plan, the code or the law; decided, say so i
     preferred a stored file; tested byte for byte). Issue on an imported document answers
     "already issued" as for any issued document; every edit answers 409.
 
+17. **One core for the CLI now and the in-editor upload next.** The owner's next step is an
+    upload in `/projects/books`: many past-invoice PDFs at once, their data extracted by Claude,
+    reviewed and corrected in a table, then imported (a separate pull request on top of this
+    one). So the import core takes a record, not the private JSON: `historicalInvoiceSchema`
+    (origin, number, dates, terms, recipient, sender, lines in cents and thousandths, total,
+    small-business note, and a strict provenance of counts and flags, so no personal value can
+    reach the event payload) plus the PDF bytes, and finds or creates the contact and customer
+    itself (`resolveImportRecipient`, the rule of decision 8). **How the data was obtained** is
+    recorded per document as `importOrigin` in its `issued` event: `operator_file` for this CLI,
+    `upload_extracted` for the upload. The event payload is the natural place (the audit trail
+    of how the document came to exist, append-only), so 009 adds no column. **The sender is an
+    input** of the record: the CLI passes the sender printed on that invoice, the upload will
+    default it to the company's current sender block. A number already present is judged before
+    any contact is created, so a re-run or a conflicting upload never adds contacts.
+
 **Operator steps** (live actions, not done here): after the deploy rolls `009_books_import` out
-and `pnpm books:init-company` has set the invoice counter to 62 for Whiz-Art Media, run
+and `pnpm books:init-company` has set the invoice counter to 62 for Whiz-Art Media (done in
+production on 2026-10-20), run
 `pnpm books:import --dry-run` with the private input, fix what it reports, run it for real,
 compare the printed yearly totals with the filed returns, and import invoice 60 by a later run
 once its PDF is saved and its entry completed.
