@@ -1,9 +1,11 @@
 // SiteRepository.deleteSite against a real Postgres (the shared integration
 // container). Proves what the unit tests can only model: the schema's
 // ON DELETE CASCADE removes the site's pages, domains and experiment rows in
-// the same transaction, the subdomain and the live custom-domain claim stop
-// resolving, the claim leaves the proxy feed, a refused delete changes
-// nothing, other sites are untouched, and Save cannot bring the site back.
+// the same transaction, the subdomain stops resolving, a refused delete
+// changes nothing, other sites are untouched, Save cannot bring the site back,
+// and a Save and a delete racing each other (both orders) never re-create it.
+// (A LIVE custom-domain claim's release is proven in the domain service's
+// integration tests, which own every live claim in the shared database.)
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
@@ -11,11 +13,12 @@ import type { PrismaClient } from '@prisma/client';
 vi.mock('next/cache', () => ({ unstable_cache: vi.fn(), revalidateTag: vi.fn() }));
 
 import { getPrismaClient } from '@/server/db';
+import { getSnapshot } from 'mobx-state-tree';
 import ProjectModel from '@/models/ProjectModel';
+import { createIntrinsicComponent } from '@/models/ComponentModel';
 import { SiteRepository, type TenantScope } from '../repository';
 import { SiteDeleteConfirmationError, SiteGoneError, SiteNotFoundError } from '../errors';
 import { resolvePublishedSite } from '../publicResolver';
-import { DomainService } from '@/server/domains/service';
 
 const TG = '018f9c10-0000-7000-8000-0000000000e1';
 const OTHER_TG = '018f9c10-0000-7000-8000-0000000000e2';
@@ -54,11 +57,13 @@ async function makeSite(id: string, opts: { status?: 'draft' | 'published'; work
       siteId: id,
       workspaceId: ws,
       tenantGroupId: tg,
+      // A requested (pending) custom domain, never a LIVE claim: the domain
+      // service's tests share this database, run in parallel and count every
+      // live claim. Releasing a live claim on delete is proven there
+      // (src/server/domains/__tests__/service.itest.ts, "project deleted").
       hostname: `www.${id}.example.com`,
-      customHostname: `www.${id}.example.com`,
-      verificationStatus: 'active',
+      verificationStatus: 'pending',
       verificationToken: `tok-${id}`,
-      verifiedAt: now,
     },
   });
 }
@@ -88,13 +93,10 @@ beforeEach(cleanup);
 afterAll(cleanup);
 
 describe('deleteSite (real database)', () => {
-  it('cascades pages, domains and experiments, and the site stops resolving everywhere', async () => {
+  it('cascades pages, domains and experiments, and the subdomain stops resolving', async () => {
     await makeSite('delpub');
     await makeSite('keepme');
     expect((await resolvePublishedSite(`delpublbl.${BASE}`, prisma, BASE))?.siteId).toBe('delpub');
-    expect((await resolvePublishedSite('www.delpub.example.com', prisma, BASE))?.siteId).toBe('delpub');
-    const feedBefore = (await new DomainService({ prisma, invalidateHost: () => {} }).listProxyHostnames()).hostnames;
-    expect(feedBefore).toContain('www.delpub.example.com');
 
     const out = await repo.deleteSite(SCOPE, 'delpub', { confirmName: 'Name of delpub' });
 
@@ -107,10 +109,7 @@ describe('deleteSite (real database)', () => {
     });
     expect(await counts('delpub')).toEqual({ site: 0, pages: 0, domains: 0, experiments: 0 });
     expect(await resolvePublishedSite(`delpublbl.${BASE}`, prisma, BASE)).toBeNull();
-    expect(await resolvePublishedSite('www.delpub.example.com', prisma, BASE)).toBeNull();
-    const feedAfter = (await new DomainService({ prisma, invalidateHost: () => {} }).listProxyHostnames()).hostnames;
-    expect(feedAfter).not.toContain('www.delpub.example.com');
-    expect(feedAfter).toContain('www.keepme.example.com');
+    expect((await resolvePublishedSite(`keepmelbl.${BASE}`, prisma, BASE))?.siteId).toBe('keepme');
     expect(await counts('keepme')).toEqual({ site: 1, pages: 1, domains: 2, experiments: 1 });
   });
 
@@ -174,8 +173,21 @@ describe('deleteSite (real database)', () => {
       await hold;
     }, { timeout: 20_000 });
     await isLocked;
-    const stale = ProjectModel.create({ id: 'race2', metadata: { title: 'Name of race2', description: '' }, pages: {} });
-    stale.createPage('Home');
+    // The editor's copy: the same home page the database holds (so the slug
+    // rules pass and the only thing in the way is the delete).
+    const stale = ProjectModel.create({
+      id: 'race2',
+      metadata: { title: 'Name of race2', description: '' },
+      pages: {
+        'race2-home': {
+          id: 'race2-home',
+          slug: '',
+          metadata: { title: 'Home', description: '' },
+          appComponentTree: getSnapshot(createIntrinsicComponent('root-race2', 'div', {})),
+          canvasNodes: {},
+        },
+      },
+    });
     const save = repo.saveProject(SCOPE, stale, { mustExist: true }).then(
       () => 'saved',
       (e) => e,

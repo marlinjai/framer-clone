@@ -222,6 +222,8 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
       site: {
         findUnique: vi.fn(async () => ({ id: 'site_1', workspaceId: 'ws_marlin', redirects: [] })),
         upsert: vi.fn(async () => ({})),
+        // The editor's Save only UPDATEs an existing site (mustExist).
+        updateMany: vi.fn(async () => ({ count: 1 })),
       },
       sitePage: {
         findMany: vi.fn(async () => Object.entries(stored).map(([pageId, slug]) => ({ pageId, slug }))),
@@ -254,6 +256,7 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error.code).toBe('invalid_page_slug');
     expect(prisma.site.upsert).not.toHaveBeenCalled();
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
     expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
   });
 
@@ -266,6 +269,7 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error.message).toMatch(/home page cannot be deleted/);
     expect(prisma.site.upsert).not.toHaveBeenCalled();
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
   });
 
   it('saves a valid slug change and records the old path as a redirect', async () => {
@@ -275,10 +279,12 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
     const res = await POST(saveReq(body));
 
     expect(res.status).toBe(200);
-    const siteUpsert = (prisma.site.upsert.mock.calls[0] as unknown as [{ update: { redirects: unknown } }])[0];
-    expect(siteUpsert.update.redirects).toEqual([
+    const siteUpdate = (prisma.site.updateMany.mock.calls[0] as unknown as [{ data: { redirects: unknown } }])[0];
+    expect(siteUpdate.data.redirects).toEqual([
       { from: 'about', pageId: 'page_about', createdAt: expect.any(String) },
     ]);
+  });
+});
 
 describe('save of a deleted project', () => {
   it('is refused with a message the editor shows as is, and nothing is written', async () => {
