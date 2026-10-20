@@ -47,6 +47,10 @@ const senderSchema = addressBlock.extend({
   country: nullableString,
   taxNumberPresent: z.boolean().optional(),
   vatIdPresent: z.boolean().optional(),
+  /** The printed tax number, when the source carries the value (an uploaded PDF read by the model). */
+  taxNumber: nullableString,
+  /** The printed VAT id, when the source carries the value. */
+  vatId: nullableString,
 });
 
 const lineSchema = z.object({
@@ -84,21 +88,21 @@ const taxGroupSchema = z.object({
  */
 export const rawInvoiceSchema = z.object({
   /** The number as printed: an integer in the operator's JSON, any text from an uploaded PDF. */
-  number: z.union([z.number().int().positive(), z.string()]),
+  number: z.union([z.number().int().positive(), z.string()]).nullable(),
   /** The operator's JSON only: the original's path (the upload carries its bytes itself). */
   file: z.string().nullable().optional(),
   fileRole: z.string().nullable().optional(),
   otherFiles: z.array(z.string()).nullable().optional(),
-  issueDate: z.string(),
+  issueDate: z.string().nullable(),
   serviceDate: z.string().nullable().optional(),
   servicePeriod: z.unknown().optional(),
   recipient: recipientSchema.nullable(),
   recipientVatId: z.string().nullable().optional(),
   sender: senderSchema.nullable(),
   lines: z.array(lineSchema).nullable().optional(),
-  total: z.number().finite(),
-  currency: z.string(),
-  taxTreatment: z.string(),
+  total: z.number().finite().nullable(),
+  currency: z.string().nullable(),
+  taxTreatment: z.string().nullable(),
   /** The printed tax groups (regular taxation); null or empty when none is printed. */
   taxAmounts: z.array(taxGroupSchema).nullable().optional(),
   /** True when the line prices include VAT (gross); such invoices are not imported (a named problem). */
@@ -500,10 +504,10 @@ export function mapPrintedInvoice(
     return issue('error', `invalid_field:${field}`);
   }
   const r = parsed.data;
-  const documentNumber = String(r.number).trim();
+  const documentNumber = r.number === null ? '' : String(r.number).trim();
   const currency = currencyCode(r.currency);
-  const issueDate = isIsoDate(r.issueDate) ? r.issueDate : null;
-  const totalCents = scaled(r.total, 100);
+  const issueDate = r.issueDate !== null && isIsoDate(r.issueDate) ? r.issueDate : null;
+  const totalCents = r.total === null ? null : scaled(r.total, 100);
 
   // Missing pieces first.
   if (documentNumber === '') return issue('skipped', 'number_missing');
@@ -577,9 +581,10 @@ export function mapPrintedInvoice(
     postalCode: senderAddress.postalCode || null,
     city: senderAddress.city || null,
     countryCode: senderCountry,
-    // The print says whether these were there; the original is the record of their values.
-    taxNumber: null,
-    vatId: null,
+    // The operator's JSON says only whether these were printed (the original is the
+    // record of their values); a model reading the PDF carries the values themselves.
+    taxNumber: blank(r.sender.taxNumber) ? null : r.sender.taxNumber!.trim().slice(0, 64),
+    vatId: blank(r.sender.vatId) ? null : (extractVatId(r.sender.vatId!) ?? null),
     smallBusinessId: null,
     email: null,
     phone: null,
@@ -627,8 +632,8 @@ export function mapPrintedInvoice(
         taxNote: taxNoteText === '' ? null : taxNoteText,
         provenance: {
           otherFilesSkipped: opts.otherFiles ?? 0,
-          senderTaxNumberPrinted: r.sender.taxNumberPresent === true,
-          senderVatIdPrinted: r.sender.vatIdPresent === true,
+          senderTaxNumberPrinted: r.sender.taxNumberPresent === true || !blank(r.sender.taxNumber),
+          senderVatIdPrinted: r.sender.vatIdPresent === true || !blank(r.sender.vatId),
           serviceDateUnparsed:
             (r.serviceDate != null && serviceDate === null) || (r.servicePeriod != null && servicePeriod === null),
           paidOnPresent: r.paidOn != null && r.paidOn.trim() !== '',
