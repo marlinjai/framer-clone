@@ -7,7 +7,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  AUTH_PAUSE_MS,
   CACHE_TTL_MS,
+  RATE_LIMIT_PAUSE_MS,
   __resetStockImageCacheForTests,
   applyStockPhotos,
   photoSrc,
@@ -299,5 +301,65 @@ describe('triggerStockDownloads', () => {
     });
     await new Promise((r) => setTimeout(r, 5));
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('circuit breaker and shared searches', () => {
+  it('a 429 pauses searching across generations, then searches again after the pause', async () => {
+    let now = 10_000;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('limit', { status: 429 }))
+      .mockResolvedValue(json({ results: [photo('a')] }));
+    const deps = { accessKey: KEY, fetch: fetchMock as unknown as typeof fetch, now: () => now };
+    await resolveStockImages([req('1', 'bread')], deps);
+    const second = await resolveStockImages([req('2', 'cake')], deps);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // answered at once, no request spent
+    expect(second.summary.fellBack).toEqual({ rate_limited: 1 });
+    now += RATE_LIMIT_PAUSE_MS + 1;
+    expect((await resolveStockImages([req('3', 'cake')], deps)).summary.resolved).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('a refused key pauses searching too', async () => {
+    let now = 0;
+    const fetchMock = vi.fn(async () => new Response('no', { status: 401 }));
+    const deps = { accessKey: KEY, fetch: fetchMock as unknown as typeof fetch, now: () => now };
+    await resolveStockImages([req('1', 'bread')], deps);
+    expect((await resolveStockImages([req('2', 'cake')], deps)).summary.fellBack).toEqual({ auth: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    now += AUTH_PAUSE_MS + 1;
+    await resolveStockImages([req('3', 'pie')], deps);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('pauses before the next 429 when Unsplash reports no requests left', async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ results: [photo('a')] }), { status: 200, headers: { 'X-Ratelimit-Remaining': '0' } }),
+    );
+    const deps = { accessKey: KEY, fetch: fetchMock as unknown as typeof fetch };
+    expect((await resolveStockImages([req('1', 'bread')], deps)).summary.resolved).toBe(1);
+    expect((await resolveStockImages([req('2', 'cake')], deps)).summary.fellBack).toEqual({ rate_limited: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('two generations asking the same thing at once share one search', async () => {
+    let release: (r: Response) => void = () => {};
+    const fetchMock = vi.fn(() => new Promise<Response>((r) => (release = r)));
+    const deps = { accessKey: KEY, fetch: fetchMock as unknown as typeof fetch };
+    const a = resolveStockImages([req('1', 'bread')], deps);
+    const b = resolveStockImages([req('2', 'Bread')], deps);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    release(json({ results: [photo('a')] }));
+    expect((await a).summary.resolved).toBe(1);
+    expect((await b).summary.resolved).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('never writes the query text to the logs', async () => {
+    const fetchMock = vi.fn(async () => new Response('busy', { status: 503 }));
+    await resolveStockImages([req('1', 'secret customer launch')], { accessKey: KEY, fetch: fetchMock as unknown as typeof fetch });
+    expect(warn).toHaveBeenCalled();
+    for (const call of warn.mock.calls) expect(String(call[0])).not.toContain('secret customer launch');
   });
 });

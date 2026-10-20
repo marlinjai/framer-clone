@@ -14,8 +14,10 @@
 //   data-credit-source-url  unsplash.com (with referral utm)
 //
 // The Generate dialog also lists every placed photo's credit with real links.
-// When the user replaces the image's src, the credit no longer describes it and
-// is removed with the same edit (withoutStockCredit).
+// When the user points the image at a different picture (a new src, or a CMS
+// binding on src), the credit no longer describes it and is removed with the
+// same edit (withImageSrc, withoutStockCredit). Editing the same photo's URL
+// (its size parameters) or clearing the field on the way to re-pasting keeps it.
 
 import type { StockPhotoCredit } from './protocol';
 
@@ -29,6 +31,28 @@ export function stockCreditProps(credit: StockPhotoCredit): Record<string, strin
     'data-credit-url': credit.photographerUrl,
     'data-credit-source-url': credit.unsplashUrl,
   };
+}
+
+/** True when both URLs are the same Unsplash photo (sizing parameters aside). */
+export function isSameUnsplashPhoto(a: unknown, b: unknown): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  try {
+    const ua = new URL(a.trim());
+    const ub = new URL(b.trim());
+    return ua.hostname === 'images.unsplash.com' && ub.hostname === ua.hostname && ua.pathname === ub.pathname;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The props after the user typed a new image URL: the credit is dropped once
+ * the src names a different picture, kept while it is empty (mid-edit) or still
+ * the credited photo.
+ */
+export function withImageSrc(props: Record<string, unknown>, nextSrc: string): Record<string, unknown> {
+  const keepCredit = nextSrc.trim() === '' || isSameUnsplashPhoto(props.src, nextSrc);
+  return { ...(keepCredit ? props : withoutStockCredit(props)), src: nextSrc };
 }
 
 /** True when the props carry a stock-photo credit. */

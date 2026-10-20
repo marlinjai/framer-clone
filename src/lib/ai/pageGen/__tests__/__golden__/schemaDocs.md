@@ -31,6 +31,9 @@ Rules:
 - Stock photos: an img without src gets "imageQuery", 2 to 6 English words describing the photo
   (at most 80 characters, plain words only). The server resolves at most
   12 images per generation to photos; the rest keep a placeholder.
+- An existing image in the selected component whose src is on images.unsplash.com: either copy its src,
+  title and data-credit-name, data-credit-url, data-credit-source-url props unchanged, or give a new imageQuery.
+  An Unsplash src without its credit props is dropped.
 - Never use these tags: base, embed, form, frame, frameset, iframe, input, link, math, meta, object, script, select, style, svg, template, textarea.
 - Budget: at most 200 nodes in total, nesting at most 10 levels,
   text at most 2000 characters per node. Prefer fewer, well-structured nodes.

@@ -29,6 +29,7 @@
 // in the browser.
 
 import { v4 as uuidv4 } from 'uuid';
+import { STOCK_CREDIT_ATTRS, stockCreditProps } from './stockCredit';
 import ComponentModel, { ComponentTypeEnum, CSS_PROP_SET } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import {
@@ -84,6 +85,8 @@ export interface GenerationResult {
   stats: { nodeCount: number; maxDepth: number };
   /** Images to resolve to stock photos, in page order. */
   imageRequests: ImageRequest[];
+  /** Images whose imageQuery was unusable (they keep the placeholder). */
+  invalidImageQueries: number;
 }
 
 export type ValidationOutcome =
@@ -134,6 +137,36 @@ export function cleanImageQuery(value: unknown): string | undefined {
   return q;
 }
 
+function isUnsplashPhotoUrl(value: string): boolean {
+  try {
+    return new URL(value).hostname === 'images.unsplash.com';
+  } catch {
+    return false;
+  }
+}
+
+function isUnsplashPage(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    const u = new URL(value);
+    return u.protocol === 'https:' && u.hostname === 'unsplash.com';
+  } catch {
+    return false;
+  }
+}
+
+/** The credit attributes of an existing stock photo, when complete and well-formed. */
+function unsplashCredit(props: Record<string, unknown>) {
+  const name = props['data-credit-name'];
+  const photographerUrl = props['data-credit-url'];
+  const unsplashUrl = props['data-credit-source-url'];
+  if (typeof name !== 'string' || !name.trim() || name.length > 120 || /[\u0000-\u001f\u007f<>]/.test(name)) {
+    return undefined;
+  }
+  if (!isUnsplashPage(photographerUrl) || !isUnsplashPage(unsplashUrl)) return undefined;
+  return { photoId: '', photographerName: name.trim(), photographerUrl, unsplashUrl };
+}
+
 /** A px length ("640px", "640", 640) as a number, else undefined. */
 function pxLength(value: unknown): number | undefined {
   if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? value : undefined;
@@ -162,6 +195,7 @@ class Validator {
   readonly warnings: string[] = [];
   readonly errors: string[] = [];
   readonly imageRequests: ImageRequest[] = [];
+  invalidImageQueries = 0;
   nodeCount = 0;
   maxDepth = 0;
   private readonly tags = new Set(listGenerationTags());
@@ -363,9 +397,13 @@ class Validator {
     const props: Record<string, unknown> = {};
     let text: string | undefined;
     let imageQuery: string | undefined;
+    let invalidQuery = false;
 
+    // An Unsplash photo's credit (an earlier generation's image, sent back in
+    // replace / insert context) is read separately below, never warned about.
+    const creditKeys = new Set<string>(type === 'img' ? ['title', ...STOCK_CREDIT_ATTRS] : []);
     for (const [key, value] of Object.entries(modelProps)) {
-      if (key === 'style') continue;
+      if (key === 'style' || creditKeys.has(key)) continue;
       if (!allowed.has(key)) {
         this.warn(path, `prop "${key}" is not allowed on <${type}>, dropped`);
         continue;
@@ -396,6 +434,7 @@ class Validator {
         // Kept out of the props: the route resolves it to a stock photo.
         imageQuery = cleanImageQuery(value);
         if (imageQuery === undefined) {
+          invalidQuery = true;
           this.warn(path, `${IMAGE_QUERY_PROP} must be a short plain-text photo description, dropped`);
         }
       }
@@ -408,10 +447,24 @@ class Validator {
     const merged: Record<string, unknown> = { ...presetDefaults, ...props };
     delete merged.style;
     if (Object.keys(style).length > 0) merged.style = style;
+    if (type === 'img' && typeof props.src === 'string' && isUnsplashPhotoUrl(props.src)) {
+      // An Unsplash photo is only ever shown with its credit: keep the credit
+      // the context carried, or drop the photo (the query or placeholder
+      // path below takes over).
+      const credit = unsplashCredit(modelProps);
+      if (credit) Object.assign(merged, stockCreditProps(credit));
+      else {
+        this.warn(path, 'an Unsplash photo without its credit cannot be kept, src dropped');
+        delete props.src;
+        delete merged.src;
+      }
+    }
     if (type === 'img') {
       // A src the model was given in the brief wins over a stock-photo query.
       if (imageQuery !== undefined && typeof props.src !== 'string') {
         this.imageRequests.push({ nodeId: id, query: imageQuery, ...this.imageGeometry(style) });
+      } else if (invalidQuery && typeof props.src !== 'string') {
+        this.invalidImageQueries += 1;
       }
       if (!(typeof merged.src === 'string' && isSafeSrc(merged.src))) {
         // No src is the documented way to ask for a placeholder (the user
@@ -535,6 +588,7 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
       warnings: v.warnings,
       stats: { nodeCount: v.nodeCount, maxDepth: v.maxDepth },
       imageRequests: v.imageRequests,
+      invalidImageQueries: v.invalidImageQueries,
     },
   };
 }

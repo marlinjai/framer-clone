@@ -733,6 +733,26 @@ describe('POST /api/ai/generate-page stock photos', () => {
     expect(result.images).toMatchObject({ resolved: 0, fellBack: { rate_limited: 2 } });
   });
 
+  it('counts unusable image descriptions as placeholders in the summary', async () => {
+    anthropicState.turns = [toolTurn({ nodes: [{ type: 'img', props: { imageQuery: '<b>', alt: 'A' } }] })];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    const result = evs.find((e) => e.event === 'gen:result')!.data as { images: unknown };
+    expect(result.images).toEqual({ requested: 1, resolved: 0, fellBack: { invalid_query: 1 }, credits: [] });
+  });
+
+  it('a client that leaves during the photo search gets no result and triggers no download', async () => {
+    let release: (r: Response) => void = () => {};
+    fetchMock.mockImplementation((url: string) =>
+      url.includes('/search/photos') ? new Promise<Response>((r) => (release = r)) : Promise.resolve(new Response('{}')),
+    );
+    const res = await POST(makeRequest(baseBody()));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await res.body!.cancel();
+    release(new Response(JSON.stringify({ results: [unsplashPhoto('a'), unsplashPhoto('b')] }), { status: 200 }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/download'))).toBe(false);
+  });
+
   it('never sends the key to the browser', async () => {
     const res = await POST(makeRequest(baseBody()));
     expect(await res.text()).not.toContain('test-unsplash-key');

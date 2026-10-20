@@ -252,28 +252,45 @@ Before this, every generated image was the placeholder `/images/sample-image.jpg
   once per distinct query and orientation, at most 4 searches in flight. Photos are distinct per
   page (a photo is never placed twice). At most 12 images are resolved per generation; the rest
   keep the placeholder. Results are cached in memory per query for 30 minutes (successful
-  searches only). Every request has a 5 second timeout.
+  searches only), and two generations asking for the same search at once share one request.
+  Every request has a 5 second timeout. Logs carry a query's length, never its text (it comes
+  from the user's brief).
 - **Failure handling**: the first 401/403 (`auth`), 429 (`rate_limited`), 5xx or network error
   (`unavailable`) or timeout stops further searches for that generation; every unresolved image
   keeps the placeholder and the result carries a count per reason. The dialog shows one line per
   reason ("3 images use the placeholder: the hourly stock photo limit is used up") as a note,
-  never an error: the page itself was generated. Without `UNSPLASH_ACCESS_KEY` the feature is off
+  never an error: the page itself was generated. A 429, or Unsplash reporting zero requests
+  left (`X-Ratelimit-Remaining: 0`), pauses searching for the whole server for 10 minutes, and a
+  refused key (401/403) for 5 minutes, so later generations answer at once instead of waiting on
+  requests that will fail. An image whose query the validator refused is counted too
+  (`invalid_query`). Without `UNSPLASH_ACCESS_KEY` the feature is off
   and the note says stock photos are not set up on this server.
 - **Unsplash API guidelines**: photos are hotlinked from images.unsplash.com (`raw` sized to twice
   the box width with `w`, `q`, `fit`, `auto` when the width is known, else `regular`), never
   re-hosted. Each placed photo's `links.download_location` is called once, server-side,
   fire-and-forget with error logging, when the result carrying it is sent to the editor (not when
-  the client already went away). Attribution with `utm_source=<app name>&utm_medium=referral`
+  the client already went away). It is not taken back if the user then undoes the generation:
+  the photo was used in a page the user saw, which is what the trigger reports. Attribution with `utm_source=<app name>&utm_medium=referral`
   (app name from `UNSPLASH_APP_NAME`, default `lumitra`).
 - **Where the attribution lives** (decided): the editor's image is a plain `<img>`, and both the
   canvas and the published-site renderer pass string props through as HTML attributes, so the
   credit is stored as attributes on the image with no renderer change: `title` ("Photo by
   <name> on Unsplash", the visible hover credit), `data-credit-name`, `data-credit-url` (the
   photographer's profile) and `data-credit-source-url` (unsplash.com). The Generate dialog also
-  lists every placed photo's credit with real links. When the user replaces an image's URL in the
-  properties panel, the credit is removed with the same edit (`stockCredit.ts`), so a user's own
-  photo never ships with a stranger's credit. A visible caption on the published page was not
-  chosen: it would change the layout of every generated design.
+  lists every placed photo's credit with real links. When the user points an image at a different
+  picture (a new URL in the properties panel, or a CMS binding on `src`), the credit is removed
+  with the same edit (`stockCredit.ts`, `ComponentModel.setBinding`), so a user's own photo never
+  ships with a stranger's credit; changing only the same photo's size parameters, or clearing the
+  field mid-edit, keeps it. In replace and insert mode the selected component goes to the model
+  with its photos' credit attributes: the validator keeps an images.unsplash.com src only together
+  with a complete, well-formed credit (host-checked links, plain-text name) and otherwise drops the
+  src, so an Unsplash photo is never shown unattributed. A visible caption on the published page
+  was not built: it would change the layout of every generated design.
+- **Open, for Marlin**: whether published sites should also show a visible, linked credit (a
+  small caption or a "Photos from Unsplash" footer line listing the photographers). Today the
+  published page carries the hover title and the credit attributes, and the editor dialog shows
+  the linked credit. This is an outward-facing compliance and design call, so it is not decided
+  here.
 - **Image domains and CSP**: nothing to change. `next.config.ts` already allows every https host
   for `next/image`, generated images render as plain `<img>` (not `next/image`) in the canvas,
   preview and published site, and the app sets no Content-Security-Policy.

@@ -295,3 +295,49 @@ describe('validateGeneration: stock-photo queries', () => {
     expect(result.warnings.some((w) => w.includes('"imageQuery" is not allowed'))).toBe(true);
   });
 });
+
+describe('validateGeneration: existing stock photos (replace / insert context)', () => {
+  const credit = {
+    title: 'anything the model wrote',
+    'data-credit-name': 'Ana',
+    'data-credit-url': 'https://unsplash.com/@ana?utm_source=lumitra&utm_medium=referral',
+    'data-credit-source-url': 'https://unsplash.com/?utm_source=lumitra&utm_medium=referral',
+  };
+  const src = 'https://images.unsplash.com/photo-1?w=480';
+
+  it('keeps an Unsplash photo that comes back with its credit (title rebuilt from the name)', () => {
+    const result = ok({ nodes: [{ type: 'img', props: { src, alt: 'A', ...credit } }] });
+    expect(result.nodes[0].props).toMatchObject({ src, title: 'Photo by Ana on Unsplash', 'data-credit-name': 'Ana' });
+    expect(result.warnings).toEqual([]);
+    expect(result.imageRequests).toEqual([]);
+  });
+
+  it('drops an Unsplash photo without a valid credit, so it is never shown unattributed', () => {
+    for (const props of [
+      { src, alt: 'A' },
+      { src, alt: 'A', ...credit, 'data-credit-url': 'https://evil.example/@ana' },
+      { src, alt: 'A', ...credit, 'data-credit-name': '<img onerror=x>' },
+    ]) {
+      const result = ok({ nodes: [{ type: 'img', props: { ...props, imageQuery: 'bread' } }] });
+      expect(result.nodes[0].props.src).toBe(PLACEHOLDER_IMAGE_SRC);
+      expect(result.nodes[0].props).not.toHaveProperty('data-credit-name');
+      expect(result.imageRequests.map((r) => r.query)).toEqual(['bread']); // resolved afresh
+    }
+  });
+
+  it('never keeps credit attributes on an image that is not an Unsplash photo', () => {
+    const result = ok({ nodes: [{ type: 'img', props: { src: 'https://example.com/a.jpg', alt: 'A', ...credit } }] });
+    expect(result.nodes[0].props).not.toHaveProperty('data-credit-name');
+    expect(result.nodes[0].props).not.toHaveProperty('title');
+  });
+
+  it('counts images whose query was unusable', () => {
+    const result = ok({
+      nodes: [
+        { type: 'img', props: { imageQuery: '<b>', alt: 'A' } },
+        { type: 'img', props: { imageQuery: '<b>', src: 'https://example.com/a.jpg', alt: 'B' } },
+      ],
+    });
+    expect(result.invalidImageQueries).toBe(1);
+  });
+});

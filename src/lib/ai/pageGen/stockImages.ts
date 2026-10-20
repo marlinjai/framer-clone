@@ -17,9 +17,13 @@
 // Budget (a demo key allows 50 requests per hour): one search per distinct
 // query and orientation, search results cached in memory for CACHE_TTL_MS, at
 // most GENERATION_LIMITS.maxStockImages images resolved per generation, and
-// every request time-limited. The first 401 / 403 / 429 / 5xx / timeout stops
-// further calls for that generation; the remaining images keep the placeholder
-// and the summary says how many and why, so the dialog can tell the user. This
+// every request time-limited, identical searches running at the same time
+// shared. The first 401 / 403 / 429 / 5xx / timeout stops further calls for
+// that generation; the remaining images keep the placeholder and the summary
+// says how many and why, so the dialog can tell the user. A 429 (or Unsplash
+// reporting no requests left) and a 401 / 403 also pause searching for the
+// whole server for a while (the circuit breaker), so later generations answer
+// at once instead of spending time on requests that will fail. This
 // module never throws into the generation: a stock-photo problem is a note,
 // never a failed generation.
 //
@@ -45,6 +49,10 @@ const CACHE_MAX_ENTRIES = 500;
 /** The hotlinked photo is at most this wide (2x the box, for sharp high-density screens). */
 const MAX_PHOTO_WIDTH = 2400;
 const DEFAULT_APP_NAME = 'lumitra';
+/** Pause after a rate limit: the demo limit is per hour, so retrying sooner mostly fails. */
+export const RATE_LIMIT_PAUSE_MS = 10 * 60 * 1000;
+/** Pause after the key was refused: long enough to stop hammering, short enough for a fixed key to take. */
+export const AUTH_PAUSE_MS = 5 * 60 * 1000;
 
 /** One usable search result (the fields we rely on, checked). */
 interface UnsplashPhoto {
@@ -85,10 +93,20 @@ export interface StockImageDeps {
 type SearchOutcome = { ok: true; photos: UnsplashPhoto[] } | { ok: false; reason: StockImageFallbackReason };
 
 const cache = new Map<string, { photos: UnsplashPhoto[]; expiresAt: number }>();
+/** Searches in flight, shared by concurrent generations asking the same thing. */
+const inflight = new Map<string, Promise<SearchOutcome>>();
+/** The circuit breaker: no searches until `until`, reported as `reason`. */
+let paused: { until: number; reason: StockImageFallbackReason } | undefined;
 
-/** Test-only: forget cached search results. */
+/** Test-only: forget cached search results, searches in flight and a pause. */
 export function __resetStockImageCacheForTests(): void {
   cache.clear();
+  inflight.clear();
+  paused = undefined;
+}
+
+function pause(reason: StockImageFallbackReason, ms: number, now: number): void {
+  paused = { until: now + ms, reason };
 }
 
 function logWarn(message: string, meta: Record<string, unknown>): void {
@@ -181,6 +199,24 @@ async function search(
   const hit = cache.get(key);
   if (hit && hit.expiresAt > now()) return { ok: true, photos: hit.photos };
   if (hit) cache.delete(key);
+  if (paused && paused.until > now()) return { ok: false, reason: paused.reason };
+  const running = inflight.get(key);
+  if (running) return running;
+  const promise = fetchSearch(key, query, orientation, accessKey, deps).finally(() => inflight.delete(key));
+  inflight.set(key, promise);
+  return promise;
+}
+
+async function fetchSearch(
+  key: string,
+  query: string,
+  orientation: ImageOrientation | undefined,
+  accessKey: string,
+  deps: StockImageDeps,
+): Promise<SearchOutcome> {
+  const now = deps.now ?? Date.now;
+  // Logs carry the query's length, never its text (it comes from the user's brief).
+  const meta = { queryChars: query.length };
 
   const url = new URL(SEARCH_URL);
   url.searchParams.set('query', query);
@@ -198,21 +234,26 @@ async function search(
     });
   } catch (err) {
     const reason: StockImageFallbackReason = isTimeout(err) || timeout.aborted ? 'timeout' : 'unavailable';
-    logWarn('search failed', { reason, query });
+    if (!deps.signal?.aborted) logWarn('search failed', { reason, ...meta });
     return { ok: false, reason };
   }
   if (!res.ok) {
     const reason: StockImageFallbackReason =
       res.status === 401 || res.status === 403 ? 'auth' : res.status === 429 ? 'rate_limited' : 'unavailable';
-    logWarn('search refused', { status: res.status, reason, query });
+    if (reason === 'rate_limited') pause(reason, RATE_LIMIT_PAUSE_MS, now());
+    if (reason === 'auth') pause(reason, AUTH_PAUSE_MS, now());
+    logWarn('search refused', { status: res.status, reason, ...meta });
     return { ok: false, reason };
   }
+  // Unsplash reports the requests left this hour; at zero, pause before the next 429.
+  if (res.headers.get('x-ratelimit-remaining') === '0') pause('rate_limited', RATE_LIMIT_PAUSE_MS, now());
   let body: unknown;
   try {
     body = await res.json();
-  } catch {
-    logWarn('search answered with invalid JSON', { query });
-    return { ok: false, reason: 'unavailable' };
+  } catch (err) {
+    const reason: StockImageFallbackReason = isTimeout(err) || timeout.aborted ? 'timeout' : 'unavailable';
+    if (!deps.signal?.aborted) logWarn('search answered with an unreadable body', { reason, ...meta });
+    return { ok: false, reason };
   }
   const results = (body as { results?: unknown })?.results;
   const photos = Array.isArray(results)
@@ -279,7 +320,7 @@ export async function resolveStockImages(
       try {
         outcome = await search(item.query, item.orientation, accessKey, deps);
       } catch (err) {
-        logWarn('search threw', { error: err instanceof Error ? err.message : String(err) });
+        logWarn('search threw', { error: err instanceof Error ? err.name : 'error' });
         outcome = { ok: false, reason: 'unavailable' };
       }
       outcomes.set(item.key, outcome);
@@ -294,7 +335,8 @@ export async function resolveStockImages(
   for (const r of inScope) {
     const outcome = outcomes.get(cacheKey(r.query, r.orientation));
     if (!outcome) {
-      countFallback(summary, stopReason ?? 'timeout');
+      // Never searched: an earlier failure stopped the rest (or the generation was cancelled).
+      countFallback(summary, stopReason ?? 'unavailable');
       continue;
     }
     if (!outcome.ok) {

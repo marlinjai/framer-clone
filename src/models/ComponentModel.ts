@@ -8,6 +8,7 @@ import type {
 } from '@/lib/bindings/types';
 import type { Query } from '@/lib/bindings/dataSource/types';
 import { resolveViewportFrameHeight } from '@/lib/canvas/viewportFrame';
+import { hasStockCredit, withoutStockCredit } from '@/lib/ai/pageGen/stockCredit';
 
 export type PropsRecord = Record<string, any>;
 
@@ -312,6 +313,8 @@ const ComponentModel: any = ComponentBase
       // Replace the entire frozen record (MST requirement for frozen
       // types). Spread keeps every other slot intact.
       self.bindings = { ...self.bindings, [slot]: binding };
+      // A bound src shows other pictures: a stock photo's credit no longer fits.
+      if (slot === 'src' && hasStockCredit(self.props)) self.props = withoutStockCredit(self.props);
     },
 
     clearBinding(slot: string) {

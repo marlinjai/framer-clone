@@ -66,6 +66,7 @@ export interface PageGenResultPayload {
  *   timeout       Unsplash did not answer in time
  *   no_results    no (unused) photo matched the image's description
  *   cap           more images than one generation resolves
+ *   invalid_query the model's description of the image was unusable
  */
 export type StockImageFallbackReason =
   | 'disabled'
@@ -74,7 +75,8 @@ export type StockImageFallbackReason =
   | 'unavailable'
   | 'timeout'
   | 'no_results'
-  | 'cap';
+  | 'cap'
+  | 'invalid_query';
 
 /** Photographer credit for one placed photo (Unsplash attribution). */
 export interface StockPhotoCredit {
@@ -87,7 +89,7 @@ export interface StockPhotoCredit {
 }
 
 export interface StockImageSummary {
-  /** Images the model described with an imageQuery. */
+  /** Images the model described with an imageQuery (usable or not). */
   requested: number;
   /** Images that now show a stock photo. */
   resolved: number;

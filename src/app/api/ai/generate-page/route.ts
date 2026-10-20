@@ -68,6 +68,7 @@ import {
   PAGE_GEN_MODELS,
   type PageGenErrorPayload,
   type PageGenTarget,
+  type StockImageSummary,
 } from '@/lib/ai/pageGen/protocol';
 import { classifyProviderError } from '@/lib/ai/pageGen/providerError';
 import { getPageGenRateLimiter } from '@/lib/ai/pageGen/rateLimit';
@@ -383,7 +384,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
         const outcome = validateGeneration(toolUse.input, { breakpoints });
         if (outcome.ok) {
           // The image requests are server-side data: resolved here, never sent.
-          const { imageRequests, ...result } = outcome.result;
+          const { imageRequests, invalidImageQueries, ...result } = outcome.result;
           if (imageRequests.length > 0) {
             sse.send('gen:progress', { phase: 'images', receivedChars: received, attempt });
           }
@@ -394,7 +395,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
             ...result,
             nodes: applyStockPhotos(result.nodes, stock.placed),
             model: modelId,
-            images: stock.summary,
+            images: withInvalidQueries(stock.summary, invalidImageQueries),
           });
           // The photos are now in a result the editor applies: tell Unsplash
           // (its download tracking), unless the client already went away.
@@ -461,6 +462,16 @@ async function runGeneration(args: RunArgs): Promise<void> {
       errorCode,
     });
   }
+}
+
+/** Count the images whose description the validator refused as placeholders too. */
+function withInvalidQueries(summary: StockImageSummary, invalid: number): StockImageSummary {
+  if (invalid === 0) return summary;
+  return {
+    ...summary,
+    requested: summary.requested + invalid,
+    fellBack: { ...summary.fellBack, invalid_query: invalid },
+  };
 }
 
 /**

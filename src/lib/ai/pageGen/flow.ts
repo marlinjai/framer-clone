@@ -17,6 +17,7 @@
 
 import type { PageGenErrorPayload, PageGenModel, PageGenProgress, StockImageSummary } from './protocol';
 import { isModelChoice, loadModelChoice } from '@/lib/ai/modelChoice';
+import { GENERATION_LIMITS } from './schema';
 import type { GenerationUndoRecord } from './apply';
 import type { TargetKind } from './editorBridge';
 
@@ -166,7 +167,8 @@ const FALLBACK_REASON_TEXT: Record<string, string> = {
   unavailable: 'the stock photo service is unavailable',
   timeout: 'the stock photo service did not answer in time',
   no_results: 'no matching photo was found',
-  cap: `only the first images of a generation get photos`,
+  cap: `only the first ${GENERATION_LIMITS.maxStockImages} images of a generation get photos`,
+  invalid_query: 'the AI did not describe the picture usably',
 };
 
 /**
