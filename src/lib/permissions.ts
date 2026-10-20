@@ -48,6 +48,18 @@ export const FRAMER_PERMISSIONS = definePermissions({
     requires: 'workspace.admin',
     description: 'Configure a custom domain or subdomain for a site.',
   },
+  // The Books (invoicing). Checked on the active company's editor workspace,
+  // AFTER the company's auth-brain app grant `books` (src/server/books/http).
+  // Reading invoices discloses customers and revenue, so even the read needs a
+  // workspace admin; a site viewer sees no books.
+  viewBooks: {
+    requires: 'workspace.admin',
+    description: 'Read the company books: customers, documents, templates.',
+  },
+  editBooks: {
+    requires: 'workspace.admin',
+    description: 'Create customers, edit drafts, issue and cancel invoices, manage templates.',
+  },
 });
 
 /** A framer-clone action name. */

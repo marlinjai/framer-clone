@@ -32,7 +32,7 @@ import { isEditorHost as isEditorHostname } from '@/lib/editorHost';
 /** Which editor-plane surface a path belongs to, or null for any other path. */
 function isEditorPlanePath(pathname: string): 'api' | 'page' | null {
   const under = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
-  if (under('/api/projects') || under('/api/ai')) return 'api';
+  if (under('/api/projects') || under('/api/ai') || under('/api/books')) return 'api';
   if (under('/projects')) return 'page';
   return null;
 }
@@ -169,5 +169,7 @@ export const config = {
     '/api/projects/:path*',
     // Editor AI API: cms-agent + edit. Editor-only, never anonymous traffic.
     '/api/ai/:path*',
+    // The Books API (invoicing): editor-only, never anonymous traffic.
+    '/api/books/:path*',
   ],
 };

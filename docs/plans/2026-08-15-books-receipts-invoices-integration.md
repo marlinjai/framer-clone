@@ -1,7 +1,7 @@
 ---
 title: "The Books: receipts + invoices as one own-tax-use accounting suite"
 type: plan
-status: decided
+status: in-progress
 date: 2026-08-15
 summary: "Cross-repo plan joining receipt-ocr-app (expenses) and framer-clone commerce (revenue) into a single per-company set of books for Marlin's own tax use. Audits what actually exists, defines the minimal Customer + SalesDocument + DocumentTemplate schema, fixes the identity seam on the auth-brain tenant (company) rather than the workspace, and sequences five phases with per-phase verify commands."
 tags: [commerce, invoices, offers, customers, receipts, ocr, auth-brain, tax, gobd, ustg, cross-repo]
@@ -984,6 +984,141 @@ reasoning; decided, say so if you disagree.
     on a re-run an omitted tax status, exemption note or payment terms keeps the stored value;
     the sender's country must be an ISO 3166-1 alpha-2 code; the address is taken whole from one
     source (auth-brain's billing address when it has one, otherwise the file), never mixed.
+
+## Phase 2 and 3 build notes (2026-10-20)
+
+Reality note for phases 2 (routes and the editor) and 3 (templates and the PDF), built on branch
+`feat/books-phase2-3`. Every choice below follows from the plan, the code or the law; decided,
+say so if you disagree.
+
+**What exists now.**
+
+- `src/server/books/http/route.ts`: the one guard every `/api/books/*` route runs, in order:
+  editor host only (404 elsewhere, and the edge middleware refuses `/api/books` on a published
+  host), a verified session (401; auth-brain down is 503 `auth_unavailable`), the editor's
+  active company (403 `sites_not_enabled` / `no_active_company`, the same resolution as every
+  editor route), the auth-brain app grant `books` on that company (403 `books_not_enabled`), the
+  permission `viewBooks` or `editBooks` on the company's editor workspace (403 `forbidden`;
+  OpenFGA down is 503 `authz_unavailable`), and a provisioned tenant schema (404
+  `books_not_provisioned`). The scope is built from the session only. A BooksError maps to one
+  status per code (`http/errorResponse.ts`): 400 malformed, 404 not found for this company
+  (another company's id included, never 403), 409 state moved on or the company not initialised
+  (`books_not_initialised`), 422 the document cannot be issued as it stands, 503 the contacts
+  database unreachable.
+- Routes: `customers` (list with contact labels, create from an existing contact or a new one,
+  tax-field edit, archive), `contacts` (the picker), `settings` (read only), `documents` (list,
+  new draft, read, header edit), `documents/:id/customer`, `documents/:id/lines` (add, edit,
+  remove, reorder), `documents/:id/issue`, `documents/:id/cancel`, `documents/:id/pdf`,
+  `templates` (CRUD).
+- The editor: `/projects/books` (documents, customers, templates, the company configuration read
+  only) and `/projects/books/documents/:id` (pick customer, lines, totals preview, issue on
+  confirmation, PDF, cancel through a credit note), linked from the projects dashboard when the
+  active company holds `books`.
+- Phase 3: `repository/templates.ts`, the render pipeline in `src/server/books/render/`
+  (`model.ts` builds every string the document shows, `pdf.ts` lays it out, `extractText.ts`
+  reads the drawn text back, `completeness.ts` is the legal check as code, `store.ts` renders,
+  checks and stores), and migration `008_books_files` (table `sales_document_file`).
+- Tests: `src/app/api/books/__tests__/guard.test.ts` (the guard chain), `books-routes.itest.ts`
+  (the four stateful-flow paths through the real routes on real Postgres, cancellation, the
+  byte-identical re-render after the customer changed, the append-only file table, draft
+  previews, templates), `src/server/books/__tests__/render.test.ts` (the completeness check
+  against the real renderer's output for section 19, regular taxation and reverse charge, each
+  dropped field reported by name, determinism, paging), and
+  `src/app/projects/books/__tests__/DocumentEditor.test.tsx` (the four paths at the interface).
+
+**Decisions.**
+
+1. **The `books` grant comes on top of `sites`.** Section 3 says the document routes require
+   `books`. The Books live inside the editor, whose active company is chosen among companies
+   holding `sites`, so the Books take that company and additionally require `books`. A company
+   with `books` but without `sites` cannot reach them; acceptable while the Books are an editor
+   area. auth-brain does not know the app `books` yet, so until an operator registers and grants
+   it every Books request answers 403 `books_not_enabled` (fail closed, no fallback to `sites`).
+2. **Reading the books needs a workspace admin**, like every write (`viewBooks` and `editBooks`
+   both map to `workspace.admin`): invoices disclose customers and revenue, which a site viewer
+   should not see.
+3. **The PDF is rendered with pdf-lib**, pure JavaScript: no headless browser, no native module,
+   no system font, so the existing `node:20-bookworm-slim` image on linux/arm64 is unchanged (the
+   library is bundled into the standalone server chunk; `docker build` was run and the code loads
+   on arm64). The "HTML to PDF" of section 5 became "render model to PDF": a browser would have
+   added a Chromium layer of several hundred megabytes for a one-page layout. Limit: the
+   built-in fonts draw Windows-1252 only (all of German and Western Europe); other characters are
+   transliterated (`format.ts toPdfText`), and the completeness check compares the same
+   sanitized text. Embedding a Unicode font would lift it.
+4. **Deterministic output.** The PDF's dates are the document's `issued_at`, the producer and
+   creator are fixed, money and dates are formatted by hand instead of `Intl` (so the ICU build
+   cannot change the bytes). Re-rendering an issued document reproduces the stored bytes; the
+   test changes the contact's name and address and the customer's tax fields after issue and
+   compares byte for byte.
+5. **Issued documents read only frozen data**: the snapshots, the stored lines and totals, and
+   for a credit note the frozen number and date of its invoice. The template contributes layout
+   only, and because a template can change later, the document of record is the PDF stored right
+   after issue (the issue and cancel routes render and store it; a rendering failure never undoes
+   the issue, the download then renders and stores it).
+6. **Storage in the tenant schema, not storage-brain.** The repository has no storage-brain
+   client, and the amendment puts storage-brain among the connections after the import (roadmap
+   line 4). `sales_document_file` holds the bytes beside the document: one file per document,
+   composite foreign keys both ways, only a non-draft document can get one (BK001), append-only
+   for every role (BK006) plus the house REVOKE (`APPEND_ONLY_TABLES`), size and SHA-256 checked
+   by CHECKs. Moving to storage-brain later is a copy and a column.
+7. **The completeness check runs on every stored PDF**, not only in the tests: an incomplete
+   document of record is refused (`RENDER_INCOMPLETE`, 422) and nothing is stored. Its expected
+   values are derived from the frozen data independently of the render model. Fields: section
+   34a UStDV under section 19 (issuer name, address and a tax number, VAT id or small-business
+   id; recipient name and address; issue date; quantity and kind of every billable line; the
+   total; the exemption note) plus the document number; under regular taxation additionally the
+   service date or period, net and tax per rate, and for reverse charge the recipient's VAT id
+   and the note (section 14 (4) and 14a UStG). Without a service date the document prints
+   "Leistungsdatum entspricht dem Rechnungsdatum".
+8. **No draft delete.** The 007 trigger refuses deleting any document, and an abandoned draft
+   consumes nothing, so the editor offers none (P1.11 left this to phase 2).
+9. **Issue confirms a version.** `issue` takes an optional `expectedVersion` (checked before and
+   under the lock); the editor sends the version whose total and customer the user confirmed, so
+   a change made in another window is never issued unseen.
+10. **The editor can create a contact** in the shared contacts database when the recipient is not
+    there yet (`contactBook.ts`, written with application name `books`); picking an existing
+    contact is the default. The contact stays if the customer insert then fails, so a retry picks
+    it.
+11. **Templates are layout only**: name, default flag, accent colour, up to four footer blocks,
+    default intro and outro (new drafts take the default template and its texts). `logo_file_id`
+    stays unused until a storage-brain client exists. A template in use cannot be deleted.
+12. **Lists degrade, issue does not.** When the contacts database cannot be read, customer and
+    document lists still answer with `contactStatus: 'unavailable'` instead of names; issue
+    still refuses with `recipient_unavailable` and writes nothing.
+
+**Review fixes (2026-10-20).** A review of the branch found eight points; all fixed on the
+branch with tests, and they supersede decisions 3, 5 and 7 above where they differ:
+
+1. **The PDF is rendered, checked and stored inside the issue transaction** (and inside the
+   cancellation's, for the credit note). `issue` and `cancelInvoice` take a `beforeCommit` hook;
+   the routes pass `storeBeforeCommit`, so a failed check rolls everything back: the document
+   stays a draft, no number is taken, nothing is stored. The check compares with all whitespace
+   removed, and words are broken only when a single word is wider than a line (a 300-character
+   unbroken title passes).
+2. **Embedded Unicode font instead of the built-in Helvetica.** DejaVu Sans and DejaVu Sans
+   Bold (open licence, in `assets/fonts/`, about 1.4 MB, traced into the standalone build by
+   `outputFileTracingIncludes`) are embedded as a subset per document through `@pdf-lib/fontkit`;
+   the output stays byte-deterministic. Polish, Cyrillic, Greek and many emoji print exactly as
+   written; nothing is transliterated. A field with a character the font lacks (CJK, for example)
+   is refused at issue with `UNDRAWABLE_TEXT` naming the fields; only a draft preview shows "?".
+3. **The template is frozen at issue** in `sales_document.template_snapshot` (added to the still
+   unreleased `008_books_files`: NULL on a draft, an object otherwise, frozen by the 007 guard like
+   every column). Issued documents render only from it; editing the template afterwards leaves
+   the re-render byte-identical (tested). A credit note keeps its invoice's frozen layout.
+4. **Rows taller than a page flow line by line** across pages, repeating the table header; a
+   4000-character description never reaches the footer (positions checked in the test).
+5. **Reverse charge requires the recipient's VAT id itself** in the check, and issue refuses
+   without it (`REVERSE_CHARGE_NOT_ALLOWED`).
+6. **A credit note must name the cancelled invoice** (number and date) in its reference line.
+7. **The contact picker** looks up customers by the returned contact ids (one query).
+8. **Document lists show the name an issued document was issued to** (`customer_snapshot->>'name'`,
+   the name only; the rest of the snapshot still never leaves `getDocument`, refining P1.5).
+
+**Operator follow-ups** (live actions, not done here): register the app `books` in auth-brain
+and grant it to Whiz-Art Media and Lumitra; scaffold `CONTACTS_DATABASE_URL` in
+framer-clone's Infisical project and copy the value from the receipts project with
+`copy_secret`; deploy, which rolls `008_books_files` across every tenant schema at boot; run
+`pnpm books:init-company` for Whiz-Art Media (P1.8). No other secret or variable is new.
 
 ## 1. Audit: what actually exists today
 

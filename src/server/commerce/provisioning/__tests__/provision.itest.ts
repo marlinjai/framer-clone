@@ -138,6 +138,7 @@ describe('CM-11 commerce per-tenant provisioning (provisionCommerceTenant → pr
       '005_minimal_orders',
       '006_inventory_policy',
       '007_books',
+      '008_books_files',
     ]);
 
     // The registry row exists and is ACTIVE (the runner flips status only after

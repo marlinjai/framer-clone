@@ -46,6 +46,7 @@ const EXPECTED_MIGRATION_IDS = [
   '005_minimal_orders',
   '006_inventory_policy',
   '007_books',
+  '008_books_files',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {
@@ -91,6 +92,7 @@ const EXPECTED_TABLES = [
   'reservation',
   'sales_document',
   'sales_document_event',
+  'sales_document_file',
   'sales_document_line',
   'stock_location',
   'stock_movement',
@@ -198,7 +200,7 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
   });
 
   // --- tables -------------------------------------------------------------
-  it('creates exactly the 19 commerce and 7 Books tables in the schema', async () => {
+  it('creates exactly the 19 commerce and 8 Books tables in the schema', async () => {
     const rows = await owner!`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = ${SCHEMA} AND table_type = 'BASE TABLE'

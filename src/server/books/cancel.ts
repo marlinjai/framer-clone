@@ -26,7 +26,10 @@
 //   5. Set the invoice to cancelled; write its `cancelled` event. Commit.
 
 import { randomUUID } from 'node:crypto';
+import type { Transaction } from 'kysely';
 import { z } from 'zod';
+
+import type { CommerceDB } from '../commerce/db-types';
 
 import { BooksError, invalid, withDbErrors } from './errors';
 import { allocateNumber, resolveIssueDate } from './numbering';
@@ -59,7 +62,15 @@ export async function cancelInvoice(
   scope: BooksScope,
   invoiceId: string,
   input: CancelInvoiceInput,
-  options: { now?: Date } = {},
+  options: {
+    now?: Date;
+    /**
+     * Runs inside the cancellation transaction with the issued credit note,
+     * before the commit; a throw rolls the cancellation back (the routes
+     * render and store the credit note's PDF here).
+     */
+    beforeCommit?: (trx: Transaction<CommerceDB>, creditNote: DocumentView) => Promise<void>;
+  } = {},
 ): Promise<CancelResult> {
   const parsed = cancelInput.safeParse(input);
   if (!parsed.success) throw invalid('INVALID_INPUT', parsed.error.issues);
@@ -197,6 +208,11 @@ export async function cancelInvoice(
             number_value: number.numberValue,
             issue_date: issueDate,
             customer_snapshot: toJsonb(invoice.customer_snapshot),
+            // The credit note keeps the invoice's frozen layout (or the plain one
+            // for an invoice issued before 008).
+            template_snapshot: toJsonb(
+              invoice.template_snapshot ?? { v: 1, templateId: null, name: null, accentColor: null, footerBlocks: [] },
+            ),
             sender_snapshot: toJsonb(senderSnapshot),
             issued_at: now,
             updated_at: now,
@@ -235,9 +251,11 @@ export async function cancelInvoice(
           payload: { creditNoteId, creditNoteNumber: number.documentNumber, reason: args.reason },
         });
 
+        const creditNote = await readPersistedView(trx, scope, creditNoteId);
+        if (options.beforeCommit) await options.beforeCommit(trx, creditNote);
         return {
           invoice: await readPersistedView(trx, scope, invoiceId),
-          creditNote: await readPersistedView(trx, scope, creditNoteId),
+          creditNote,
           alreadyCancelled: false,
         };
       }),

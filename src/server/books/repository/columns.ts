@@ -60,7 +60,12 @@ export function documentColumns(eb: DocEb) {
 
 /** sales_document with the two snapshots (what getDocument returns). */
 export function documentColumnsWithSnapshots(eb: DocEb) {
-  return [...documentColumns(eb), 'sales_document.customer_snapshot', 'sales_document.sender_snapshot'] as const;
+  return [
+    ...documentColumns(eb),
+    'sales_document.customer_snapshot',
+    'sales_document.sender_snapshot',
+    'sales_document.template_snapshot',
+  ] as const;
 }
 
 export const LINE_COLUMNS = [

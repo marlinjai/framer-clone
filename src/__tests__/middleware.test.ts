@@ -165,6 +165,8 @@ describe('middleware: the authoring and AI APIs are refused on a published host 
     '/api/ai/cms-agent',
     '/api/ai/cms-agent/undo',
     '/api/ai/edit',
+    '/api/books/documents',
+    '/api/books/documents/d1/pdf',
   ])('404s %s on a published host EVEN WITH a session cookie', async (path) => {
     process.env.EDITOR_HOST = EDITOR;
     const res = await middleware(
@@ -175,7 +177,7 @@ describe('middleware: the authoring and AI APIs are refused on a published host 
     expect((await res.json()).error.code).toBe('not_found');
   });
 
-  it.each(['/api/projects/p1/commerce/products', '/api/ai/edit'])(
+  it.each(['/api/projects/p1/commerce/products', '/api/ai/edit', '/api/books/documents'])(
     'still lets %s through on the editor host (signed in)',
     async (path) => {
       process.env.EDITOR_HOST = EDITOR;
@@ -205,6 +207,7 @@ describe('middleware: matcher reconciled to real routes (MT-16)', () => {
       '/projects/:path*',
       '/api/projects/:path*',
       '/api/ai/:path*',
+      '/api/books/:path*',
     ]);
   });
 

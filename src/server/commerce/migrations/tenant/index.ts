@@ -7,6 +7,7 @@ import { pricingAndTax } from './004_pricing_and_tax';
 import { minimalOrders } from './005_minimal_orders';
 import { inventoryPolicy } from './006_inventory_policy';
 import { books } from './007_books';
+import { booksFiles } from './008_books_files';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -37,6 +38,9 @@ import { books } from './007_books';
  *                            counters, customer, template, sales_document with its
  *                            lines and append-only events, freeze triggers BK001
  *                            to BK005)
+ *   008_books_files        : the stored document of record (the rendered PDF of an
+ *                            issued document), append-only (BK006), one per
+ *                            document, pointed at by sales_document.rendered_pdf_file_id
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -47,4 +51,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   minimalOrders,
   inventoryPolicy,
   books,
+  booksFiles,
 ];
