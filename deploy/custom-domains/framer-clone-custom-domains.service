@@ -1,0 +1,16 @@
+# /etc/systemd/system/framer-clone-custom-domains.service
+# Renders framer-clone's verified custom hostnames into a Traefik file-provider
+# configuration (deploy/custom-domains/sync-traefik.sh in the framer-clone repo).
+[Unit]
+Description=framer-clone custom domains: sync Traefik routes
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=FEED_URL=https://app.lumitra.co/api/internal/custom-domains/hostnames
+Environment=TOKEN_FILE=/etc/framer-clone/custom-domains.header
+# The app's Traefik service, from its labels in Coolify (http-0-<app-uuid>).
+Environment=TRAEFIK_SERVICE=REPLACE_WITH_APP_SERVICE@docker
+Environment=OUTPUT_FILE=/data/coolify/proxy/dynamic/framer-clone-custom-domains.yml
+ExecStart=/usr/local/bin/framer-clone-sync-traefik.sh

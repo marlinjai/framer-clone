@@ -1,0 +1,11 @@
+# /etc/systemd/system/framer-clone-custom-domains.timer
+[Unit]
+Description=framer-clone custom domains: sync Traefik routes every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
