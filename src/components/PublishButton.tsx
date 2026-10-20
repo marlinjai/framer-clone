@@ -38,11 +38,21 @@ const PublishButton = observer(() => {
   const rootStore = useStore();
   const project = rootStore.editorUI.currentProject;
   const { address, setAddress } = useSiteAddress();
+  const isUnsavedDemo = rootStore.editorUI.isUnsavedDemo === true;
   const [state, setState] = React.useState<PublishState>({ kind: 'idle' });
 
   const publish = React.useCallback(async () => {
     if (!project) {
       setState({ kind: 'error', message: 'No project to publish.' });
+      return;
+    }
+    // The demo editor at `/` builds its project in the browser; no company
+    // holds it, so there is nothing on the server to publish to.
+    if (isUnsavedDemo) {
+      setState({
+        kind: 'error',
+        message: 'This demo project exists only in this browser. Create a project on the projects dashboard to save and publish.',
+      });
       return;
     }
     setState({ kind: 'publishing' });
@@ -95,7 +105,7 @@ const PublishButton = observer(() => {
           err instanceof Error ? err.message : 'Network error while publishing.',
       });
     }
-  }, [project, address.host, setAddress]);
+  }, [project, address.host, setAddress, isUnsavedDemo]);
 
   const publishing = state.kind === 'publishing';
 

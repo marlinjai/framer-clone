@@ -69,6 +69,9 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
       );
       // Set this project as current in the editor
       rootStore.editorUI.setCurrentProject(rootStore.projectStore.findProjectByTitle('Framer Clone Demo'));
+      // It exists only in this browser: Save and Publish say so instead of
+      // calling routes that only update projects created on the dashboard.
+      rootStore.editorUI.markUnsavedDemo();
       rootStore.editorUI.setCurrentPage(rootStore.editorUI.currentProject?.findPageBySlug(''));
     }
     initRef.current = true;

@@ -84,7 +84,7 @@ async function handlePOST(req: Request): Promise<Response> {
   const project = body.data.project as unknown as ProjectSnapshotOut;
   try {
     const repo = getSiteRepository();
-    await repo.saveProject(scope, project);
+    await repo.saveProject(scope, project, { mustExist: true });
   } catch (err) {
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
     return jsonError(

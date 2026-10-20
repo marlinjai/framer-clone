@@ -47,6 +47,10 @@ const EditorUIStore = types.model('EditorUI', {
   // Transient interaction state (won't be persisted).
   // Drag state lives in DragManager (src/lib/drag/DragManager.ts).
   hoverComponent: undefined as ComponentInstance | undefined,
+  // True for the standalone demo editor at `/`, whose project is built in the
+  // browser and belongs to no company: there is nothing to save or publish to
+  // (projects are created from the dashboard, POST /api/projects).
+  isUnsavedDemo: false,
   isResizing: false,
   resizeData: undefined as {
     component: ComponentInstance;
@@ -59,6 +63,10 @@ const EditorUIStore = types.model('EditorUI', {
   } | undefined,
 }))
 .actions(self => ({
+  markUnsavedDemo() {
+    self.isUnsavedDemo = true;
+  },
+
   // Project selection
   setCurrentProject(project?: ProjectModelType) {
     self.currentProject = project;

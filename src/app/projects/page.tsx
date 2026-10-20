@@ -43,6 +43,12 @@ function formatUpdated(value: Date): string {
   return new Date(value).toISOString().slice(0, 10);
 }
 
+/** `<label>.<PUBLIC_SITE_BASE_HOST>` for a site's subdomain, or null. */
+function liveHostFor(subdomain: string | null): string | null {
+  const base = process.env.PUBLIC_SITE_BASE_HOST?.trim();
+  return subdomain && base ? `${subdomain}.${base}` : null;
+}
+
 const CHOOSER_ERRORS: Record<string, string> = {
   company_unavailable:
     'Lumitra Sites is not available for that company any more. Pick another one.',
@@ -117,9 +123,15 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
 
   return (
     <main className="mx-auto w-full max-w-3xl px-6 py-12">
+      {/* Persistent live region for list changes made on this page (a deleted
+          project's card is gone, so it cannot announce itself). Present and
+          empty from the first render, so screen readers pick up later text. */}
+      <p id="projects-status" role="status" aria-live="polite" className="sr-only" />
       <header className="mb-8 flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
+          <h1 id="projects-heading" tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none">
+            Projects
+          </h1>
           <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
             <span>
               Sites in <span className="font-medium text-foreground">{activeCompany.name}</span>
@@ -166,6 +178,8 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
                 name={site.name}
                 status={site.status}
                 updatedLabel={formatUpdated(site.updatedAt)}
+                liveHost={liveHostFor(site.subdomain)}
+                customDomains={site.customDomains}
               />
             </li>
           ))}

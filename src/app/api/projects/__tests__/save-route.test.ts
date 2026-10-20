@@ -153,9 +153,12 @@ describe('POST /api/projects/save (authorized)', () => {
       savedPages: ['', 'about'],
     });
     // Scope comes from the SERVER session, not the body.
+    // ...and only UPDATES an existing site: it never creates (or re-creates a
+    // deleted) one; creating is POST /api/projects.
     expect(save).toHaveBeenCalledWith(
       SCOPE,
       expect.objectContaining({ id: 'site_1' }),
+      { mustExist: true },
     );
     // Save is non-destructive: it must NEVER flip the site to published.
     expect(publish).not.toHaveBeenCalled();
@@ -219,6 +222,8 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
       site: {
         findUnique: vi.fn(async () => ({ id: 'site_1', workspaceId: 'ws_marlin', redirects: [] })),
         upsert: vi.fn(async () => ({})),
+        // The editor's Save only UPDATEs an existing site (mustExist).
+        updateMany: vi.fn(async () => ({ count: 1 })),
       },
       sitePage: {
         findMany: vi.fn(async () => Object.entries(stored).map(([pageId, slug]) => ({ pageId, slug }))),
@@ -251,6 +256,7 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error.code).toBe('invalid_page_slug');
     expect(prisma.site.upsert).not.toHaveBeenCalled();
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
     expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
   });
 
@@ -263,6 +269,7 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error.message).toMatch(/home page cannot be deleted/);
     expect(prisma.site.upsert).not.toHaveBeenCalled();
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
   });
 
   it('saves a valid slug change and records the old path as a redirect', async () => {
@@ -272,9 +279,30 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
     const res = await POST(saveReq(body));
 
     expect(res.status).toBe(200);
-    const siteUpsert = (prisma.site.upsert.mock.calls[0] as unknown as [{ update: { redirects: unknown } }])[0];
-    expect(siteUpsert.update.redirects).toEqual([
+    const siteUpdate = (prisma.site.updateMany.mock.calls[0] as unknown as [{ data: { redirects: unknown } }])[0];
+    expect(siteUpdate.data.redirects).toEqual([
       { from: 'about', pageId: 'page_about', createdAt: expect.any(String) },
     ]);
+  });
+});
+
+describe('save of a deleted project', () => {
+  it('is refused with a message the editor shows as is, and nothing is written', async () => {
+    mockVerifySession.mockResolvedValue(makeSession());
+    mockCan.mockResolvedValue(true);
+    const { SiteGoneError } = await import('@/server/sites');
+    const save = vi.fn().mockRejectedValue(new SiteGoneError());
+    const publish = vi.fn();
+    installRepo({ saveProject: save, publishProject: publish });
+
+    const res = await POST(saveReq({ project: PROJECT }));
+
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error.code).toBe('site_not_found');
+    expect(body.error.message).toBe(
+      'This project does not exist (any more): it may have been deleted. Your changes were not saved.',
+    );
+    expect(publish).not.toHaveBeenCalled();
   });
 });

@@ -22,6 +22,7 @@ vi.mock('next/cache', () => ({ unstable_cache: vi.fn(), revalidateTag: vi.fn() }
 
 import { getPrismaClient } from '@/server/db';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
+import { SiteRepository } from '@/server/sites/repository';
 import type { CustomDomainConfig } from '../config';
 import type { DnsLookup } from '../dnsCheck';
 import { DomainError, DomainService, RECHECK_INTERVAL_MS, type DomainServiceDeps } from '../service';
@@ -141,6 +142,31 @@ describe('forward: add, verify, activate, serve', () => {
     const active = await service().verifyDomain(site.id, domain.id, CONFIG);
     expect(active).toMatchObject({ status: 'active', serving: true, lastError: null });
     expect(active.activatedAt).not.toBeNull();
+  });
+});
+
+describe('project deleted (SiteRepository.deleteSite)', () => {
+  // Here, not in deleteSite.itest.ts: this file owns every LIVE claim in the
+  // shared database (its other tests count them), so a live claim made by a
+  // parallel file would disturb it.
+  it('releases the live claim: the host stops resolving and leaves the proxy feed', async () => {
+    const site = await makeSite('dom_site_deleted');
+    const { domain } = await service().addDomain(site, 'www.deleted-shop.com', CONFIG);
+    publishDns('www.deleted-shop.com', tokenOf(domain));
+    await service().verifyDomain(site.id, domain.id, CONFIG);
+    expect((await resolvePublishedSite('www.deleted-shop.com', prisma, 'sites.lumitra.co'))?.siteId).toBe(site.id);
+    expect((await service().listProxyHostnames()).hostnames).toContain('www.deleted-shop.com');
+
+    const deleted = await new SiteRepository(prisma).deleteSite(
+      { workspaceId: site.workspaceId, tenantGroupId: site.tenantGroupId },
+      site.id,
+      { confirmName: site.id },
+    );
+
+    expect(deleted.hostnames).toEqual(['www.deleted-shop.com']);
+    expect(await resolvePublishedSite('www.deleted-shop.com', prisma, 'sites.lumitra.co')).toBeNull();
+    expect((await service().listProxyHostnames()).hostnames).not.toContain('www.deleted-shop.com');
+    expect(await prisma.siteDomain.count({ where: { siteId: site.id } })).toBe(0);
   });
 });
 

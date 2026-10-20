@@ -12,12 +12,15 @@ export {
   getSiteRepository,
   type TenantScope,
   type SiteSummary,
+  type DeletedSite,
 } from './repository';
 
 export {
   SiteRepositoryError,
   SiteNotFoundError,
   SiteNameConflictError,
+  SiteGoneError,
+  SiteDeleteConfirmationError,
   InvalidTenantScopeError,
   InvalidPageSlugError,
   siteRepositoryErrorResponse,

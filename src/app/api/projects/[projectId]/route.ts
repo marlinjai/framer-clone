@@ -1,6 +1,7 @@
 // src/app/api/projects/[projectId]/route.ts
 //
-// PATCH /api/projects/<projectId>   { name, expectedName? } -> rename a project
+// PATCH  /api/projects/<projectId>   { name, expectedName? } -> rename a project
+// DELETE /api/projects/<projectId>   { confirmName? }        -> delete a project
 //
 // Renames the project (the `Site.name` row field, which the dashboard lists and
 // the editor loads as the project title). Body:
@@ -26,6 +27,24 @@
 // a missing one, so existence never leaks. (The custom-domain routes answer
 // 403 for that case; this route follows save/publish, which answer 404.)
 //
+// DELETE removes the project for good (there is no restore): one transaction
+// deletes the site row, and the database cascade removes its pages, its domain
+// rows (the subdomain, so it answers 404 from then on, and every custom domain,
+// whose live claim is released so the proxy host sync drops its route) and its
+// experiment references. Company-wide data stays: CMS collections, the commerce
+// catalog and orders, Books, the analytics project. A PUBLISHED project needs
+// `confirmName` equal to its current name (409 `confirmation_mismatch`
+// otherwise). After the commit the published-site caches of the captured
+// subdomain and hostnames are invalidated; if that fails the answer is 500
+// `delete_cache_failed` (the project is gone, a cached copy may still be
+// served until the next deploy), never a quiet success; a second invalidation
+// runs a few seconds later to catch a request that cached the site during the
+// commit. Permission: `editSite` plus `publishSite` and `manageDomain` (taking
+// a site offline, releasing its domains). The proxy host sync drops released
+// routes within a minute, unless its drop protection holds a large drop
+// (deploy/README.md): the routes then stay until an operator confirms, but the
+// app answers 404 for them, as it does for any host it has no claim for.
+//
 // What a rename does NOT touch: the published address. A site's subdomain is a
 // random label allocated on first publish and custom domains are their own
 // rows; neither derives from the name, and page URL slugs are per page. The
@@ -36,15 +55,20 @@ import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { readCompanySelectors } from '@/lib/activeCompanyCookie';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
 import { isEditorHost } from '@/lib/editorHost';
+import { checkWorkspaceAccess } from '@/lib/auth-check';
+import type { FramerAction } from '@/lib/permissions';
 import { jsonError, parseBody } from '@/lib/api/respond';
 import { projectNameSchema } from '@/lib/projectName';
 import { z } from 'zod';
+import { revalidateCustomHostCache, revalidateSiteCache } from '@/server/sites/cachedResolver';
 import {
   getSiteRepository,
   activeScopeDenial,
   resolveActiveScope,
   siteRepositoryErrorResponse,
   SiteRepositoryError,
+  type DeletedSite,
+  type TenantScope,
 } from '@/server/sites';
 
 export const runtime = 'nodejs';
@@ -59,31 +83,53 @@ const renameBodySchema = z.object({
   expectedName: z.string().optional(),
 });
 
-async function handlePATCH(req: Request, { params }: Ctx): Promise<Response> {
+const deleteBodySchema = z.object({ confirmName: z.string().optional() });
+
+type GuardResult =
+  | { ok: true; scope: TenantScope }
+  | { ok: false; response: Response };
+
+/**
+ * Guards 0 to 3 of the header, shared by PATCH and DELETE. `alsoRequires`
+ * adds permissions on top of `editSite` (all of them `workspace.admin` today,
+ * but each action may be tightened on its own later).
+ */
+async function guard(req: Request, alsoRequires: FramerAction[] = []): Promise<GuardResult> {
   if (!isEditorHost(req.headers.get('host'))) {
-    return jsonError('not_found', 'not found', 404);
+    return { ok: false, response: jsonError('not_found', 'not found', 404) };
   }
 
   const session = await getVerifiedSession(req);
   if (!session) {
-    return jsonError('unauthorized', 'authentication required', 401);
+    return { ok: false, response: jsonError('unauthorized', 'authentication required', 401) };
   }
 
   const scopeResult = resolveActiveScope(session, readCompanySelectors(req));
   if (!scopeResult.ok) {
     const denial = activeScopeDenial(scopeResult.error);
-    return jsonError(denial.code, denial.message, 403);
+    return { ok: false, response: jsonError(denial.code, denial.message, 403) };
   }
   const { scope } = scopeResult;
 
   const auth = await authenticateRequest(req, scope.workspaceId, 'editSite');
   if (!auth.authenticated) {
-    return jsonError(
-      auth.status === 401 ? 'unauthorized' : 'forbidden',
-      auth.error,
-      auth.status,
-    );
+    return {
+      ok: false,
+      response: jsonError(auth.status === 401 ? 'unauthorized' : 'forbidden', auth.error, auth.status),
+    };
   }
+  for (const action of alsoRequires) {
+    if (!(await checkWorkspaceAccess(auth.userId, scope.workspaceId, action))) {
+      return { ok: false, response: jsonError('forbidden', 'Forbidden', 403) };
+    }
+  }
+  return { ok: true, scope };
+}
+
+async function handlePATCH(req: Request, { params }: Ctx): Promise<Response> {
+  const guarded = await guard(req);
+  if (!guarded.ok) return guarded.response;
+  const { scope } = guarded;
 
   const body = await parseBody(req, renameBodySchema);
   if (!body.ok) return body.response;
@@ -107,7 +153,98 @@ async function handlePATCH(req: Request, { params }: Ctx): Promise<Response> {
   }
 }
 
+/** Delay of the second cache invalidation after a delete. */
+const LATE_INVALIDATION_MS = 5_000;
+
+/** Invalidate every captured host; returns the hosts whose invalidation threw. */
+function invalidateDeletedHosts(deleted: DeletedSite): string[] {
+  const failed: string[] = [];
+  const attempt = (host: string, fn: () => void) => {
+    try {
+      fn();
+    } catch (err) {
+      failed.push(host);
+      console.error(`[projects] invalidating the cache of ${host} after deleting ${deleted.siteId} failed:`, err);
+    }
+  };
+  if (deleted.subdomain) {
+    const sub = deleted.subdomain;
+    attempt(sub, () => revalidateSiteCache(sub));
+  }
+  for (const hostname of deleted.hostnames) attempt(hostname, () => revalidateCustomHostCache(hostname));
+  return failed;
+}
+
+async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
+  // Deleting takes a site offline and releases its domains: on top of
+  // editSite it needs what unpublishing and disconnecting a domain need.
+  const guarded = await guard(req, ['publishSite', 'manageDomain']);
+  if (!guarded.ok) return guarded.response;
+  const { scope } = guarded;
+
+  // The body is optional (an unpublished project needs no confirmation).
+  let confirmName: string | undefined;
+  const raw = await req.text();
+  if (raw.trim().length > 0) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return jsonError('bad_json', 'invalid JSON body', 400);
+    }
+    const result = deleteBodySchema.safeParse(parsed);
+    if (!result.success) {
+      return jsonError('bad_body', 'invalid request body', 400, { issues: result.error.issues });
+    }
+    confirmName = result.data.confirmName;
+  }
+
+  const { projectId } = await params;
+  let deleted: DeletedSite;
+  try {
+    deleted = await getSiteRepository().deleteSite(scope, projectId, { confirmName });
+  } catch (err) {
+    if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
+    console.error(`[projects] delete of ${projectId} failed:`, err);
+    return jsonError('delete_failed', 'deleting the project failed; nothing was deleted, try again', 500);
+  }
+
+  // After the commit: stop serving cached copies on the subdomain and every
+  // custom hostname at once. Cached custom-host hits never expire on their
+  // own, so a failure must be loud. Every host is tried even when one fails.
+  const failed = invalidateDeletedHosts(deleted);
+  // A visitor request that read the site just BEFORE the commit can store its
+  // (stale) result just AFTER the invalidation above, and nothing would ever
+  // invalidate that host again. A second pass a few seconds later closes that
+  // window (the server is a long-running Node process).
+  setTimeout(() => {
+    const late = invalidateDeletedHosts(deleted);
+    if (late.length > 0) console.error(`[projects] late cache invalidation after deleting ${projectId} failed for: ${late.join(', ')}`);
+  }, LATE_INVALIDATION_MS).unref?.();
+  if (failed.length > 0) {
+    return jsonError(
+      'delete_cache_failed',
+      'The project was deleted, but its published pages may still be served from cache until the next deploy.',
+      500,
+    );
+  }
+
+  console.info(
+    `[projects] deleted ${projectId} ("${deleted.name}", ${deleted.wasPublished ? 'published' : 'unpublished'}; released ${deleted.hostnames.length} custom hostname(s))`,
+  );
+  return Response.json(
+    {
+      siteId: projectId,
+      deleted: true,
+      subdomain: deleted.subdomain,
+      releasedHostnames: deleted.hostnames,
+    },
+    { headers: { 'cache-control': 'no-store' } },
+  );
+}
+
 // An auth-brain outage during session verify answers JSON 503 `auth_unavailable`,
 // and OpenFGA failing a permission check answers JSON 503 `authz_unavailable`
 // (src/lib/authBrainAvailability.ts), never a 500 and never "signed out".
 export const PATCH = withAuthAvailability(handlePATCH);
+export const DELETE = withAuthAvailability(handleDELETE);
