@@ -260,13 +260,30 @@ which fetches the verified hostnames from the token-guarded feed, re-validates
 each line, and writes `framer-clone-custom-domains.yml` into Traefik's watched
 file-provider directory (`/data/coolify/proxy/dynamic/`) with one http redirect
 router and one https router (`certResolver: letsencrypt`, priority 1) per
-hostname. The script refuses (and keeps the current file) when the answer is not
-text/plain, does not match its `x-content-sha256` / `x-hostname-count` headers,
-contains one invalid or blocked line, or would drop the routes to zero or by
-more than half (`FORCE=1` accepts such a drop once). The same timer first calls
-`POST /api/internal/custom-domains/recheck`, which re-checks live domains that
-are due (routing only, every six hours, three definitive failures in a row
-release a domain). The ordered operator steps live in the infra RUNBOOK.
+hostname. The script refuses the feed (and keeps the current file, exit 1) when
+the answer is not text/plain, does not match its `x-content-sha256` /
+`x-hostname-count` headers, or contains one invalid or blocked line.
+
+**Drop protection.** A drop is held when the feed has more than 5 fewer routes
+than the high-water mark (the largest count written in the last 24 hours) AND
+fewer than half of it. While held, removals wait but additions still go live
+(the file gets the union of current and new routes) and the run exits 3, which
+the journal shows. If the drop is genuine (many domains really disconnected),
+confirm it once on the server:
+
+    touch /var/lib/framer-clone-custom-domains/force-once
+
+The next run (within a minute) applies the drop, deletes the flag and resets the
+high-water mark. The flag lives in the unit's state directory, not under /etc,
+because the unit keeps /etc read-only.
+
+**Re-check.** A separate unit and timer (`framer-clone-custom-domains-recheck`,
+every 10 minutes) calls `POST /api/internal/custom-domains/recheck`, which
+re-checks live domains that are due (routing only, every six hours, three
+definitive failures in a row release a domain). If more than half of a pass
+fails at once (at least 5 checked), nothing is counted and the call answers 503
+`recheck_circuit_open`, which fails the unit: check the `CUSTOM_DOMAIN_TARGET_*`
+values. The ordered operator steps live in the infra RUNBOOK.
 
 ## Operator commands (from a checkout, against a forwarded database)
 
