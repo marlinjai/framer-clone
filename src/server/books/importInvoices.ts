@@ -7,9 +7,12 @@
 //
 //   - the operator CLI (importCli.ts, `pnpm books:import`) maps the owner's
 //     private JSON extraction to records with origin `operator_file`;
-//   - the planned in-editor upload maps the data extracted from each uploaded
-//     PDF, after the user reviewed it, to records with origin
-//     `upload_extracted`, its sender defaulting to the company's sender block.
+//   - the upload import (src/server/books/upload) maps the model's reading of
+//     each uploaded PDF, after the user reviewed it, to records with origin
+//     `upload_extracted`; its sender is the printed one, the company's sender
+//     block filling only what the PDF does not show.
+//
+// Both go through the same mapping from a printed invoice (importPrinted.ts).
 //
 // Nothing here reads a file or a command line. `importHistoricalInvoice` does
 // every check and write for one record:
@@ -17,9 +20,12 @@
 //   - the record is parsed (INVALID_INPUT naming the fields, never values), the
 //     bytes must be a PDF, the issue date not in the future;
 //   - its number is the printed one, stored as printed (never allocated, never
-//     reformatted through the counter's format), and must lie below the
-//     company's invoice counter, which is never moved (COUNTER_MISSING,
-//     IMPORT_COUNTER_TOO_LOW);
+//     reformatted through the counter's format); its counter value comes from
+//     the company's number format (none for a number in another format). The
+//     counter policy decides what a number at or above the counter does: the
+//     CLI refuses it (IMPORT_COUNTER_TOO_LOW), the upload raises the counter
+//     past it, upwards only and only to the value the user confirmed
+//     (COUNTER_RAISE_UNCONFIRMED); COUNTER_MISSING without a counter;
 //   - a number already present is `already_imported` when it is an import whose
 //     stored original has the same SHA-256, and IMPORT_CONFLICT otherwise;
 //     nothing is ever overwritten, and nothing is created for it;
@@ -29,7 +35,10 @@
 //   - the customer and sender snapshots are the record's own data (the sender
 //     is an INPUT: the CLI passes the sender printed on that invoice, since the
 //     owner moved several times), frozen as given;
-//   - lines and totals as given, small business (section 19 UStG) only, tax 0;
+//   - lines and totals as given, under the printed tax treatment: small
+//     business (section 19 UStG, tax 0), regular taxation (net lines with
+//     their printed rate and VAT) or reverse charge (section 13b UStG for a
+//     business in another EU country, tax 0);
 //   - one transaction writes the lines, the document, the original in
 //     sales_document_file, the pointer rendered_pdf_file_id and an `issued`
 //     event recording the origin, so a failure never leaves half a document
@@ -713,7 +722,7 @@ export function importCustomerSnapshot(record: HistoricalInvoice, contactId: str
   });
 }
 
-/** The sender exactly as the record gives it (the CLI: as printed; the upload: the company's sender block). */
+/** The sender exactly as the record gives it (as printed; the upload fills what the PDF does not show from the company's sender block). */
 export function importSenderSnapshot(record: HistoricalInvoice): SenderSnapshotV1 {
   return senderSnapshotV1Schema.parse({ v: 1, ...record.sender });
 }
@@ -798,7 +807,11 @@ export function importIssuedAt(issueDate: string): Date {
  *   - `line_tax_derived`: lines without a printed VAT amount, derived from their
  *     rate and adjusted to the printed tax group.
  *   - `sender_from_company`: sender fields the PDF did not show, taken from
- *     the company's current sender block.
+ *     the company's current sender block;
+ *   - `service_date_unparsed`, `payment_terms_unparsed`,
+ *     `recipient_vat_id_unparsed`: printed, but not readable as a date or
+ *     period, a number of days, or a valid VAT id; the record carries none
+ *     (the stored original shows them).
  */
 export type ImportWarning =
   | { code: 'line_not_quantity_times_price'; count: number }
@@ -811,7 +824,10 @@ export type ImportWarning =
   | { code: 'issue_date_out_of_number_order' }
   | { code: 'sender_address_missing' }
   | { code: 'recipient_address_incomplete' }
-  | { code: 'recipient_country_assumed' };
+  | { code: 'recipient_country_assumed' }
+  | { code: 'service_date_unparsed' }
+  | { code: 'payment_terms_unparsed' }
+  | { code: 'recipient_vat_id_unparsed' };
 
 /** The lines whose printed total is not their arithmetic (any difference, a rounding cent included). */
 export function linesNotQuantityTimesPrice(record: Pick<HistoricalInvoice, 'lines'>): number {
@@ -866,6 +882,10 @@ export function recordWarnings(record: HistoricalInvoice): ImportWarning[] {
   if (taxDerived > 0) out.push({ code: 'line_tax_derived', count: taxDerived });
   const fromCompany = record.provenance.senderFieldsFromCompany ?? 0;
   if (fromCompany > 0) out.push({ code: 'sender_from_company', count: fromCompany });
+  // Printed but not readable: the record carries none, the stored original has it.
+  if (record.provenance.serviceDateUnparsed) out.push({ code: 'service_date_unparsed' });
+  if (record.provenance.paymentTermsUnparsed) out.push({ code: 'payment_terms_unparsed' });
+  if (record.provenance.recipientVatIdUnparsed) out.push({ code: 'recipient_vat_id_unparsed' });
   return out;
 }
 
@@ -947,12 +967,25 @@ export function counterRaiseUnconfirmed(raiseTo: number, confirmed: number | nul
 }
 
 /** The counter value of the record's number and what the counter policy makes of it. */
+/**
+ * The counter value of a record's number: by the company's number format; for
+ * the operator's file (`pnpm books:import`, whose numbers are integers) a plain
+ * integer is its own value under any format, so the counter refusal and the
+ * date-order warning hold whatever the format.
+ */
+export function recordNumberValue(record: Pick<HistoricalInvoice, 'documentNumber' | 'origin'>, format: string): number | null {
+  const byFormat = numberValueFor(record.documentNumber, format);
+  if (byFormat !== null || record.origin !== 'operator_file' || !/^\d{1,15}$/.test(record.documentNumber)) return byFormat;
+  const value = Number(record.documentNumber);
+  return Number.isSafeInteger(value) && value >= 1 ? value : null;
+}
+
 function counterEffect(
   counter: ImportCounter,
-  documentNumber: string,
+  record: HistoricalInvoice,
   policy: CounterPolicy,
 ): { numberValue: number | null; raiseTo: number | null } {
-  const numberValue = numberValueFor(documentNumber, counter.format);
+  const numberValue = recordNumberValue(record, counter.format);
   if (numberValue === null || numberValue < counter.nextValue) return { numberValue, raiseTo: null };
   if (policy === 'refuse') {
     throw new BooksError(
@@ -972,7 +1005,7 @@ async function checkBefore(
   policy: CounterPolicy,
 ): Promise<{ done: ImportResult | null; numberValue: number | null; raiseTo: number | null }> {
   const counter = await readCounter(scope.db, scope, 'none');
-  const effect = counterEffect(counter, record.documentNumber, policy);
+  const effect = counterEffect(counter, record, policy);
   const number = { documentNumber: record.documentNumber, numberValue: effect.numberValue };
   const existing = judgeExisting(await existingInvoice(scope.db, scope, number), record.documentNumber, sha256, record);
   if (existing) return { done: existing, ...effect };
@@ -1080,7 +1113,7 @@ export async function importHistoricalInvoice(
           // counter only ever moves up, and an issue would wait for this lock);
           // FOR UPDATE when this import may raise it.
           const counter = await readCounter(trx, scope, policy === 'raise' ? 'update' : 'share');
-          const effect = counterEffect(counter, record.documentNumber, policy);
+          const effect = counterEffect(counter, record, policy);
           if (opts.confirmedCounterRaiseTo !== undefined && effect.raiseTo !== null && effect.raiseTo !== opts.confirmedCounterRaiseTo) {
             throw counterRaiseUnconfirmed(effect.raiseTo, opts.confirmedCounterRaiseTo);
           }

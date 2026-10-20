@@ -298,6 +298,7 @@ export const booksUploadImport: Migration = {
         "problems" JSONB NOT NULL DEFAULT '[]',
         "model" TEXT,
         "claimed_at" TIMESTAMP(3),
+        "claim_id" TEXT,
         "document_id" TEXT,
         "discarded_at" TIMESTAMP(3),
         "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -412,7 +413,7 @@ export const booksUploadImport: Migration = {
         CONSTRAINT "historical_import_extraction_model_check" CHECK (length("model") BETWEEN 1 AND 100),
         CONSTRAINT "historical_import_extraction_outcome_check" CHECK (
           ("outcome" IS NULL) = ("finished_at" IS NULL)
-          AND ("outcome" IS NULL OR "outcome" IN ('ok', 'refused', 'invalid_output', 'max_tokens', 'error', 'aborted'))
+          AND ("outcome" IS NULL OR "outcome" IN ('ok', 'refused', 'invalid_output', 'max_tokens', 'unreadable', 'error', 'aborted'))
         ),
         CONSTRAINT "historical_import_extraction_tokens_check" CHECK ("input_tokens" >= 0 AND "output_tokens" >= 0),
         CONSTRAINT "historical_import_extraction_item_fkey" FOREIGN KEY ("tenant_id", "item_id")

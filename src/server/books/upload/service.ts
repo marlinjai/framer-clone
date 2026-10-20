@@ -16,15 +16,19 @@
 //            (importHistoricalInvoice, origin `upload_extracted`, counter policy
 //            `raise`), marking the row imported INSIDE the import transaction;
 //            a failed import leaves the row `ready` with the problem named;
-//   discard  set the row aside; its bytes are cleared after 30 days (pruned
-//            when the list is read), and the same file can be staged again.
+//   by hand  a row the model could not read (refused, too long, unreadable)
+//            gets an empty manual reading the user fills in, keyed like any
+//            other reading;
+//   discard  set the row aside and clear its bytes at once; the same file can
+//            be staged again.
 //
 // Logs carry item ids, statuses, sizes and codes, never extracted values or
 // file names (plan decision 9).
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type Anthropic from '@anthropic-ai/sdk';
+import { sql } from 'kysely';
 
 import type { AiModelKey } from '@/lib/ai/anthropicClient';
 
@@ -41,11 +45,12 @@ import {
   getItem,
   insertItem,
   itemContent,
-  listItems,
+  listImportedItems,
+  listOpenItems,
   liveItemBySha,
-  pruneDiscarded,
   startExtraction,
   updateItem,
+  withoutNul,
   type ExtractionOutcome,
   type ImportItem,
   type Problem,
@@ -55,8 +60,16 @@ import { stagedNumber, validateItem } from './validate';
 /** The largest PDF one upload takes (plan: 10 MB). */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
-/** How many rows a company may have open (not imported, not discarded) at once: a bound on staged bytes. */
-export const MAX_OPEN_ITEMS = 500;
+/**
+ * How many rows a company may have open (not imported, not discarded) at once,
+ * and how many bytes they may hold together: the bound on what the staging
+ * table keeps per company (four full uploads of 50, at most 512 MB).
+ */
+export const MAX_OPEN_ITEMS = 200;
+export const MAX_OPEN_BYTES = 512 * 1024 * 1024;
+
+/** How many imported rows the review table shows (the newest; the total is counted). */
+export const IMPORTED_SHOWN = 100;
 
 /** A file name as the review table shows it: the last path segment, control characters out, at most 255 characters. */
 export function cleanFileName(raw: string | null | undefined): string {
@@ -95,12 +108,14 @@ export async function stageUpload(scope: BooksScope, file: { fileName: string; b
 
   const open = await scope.db
     .selectFrom('historical_import_item')
-    .select((eb) => eb.fn.countAll<string>().as('n'))
+    .select((eb) => [eb.fn.countAll<string>().as('n'), eb.fn.coalesce(eb.fn.sum<string>('byte_size'), eb.lit(0)).as('bytes')])
     .where('tenant_id', '=', scope.tenantId)
     .where('status', 'not in', ['imported', 'discarded'])
     .executeTakeFirstOrThrow();
-  if (Number(open.n) >= MAX_OPEN_ITEMS) {
-    throw new BooksError('IMPORT_LIMIT', `IMPORT_LIMIT: at most ${MAX_OPEN_ITEMS} files can be open at once`, { limit: MAX_OPEN_ITEMS });
+  if (Number(open.n) >= MAX_OPEN_ITEMS || Number(open.bytes) + bytes.byteLength > MAX_OPEN_BYTES) {
+    throw new BooksError('IMPORT_LIMIT', `IMPORT_LIMIT: at most ${MAX_OPEN_ITEMS} files (${MAX_OPEN_BYTES} bytes) can be open at once`, {
+      limit: MAX_OPEN_ITEMS,
+    });
   }
   try {
     return { status: 'staged', item: await insertItem(scope.db, scope, { fileName: cleanFileName(file.fileName), bytes, sha256 }) };
@@ -118,7 +133,7 @@ export async function stageUpload(scope: BooksScope, file: { fileName: string; b
 async function revalidate(scope: BooksScope, book: ContactBook, item: ImportItem, now: Date): Promise<ImportItem> {
   const bytes = await itemContent(scope.db, scope, item.id);
   if (!bytes) throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: the uploaded file is no longer stored', { itemId: item.id });
-  const [others, settings] = await Promise.all([listItems(scope.db, scope), readSettings(scope.db, scope)]);
+  const [others, settings] = await Promise.all([listOpenItems(scope.db, scope), readSettings(scope.db, scope)]);
   const v = await validateItem(scope, book, item, { bytes, others, companySender: settings?.senderBlock ?? null, now });
   const stored = await updateItem(scope.db, scope, item.id, { status: v.status, problems: v.problems }, {
     expectedVersion: item.version,
@@ -141,11 +156,13 @@ export interface ExtractDeps {
 
 /**
  * Read one staged row with the model. Refusals before any call: a row that is
- * imported or discarded (NOT_CANCELLABLE semantics: CONCURRENT_EDIT), a row
- * already being read (EXTRACTION_RUNNING, until its claim times out), the
- * company's four slots in use (EXTRACT_BUSY), the daily ceiling reached
- * (IMPORT_LIMIT). A failed or aborted call is recorded in the ledger and the
- * row says why; it can be read again.
+ * imported or discarded (CONCURRENT_EDIT), a row already being read
+ * (EXTRACTION_RUNNING, until its claim times out), the company's four slots in
+ * use (EXTRACT_BUSY), the daily ceiling reached (IMPORT_LIMIT, counted and
+ * recorded atomically, so parallel calls cannot pass it together). The claim
+ * carries the extraction's id: a call whose claim was taken over writes
+ * nothing. A failed call is recorded in the ledger and the row says why; an
+ * aborted one puts the row back as it was (a reading and its correction kept).
  */
 export async function extractItem(scope: BooksScope, itemId: string, deps: ExtractDeps): Promise<ImportItem> {
   const clock = deps.now ?? (() => new Date());
@@ -153,40 +170,53 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
   if (item.status === 'imported' || item.status === 'discarded') {
     throw new BooksError('CONCURRENT_EDIT', `CONCURRENT_EDIT: the row is ${item.status}`, { itemId, status: item.status });
   }
+  // What the row goes back to when the call is aborted or never made.
+  const previous = item.status === 'extracting' ? (item.extracted ? 'needs_attention' : 'uploaded') : item.status;
   const slot = deps.slots.acquire(scope.tenantId);
   if (!slot.ok) throw new BooksError('EXTRACT_BUSY', 'EXTRACT_BUSY: four invoices are being read for this company; try again shortly', { retryAfterSec: slot.retryAfterSec });
   try {
     const started = clock();
-    const recent = await extractionsSince(scope.db, scope, new Date(started.getTime() - DAILY_WINDOW_MS));
-    if (recent >= deps.dailyLimit) {
-      throw new BooksError('IMPORT_LIMIT', `IMPORT_LIMIT: at most ${deps.dailyLimit} invoices are read per day for a company`, { limit: deps.dailyLimit });
-    }
+    const claimId = randomUUID();
     // The durable claim: one extraction per file at a time; a stale claim (crash) may be taken over.
-    const stale = new Date(started.getTime() - CLAIM_TIMEOUT_MS);
     const claimed =
       item.status === 'extracting'
-        ? await updateItem(scope.db, scope, itemId, { status: 'extracting', claimedAt: started }, {
+        ? await updateItem(scope.db, scope, itemId, { status: 'extracting', claimedAt: started, claimId }, {
             expectedVersion: item.version,
             whenStatus: ['extracting'],
-            claimedBefore: stale,
+            claimedBefore: new Date(started.getTime() - CLAIM_TIMEOUT_MS),
           })
-        : await updateItem(scope.db, scope, itemId, { status: 'extracting', claimedAt: started }, {
+        : await updateItem(scope.db, scope, itemId, { status: 'extracting', claimedAt: started, claimId }, {
             expectedVersion: item.version,
             whenStatus: ['uploaded', 'ready', 'needs_attention'],
           });
     if (!claimed) {
       throw new BooksError('EXTRACTION_RUNNING', 'EXTRACTION_RUNNING: this invoice is being read already', { itemId });
     }
-    const bytes = await itemContent(scope.db, scope, itemId);
-    if (!bytes) throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: the uploaded file is no longer stored', { itemId });
-    const ledgerId = await startExtraction(scope.db, scope, itemId, deps.modelId, started);
+    const release = () => updateItem(scope.db, scope, itemId, { status: previous, claimedAt: null, claimId: null }, { whenStatus: ['extracting'], claimId });
+    let bytes: Uint8Array | null;
+    try {
+      bytes = await itemContent(scope.db, scope, itemId);
+      if (!bytes) throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: the uploaded file is no longer stored', { itemId });
+      // The daily ceiling, counted and recorded under one company lock.
+      await scope.db.transaction().execute(async (trx) => {
+        await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`books-import-extract:${scope.tenantId}`}, 0))`.execute(trx);
+        const recent = await extractionsSince(trx, scope, new Date(started.getTime() - DAILY_WINDOW_MS));
+        if (recent >= deps.dailyLimit) {
+          throw new BooksError('IMPORT_LIMIT', `IMPORT_LIMIT: at most ${deps.dailyLimit} invoices are read per day for a company`, { limit: deps.dailyLimit });
+        }
+        await startExtraction(trx, scope, claimId, itemId, deps.modelId, started);
+      });
+    } catch (err) {
+      await release();
+      throw err;
+    }
 
     let outcome: ExtractionOutcome = 'error';
-    let usage = { inputTokens: 0, outputTokens: 0 };
+    // Accumulated by the call across its attempts, also when a later attempt throws.
+    const usage = { inputTokens: 0, outputTokens: 0 };
     let read: { printed: Record<string, unknown>; confidence: Record<string, 'high' | 'medium' | 'low'> } | null = null;
     try {
-      const result = await extractPrintedInvoice(deps.anthropic, bytes, { modelKey: deps.modelKey, signal: deps.signal });
-      usage = result.usage;
+      const result = await extractPrintedInvoice(deps.anthropic, bytes, { modelKey: deps.modelKey, signal: deps.signal, usage });
       if (result.ok) {
         outcome = 'ok';
         read = { printed: result.printed, confidence: result.confidence };
@@ -195,59 +225,132 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
       }
     } catch (err) {
       const name = (err as { name?: unknown })?.name;
-      outcome = name === 'AbortError' || name === 'APIUserAbortError' || deps.signal.aborted ? 'aborted' : 'error';
-      if (outcome === 'error') {
-        const status = (err as { status?: unknown })?.status;
-        console.error(`[books-import] item ${itemId}: extraction failed (${typeof status === 'number' ? status : 'no status'})`);
+      const status = (err as { status?: unknown })?.status;
+      outcome =
+        name === 'AbortError' || name === 'APIUserAbortError' || deps.signal.aborted
+          ? 'aborted'
+          : status === 400 || status === 413
+            ? 'unreadable'
+            : 'error';
+      if (outcome !== 'aborted') {
+        console.error(`[books-import] item ${itemId}: extraction failed (${typeof status === 'number' ? status : 'no status'}, ${outcome})`);
       }
     }
     const finished = clock();
-    await finishExtraction(scope.db, scope, ledgerId, outcome, usage, finished);
+    await finishExtraction(scope.db, scope, claimId, outcome, usage, finished);
 
     if (outcome === 'aborted') {
-      // The caller left: the row is free to be read again (resume), nothing lost.
-      const back = await updateItem(scope.db, scope, itemId, { status: 'uploaded', claimedAt: null }, { whenStatus: ['extracting'] });
-      return back ?? (await getItem(scope.db, scope, itemId));
+      // The caller left: the row is as it was before (a reading and its correction kept), free to be read again.
+      return (await release()) ?? (await getItem(scope.db, scope, itemId));
     }
-    if (!read) {
-      const failed = await updateItem(
+    const failRow = (code: ExtractionOutcome) =>
+      updateItem(
         scope.db,
         scope,
         itemId,
         {
           status: 'needs_attention',
           claimedAt: null,
-          extractionError: outcome,
-          problems: [{ code: `extraction_failed:${outcome}`, path: null, blocking: true, count: null }],
+          claimId: null,
+          extractionError: code,
+          problems: [{ code: `extraction_failed:${code}`, path: null, blocking: true, count: null }],
           model: deps.modelId,
         },
-        { whenStatus: ['extracting'] },
+        { whenStatus: ['extracting'], claimId },
       );
-      return failed ?? (await getItem(scope.db, scope, itemId));
-    }
+    if (!read) return (await failRow(outcome)) ?? (await getItem(scope.db, scope, itemId));
     // The new extraction replaces the old one; a correction of the old one is dropped (keyed).
-    const stored = await updateItem(
-      scope.db,
-      scope,
-      itemId,
-      {
-        status: 'needs_attention',
-        claimedAt: null,
-        extractionId: ledgerId,
-        extracted: read,
-        extractionError: null,
-        corrected: null,
-        problems: [],
-        model: deps.modelId,
-      },
-      { whenStatus: ['extracting'] },
-    );
-    // Discarded while being read: the transcription is not attached.
+    let stored: ImportItem | null;
+    try {
+      stored = await updateItem(
+        scope.db,
+        scope,
+        itemId,
+        {
+          status: 'needs_attention',
+          claimedAt: null,
+          claimId: null,
+          extractionId: claimId,
+          extracted: read,
+          extractionError: null,
+          corrected: null,
+          numberConfirmed: null,
+          problems: [],
+          model: deps.modelId,
+        },
+        { whenStatus: ['extracting'], claimId },
+      );
+    } catch (err) {
+      // The reading could not be stored: the row says so instead of staying claimed.
+      await failRow('error');
+      throw err;
+    }
+    // Discarded, or taken over by another call, while being read: this reading is not attached.
     if (!stored) return getItem(scope.db, scope, itemId);
     return revalidate(scope, deps.contactBook, stored, finished);
   } finally {
     slot.release();
   }
+}
+
+/** The printed invoice a manual reading starts from: the shared shape, nothing filled in. */
+export function emptyPrinted(): Record<string, unknown> {
+  return {
+    number: null,
+    issueDate: null,
+    serviceDate: null,
+    servicePeriod: null,
+    recipient: null,
+    recipientVatId: null,
+    sender: null,
+    lines: [],
+    total: null,
+    currency: 'EUR',
+    taxTreatment: null,
+    taxAmounts: [],
+    pricesIncludeVat: false,
+    taxNote: null,
+    paymentTerms: null,
+  };
+}
+
+/**
+ * Fill in a row by hand when the model has no reading of it (refused, too
+ * long, unreadable, or the daily ceiling reached): the row gets an empty
+ * manual reading (`manual:<id>`, no model call, nothing in the ledger) that the
+ * user corrects like any other; reading it with the model later replaces it.
+ */
+export async function enterByHand(
+  scope: BooksScope,
+  book: ContactBook,
+  itemId: string,
+  input: { expectedVersion: number },
+  now: Date = new Date(),
+): Promise<ImportItem> {
+  const item = await getItem(scope.db, scope, itemId);
+  if ((item.status !== 'uploaded' && item.status !== 'needs_attention') || item.extracted !== null) {
+    throw new BooksError('CONCURRENT_EDIT', `CONCURRENT_EDIT: the row is ${item.status}${item.extracted ? ' and has a reading' : ''}`, {
+      itemId,
+      status: item.status,
+    });
+  }
+  const stored = await updateItem(
+    scope.db,
+    scope,
+    itemId,
+    {
+      status: 'needs_attention',
+      extractionId: `manual:${randomUUID()}`,
+      extracted: { printed: emptyPrinted(), confidence: {} },
+      extractionError: null,
+      corrected: null,
+      numberConfirmed: null,
+      problems: [],
+    },
+    { expectedVersion: input.expectedVersion, whenStatus: ['uploaded', 'needs_attention'] },
+  );
+  if (!stored) throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the row changed meanwhile; reload it', { itemId });
+  return revalidate(scope, book, stored, now);
 }
 
 /**
@@ -263,6 +366,7 @@ export async function correctItem(
   input: { printed: Record<string, unknown>; extractionId: string; expectedVersion: number },
   now: Date = new Date(),
 ): Promise<ImportItem> {
+  const printed = withoutNul(input.printed);
   const item = await getItem(scope.db, scope, itemId);
   if (item.status !== 'ready' && item.status !== 'needs_attention') {
     throw new BooksError('CONCURRENT_EDIT', `CONCURRENT_EDIT: the row is ${item.status}`, { itemId, status: item.status });
@@ -274,8 +378,8 @@ export async function correctItem(
     throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the row changed meanwhile; reload it', { itemId });
   }
   const current = item.corrected ?? item.extracted?.printed ?? null;
-  if (JSON.stringify(current) === JSON.stringify(input.printed)) return item;
-  const stored = await updateItem(scope.db, scope, itemId, { corrected: { printed: input.printed, extractionId: input.extractionId } }, {
+  if (JSON.stringify(current) === JSON.stringify(printed)) return item;
+  const stored = await updateItem(scope.db, scope, itemId, { corrected: { printed, extractionId: input.extractionId } }, {
     expectedVersion: input.expectedVersion,
     whenStatus: ['ready', 'needs_attention'],
   });
@@ -353,7 +457,7 @@ export async function confirmItem(
   }
   const bytes = await itemContent(scope.db, scope, itemId);
   if (!bytes) throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: the uploaded file is no longer stored', { itemId });
-  const [others, settings] = await Promise.all([listItems(scope.db, scope), readSettings(scope.db, scope)]);
+  const [others, settings] = await Promise.all([listOpenItems(scope.db, scope), readSettings(scope.db, scope)]);
   const v = await validateItem(scope, book, item, { bytes, others, companySender: settings?.senderBlock ?? null, now });
   const checked = await updateItem(scope.db, scope, itemId, { status: v.status, problems: v.problems }, {
     expectedVersion: item.version,
@@ -404,23 +508,27 @@ export async function confirmItem(
   }
 }
 
-/** Set a row aside (any status but imported). Its bytes are cleared after 30 days; the file can be staged again. */
+/**
+ * Set a row aside (any status but imported). Its bytes are cleared at once
+ * (the customer's invoice is not kept for a row nobody imports); the same file
+ * can be staged again.
+ */
 export async function discardItem(scope: BooksScope, itemId: string, now: Date = new Date()): Promise<ImportItem> {
   const item = await getItem(scope.db, scope, itemId);
   if (item.status === 'imported') {
     throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: an imported row cannot be discarded', { itemId, status: item.status });
   }
   if (item.status === 'discarded') return item;
-  const stored = await updateItem(scope.db, scope, itemId, { status: 'discarded', discardedAt: now, claimedAt: null }, {
+  const stored = await updateItem(scope.db, scope, itemId, { status: 'discarded', discardedAt: now, claimedAt: null, claimId: null, clearContent: true }, {
     whenStatus: ['uploaded', 'extracting', 'ready', 'needs_attention'],
   });
   return stored ?? (await getItem(scope.db, scope, itemId));
 }
 
-/** The review table: the company's rows (discarded ones left out), after pruning discarded bytes older than 30 days. */
-export async function listImportItems(scope: BooksScope, now: Date = new Date()): Promise<ImportItem[]> {
-  await pruneDiscarded(scope.db, scope, now);
-  return listItems(scope.db, scope);
+/** The review table: every open row (oldest first), then the newest imported ones, and how many are imported in all. */
+export async function listImportItems(scope: BooksScope): Promise<{ items: ImportItem[]; importedTotal: number }> {
+  const [open, imported] = await Promise.all([listOpenItems(scope.db, scope), listImportedItems(scope.db, scope, IMPORTED_SHOWN)]);
+  return { items: [...open, ...imported.items], importedTotal: imported.total };
 }
 
 /** The PDF of a row: the uploaded bytes, or, once imported, the stored original of its document. */

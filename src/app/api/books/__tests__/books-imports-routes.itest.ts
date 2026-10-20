@@ -18,12 +18,13 @@ const state = vi.hoisted(() => ({
   contactBook: null as unknown,
   anthropic: null as unknown,
   missingKey: false,
+  allowed: true,
 }));
 
 vi.mock('@/lib/auth-brain', () => ({
   authBrainClient: {
     verifySession: async () => state.session,
-    can: async () => true,
+    can: async () => state.allowed,
   },
 }));
 vi.mock('@/server/commerce/db', () => ({
@@ -55,6 +56,7 @@ import * as discardRoute from '../imports/[id]/discard/route';
 import * as recheckRoute from '../imports/[id]/recheck/route';
 import * as itemPdfRoute from '../imports/[id]/pdf/route';
 import * as confirmNumberRoute from '../imports/[id]/confirm-number/route';
+import * as byHandRoute from '../imports/[id]/by-hand/route';
 import * as documentPdfRoute from '../documents/[id]/pdf/route';
 
 let env: BooksEnv;
@@ -89,6 +91,7 @@ beforeEach(async () => {
   state.contactBook = new FakeContactBook(dir);
   state.session = sessionFor(tenantId);
   state.missingKey = false;
+  state.allowed = true;
   fake = fakeAnthropic([]);
   state.anthropic = fake.client;
   await initCompany(scopeFor(env.appDb, env.tgId, tenantId, dir), { invoiceNext: 62 });
@@ -138,6 +141,40 @@ describe('the guard chain on the import routes', () => {
     expect((await call(importsRoute.GET, 'GET', '/api/books/imports')).status).toBe(403);
     const rows = await env.ownerDb.selectFrom('historical_import_item').select('id').where('tenant_id', '=', tenantId).execute();
     expect(rows).toEqual([]);
+  });
+
+  it('another host answers 404, and a user without the Books permission 403, on every import route', async () => {
+    const id = (await upload(pdfBytes(`perm-${tenantId}`))).json.item.id as string;
+    const routes: Array<[(req: Request, route: { params: Promise<any> }) => Promise<Response>, string, string, unknown]> = [ // eslint-disable-line @typescript-eslint/no-explicit-any
+      [importsRoute.GET, 'GET', '/api/books/imports', undefined],
+      [itemRoute.GET, 'GET', `/api/books/imports/${id}`, undefined],
+      [itemRoute.PATCH, 'PATCH', `/api/books/imports/${id}`, { printed: {}, extractionId: 'x', expectedVersion: 0 }],
+      [extractRoute.POST, 'POST', `/api/books/imports/${id}/extract`, undefined],
+      [confirmRoute.POST, 'POST', `/api/books/imports/${id}/confirm`, { expectedVersion: 0 }],
+      [confirmNumberRoute.POST, 'POST', `/api/books/imports/${id}/confirm-number`, { documentNumber: '1', expectedVersion: 0 }],
+      [byHandRoute.POST, 'POST', `/api/books/imports/${id}/by-hand`, { expectedVersion: 0 }],
+      [recheckRoute.POST, 'POST', `/api/books/imports/${id}/recheck`, undefined],
+      [discardRoute.POST, 'POST', `/api/books/imports/${id}/discard`, undefined],
+      [itemPdfRoute.GET, 'GET', `/api/books/imports/${id}/pdf`, undefined],
+    ];
+    // The editor runs on EDITOR_HOST; a published site's host never reaches the Books.
+    vi.stubEnv('EDITOR_HOST', 'editor.example');
+    for (const [handler, method, path, body] of routes) {
+      const req = new Request(`http://elsewhere.example${path}`, {
+        method,
+        headers: { host: 'elsewhere.example', cookie: 'lumitra_session=s', 'content-type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      expect((await handler(req, { params: Promise.resolve({ id }) })).status).toBe(404);
+    }
+    vi.unstubAllEnvs();
+    state.allowed = false;
+    for (const [handler, method, path, body] of routes) {
+      const res = await call(handler, method, path, { id }, body);
+      expect([res.status, res.json.error?.code]).toEqual([403, 'forbidden']);
+    }
+    expect(fake.calls).toHaveLength(0);
+    expect((await env.ownerDb.selectFrom('historical_import_item').select('status').where('id', '=', id).executeTakeFirstOrThrow()).status).toBe('uploaded');
   });
 
   it("another company's row answers 404", async () => {
@@ -239,6 +276,20 @@ describe('read, correct, import', () => {
     const current = await call(itemRoute.GET, 'GET', `/api/books/imports/${id}`, { id });
     const done = await call(confirmRoute.POST, 'POST', `/api/books/imports/${id}/confirm`, { id }, { expectedVersion: current.json.version, confirmCounterRaiseTo: 201 });
     expect(done.json).toMatchObject({ item: { status: 'imported' }, counterRaisedTo: 201 });
+  });
+
+  it('a row the AI could not read is filled in by hand through its route', async () => {
+    const id = (await upload(pdfBytes(`byhand-${tenantId}`))).json.item.id as string;
+    fake.turns.push({ content: [], stop_reason: 'refusal' });
+    const refused = await call(extractRoute.POST, 'POST', `/api/books/imports/${id}/extract`, { id });
+    expect(refused.json.problems).toEqual([{ code: 'extraction_failed:refused', path: null, blocking: true, count: null }]);
+    expect((await call(byHandRoute.POST, 'POST', `/api/books/imports/${id}/by-hand`, { id }, {})).status).toBe(400);
+    const blank = await call(byHandRoute.POST, 'POST', `/api/books/imports/${id}/by-hand`, { id }, { expectedVersion: refused.json.version });
+    expect(blank.status).toBe(200);
+    expect(blank.json.extractionId).toMatch(/^manual:/);
+    expect(blank.json.printed).toMatchObject({ number: null, lines: [], currency: 'EUR' });
+    const again = await call(byHandRoute.POST, 'POST', `/api/books/imports/${id}/by-hand`, { id }, { expectedVersion: blank.json.version });
+    expect([again.status, again.json.error.code]).toEqual([409, 'concurrent_edit']);
   });
 
   it('without an AI key the reading answers 401 like the other AI routes, and the row stays unread', async () => {

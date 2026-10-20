@@ -42,6 +42,12 @@ interface LineForm {
   taxAmount: string;
 }
 
+interface TaxGroupForm {
+  rate: string;
+  net: string;
+  tax: string;
+}
+
 interface Form {
   number: string;
   issueDate: string;
@@ -63,6 +69,8 @@ interface Form {
   senderTaxNumber: string;
   senderVatId: string;
   lines: LineForm[];
+  /** The printed VAT summary per rate (regular taxation): line VAT not printed is derived from it. */
+  taxAmounts: TaxGroupForm[];
 }
 
 function toForm(p: PrintedInvoice | null): Form {
@@ -96,6 +104,7 @@ function toForm(p: PrintedInvoice | null): Form {
       taxRate: show(l.taxRate),
       taxAmount: show(l.taxAmount),
     })),
+    taxAmounts: (p?.taxAmounts ?? []).map((g) => ({ rate: show(g.rate), net: show(g.net), tax: show(g.tax) })),
   };
 }
 
@@ -130,8 +139,10 @@ export function fromForm(form: Form, base: PrintedInvoice | null): { ok: true; p
           : {
               name: form.recipientName.trim(),
               addressLines: lines(form.recipientLines),
-              country: opt(form.recipientCountry),
-              countryInferred: null,
+              // A country the AI inferred (none printed) stays inferred unless the user changed it.
+              ...(inferredKept(form, base)
+                ? { country: null, countryInferred: base!.recipient!.countryInferred }
+                : { country: opt(form.recipientCountry), countryInferred: null }),
               customerNumber: base?.recipient?.customerNumber ?? null,
             },
       recipientVatId: opt(form.recipientVatId),
@@ -151,7 +162,13 @@ export function fromForm(form: Form, base: PrintedInvoice | null): { ok: true; p
       total: num(form.total, 'Total'),
       currency: opt(form.currency)?.toUpperCase() ?? null,
       taxTreatment: form.taxTreatment,
-      taxAmounts: base?.taxAmounts ?? [],
+      taxAmounts: form.taxAmounts
+        .filter((g) => g.rate.trim() !== '' || g.net.trim() !== '' || g.tax.trim() !== '')
+        .map((g, i) => ({
+          rate: num(g.rate, `VAT summary ${i + 1}, rate`) ?? 0,
+          net: num(g.net, `VAT summary ${i + 1}, net`),
+          tax: num(g.tax, `VAT summary ${i + 1}, VAT`) ?? 0,
+        })),
       pricesIncludeVat: form.pricesIncludeVat,
       taxNote: opt(form.taxNote),
       paymentTerms: opt(form.paymentTerms),
@@ -161,6 +178,14 @@ export function fromForm(form: Form, base: PrintedInvoice | null): { ok: true; p
     return { ok: false, field: (err as Error).message };
   }
 }
+
+/** Whether the form keeps the recipient country the AI inferred (not printed, not changed). */
+function inferredKept(form: Form, base: PrintedInvoice | null): boolean {
+  const r = base?.recipient;
+  return r != null && r.country == null && r.countryInferred != null && form.recipientCountry.trim() === r.countryInferred;
+}
+
+const EMPTY_GROUP: TaxGroupForm = { rate: '', net: '', tax: '' };
 
 const EMPTY_LINE: LineForm = { description: '', quantity: '', unit: '', unitPrice: '', discount: '', lineTotal: '', taxRate: '', taxAmount: '' };
 
@@ -185,8 +210,19 @@ export default function ImportRowEditor({
   const set = (change: Partial<Form>) => setForm((f) => ({ ...f, ...change }));
   const setLine = (i: number, change: Partial<LineForm>) =>
     setForm((f) => ({ ...f, lines: f.lines.map((l, j) => (j === i ? { ...l, ...change } : l)) }));
-  const mark = (path: string) => (unsure.has(path) ? 'border-amber-500 ring-1 ring-amber-500' : '');
-  const input = (path: string, extra = '') => `h-9 rounded-md border bg-transparent px-2 text-sm ${mark(path)} ${extra}`;
+  // An unsure field: an amber DASHED frame (not colour alone) and the explanation read out with it.
+  const hintId = `${item.id}-unsure-hint`;
+  const mark = (path: string) => (unsure.has(path) ? 'border-dashed border-2 border-amber-500 ring-1 ring-amber-500' : '');
+  const fieldProps = (path: string, extra = '') => ({
+    className: `h-9 rounded-md border bg-transparent px-2 text-sm ${mark(path)} ${extra}`,
+    ...(unsure.has(path) ? { 'aria-describedby': hintId } : {}),
+  });
+  const areaProps = (path: string) => ({
+    className: `rounded-md border bg-transparent px-2 py-1 text-sm ${mark(path)}`,
+    ...(unsure.has(path) ? { 'aria-describedby': hintId } : {}),
+  });
+  const setGroup = (i: number, change: Partial<TaxGroupForm>) =>
+    setForm((f) => ({ ...f, taxAmounts: f.taxAmounts.map((g, j) => (j === i ? { ...g, ...change } : g)) }));
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -219,26 +255,30 @@ export default function ImportRowEditor({
             ))}
           </ul>
         ) : null}
-        {unsure.size > 0 ? <p className="text-xs text-muted-foreground">Fields with an amber frame: the AI was not sure. Compare them with the PDF.</p> : null}
+        {unsure.size > 0 ? (
+          <p id={hintId} className="text-xs text-muted-foreground">
+            Fields with a dashed amber frame: the AI was not sure. Compare them with the PDF.
+          </p>
+        ) : null}
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Invoice number" htmlFor={`${id}-number`}>
-            <input id={`${id}-number`} value={form.number} onChange={(e) => set({ number: e.target.value })} className={input('number')} />
+            <input id={`${id}-number`} value={form.number} onChange={(e) => set({ number: e.target.value })} {...fieldProps('number')} />
           </Field>
           <Field label="Invoice date" htmlFor={`${id}-date`} hint="YYYY-MM-DD">
-            <input id={`${id}-date`} value={form.issueDate} onChange={(e) => set({ issueDate: e.target.value })} className={input('issueDate')} />
+            <input id={`${id}-date`} value={form.issueDate} onChange={(e) => set({ issueDate: e.target.value })} {...fieldProps('issueDate')} />
           </Field>
           <Field label="Service date" htmlFor={`${id}-sdate`}>
-            <input id={`${id}-sdate`} value={form.serviceDate} onChange={(e) => set({ serviceDate: e.target.value })} className={input('serviceDate')} />
+            <input id={`${id}-sdate`} value={form.serviceDate} onChange={(e) => set({ serviceDate: e.target.value })} {...fieldProps('serviceDate')} />
           </Field>
           <Field label="Service period (as printed)" htmlFor={`${id}-period`}>
-            <input id={`${id}-period`} value={form.servicePeriod} onChange={(e) => set({ servicePeriod: e.target.value })} className={input('servicePeriod')} />
+            <input id={`${id}-period`} value={form.servicePeriod} onChange={(e) => set({ servicePeriod: e.target.value })} {...fieldProps('servicePeriod')} />
           </Field>
           <Field label="Currency" htmlFor={`${id}-currency`} hint="Kept as printed, never converted">
-            <input id={`${id}-currency`} value={form.currency} onChange={(e) => set({ currency: e.target.value })} className={input('currency')} />
+            <input id={`${id}-currency`} value={form.currency} onChange={(e) => set({ currency: e.target.value })} {...fieldProps('currency')} />
           </Field>
           <Field label="Tax" htmlFor={`${id}-tax`}>
-            <select id={`${id}-tax`} value={form.taxTreatment} onChange={(e) => set({ taxTreatment: e.target.value })} className={input('taxTreatment')}>
+            <select id={`${id}-tax`} value={form.taxTreatment} onChange={(e) => set({ taxTreatment: e.target.value })} {...fieldProps('taxTreatment')}>
               <option value="small_business">No VAT (§ 19 UStG)</option>
               <option value="regular">VAT charged</option>
               <option value="reverse_charge">Reverse charge (§ 13b UStG)</option>
@@ -246,14 +286,14 @@ export default function ImportRowEditor({
             </select>
           </Field>
           <Field label="Total" htmlFor={`${id}-total`}>
-            <input id={`${id}-total`} value={form.total} onChange={(e) => set({ total: e.target.value })} className={input('total')} inputMode="decimal" />
+            <input id={`${id}-total`} value={form.total} onChange={(e) => set({ total: e.target.value })} {...fieldProps('total')} inputMode="decimal" />
           </Field>
           <Field label="Payment terms" htmlFor={`${id}-terms`}>
-            <input id={`${id}-terms`} value={form.paymentTerms} onChange={(e) => set({ paymentTerms: e.target.value })} className={input('paymentTerms')} />
+            <input id={`${id}-terms`} value={form.paymentTerms} onChange={(e) => set({ paymentTerms: e.target.value })} {...fieldProps('paymentTerms')} />
           </Field>
         </div>
         <Field label="Tax note (as printed)" htmlFor={`${id}-note`}>
-          <input id={`${id}-note`} value={form.taxNote} onChange={(e) => set({ taxNote: e.target.value })} className={input('taxNote')} />
+          <input id={`${id}-note`} value={form.taxNote} onChange={(e) => set({ taxNote: e.target.value })} {...fieldProps('taxNote')} />
         </Field>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={form.pricesIncludeVat} onChange={(e) => set({ pricesIncludeVat: e.target.checked })} />
@@ -263,36 +303,36 @@ export default function ImportRowEditor({
         <fieldset className="grid grid-cols-2 gap-3 rounded-md border p-3">
           <legend className="px-1 text-xs font-medium text-muted-foreground">Recipient</legend>
           <Field label="Name" htmlFor={`${id}-rname`}>
-            <input id={`${id}-rname`} value={form.recipientName} onChange={(e) => set({ recipientName: e.target.value })} className={input('recipient.name')} />
+            <input id={`${id}-rname`} value={form.recipientName} onChange={(e) => set({ recipientName: e.target.value })} {...fieldProps('recipient.name')} />
           </Field>
           <Field label="Country" htmlFor={`${id}-rcountry`}>
-            <input id={`${id}-rcountry`} value={form.recipientCountry} onChange={(e) => set({ recipientCountry: e.target.value })} className={input('recipient.country')} />
+            <input id={`${id}-rcountry`} value={form.recipientCountry} onChange={(e) => set({ recipientCountry: e.target.value })} {...fieldProps('recipient.country')} />
           </Field>
           <Field label="Address (one line each)" htmlFor={`${id}-rlines`}>
-            <textarea id={`${id}-rlines`} value={form.recipientLines} onChange={(e) => set({ recipientLines: e.target.value })} rows={3} className={`rounded-md border bg-transparent px-2 py-1 text-sm ${mark('recipient.addressLines')}`} />
+            <textarea id={`${id}-rlines`} value={form.recipientLines} onChange={(e) => set({ recipientLines: e.target.value })} rows={3} {...areaProps('recipient.addressLines')} />
           </Field>
           <Field label="VAT id (as printed)" htmlFor={`${id}-rvat`}>
-            <input id={`${id}-rvat`} value={form.recipientVatId} onChange={(e) => set({ recipientVatId: e.target.value })} className={input('recipientVatId')} />
+            <input id={`${id}-rvat`} value={form.recipientVatId} onChange={(e) => set({ recipientVatId: e.target.value })} {...fieldProps('recipientVatId')} />
           </Field>
         </fieldset>
 
         <fieldset className="grid grid-cols-2 gap-3 rounded-md border p-3">
           <legend className="px-1 text-xs font-medium text-muted-foreground">Sender as printed (empty fields come from the company settings)</legend>
           <Field label="Name" htmlFor={`${id}-sname`}>
-            <input id={`${id}-sname`} value={form.senderName} onChange={(e) => set({ senderName: e.target.value })} className={input('sender.name')} />
+            <input id={`${id}-sname`} value={form.senderName} onChange={(e) => set({ senderName: e.target.value })} {...fieldProps('sender.name')} />
           </Field>
           <Field label="Country" htmlFor={`${id}-scountry`}>
-            <input id={`${id}-scountry`} value={form.senderCountry} onChange={(e) => set({ senderCountry: e.target.value })} className={input('sender.country')} />
+            <input id={`${id}-scountry`} value={form.senderCountry} onChange={(e) => set({ senderCountry: e.target.value })} {...fieldProps('sender.country')} />
           </Field>
           <Field label="Address (one line each)" htmlFor={`${id}-slines`}>
-            <textarea id={`${id}-slines`} value={form.senderLines} onChange={(e) => set({ senderLines: e.target.value })} rows={3} className={`rounded-md border bg-transparent px-2 py-1 text-sm ${mark('sender.addressLines')}`} />
+            <textarea id={`${id}-slines`} value={form.senderLines} onChange={(e) => set({ senderLines: e.target.value })} rows={3} {...areaProps('sender.addressLines')} />
           </Field>
           <div className="flex flex-col gap-3">
             <Field label="Tax number" htmlFor={`${id}-stax`}>
-              <input id={`${id}-stax`} value={form.senderTaxNumber} onChange={(e) => set({ senderTaxNumber: e.target.value })} className={input('sender.taxNumber')} />
+              <input id={`${id}-stax`} value={form.senderTaxNumber} onChange={(e) => set({ senderTaxNumber: e.target.value })} {...fieldProps('sender.taxNumber')} />
             </Field>
             <Field label="VAT id" htmlFor={`${id}-svat`}>
-              <input id={`${id}-svat`} value={form.senderVatId} onChange={(e) => set({ senderVatId: e.target.value })} className={input('sender.vatId')} />
+              <input id={`${id}-svat`} value={form.senderVatId} onChange={(e) => set({ senderVatId: e.target.value })} {...fieldProps('sender.vatId')} />
             </Field>
           </div>
         </fieldset>
@@ -302,14 +342,14 @@ export default function ImportRowEditor({
           <div className="flex flex-col gap-3">
             {form.lines.map((l, i) => (
               <div key={i} className="grid grid-cols-4 gap-2" aria-label={`Line ${i + 1}`} role="group">
-                <input aria-label={`Line ${i + 1} description`} value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} className={input(`lines.${i}.description`, 'col-span-4')} />
-                <input aria-label={`Line ${i + 1} quantity`} placeholder="Qty" value={l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value })} className={input(`lines.${i}.quantity`)} />
-                <input aria-label={`Line ${i + 1} unit`} placeholder="Unit" value={l.unit} onChange={(e) => setLine(i, { unit: e.target.value })} className={input(`lines.${i}.unit`)} />
-                <input aria-label={`Line ${i + 1} unit price`} placeholder="Unit price" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: e.target.value })} className={input(`lines.${i}.unitPrice`)} />
-                <input aria-label={`Line ${i + 1} total`} placeholder="Total" value={l.lineTotal} onChange={(e) => setLine(i, { lineTotal: e.target.value })} className={input(`lines.${i}.lineTotal`)} />
-                <input aria-label={`Line ${i + 1} discount`} placeholder="Discount (10 %)" value={l.discount} onChange={(e) => setLine(i, { discount: e.target.value })} className={input(`lines.${i}.discount`)} />
-                <input aria-label={`Line ${i + 1} VAT rate`} placeholder="VAT %" value={l.taxRate} onChange={(e) => setLine(i, { taxRate: e.target.value })} className={input(`lines.${i}.taxRate`)} />
-                <input aria-label={`Line ${i + 1} VAT`} placeholder="VAT" value={l.taxAmount} onChange={(e) => setLine(i, { taxAmount: e.target.value })} className={input(`lines.${i}.taxAmount`)} />
+                <input aria-label={`Line ${i + 1} description`} value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} {...fieldProps(`lines.${i}.description`, 'col-span-4')} />
+                <input aria-label={`Line ${i + 1} quantity`} placeholder="Qty" value={l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value })} {...fieldProps(`lines.${i}.quantity`)} />
+                <input aria-label={`Line ${i + 1} unit`} placeholder="Unit" value={l.unit} onChange={(e) => setLine(i, { unit: e.target.value })} {...fieldProps(`lines.${i}.unit`)} />
+                <input aria-label={`Line ${i + 1} unit price`} placeholder="Unit price" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: e.target.value })} {...fieldProps(`lines.${i}.unitPrice`)} />
+                <input aria-label={`Line ${i + 1} total`} placeholder="Total" value={l.lineTotal} onChange={(e) => setLine(i, { lineTotal: e.target.value })} {...fieldProps(`lines.${i}.lineTotal`)} />
+                <input aria-label={`Line ${i + 1} discount`} placeholder="Discount (10 %)" value={l.discount} onChange={(e) => setLine(i, { discount: e.target.value })} {...fieldProps(`lines.${i}.discount`)} />
+                <input aria-label={`Line ${i + 1} VAT rate`} placeholder="VAT %" value={l.taxRate} onChange={(e) => setLine(i, { taxRate: e.target.value })} {...fieldProps(`lines.${i}.taxRate`)} />
+                <input aria-label={`Line ${i + 1} VAT`} placeholder="VAT" value={l.taxAmount} onChange={(e) => setLine(i, { taxAmount: e.target.value })} {...fieldProps(`lines.${i}.taxAmount`)} />
                 <button type="button" className="text-left text-xs underline underline-offset-4" onClick={() => setForm((f) => ({ ...f, lines: f.lines.filter((_, j) => j !== i) }))}>
                   Remove line
                 </button>
@@ -320,6 +360,29 @@ export default function ImportRowEditor({
             </button>
           </div>
         </fieldset>
+
+        {form.taxTreatment === 'regular' || form.taxAmounts.length > 0 ? (
+          <fieldset className="rounded-md border p-3">
+            <legend className="px-1 text-xs font-medium text-muted-foreground">
+              VAT summary as printed, per rate (a line without its own VAT gets it from here)
+            </legend>
+            <div className="flex flex-col gap-2">
+              {form.taxAmounts.map((g, i) => (
+                <div key={i} className="grid grid-cols-4 gap-2" role="group" aria-label={`VAT summary ${i + 1}`}>
+                  <input aria-label={`VAT summary ${i + 1} rate`} placeholder="Rate %" value={g.rate} onChange={(e) => setGroup(i, { rate: e.target.value })} {...fieldProps(`taxAmounts.${i}.rate`)} />
+                  <input aria-label={`VAT summary ${i + 1} net`} placeholder="Net" value={g.net} onChange={(e) => setGroup(i, { net: e.target.value })} {...fieldProps(`taxAmounts.${i}.net`)} />
+                  <input aria-label={`VAT summary ${i + 1} VAT`} placeholder="VAT" value={g.tax} onChange={(e) => setGroup(i, { tax: e.target.value })} {...fieldProps(`taxAmounts.${i}.tax`)} />
+                  <button type="button" className="text-left text-xs underline underline-offset-4" onClick={() => setForm((f) => ({ ...f, taxAmounts: f.taxAmounts.filter((_, j) => j !== i) }))}>
+                    Remove rate
+                  </button>
+                </div>
+              ))}
+              <button type="button" className="self-start text-sm underline underline-offset-4" onClick={() => setForm((f) => ({ ...f, taxAmounts: [...f.taxAmounts, EMPTY_GROUP] }))}>
+                Add rate
+              </button>
+            </div>
+          </fieldset>
+        ) : null}
 
         {formError ? (
           <p role="alert" className="text-sm text-destructive">

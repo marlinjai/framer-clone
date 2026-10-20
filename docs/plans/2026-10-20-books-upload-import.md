@@ -142,9 +142,12 @@ Books home.
    decided ("reported, not blocking").
 4. **Staging and the bytes (decision 1).** The core gained an in-transaction hook: the upload marks
    its staging row `imported` (document id set, bytes cleared) inside the import's own
-   transaction, so a failure leaves neither a document without its row nor the reverse. The
-   repository has no scheduler, so the bytes of rows discarded more than 30 days ago are
-   cleared whenever the company's import list is read, which is the only place they are seen.
+   transaction, so a failure leaves neither a document without its row nor the reverse. A
+   discarded row's bytes are cleared AT ONCE rather than after 30 days: the repository has no
+   scheduler, and clearing on a later visit would keep the invoices of a company that never
+   comes back; nothing reads a discarded row's bytes (the same file can be staged again). Open
+   rows per company are bounded at 200 files and 512 MB together, and the review table lists
+   every open row (no cap) and the newest 100 imported ones with the number imported in all.
 5. **Upload transport.** One PDF per request, sent as the request body (`content-type:
    application/pdf`, its name in `x-file-name`): fifty files of 10 MB are not one request. The
    edge middleware keeps a body only up to `middlewareClientMaxBodySize` (default 10 MB, so a
@@ -159,27 +162,42 @@ Books home.
    (tested with an injected field and another tool). Effort `low`: transcription of a short
    document that a person and the code check afterwards. Output ceiling 16k tokens, one repair
    turn for output of the wrong shape, a refusal and the token ceiling are named failures of the
-   row ("read again" offered), and the call is aborted when the client disconnects, the row then
-   free to be read again. The model also reads the sender's printed tax number and VAT id, which
-   the operator's JSON never had.
+   row, a PDF the API itself refuses (400 or 413: damaged, encrypted, too long) is `unreadable`
+   and not offered again, and every row the model has no reading of can be filled in by hand
+   (an empty manual reading, keyed like any other, no model call). Each request has a 120 s
+   timeout and one SDK retry; the call is aborted when the client disconnects and the row then
+   goes back to what it was (a reading and its correction kept). The fields the model reports
+   as unsure are kept only when they name a field of the invoice, and NUL characters (which
+   Postgres refuses in JSONB) are dropped from everything the model or the user sends. The model
+   also reads the sender's printed tax number and VAT id, which the operator's JSON never had.
 7. **Spend bounds (decision 2).** Four extractions in flight per company (process local, like the
    AI routes' per-user slot; the plan's unit is the company, so the per-company slot replaces the
    per-user one: one user uploading fifty files gets four in parallel, and a colleague of the same
-   company shares them). One extraction per file at a time, durable: a claim on the staging row,
-   taken over after five minutes so a crashed call is retried, not lost. The daily ceiling
+   company shares them). One extraction per file at a time, durable: a claim on the staging row
+   carrying the extraction's id (`claim_id`), taken over after ten minutes (above the longest a
+   call can run) so a crashed call is retried, not lost, and every write of the call that was
+   taken over is conditional on its claim, so it writes nothing. The daily ceiling
    (`BOOKS_IMPORT_DAILY_LIMIT`, default 500) counts the ledger's calls of the last 24 hours, a
    rolling window rather than a calendar day: no time-zone edge, a restart does not reset it, and
-   a retry counts like a first attempt.
+   a retry counts like a first attempt; the count and the new ledger row are written under one
+   company lock, so parallel calls cannot pass it together, and the tokens of every attempt are
+   recorded, also when a later one fails. An invalid setting stops reading, not the page.
 8. **Validation (decision 3) is the import core's own preview.** A staged row is mapped with the
    shared mapping and previewed by the core with the `raise` policy, so the table refuses exactly
    what the import would (the record's rules, a number already in the books, the same original
    under another number, an ambiguous recipient, the counter); only the staging table adds the
-   same number on two staged rows. The outcome is a list of named problems (codes, field paths,
-   counts; never values), blocking or not; the row is `ready` without a blocking one. Fields the
-   model was unsure about are marked until the user changes them.
+   same number on two staged rows ("0062" and "62" count as the same). The outcome is a list of
+   named problems (codes, field paths, counts; never values), blocking or not; the row is `ready`
+   without a blocking one. Fields the model was unsure about are marked (a dashed amber frame,
+   described to screen readers) until the user changes them. What is printed but not readable is
+   warned, never dropped silently: a service date or period (a month such as "Februar 2023" is
+   read as its first and last day), payment terms, a recipient VAT id. An invoice already in the
+   Books with these exact bytes (imported meanwhile by another path) is not a problem to fix:
+   confirming it marks the row imported and creates nothing.
 9. **Sender (decision 6).** The printed sender, with the company's current sender block filling the
    name, address, country, tax number and VAT id where the PDF shows none; the number of filled
-   fields is a warning (`sender_from_company`) and recorded in the document's event.
+   fields is a warning (`sender_from_company`) and recorded in the document's event, and the
+   event records the tax number and VAT id as printed only when the PDF showed them.
 10. **Duplicates (decision 5).** One live staging row per file (a partial unique index on the
     SHA-256, discarded rows excepted, so a discarded file can be staged again); a file imported
     before, by an upload or by `pnpm books:import`, is found by the stored original's SHA-256. In
@@ -192,13 +210,26 @@ Books home.
     drops the old correction, a row loaded from storage shows a correction only when its key
     matches the current reading, and a correction identical to what is stored changes nothing.
 13. **Privacy (decision 9).** Logs carry item ids, sizes, statuses, problem counts and HTTP status
-    codes, never extracted values, file names or model output.
+    codes, never extracted values, file names or model output. An unexpected error on any Books
+    route is logged by its kind, SQLSTATE, constraint, table and column and its stack frames,
+    never its message (a database error's message can quote the row). The PDF beside the form is
+    served same-origin only, not embeddable elsewhere, never sniffed or cached; it is not
+    sandboxed, because browsers refuse to display a PDF in a sandboxed document.
 14. **Time stamps compared in SQL.** A staging claim's age is compared in the database against a
     parameter of the same kind it was written with: a `TIMESTAMP` without time zone read back
     into JavaScript can carry the machine's offset, so comparing there took a fresh claim for a
     stale one (found by the resume test).
+15. **Reverse charge is the EU case only.** The Books store reverse charge as section 13b UStG for a
+    business in another EU country (the tax profile agrees). A reverse-charge invoice to a German
+    recipient (domestic section 13b) or to a customer outside the EU is the named problem
+    `reverse_charge_outside_eu`; the way forward for a customer outside the EU is "VAT charged"
+    at 0 % (not taxable in Germany), which the review text says.
+16. **The operator CLI after the shared core changed.** `pnpm books:import` now also imports
+    regular-VAT and reverse-charge entries, and a section 19 invoice without the printed notice
+    is a warning there too (it was refused). Its integer numbers keep their counter value under
+    any number format, so the counter refusal and the date-order warning hold as before.
 
-15. **Raising the counter is confirmed, value by value (lead's decision of 2026-10-20).** A raise
+17. **Raising the counter is confirmed, value by value (lead's decision of 2026-10-20).** A raise
     cannot be undone (BK003), and a misread "9999" for "99" would push the company's next
     invoice number up for good. Whenever importing a row would raise the counter, the review
     table says so plainly before the import ("Your next invoice number will become X. It cannot
@@ -209,12 +240,13 @@ Books home.
     the number was changed is refused), and the core refuses any other raise inside its
     transaction (`confirmedCounterRaiseTo`), so a counter moved meanwhile is never followed
     unconfirmed.
-16. **Numbers that jump far ahead block until confirmed.** A number that would raise the counter
+18. **Numbers that jump far ahead block until confirmed.** A number that would raise the counter
     more than 50 above its current next value, or lies more than 50 above the highest number of
-    the other staged rows (the batch's sequence, imported rows included), is the blocking problem
+    the other open staged rows (the batch's sequence), is the blocking problem
     `number_jump`. The user confirms that the number is printed that way ("The number is right");
     the confirmation is stored for exactly that number (`number_confirmed` on the staging row, in
-    010) and the problem returns when the number changes.
+    010) and the problem returns when the number changes. "Import all ready" goes on after a failed
+    row with the rows as they are then (never with versions that moved) and names every failure.
 
 **Operator steps** (live actions, not done here): deploy, which rolls `010_books_upload_import`
 across every tenant schema at boot; optionally set `AI_INVOICE_EXTRACT_MODEL` and

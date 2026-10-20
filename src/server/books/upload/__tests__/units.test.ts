@@ -11,8 +11,11 @@ import { fromForm, readDecimal } from '@/app/projects/books/ImportRowEditor';
 import type { PrintedInvoice } from '@/lib/books/api';
 import { pathLabel, problemText } from '@/lib/books/importProblems';
 
-import { createCompanySlots, dailyExtractLimit } from '../limits';
+import { describeError } from '@/server/books/http/route';
+
+import { createCompanySlots, dailyExtractLimit, dailyExtractLimitShown } from '../limits';
 import { cleanFileName } from '../service';
+import { withoutNul } from '../staging';
 import { valueAt, withCompanySender } from '../validate';
 
 const company = {
@@ -60,6 +63,32 @@ describe('dailyExtractLimit', () => {
     expect(() => dailyExtractLimit({ BOOKS_IMPORT_DAILY_LIMIT: '0' })).toThrow();
     expect(() => dailyExtractLimit({ BOOKS_IMPORT_DAILY_LIMIT: 'lots' })).toThrow();
   });
+
+  it('for showing, an invalid setting is null rather than breaking the page', () => {
+    expect(dailyExtractLimitShown({ BOOKS_IMPORT_DAILY_LIMIT: 'lots' })).toBeNull();
+    expect(dailyExtractLimitShown({})).toBe(500);
+  });
+});
+
+describe('what the import keeps and logs', () => {
+  it('withoutNul drops U+0000 from every string, keys included, and leaves the rest', () => {
+    expect(withoutNul({ a: 'x\u0000y', 'k\u0000': [1, 'z\u0000', null, { b: true }] })).toEqual({ a: 'xy', k: [1, 'z', null, { b: true }] });
+  });
+
+  it('an unexpected error is logged by kind, SQLSTATE, names and frames, never its message', () => {
+    const err = Object.assign(new Error('Failing row contains (Example Client GmbH, 1234.50)'), {
+      name: 'PostgresError',
+      code: '23514',
+      constraint_name: 'some_check',
+      table_name: 'historical_import_item',
+      detail: 'Failing row contains (Example Client GmbH)',
+    });
+    const text = describeError(err);
+    expect(text).toContain('PostgresError (code=23514, constraint_name=some_check, table_name=historical_import_item)');
+    expect(text).not.toContain('Example Client');
+    expect(text).not.toContain('1234.50');
+    expect(describeError('a string')).toBe('string');
+  });
 });
 
 describe('withCompanySender', () => {
@@ -72,6 +101,9 @@ describe('withCompanySender', () => {
       country: 'DE',
       taxNumber: '12/345/67890',
       vatId: null,
+      // Recorded as not printed: filled from the settings.
+      taxNumberPresent: false,
+      vatIdPresent: false,
     });
     expect(out.filled).toBe(3);
   });
@@ -104,6 +136,7 @@ describe('the review form', () => {
       recipientCountry: 'DE', recipientVatId: '', senderName: 'Sample Studio', senderLines: '', senderCountry: '', senderTaxNumber: '', senderVatId: '',
       lines: [{ description: 'Design work', quantity: '10', unit: 'h', unitPrice: '80', discount: '', lineTotal: '800', taxRate: '', taxAmount: '' },
         { description: 'Rabatt', quantity: '', unit: '', unitPrice: '', discount: '', lineTotal: '-80', taxRate: '', taxAmount: '' }],
+      taxAmounts: [],
     };
     const out = fromForm(form, base);
     if (!out.ok) throw new Error(out.field);
@@ -115,6 +148,28 @@ describe('the review form', () => {
       lines: [{ quantity: 10, lineTotal: 800 }, { quantity: null, unitPrice: null, lineTotal: -80 }],
     });
     expect(fromForm({ ...form, total: 'twelve' }, base)).toEqual({ ok: false, field: 'Total' });
+  });
+
+  it('keeps an inferred recipient country inferred unless changed, and sends the edited VAT summary', () => {
+    const base = {
+      taxAmounts: [{ rate: 19, net: 100, tax: 19 }],
+      recipient: { name: 'Example Client GmbH', addressLines: [], country: null, countryInferred: 'DE', customerNumber: null },
+    } as unknown as PrintedInvoice;
+    const form = {
+      number: '5', issueDate: '2022-05-03', serviceDate: '', servicePeriod: '', currency: 'EUR', taxTreatment: 'regular', total: '119',
+      taxNote: '', paymentTerms: '', pricesIncludeVat: false, recipientName: 'Example Client GmbH', recipientLines: '',
+      recipientCountry: 'DE', recipientVatId: '', senderName: '', senderLines: '', senderCountry: '', senderTaxNumber: '', senderVatId: '',
+      lines: [{ description: 'Design', quantity: '', unit: '', unitPrice: '', discount: '', lineTotal: '100', taxRate: '', taxAmount: '' }],
+      taxAmounts: [{ rate: '19', net: '100', tax: '19,00' }, { rate: '', net: '', tax: '' }],
+    };
+    const kept = fromForm(form, base);
+    if (!kept.ok) throw new Error(kept.field);
+    expect(kept.printed.recipient).toMatchObject({ country: null, countryInferred: 'DE' });
+    expect(kept.printed.taxAmounts).toEqual([{ rate: 19, net: 100, tax: 19 }]);
+    const changed = fromForm({ ...form, recipientCountry: 'AT' }, base);
+    if (!changed.ok) throw new Error(changed.field);
+    expect(changed.printed.recipient).toMatchObject({ country: 'AT', countryInferred: null });
+    expect(fromForm({ ...form, taxAmounts: [{ rate: '19', net: 'x', tax: '19' }] }, base)).toEqual({ ok: false, field: 'VAT summary 1, net' });
   });
 });
 

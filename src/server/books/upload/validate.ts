@@ -20,7 +20,6 @@ import { isBooksError } from '../errors';
 import {
   newImportSession,
   numberValueFor,
-  parseHistoricalInvoice,
   previewHistoricalInvoice,
   type HistoricalInvoice,
 } from '../importInvoices';
@@ -72,6 +71,9 @@ export function withCompanySender(
     vatId: company.vatId,
   };
   const sender: Record<string, unknown> = { ...raw };
+  // What the PDF itself showed, before the company fills anything in (recorded as printed or not).
+  sender.taxNumberPresent ??= !blank(raw.taxNumber);
+  sender.vatIdPresent ??= !blank(raw.vatId);
   let filled = 0;
   for (const [field, value] of Object.entries(fill)) {
     if (blank(sender[field]) && !blank(value)) {
@@ -80,6 +82,7 @@ export function withCompanySender(
     }
   }
   if (!sender.addressLines) sender.addressLines = [];
+  // Neither the PDF nor the company settings name a sender: left absent (sender_missing).
   if (sender.name == null) return { printed, filled: 0 };
   return { printed: { ...printed, sender }, filled };
 }
@@ -114,6 +117,12 @@ async function numberJump(
   if (batch.length === 0) return null;
   const highest = Math.max(...batch);
   return numberValue - highest > NUMBER_JUMP_LIMIT ? highest : null;
+}
+
+/** A number for comparing staged rows: "0062" and "62" are the same invoice number. */
+function numberKey(n: string | null): string | null {
+  if (n === null) return null;
+  return /^\d+$/.test(n) ? String(Number(n)) : n;
 }
 
 /** The printed number of a staged row now (for the duplicate check among staged rows). */
@@ -166,14 +175,12 @@ export async function validateItem(
     }
     return done([problem(reason)], null);
   }
-  const record = parseHistoricalInvoice(
-    { ...mapped.record, provenance: { ...mapped.record.provenance, senderFieldsFromCompany: sender.filled } },
-    ctx.now,
-  );
+  const record: HistoricalInvoice = { ...mapped.record, provenance: { ...mapped.record.provenance, senderFieldsFromCompany: sender.filled } };
 
   const problems: Problem[] = [];
   const number = record.documentNumber;
-  if (ctx.others.some((o) => o.id !== item.id && o.status !== 'imported' && o.status !== 'discarded' && stagedNumber(o) === number)) {
+  const key = numberKey(number);
+  if (ctx.others.some((o) => o.id !== item.id && o.status !== 'imported' && o.status !== 'discarded' && numberKey(stagedNumber(o)) === key)) {
     problems.push(problem('number_staged_twice', { path: 'number' }));
   }
 
@@ -183,7 +190,9 @@ export async function validateItem(
       counterPolicy: 'raise',
     });
     if (preview.status === 'already_imported') {
-      problems.push(problem('already_imported'));
+      // The same number with these exact bytes is in the books (imported meanwhile by another
+      // path): not a problem to fix; confirming marks the row imported and creates nothing.
+      problems.push(problem('already_imported', { blocking: false }));
     } else {
       for (const w of preview.warnings) problems.push(problem(w.code, { blocking: false, count: 'count' in w ? w.count : null }));
       if (preview.counterRaisedTo !== null) problems.push(problem('counter_raised', { blocking: false, count: preview.counterRaisedTo }));

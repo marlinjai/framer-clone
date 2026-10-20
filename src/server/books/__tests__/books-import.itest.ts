@@ -818,8 +818,17 @@ describe('009_books_import: what holds for every role', () => {
         }),
       ),
     ).toBe('BK008');
+    // A negative VAT amount alone (010 moved 007's CHECK into the guard): refused on a draft too,
+    // inserted or updated, for every role.
+    expect(
+      await rejectionCode(env.ownerDb.insertInto('sales_document_line').values({ ...lineFor(draftId, 100, 2), tax_rate: 1900, tax_amount: -19, tax_treatment: 'standard' as const }).execute()),
+    ).toBe('BK008');
     // And a positive line on the draft is still fine.
-    await env.ownerDb.insertInto('sales_document_line').values(lineFor(draftId, 100)).execute();
+    const positive = lineFor(draftId, 100);
+    await env.ownerDb.insertInto('sales_document_line').values(positive).execute();
+    expect(
+      await rejectionCode(env.ownerDb.updateTable('sales_document_line').set({ tax_rate: 1900, tax_amount: -19, tax_treatment: 'standard' }).where('id', '=', positive.id).execute()),
+    ).toBe('BK008');
   });
 
   it('a currency other than EUR: only on an import and on the credit note of its own invoice (BK009)', async () => {

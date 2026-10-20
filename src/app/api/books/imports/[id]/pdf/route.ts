@@ -4,6 +4,13 @@
 //
 // The uploaded PDF of a staged row, shown beside the review form; once the row
 // is imported, the stored original of its document (the same bytes).
+//
+// It is the company's own file, served same-origin only (never embeddable
+// elsewhere, never sniffed as another type, never cached). It is not served
+// with `Content-Security-Policy: sandbox` and the frame showing it is not
+// sandboxed: browsers refuse to display a PDF in a sandboxed document (the PDF
+// viewer is a plugin), which would leave the review table without its PDF. A
+// PDF's own scripts run inside the browser's PDF viewer, not in the page.
 
 import { booksRoute } from '@/server/books/http/route';
 import { itemPdf } from '@/server/books/upload/service';
@@ -22,6 +29,8 @@ export const GET = booksRoute<{ id: string }>('read', async (ctx, _req, { params
       'content-length': String(pdf.bytes.byteLength),
       'cache-control': 'private, no-store',
       'x-content-type-options': 'nosniff',
+      'cross-origin-resource-policy': 'same-origin',
+      'content-security-policy': "frame-ancestors 'self'",
     },
   });
 });

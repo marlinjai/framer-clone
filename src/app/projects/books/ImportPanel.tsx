@@ -48,6 +48,11 @@ const STATUS_TEXT: Record<ImportItemView['status'], string> = {
 
 const MAX_FILES = 50;
 const MAX_BYTES = 10 * 1024 * 1024;
+/** A row `extracting` for longer than the server's claim timeout (10 minutes) was interrupted: read it again. */
+const STALE_READING_MS = 11 * 60 * 1000;
+
+const staleReadings = (items: ImportItemView[]) =>
+  items.filter((i) => i.status === 'extracting' && Date.parse(i.updatedAt) < Date.now() - STALE_READING_MS).map((i) => i.id);
 
 /** The new next invoice number importing this row would set, or null when it does not raise the counter. */
 function raiseOf(item: ImportItemView): number | null {
@@ -157,23 +162,26 @@ export default function ImportPanel() {
     };
   }, [reload]);
 
-  // Resume: rows uploaded but not read yet are read now; a row left `extracting` for over
-  // five minutes (an interrupted call) is read again (the server takes the stale claim over).
+  // Resume: rows uploaded but not read yet are read now; a row left `extracting` past the
+  // server's claim timeout (an interrupted call) is read again (the server takes the claim over).
   const resumed = useRef(false);
   useEffect(() => {
     if (!list || resumed.current) return;
     resumed.current = true;
-    const stale = Date.now() - 5 * 60 * 1000;
-    enqueue(list.items.filter((i) => i.status === 'uploaded' || (i.status === 'extracting' && Date.parse(i.updatedAt) < stale)).map((i) => i.id));
+    enqueue([...list.items.filter((i) => i.status === 'uploaded').map((i) => i.id), ...staleReadings(list.items)]);
   }, [list, enqueue]);
 
-  // While a row is being read elsewhere, refresh now and then.
+  // While a row is being read elsewhere, refresh now and then; one interrupted meanwhile is read again.
   const reading = list?.items.some((i) => i.status === 'extracting' && !running.current.has(i.id)) ?? false;
   useEffect(() => {
     if (!reading) return;
-    const t = setInterval(() => void reload(), 10_000);
+    const t = setInterval(() => {
+      void reload().then((next) => {
+        if (next) enqueue(staleReadings(next.items));
+      });
+    }, 10_000);
     return () => clearInterval(t);
-  }, [reading, reload]);
+  }, [reading, reload, enqueue]);
 
   async function addFiles(files: File[]) {
     setError(null);
@@ -227,16 +235,15 @@ export default function ImportPanel() {
     }
   }
 
-  async function confirm(item: ImportItemView, confirmedRaise: number | null = null): Promise<boolean> {
+  /** Import one row; null when it was imported, else what went wrong (the caller shows it). */
+  async function confirm(item: ImportItemView, confirmedRaise: number | null = null): Promise<string | null> {
     try {
       const res = await importsApi.confirm(item.id, item.version, confirmedRaise);
       upsert(res.item);
       if (res.counterRaisedTo !== null) setNotice(`The invoice counter was raised to ${res.counterRaisedTo}: your next invoice continues after the imported ones.`);
-      return true;
+      return null;
     } catch (err) {
-      setError(errorText(err));
-      await reload();
-      return false;
+      return errorText(err);
     }
   }
 
@@ -249,8 +256,18 @@ export default function ImportPanel() {
     }
     setRaising(null);
     await act(item.id, async () => {
-      await confirm(item, to);
+      const failed = await confirm(item, to);
+      if (failed !== null) {
+        setError(failed);
+        await reload();
+      }
     });
+  }
+
+  /** Fill a row in by hand (no AI reading), then open it. */
+  async function byHand(item: ImportItemView) {
+    await act(item.id, () => importsApi.byHand(item.id, item.version));
+    setOpen(item.id);
   }
 
   /** Import every ready row; when any of them raises the counter, the highest new value is confirmed first. */
@@ -264,15 +281,37 @@ export default function ImportPanel() {
       return;
     }
     setBatchRaise(null);
-    for (const item of ready) {
+    const failures: string[] = [];
+    let current = ready;
+    for (const id of ready.map((i) => i.id)) {
+      const item = current.find((i) => i.id === id);
+      // Changed since (read again, corrected, imported elsewhere): left for the user, not imported blind.
+      if (!item || item.status !== 'ready') continue;
+      const to = raiseOf(item);
+      // A raise beyond the value the user confirmed is not covered by that confirmation.
+      if (to !== null && (highest === null || to > highest)) {
+        failures.push(`${item.fileName}: the next invoice number it would set changed; confirm it on its row.`);
+        continue;
+      }
       setBusy((b) => new Set(b).add(item.id));
       // Each row names its own new next value; the batch confirmation covered the highest.
-      await confirm(item, raiseOf(item));
+      const failed = await confirm(item, to);
       setBusy((b) => {
         const n = new Set(b);
         n.delete(item.id);
         return n;
       });
+      if (failed !== null) {
+        failures.push(`${item.fileName}: ${failed}`);
+        // Continue with the rows as they are now (versions moved), never with the old list.
+        const fresh = await reload();
+        if (!fresh) break;
+        current = fresh.items;
+      }
+    }
+    if (failures.length > 0) {
+      setError(`${failures.length} of ${ready.length} could not be imported. ${failures.join(' ')}`);
+      await reload();
     }
   }
 
@@ -314,14 +353,20 @@ export default function ImportPanel() {
 
       <ErrorAlert message={error} onDismiss={() => setError(null)} />
       {batchRaise !== null ? (
-        <section role="alertdialog" aria-label="Confirm the new invoice number" className="mb-4 rounded-md border border-amber-500 px-4 py-3 text-sm">
-          <p className="font-medium">Your next invoice number will become {batchRaise}. It cannot be lowered later.</p>
+        <section
+          role="alertdialog"
+          aria-label="Confirm the new invoice number"
+          aria-describedby="batch-raise-text"
+          className="mb-4 rounded-md border border-amber-500 px-4 py-3 text-sm"
+          onKeyDown={(e) => e.key === 'Escape' && setBatchRaise(null)}
+        >
+          <p id="batch-raise-text" className="font-medium">Your next invoice number will become {batchRaise}. It cannot be lowered later.</p>
           <p className="mt-1 text-muted-foreground">
             Importing the ready invoices raises the invoice counter past the highest imported number. Check that number
             against its PDF before you continue.
           </p>
           <span className="mt-3 flex gap-2">
-            <Button size="sm" onClick={() => void confirmAllReady(batchRaise)}>
+            <Button size="sm" autoFocus onClick={() => void confirmAllReady(batchRaise)}>
               Import and set the next number to {batchRaise}
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setBatchRaise(null)}>
@@ -448,17 +493,25 @@ export default function ImportPanel() {
                         </span>
                       ) : null}
                       {raising?.id === item.id ? (
-                        <span role="alertdialog" aria-label="Confirm the new invoice number" className="mt-2 block rounded-md border border-amber-500 p-2 text-xs">
-                          <span className="block font-medium">Your next invoice number will become {raising.to}. It cannot be lowered later.</span>
-                          <span className="mt-2 flex gap-2">
-                            <Button size="sm" onClick={() => void importRow(item, raising.to)} disabled={rowBusy}>
+                        <div
+                          role="alertdialog"
+                          aria-label="Confirm the new invoice number"
+                          aria-describedby={`${item.id}-raise-text`}
+                          className="mt-2 rounded-md border border-amber-500 p-2 text-xs"
+                          onKeyDown={(e) => e.key === 'Escape' && setRaising(null)}
+                        >
+                          <p id={`${item.id}-raise-text`} className="font-medium">
+                            Your next invoice number will become {raising.to}. It cannot be lowered later.
+                          </p>
+                          <div className="mt-2 flex gap-2">
+                            <Button size="sm" autoFocus onClick={() => void importRow(item, raising.to)} disabled={rowBusy}>
                               Import and set the next number to {raising.to}
                             </Button>
                             <Button size="sm" variant="ghost" onClick={() => setRaising(null)}>
                               Cancel
                             </Button>
-                          </span>
-                        </span>
+                          </div>
+                        </div>
                       ) : null}
                     </td>
                     <td className="px-3 py-2">
@@ -468,7 +521,7 @@ export default function ImportPanel() {
                             Open
                           </Link>
                         ) : null}
-                        {item.status === 'ready' || item.status === 'needs_attention' ? (
+                        {(item.status === 'ready' || item.status === 'needs_attention') && item.extractionId !== null ? (
                           <Button variant="outline" size="sm" onClick={() => setOpen(open === item.id ? null : item.id)} disabled={rowBusy}>
                             {open === item.id ? 'Close' : 'Check'}
                           </Button>
@@ -488,9 +541,22 @@ export default function ImportPanel() {
                             The number is right
                           </Button>
                         ) : null}
-                        {item.status === 'needs_attention' && item.extractionError ? (
+                        {item.status === 'uploaded' && !busy.has(item.id) ? (
+                          <Button variant="outline" size="sm" onClick={() => {
+                            stopped.current = false;
+                            enqueue([item.id]);
+                          }}>
+                            Read
+                          </Button>
+                        ) : null}
+                        {item.status === 'needs_attention' && item.extractionError && item.extractionError !== 'unreadable' ? (
                           <Button variant="outline" size="sm" onClick={() => enqueue([item.id])} disabled={rowBusy}>
                             Read again
+                          </Button>
+                        ) : null}
+                        {(item.status === 'uploaded' || item.status === 'needs_attention') && item.extractionId === null && !busy.has(item.id) ? (
+                          <Button variant="outline" size="sm" onClick={() => void byHand(item)} disabled={rowBusy}>
+                            Fill in by hand
                           </Button>
                         ) : null}
                         {item.status !== 'imported' ? (
@@ -508,7 +574,14 @@ export default function ImportPanel() {
         </div>
       ) : null}
 
-      {editing ? (
+      {list && list.importedTotal > items.filter((i) => i.status === 'imported').length ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Showing the newest {items.filter((i) => i.status === 'imported').length} of {list.importedTotal} imported invoices; all of them
+          are in the documents list.
+        </p>
+      ) : null}
+
+      {editing && editing.extractionId !== null ? (
         <ImportRowEditor
           key={`${editing.id}-${editing.extractionId}`}
           item={editing}

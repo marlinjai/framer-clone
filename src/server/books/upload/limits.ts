@@ -9,17 +9,20 @@
 //     because the plan's unit is the company: one user uploading 50 files gets
 //     four in parallel, and a second user of the same company shares them;
 //   - one extraction per file at a time, durable: the claim on the staging row
-//     (service.ts), which a crashed or aborted call releases after
-//     CLAIM_TIMEOUT_MS so it is retried, not lost;
+//     (service.ts), carrying the extraction's id, which another call may take
+//     over after CLAIM_TIMEOUT_MS (a crashed call is retried, not lost; the
+//     call taken over writes nothing). A call is bounded well below that: two
+//     attempts of at most EXTRACT_REQUEST_TIMEOUT_MS each (extract.ts);
 //   - a daily ceiling per company (BOOKS_IMPORT_DAILY_LIMIT, default 500), durable:
 //     the extraction ledger counts the calls started in the last 24 hours, so a
-//     restart does not reset it and retries count like first attempts.
+//     restart does not reset it and retries count like first attempts; the
+//     count and the new ledger row are written under one company lock.
 
 /** Extractions in flight per company. */
 export const EXTRACT_PARALLEL = 4;
 
 /** A claim older than this is a crashed or abandoned call: the file may be read again. */
-export const CLAIM_TIMEOUT_MS = 5 * 60 * 1000;
+export const CLAIM_TIMEOUT_MS = 10 * 60 * 1000;
 
 /** The rolling window of the daily ceiling. */
 export const DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -31,6 +34,19 @@ export function dailyExtractLimit(env: Record<string, string | undefined> = proc
   const n = Number(raw);
   if (!Number.isSafeInteger(n) || n < 1) throw new Error('BOOKS_IMPORT_DAILY_LIMIT must be a positive integer');
   return n;
+}
+
+/**
+ * The daily ceiling for showing it: null (logged once per call) when the
+ * setting is not valid, so a bad setting stops reading, not the whole page.
+ */
+export function dailyExtractLimitShown(env: Record<string, string | undefined> = process.env): number | null {
+  try {
+    return dailyExtractLimit(env);
+  } catch {
+    console.error('[books-import] BOOKS_IMPORT_DAILY_LIMIT is not a positive integer; reading invoices is refused until it is fixed');
+    return null;
+  }
 }
 
 export type SlotResult = { ok: true; release: () => void } | { ok: false; retryAfterSec: number };

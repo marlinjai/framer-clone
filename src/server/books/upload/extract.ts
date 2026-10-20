@@ -35,7 +35,7 @@ import {
 } from '@/lib/ai/anthropicClient';
 
 import { rawInvoiceSchema } from '../importPrinted';
-import type { Confidence } from './staging';
+import { withoutNul, type Confidence } from './staging';
 
 /** The tool the model records the invoice with. */
 export const RECORD_TOOL_NAME = 'record_invoice';
@@ -55,6 +55,13 @@ export const EXTRACT_MAX_TOKENS = 16_000;
 
 /** Attempts per file: the first, plus one repair turn when the tool input does not have the shape. */
 const MAX_ATTEMPTS = 2;
+
+/**
+ * One model request at most (the SDK retries a transient failure once): two
+ * attempts of two tries stay below the staging claim's timeout (limits.ts), so
+ * a call that is still running is never taken over.
+ */
+export const EXTRACT_REQUEST_TIMEOUT_MS = 120_000;
 
 /** The model key of `AI_INVOICE_EXTRACT_MODEL` (an id); a configuration error names an unknown id, never falls back. */
 export function extractModelKey(env: Record<string, string | undefined> = process.env): AiModelKey {
@@ -255,19 +262,30 @@ export type ToolInput = z.infer<typeof toolInputSchema>;
  * over the model boundary).
  */
 export function printedFromToolInput(input: ToolInput): { printed: Record<string, unknown>; confidence: Record<string, Confidence> } {
-  const { uncertainFields, ...rest } = input;
+  const { uncertainFields, ...rest } = withoutNul(input);
+  // The model may report `other` as the tax treatment; the mapping refuses anything it does not know by name.
   const printed: Record<string, unknown> = {
     ...rest,
-    // The model reports `other`; the mapping refuses anything it does not know by name.
-    taxTreatment: rest.taxTreatment,
     sender: rest.sender
       ? { ...rest.sender, taxNumberPresent: rest.sender.taxNumber !== null, vatIdPresent: rest.sender.vatId !== null }
       : null,
   };
   rawInvoiceSchema.parse(printed);
+  // Only paths of fields the invoice has: a path is model output, shown in the review table as a field name.
   const confidence: Record<string, Confidence> = {};
-  for (const u of uncertainFields) confidence[u.path] = u.confidence;
+  for (const u of uncertainFields) if (hasPath(printed, u.path)) confidence[u.path] = u.confidence;
   return { printed, confidence };
+}
+
+/** Whether a dotted path (`lines.2.lineTotal`, `recipient.name`) names a field of the printed invoice. */
+export function hasPath(obj: unknown, path: string): boolean {
+  if (!/^[A-Za-z]+(\.(\d{1,3}|[A-Za-z]+))*$/.test(path)) return false;
+  let cur: unknown = obj;
+  for (const part of path.split('.')) {
+    if (cur === null || typeof cur !== 'object' || !Object.prototype.hasOwnProperty.call(cur, part)) return false;
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return true;
 }
 
 // --- the call -------------------------------------------------------------------------
@@ -281,7 +299,7 @@ export function systemText(): string {
     'Rules:',
     '- Transcribe as printed. Never compute, correct or complete a value that is not printed; leave it null.',
     '- Amounts are numbers with a dot as decimal separator (1234.5), in the currency printed. Never convert currencies.',
-    '- Dates are YYYY-MM-DD. A service period printed as two dates or a month goes into servicePeriod as printed.',
+    '- Dates are YYYY-MM-DD. A service period printed as two dates or as a month goes into servicePeriod as printed.',
     '- Every line of the invoice table is a line, in order. A discount printed as its own line is a line with a',
     '  negative lineTotal; a discount printed on a line (a percentage or an amount) goes into that line\'s discount.',
     '- A line that prints only an amount has quantity and unitPrice null.',
@@ -315,10 +333,15 @@ export type ExtractionResult =
 export async function extractPrintedInvoice(
   anthropic: Anthropic,
   pdf: Uint8Array,
-  opts: { modelKey: AiModelKey; signal: AbortSignal },
+  opts: {
+    modelKey: AiModelKey;
+    signal: AbortSignal;
+    /** Added to across the attempts, so the caller records the tokens also when a later attempt throws. */
+    usage?: { inputTokens: number; outputTokens: number };
+  },
 ): Promise<ExtractionResult> {
   const fields = modelRequestFields(opts.modelKey, EXTRACT_EFFORT);
-  const usage = { inputTokens: 0, outputTokens: 0 };
+  const usage = opts.usage ?? { inputTokens: 0, outputTokens: 0 };
   const messages: BetaMessageParam[] = [
     {
       role: 'user',
@@ -341,7 +364,7 @@ export async function extractPrintedInvoice(
         tool_choice: { type: 'auto', disable_parallel_tool_use: true },
         messages,
       },
-      { signal: opts.signal },
+      { signal: opts.signal, timeout: EXTRACT_REQUEST_TIMEOUT_MS, maxRetries: 1 },
     );
     let rawInput = '';
     stream.on('inputJson', (partial: string) => {

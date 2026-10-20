@@ -585,6 +585,7 @@ export interface HistoricalImportItemTable {
   corrected: JsonColumn<Record<string, unknown>> | null;
   corrected_extraction_id: string | null;
   number_confirmed: string | null;
+  claim_id: string | null;
   problems: Generated<JsonColumn<Array<Record<string, unknown>>>>;
   model: string | null;
   claimed_at: Timestamp | null;
@@ -605,7 +606,7 @@ export interface HistoricalImportExtractionTable {
   model: string;
   started_at: Timestamp;
   finished_at: Timestamp | null;
-  outcome: 'ok' | 'refused' | 'invalid_output' | 'max_tokens' | 'error' | 'aborted' | null;
+  outcome: 'ok' | 'refused' | 'invalid_output' | 'max_tokens' | 'unreadable' | 'error' | 'aborted' | null;
   input_tokens: Generated<number>;
   output_tokens: Generated<number>;
 }

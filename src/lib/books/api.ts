@@ -338,9 +338,13 @@ export interface PrintedLine {
 }
 
 export interface ImportList {
+  /** Every open row, then the newest imported ones. */
   items: ImportItemView[];
+  /** How many rows are imported in all (the list shows the newest of them). */
+  importedTotal: number;
   counter: { format: string; nextValue: number } | null;
-  limits: { maxFileBytes: number; maxFilesAtOnce: number; parallel: number; perDay: number };
+  /** `perDay` is null when the server's setting is not valid (reading is refused until it is fixed). */
+  limits: { maxFileBytes: number; maxFilesAtOnce: number; parallel: number; perDay: number | null };
 }
 
 export type UploadResult =
@@ -381,6 +385,8 @@ export const importsApi = {
   correct: (id: string, printed: PrintedInvoice, extractionId: string, expectedVersion: number) =>
     request<ImportItemView>('PATCH', `/api/books/imports/${id}`, { printed, extractionId, expectedVersion }),
   recheck: (id: string) => request<ImportItemView>('POST', `/api/books/imports/${id}/recheck`),
+  /** An empty manual reading for a row the AI could not read, to fill in by hand. */
+  byHand: (id: string, expectedVersion: number) => request<ImportItemView>('POST', `/api/books/imports/${id}/by-hand`, { expectedVersion }),
   /** `confirmCounterRaiseTo`: the new next invoice number the user was shown and confirmed (required when the import raises the counter). */
   confirm: (id: string, expectedVersion: number, confirmCounterRaiseTo: number | null = null) =>
     request<{ item: ImportItemView; documentId: string | null; counterRaisedTo: number | null }>(

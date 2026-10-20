@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { importTaxFields, numberValueFor, recordWarnings } from '../importInvoices';
+import { importTaxFields, numberValueFor, recordNumberValue, recordWarnings } from '../importInvoices';
 import { mapPrintedInvoice } from '../importPrinted';
 
 const NOW = new Date('2026-10-20T10:00:00Z');
@@ -118,7 +118,12 @@ describe('the other treatments', () => {
   it('reverse charge needs the recipient VAT id and a business; tax stays 0', () => {
     const lines = [{ description: 'Consulting', quantity: 1, unit: null, unitPrice: 1000, discount: null, lineTotal: 1000, taxRate: null, taxAmount: null }];
     const rc = { taxTreatment: 'reverse_charge', lines, total: 1000, taxNote: 'Steuerschuldnerschaft des Leistungsempfängers' };
-    expect(issue(printed(rc)).reason).toBe('invalid_record:recipient.vatId');
+    // Only for a business in another EU country: a German or a non-EU recipient is not that case.
+    expect(issue(printed(rc)).reason).toBe('reverse_charge_outside_eu');
+    const swiss = { name: 'Beispiel AG', addressLines: ['Musterweg 1', '8000 Zürich'], country: 'CH', countryInferred: null, customerNumber: null };
+    expect(issue(printed({ ...rc, currency: 'CHF', recipient: swiss })).reason).toBe('reverse_charge_outside_eu');
+    const french = { name: 'Exemple SARL', addressLines: ['1 Rue Exemple', '75001 Paris'], country: 'FR', countryInferred: null, customerNumber: null };
+    expect(issue(printed({ ...rc, recipient: french })).reason).toBe('invalid_record:recipient.vatId');
     const r = ok(printed({ ...rc, recipientVatId: 'USt-IdNr.: FR12345678901', recipient: { name: 'Exemple SARL', addressLines: ['1 Rue Exemple', '75001 Paris'], country: 'FR', countryInferred: null, customerNumber: null } }));
     expect(importTaxFields(r)).toMatchObject({ reverseCharge: true, kleinunternehmer: false, taxAmount: 0 });
     expect(importTaxFields(r).taxSummary).toEqual([{ taxRate: 0, taxTreatment: 'reverse_charge', net: 100000, tax: 0 }]);
@@ -151,5 +156,32 @@ describe('numberValueFor', () => {
     expect(numberValueFor('RE-2021-0012', '{n}')).toBeNull();
     expect(numberValueFor('2021/7', '2021/{n}')).toBe(7);
     expect(numberValueFor('0', '{n}')).toBeNull();
+  });
+});
+
+describe('recordNumberValue', () => {
+  it("the operator's integer numbers keep their value under any format; an upload goes by the format only", () => {
+    expect(recordNumberValue({ documentNumber: '17', origin: 'operator_file' }, 'RE-{n:4}')).toBe(17);
+    expect(recordNumberValue({ documentNumber: '17', origin: 'upload_extracted' }, 'RE-{n:4}')).toBeNull();
+    expect(recordNumberValue({ documentNumber: 'RE-0017', origin: 'upload_extracted' }, 'RE-{n:4}')).toBe(17);
+    expect(recordNumberValue({ documentNumber: 'X-17', origin: 'operator_file' }, '{n}')).toBeNull();
+  });
+});
+
+describe('printed but not readable', () => {
+  it('payment terms, a recipient VAT id and a service period that cannot be read are warned; terms not printed are not', () => {
+    const r = ok(printed({ paymentTerms: 'nach Absprache', recipientVatId: 'USt-IdNr. folgt', servicePeriod: 'laut Vertrag' }));
+    expect(recordWarnings(r)).toEqual(
+      expect.arrayContaining([{ code: 'payment_terms_unparsed' }, { code: 'recipient_vat_id_unparsed' }, { code: 'service_date_unparsed' }]),
+    );
+    const none = ok(printed());
+    expect(none.provenance.paymentTermsUnparsed).toBe(false);
+    expect(recordWarnings(none).map((w) => w.code)).not.toContain('payment_terms_unparsed');
+  });
+
+  it('records the sender tax number and VAT id as printed only when the reading says so', () => {
+    const r = ok(printed({ sender: { name: 'Sample Studio', addressLines: [], country: null, taxNumber: '12/345/67890', vatId: null, taxNumberPresent: false, vatIdPresent: false } }));
+    expect(r.provenance).toMatchObject({ senderTaxNumberPrinted: false, senderVatIdPrinted: false });
+    expect(r.sender.taxNumber).toBe('12/345/67890');
   });
 });

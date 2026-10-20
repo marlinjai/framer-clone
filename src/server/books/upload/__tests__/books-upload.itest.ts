@@ -37,8 +37,20 @@ import {
   type BooksEnv,
 } from '../../__tests__/booksFixtures';
 import { createCompanySlots } from '../limits';
-import { confirmItem, confirmNumber, correctItem, discardItem, extractItem, listImportItems, stageUpload, type ExtractDeps } from '../service';
-import { getItem } from '../staging';
+import { IMPORT_RENDERER, importHistoricalInvoice, newImportSession } from '../../importInvoices';
+import { mapPrintedInvoice } from '../../importPrinted';
+import {
+  confirmItem,
+  confirmNumber,
+  correctItem,
+  discardItem,
+  enterByHand,
+  extractItem,
+  listImportItems,
+  stageUpload,
+  type ExtractDeps,
+} from '../service';
+import { getItem, itemContent } from '../staging';
 import { fakeAnthropic, pdfBytes, toolInput, toolTurn, type Turn } from './fakeAnthropic';
 
 let env: BooksEnv;
@@ -84,6 +96,13 @@ async function staged(scope: Parameters<typeof stageUpload>[0], label: string) {
 }
 
 const codes = (item: { problems: Array<{ code: string }> }) => item.problems.map((p) => p.code).sort();
+
+/** A printed invoice as the user types it in the form: the model's tool input without its unsure fields. */
+function typedByUser(input: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...input };
+  delete out.uncertainFields;
+  return out;
+}
 
 describe('forward', () => {
   it('stage, read, check, import: the original is the document of record, byte for byte', async () => {
@@ -288,7 +307,7 @@ describe('resume', () => {
     const { tenantId, book, scope } = await company();
     const a = await staged(scope, `r1-${tenantId}`);
     const b = await staged(scope, `r2-${tenantId}`);
-    expect((await listImportItems(scope)).map((i) => i.id)).toEqual([a.id, b.id]);
+    expect((await listImportItems(scope)).items.map((i) => i.id)).toEqual([a.id, b.id]);
 
     // The caller leaves mid-way: aborted in the ledger, the row free again.
     const controller = new AbortController();
@@ -302,10 +321,10 @@ describe('resume', () => {
     const outcomes = await env.ownerDb.selectFrom('historical_import_extraction').select('outcome').where('item_id', '=', a.id).execute();
     expect(outcomes).toEqual([{ outcome: 'aborted' }]);
 
-    // A claim left behind by a crash (older than five minutes) is taken over.
+    // A claim left behind by a crash (older than the claim timeout) is taken over.
     await env.ownerDb
       .updateTable('historical_import_item')
-      .set({ status: 'extracting', claimed_at: new Date(Date.now() - 10 * 60 * 1000), updated_at: new Date() })
+      .set({ status: 'extracting', claimed_at: new Date(Date.now() - 20 * 60 * 1000), updated_at: new Date() })
       .where('id', '=', b.id)
       .execute();
     const resumed = await extractItem(scope, b.id, deps([toolTurn(toolInput({ number: '40' }))], book).deps);
@@ -325,7 +344,7 @@ describe('re-entry', () => {
     const other = await staged(scope, `e2-${tenantId}`);
     expect(await stageUpload(scope, { fileName: 'twice.pdf', bytes: pdfBytes(`e2-${tenantId}`) })).toMatchObject({ status: 'duplicate', documentId: null });
     await discardItem(scope, other.id);
-    expect((await listImportItems(scope)).map((i) => i.id)).not.toContain(other.id);
+    expect((await listImportItems(scope)).items.map((i) => i.id)).not.toContain(other.id);
     const again = await stageUpload(scope, { fileName: 'back.pdf', bytes: pdfBytes(`e2-${tenantId}`) });
     expect(again.status).toBe('staged');
   });
@@ -410,5 +429,125 @@ describe('010_books_upload_import: staging rows and the ledger', () => {
     const owner = env.fx.owner;
     expect(await rejectionCode(owner`TRUNCATE ${owner(env.schema)}.historical_import_extraction`)).toBe('BK010');
     expect(await rejectionCode(owner`TRUNCATE ${owner(env.schema)}.historical_import_item CASCADE`)).toBe('BK010');
+  });
+});
+
+describe('unhappy paths of reading and importing', () => {
+  it('a PDF the AI cannot read is filled in by hand and imported; a row with a reading cannot be', async () => {
+    const { tenantId, book, scope } = await company();
+    const item = await staged(scope, `hand-${tenantId}`);
+    // The API refuses the PDF itself: unreadable, not offered again.
+    const unreadable = await extractItem(scope, item.id, deps([{ throws: Object.assign(new Error('bad pdf'), { status: 400 }) }], book).deps);
+    expect(unreadable.problems).toEqual([{ code: 'extraction_failed:unreadable', path: null, blocking: true, count: null }]);
+    expect(unreadable.extractionId).toBeNull();
+
+    const blank = await enterByHand(scope, book, item.id, { expectedVersion: unreadable.version });
+    expect(blank.extractionId).toMatch(/^manual:/);
+    expect(blank.status).toBe('needs_attention');
+    expect(codes(blank)).toContain('number_missing');
+    // Nothing was spent: the ledger holds only the failed call.
+    expect(await env.ownerDb.selectFrom('historical_import_extraction').select('outcome').where('item_id', '=', item.id).execute()).toEqual([{ outcome: 'unreadable' }]);
+
+    const typed = typedByUser(toolInput({ number: '58' }));
+    const filled = await correctItem(scope, book, item.id, { printed: typed, extractionId: blank.extractionId!, expectedVersion: blank.version });
+    expect(filled.status).toBe('ready');
+    expect((await confirmItem(scope, book, item.id, { expectedVersion: filled.version })).item.status).toBe('imported');
+
+    const read = await staged(scope, `hand2-${tenantId}`);
+    const r = await extractItem(scope, read.id, deps([toolTurn(toolInput({ number: '59' }))], book).deps);
+    await expect(enterByHand(scope, book, read.id, { expectedVersion: r.version })).rejects.toMatchObject({ code: 'CONCURRENT_EDIT' });
+  });
+
+  it('a call whose claim was taken over writes nothing; the newer reading stands', async () => {
+    const { tenantId, book, scope } = await company();
+    const item = await staged(scope, `take-${tenantId}`);
+    let finishSlow!: () => void;
+    const slow = extractItem(scope, item.id, deps([{ ...toolTurn(toolInput({ number: '30' })), wait: new Promise<void>((r) => (finishSlow = r)) }], book).deps);
+    await new Promise((r) => setTimeout(r, 50));
+    // The slow call looks crashed: its claim is old.
+    await env.ownerDb.updateTable('historical_import_item').set({ claimed_at: new Date(Date.now() - 20 * 60 * 1000) }).where('id', '=', item.id).execute();
+    const newer = await extractItem(scope, item.id, deps([toolTurn(toolInput({ number: '31' }))], book).deps);
+    expect(newer.extracted!.printed.number).toBe('31');
+    finishSlow();
+    await slow;
+    const now = await getItem(scope.db, scope, item.id);
+    expect(now.extractionId).toBe(newer.extractionId);
+    expect(now.extracted!.printed.number).toBe('31');
+    // Both calls are in the ledger (both were paid for).
+    expect(await env.ownerDb.selectFrom('historical_import_extraction').select('outcome').where('item_id', '=', item.id).orderBy('started_at').execute()).toEqual([
+      { outcome: 'ok' },
+      { outcome: 'ok' },
+    ]);
+  });
+
+  it('an aborted reading again keeps the reading, its correction and the status', async () => {
+    const { tenantId, book, scope } = await company();
+    const item = await staged(scope, `keep-${tenantId}`);
+    const r = await extractItem(scope, item.id, deps([toolTurn(toolInput({ number: '33' }))], book).deps);
+    const typed = typedByUser(toolInput({ number: '34' }));
+    const fixed = await correctItem(scope, book, item.id, { printed: typed, extractionId: r.extractionId!, expectedVersion: r.version });
+    expect(fixed.status).toBe('ready');
+    const controller = new AbortController();
+    const pending = extractItem(scope, item.id, deps([{ ...toolTurn(toolInput()), wait: new Promise(() => {}) }], book, { signal: controller.signal }).deps);
+    await new Promise((res) => setTimeout(res, 50));
+    controller.abort();
+    const back = await pending;
+    expect(back.status).toBe('ready');
+    expect(back.extractionId).toBe(r.extractionId);
+    expect(back.corrected).toMatchObject({ number: '34' });
+  });
+
+  it('the daily ceiling holds for parallel calls: never more calls than the limit', async () => {
+    const { tenantId, book, scope } = await company();
+    const rows = await Promise.all([1, 2, 3, 4].map((n) => staged(scope, `par-${n}-${tenantId}`)));
+    const slots = createCompanySlots(4);
+    const results = await Promise.allSettled(
+      rows.map((row, i) => extractItem(scope, row.id, deps([toolTurn(toolInput({ number: String(100 + i) }))], book, { dailyLimit: 2, slots }).deps)),
+    );
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(2);
+    expect(results.filter((r) => r.status === 'rejected').map((r) => (r as PromiseRejectedResult).reason.code)).toEqual(['IMPORT_LIMIT', 'IMPORT_LIMIT']);
+    const ledger = await env.ownerDb.selectFrom('historical_import_extraction').select('id').where('tenant_id', '=', tenantId).execute();
+    expect(ledger).toHaveLength(2);
+    // The refused rows are as they were, free to be read later.
+    const statuses = await Promise.all(rows.map((row) => getItem(scope.db, scope, row.id)));
+    expect(statuses.map((x) => x.status).sort()).toEqual(['ready', 'ready', 'uploaded', 'uploaded']);
+  });
+
+  it('discarding clears the bytes at once; the list shows every open row and the newest imported with their total', async () => {
+    const { tenantId, book, scope } = await company();
+    const gone = await staged(scope, `dis-${tenantId}`);
+    await discardItem(scope, gone.id);
+    expect(await itemContent(scope.db, scope, gone.id)).toBeNull();
+    const imported = await staged(scope, `li-${tenantId}`);
+    const r = await extractItem(scope, imported.id, deps([toolTurn(toolInput({ number: '44' }))], book).deps);
+    await confirmItem(scope, book, imported.id, { expectedVersion: r.version });
+    const open = await staged(scope, `lo-${tenantId}`);
+    const listed = await listImportItems(scope);
+    expect(listed.items.map((i) => i.id)).toEqual([open.id, imported.id]);
+    expect(listed.importedTotal).toBe(1);
+  });
+
+  it('NUL characters in a correction are dropped instead of failing the write', async () => {
+    const { tenantId, book, scope } = await company();
+    const item = await staged(scope, `nul-${tenantId}`);
+    const r = await extractItem(scope, item.id, deps([toolTurn(toolInput({ number: '35' }))], book).deps);
+    const typed = typedByUser(toolInput({ number: '3\u00006' }));
+    const fixed = await correctItem(scope, book, item.id, { printed: typed, extractionId: r.extractionId!, expectedVersion: r.version });
+    expect(fixed.corrected).toMatchObject({ number: '36' });
+  });
+
+  it('a file imported meanwhile by another path (the same number and bytes) marks the row imported, nothing twice', async () => {
+    const { tenantId, book, scope } = await company();
+    const item = await staged(scope, `race-${tenantId}`);
+    const r = await extractItem(scope, item.id, deps([toolTurn(toolInput({ number: '47' }))], book).deps);
+    // Another session imports the same invoice with the same original first.
+    const mapped = mapPrintedInvoice(r.extracted!.printed, { origin: 'upload_extracted', now: new Date() });
+    if (!mapped.ok) throw new Error(mapped.issue.reason);
+    const first = await importHistoricalInvoice(scope, book, mapped.record, pdfBytes(`race-${tenantId}`), newImportSession(), { counterPolicy: 'raise' });
+    if (first.status !== 'imported') throw new Error(first.status);
+    const done = await confirmItem(scope, book, item.id, { expectedVersion: r.version });
+    expect(done).toMatchObject({ documentId: first.documentId, item: { status: 'imported' } });
+    const files = await env.ownerDb.selectFrom('sales_document_file').select('id').where('tenant_id', '=', tenantId).where('renderer', '=', IMPORT_RENDERER).execute();
+    expect(files).toHaveLength(1);
   });
 });

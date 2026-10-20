@@ -524,11 +524,17 @@ describe('the shapes of the real historical data, imported as printed', () => {
     expect(extractVatId('DE123456789 / ATU12345678')).toBeNull();
   });
 
-  it('a service period printed as text with two dates is read; anything else is flagged', () => {
+  it('a service period printed as text with two dates or as one month is read; anything else is flagged and warned', () => {
     expect(servicePeriodOf('2023-01-01 bis 2023-01-31')).toEqual({ start: '2023-01-01', end: '2023-01-31' });
     expect(servicePeriodOf('01.02.2023 - 28.02.2023')).toEqual({ start: '2023-02-01', end: '2023-02-28' });
-    expect(servicePeriodOf('März 2023')).toBeNull();
-    expect(one([line({})], 1000, { servicePeriod: 'März 2023' }).provenance.serviceDateUnparsed).toBe(true);
+    expect(servicePeriodOf('März 2023')).toEqual({ start: '2023-03-01', end: '2023-03-31' });
+    expect(servicePeriodOf('Leistungszeitraum: Februar 2024')).toEqual({ start: '2024-02-01', end: '2024-02-29' });
+    expect(servicePeriodOf('02/2023')).toEqual({ start: '2023-02-01', end: '2023-02-28' });
+    expect(servicePeriodOf('2023-11')).toEqual({ start: '2023-11-01', end: '2023-11-30' });
+    expect(servicePeriodOf('13/2023')).toBeNull();
+    const unread = one([line({})], 1000, { servicePeriod: 'erstes Quartal laut Vertrag' });
+    expect(unread.provenance.serviceDateUnparsed).toBe(true);
+    expect(recordWarnings(unread)).toContainEqual({ code: 'service_date_unparsed' });
   });
 });
 

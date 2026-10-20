@@ -302,6 +302,66 @@ describe('ImportPanel', () => {
     expect(calls.find((c) => c.url.endsWith('/confirm-number'))!.body).toEqual({ documentNumber: '9999', expectedVersion: 3 });
   });
 
+  it('a PDF the AI could not read is filled in by hand: no "Check" before, the form opens after', async () => {
+    const failed = item({ status: 'needs_attention', printed: null, extractedPrinted: null, extractionId: null, extractionError: 'unreadable', problems: [{ code: 'extraction_failed:unreadable', path: null, blocking: true, count: null }] });
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: { items: [failed], importedTotal: 0, counter: null, limits: LIMITS } }),
+      'POST /api/books/imports/i1/by-hand': () => ({
+        status: 200,
+        body: item({ version: 4, status: 'needs_attention', extractionId: 'manual:1', printed: printed({ number: null, recipient: null, lines: [], total: null }), problems: [{ code: 'number_missing', path: null, blocking: true, count: null }] }),
+      }),
+    });
+    render(<ImportPanel />);
+    const row = await screen.findByTestId('import-row-i1');
+    expect(row.textContent).toMatch(/could not open this PDF/);
+    expect(within(row).queryByRole('button', { name: 'Check' })).toBeNull();
+    // Unreadable is not offered again: reading it again cannot change it.
+    expect(within(row).queryByRole('button', { name: 'Read again' })).toBeNull();
+    fireEvent.click(within(row).getByRole('button', { name: 'Fill in by hand' }));
+    const form = await screen.findByRole('form', { name: 'Invoice as printed' });
+    expect((within(form).getByLabelText('Invoice number') as HTMLInputElement).value).toBe('');
+    expect(calls.find((c) => c.url.endsWith('/by-hand'))!.body).toEqual({ expectedVersion: 3 });
+  });
+
+  it('a row stopped by the daily limit can be read later with its own button', async () => {
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ status: 'uploaded', printed: null, extractionId: null })], importedTotal: 0, counter: null, limits: LIMITS } }),
+      'POST /api/books/imports/i1/extract': [
+        () => ({ status: 429, body: { error: { code: 'import_limit', message: 'The daily limit of invoices read is reached.' } } }),
+        () => ({ status: 200, body: item() }),
+      ],
+    });
+    render(<ImportPanel />);
+    await screen.findByText(/daily limit of invoices read/);
+    fireEvent.click(within(await screen.findByTestId('import-row-i1')).getByRole('button', { name: 'Read' }));
+    await screen.findByText('Ready to check');
+    expect(calls.filter((c) => c.url.endsWith('/i1/extract'))).toHaveLength(2);
+  });
+
+  it('"Import all ready" goes on after a failure with the rows as they are now, and names what failed', async () => {
+    const lists = [
+      { items: [item({ id: 'i1', fileName: 'a.pdf' }), item({ id: 'i2', fileName: 'b.pdf' })], importedTotal: 0, counter: null, limits: LIMITS },
+      // After the failure: the second row was checked again meanwhile (its version moved).
+      { items: [item({ id: 'i1', fileName: 'a.pdf', version: 5 }), item({ id: 'i2', fileName: 'b.pdf', version: 9 })], importedTotal: 0, counter: null, limits: LIMITS },
+    ];
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: lists.length > 1 ? lists.shift()! : lists[0] }),
+      'POST /api/books/imports/i1/confirm': () => ({ status: 409, body: { error: { code: 'concurrent_edit', message: 'the row changed meanwhile' } } }),
+      'POST /api/books/imports/i2/confirm': () => ({ status: 200, body: { item: item({ id: 'i2', status: 'imported', documentId: 'd2' }), documentId: 'd2', counterRaisedTo: null } }),
+    });
+    render(<ImportPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Import all ready (2)' }));
+    await screen.findByText(/1 of 2 could not be imported/);
+    expect(screen.getByText(/a\.pdf:/)).toBeTruthy();
+    expect(calls.find((c) => c.url.endsWith('/i2/confirm'))!.body).toEqual({ expectedVersion: 9, confirmCounterRaiseTo: null });
+  });
+
+  it('shows how many imported invoices are not listed', async () => {
+    server({ 'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ status: 'imported', documentId: 'd1' })], importedTotal: 140, counter: null, limits: LIMITS } }) });
+    render(<ImportPanel />);
+    expect(await screen.findByText(/newest 1 of 140 imported invoices/)).toBeTruthy();
+  });
+
   it('everything imported: says so', async () => {
     server({ 'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ status: 'imported', documentId: 'd1' })], counter: null, limits: LIMITS } }) });
     render(<ImportPanel />);

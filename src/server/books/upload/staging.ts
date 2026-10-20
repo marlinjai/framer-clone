@@ -53,6 +53,21 @@ export const problemSchema = z.object({
 });
 export type Problem = z.infer<typeof problemSchema>;
 
+/**
+ * A copy of a JSON value without NUL characters in its strings: Postgres
+ * refuses U+0000 in JSONB, so text from a PDF or a form that carried one would
+ * otherwise fail the write (and leave a row being read until its claim
+ * expired). Applied to everything the model or the user hands in.
+ */
+export function withoutNul<T>(value: T): T {
+  if (typeof value === 'string') return value.replace(/\u0000/g, '') as T;
+  if (Array.isArray(value)) return value.map((v) => withoutNul(v)) as T;
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [withoutNul(k), withoutNul(v)])) as T;
+  }
+  return value;
+}
+
 /** A staging row as the service reads it (the bytes are read separately). */
 export interface ImportItem {
   id: string;
@@ -71,6 +86,8 @@ export interface ImportItem {
   problems: Problem[];
   model: string | null;
   claimedAt: Date | null;
+  /** The extraction (ledger id) holding the claim while the row is being read. */
+  claimId: string | null;
   documentId: string | null;
   discardedAt: Date | null;
   createdAt: Date;
@@ -98,6 +115,7 @@ const ITEM_COLUMNS = [
   'problems',
   'model',
   'claimed_at',
+  'claim_id',
   'document_id',
   'discarded_at',
   'created_at',
@@ -120,6 +138,7 @@ type ItemRow = {
   problems: unknown;
   model: string | null;
   claimed_at: Date | null;
+  claim_id: string | null;
   document_id: string | null;
   discarded_at: Date | null;
   created_at: Date;
@@ -150,6 +169,7 @@ function mapItem(row: ItemRow): ImportItem {
     problems: problems.success ? problems.data : [],
     model: row.model,
     claimedAt: row.claimed_at,
+    claimId: row.claim_id,
     documentId: row.document_id,
     discardedAt: row.discarded_at,
     createdAt: row.created_at,
@@ -166,18 +186,43 @@ export async function getItem(db: Db, scope: BooksScope, id: string, opts: { for
   return mapItem(row as ItemRow);
 }
 
-/** The company's staging rows for the review table: everything but discarded rows, oldest first. */
-export async function listItems(db: Db, scope: BooksScope): Promise<ImportItem[]> {
+/**
+ * The company's OPEN staging rows (neither imported nor discarded), oldest
+ * first. Not capped: the upload keeps at most MAX_OPEN_ITEMS open (service.ts),
+ * so this is bounded, and every open row must be shown and checked against.
+ */
+export async function listOpenItems(db: Db, scope: BooksScope): Promise<ImportItem[]> {
   const rows = await db
     .selectFrom('historical_import_item')
     .select(ITEM_COLUMNS)
     .where('tenant_id', '=', scope.tenantId)
-    .where('status', '<>', 'discarded')
+    .where('status', 'not in', ['imported', 'discarded'])
     .orderBy('created_at')
     .orderBy('id')
-    .limit(1000)
     .execute();
   return rows.map((r) => mapItem(r as ItemRow));
+}
+
+/** The company's most recently imported rows (newest first, at most `limit`) and how many there are in all. */
+export async function listImportedItems(db: Db, scope: BooksScope, limit: number): Promise<{ items: ImportItem[]; total: number }> {
+  const [rows, count] = await Promise.all([
+    db
+      .selectFrom('historical_import_item')
+      .select(ITEM_COLUMNS)
+      .where('tenant_id', '=', scope.tenantId)
+      .where('status', '=', 'imported')
+      .orderBy('updated_at', 'desc')
+      .orderBy('id')
+      .limit(limit)
+      .execute(),
+    db
+      .selectFrom('historical_import_item')
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .where('tenant_id', '=', scope.tenantId)
+      .where('status', '=', 'imported')
+      .executeTakeFirstOrThrow(),
+  ]);
+  return { items: rows.map((r) => mapItem(r as ItemRow)), total: Number(count.n) };
 }
 
 /** The live (not discarded) row holding a file with this SHA-256, if any. */
@@ -192,7 +237,7 @@ export async function liveItemBySha(db: Db, scope: BooksScope, sha256: string): 
   return row ? mapItem(row as ItemRow) : null;
 }
 
-/** The uploaded bytes of a row (null once imported or pruned). */
+/** The uploaded bytes of a row (null once imported or discarded). */
 export async function itemContent(db: Db, scope: BooksScope, id: string): Promise<Uint8Array | null> {
   const row = await db
     .selectFrom('historical_import_item')
@@ -238,6 +283,7 @@ export interface ItemUpdate {
   problems?: Problem[];
   model?: string | null;
   claimedAt?: Date | null;
+  claimId?: string | null;
   documentId?: string | null;
   clearContent?: boolean;
   discardedAt?: Date | null;
@@ -262,6 +308,8 @@ export async function updateItem(
      * comparison there could take a fresh claim for a stale one.
      */
     claimedBefore?: Date;
+    /** Only while this extraction holds the claim (a call taken over by another one writes nothing). */
+    claimId?: string;
   } = {},
 ): Promise<ImportItem | null> {
   let q = db
@@ -271,17 +319,18 @@ export async function updateItem(
       updated_at: new Date(),
       ...(change.status !== undefined ? { status: change.status } : {}),
       ...(change.extractionId !== undefined ? { extraction_id: change.extractionId } : {}),
-      ...(change.extracted !== undefined ? { extracted: change.extracted === null ? null : toJsonb(change.extracted) } : {}),
+      ...(change.extracted !== undefined ? { extracted: change.extracted === null ? null : toJsonb(withoutNul(change.extracted)) } : {}),
       ...(change.extractionError !== undefined ? { extraction_error: change.extractionError } : {}),
       ...(change.corrected !== undefined
         ? change.corrected === null
           ? { corrected: null, corrected_extraction_id: null }
-          : { corrected: toJsonb(change.corrected.printed), corrected_extraction_id: change.corrected.extractionId }
+          : { corrected: toJsonb(withoutNul(change.corrected.printed)), corrected_extraction_id: change.corrected.extractionId }
         : {}),
       ...(change.problems !== undefined ? { problems: toJsonb(change.problems) } : {}),
       ...(change.numberConfirmed !== undefined ? { number_confirmed: change.numberConfirmed } : {}),
       ...(change.model !== undefined ? { model: change.model } : {}),
       ...(change.claimedAt !== undefined ? { claimed_at: change.claimedAt } : {}),
+      ...(change.claimId !== undefined ? { claim_id: change.claimId } : {}),
       ...(change.documentId !== undefined ? { document_id: change.documentId } : {}),
       ...(change.clearContent ? { content: null } : {}),
       ...(change.discardedAt !== undefined ? { discarded_at: change.discardedAt } : {}),
@@ -291,37 +340,26 @@ export async function updateItem(
   if (cond.expectedVersion !== undefined) q = q.where('version', '=', cond.expectedVersion);
   if (cond.whenStatus) q = q.where('status', 'in', [...cond.whenStatus]);
   if (cond.claimedBefore) q = q.where('claimed_at', '<', cond.claimedBefore);
+  if (cond.claimId !== undefined) q = q.where('claim_id', '=', cond.claimId);
   const row = await q.returning(ITEM_COLUMNS).executeTakeFirst();
   return row ? mapItem(row as ItemRow) : null;
 }
 
-/** Clear the bytes of rows discarded more than `olderThanDays` ago (the plan's 30 days). Returns how many. */
-export async function pruneDiscarded(db: Db, scope: BooksScope, now: Date, olderThanDays = 30): Promise<number> {
-  const cutoff = new Date(now.getTime() - olderThanDays * 24 * 60 * 60 * 1000);
-  const result = await db
-    .updateTable('historical_import_item')
-    .set((eb) => ({ content: null, updated_at: now, version: eb('version', '+', 1) }))
-    .where('tenant_id', '=', scope.tenantId)
-    .where('status', '=', 'discarded')
-    .where('discarded_at', '<', cutoff)
-    .where('content', 'is not', null)
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows);
-}
-
 // --- the extraction ledger ---------------------------------------------------------
 
-/** Start one model call in the ledger; returns its id (the extraction id of the row). */
-export async function startExtraction(db: Db, scope: BooksScope, itemId: string, model: string, now: Date): Promise<string> {
-  const id = randomUUID();
+/** Start one model call `id` in the ledger (the extraction id of the row once it succeeds). */
+export async function startExtraction(db: Db, scope: BooksScope, id: string, itemId: string, model: string, now: Date): Promise<void> {
   await db
     .insertInto('historical_import_extraction')
     .values({ id, tenant_id: scope.tenantId, item_id: itemId, model, started_at: now })
     .execute();
-  return id;
 }
 
-export type ExtractionOutcome = 'ok' | 'refused' | 'invalid_output' | 'max_tokens' | 'error' | 'aborted';
+/**
+ * How a model call ended. `unreadable`: the API refused the PDF itself (a 400
+ * or 413: damaged, encrypted, too many pages), which reading again cannot change.
+ */
+export type ExtractionOutcome = 'ok' | 'refused' | 'invalid_output' | 'max_tokens' | 'unreadable' | 'error' | 'aborted';
 
 /** Finish one model call in the ledger (once). */
 export async function finishExtraction(

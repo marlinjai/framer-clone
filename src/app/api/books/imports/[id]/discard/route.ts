@@ -3,7 +3,7 @@
 // POST /api/books/imports/<id>/discard -> ImportItemView
 //
 // Set a staged row aside (any status but imported). It leaves the review
-// table; its bytes are cleared after 30 days; uploading the same file again
+// table and its bytes are cleared at once; uploading the same file again
 // stages it again.
 
 import { booksRoute } from '@/server/books/http/route';

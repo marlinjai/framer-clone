@@ -25,6 +25,7 @@ import {
 } from './importInvoices';
 import { addDays, berlinToday, isIsoDate } from './numbering';
 import { normalizeVatId } from './repository/customers';
+import { EU_MEMBER_STATES } from '../tax/germanVat';
 import type { SenderBlockV1 } from './snapshots';
 
 const nullableString = z.string().nullable().optional();
@@ -223,8 +224,42 @@ function isoOf(value: string): string | null {
  * A service period from an object (`start`/`end` or `from`/`to`) or from text
  * naming exactly two dates ("2023-01-01 bis 2023-01-31", "01.01.2023 - 31.01.2023").
  */
+const MONTHS: Record<string, number> = {
+  januar: 1, jan: 1, january: 1, jänner: 1,
+  februar: 2, feb: 2, february: 2,
+  märz: 3, maerz: 3, mär: 3, mar: 3, march: 3,
+  april: 4, apr: 4,
+  mai: 5, may: 5,
+  juni: 6, jun: 6, june: 6,
+  juli: 7, jul: 7, july: 7,
+  august: 8, aug: 8,
+  september: 9, sep: 9, sept: 9,
+  oktober: 10, okt: 10, oct: 10, october: 10,
+  november: 11, nov: 11,
+  dezember: 12, dez: 12, dec: 12, december: 12,
+};
+
+/** A service period printed as one month ("Februar 2023", "02/2023", "2023-02"): its first and last day. */
+export function monthPeriodOf(text: string): { start: string; end: string } | null {
+  const t = text.trim().toLowerCase().replace(/^(leistungszeitraum|zeitraum|service period|period)\s*:?\s*/, '');
+  let year: number | null = null;
+  let month: number | null = null;
+  let m = /^([a-zäöü]+)\.?\s+(\d{4})$/.exec(t);
+  if (m && MONTHS[m[1]] !== undefined) [month, year] = [MONTHS[m[1]], Number(m[2])];
+  m = month === null ? /^(\d{1,2})\s*[/.]\s*(\d{4})$/.exec(t) : null;
+  if (m) [month, year] = [Number(m[1]), Number(m[2])];
+  m = month === null ? /^(\d{4})-(\d{1,2})$/.exec(t) : null;
+  if (m) [year, month] = [Number(m[1]), Number(m[2])];
+  if (year === null || month === null || month < 1 || month > 12 || year < 1990 || year > 2100) return null;
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const mm = String(month).padStart(2, '0');
+  return { start: `${year}-${mm}-01`, end: `${year}-${mm}-${String(last).padStart(2, '0')}` };
+}
+
 export function servicePeriodOf(value: unknown): { start: string; end: string } | null {
   if (typeof value === 'string') {
+    const month = monthPeriodOf(value);
+    if (month) return month;
     const dates = [...value.matchAll(/\d{4}-\d{2}-\d{2}|\d{1,2}\.\d{1,2}\.\d{4}/g)].map((m) => isoOf(m[0]));
     if (dates.length !== 2 || dates.some((d) => d === null)) return null;
     const [start, end] = dates as string[];
@@ -432,11 +467,6 @@ export type MappedPrinted =
   | { ok: true; record: HistoricalInvoice }
   | { ok: false; issue: PlanIssue };
 
-/** Round half away from zero (the same for negative amounts). */
-function roundAway(x: number): number {
-  return Math.sign(x) * Math.round(Math.abs(x));
-}
-
 /**
  * The VAT of the lines under regular taxation, as printed: each billable
  * line's rate (printed, or the invoice's only printed rate), its printed tax
@@ -467,7 +497,7 @@ function taxLines(
       l.taxAmount = cents;
       printedTax.add(i);
     } else {
-      l.taxAmount = roundAway((l.subtotal * rate) / 10000);
+      l.taxAmount = roundHalfAway((l.subtotal * rate) / 10000);
     }
   }
   for (const g of groups) {
@@ -546,6 +576,11 @@ export function mapPrintedInvoice(
   const senderCountryInferred = blank(r.sender.country);
   const senderCountry = senderCountryInferred ? 'DE' : countryCode(r.sender.country);
   if (!senderCountry) return issue('error', 'sender_country_unknown');
+  // Reverse charge as the Books know it (section 13b UStG for an EU business abroad): a domestic
+  // section 13b case or a customer outside the EU is not that, and is never stored as it.
+  if (treatment === 'reverse_charge' && (recipientCountry === 'DE' || !EU_MEMBER_STATES.has(recipientCountry))) {
+    return issue('error', 'reverse_charge_outside_eu');
+  }
   const taxNoteText = (r.taxNote ?? r.smallBusinessNote ?? '').trim();
 
   const mapped = mapLines(r.lines, currency);
@@ -633,12 +668,14 @@ export function mapPrintedInvoice(
         taxNote: taxNoteText === '' ? null : taxNoteText,
         provenance: {
           otherFilesSkipped: opts.otherFiles ?? 0,
-          senderTaxNumberPrinted: r.sender.taxNumberPresent === true || !blank(r.sender.taxNumber),
-          senderVatIdPrinted: r.sender.vatIdPresent === true || !blank(r.sender.vatId),
+          // What the PDF showed: the reading says so explicitly (a value filled in from the company's
+          // settings is not printed); the operator's file has only the flags or the values.
+          senderTaxNumberPrinted: typeof r.sender.taxNumberPresent === 'boolean' ? r.sender.taxNumberPresent : !blank(r.sender.taxNumber),
+          senderVatIdPrinted: typeof r.sender.vatIdPresent === 'boolean' ? r.sender.vatIdPresent : !blank(r.sender.vatId),
           serviceDateUnparsed:
             (r.serviceDate != null && serviceDate === null) || (r.servicePeriod != null && servicePeriod === null),
           paidOnPresent: r.paidOn != null && r.paidOn.trim() !== '',
-          paymentTermsUnparsed: terms === null,
+          paymentTermsUnparsed: terms === null && !blank(r.paymentTerms),
           recipientVatIdUnparsed: vatIdUnparsed,
           recipientCountryInferred: countryInferred && !countryAssumed,
           recipientCountryAssumed: countryAssumed,
