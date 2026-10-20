@@ -14,7 +14,7 @@
 // the built-in PDF fonts (Helvetica) encode Windows-1252 only, which covers
 // German (äöüß, €, „“) and Western European text. A character outside it (a
 // Polish ł, a Czech ř, an emoji) is transliterated (its accents dropped:
-// "Łódź" stays readable as "Lodz") or, if that is impossible, replaced by "?".
+// "Łódź" stays readable as "Lódz") or, if that is impossible, replaced by "?".
 // The completeness check (completeness.ts) compares against the same sanitized
 // text, so a transliterated name still counts as present. Embedding a Unicode
 // font would lift this; it is a deliberate limit of the first renderer.
