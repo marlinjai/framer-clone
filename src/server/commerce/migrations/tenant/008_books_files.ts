@@ -7,7 +7,7 @@ import type { Migration } from '@marlinjai/tenant-db';
  * it (set once, NULL to a value, which the 007 guard trigger already allows and
  * nothing else). Specified in
  * docs/plans/2026-08-15-books-receipts-invoices-integration.md, "Phase 2 and 3
- * build notes (2026-10-19)".
+ * build notes (2026-10-20)".
  *
  * Why the database and not storage-brain: the plan names storage-brain for the
  * PDFs (amendment item 6, "connections, after the import"), but this repository
