@@ -44,7 +44,7 @@ connections to the suite. The four lines below are in that order.
   templates, the PDF rendered with pdf-lib from the frozen snapshots, checked for the section 34a
   UStDV and section 14 (4) UStG fields and stored once in `sales_document_file`, migration
   `008_books_files`, download from the editor). Open, all operator steps: register the app
-  `books` in auth-brain and grant it to Whiz-Art Media (and Lumitra if wanted), set
+  `books` in auth-brain and grant it to Whiz-Art Media and Lumitra, set
   `CONTACTS_DATABASE_URL` in framer-clone's Infisical project (copied from the receipts project
   with `copy_secret`), roll `008` out with the deploy, and run `pnpm books:init-company` for
   Whiz-Art Media. Then the first real invoice from the editor closes this line. See

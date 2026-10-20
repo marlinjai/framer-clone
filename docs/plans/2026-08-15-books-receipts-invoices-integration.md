@@ -1087,7 +1087,7 @@ say so if you disagree.
     still refuses with `recipient_unavailable` and writes nothing.
 
 **Operator follow-ups** (live actions, not done here): register the app `books` in auth-brain
-and grant it to Whiz-Art Media (and Lumitra if wanted); scaffold `CONTACTS_DATABASE_URL` in
+and grant it to Whiz-Art Media and Lumitra; scaffold `CONTACTS_DATABASE_URL` in
 framer-clone's Infisical project and copy the value from the receipts project with
 `copy_secret`; deploy, which rolls `008_books_files` across every tenant schema at boot; run
 `pnpm books:init-company` for Whiz-Art Media (P1.8). No other secret or variable is new.
