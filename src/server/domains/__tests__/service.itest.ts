@@ -24,7 +24,7 @@ import { getPrismaClient } from '@/server/db';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
 import type { CustomDomainConfig } from '../config';
 import type { DnsLookup } from '../dnsCheck';
-import { DomainError, DomainService } from '../service';
+import { DomainError, DomainService, RECHECK_INTERVAL_MS } from '../service';
 import type { TlsProbe } from '../tlsProbe';
 
 const CONFIG: CustomDomainConfig = {
@@ -64,8 +64,15 @@ let certReady = false;
 const probe: TlsProbe = async () => (certReady ? { ok: true } : { ok: false, reason: 'ECONNRESET' });
 const invalidated: string[] = [];
 
+let clock = new Date('2026-10-20T00:00:00Z');
 function service(): DomainService {
-  return new DomainService({ prisma, dns, probe, invalidateHost: (h) => invalidated.push(h) });
+  return new DomainService({
+    prisma,
+    dns,
+    probe,
+    invalidateHost: (h) => invalidated.push(h),
+    now: () => clock,
+  });
 }
 
 async function makeSite(id: string, workspaceId = 'ws_dom') {
@@ -105,6 +112,7 @@ beforeEach(async () => {
   routes.clear();
   certReady = false;
   invalidated.length = 0;
+  clock = new Date('2026-10-20T00:00:00Z');
 });
 
 afterAll(async () => {
@@ -126,7 +134,7 @@ describe('forward: add, verify, activate, serve', () => {
     expect(verified).toMatchObject({ status: 'verified', serving: true, lastErrorCode: 'certificate_pending' });
     expect(invalidated).toContain('www.shop-example.com');
     expect((await resolvePublishedSite('www.shop-example.com', prisma, 'sites.lumitra.co'))?.siteId).toBe(site.id);
-    expect(await service().listProxyHostnames()).toEqual(['www.shop-example.com']);
+    expect((await service().listProxyHostnames()).hostnames).toEqual(['www.shop-example.com']);
 
     certReady = true;
     const active = await service().verifyDomain(site.id, domain.id, CONFIG);
@@ -182,7 +190,7 @@ describe('re-entry after failure or completion', () => {
     await service().verifyDomain(site.id, first.id, CONFIG);
     await service().removeDomain(site.id, first.id);
     expect(await resolvePublishedSite('again.example.net', prisma, 'sites.lumitra.co')).toBeNull();
-    expect(await service().listProxyHostnames()).toEqual([]);
+    expect((await service().listProxyHostnames()).hostnames).toEqual([]);
 
     const second = (await service().addDomain(site, 'again.example.net', CONFIG)).domain;
     expect(second).toMatchObject({ status: 'pending', serving: false, lastError: null });
@@ -219,7 +227,7 @@ describe('ownership rules', () => {
     expect((await resolvePublishedSite('moved.example.com', prisma, 'sites.lumitra.co'))?.siteId).toBe(b.id);
     const [lost] = await service().listDomains(a.id, CONFIG);
     expect(lost).toMatchObject({ status: 'failed', serving: false, lastErrorCode: 'claimed_elsewhere' });
-    expect(await service().listProxyHostnames()).toEqual(['moved.example.com']);
+    expect((await service().listProxyHostnames()).hostnames).toEqual(['moved.example.com']);
   });
 
   it('a serving domain whose DNS moved away loses the claim and stops serving', async () => {
@@ -263,5 +271,136 @@ describe('ownership rules', () => {
     await expect(service().addDomain(site, 'd10.example.com', CONFIG)).rejects.toMatchObject({
       code: 'domain_limit_reached',
     });
+  });
+});
+
+describe('caps and feed fairness', () => {
+  it('caps custom domains per workspace across its sites', async () => {
+    const sites = [];
+    for (let i = 0; i < 6; i += 1) sites.push(await makeSite(`dom_site_ws${i}`, 'ws_cap'));
+    let n = 0;
+    for (const site of sites.slice(0, 5)) {
+      for (let j = 0; j < 10; j += 1) {
+        await service().addDomain(site, `w${n}.example.com`, CONFIG);
+        n += 1;
+      }
+    }
+    await expect(service().addDomain(sites[5], 'w50.example.com', CONFIG)).rejects.toMatchObject({
+      code: 'workspace_domain_limit_reached',
+      status: 409,
+    });
+  });
+
+  it('orders the feed active first, then by oldest verification', async () => {
+    const site = await makeSite('dom_site_order');
+    const add = async (host: string) => {
+      const d = (await service().addDomain(site, host, CONFIG)).domain;
+      publishDns(host, tokenOf(d));
+      return d;
+    };
+    const old = await add('old-verified.example.com');
+    await service().verifyDomain(site.id, old.id, CONFIG);
+    clock = new Date(clock.getTime() + 60_000);
+    const newer = await add('new-verified.example.com');
+    await service().verifyDomain(site.id, newer.id, CONFIG);
+    clock = new Date(clock.getTime() + 60_000);
+    certReady = true;
+    const live = await add('zz-active.example.com');
+    await service().verifyDomain(site.id, live.id, CONFIG);
+
+    const feed = await service().listProxyHostnames();
+    expect(feed).toEqual({
+      hostnames: ['zz-active.example.com', 'old-verified.example.com', 'new-verified.example.com'],
+      truncated: false,
+    });
+  });
+});
+
+describe('scheduled re-check of live domains', () => {
+  async function liveDomain(id: string, host: string) {
+    const site = await makeSite(id);
+    const d = (await service().addDomain(site, host, CONFIG)).domain;
+    publishDns(host, tokenOf(d));
+    certReady = true;
+    await service().verifyDomain(site.id, d.id, CONFIG);
+    return { site, d };
+  }
+  const later = (hours: number) => {
+    clock = new Date(clock.getTime() + hours * 60 * 60 * 1000);
+  };
+
+  it('only checks domains whose last check is older than the interval', async () => {
+    await liveDomain('dom_site_rc1', 'rc1.example.com');
+    expect((await service().recheckDue(CONFIG)).checked).toBe(0);
+    clock = new Date(clock.getTime() + RECHECK_INTERVAL_MS + 1);
+    expect((await service().recheckDue(CONFIG)).checked).toBe(1);
+    expect((await service().recheckDue(CONFIG)).checked).toBe(0);
+  });
+
+  it('needs routing only: a tidied-away TXT record keeps the domain', async () => {
+    const { site } = await liveDomain('dom_site_rc2', 'rc2.example.com');
+    txt.delete('rc2.example.com');
+    later(7);
+    expect(await service().recheckDue(CONFIG)).toMatchObject({ ok: 1 });
+    const [d] = await service().listDomains(site.id, CONFIG);
+    expect(d).toMatchObject({ status: 'active', serving: true });
+  });
+
+  it('releases a domain after three definitive failures in a row, not before', async () => {
+    const { site } = await liveDomain('dom_site_rc3', 'rc3.example.com');
+    routes.set('rc3.example.com', ['198.51.100.9']);
+    later(7);
+    expect(await service().recheckDue(CONFIG)).toMatchObject({ failing: 1 });
+    later(7);
+    expect(await service().recheckDue(CONFIG)).toMatchObject({ failing: 1 });
+    let [d] = await service().listDomains(site.id, CONFIG);
+    expect(d).toMatchObject({ status: 'active', serving: true, lastErrorCode: 'routing_mismatch' });
+    expect(d.lastError).toContain('2 of 3');
+    expect((await resolvePublishedSite('rc3.example.com', prisma, 'sites.lumitra.co'))?.siteId).toBe(site.id);
+
+    later(7);
+    expect(await service().recheckDue(CONFIG)).toMatchObject({ released: 1 });
+    [d] = await service().listDomains(site.id, CONFIG);
+    expect(d).toMatchObject({ status: 'failed', serving: false });
+    expect(await resolvePublishedSite('rc3.example.com', prisma, 'sites.lumitra.co')).toBeNull();
+    expect((await service().listProxyHostnames()).hostnames).toEqual([]);
+    expect(invalidated).toContain('rc3.example.com');
+  });
+
+  it('transient errors never count, and a success resets the counter', async () => {
+    const { site } = await liveDomain('dom_site_rc4', 'rc4.example.com');
+    routes.set('rc4.example.com', ['198.51.100.9']);
+    later(7);
+    await service().recheckDue(CONFIG);
+    later(7);
+    await service().recheckDue(CONFIG);
+    routes.set('rc4.example.com', 'timeout');
+    for (let i = 0; i < 4; i += 1) {
+      later(7);
+      expect(await service().recheckDue(CONFIG)).toMatchObject({ transient: 1 });
+    }
+    routes.set('rc4.example.com', ['203.0.113.10']);
+    later(7);
+    expect(await service().recheckDue(CONFIG)).toMatchObject({ ok: 1 });
+    // Two more failures after the reset still do not release it.
+    routes.set('rc4.example.com', ['198.51.100.9']);
+    later(7);
+    await service().recheckDue(CONFIG);
+    later(7);
+    await service().recheckDue(CONFIG);
+    const [d] = await service().listDomains(site.id, CONFIG);
+    expect(d).toMatchObject({ status: 'active', serving: true });
+  });
+
+  it('moves a verified domain to active once its certificate answers', async () => {
+    const site = await makeSite('dom_site_rc5');
+    const d = (await service().addDomain(site, 'rc5.example.com', CONFIG)).domain;
+    publishDns('rc5.example.com', tokenOf(d));
+    await service().verifyDomain(site.id, d.id, CONFIG);
+    certReady = true;
+    later(7);
+    await service().recheckDue(CONFIG);
+    const [after] = await service().listDomains(site.id, CONFIG);
+    expect(after.status).toBe('active');
   });
 });

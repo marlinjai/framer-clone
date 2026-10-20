@@ -40,20 +40,27 @@ afterEach(() => {
 
 describe('GET /api/internal/custom-domains/hostnames', () => {
   it('returns the hostnames as plain text with a count and a hash', async () => {
-    listProxyHostnames.mockResolvedValue(['a.example.com', 'www.example.org']);
+    listProxyHostnames.mockResolvedValue({ hostnames: ['a.example.com', 'www.example.org'], truncated: false });
     const res = await GET(req());
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8');
     const body = await res.text();
     expect(body).toBe('a.example.com\nwww.example.org\n');
     expect(res.headers.get('x-hostname-count')).toBe('2');
+    expect(res.headers.get('x-hostname-truncated')).toBe('false');
     expect(res.headers.get('x-content-sha256')).toBe(createHash('sha256').update(body).digest('hex'));
   });
 
   it('an empty list is an empty body (the sync then writes no routers)', async () => {
-    listProxyHostnames.mockResolvedValue([]);
+    listProxyHostnames.mockResolvedValue({ hostnames: [], truncated: false });
     const res = await GET(req());
     expect(await res.text()).toBe('');
+  });
+
+  it('reports when the cap cut the list', async () => {
+    listProxyHostnames.mockResolvedValue({ hostnames: ['a.example.com'], truncated: true });
+    const res = await GET(req());
+    expect(res.headers.get('x-hostname-truncated')).toBe('true');
   });
 
   it('401s without or with a wrong token', async () => {

@@ -55,8 +55,35 @@ import { probeCertificate, type TlsProbe } from './tlsProbe';
 /** How many custom domains one site may carry. */
 export const MAX_DOMAINS_PER_SITE = 10;
 
+/** How many custom domains one workspace (one company's sites) may carry. */
+export const MAX_DOMAINS_PER_WORKSPACE = 50;
+
 /** The most hostnames the proxy feed returns (a backstop against runaway rows). */
 export const MAX_PROXY_HOSTNAMES = 1_000;
+
+/** A live domain is re-checked when its last check is older than this. */
+export const RECHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/** At most this many domains are re-checked per scheduled call. */
+export const RECHECK_BATCH_SIZE = 20;
+
+/** Definitive routing failures in a row after which a live claim is released. */
+export const RECHECK_RELEASE_AFTER = 3;
+
+/** What the proxy feed returns: the hostnames, and whether the cap cut it. */
+export interface ProxyHostnameList {
+  hostnames: string[];
+  truncated: boolean;
+}
+
+/** What one scheduled re-check pass did. */
+export interface RecheckSummary {
+  checked: number;
+  ok: number;
+  transient: number;
+  failing: number;
+  released: number;
+}
 
 export type DomainStatus = 'pending' | 'verified' | 'active' | 'failed';
 
@@ -111,6 +138,7 @@ type DomainRow = {
   lastCheckedAt: Date | null;
   lastErrorCode: string | null;
   lastError: string | null;
+  consecutiveFailures: number;
 };
 
 const ROW_SELECT = {
@@ -125,6 +153,7 @@ const ROW_SELECT = {
   lastCheckedAt: true,
   lastErrorCode: true,
   lastError: true,
+  consecutiveFailures: true,
 } as const;
 
 /** The DNS records an owner creates for `hostname` (TXT first, then routing). */
@@ -263,6 +292,18 @@ export class DomainService {
         409,
       );
     }
+    // Fairness across companies: one workspace cannot take the whole proxy
+    // feed (and the Let's Encrypt account's quota) by spreading over sites.
+    const workspaceCount = await this.prisma.siteDomain.count({
+      where: { workspaceId: site.workspaceId, hostname: { not: null } },
+    });
+    if (workspaceCount >= MAX_DOMAINS_PER_WORKSPACE) {
+      throw new DomainError(
+        'workspace_domain_limit_reached',
+        `This company already has ${MAX_DOMAINS_PER_WORKSPACE} custom domains across its sites. Disconnect one first.`,
+        409,
+      );
+    }
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
@@ -356,27 +397,131 @@ export class DomainService {
 
   /**
    * Every hostname the proxy must route: the live claims of verified and
-   * active domains, re-checked against the hostname contract, sorted, capped.
-   * Unpublished sites keep their routes (and certificates): flapping routes on
-   * every publish would spend Let's Encrypt quota for nothing.
+   * active domains, re-checked against the hostname contract, capped at
+   * MAX_PROXY_HOSTNAMES. Order decides who keeps a route when the cap bites:
+   * ACTIVE domains first (they already have a certificate and visitors), then
+   * verified ones, each oldest `verifiedAt` first, so a flood of new claims can
+   * never push established domains out. Hitting the cap is logged and reported
+   * (`truncated`). Unpublished sites keep their routes (and certificates):
+   * flapping routes on every publish would spend Let's Encrypt quota for
+   * nothing.
    */
-  async listProxyHostnames(): Promise<string[]> {
+  async listProxyHostnames(): Promise<ProxyHostnameList> {
+    const zones = platformZones();
+    const names: string[] = [];
+    const seen = new Set<string>();
+    let truncated = false;
+    for (const status of ['active', 'verified'] as const) {
+      const remaining = MAX_PROXY_HOSTNAMES - names.length;
+      const rows = await this.prisma.siteDomain.findMany({
+        where: { customHostname: { not: null }, verificationStatus: status },
+        select: { customHostname: true },
+        orderBy: [{ verifiedAt: 'asc' }, { customHostname: 'asc' }],
+        // One extra row tells whether the cap cut the list.
+        take: remaining + 1,
+      });
+      for (const row of rows) {
+        const name = row.customHostname;
+        if (!name || seen.has(name) || !isClaimableHostname(name, zones)) continue;
+        if (names.length >= MAX_PROXY_HOSTNAMES) {
+          truncated = true;
+          break;
+        }
+        seen.add(name);
+        names.push(name);
+      }
+      if (truncated) break;
+    }
+    if (truncated) {
+      console.error(
+        `[domains] the proxy feed reached its cap of ${MAX_PROXY_HOSTNAMES} hostnames; the newest verified domains get no route until some are removed`,
+      );
+    }
+    return { hostnames: names, truncated };
+  }
+
+  /**
+   * The scheduled re-check of LIVE domains (verified or active): at most
+   * RECHECK_BATCH_SIZE claims whose last check is older than
+   * RECHECK_INTERVAL_MS, least recently checked first, which spreads the
+   * checks out over time on its own. Each gets the routing-only DNS check (the
+   * TXT record may have been tidied away, that is fine):
+   *   - routing fine: the failure counter resets, and the certificate probe
+   *     runs (a verified domain whose certificate arrived becomes active);
+   *   - transient DNS error: only the "last checked" note, never counted;
+   *   - definitive failure: counted, the domain keeps serving with a warning,
+   *     and at RECHECK_RELEASE_AFTER failures in a row it is marked failed and
+   *     its claim released (it stops serving, the proxy drops its route).
+   * The owner's own "Check again" stays immediate: a definitive failure there
+   * releases at once, since the owner is looking at the result.
+   */
+  async recheckDue(config: CustomDomainConfig): Promise<RecheckSummary> {
+    const now = this.now();
+    const cutoff = new Date(now.getTime() - RECHECK_INTERVAL_MS);
     const rows = await this.prisma.siteDomain.findMany({
       where: {
         customHostname: { not: null },
+        hostname: { not: null },
         verificationStatus: { in: ['verified', 'active'] },
+        OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: cutoff } }],
       },
-      select: { customHostname: true },
-      orderBy: { customHostname: 'asc' },
-      take: MAX_PROXY_HOSTNAMES,
+      orderBy: [{ lastCheckedAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
+      take: RECHECK_BATCH_SIZE,
+      select: ROW_SELECT,
     });
-    const zones = platformZones();
-    const names = new Set<string>();
+    const summary: RecheckSummary = { checked: 0, ok: 0, transient: 0, failing: 0, released: 0 };
+    const dns = this.deps.dns ?? createDnsLookup(config);
     for (const row of rows) {
-      const name = row.customHostname;
-      if (name && isClaimableHostname(name, zones)) names.add(name);
+      summary.checked += 1;
+      const hostname = row.hostname as string;
+      if (row.customHostname !== hostname) continue;
+      try {
+        const check = await checkDomainDns({
+          hostname,
+          token: row.verificationToken ?? '',
+          requireTxt: false,
+          config,
+          dns,
+        });
+        if (check.ok) {
+          await this.probeAndRecord(row, hostname, now, config);
+          summary.ok += 1;
+          continue;
+        }
+        if (check.transient) {
+          await this.prisma.siteDomain.update({
+            where: { id: row.id },
+            data: { lastCheckedAt: now, lastErrorCode: check.code, lastError: check.message },
+          });
+          summary.transient += 1;
+          continue;
+        }
+        const failures = row.consecutiveFailures + 1;
+        if (failures >= RECHECK_RELEASE_AFTER) {
+          await this.recordFailure(row, true, now, config, {
+            code: check.code,
+            message: `${check.message} (Checked ${failures} times in a row, so the domain was disconnected from the site. Fix the record and verify again.)`,
+          });
+          summary.released += 1;
+        } else {
+          await this.prisma.siteDomain.update({
+            where: { id: row.id },
+            data: {
+              consecutiveFailures: failures,
+              lastCheckedAt: now,
+              lastErrorCode: check.code,
+              lastError: `${check.message} (Failed check ${failures} of ${RECHECK_RELEASE_AFTER}; the domain keeps serving until then.)`,
+            },
+          });
+          summary.failing += 1;
+        }
+      } catch (err) {
+        // One broken row must not stop the pass; it is retried next time.
+        console.error(`[domains] re-check of ${hostname} failed:`, err);
+        summary.transient += 1;
+      }
     }
-    return [...names].sort();
+    return summary;
   }
 
   // --- internals ------------------------------------------------------------
@@ -423,6 +568,7 @@ export class DomainService {
             lastCheckedAt: now,
             lastErrorCode: null,
             lastError: null,
+            consecutiveFailures: 0,
           },
           select: ROW_SELECT,
         });
@@ -449,7 +595,7 @@ export class DomainService {
     if (!config.tlsProbe) {
       const updated = await this.prisma.siteDomain.update({
         where: { id: row.id },
-        data: { lastCheckedAt: now, lastErrorCode: null, lastError: null },
+        data: { lastCheckedAt: now, lastErrorCode: null, lastError: null, consecutiveFailures: 0 },
         select: ROW_SELECT,
       });
       return toView(updated, config);
@@ -466,6 +612,7 @@ export class DomainService {
           lastCheckedAt: now,
           lastErrorCode: null,
           lastError: null,
+          consecutiveFailures: 0,
         },
         select: ROW_SELECT,
       });
@@ -478,6 +625,7 @@ export class DomainService {
       where: { id: row.id },
       data: {
         lastCheckedAt: now,
+        consecutiveFailures: 0,
         lastErrorCode: wasActive ? 'certificate_check_failed' : 'certificate_pending',
         lastError: wasActive
           ? `DNS is correct, but the certificate check failed (${result.reason}). The domain keeps serving; check again in a few minutes.`
@@ -502,6 +650,7 @@ export class DomainService {
         lastCheckedAt: now,
         lastErrorCode: failure.code,
         lastError: failure.message,
+        consecutiveFailures: 0,
         ...(holdsClaim ? { customHostname: null, activatedAt: null } : {}),
       },
       select: ROW_SELECT,
