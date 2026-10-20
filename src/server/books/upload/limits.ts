@@ -11,8 +11,8 @@
 //   - one extraction per file at a time, durable: the claim on the staging row
 //     (service.ts), carrying the extraction's id, which another call may take
 //     over after CLAIM_TIMEOUT_MS (a crashed call is retried, not lost; the
-//     call taken over writes nothing). A call is bounded well below that: two
-//     attempts of at most EXTRACT_REQUEST_TIMEOUT_MS each (extract.ts);
+//     call taken over writes nothing). A call is aborted after
+//     EXTRACT_CALL_BUDGET_MS, below that;
 //   - a daily ceiling per company (BOOKS_IMPORT_DAILY_LIMIT, default 500), durable:
 //     the extraction ledger counts the calls started in the last 24 hours, so a
 //     restart does not reset it and retries count like first attempts; the
@@ -23,6 +23,13 @@ export const EXTRACT_PARALLEL = 4;
 
 /** A claim older than this is a crashed or abandoned call: the file may be read again. */
 export const CLAIM_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * The longest one reading may take as a whole (all attempts, streaming
+ * included), enforced with an abort: below CLAIM_TIMEOUT_MS, so a call that is
+ * still running is never taken over by another.
+ */
+export const EXTRACT_CALL_BUDGET_MS = 8 * 60 * 1000;
 
 /** The rolling window of the daily ceiling. */
 export const DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;

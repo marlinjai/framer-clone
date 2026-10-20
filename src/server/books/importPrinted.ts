@@ -220,10 +220,7 @@ function isoOf(value: string): string | null {
   return isIsoDate(iso) ? iso : null;
 }
 
-/**
- * A service period from an object (`start`/`end` or `from`/`to`) or from text
- * naming exactly two dates ("2023-01-01 bis 2023-01-31", "01.01.2023 - 31.01.2023").
- */
+/** Month names (German and English, with their usual abbreviations) and their numbers. */
 const MONTHS: Record<string, number> = {
   januar: 1, jan: 1, january: 1, jänner: 1,
   februar: 2, feb: 2, february: 2,
@@ -256,6 +253,11 @@ export function monthPeriodOf(text: string): { start: string; end: string } | nu
   return { start: `${year}-${mm}-01`, end: `${year}-${mm}-${String(last).padStart(2, '0')}` };
 }
 
+/**
+ * A service period from an object (`start`/`end` or `from`/`to`), from text
+ * naming exactly two dates ("2023-01-01 bis 2023-01-31", "01.01.2023 - 31.01.2023"),
+ * or from text naming one month ("Februar 2023": its first and last day).
+ */
 export function servicePeriodOf(value: unknown): { start: string; end: string } | null {
   if (typeof value === 'string') {
     const month = monthPeriodOf(value);
@@ -494,6 +496,8 @@ function taxLines(
     if (rawTax != null) {
       const cents = Math.round(rawTax * 100);
       if (Math.abs(rawTax * 100 - cents) > 1e-6) return { kind: 'error', reason: 'line_amount_invalid' };
+      // A 0 % line carries no VAT: a printed amount there is a misreading, never stored.
+      if (rate === 0 && cents !== 0) return { kind: 'error', reason: 'line_tax_on_zero_rate' };
       l.taxAmount = cents;
       printedTax.add(i);
     } else {
@@ -508,6 +512,10 @@ function taxLines(
     const want = Math.round(g.tax * 100);
     const have = members.reduce((acc, { l }) => acc + l.taxAmount, 0);
     if (want !== have) {
+      // Only a rounding difference (a cent per derived line) is put on a line; anything more
+      // means the summary and the lines disagree, which is named, never absorbed. A 0 % group
+      // has nothing to round.
+      if (rate === 0 || Math.abs(want - have) > derivedMembers.length) return { kind: 'error', reason: 'tax_summary_mismatch' };
       const largest = derivedMembers.reduce((a, b) => (Math.abs(b.l.subtotal) > Math.abs(a.l.subtotal) ? b : a));
       largest.l.taxAmount += want - have;
     }
@@ -577,9 +585,11 @@ export function mapPrintedInvoice(
   const senderCountry = senderCountryInferred ? 'DE' : countryCode(r.sender.country);
   if (!senderCountry) return issue('error', 'sender_country_unknown');
   // Reverse charge as the Books know it (section 13b UStG for an EU business abroad): a domestic
-  // section 13b case or a customer outside the EU is not that, and is never stored as it.
+  // section 13b case or a customer outside the EU is not that, and is never stored as it. Each
+  // case is named for its own way forward.
   if (treatment === 'reverse_charge' && (recipientCountry === 'DE' || !EU_MEMBER_STATES.has(recipientCountry))) {
-    return issue('error', 'reverse_charge_outside_eu');
+    if (countryAssumed || countryInferred) return issue('error', 'reverse_charge_country_unknown');
+    return issue('error', recipientCountry === 'DE' ? 'reverse_charge_domestic' : 'reverse_charge_outside_eu');
   }
   const taxNoteText = (r.taxNote ?? r.smallBusinessNote ?? '').trim();
 

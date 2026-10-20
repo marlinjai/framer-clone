@@ -14,7 +14,7 @@ import { pathLabel, problemText } from '@/lib/books/importProblems';
 import { describeError } from '@/server/books/http/route';
 
 import { createCompanySlots, dailyExtractLimit, dailyExtractLimitShown } from '../limits';
-import { cleanFileName } from '../service';
+import { cleanFileName, failureOutcome } from '../service';
 import { withoutNul } from '../staging';
 import { valueAt, withCompanySender } from '../validate';
 
@@ -67,6 +67,18 @@ describe('dailyExtractLimit', () => {
   it('for showing, an invalid setting is null rather than breaking the page', () => {
     expect(dailyExtractLimitShown({ BOOKS_IMPORT_DAILY_LIMIT: 'lots' })).toBeNull();
     expect(dailyExtractLimitShown({})).toBe(500);
+  });
+});
+
+describe('failureOutcome', () => {
+  it('blames the PDF only when the API refused the document itself; account and request errors stay retryable', () => {
+    const apiError = (status: number, message: string) => Object.assign(new Error(`${status} ${message}`), { status, error: { error: { message } } });
+    expect(failureOutcome(apiError(413, 'request too large'))).toBe('unreadable');
+    expect(failureOutcome(apiError(400, 'The PDF specified was not valid.'))).toBe('unreadable');
+    expect(failureOutcome(apiError(400, 'Your credit balance is too low to access the Anthropic API.'))).toBe('error');
+    expect(failureOutcome(apiError(400, 'output_config.effort: invalid value'))).toBe('error');
+    expect(failureOutcome(apiError(529, 'Overloaded'))).toBe('error');
+    expect(failureOutcome(new Error('socket hang up'))).toBe('error');
   });
 });
 
@@ -147,7 +159,7 @@ describe('the review form', () => {
       recipient: { addressLines: ['Beispielweg 2', '20095 Hamburg'], customerNumber: '1003' },
       lines: [{ quantity: 10, lineTotal: 800 }, { quantity: null, unitPrice: null, lineTotal: -80 }],
     });
-    expect(fromForm({ ...form, total: 'twelve' }, base)).toEqual({ ok: false, field: 'Total' });
+    expect(fromForm({ ...form, total: 'twelve' }, base)).toEqual({ ok: false, field: 'Total is not a number.' });
   });
 
   it('keeps an inferred recipient country inferred unless changed, and sends the edited VAT summary', () => {
@@ -169,7 +181,8 @@ describe('the review form', () => {
     const changed = fromForm({ ...form, recipientCountry: 'AT' }, base);
     if (!changed.ok) throw new Error(changed.field);
     expect(changed.printed.recipient).toMatchObject({ country: 'AT', countryInferred: null });
-    expect(fromForm({ ...form, taxAmounts: [{ rate: '19', net: 'x', tax: '19' }] }, base)).toEqual({ ok: false, field: 'VAT summary 1, net' });
+    expect(fromForm({ ...form, taxAmounts: [{ rate: '19', net: 'x', tax: '19' }] }, base)).toEqual({ ok: false, field: 'VAT summary 1, net is not a number.' });
+    expect(fromForm({ ...form, taxAmounts: [{ rate: '', net: '100', tax: '19' }] }, base)).toEqual({ ok: false, field: 'VAT summary 1, rate is missing.' });
   });
 });
 

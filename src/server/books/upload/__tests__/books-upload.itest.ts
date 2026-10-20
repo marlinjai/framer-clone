@@ -47,6 +47,7 @@ import {
   enterByHand,
   extractItem,
   listImportItems,
+  MAX_OPEN_ITEMS,
   stageUpload,
   type ExtractDeps,
 } from '../service';
@@ -290,8 +291,8 @@ describe('backtrack and revise', () => {
     await expect(correctItem(scope, book, second.id, { printed, extractionId: r2.extractionId!, expectedVersion: r2.version })).rejects.toMatchObject({ code: 'CONCURRENT_EDIT' });
     await expect(correctItem(scope, book, second.id, { printed, extractionId: 'an-old-reading', expectedVersion: raised.version })).rejects.toMatchObject({ code: 'STALE_EXTRACTION' });
 
-    // Reading again replaces the reading and drops the correction keyed to the old one.
-    const again = await extractItem(scope, second.id, deps([toolTurn(toolInput({ number: '22' }))], book).deps);
+    // Reading again (asked for by the user) replaces the reading and drops the correction keyed to the old one.
+    const again = await extractItem(scope, second.id, deps([toolTurn(toolInput({ number: '22' }))], book).deps, { replace: true });
     expect(again.extractionId).not.toBe(r2.extractionId);
     expect(again.corrected).toBeNull();
     expect(again.extracted!.printed.number).toBe('22');
@@ -324,7 +325,7 @@ describe('resume', () => {
     // A claim left behind by a crash (older than the claim timeout) is taken over.
     await env.ownerDb
       .updateTable('historical_import_item')
-      .set({ status: 'extracting', claimed_at: new Date(Date.now() - 20 * 60 * 1000), updated_at: new Date() })
+      .set({ status: 'extracting', claimed_at: new Date(Date.now() - 20 * 60 * 1000), claim_id: 'crashed-call', updated_at: new Date() })
       .where('id', '=', b.id)
       .execute();
     const resumed = await extractItem(scope, b.id, deps([toolTurn(toolInput({ number: '40' }))], book).deps);
@@ -458,26 +459,34 @@ describe('unhappy paths of reading and importing', () => {
     await expect(enterByHand(scope, book, read.id, { expectedVersion: r.version })).rejects.toMatchObject({ code: 'CONCURRENT_EDIT' });
   });
 
-  it('a call whose claim was taken over writes nothing; the newer reading stands', async () => {
-    const { tenantId, book, scope } = await company();
-    const item = await staged(scope, `take-${tenantId}`);
-    let finishSlow!: () => void;
-    const slow = extractItem(scope, item.id, deps([{ ...toolTurn(toolInput({ number: '30' })), wait: new Promise<void>((r) => (finishSlow = r)) }], book).deps);
-    await new Promise((r) => setTimeout(r, 50));
-    // The slow call looks crashed: its claim is old.
-    await env.ownerDb.updateTable('historical_import_item').set({ claimed_at: new Date(Date.now() - 20 * 60 * 1000) }).where('id', '=', item.id).execute();
-    const newer = await extractItem(scope, item.id, deps([toolTurn(toolInput({ number: '31' }))], book).deps);
-    expect(newer.extracted!.printed.number).toBe('31');
-    finishSlow();
-    await slow;
-    const now = await getItem(scope.db, scope, item.id);
-    expect(now.extractionId).toBe(newer.extractionId);
-    expect(now.extracted!.printed.number).toBe('31');
-    // Both calls are in the ledger (both were paid for).
-    expect(await env.ownerDb.selectFrom('historical_import_extraction').select('outcome').where('item_id', '=', item.id).orderBy('started_at').execute()).toEqual([
-      { outcome: 'ok' },
-      { outcome: 'ok' },
-    ]);
+  it('a call whose claim was taken over writes nothing while the newer call is still running, read or failed', async () => {
+    for (const slowEnds of ['with a reading', 'with a failure'] as const) {
+      const { tenantId, book, scope } = await company();
+      const item = await staged(scope, `take-${slowEnds.length}-${tenantId}`);
+      let finishSlow!: () => void;
+      const slowTurn: Turn =
+        slowEnds === 'with a reading'
+          ? { ...toolTurn(toolInput({ number: '30' })), wait: new Promise<void>((r) => (finishSlow = r)) }
+          : { content: [], stop_reason: 'refusal', wait: new Promise<void>((r) => (finishSlow = r)) };
+      const slow = extractItem(scope, item.id, deps([slowTurn], book).deps);
+      await new Promise((r) => setTimeout(r, 50));
+      // The slow call looks crashed: its claim is old, and a newer call takes it over.
+      await env.ownerDb.updateTable('historical_import_item').set({ claimed_at: new Date(Date.now() - 20 * 60 * 1000) }).where('id', '=', item.id).execute();
+      let finishNewer!: () => void;
+      const newer = extractItem(scope, item.id, deps([{ ...toolTurn(toolInput({ number: '31' })), wait: new Promise<void>((r) => (finishNewer = r)) }], book).deps);
+      await new Promise((r) => setTimeout(r, 50));
+      const newerClaim = (await env.ownerDb.selectFrom('historical_import_item').select('claim_id').where('id', '=', item.id).executeTakeFirstOrThrow()).claim_id;
+      // The slow call ends while the newer one still runs: it must write nothing.
+      finishSlow();
+      await slow;
+      const between = await env.ownerDb.selectFrom('historical_import_item').select(['status', 'claim_id', 'extracted', 'problems']).where('id', '=', item.id).executeTakeFirstOrThrow();
+      expect(between).toMatchObject({ status: 'extracting', claim_id: newerClaim, extracted: null });
+      expect(between.problems).toEqual([]);
+      finishNewer();
+      const done = await newer;
+      expect(done.extracted!.printed.number).toBe('31');
+      expect(done.status).toBe('ready');
+    }
   });
 
   it('an aborted reading again keeps the reading, its correction and the status', async () => {
@@ -488,7 +497,7 @@ describe('unhappy paths of reading and importing', () => {
     const fixed = await correctItem(scope, book, item.id, { printed: typed, extractionId: r.extractionId!, expectedVersion: r.version });
     expect(fixed.status).toBe('ready');
     const controller = new AbortController();
-    const pending = extractItem(scope, item.id, deps([{ ...toolTurn(toolInput()), wait: new Promise(() => {}) }], book, { signal: controller.signal }).deps);
+    const pending = extractItem(scope, item.id, deps([{ ...toolTurn(toolInput()), wait: new Promise(() => {}) }], book, { signal: controller.signal }).deps, { replace: true });
     await new Promise((res) => setTimeout(res, 50));
     controller.abort();
     const back = await pending;
@@ -549,5 +558,76 @@ describe('unhappy paths of reading and importing', () => {
     expect(done).toMatchObject({ documentId: first.documentId, item: { status: 'imported' } });
     const files = await env.ownerDb.selectFrom('sales_document_file').select('id').where('tenant_id', '=', tenantId).where('renderer', '=', IMPORT_RENDERER).execute();
     expect(files).toHaveLength(1);
+  });
+
+  it('what the user typed is not replaced by a reading nobody asked for; asked for, it is', async () => {
+    const { tenantId, book, scope } = await company();
+    const item = await staged(scope, `typed-${tenantId}`);
+    const refused = await extractItem(scope, item.id, deps([{ content: [], stop_reason: 'refusal' }], book).deps);
+    const blank = await enterByHand(scope, book, item.id, { expectedVersion: refused.version });
+    const typed = await correctItem(scope, book, item.id, { printed: typedByUser(toolInput({ number: '61' })), extractionId: blank.extractionId!, expectedVersion: blank.version });
+    const queued = deps([toolTurn(toolInput({ number: '99' }))], book);
+    await expect(extractItem(scope, item.id, queued.deps)).rejects.toMatchObject({ code: 'READING_WOULD_BE_REPLACED' });
+    expect(queued.fake.calls).toHaveLength(0);
+    expect((await getItem(scope.db, scope, item.id)).corrected).toMatchObject({ number: '61' });
+    const asked = await extractItem(scope, item.id, deps([toolTurn(toolInput({ number: '62' }))], book).deps, { replace: true });
+    expect(asked.extracted!.printed.number).toBe('62');
+    expect(asked.corrected).toBeNull();
+    expect(typed.status).toBe('ready');
+  });
+
+  it('a failed reading again keeps the earlier reading and its status, the failure noted', async () => {
+    const { tenantId, book, scope } = await company();
+    const item = await staged(scope, `rf-${tenantId}`);
+    const r = await extractItem(scope, item.id, deps([toolTurn(toolInput({ number: '37' }))], book).deps);
+    expect(r.status).toBe('ready');
+    const failed = await extractItem(scope, item.id, deps([{ throws: Object.assign(new Error('overloaded'), { status: 529 }) }], book).deps);
+    expect(failed.status).toBe('ready');
+    expect(failed.extractionId).toBe(r.extractionId);
+    expect(failed.problems).toContainEqual({ code: 'reread_failed:error', path: null, blocking: false, count: null });
+    expect(failed.problems.every((p) => !p.blocking)).toBe(true);
+  });
+
+  it('a call is bounded as a whole (a stalled stream is aborted), recorded as an error, and the row can be read again', async () => {
+    const { tenantId, book, scope } = await company();
+    const item = await staged(scope, `slow-${tenantId}`);
+    const stalled = await extractItem(scope, item.id, deps([{ ...toolTurn(toolInput()), wait: new Promise(() => {}) }], book, { callBudgetMs: 100 }).deps);
+    expect(stalled.status).toBe('needs_attention');
+    expect(stalled.problems).toEqual([{ code: 'extraction_failed:error', path: null, blocking: true, count: null }]);
+    expect(await env.ownerDb.selectFrom('historical_import_extraction').select('outcome').where('item_id', '=', item.id).execute()).toEqual([{ outcome: 'error' }]);
+  });
+
+  it('a call the caller left before it began is not made and not counted', async () => {
+    const { tenantId, book, scope } = await company();
+    const item = await staged(scope, `gone-${tenantId}`);
+    const controller = new AbortController();
+    controller.abort();
+    const d = deps([toolTurn(toolInput())], book, { signal: controller.signal });
+    const back = await extractItem(scope, item.id, d.deps);
+    expect(back.status).toBe('uploaded');
+    expect(d.fake.calls).toHaveLength(0);
+    expect(await env.ownerDb.selectFrom('historical_import_extraction').select('id').where('item_id', '=', item.id).execute()).toEqual([]);
+  });
+
+  it('parallel uploads cannot pass the open-row bound together', async () => {
+    const { tenantId, scope } = await company();
+    // Fill up to one below the bound directly (as the owner), then race two uploads.
+    const rows = Array.from({ length: MAX_OPEN_ITEMS - 1 }, (_, i) => ({
+      id: crypto.randomUUID(), tenant_id: tenantId, file_name: 'f.pdf', content: Buffer.from(`%PDF-${i}`), byte_size: Buffer.from(`%PDF-${i}`).byteLength,
+      sha256: i.toString(16).padStart(64, '0'), updated_at: new Date(),
+    }));
+    await env.ownerDb.insertInto('historical_import_item').values(rows).execute();
+    const results = await Promise.allSettled([stageUpload(scope, { fileName: 'a.pdf', bytes: pdfBytes(`ra-${tenantId}`) }), stageUpload(scope, { fileName: 'b.pdf', bytes: pdfBytes(`rb-${tenantId}`) })]);
+    expect(results.filter((x) => x.status === 'fulfilled')).toHaveLength(1);
+    expect((results.find((x) => x.status === 'rejected') as PromiseRejectedResult).reason.code).toBe('IMPORT_LIMIT');
+  });
+
+  it('010 keeps the claim with the status, and a discarded row without bytes', async () => {
+    const { tenantId, scope } = await company();
+    const item = await staged(scope, `ck-${tenantId}`);
+    expect(await rejectionCode(env.ownerDb.updateTable('historical_import_item').set({ status: 'extracting' }).where('id', '=', item.id).execute())).toBe('23514');
+    expect(
+      await rejectionCode(env.ownerDb.updateTable('historical_import_item').set({ status: 'discarded', discarded_at: new Date() }).where('id', '=', item.id).execute()),
+    ).toBe('23514');
   });
 });

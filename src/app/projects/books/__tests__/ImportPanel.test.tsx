@@ -351,9 +351,37 @@ describe('ImportPanel', () => {
     });
     render(<ImportPanel />);
     fireEvent.click(await screen.findByRole('button', { name: 'Import all ready (2)' }));
-    await screen.findByText(/1 of 2 could not be imported/);
+    await screen.findByText(/1 of 2 were not imported/);
     expect(screen.getByText(/a\.pdf:/)).toBeTruthy();
     expect(calls.find((c) => c.url.endsWith('/i2/confirm'))!.body).toEqual({ expectedVersion: 9, confirmCounterRaiseTo: null });
+  });
+
+  it('after the daily limit, a row\'s "Read" reads only that row, never the rest of the old queue', async () => {
+    server({
+      'GET /api/books/imports': () => ({
+        status: 200,
+        body: { items: [item({ id: 'i1', status: 'uploaded', printed: null, extractionId: null }), item({ id: 'i2', status: 'uploaded', printed: null, extractionId: null })], importedTotal: 0, counter: null, limits: { ...LIMITS, parallel: 1 } },
+      }),
+      'POST /api/books/imports/i1/extract': () => ({ status: 429, body: { error: { code: 'import_limit', message: 'The daily limit of invoices read is reached.' } } }),
+      'POST /api/books/imports/i2/extract': () => ({ status: 200, body: item({ id: 'i2' }) }),
+    });
+    render(<ImportPanel />);
+    await screen.findByText(/daily limit of invoices read/);
+    expect(calls.filter((c) => c.url.endsWith('/i2/extract'))).toHaveLength(0);
+    fireEvent.click(within(screen.getByTestId('import-row-i2')).getByRole('button', { name: 'Read' }));
+    await waitFor(() => expect(within(screen.getByTestId('import-row-i2')).getByText('Ready to check')).toBeTruthy());
+    expect(calls.filter((c) => c.url.endsWith('/i1/extract'))).toHaveLength(1);
+  });
+
+  it('the counter-raise confirmation puts the focus on Cancel, and Cancel gives it back to Import', async () => {
+    server({ 'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ problems: [{ code: 'counter_raised', path: null, blocking: false, count: 71 }] })], importedTotal: 0, counter: null, limits: LIMITS } }) });
+    render(<ImportPanel />);
+    const row = await screen.findByTestId('import-row-i1');
+    fireEvent.click(within(row).getByRole('button', { name: 'Import' }));
+    const cancel = within(row).getByRole('button', { name: 'Cancel' });
+    expect(document.activeElement).toBe(cancel);
+    fireEvent.click(cancel);
+    await waitFor(() => expect(document.activeElement).toBe(within(screen.getByTestId('import-row-i1')).getByRole('button', { name: 'Import' })));
   });
 
   it('shows how many imported invoices are not listed', async () => {

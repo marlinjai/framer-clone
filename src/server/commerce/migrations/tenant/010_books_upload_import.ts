@@ -316,9 +316,14 @@ export const booksUploadImport: Migration = {
           "status" IN ('uploaded', 'extracting', 'ready', 'needs_attention', 'imported', 'discarded')
         ),
         -- The bytes stay until the file is imported (then they live in
-        -- sales_document_file) or discarded (cleared after 30 days).
+        -- sales_document_file) or discarded (cleared at once).
         CONSTRAINT "historical_import_item_content_check" CHECK (
-          "content" IS NOT NULL OR "status" IN ('imported', 'discarded')
+          ("content" IS NOT NULL OR "status" IN ('imported', 'discarded'))
+          AND ("status" <> 'discarded' OR "content" IS NULL)
+        ),
+        -- A row is being read exactly while a call holds its claim (id and time).
+        CONSTRAINT "historical_import_item_claim_check" CHECK (
+          ("status" = 'extracting') = ("claim_id" IS NOT NULL AND "claimed_at" IS NOT NULL)
         ),
         CONSTRAINT "historical_import_item_imported_check" CHECK (
           ("status" = 'imported') = ("document_id" IS NOT NULL)

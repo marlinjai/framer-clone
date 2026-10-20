@@ -315,6 +315,12 @@ describe('read, correct, import', () => {
     expect(blank.json.printed).toMatchObject({ number: null, lines: [], currency: 'EUR' });
     const again = await call(byHandRoute.POST, 'POST', `/api/books/imports/${id}/by-hand`, { id }, { expectedVersion: blank.json.version });
     expect([again.status, again.json.error.code]).toEqual([409, 'concurrent_edit']);
+    // A reading nobody asked for does not replace it; `replace=1` (the user's "Read again") does.
+    const kept = await call(extractRoute.POST, 'POST', `/api/books/imports/${id}/extract`, { id });
+    expect([kept.status, kept.json.error.code]).toEqual([409, 'reading_would_be_replaced']);
+    fake.turns.push(toolTurn(toolInput({ number: '27' })));
+    const replaced = await call(extractRoute.POST, 'POST', `/api/books/imports/${id}/extract?replace=1`, { id });
+    expect(replaced.json.printed.number).toBe('27');
   });
 
   it('without an AI key the reading answers 401 like the other AI routes, and the row stays unread', async () => {

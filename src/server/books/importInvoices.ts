@@ -258,6 +258,9 @@ export const historicalInvoiceSchema = z
       if (r.taxTreatment === 'regular' && !HISTORICAL_VAT_RATES.has(l.taxRate)) {
         ctx.addIssue({ code: 'custom', path: ['lines', i, 'taxRate'], message: 'not a German VAT rate (19, 16, 7, 5 or 0 %)' });
       }
+      if (l.taxRate === 0 && l.taxAmount !== 0) {
+        ctx.addIssue({ code: 'custom', path: ['lines', i, 'taxAmount'], message: 'a 0 % line carries no VAT' });
+      }
     });
     if (r.taxTreatment === 'reverse_charge') {
       // The database twin refuses it too (sales_document_reverse_charge_check).
@@ -966,7 +969,6 @@ export function counterRaiseUnconfirmed(raiseTo: number, confirmed: number | nul
   );
 }
 
-/** The counter value of the record's number and what the counter policy makes of it. */
 /**
  * The counter value of a record's number: by the company's number format; for
  * the operator's file (`pnpm books:import`, whose numbers are integers) a plain
@@ -980,6 +982,7 @@ export function recordNumberValue(record: Pick<HistoricalInvoice, 'documentNumbe
   return Number.isSafeInteger(value) && value >= 1 ? value : null;
 }
 
+/** What the counter policy makes of the record's number: its counter value and the raise it needs, if any. */
 function counterEffect(
   counter: ImportCounter,
   record: HistoricalInvoice,

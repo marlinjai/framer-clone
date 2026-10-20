@@ -21,6 +21,7 @@ import type { ContactBook } from '../contactBook';
 import type { Customer } from '../repository/customers';
 import type { DocumentView, SalesDocument, SalesDocumentListItem } from '../repository/read';
 import type { RecipientContact } from '../snapshots';
+import { describeError } from './describeError';
 
 export type ContactStatus = 'ok' | 'missing' | 'unavailable';
 
@@ -94,7 +95,7 @@ export async function contactsById(
     return new Map(rows.map((c) => [c.id, c]));
   } catch (err) {
     if (isBooksError(err, 'RECIPIENT_UNAVAILABLE')) {
-      console.error('[books] contacts database unavailable while labelling', (err as Error).cause ?? err);
+      console.error(`[books] contacts database unavailable while labelling: ${describeError((err as Error).cause ?? err)}`);
       return null;
     }
     throw err;

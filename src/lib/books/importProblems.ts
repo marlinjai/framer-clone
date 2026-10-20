@@ -24,6 +24,11 @@ const TEXT: Record<string, string> = {
   tax_treatment_unsupported: 'The tax treatment is not one the Books know (section 19, regular VAT, reverse charge).',
   gross_priced_lines: 'The line prices include VAT. Invoices with gross line prices cannot be imported yet; enter the net amounts per line.',
   tax_on_untaxed_invoice: 'The invoice charges VAT, but its tax treatment says it does not.',
+  reverse_charge_domestic:
+    'Reverse charge for a German customer (section 13b UStG within Germany) is not supported by this import. Keep this invoice in your own records outside the Books, and discard the row.',
+  reverse_charge_country_unknown: 'Reverse charge needs the recipient country: enter the country printed on the invoice.',
+  line_tax_on_zero_rate: 'A line at 0 % carries VAT. Check the rate and the VAT of that line against the PDF.',
+  tax_summary_mismatch: 'The VAT summary does not match the lines (more than rounding). Check the rates, net amounts and VAT against the PDF.',
   reverse_charge_outside_eu:
     'Reverse charge applies here only to a business in another EU country. For a customer outside the EU (not taxable in Germany), choose "VAT charged" with 0 %.',
   total_invalid: 'The total is missing or not an amount.',

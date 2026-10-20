@@ -62,7 +62,8 @@ export type BooksErrorCode =
   | 'EXTRACT_BUSY'
   | 'EXTRACTION_RUNNING'
   | 'STALE_EXTRACTION'
-  | 'COUNTER_RAISE_UNCONFIRMED';
+  | 'COUNTER_RAISE_UNCONFIRMED'
+  | 'READING_WOULD_BE_REPLACED';
 
 export class BooksError extends Error {
   readonly code: BooksErrorCode;

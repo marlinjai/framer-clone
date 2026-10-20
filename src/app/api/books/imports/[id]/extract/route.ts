@@ -1,6 +1,6 @@
 // src/app/api/books/imports/[id]/extract/route.ts
 //
-// POST /api/books/imports/<id>/extract -> ImportItemView
+// POST /api/books/imports/<id>/extract[?replace=1] -> ImportItemView
 //
 // Read one staged PDF with Claude (src/server/books/upload/extract.ts) and
 // validate the transcription. Synchronous (one invoice is a short call); the
@@ -8,7 +8,10 @@
 // read again. Refusals before any model call: 429 `extract_busy` (four
 // invoices of the company are being read; retry-after), 429 `import_limit`
 // (the daily ceiling), 409 `extraction_running` (this file is being read),
-// 409 `concurrent_edit` (imported or discarded). A missing ANTHROPIC_API_KEY
+// 409 `concurrent_edit` (imported or discarded), 409
+// `reading_would_be_replaced` (the row holds what the user typed by hand or
+// corrected; `replace=1` says to read it again anyway). The call as a whole is
+// aborted after EXTRACT_CALL_BUDGET_MS (8 minutes). A missing ANTHROPIC_API_KEY
 // answers 401 `missing_anthropic_key` like the other AI routes; an unknown
 // AI_INVOICE_EXTRACT_MODEL answers 500 `extract_model_unknown`.
 
@@ -24,8 +27,8 @@ import { importItemView } from '@/server/books/upload/views';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// One invoice is read in well under a minute; the ceiling leaves room for a repair turn.
-export const maxDuration = 300;
+// One invoice is read in well under a minute; the call's own budget (8 minutes, limits.ts) fits within this.
+export const maxDuration = 540;
 
 export const POST = booksRoute<{ id: string }>('write', async (ctx, req, { params }) => {
   const { id } = await params;
@@ -50,7 +53,7 @@ export const POST = booksRoute<{ id: string }>('write', async (ctx, req, { param
     dailyLimit: dailyExtractLimit(),
     signal: req.signal,
     contactBook: ctx.contactBook,
-  });
+  }, { replace: new URL(req.url).searchParams.get('replace') === '1' });
   console.info(`[books-import] item ${item.id}: ${item.status}, ${item.problems.length} problem(s)`);
   return Response.json(importItemView(item));
 });

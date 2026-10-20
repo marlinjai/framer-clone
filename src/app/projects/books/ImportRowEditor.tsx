@@ -112,7 +112,11 @@ function toForm(p: PrintedInvoice | null): Form {
 export function fromForm(form: Form, base: PrintedInvoice | null): { ok: true; printed: PrintedInvoice } | { ok: false; field: string } {
   const num = (text: string, field: string): number | null => {
     const v = readDecimal(text);
-    if (v !== null && Number.isNaN(v)) throw new Error(field);
+    if (v !== null && Number.isNaN(v)) throw new Error(`${field} is not a number.`);
+    return v;
+  };
+  const required = (v: number | null, field: string): number => {
+    if (v === null) throw new Error(`${field} is missing.`);
     return v;
   };
   try {
@@ -165,9 +169,10 @@ export function fromForm(form: Form, base: PrintedInvoice | null): { ok: true; p
       taxAmounts: form.taxAmounts
         .filter((g) => g.rate.trim() !== '' || g.net.trim() !== '' || g.tax.trim() !== '')
         .map((g, i) => ({
-          rate: num(g.rate, `VAT summary ${i + 1}, rate`) ?? 0,
+          // A rate or VAT left empty in a filled row is asked for, never taken as 0.
+          rate: required(num(g.rate, `VAT summary ${i + 1}, rate`), `VAT summary ${i + 1}, rate`),
           net: num(g.net, `VAT summary ${i + 1}, net`),
-          tax: num(g.tax, `VAT summary ${i + 1}, VAT`) ?? 0,
+          tax: required(num(g.tax, `VAT summary ${i + 1}, VAT`), `VAT summary ${i + 1}, VAT`),
         })),
       pricesIncludeVat: form.pricesIncludeVat,
       taxNote: opt(form.taxNote),
@@ -227,7 +232,7 @@ export default function ImportRowEditor({
   async function save(e: React.FormEvent) {
     e.preventDefault();
     const out = fromForm(form, item.printed);
-    if (!out.ok) return setFormError(`${out.field} is not a number.`);
+    if (!out.ok) return setFormError(out.field);
     setFormError(null);
     await onSave(out.printed);
   }

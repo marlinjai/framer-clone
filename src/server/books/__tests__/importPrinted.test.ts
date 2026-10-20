@@ -119,9 +119,12 @@ describe('the other treatments', () => {
     const lines = [{ description: 'Consulting', quantity: 1, unit: null, unitPrice: 1000, discount: null, lineTotal: 1000, taxRate: null, taxAmount: null }];
     const rc = { taxTreatment: 'reverse_charge', lines, total: 1000, taxNote: 'Steuerschuldnerschaft des Leistungsempfängers' };
     // Only for a business in another EU country: a German or a non-EU recipient is not that case.
-    expect(issue(printed(rc)).reason).toBe('reverse_charge_outside_eu');
+    // The default recipient's country is inferred, not printed: the country is asked for.
+    expect(issue(printed(rc)).reason).toBe('reverse_charge_country_unknown');
     const swiss = { name: 'Beispiel AG', addressLines: ['Musterweg 1', '8000 Zürich'], country: 'CH', countryInferred: null, customerNumber: null };
     expect(issue(printed({ ...rc, currency: 'CHF', recipient: swiss })).reason).toBe('reverse_charge_outside_eu');
+    const german = { name: 'Beispiel Bau GmbH', addressLines: ['Musterweg 1', '10115 Berlin'], country: 'DE', countryInferred: null, customerNumber: null };
+    expect(issue(printed({ ...rc, recipient: german })).reason).toBe('reverse_charge_domestic');
     const french = { name: 'Exemple SARL', addressLines: ['1 Rue Exemple', '75001 Paris'], country: 'FR', countryInferred: null, customerNumber: null };
     expect(issue(printed({ ...rc, recipient: french })).reason).toBe('invalid_record:recipient.vatId');
     const r = ok(printed({ ...rc, recipientVatId: 'USt-IdNr.: FR12345678901', recipient: { name: 'Exemple SARL', addressLines: ['1 Rue Exemple', '75001 Paris'], country: 'FR', countryInferred: null, customerNumber: null } }));
@@ -183,5 +186,16 @@ describe('printed but not readable', () => {
     const r = ok(printed({ sender: { name: 'Sample Studio', addressLines: [], country: null, taxNumber: '12/345/67890', vatId: null, taxNumberPresent: false, vatIdPresent: false } }));
     expect(r.provenance).toMatchObject({ senderTaxNumberPrinted: false, senderVatIdPrinted: false });
     expect(r.sender.taxNumber).toBe('12/345/67890');
+  });
+});
+
+describe('VAT that does not add up', () => {
+  it('a summary off by more than rounding is named, never put on a line; a 0 % line never carries VAT', () => {
+    const lines = [{ description: 'Design work', quantity: 1, unit: null, unitPrice: 100, discount: null, lineTotal: 100, taxRate: null, taxAmount: null }];
+    // Rounding (a cent) is absorbed.
+    expect(ok(printed({ lines, total: 119.01, taxAmounts: [{ rate: 19, net: 100, tax: 19.01 }] })).lines[0].taxAmount).toBe(1901);
+    expect(issue(printed({ lines, total: 120, taxAmounts: [{ rate: 19, net: 100, tax: 20 }] })).reason).toBe('tax_summary_mismatch');
+    expect(issue(printed({ lines, total: 119, taxAmounts: [{ rate: 0, net: 100, tax: 19 }] })).reason).toBe('tax_summary_mismatch');
+    expect(issue(printed({ lines: [{ ...lines[0], taxRate: 0, taxAmount: 19 }], total: 119 })).reason).toBe('line_tax_on_zero_rate');
   });
 });

@@ -57,9 +57,10 @@ export const EXTRACT_MAX_TOKENS = 16_000;
 const MAX_ATTEMPTS = 2;
 
 /**
- * One model request at most (the SDK retries a transient failure once): two
- * attempts of two tries stay below the staging claim's timeout (limits.ts), so
- * a call that is still running is never taken over.
+ * How long one request may wait for its response to begin (the SDK's timeout
+ * ends with the response headers; the whole call, streaming included, is
+ * bounded by the caller's EXTRACT_CALL_BUDGET_MS, limits.ts). The SDK retries
+ * a transient failure once.
  */
 export const EXTRACT_REQUEST_TIMEOUT_MS = 120_000;
 
@@ -374,10 +375,11 @@ export async function extractPrintedInvoice(
     try {
       final = await stream.finalMessage();
     } catch (err) {
-      if (!isToolInputParseError(err)) throw err;
+      // What this attempt already used counts, whatever ended it (billed either way).
       const partial = stream.currentMessage?.usage;
       usage.inputTokens += partial?.input_tokens ?? 0;
       usage.outputTokens += partial?.output_tokens ?? 0;
+      if (!isToolInputParseError(err)) throw err;
       messages.push({ role: 'user', content: repairText(['the tool input was not valid JSON']) });
       continue;
     }

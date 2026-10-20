@@ -38,7 +38,8 @@ import { counterRaiseUnconfirmed, IMPORT_RENDERER, importHistoricalInvoice, newI
 import type { BooksScope } from '../scope';
 import { readSettings } from '../settings';
 import { extractPrintedInvoice } from './extract';
-import { CLAIM_TIMEOUT_MS, DAILY_WINDOW_MS, type CompanySlots } from './limits';
+import { describeError } from '../http/describeError';
+import { CLAIM_TIMEOUT_MS, DAILY_WINDOW_MS, EXTRACT_CALL_BUDGET_MS, type CompanySlots } from './limits';
 import {
   extractionsSince,
   finishExtraction,
@@ -106,19 +107,24 @@ export async function stageUpload(scope: BooksScope, file: { fileName: string; b
     .executeTakeFirst();
   if (imported) return { status: 'duplicate', item: null, documentId: imported.document_id };
 
-  const open = await scope.db
-    .selectFrom('historical_import_item')
-    .select((eb) => [eb.fn.countAll<string>().as('n'), eb.fn.coalesce(eb.fn.sum<string>('byte_size'), eb.lit(0)).as('bytes')])
-    .where('tenant_id', '=', scope.tenantId)
-    .where('status', 'not in', ['imported', 'discarded'])
-    .executeTakeFirstOrThrow();
-  if (Number(open.n) >= MAX_OPEN_ITEMS || Number(open.bytes) + bytes.byteLength > MAX_OPEN_BYTES) {
-    throw new BooksError('IMPORT_LIMIT', `IMPORT_LIMIT: at most ${MAX_OPEN_ITEMS} files (${MAX_OPEN_BYTES} bytes) can be open at once`, {
-      limit: MAX_OPEN_ITEMS,
-    });
-  }
   try {
-    return { status: 'staged', item: await insertItem(scope.db, scope, { fileName: cleanFileName(file.fileName), bytes, sha256 }) };
+    // The open-row bounds, counted and the row inserted under one company lock (parallel uploads cannot pass them together).
+    const item = await scope.db.transaction().execute(async (trx) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`books-import-stage:${scope.tenantId}`}, 0))`.execute(trx);
+      const open = await trx
+        .selectFrom('historical_import_item')
+        .select((eb) => [eb.fn.countAll<string>().as('n'), eb.fn.coalesce(eb.fn.sum<string>('byte_size'), eb.lit(0)).as('bytes')])
+        .where('tenant_id', '=', scope.tenantId)
+        .where('status', 'not in', ['imported', 'discarded'])
+        .executeTakeFirstOrThrow();
+      if (Number(open.n) >= MAX_OPEN_ITEMS || Number(open.bytes) + bytes.byteLength > MAX_OPEN_BYTES) {
+        throw new BooksError('IMPORT_LIMIT', `IMPORT_LIMIT: at most ${MAX_OPEN_ITEMS} files (${MAX_OPEN_BYTES} bytes) can be open at once`, {
+          limit: MAX_OPEN_ITEMS,
+        });
+      }
+      return insertItem(trx, scope, { fileName: cleanFileName(file.fileName), bytes, sha256 });
+    });
+    return { status: 'staged', item };
   } catch (err) {
     // Two uploads of the same file at once: the loser sees the winner's row.
     if ((err as { code?: unknown }).code === '23505') {
@@ -152,25 +158,35 @@ export interface ExtractDeps {
   signal: AbortSignal;
   contactBook: ContactBook;
   now?: () => Date;
+  /** The time budget of the whole call (tests shorten it); default EXTRACT_CALL_BUDGET_MS. */
+  callBudgetMs?: number;
 }
 
 /**
  * Read one staged row with the model. Refusals before any call: a row that is
- * imported or discarded (CONCURRENT_EDIT), a row already being read
- * (EXTRACTION_RUNNING, until its claim times out), the company's four slots in
- * use (EXTRACT_BUSY), the daily ceiling reached (IMPORT_LIMIT, counted and
- * recorded atomically, so parallel calls cannot pass it together). The claim
- * carries the extraction's id: a call whose claim was taken over writes
- * nothing. A failed call is recorded in the ledger and the row says why; an
- * aborted one puts the row back as it was (a reading and its correction kept).
+ * imported or discarded (CONCURRENT_EDIT), a row whose reading the user typed
+ * by hand or corrected, unless `replace` says to read it again anyway
+ * (READING_WOULD_BE_REPLACED), a row already being read (EXTRACTION_RUNNING,
+ * until its claim times out), the company's four slots in use (EXTRACT_BUSY),
+ * the daily ceiling reached (IMPORT_LIMIT, counted and recorded atomically, so
+ * parallel calls cannot pass it together). The claim carries the extraction's
+ * id: a call whose claim was taken over writes nothing. The call as a whole is
+ * bounded by EXTRACT_CALL_BUDGET_MS, below the claim timeout. A failed call is
+ * recorded in the ledger; a row without a reading says why, a row with one
+ * keeps it (the failure noted); an aborted call puts the row back as it was.
  */
-export async function extractItem(scope: BooksScope, itemId: string, deps: ExtractDeps): Promise<ImportItem> {
+export async function extractItem(scope: BooksScope, itemId: string, deps: ExtractDeps, opts: { replace?: boolean } = {}): Promise<ImportItem> {
   const clock = deps.now ?? (() => new Date());
   const item = await getItem(scope.db, scope, itemId);
   if (item.status === 'imported' || item.status === 'discarded') {
     throw new BooksError('CONCURRENT_EDIT', `CONCURRENT_EDIT: the row is ${item.status}`, { itemId, status: item.status });
   }
-  // What the row goes back to when the call is aborted or never made.
+  // What the user typed is never replaced by a reading nobody asked for (a queue, a resume).
+  const typed = item.extractionId?.startsWith('manual:') === true || item.corrected !== null;
+  if (typed && !opts.replace && (item.status === 'ready' || item.status === 'needs_attention')) {
+    throw new BooksError('READING_WOULD_BE_REPLACED', 'READING_WOULD_BE_REPLACED: this row holds what you entered; read it again only if you mean to replace it', { itemId });
+  }
+  // What the row goes back to when the call is aborted, never made, or fails with a reading kept.
   const previous = item.status === 'extracting' ? (item.extracted ? 'needs_attention' : 'uploaded') : item.status;
   const slot = deps.slots.acquire(scope.tenantId);
   if (!slot.ok) throw new BooksError('EXTRACT_BUSY', 'EXTRACT_BUSY: four invoices are being read for this company; try again shortly', { retryAfterSec: slot.retryAfterSec });
@@ -190,13 +206,24 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
             whenStatus: ['uploaded', 'ready', 'needs_attention'],
           });
     if (!claimed) {
-      throw new BooksError('EXTRACTION_RUNNING', 'EXTRACTION_RUNNING: this invoice is being read already', { itemId });
+      // Say what really happened: set aside or imported meanwhile, or being read.
+      const now = await getItem(scope.db, scope, itemId);
+      if (now.status === 'imported' || now.status === 'discarded') {
+        throw new BooksError('CONCURRENT_EDIT', `CONCURRENT_EDIT: the row is ${now.status}`, { itemId, status: now.status });
+      }
+      if (now.status === 'extracting') throw new BooksError('EXTRACTION_RUNNING', 'EXTRACTION_RUNNING: this invoice is being read already', { itemId });
+      throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the row changed meanwhile; reload it', { itemId });
     }
     const release = () => updateItem(scope.db, scope, itemId, { status: previous, claimedAt: null, claimId: null }, { whenStatus: ['extracting'], claimId });
     let bytes: Uint8Array | null;
     try {
       bytes = await itemContent(scope.db, scope, itemId);
       if (!bytes) throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: the uploaded file is no longer stored', { itemId });
+      // The caller already left: no call, nothing counted.
+      if (deps.signal.aborted) {
+        await release();
+        return getItem(scope.db, scope, itemId);
+      }
       // The daily ceiling, counted and recorded under one company lock.
       await scope.db.transaction().execute(async (trx) => {
         await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`books-import-extract:${scope.tenantId}`}, 0))`.execute(trx);
@@ -215,8 +242,15 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
     // Accumulated by the call across its attempts, also when a later attempt throws.
     const usage = { inputTokens: 0, outputTokens: 0 };
     let read: { printed: Record<string, unknown>; confidence: Record<string, 'high' | 'medium' | 'low'> } | null = null;
+    // The whole call is bounded (the SDK's timeout covers only the wait for the response headers,
+    // not a stream that stalls after them): below the claim timeout, so a running call is never taken over.
+    const budget = AbortSignal.timeout(deps.callBudgetMs ?? EXTRACT_CALL_BUDGET_MS);
     try {
-      const result = await extractPrintedInvoice(deps.anthropic, bytes, { modelKey: deps.modelKey, signal: deps.signal, usage });
+      const result = await extractPrintedInvoice(deps.anthropic, bytes, {
+        modelKey: deps.modelKey,
+        signal: AbortSignal.any([deps.signal, budget]),
+        usage,
+      });
       if (result.ok) {
         outcome = 'ok';
         read = { printed: result.printed, confidence: result.confidence };
@@ -224,40 +258,55 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
         outcome = result.outcome;
       }
     } catch (err) {
-      const name = (err as { name?: unknown })?.name;
-      const status = (err as { status?: unknown })?.status;
-      outcome =
-        name === 'AbortError' || name === 'APIUserAbortError' || deps.signal.aborted
-          ? 'aborted'
-          : status === 400 || status === 413
-            ? 'unreadable'
-            : 'error';
+      outcome = deps.signal.aborted ? 'aborted' : budget.aborted ? 'error' : failureOutcome(err);
       if (outcome !== 'aborted') {
-        console.error(`[books-import] item ${itemId}: extraction failed (${typeof status === 'number' ? status : 'no status'}, ${outcome})`);
+        const status = (err as { status?: unknown })?.status;
+        console.error(
+          `[books-import] item ${itemId}: extraction failed (${typeof status === 'number' ? status : budget.aborted ? 'time budget' : 'no status'}, ${outcome})`,
+        );
       }
     }
+    try {
+      await finishExtraction(scope.db, scope, claimId, outcome, usage, clock());
+    } catch (err) {
+      // The ledger row stays open (and still counts): the row itself must not stay claimed.
+      console.error(`[books-import] item ${itemId}: the ledger could not be finished: ${describeError(err)}`);
+    }
     const finished = clock();
-    await finishExtraction(scope.db, scope, claimId, outcome, usage, finished);
 
     if (outcome === 'aborted') {
       // The caller left: the row is as it was before (a reading and its correction kept), free to be read again.
       return (await release()) ?? (await getItem(scope.db, scope, itemId));
     }
-    const failRow = (code: ExtractionOutcome) =>
-      updateItem(
-        scope.db,
-        scope,
-        itemId,
-        {
-          status: 'needs_attention',
-          claimedAt: null,
-          claimId: null,
-          extractionError: code,
-          problems: [{ code: `extraction_failed:${code}`, path: null, blocking: true, count: null }],
-          model: deps.modelId,
-        },
-        { whenStatus: ['extracting'], claimId },
-      );
+    // A failed call: a row without a reading says why (blocking); a row with one keeps it and its status, the failure noted.
+    const failRow = async (code: ExtractionOutcome): Promise<ImportItem | null> => {
+      try {
+        return await updateItem(
+          scope.db,
+          scope,
+          itemId,
+          item.extracted
+            ? {
+                status: previous,
+                claimedAt: null,
+                claimId: null,
+                problems: [...item.problems.filter((p) => !p.code.startsWith('reread_failed:')), { code: `reread_failed:${code}`, path: null, blocking: false, count: null }],
+              }
+            : {
+                status: 'needs_attention',
+                claimedAt: null,
+                claimId: null,
+                extractionError: code,
+                problems: [{ code: `extraction_failed:${code}`, path: null, blocking: true, count: null }],
+                model: deps.modelId,
+              },
+          { whenStatus: ['extracting'], claimId },
+        );
+      } catch (err) {
+        console.error(`[books-import] item ${itemId}: the failed reading could not be recorded: ${describeError(err)}`);
+        return null;
+      }
+    };
     if (!read) return (await failRow(outcome)) ?? (await getItem(scope.db, scope, itemId));
     // The new extraction replaces the old one; a correction of the old one is dropped (keyed).
     let stored: ImportItem | null;
@@ -291,6 +340,21 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
   } finally {
     slot.release();
   }
+}
+
+/**
+ * How a thrown provider error ends a call: `unreadable` only when the API
+ * refused the PDF itself (a 413, or a 400 about the document), which reading
+ * again cannot change; any other error (a 400 about the account or the
+ * request, a 5xx, the network) stays `error`, which may be read again.
+ */
+export function failureOutcome(err: unknown): ExtractionOutcome {
+  const status = (err as { status?: unknown })?.status;
+  if (status === 413) return 'unreadable';
+  if (status !== 400) return 'error';
+  const e = err as { error?: { error?: { message?: unknown } }; message?: unknown };
+  const message = typeof e.error?.error?.message === 'string' ? e.error.error.message : typeof e.message === 'string' ? e.message : '';
+  return /\b(pdf|document)\b/i.test(message) && !/credit|billing|balance|api key/i.test(message) ? 'unreadable' : 'error';
 }
 
 /** The printed invoice a manual reading starts from: the shared shape, nothing filled in. */

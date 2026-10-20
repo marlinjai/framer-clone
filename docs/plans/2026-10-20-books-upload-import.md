@@ -162,11 +162,16 @@ Books home.
    (tested with an injected field and another tool). Effort `low`: transcription of a short
    document that a person and the code check afterwards. Output ceiling 16k tokens, one repair
    turn for output of the wrong shape, a refusal and the token ceiling are named failures of the
-   row, a PDF the API itself refuses (400 or 413: damaged, encrypted, too long) is `unreadable`
-   and not offered again, and every row the model has no reading of can be filled in by hand
-   (an empty manual reading, keyed like any other, no model call). Each request has a 120 s
-   timeout and one SDK retry; the call is aborted when the client disconnects and the row then
-   goes back to what it was (a reading and its correction kept). The fields the model reports
+   row, a PDF the API itself refuses (a 413, or a 400 about the document: damaged, encrypted,
+   too long) is `unreadable` and not offered again, while any other 400 (an account or request
+   problem) stays a retryable error, and every row the model has no reading of can be filled in
+   by hand (an empty manual reading, keyed like any other, no model call). What the user typed by
+   hand or corrected is never replaced by a reading nobody asked for (a queue, a resume): only
+   the row's own "Read again" replaces it (`replace=1`), and filling a row in by hand takes it
+   out of the reading queue. A failed reading again keeps the earlier reading and its status,
+   the failure noted. The whole call is aborted after 8 minutes (the SDK's own timeout ends with
+   the response headers, so a stalled stream would otherwise run on), and also when the client
+   disconnects; the row then goes back to what it was (a reading and its correction kept). The fields the model reports
    as unsure are kept only when they name a field of the invoice, and NUL characters (which
    Postgres refuses in JSONB) are dropped from everything the model or the user sends. The model
    also reads the sender's printed tax number and VAT id, which the operator's JSON never had.
@@ -174,9 +179,11 @@ Books home.
    AI routes' per-user slot; the plan's unit is the company, so the per-company slot replaces the
    per-user one: one user uploading fifty files gets four in parallel, and a colleague of the same
    company shares them). One extraction per file at a time, durable: a claim on the staging row
-   carrying the extraction's id (`claim_id`), taken over after ten minutes (above the longest a
-   call can run) so a crashed call is retried, not lost, and every write of the call that was
-   taken over is conditional on its claim, so it writes nothing. The daily ceiling
+   carrying the extraction's id (`claim_id`, which 010 ties to the `extracting` status), taken
+   over after ten minutes (above the 8-minute budget of a call) so a crashed call is retried, not
+   lost, and every write of the call that was taken over is conditional on its claim, so it
+   writes nothing. The open-row bounds are counted and the row inserted under one company lock
+   too. The daily ceiling
    (`BOOKS_IMPORT_DAILY_LIMIT`, default 500) counts the ledger's calls of the last 24 hours, a
    rolling window rather than a calendar day: no time-zone edge, a restart does not reset it, and
    a retry counts like a first attempt; the count and the new ledger row are written under one
@@ -226,10 +233,15 @@ Books home.
     into JavaScript can carry the machine's offset, so comparing there took a fresh claim for a
     stale one (found by the resume test).
 15. **Reverse charge is the EU case only.** The Books store reverse charge as section 13b UStG for a
-    business in another EU country (the tax profile agrees). A reverse-charge invoice to a German
-    recipient (domestic section 13b) or to a customer outside the EU is the named problem
-    `reverse_charge_outside_eu`; the way forward for a customer outside the EU is "VAT charged"
-    at 0 % (not taxable in Germany), which the review text says.
+    business in another EU country (the tax profile agrees). Three named problems, each with its
+    own way forward: `reverse_charge_country_unknown` (the country is not printed: enter it),
+    `reverse_charge_outside_eu` (a customer outside the EU: "VAT charged" at 0 %, not taxable in
+    Germany) and `reverse_charge_domestic` (a German customer under domestic section 13b: not
+    supported by this import, the row says to keep the invoice outside the Books and discard it;
+    supporting it is a product and tax decision for the lead). VAT that does not add up is named,
+    never absorbed: a VAT summary off from the lines by more than rounding
+    (`tax_summary_mismatch`), VAT on a 0 % line (`line_tax_on_zero_rate`, also refused by the
+    record schema), and a summary row in the editor with its rate or VAT left empty.
 16. **The operator CLI after the shared core changed.** `pnpm books:import` now also imports
     regular-VAT and reverse-charge entries, and a section 19 invoice without the printed notice
     is a warning there too (it was refused). Its integer numbers keep their counter value under

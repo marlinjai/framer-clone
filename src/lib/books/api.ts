@@ -165,6 +165,7 @@ const MESSAGES: Record<string, string> = {
   extraction_running: 'This invoice is being read already.',
   stale_extraction: 'This invoice was read again meanwhile. The table shows the new reading; check it again.',
   import_not_ready: 'This row has a problem to fix before it can be imported.',
+  reading_would_be_replaced: 'This row holds what you entered. Use "Read again with AI" in the row to replace it with a new reading.',
   counter_raise_unconfirmed: 'The invoice number this import would set has changed. Check the row again and confirm the new value.',
   file_too_large: 'The file is larger than 10 MB.',
   upload_truncated: 'The file did not arrive whole. Upload it again.',
@@ -381,7 +382,8 @@ async function uploadPdf(file: File): Promise<UploadResult> {
 export const importsApi = {
   list: () => request<ImportList>('GET', '/api/books/imports'),
   upload: uploadPdf,
-  extract: (id: string) => request<ImportItemView>('POST', `/api/books/imports/${id}/extract`),
+  /** `replace`: read again although the row holds what the user typed or corrected (the user asked for it). */
+  extract: (id: string, replace = false) => request<ImportItemView>('POST', `/api/books/imports/${id}/extract${replace ? '?replace=1' : ''}`),
   correct: (id: string, printed: PrintedInvoice, extractionId: string, expectedVersion: number) =>
     request<ImportItemView>('PATCH', `/api/books/imports/${id}`, { printed, extractionId, expectedVersion }),
   recheck: (id: string) => request<ImportItemView>('POST', `/api/books/imports/${id}/recheck`),

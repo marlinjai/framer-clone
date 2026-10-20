@@ -79,6 +79,8 @@ export default function ImportPanel() {
   /** The batch import waiting for its explicit confirmation of the highest new next number. */
   const [batchRaise, setBatchRaise] = useState<number | null>(null);
   const queue = useRef<string[]>([]);
+  /** Rows the user asked to read again although they hold what was typed or corrected. */
+  const replacing = useRef<Set<string>>(new Set());
   const running = useRef<Set<string>>(new Set());
   const stopped = useRef(false);
   const mounted = useRef(true);
@@ -91,54 +93,6 @@ export default function ImportPanel() {
       return { ...cur, items };
     });
   }, []);
-
-  // The reading queue: at most `parallel` at a time; a busy answer waits and retries, the daily ceiling stops it.
-  const pump = useCallback(() => {
-    const parallel = list?.limits.parallel ?? 4;
-    while (!stopped.current && running.current.size < parallel && queue.current.length > 0) {
-      const id = queue.current.shift()!;
-      if (running.current.has(id)) continue;
-      running.current.add(id);
-      setBusy((b) => new Set(b).add(id));
-      importsApi
-        .extract(id)
-        .then((item) => mounted.current && upsert(item))
-        .catch((err: unknown) => {
-          if (!mounted.current) return;
-          if (err instanceof BooksApiError && err.code === 'extract_busy') {
-            const wait = Number((err.details as { retryAfterSec?: unknown }).retryAfterSec ?? 5);
-            setTimeout(() => {
-              queue.current.push(id);
-              pump();
-            }, Math.max(1, wait) * 1000);
-          } else if (err instanceof BooksApiError && err.code === 'import_limit') {
-            stopped.current = true;
-            setNotice(err.message);
-          } else if (err instanceof BooksApiError && err.code === 'extraction_running') {
-            // Being read in another window: the next refresh shows the result.
-          } else {
-            setError(errorText(err));
-          }
-        })
-        .finally(() => {
-          running.current.delete(id);
-          setBusy((b) => {
-            const n = new Set(b);
-            n.delete(id);
-            return n;
-          });
-          pump();
-        });
-    }
-  }, [list?.limits.parallel, upsert]);
-
-  const enqueue = useCallback(
-    (ids: string[]) => {
-      for (const id of ids) if (!queue.current.includes(id) && !running.current.has(id)) queue.current.push(id);
-      pump();
-    },
-    [pump],
-  );
 
   const reload = useCallback(async () => {
     try {
@@ -153,6 +107,60 @@ export default function ImportPanel() {
       return undefined;
     }
   }, []);
+
+  // The reading queue: at most `parallel` at a time; a busy answer waits and retries, the daily ceiling stops it.
+  const pump = useCallback(() => {
+    const parallel = list?.limits.parallel ?? 4;
+    while (!stopped.current && running.current.size < parallel && queue.current.length > 0) {
+      const id = queue.current.shift()!;
+      if (running.current.has(id)) continue;
+      running.current.add(id);
+      setBusy((b) => new Set(b).add(id));
+      const replace = replacing.current.has(id);
+      replacing.current.delete(id);
+      importsApi
+        .extract(id, replace)
+        .then((item) => mounted.current && upsert(item))
+        .catch((err: unknown) => {
+          if (!mounted.current) return;
+          if (err instanceof BooksApiError && err.code === 'extract_busy') {
+            const wait = Number((err.details as { retryAfterSec?: unknown }).retryAfterSec ?? 5);
+            setTimeout(() => {
+              queue.current.push(id);
+              pump();
+            }, Math.max(1, wait) * 1000);
+          } else if (err instanceof BooksApiError && err.code === 'import_limit') {
+            // Stop, and forget what was waiting: each row keeps its own "Read" button for later.
+            stopped.current = true;
+            queue.current = [];
+            setNotice(err.message);
+          } else if (err instanceof BooksApiError && ['extraction_running', 'concurrent_edit'].includes(err.code)) {
+            // Read in another window, or set aside or imported meanwhile: show the row as it is now.
+            void reload();
+          } else {
+            setError(errorText(err));
+          }
+        })
+        .finally(() => {
+          running.current.delete(id);
+          setBusy((b) => {
+            const n = new Set(b);
+            n.delete(id);
+            return n;
+          });
+          pump();
+        });
+    }
+  }, [list?.limits.parallel, upsert, reload]);
+
+  const enqueue = useCallback(
+    (ids: string[]) => {
+      for (const id of ids) if (!queue.current.includes(id) && !running.current.has(id)) queue.current.push(id);
+      pump();
+    },
+    [pump],
+  );
+
 
   useEffect(() => {
     mounted.current = true;
@@ -264,10 +272,25 @@ export default function ImportPanel() {
     });
   }
 
-  /** Fill a row in by hand (no AI reading), then open it. */
+  /** Fill a row in by hand (no AI reading), then open it; it leaves the reading queue, so nothing replaces what is typed. */
   async function byHand(item: ImportItemView) {
+    queue.current = queue.current.filter((id) => id !== item.id);
     await act(item.id, () => importsApi.byHand(item.id, item.version));
     setOpen(item.id);
+  }
+
+  /** Read one row now (its own button): only this row, never the rest of an old queue. */
+  function readOne(id: string, replace = false) {
+    if (replace) replacing.current.add(id);
+    const wasStopped = stopped.current;
+    stopped.current = false;
+    if (wasStopped) queue.current = [];
+    enqueue([id]);
+  }
+
+  /** Put the focus back on a row's Import button (or the batch button) after a dialog closes. */
+  function focusBack(selector: string) {
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(selector)?.focus());
   }
 
   /** Import every ready row; when any of them raises the counter, the highest new value is confirmed first. */
@@ -282,15 +305,25 @@ export default function ImportPanel() {
     }
     setBatchRaise(null);
     const failures: string[] = [];
+    let changed = 0;
+    let notImported = 0;
     let current = ready;
-    for (const id of ready.map((i) => i.id)) {
+    const ids = ready.map((i) => i.id);
+    for (const [n, id] of ids.entries()) {
       const item = current.find((i) => i.id === id);
       // Changed since (read again, corrected, imported elsewhere): left for the user, not imported blind.
-      if (!item || item.status !== 'ready') continue;
+      if (!item || item.status !== 'ready') {
+        if (item?.status !== 'imported') {
+          changed += 1;
+          notImported += 1;
+        }
+        continue;
+      }
       const to = raiseOf(item);
       // A raise beyond the value the user confirmed is not covered by that confirmation.
       if (to !== null && (highest === null || to > highest)) {
         failures.push(`${item.fileName}: the next invoice number it would set changed; confirm it on its row.`);
+        notImported += 1;
         continue;
       }
       setBusy((b) => new Set(b).add(item.id));
@@ -303,14 +336,20 @@ export default function ImportPanel() {
       });
       if (failed !== null) {
         failures.push(`${item.fileName}: ${failed}`);
+        notImported += 1;
         // Continue with the rows as they are now (versions moved), never with the old list.
         const fresh = await reload();
-        if (!fresh) break;
+        if (!fresh) {
+          failures.push(`The list could not be reloaded, so ${ids.length - n - 1} more were not tried; reload the page and import them.`);
+          notImported += ids.length - n - 1;
+          break;
+        }
         current = fresh.items;
       }
     }
+    if (changed > 0) failures.push(`${changed} changed meanwhile and were left for you to check.`);
     if (failures.length > 0) {
-      setError(`${failures.length} of ${ready.length} could not be imported. ${failures.join(' ')}`);
+      setError(`${notImported} of ${ready.length} were not imported. ${failures.join(' ')}`);
       await reload();
     }
   }
@@ -346,7 +385,7 @@ export default function ImportPanel() {
             {list?.counter ? ` Next invoice number: ${list.counter.nextValue}.` : ''}
           </p>
         </div>
-        <Button onClick={() => void confirmAllReady()} disabled={readyCount === 0 || busy.size > 0}>
+        <Button data-import-all onClick={() => void confirmAllReady()} disabled={readyCount === 0 || busy.size > 0}>
           {readyCount > 0 ? `Import all ready (${readyCount})` : 'Import all ready'}
         </Button>
       </header>
@@ -358,7 +397,11 @@ export default function ImportPanel() {
           aria-label="Confirm the new invoice number"
           aria-describedby="batch-raise-text"
           className="mb-4 rounded-md border border-amber-500 px-4 py-3 text-sm"
-          onKeyDown={(e) => e.key === 'Escape' && setBatchRaise(null)}
+          onKeyDown={(e) => {
+            if (e.key !== 'Escape') return;
+            setBatchRaise(null);
+            focusBack('[data-import-all]');
+          }}
         >
           <p id="batch-raise-text" className="font-medium">Your next invoice number will become {batchRaise}. It cannot be lowered later.</p>
           <p className="mt-1 text-muted-foreground">
@@ -366,10 +409,19 @@ export default function ImportPanel() {
             against its PDF before you continue.
           </p>
           <span className="mt-3 flex gap-2">
-            <Button size="sm" autoFocus onClick={() => void confirmAllReady(batchRaise)}>
+            <Button size="sm" onClick={() => void confirmAllReady(batchRaise)}>
               Import and set the next number to {batchRaise}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setBatchRaise(null)}>
+            {/* The safe choice has the focus: the raise cannot be undone. */}
+            <Button
+              size="sm"
+              variant="ghost"
+              autoFocus
+              onClick={() => {
+                setBatchRaise(null);
+                focusBack('[data-import-all]');
+              }}
+            >
               Cancel
             </Button>
           </span>
@@ -498,16 +550,28 @@ export default function ImportPanel() {
                           aria-label="Confirm the new invoice number"
                           aria-describedby={`${item.id}-raise-text`}
                           className="mt-2 rounded-md border border-amber-500 p-2 text-xs"
-                          onKeyDown={(e) => e.key === 'Escape' && setRaising(null)}
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Escape') return;
+                            setRaising(null);
+                            focusBack(`[data-import-row="${item.id}"]`);
+                          }}
                         >
                           <p id={`${item.id}-raise-text`} className="font-medium">
                             Your next invoice number will become {raising.to}. It cannot be lowered later.
                           </p>
                           <div className="mt-2 flex gap-2">
-                            <Button size="sm" autoFocus onClick={() => void importRow(item, raising.to)} disabled={rowBusy}>
+                            <Button size="sm" onClick={() => void importRow(item, raising.to)} disabled={rowBusy}>
                               Import and set the next number to {raising.to}
                             </Button>
-                            <Button size="sm" variant="ghost" onClick={() => setRaising(null)}>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              autoFocus
+                              onClick={() => {
+                                setRaising(null);
+                                focusBack(`[data-import-row="${item.id}"]`);
+                              }}
+                            >
                               Cancel
                             </Button>
                           </div>
@@ -527,7 +591,7 @@ export default function ImportPanel() {
                           </Button>
                         ) : null}
                         {item.status === 'ready' ? (
-                          <Button size="sm" onClick={() => void importRow(item)} disabled={rowBusy}>
+                          <Button size="sm" data-import-row={item.id} onClick={() => void importRow(item)} disabled={rowBusy}>
                             Import
                           </Button>
                         ) : null}
@@ -542,15 +606,12 @@ export default function ImportPanel() {
                           </Button>
                         ) : null}
                         {item.status === 'uploaded' && !busy.has(item.id) ? (
-                          <Button variant="outline" size="sm" onClick={() => {
-                            stopped.current = false;
-                            enqueue([item.id]);
-                          }}>
+                          <Button variant="outline" size="sm" onClick={() => readOne(item.id)}>
                             Read
                           </Button>
                         ) : null}
                         {item.status === 'needs_attention' && item.extractionError && item.extractionError !== 'unreadable' ? (
-                          <Button variant="outline" size="sm" onClick={() => enqueue([item.id])} disabled={rowBusy}>
+                          <Button variant="outline" size="sm" onClick={() => readOne(item.id, true)} disabled={rowBusy}>
                             Read again
                           </Button>
                         ) : null}
@@ -588,7 +649,7 @@ export default function ImportPanel() {
           busy={busy.has(editing.id)}
           onSave={(printed) => act(editing.id, () => importsApi.correct(editing.id, printed, editing.extractionId!, editing.version))}
           onRecheck={() => act(editing.id, () => importsApi.recheck(editing.id))}
-          onReadAgain={() => enqueue([editing.id])}
+          onReadAgain={() => readOne(editing.id, true)}
           onClose={() => setOpen(null)}
         />
       ) : null}
