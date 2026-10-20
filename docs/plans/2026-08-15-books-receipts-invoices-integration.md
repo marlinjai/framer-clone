@@ -1086,6 +1086,34 @@ say so if you disagree.
     document lists still answer with `contactStatus: 'unavailable'` instead of names; issue
     still refuses with `recipient_unavailable` and writes nothing.
 
+**Review fixes (2026-10-20).** A review of the branch found eight points; all fixed on the
+branch with tests, and they supersede decisions 3, 5 and 7 above where they differ:
+
+1. **The PDF is rendered, checked and stored inside the issue transaction** (and inside the
+   cancellation's, for the credit note). `issue` and `cancelInvoice` take a `beforeCommit` hook;
+   the routes pass `storeBeforeCommit`, so a failed check rolls everything back: the document
+   stays a draft, no number is taken, nothing is stored. The check compares with all whitespace
+   removed, and words are broken only when a single word is wider than a line (a 300-character
+   unbroken title passes).
+2. **Embedded Unicode font instead of the built-in Helvetica.** DejaVu Sans and DejaVu Sans
+   Bold (open licence, in `assets/fonts/`, about 1.4 MB, traced into the standalone build by
+   `outputFileTracingIncludes`) are embedded as a subset per document through `@pdf-lib/fontkit`;
+   the output stays byte-deterministic. Polish, Cyrillic, Greek and many emoji print exactly as
+   written; nothing is transliterated. A field with a character the font lacks (CJK, for example)
+   is refused at issue with `UNDRAWABLE_TEXT` naming the fields; only a draft preview shows "?".
+3. **The template is frozen at issue** in `sales_document.template_snapshot` (added to the still
+   unreleased `008_books_files`: NULL on a draft, an object otherwise, frozen by the 007 guard like
+   every column). Issued documents render only from it; editing the template afterwards leaves
+   the re-render byte-identical (tested). A credit note keeps its invoice's frozen layout.
+4. **Rows taller than a page flow line by line** across pages, repeating the table header; a
+   4000-character description never reaches the footer (positions checked in the test).
+5. **Reverse charge requires the recipient's VAT id itself** in the check, and issue refuses
+   without it (`REVERSE_CHARGE_NOT_ALLOWED`).
+6. **A credit note must name the cancelled invoice** (number and date) in its reference line.
+7. **The contact picker** looks up customers by the returned contact ids (one query).
+8. **Document lists show the name an issued document was issued to** (`customer_snapshot->>'name'`,
+   the name only; the rest of the snapshot still never leaves `getDocument`, refining P1.5).
+
 **Operator follow-ups** (live actions, not done here): register the app `books` in auth-brain
 and grant it to Whiz-Art Media and Lumitra; scaffold `CONTACTS_DATABASE_URL` in
 framer-clone's Infisical project and copy the value from the receipts project with
