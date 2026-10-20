@@ -673,17 +673,29 @@ describe('SiteRepository.deleteSite', () => {
     };
   }
 
-  it('reads and deletes scoped by id, workspace AND tenant group, in one transaction', async () => {
+  beforeEach(() => {
+    // The row lock taken first (an UPDATE of the row's own write timestamp).
+    prisma.site.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('locks, reads and deletes scoped by id, workspace AND tenant group, in one transaction', async () => {
     prisma.site.findFirst.mockResolvedValue(siteRow('draft'));
     prisma.site.deleteMany.mockResolvedValue({ count: 1 });
     await repo.deleteSite(SCOPE, 'site_1');
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    const lock = prisma.site.updateMany.mock.calls[0][0];
+    expect(lock.where).toEqual(WHERE);
+    expect(Object.keys(lock.data)).toEqual(['updatedAt']);
+    // The lock comes before the status read, so a publish in flight finishes first.
+    expect(prisma.site.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.site.findFirst.mock.invocationCallOrder[0],
+    );
     expect(prisma.site.findFirst.mock.calls[0][0].where).toEqual(WHERE);
     expect(prisma.site.deleteMany).toHaveBeenCalledWith({ where: WHERE });
   });
 
   it('a missing or foreign site is a 404 and nothing is deleted', async () => {
-    prisma.site.findFirst.mockResolvedValue(null);
+    prisma.site.updateMany.mockResolvedValue({ count: 0 });
     await expect(repo.deleteSite(SCOPE, 'site_other_ws')).rejects.toBeInstanceOf(SiteNotFoundError);
     expect(prisma.site.deleteMany).not.toHaveBeenCalled();
   });
@@ -739,17 +751,29 @@ describe('SiteRepository.saveProject with mustExist (editor Save and Publish)', 
 
   it('refuses a site that no longer exists instead of re-creating it', async () => {
     prisma.site.findUnique.mockResolvedValue(null);
+    prisma.site.updateMany.mockResolvedValue({ count: 0 });
     const err = await repo.saveProject(SCOPE, project(), { mustExist: true }).catch((e) => e);
     expect(err).toBeInstanceOf(SiteGoneError);
-    expect(err.message).toBe('This project no longer exists (it may have been deleted). Your changes were not saved.');
+    expect(err.message).toBe('This project does not exist (any more): it may have been deleted. Your changes were not saved.');
     expect(prisma.site.upsert).not.toHaveBeenCalled();
     expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
   });
 
-  it('still updates a site that exists', async () => {
+  it('still updates a site that exists, with an UPDATE (row lock), never an upsert', async () => {
     prisma.site.findUnique.mockResolvedValue({ id: 'site_gone', workspaceId: 'ws_marlin' });
-    prisma.site.upsert.mockResolvedValue({});
+    prisma.site.updateMany.mockResolvedValue({ count: 1 });
     prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
     await expect(repo.saveProject(SCOPE, project(), { mustExist: true })).resolves.toBeUndefined();
+    expect(prisma.site.updateMany.mock.calls[0][0].where).toEqual({ id: 'site_gone', workspaceId: 'ws_marlin' });
+    expect(prisma.site.updateMany.mock.calls[0][0].data).not.toHaveProperty('name');
+    expect(prisma.site.upsert).not.toHaveBeenCalled();
+  });
+
+  it('a delete committed between the existence check and the write: still refused, no re-create', async () => {
+    prisma.site.findUnique.mockResolvedValue({ id: 'site_gone', workspaceId: 'ws_marlin' });
+    prisma.site.updateMany.mockResolvedValue({ count: 0 });
+    await expect(repo.saveProject(SCOPE, project(), { mustExist: true })).rejects.toBeInstanceOf(SiteGoneError);
+    expect(prisma.site.upsert).not.toHaveBeenCalled();
+    expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
   });
 });

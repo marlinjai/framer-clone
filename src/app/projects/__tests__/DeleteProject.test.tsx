@@ -35,6 +35,7 @@ afterEach(() => {
 function renderCard(props: Partial<React.ComponentProps<typeof ProjectCard>> = {}) {
   return render(
     <>
+      <p id="projects-status" role="status" aria-live="polite" />
       <h1 id="projects-heading" tabIndex={-1}>Projects</h1>
       <ProjectCard
         siteId="site_1"
@@ -65,7 +66,7 @@ describe('Delete project dialog', () => {
     const text = dialog.textContent ?? '';
     expect(text).toContain('cannot be undone');
     expect(text).toContain('k3j9x0abcd12.sites.lumitra.co');
-    expect(text).toContain('goes offline right away');
+    expect(text).toContain('goes offline');
     expect(text).toContain('www.bakery.de');
     expect(text).toContain('Books');
   });
@@ -180,9 +181,76 @@ describe('Delete project dialog', () => {
     renderCard({ status: 'draft' });
     const dialog = await openDelete();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete project' }));
-    expect((await within(dialog).findByRole('alert')).textContent).toContain('no longer exists');
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('not in the selected company any more');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(refreshMock).toHaveBeenCalled());
     expect(screen.queryByRole('link', { name: 'Bakery' })).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe('The project Bakery is no longer in this company.');
+  });
+
+  it('focus starts inside the dialog: on the name field when typing is needed', async () => {
+    renderCard();
+    const dialog = await openDelete();
+    await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByLabelText(/to confirm/)));
+  });
+
+  it('focus starts inside the dialog: on Cancel for a plain confirm', async () => {
+    renderCard({ status: 'draft', liveHost: null, customDomains: [] });
+    const dialog = await openDelete();
+    await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' })));
+  });
+
+  it('published since the page loaded: switches to asking for the name, then deletes', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ error: { code: 'confirmation_mismatch', message: 'x', currentName: 'Bakery' } }),
+          { status: 409 },
+        ),
+      )
+      .mockResolvedValueOnce(okResponse());
+    renderCard({ status: 'draft', liveHost: null, customDomains: [] });
+    const dialog = await openDelete();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete project' }));
+    expect((await within(dialog).findByRole('alert')).textContent).toBe(
+      'This project was published in the meantime, so it now needs its name typed to confirm.',
+    );
+    const input = within(dialog).getByLabelText(/to confirm/);
+    const del = within(dialog).getByRole('button', { name: 'Delete project' }) as HTMLButtonElement;
+    expect(del.disabled).toBe(true);
+    fireEvent.change(input, { target: { value: 'Bakery' } });
+    fireEvent.click(del);
+    await waitFor(() => expect(refreshMock).toHaveBeenCalled());
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ confirmName: 'Bakery' });
+  });
+
+  it('deleted but the cache could not be cleared: says so, and the card goes', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: { code: 'delete_cache_failed', message: 'The project was deleted, but its published pages may still be served from cache until the next deploy.' } }),
+        { status: 500 },
+      ),
+    );
+    renderCard();
+    const dialog = await openDelete();
+    fireEvent.change(within(dialog).getByLabelText(/to confirm/), { target: { value: 'Bakery' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete project' }));
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('was deleted, but');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(refreshMock).toHaveBeenCalled());
+    expect(screen.getByRole('status').textContent).toBe('Deleted the project Bakery.');
+  });
+
+  it('a published project with an empty stored name: type the shown fallback, the real name is sent', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    renderCard({ name: '' });
+    const dialog = await openDelete('Untitled Project');
+    expect(within(dialog).getByText('Untitled Project', { selector: 'span' })).toBeTruthy();
+    const del = within(dialog).getByRole('button', { name: 'Delete project' }) as HTMLButtonElement;
+    expect(del.disabled).toBe(true); // an empty field never confirms
+    fireEvent.change(within(dialog).getByLabelText(/to confirm/), { target: { value: 'Untitled Project' } });
+    fireEvent.click(del);
+    await waitFor(() => expect(refreshMock).toHaveBeenCalled());
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ confirmName: '' });
   });
 });

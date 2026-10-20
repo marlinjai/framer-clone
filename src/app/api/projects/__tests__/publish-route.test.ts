@@ -374,7 +374,7 @@ describe('publish of a deleted project', () => {
     const body = await res.json();
     expect(body.error.code).toBe('site_not_found');
     expect(body.error.message).toBe(
-      'This project no longer exists (it may have been deleted). Your changes were not saved.',
+      'This project does not exist (any more): it may have been deleted. Your changes were not saved.',
     );
     expect(publish).not.toHaveBeenCalled();
   });

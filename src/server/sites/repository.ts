@@ -294,41 +294,55 @@ export class SiteRepository {
         now: new Date(),
       });
 
-      // Upsert the site row. On create, status defaults to `draft` (the DB
-      // default); on update, status is left untouched (publish/archive own it).
-      await tx.site.upsert({
-        where: { id: persisted.siteId },
-        create: {
-          id: persisted.siteId,
-          workspaceId: scope.workspaceId,
-          tenantGroupId: scope.tenantGroupId,
-          name: persisted.name,
-          description: persisted.description,
-          analyticsProjectId: persisted.analyticsProjectId,
-          ingestionEndpoint: persisted.ingestionEndpoint,
-          apiKeyRef: persisted.apiKeyRef,
-          lumitraEnabled: persisted.lumitraEnabled,
-          projectCreatedAt: new Date(persisted.projectCreatedAt),
-          projectUpdatedAt: new Date(persisted.projectUpdatedAt),
-          redirects: redirects as unknown as Prisma.InputJsonValue,
-        },
-        // `name` is written on create only. After that the rename action
-        // (renameSite, PATCH /api/projects/<id>) is its only writer: an editor
-        // tab opened before a rename still carries the old title in its
-        // snapshot, and a later Save or Publish from it must not silently undo
-        // the rename.
-        update: {
-          description: persisted.description,
-          analyticsProjectId: persisted.analyticsProjectId,
-          ingestionEndpoint: persisted.ingestionEndpoint,
-          apiKeyRef: persisted.apiKeyRef,
-          lumitraEnabled: persisted.lumitraEnabled,
-          // projectCreatedAt is immutable (set on create); only the
-          // application "last edited" time advances on update.
-          projectUpdatedAt: new Date(persisted.projectUpdatedAt),
-          redirects: redirects as unknown as Prisma.InputJsonValue,
-        },
-      });
+      const updateData = {
+        description: persisted.description,
+        analyticsProjectId: persisted.analyticsProjectId,
+        ingestionEndpoint: persisted.ingestionEndpoint,
+        apiKeyRef: persisted.apiKeyRef,
+        lumitraEnabled: persisted.lumitraEnabled,
+        // projectCreatedAt is immutable (set on create); only the
+        // application "last edited" time advances on update.
+        projectUpdatedAt: new Date(persisted.projectUpdatedAt),
+        redirects: redirects as unknown as Prisma.InputJsonValue,
+      };
+
+      if (options.mustExist) {
+        // UPDATE, never INSERT: a delete that committed after the read above
+        // leaves zero rows here, so the site is NOT re-created. (The
+        // transaction is SERIALIZABLE besides: a save and a delete that
+        // overlap cannot both commit; the retried one then sees the outcome.)
+        const updated = await tx.site.updateMany({
+          where: { id: persisted.siteId, workspaceId: scope.workspaceId },
+          data: updateData,
+        });
+        if (updated.count === 0) throw new SiteGoneError();
+      } else {
+        // Upsert the site row. On create, status defaults to `draft` (the DB
+        // default); on update, status is left untouched (publish/archive own it).
+        await tx.site.upsert({
+          where: { id: persisted.siteId },
+          create: {
+            id: persisted.siteId,
+            workspaceId: scope.workspaceId,
+            tenantGroupId: scope.tenantGroupId,
+            name: persisted.name,
+            description: persisted.description,
+            analyticsProjectId: persisted.analyticsProjectId,
+            ingestionEndpoint: persisted.ingestionEndpoint,
+            apiKeyRef: persisted.apiKeyRef,
+            lumitraEnabled: persisted.lumitraEnabled,
+            projectCreatedAt: new Date(persisted.projectCreatedAt),
+            projectUpdatedAt: new Date(persisted.projectUpdatedAt),
+            redirects: redirects as unknown as Prisma.InputJsonValue,
+          },
+          // `name` is written on create only. After that the rename action
+          // (renameSite, PATCH /api/projects/<id>) is its only writer: an editor
+          // tab opened before a rename still carries the old title in its
+          // snapshot, and a later Save or Publish from it must not silently undo
+          // the rename.
+          update: updateData,
+        });
+      }
 
       // Reconcile pages: upsert every current page, then delete any page row
       // whose pageId is no longer present in the snapshot. tenant_group_id and
@@ -618,6 +632,13 @@ export class SiteRepository {
     assertScope(scope);
     const where = { id: siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId };
     return this.prisma.$transaction(async (tx) => {
+      // Take the row lock BEFORE reading the status: a publish or save that is
+      // in flight finishes first, so the status checked below (and the domains
+      // captured) are the ones this delete really removes. Touching only the
+      // row's own write timestamp, which is deleted with it.
+      const locked = await tx.site.updateMany({ where, data: { updatedAt: new Date() } });
+      if (locked.count === 0) throw new SiteNotFoundError(siteId);
+
       const site = await tx.site.findFirst({
         where,
         select: {

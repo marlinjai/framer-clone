@@ -123,6 +123,10 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
 
   return (
     <main className="mx-auto w-full max-w-3xl px-6 py-12">
+      {/* Persistent live region for list changes made on this page (a deleted
+          project's card is gone, so it cannot announce itself). Present and
+          empty from the first render, so screen readers pick up later text. */}
+      <p id="projects-status" role="status" aria-live="polite" className="sr-only" />
       <header className="mb-8 flex items-center justify-between gap-4">
         <div>
           <h1 id="projects-heading" tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none">

@@ -31,6 +31,8 @@ import {
   resolveActiveScope,
   siteRepositoryErrorResponse,
   SiteRepositoryError,
+  SiteNotFoundError,
+  SiteGoneError,
 } from '@/server/sites';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 import { jsonError, parseBody } from '@/lib/api/respond';
@@ -107,6 +109,10 @@ async function handlePOST(req: Request): Promise<Response> {
       console.error('[sites] custom-domain cache revalidation failed for ' + project.id, err);
     });
   } catch (err) {
+    // A project deleted while this publish was running (between the save and
+    // the status flip or the address allocation) surfaces as a plain not-found
+    // from the later steps: answer with the same message a Save gets.
+    if (err instanceof SiteNotFoundError) return siteRepositoryErrorResponse(new SiteGoneError());
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
     return jsonError(
       'publish_failed',

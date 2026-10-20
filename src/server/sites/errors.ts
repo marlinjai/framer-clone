@@ -116,7 +116,7 @@ export class SiteGoneError extends SiteRepositoryError {
   constructor() {
     super(
       'site_not_found',
-      'This project no longer exists (it may have been deleted). Your changes were not saved.',
+      'This project does not exist (any more): it may have been deleted. Your changes were not saved.',
       404,
     );
   }

@@ -137,4 +137,54 @@ describe('deleteSite (real database)', () => {
     await expect(repo.saveProject(SCOPE, stale, { mustExist: true })).rejects.toBeInstanceOf(SiteGoneError);
     expect(await counts('draftone')).toEqual({ site: 0, pages: 0, domains: 0, experiments: 0 });
   });
+
+  it('race: a delete that starts while a Save holds the row waits, then removes everything', async () => {
+    await makeSite('race1', { status: 'draft' });
+    let release!: () => void;
+    const hold = new Promise<void>((r) => { release = r; });
+    // A Save in flight: its UPDATE holds the row lock until it commits.
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => { locked = r; });
+    const save = prisma.$transaction(async (tx) => {
+      await tx.site.updateMany({ where: { id: 'race1' }, data: { description: 'saving' } });
+      locked();
+      await hold;
+    }, { timeout: 20_000 });
+    await isLocked;
+    let deleteDone = false;
+    const del = repo.deleteSite(SCOPE, 'race1').then((r) => { deleteDone = true; return r; });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(deleteDone).toBe(false); // blocked behind the save's lock
+    release();
+    await save;
+    await del;
+    expect(await counts('race1')).toEqual({ site: 0, pages: 0, domains: 0, experiments: 0 });
+  });
+
+  it('race: a Save that started while the delete holds the row is refused and re-creates nothing', async () => {
+    await makeSite('race2', { status: 'draft' });
+    let release!: () => void;
+    const hold = new Promise<void>((r) => { release = r; });
+    // A delete in flight: row locked and deleted, not yet committed.
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => { locked = r; });
+    const del = prisma.$transaction(async (tx) => {
+      await tx.site.deleteMany({ where: { id: 'race2' } });
+      locked();
+      await hold;
+    }, { timeout: 20_000 });
+    await isLocked;
+    const stale = ProjectModel.create({ id: 'race2', metadata: { title: 'Name of race2', description: '' }, pages: {} });
+    stale.createPage('Home');
+    const save = repo.saveProject(SCOPE, stale, { mustExist: true }).then(
+      () => 'saved',
+      (e) => e,
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    release();
+    await del;
+    const outcome = await save;
+    expect(outcome).toBeInstanceOf(SiteGoneError);
+    expect(await counts('race2')).toEqual({ site: 0, pages: 0, domains: 0, experiments: 0 });
+  });
 });

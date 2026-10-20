@@ -21,6 +21,19 @@ vi.mock('@/lib/auth-brain', () => ({
   },
 }));
 
+// Every permission maps to workspace.admin today, so the auth-brain mock alone
+// cannot deny one action and allow another: this wraps the real check and
+// denies exactly `deniedAction`.
+let deniedAction: string | null = null;
+vi.mock('@/lib/auth-check', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/auth-check')>();
+  return {
+    ...actual,
+    checkWorkspaceAccess: async (...args: Parameters<typeof actual.checkWorkspaceAccess>) =>
+      args[2] === deniedAction ? false : actual.checkWorkspaceAccess(...args),
+  };
+});
+
 const revalidateSiteCache = vi.fn();
 const revalidateCustomHostCache = vi.fn();
 vi.mock('@/server/sites/cachedResolver', () => ({
@@ -61,6 +74,9 @@ const db = {
       };
     }),
     findUnique: vi.fn(async ({ where }: { where: { id: string } }) => sites.find((s) => s.id === where.id) ?? null),
+    updateMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => ({
+      count: sites.filter((x) => matches(x, where)).length,
+    })),
     deleteMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
       const gone = sites.filter((s) => matches(s, where));
       sites = sites.filter((s) => !gone.includes(s));
@@ -126,6 +142,7 @@ const domainService = () => new DomainService({ prisma: db as never, invalidateH
 
 beforeEach(() => {
   vi.clearAllMocks();
+  deniedAction = null;
   process.env.EDITOR_HOST = 'app.lumitra.co';
   sites = [
     { id: 'site_pub', workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra', name: 'Bakery', status: 'published' },
@@ -176,6 +193,13 @@ describe('DELETE /api/projects/<id> guards', () => {
     mockCan.mockResolvedValue(false);
     expect((await del('site_draft')).status).toBe(403);
     expect(sites).toHaveLength(3);
+  });
+
+  it.each(['publishSite', 'manageDomain'])('403s without %s (deleting takes the site offline and releases domains)', async (action) => {
+    deniedAction = action;
+    const res = await del('site_draft');
+    expect(res.status).toBe(403);
+    expect(sites.find((s) => s.id === 'site_draft')).toBeTruthy();
   });
 
   it('403s sites_not_enabled when no company has Lumitra Sites', async () => {
@@ -258,24 +282,38 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
     // Caches invalidated by the names captured before the cascade.
     expect(revalidateSiteCache).toHaveBeenCalledWith('bakery0label');
     expect(revalidateCustomHostCache.mock.calls.map((c) => c[0]).sort()).toEqual(['shop.bakery.de', 'www.bakery.de']);
-    // The only write was the one scoped site delete (the fake database has no
-    // CMS, commerce or Books tables, so any write there would have thrown);
-    // the other projects are untouched.
+    // The only delete was the one scoped site row (CMS, commerce and Books
+    // carry no site reference; see the PR's data table); the other projects
+    // are untouched.
     expect(db.site.deleteMany).toHaveBeenCalledTimes(1);
     expect(db.site.upsert).not.toHaveBeenCalled();
     expect(sites.map((s) => s.id).sort()).toEqual(['site_draft', 'site_foreign']);
   });
 
-  it('a cache invalidation failure is loud (500), never a quiet success', async () => {
-    revalidateCustomHostCache.mockImplementationOnce(() => {
+  it('a cache invalidation failure is loud (500), and every other host is still invalidated', async () => {
+    revalidateSiteCache.mockImplementationOnce(() => {
       throw new Error('boom');
     });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const res = await del('site_pub', { confirmName: 'Bakery' });
     expect(res.status).toBe(500);
     expect((await res.json()).error.code).toBe('delete_cache_failed');
+    expect(revalidateCustomHostCache).toHaveBeenCalledTimes(2);
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+
+  it('invalidates the captured hosts a second time a few seconds later', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      expect((await del('site_pub', { confirmName: 'Bakery' })).status).toBe(200);
+      expect(revalidateSiteCache).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(5_000);
+      expect(revalidateSiteCache).toHaveBeenCalledTimes(2);
+      expect(revalidateCustomHostCache).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('an editor tab still open on the deleted project cannot bring it back on Save', async () => {
@@ -295,7 +333,7 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
     );
     expect(res.status).toBe(404);
     expect((await res.json()).error.message).toBe(
-      'This project no longer exists (it may have been deleted). Your changes were not saved.',
+      'This project does not exist (any more): it may have been deleted. Your changes were not saved.',
     );
     expect(db.site.upsert).not.toHaveBeenCalled();
     expect(sites.find((s) => s.id === 'site_draft')).toBeUndefined();

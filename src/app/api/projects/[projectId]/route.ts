@@ -37,8 +37,13 @@
 // otherwise). After the commit the published-site caches of the captured
 // subdomain and hostnames are invalidated; if that fails the answer is 500
 // `delete_cache_failed` (the project is gone, a cached copy may still be
-// served until the next deploy), never a quiet success. Permission: `editSite`
-// (workspace admin, the same role `publishSite` requires).
+// served until the next deploy), never a quiet success; a second invalidation
+// runs a few seconds later to catch a request that cached the site during the
+// commit. Permission: `editSite` plus `publishSite` and `manageDomain` (taking
+// a site offline, releasing its domains). The proxy host sync drops released
+// routes within a minute, unless its drop protection holds a large drop
+// (deploy/README.md): the routes then stay until an operator confirms, but the
+// app answers 404 for them, as it does for any host it has no claim for.
 //
 // What a rename does NOT touch: the published address. A site's subdomain is a
 // random label allocated on first publish and custom domains are their own
@@ -50,6 +55,8 @@ import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { readCompanySelectors } from '@/lib/activeCompanyCookie';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
 import { isEditorHost } from '@/lib/editorHost';
+import { checkWorkspaceAccess } from '@/lib/auth-check';
+import type { FramerAction } from '@/lib/permissions';
 import { jsonError, parseBody } from '@/lib/api/respond';
 import { projectNameSchema } from '@/lib/projectName';
 import { z } from 'zod';
@@ -82,8 +89,12 @@ type GuardResult =
   | { ok: true; scope: TenantScope }
   | { ok: false; response: Response };
 
-/** Guards 0 to 3 of the header, shared by PATCH and DELETE. */
-async function guard(req: Request): Promise<GuardResult> {
+/**
+ * Guards 0 to 3 of the header, shared by PATCH and DELETE. `alsoRequires`
+ * adds permissions on top of `editSite` (all of them `workspace.admin` today,
+ * but each action may be tightened on its own later).
+ */
+async function guard(req: Request, alsoRequires: FramerAction[] = []): Promise<GuardResult> {
   if (!isEditorHost(req.headers.get('host'))) {
     return { ok: false, response: jsonError('not_found', 'not found', 404) };
   }
@@ -106,6 +117,11 @@ async function guard(req: Request): Promise<GuardResult> {
       ok: false,
       response: jsonError(auth.status === 401 ? 'unauthorized' : 'forbidden', auth.error, auth.status),
     };
+  }
+  for (const action of alsoRequires) {
+    if (!(await checkWorkspaceAccess(auth.userId, scope.workspaceId, action))) {
+      return { ok: false, response: jsonError('forbidden', 'Forbidden', 403) };
+    }
   }
   return { ok: true, scope };
 }
@@ -137,8 +153,32 @@ async function handlePATCH(req: Request, { params }: Ctx): Promise<Response> {
   }
 }
 
+/** Delay of the second cache invalidation after a delete. */
+const LATE_INVALIDATION_MS = 5_000;
+
+/** Invalidate every captured host; returns the hosts whose invalidation threw. */
+function invalidateDeletedHosts(deleted: DeletedSite): string[] {
+  const failed: string[] = [];
+  const attempt = (host: string, fn: () => void) => {
+    try {
+      fn();
+    } catch (err) {
+      failed.push(host);
+      console.error(`[projects] invalidating the cache of ${host} after deleting ${deleted.siteId} failed:`, err);
+    }
+  };
+  if (deleted.subdomain) {
+    const sub = deleted.subdomain;
+    attempt(sub, () => revalidateSiteCache(sub));
+  }
+  for (const hostname of deleted.hostnames) attempt(hostname, () => revalidateCustomHostCache(hostname));
+  return failed;
+}
+
 async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
-  const guarded = await guard(req);
+  // Deleting takes a site offline and releases its domains: on top of
+  // editSite it needs what unpublishing and disconnecting a domain need.
+  const guarded = await guard(req, ['publishSite', 'manageDomain']);
   if (!guarded.ok) return guarded.response;
   const { scope } = guarded;
 
@@ -171,15 +211,17 @@ async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
 
   // After the commit: stop serving cached copies on the subdomain and every
   // custom hostname at once. Cached custom-host hits never expire on their
-  // own, so a failure must be loud.
-  try {
-    if (deleted.subdomain) revalidateSiteCache(deleted.subdomain);
-    for (const hostname of deleted.hostnames) revalidateCustomHostCache(hostname);
-  } catch (err) {
-    console.error(
-      `[projects] deleted ${projectId}, but invalidating the cache of ${[deleted.subdomain, ...deleted.hostnames].filter(Boolean).join(', ')} failed:`,
-      err,
-    );
+  // own, so a failure must be loud. Every host is tried even when one fails.
+  const failed = invalidateDeletedHosts(deleted);
+  // A visitor request that read the site just BEFORE the commit can store its
+  // (stale) result just AFTER the invalidation above, and nothing would ever
+  // invalidate that host again. A second pass a few seconds later closes that
+  // window (the server is a long-running Node process).
+  setTimeout(() => {
+    const late = invalidateDeletedHosts(deleted);
+    if (late.length > 0) console.error(`[projects] late cache invalidation after deleting ${projectId} failed for: ${late.join(', ')}`);
+  }, LATE_INVALIDATION_MS).unref?.();
+  if (failed.length > 0) {
     return jsonError(
       'delete_cache_failed',
       'The project was deleted, but its published pages may still be served from cache until the next deploy.',

@@ -81,18 +81,13 @@ export default function ProjectCard({
   const shown = name || FALLBACK_NAME;
 
   // Once deleted the card is gone: focus moves to the page heading (nothing
-  // else would take it) and a status line tells screen readers what happened.
+  // else would take it). The announcement goes to the page's persistent live
+  // region (see page.tsx), which outlives this card and the list refresh.
   useEffect(() => {
     if (deleted) document.getElementById('projects-heading')?.focus();
   }, [deleted]);
 
-  if (deleted) {
-    return (
-      <p role="status" className="sr-only">
-        Deleted the project {shown}.
-      </p>
-    );
-  }
+  if (deleted) return null;
 
   const save = async (next: string) => {
     close();
@@ -199,7 +194,9 @@ export default function ProjectCard({
         published={status === 'published'}
         liveHost={liveHost}
         customDomains={customDomains}
-        onDeleted={() => {
+        onDeleted={(announcement) => {
+          const status = document.getElementById('projects-status');
+          if (status) status.textContent = announcement;
           setDeleteOpen(false);
           setDeleted(true);
           router.refresh();

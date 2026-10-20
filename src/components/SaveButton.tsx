@@ -30,11 +30,21 @@ type SaveState =
 const SaveButton = observer(() => {
   const rootStore = useStore();
   const project = rootStore.editorUI.currentProject;
+  const isUnsavedDemo = rootStore.editorUI.isUnsavedDemo === true;
   const [state, setState] = React.useState<SaveState>({ kind: 'idle' });
 
   const save = React.useCallback(async () => {
     if (!project) {
       setState({ kind: 'error', message: 'No project to save.' });
+      return;
+    }
+    // The demo editor at `/` builds its project in the browser; no company
+    // holds it, so there is nothing on the server to save to.
+    if (isUnsavedDemo) {
+      setState({
+        kind: 'error',
+        message: 'This demo project exists only in this browser. Create a project on the projects dashboard to save and publish.',
+      });
       return;
     }
     setState({ kind: 'saving' });
@@ -68,7 +78,7 @@ const SaveButton = observer(() => {
           err instanceof Error ? err.message : 'Network error while saving.',
       });
     }
-  }, [project]);
+  }, [project, isUnsavedDemo]);
 
   const saving = state.kind === 'saving';
 

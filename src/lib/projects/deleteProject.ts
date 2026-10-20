@@ -5,7 +5,16 @@
 
 export type DeleteResult =
   | { ok: true }
-  | { ok: false; message: string; currentName?: string; gone?: boolean };
+  | {
+      ok: false;
+      message: string;
+      /** Set on a refused confirmation: the project's current name. */
+      currentName?: string;
+      /** The project is gone (deleted, or not in this company): drop its card. */
+      gone?: boolean;
+      /** The project is deleted, but its published pages may linger in a cache. */
+      deletedWithWarning?: boolean;
+    };
 
 export async function deleteProject(projectId: string, confirmName?: string): Promise<DeleteResult> {
   let res: Response;
@@ -34,19 +43,24 @@ export async function deleteProject(projectId: string, confirmName?: string): Pr
 
   switch (code) {
     case 'confirmation_mismatch':
+      // The dialog words this by cause (published or renamed in the meantime).
+      return { ok: false, currentName, message: 'The name does not match. Nothing was deleted.' };
+    case 'site_not_found':
+      // Deleted elsewhere, or the selected company was switched in another tab.
       return {
         ok: false,
-        currentName,
-        message: currentName !== undefined
-          ? `The name does not match. This project is now called "${currentName}"; type that name to confirm.`
-          : 'The name does not match the project. Nothing was deleted.',
+        gone: true,
+        message:
+          'This project is not in the selected company any more: it was deleted, or the company was switched in another tab. Nothing was deleted now.',
       };
-    case 'site_not_found':
-      // Already gone (deleted in another tab, or by someone else).
-      return { ok: false, gone: true, message: 'This project no longer exists; it may already have been deleted.' };
     case 'delete_cache_failed':
       // The project IS deleted; only the cached published copy may linger.
-      return { ok: false, gone: true, message: serverMessage ?? 'The project was deleted, but a cached copy may still be served for a while.' };
+      return {
+        ok: false,
+        gone: true,
+        deletedWithWarning: true,
+        message: serverMessage ?? 'The project was deleted, but a cached copy may still be served for a while.',
+      };
     case 'forbidden':
       return { ok: false, message: 'You do not have permission to delete this project.' };
     case 'unauthorized':
