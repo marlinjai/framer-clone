@@ -197,5 +197,10 @@ describe('VAT that does not add up', () => {
     expect(issue(printed({ lines, total: 120, taxAmounts: [{ rate: 19, net: 100, tax: 20 }] })).reason).toBe('tax_summary_mismatch');
     expect(issue(printed({ lines, total: 119, taxAmounts: [{ rate: 0, net: 100, tax: 19 }] })).reason).toBe('tax_summary_mismatch');
     expect(issue(printed({ lines: [{ ...lines[0], taxRate: 0, taxAmount: 19 }], total: 119 })).reason).toBe('line_tax_on_zero_rate');
+    // Every line printed with its VAT, and a summary that disagrees, or names a rate no line has.
+    const printedLines = [{ ...lines[0], taxRate: 19, taxAmount: 19 }];
+    expect(ok(printed({ lines: printedLines, total: 119, taxAmounts: [{ rate: 19, net: 100, tax: 19 }] })).lines[0].taxAmount).toBe(1900);
+    expect(issue(printed({ lines: printedLines, total: 119, taxAmounts: [{ rate: 19, net: 100, tax: 18 }] })).reason).toBe('tax_summary_mismatch');
+    expect(issue(printed({ lines: printedLines, total: 119, taxAmounts: [{ rate: 7, net: 100, tax: 19 }] })).reason).toBe('tax_summary_mismatch');
   });
 });

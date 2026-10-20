@@ -508,9 +508,10 @@ function taxLines(
     const rate = Math.round(g.rate * 100);
     const members = out.map((l, i) => ({ l, i })).filter(({ l }) => l.kind !== 'text' && l.taxRate === rate);
     const derivedMembers = members.filter(({ i }) => !printedTax.has(i));
-    if (derivedMembers.length === 0) continue;
     const want = Math.round(g.tax * 100);
     const have = members.reduce((acc, { l }) => acc + l.taxAmount, 0);
+    // A summary rate no line carries, or printed line VAT that disagrees with its summary: a misreading.
+    if (members.length === 0 || (derivedMembers.length === 0 && want !== have)) return { kind: 'error', reason: 'tax_summary_mismatch' };
     if (want !== have) {
       // Only a rounding difference (a cent per derived line) is put on a line; anything more
       // means the summary and the lines disagree, which is named, never absorbed. A 0 % group

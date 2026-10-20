@@ -178,11 +178,16 @@ describe('ImportPanel', () => {
     expect(within(screen.getByTestId('import-row-i1')).getByText(/already in the Books/)).toBeTruthy();
     const patch = calls.find((c) => c.method === 'PATCH')!;
     expect(patch.body).toMatchObject({ extractionId: 'x1', expectedVersion: 3, printed: { number: '20', total: 800, currency: 'EUR' } });
-    // Reading again: the form shows the new reading, not the old edit.
+    // Reading again replaces the correction: asked first, the focus on Cancel; confirmed, it is sent as a replacing read.
     fireEvent.click(within(screen.getByRole('form', { name: 'Invoice as printed' })).getByRole('button', { name: 'Read again with AI' }));
+    const ask = screen.getByRole('alertdialog', { name: 'Replace what you entered' });
+    expect(document.activeElement).toBe(within(ask).getByRole('button', { name: 'Cancel' }));
+    expect(calls.some((c) => c.url.includes('/extract'))).toBe(false);
+    fireEvent.click(within(ask).getByRole('button', { name: 'Replace with a new reading' }));
     await waitFor(() =>
       expect((within(screen.getByRole('form', { name: 'Invoice as printed' })).getByLabelText('Invoice number') as HTMLInputElement).value).toBe('99'),
     );
+    expect(calls.find((c) => c.url.includes('/extract'))!.url).toBe('/api/books/imports/i1/extract?replace=1');
   });
 
   it('re-entry and failures: duplicate, failed upload with retry, busy retried, daily limit stops', async () => {
@@ -382,6 +387,52 @@ describe('ImportPanel', () => {
     expect(document.activeElement).toBe(cancel);
     fireEvent.click(cancel);
     await waitFor(() => expect(document.activeElement).toBe(within(screen.getByTestId('import-row-i1')).getByRole('button', { name: 'Import' })));
+  });
+
+  it('a replacing read keeps its flag across a busy retry; queued reads never replace', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ status: 'needs_attention', extractionError: 'error', corrected: true })], importedTotal: 0, counter: null, limits: LIMITS } }),
+      'POST /api/books/imports/i1/extract': [
+        () => ({ status: 429, body: { error: { code: 'extract_busy', message: 'busy', retryAfterSec: 1 } } }),
+        () => ({ status: 200, body: item({ version: 7, extractionId: 'x2' }) }),
+      ],
+    });
+    render(<ImportPanel />);
+    fireEvent.click(within(await screen.findByTestId('import-row-i1')).getByRole('button', { name: 'Read again' }));
+    await vi.advanceTimersByTimeAsync(1500);
+    await waitFor(() => expect(calls.filter((c) => c.url.includes('/i1/extract'))).toHaveLength(2));
+    expect(calls.filter((c) => c.url.includes('/i1/extract')).map((c) => c.url)).toEqual([
+      '/api/books/imports/i1/extract?replace=1',
+      '/api/books/imports/i1/extract?replace=1',
+    ]);
+  });
+
+  it('filling a row in by hand drops a pending busy retry of its reading', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ status: 'uploaded', printed: null, extractionId: null })], importedTotal: 0, counter: null, limits: LIMITS } }),
+      'POST /api/books/imports/i1/extract': () => ({ status: 429, body: { error: { code: 'extract_busy', message: 'busy', retryAfterSec: 2 } } }),
+      'POST /api/books/imports/i1/by-hand': () => ({ status: 200, body: item({ version: 4, status: 'needs_attention', extractionId: 'manual:1', printed: printed({ number: null }) }) }),
+    });
+    render(<ImportPanel />);
+    await waitFor(() => expect(calls.filter((c) => c.url.includes('/i1/extract'))).toHaveLength(1));
+    fireEvent.click(await within(screen.getByTestId('import-row-i1')).findByRole('button', { name: 'Fill in by hand' }));
+    await screen.findByRole('form', { name: 'Invoice as printed' });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(calls.filter((c) => c.url.includes('/i1/extract'))).toHaveLength(1);
+    expect(calls.every((c) => !c.url.endsWith('?replace=1'))).toBe(true);
+  });
+
+  it('the batch confirmation puts the focus on Cancel, and Cancel gives it back to "Import all ready"', async () => {
+    server({ 'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ problems: [{ code: 'counter_raised', path: null, blocking: false, count: 71 }] })], importedTotal: 0, counter: null, limits: LIMITS } }) });
+    render(<ImportPanel />);
+    const all = await screen.findByRole('button', { name: 'Import all ready (1)' });
+    fireEvent.click(all);
+    const dialog = screen.getByRole('alertdialog', { name: 'Confirm the new invoice number' });
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Import all ready (1)' })));
   });
 
   it('shows how many imported invoices are not listed', async () => {

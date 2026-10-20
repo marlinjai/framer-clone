@@ -324,6 +324,7 @@ export const booksUploadImport: Migration = {
         -- A row is being read exactly while a call holds its claim (id and time).
         CONSTRAINT "historical_import_item_claim_check" CHECK (
           ("status" = 'extracting') = ("claim_id" IS NOT NULL AND "claimed_at" IS NOT NULL)
+          AND (("claim_id" IS NULL) = ("claimed_at" IS NULL))
         ),
         CONSTRAINT "historical_import_item_imported_check" CHECK (
           ("status" = 'imported') = ("document_id" IS NOT NULL)

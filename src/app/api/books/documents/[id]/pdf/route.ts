@@ -13,7 +13,9 @@
 // would lack a required field (nothing is stored then).
 
 import { booksRoute } from '@/server/books/http/route';
+import { BooksError } from '@/server/books/errors';
 import { documentPdf } from '@/server/books/render/store';
+import { isPdfBytes } from '@/server/books/upload/service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,6 +23,8 @@ export const dynamic = 'force-dynamic';
 export const GET = booksRoute<{ id: string }>('read', async (ctx, _req, { params }) => {
   const { id } = await params;
   const pdf = await documentPdf(ctx.scope, id);
+  // An imported original is the user's upload: like every PDF served here, only bytes that are a PDF.
+  if (!isPdfBytes(pdf.bytes)) throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: the stored file is not a PDF', { documentId: id });
   return new Response(Buffer.from(pdf.bytes), {
     status: 200,
     headers: {
@@ -28,6 +32,8 @@ export const GET = booksRoute<{ id: string }>('read', async (ctx, _req, { params
       'content-disposition': `attachment; filename="${pdf.fileName}"`,
       'content-length': String(pdf.bytes.byteLength),
       'cache-control': 'private, no-store',
+      'x-content-type-options': 'nosniff',
+      'cross-origin-resource-policy': 'same-origin',
       'x-books-of-record': pdf.ofRecord ? 'true' : 'false',
       'x-books-sha256': pdf.sha256,
     },

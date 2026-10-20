@@ -26,7 +26,7 @@ const TEXT: Record<string, string> = {
   tax_on_untaxed_invoice: 'The invoice charges VAT, but its tax treatment says it does not.',
   reverse_charge_domestic:
     'Reverse charge for a German customer (section 13b UStG within Germany) is not supported by this import. Keep this invoice in your own records outside the Books, and discard the row.',
-  reverse_charge_country_unknown: 'Reverse charge needs the recipient country: enter the country printed on the invoice.',
+  reverse_charge_country_unknown: 'Reverse charge needs the recipient country, and none is printed: enter the recipient\'s country (from the address or the VAT id).',
   line_tax_on_zero_rate: 'A line at 0 % carries VAT. Check the rate and the VAT of that line against the PDF.',
   tax_summary_mismatch: 'The VAT summary does not match the lines (more than rounding). Check the rates, net amounts and VAT against the PDF.',
   reverse_charge_outside_eu:
@@ -71,9 +71,27 @@ const TEXT: Record<string, string> = {
   unsure_low: 'The AI could hardly read this field.',
 };
 
+/** Why reading again failed, in words (the outcome a `reread_failed:` code carries). */
+const REREAD_REASON: Record<string, string> = {
+  refused: 'the AI declined',
+  invalid_output: 'the AI gave no usable reading',
+  max_tokens: 'the invoice is too long to read in one go',
+  unreadable: 'the AI service could not open the PDF',
+  error: 'the AI service did not answer',
+};
+
+/** Every problem code the server writes as such (the prefixed families are handled by their prefix). */
+export const KNOWN_PROBLEM_CODES: readonly string[] = Object.keys(TEXT);
+
 /** The sentence for one problem; counts are added where they say something. */
 export function problemText(p: ImportProblem): string {
-  const base = TEXT[p.code] ?? (p.code.startsWith('import_failed:') ? `The import failed (${p.code.slice(14)}). Nothing was imported; try again.` : p.code);
+  const base =
+    TEXT[p.code] ??
+    (p.code.startsWith('import_failed:')
+      ? `The import failed (${p.code.slice(14)}). Nothing was imported; try again.`
+      : p.code.startsWith('reread_failed:')
+        ? `Reading again failed (${REREAD_REASON[p.code.slice(14)] ?? p.code.slice(14)}). The earlier reading is kept; try again later.`
+        : p.code);
   if (p.code === 'counter_raised' && p.count !== null) {
     return `Your next invoice number will become ${p.count}. It cannot be lowered later.`;
   }

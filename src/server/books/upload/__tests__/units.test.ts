@@ -5,6 +5,9 @@
 // the review form's conversion, the problem texts, the file name shown.
 // Synthetic data only.
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { fromForm, readDecimal } from '@/app/projects/books/ImportRowEditor';
@@ -196,6 +199,26 @@ describe('problem texts', () => {
     expect(pathLabel('lines.2.lineTotal')).toBe('Line 3, lineTotal');
     expect(pathLabel('recipient.name')).toBe('Recipient name');
     expect(pathLabel(null)).toBeNull();
+  });
+});
+
+describe('every problem the server writes has a text', () => {
+  it('codes named in the mapping, the core, the validation and the service all have a sentence', () => {
+    const files = ['src/server/books/importPrinted.ts', 'src/server/books/importInvoices.ts', 'src/server/books/upload/validate.ts', 'src/server/books/upload/service.ts'];
+    const codes = new Set<string>();
+    for (const f of files) {
+      const text = readFileSync(join(process.cwd(), f), 'utf8');
+      for (const m of text.matchAll(/(?:issue\(\s*'(?:error|skipped)',\s*|reason: |problem\(|code: )'([a-z][a-z0-9_]+)'/g)) codes.add(m[1]);
+    }
+    // zod's own issue kind, not a problem code.
+    codes.delete('custom');
+    expect(codes.size).toBeGreaterThan(30);
+    const missing = [...codes].filter((code) => problemText({ code, path: null, blocking: true, count: null }) === code);
+    expect(missing).toEqual([]);
+    for (const outcome of ['refused', 'invalid_output', 'max_tokens', 'unreadable', 'error']) {
+      expect(problemText({ code: `extraction_failed:${outcome}`, path: null, blocking: true, count: null })).not.toBe(`extraction_failed:${outcome}`);
+      expect(problemText({ code: `reread_failed:${outcome}`, path: null, blocking: false, count: null })).toMatch(/earlier reading is kept/);
+    }
   });
 });
 

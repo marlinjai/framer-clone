@@ -81,6 +81,8 @@ export default function ImportPanel() {
   const queue = useRef<string[]>([]);
   /** Rows the user asked to read again although they hold what was typed or corrected. */
   const replacing = useRef<Set<string>>(new Set());
+  /** Rows filled in by hand while a busy retry was pending: the retry is dropped. */
+  const handFilled = useRef<Set<string>>(new Set());
   const running = useRef<Set<string>>(new Set());
   const stopped = useRef(false);
   const mounted = useRef(true);
@@ -126,6 +128,10 @@ export default function ImportPanel() {
           if (err instanceof BooksApiError && err.code === 'extract_busy') {
             const wait = Number((err.details as { retryAfterSec?: unknown }).retryAfterSec ?? 5);
             setTimeout(() => {
+              // Filled in by hand meanwhile: nothing to read any more.
+              if (handFilled.current.has(id)) return;
+              // The retry is the same request: the user's "Read again" stays a replacing read.
+              if (replace) replacing.current.add(id);
               queue.current.push(id);
               pump();
             }, Math.max(1, wait) * 1000);
@@ -134,7 +140,7 @@ export default function ImportPanel() {
             stopped.current = true;
             queue.current = [];
             setNotice(err.message);
-          } else if (err instanceof BooksApiError && ['extraction_running', 'concurrent_edit'].includes(err.code)) {
+          } else if (err instanceof BooksApiError && ['extraction_running', 'concurrent_edit', 'reading_would_be_replaced'].includes(err.code)) {
             // Read in another window, or set aside or imported meanwhile: show the row as it is now.
             void reload();
           } else {
@@ -275,12 +281,15 @@ export default function ImportPanel() {
   /** Fill a row in by hand (no AI reading), then open it; it leaves the reading queue, so nothing replaces what is typed. */
   async function byHand(item: ImportItemView) {
     queue.current = queue.current.filter((id) => id !== item.id);
+    replacing.current.delete(item.id);
+    handFilled.current.add(item.id);
     await act(item.id, () => importsApi.byHand(item.id, item.version));
     setOpen(item.id);
   }
 
   /** Read one row now (its own button): only this row, never the rest of an old queue. */
   function readOne(id: string, replace = false) {
+    handFilled.current.delete(id);
     if (replace) replacing.current.add(id);
     const wasStopped = stopped.current;
     stopped.current = false;
@@ -313,7 +322,8 @@ export default function ImportPanel() {
       const item = current.find((i) => i.id === id);
       // Changed since (read again, corrected, imported elsewhere): left for the user, not imported blind.
       if (!item || item.status !== 'ready') {
-        if (item?.status !== 'imported') {
+        // Imported elsewhere or set aside meanwhile (gone from the list): nothing left to do.
+        if (item && item.status !== 'imported') {
           changed += 1;
           notImported += 1;
         }

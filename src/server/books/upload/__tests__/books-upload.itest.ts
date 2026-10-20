@@ -460,9 +460,9 @@ describe('unhappy paths of reading and importing', () => {
   });
 
   it('a call whose claim was taken over writes nothing while the newer call is still running, read or failed', async () => {
-    for (const slowEnds of ['with a reading', 'with a failure'] as const) {
+    for (const [n, slowEnds] of (['with a reading', 'with a failure'] as const).entries()) {
       const { tenantId, book, scope } = await company();
-      const item = await staged(scope, `take-${slowEnds.length}-${tenantId}`);
+      const item = await staged(scope, `take-${n}-${tenantId}`);
       let finishSlow!: () => void;
       const slowTurn: Turn =
         slowEnds === 'with a reading'
@@ -617,9 +617,12 @@ describe('unhappy paths of reading and importing', () => {
       sha256: i.toString(16).padStart(64, '0'), updated_at: new Date(),
     }));
     await env.ownerDb.insertInto('historical_import_item').values(rows).execute();
-    const results = await Promise.allSettled([stageUpload(scope, { fileName: 'a.pdf', bytes: pdfBytes(`ra-${tenantId}`) }), stageUpload(scope, { fileName: 'b.pdf', bytes: pdfBytes(`rb-${tenantId}`) })]);
+    // Ten at once for the last free place: without the lock several would pass the count together.
+    const results = await Promise.allSettled(
+      Array.from({ length: 10 }, (_, i) => stageUpload(scope, { fileName: `${i}.pdf`, bytes: pdfBytes(`race-${i}-${tenantId}`) })),
+    );
     expect(results.filter((x) => x.status === 'fulfilled')).toHaveLength(1);
-    expect((results.find((x) => x.status === 'rejected') as PromiseRejectedResult).reason.code).toBe('IMPORT_LIMIT');
+    expect(results.filter((x) => x.status === 'rejected').map((x) => (x as PromiseRejectedResult).reason.code)).toEqual(Array(9).fill('IMPORT_LIMIT'));
   });
 
   it('010 keeps the claim with the status, and a discarded row without bytes', async () => {

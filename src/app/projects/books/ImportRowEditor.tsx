@@ -12,7 +12,7 @@
 // when the invoice is read again the form starts from the new reading, never
 // from edits of the old one.
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { importPdfUrl, type ImportItemView, type PrintedInvoice, type PrintedLine } from '@/lib/books/api';
@@ -211,6 +211,19 @@ export default function ImportRowEditor({
 }) {
   const [form, setForm] = useState<Form>(() => toForm(item.printed));
   const [formError, setFormError] = useState<string | null>(null);
+  /** "Read again with AI" would replace what the user entered: asked first. */
+  const [confirmReread, setConfirmReread] = useState(false);
+  const rereadButton = useRef<HTMLButtonElement>(null);
+  const initial = useMemo(() => JSON.stringify(toForm(item.printed)), [item.printed]);
+  const typedHere = item.corrected || item.extractionId?.startsWith('manual:') === true || JSON.stringify(form) !== initial;
+  function readAgain() {
+    if (typedHere) return setConfirmReread(true);
+    onReadAgain();
+  }
+  function closeReread() {
+    setConfirmReread(false);
+    requestAnimationFrame(() => rereadButton.current?.focus());
+  }
   const unsure = useMemo(() => new Set(Object.keys(item.confidence)), [item.confidence]);
   const set = (change: Partial<Form>) => setForm((f) => ({ ...f, ...change }));
   const setLine = (i: number, change: Partial<LineForm>) =>
@@ -394,8 +407,34 @@ export default function ImportRowEditor({
             {formError}
           </p>
         ) : null}
+        {confirmReread ? (
+          <div
+            role="alertdialog"
+            aria-label="Replace what you entered"
+            aria-describedby={`${id}-reread-text`}
+            className="rounded-md border border-amber-500 p-3 text-sm"
+            onKeyDown={(e) => e.key === 'Escape' && closeReread()}
+          >
+            <p id={`${id}-reread-text`}>Reading again replaces what you entered or corrected here with a new reading by the AI.</p>
+            <div className="mt-2 flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  setConfirmReread(false);
+                  onReadAgain();
+                }}
+              >
+                Replace with a new reading
+              </Button>
+              <Button type="button" size="sm" variant="ghost" autoFocus onClick={closeReread}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : null}
         <div className="flex flex-wrap justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onReadAgain} disabled={busy}>
+          <Button ref={rereadButton} type="button" variant="ghost" onClick={readAgain} disabled={busy}>
             Read again with AI
           </Button>
           <Button type="button" variant="outline" onClick={() => void onRecheck()} disabled={busy}>

@@ -167,8 +167,9 @@ Books home.
    problem) stays a retryable error, and every row the model has no reading of can be filled in
    by hand (an empty manual reading, keyed like any other, no model call). What the user typed by
    hand or corrected is never replaced by a reading nobody asked for (a queue, a resume): only
-   the row's own "Read again" replaces it (`replace=1`), and filling a row in by hand takes it
-   out of the reading queue. A failed reading again keeps the earlier reading and its status,
+   the row's own "Read again" replaces it (`replace=1`, kept across a busy retry), after a
+   confirmation in the editor, and filling a row in by hand takes it out of the reading queue
+   and drops a pending retry. A failed reading again keeps the earlier reading and its status,
    the failure noted. The whole call is aborted after 8 minutes (the SDK's own timeout ends with
    the response headers, so a stalled stream would otherwise run on), and also when the client
    disconnects; the row then goes back to what it was (a reading and its correction kept). The fields the model reports
@@ -239,8 +240,8 @@ Books home.
     Germany) and `reverse_charge_domestic` (a German customer under domestic section 13b: not
     supported by this import, the row says to keep the invoice outside the Books and discard it;
     supporting it is a product and tax decision for the lead). VAT that does not add up is named,
-    never absorbed: a VAT summary off from the lines by more than rounding
-    (`tax_summary_mismatch`), VAT on a 0 % line (`line_tax_on_zero_rate`, also refused by the
+    never absorbed: a VAT summary off from the lines by more than rounding, off at all where every
+    line prints its VAT, or naming a rate no line carries (`tax_summary_mismatch`), VAT on a 0 % line (`line_tax_on_zero_rate`, also refused by the
     record schema), and a summary row in the editor with its rate or VAT left empty.
 16. **The operator CLI after the shared core changed.** `pnpm books:import` now also imports
     regular-VAT and reverse-charge entries, and a section 19 invoice without the printed notice

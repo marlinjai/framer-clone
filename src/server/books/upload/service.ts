@@ -214,7 +214,15 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
       if (now.status === 'extracting') throw new BooksError('EXTRACTION_RUNNING', 'EXTRACTION_RUNNING: this invoice is being read already', { itemId });
       throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the row changed meanwhile; reload it', { itemId });
     }
-    const release = () => updateItem(scope.db, scope, itemId, { status: previous, claimedAt: null, claimId: null }, { whenStatus: ['extracting'], claimId });
+    // Back to what it was; a failure to do so is logged (the claim then expires) and never hides the caller's error.
+    const release = async (): Promise<ImportItem | null> => {
+      try {
+        return await updateItem(scope.db, scope, itemId, { status: previous, claimedAt: null, claimId: null }, { whenStatus: ['extracting'], claimId });
+      } catch (err) {
+        console.error(`[books-import] item ${itemId}: the claim could not be released: ${describeError(err)}`);
+        return null;
+      }
+    };
     let bytes: Uint8Array | null;
     try {
       bytes = await itemContent(scope.db, scope, itemId);
@@ -244,13 +252,17 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
     let read: { printed: Record<string, unknown>; confidence: Record<string, 'high' | 'medium' | 'low'> } | null = null;
     // The whole call is bounded (the SDK's timeout covers only the wait for the response headers,
     // not a stream that stalls after them): below the claim timeout, so a running call is never taken over.
-    const budget = AbortSignal.timeout(deps.callBudgetMs ?? EXTRACT_CALL_BUDGET_MS);
+    // One signal for both (composed by hand: no reliance on AbortSignal.any).
+    const budget = new AbortController();
+    const call = new AbortController();
+    const onAbort = () => call.abort();
+    deps.signal.addEventListener('abort', onAbort, { once: true });
+    const timer = setTimeout(() => {
+      budget.abort();
+      call.abort();
+    }, deps.callBudgetMs ?? EXTRACT_CALL_BUDGET_MS);
     try {
-      const result = await extractPrintedInvoice(deps.anthropic, bytes, {
-        modelKey: deps.modelKey,
-        signal: AbortSignal.any([deps.signal, budget]),
-        usage,
-      });
+      const result = await extractPrintedInvoice(deps.anthropic, bytes, { modelKey: deps.modelKey, signal: call.signal, usage });
       if (result.ok) {
         outcome = 'ok';
         read = { printed: result.printed, confidence: result.confidence };
@@ -258,13 +270,16 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
         outcome = result.outcome;
       }
     } catch (err) {
-      outcome = deps.signal.aborted ? 'aborted' : budget.aborted ? 'error' : failureOutcome(err);
+      outcome = deps.signal.aborted ? 'aborted' : budget.signal.aborted ? 'error' : failureOutcome(err);
       if (outcome !== 'aborted') {
         const status = (err as { status?: unknown })?.status;
         console.error(
-          `[books-import] item ${itemId}: extraction failed (${typeof status === 'number' ? status : budget.aborted ? 'time budget' : 'no status'}, ${outcome})`,
+          `[books-import] item ${itemId}: extraction failed (${typeof status === 'number' ? status : budget.signal.aborted ? 'time budget' : 'no status'}, ${outcome})`,
         );
       }
+    } finally {
+      clearTimeout(timer);
+      deps.signal.removeEventListener('abort', onAbort);
     }
     try {
       await finishExtraction(scope.db, scope, claimId, outcome, usage, clock());

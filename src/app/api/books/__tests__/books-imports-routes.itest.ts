@@ -271,6 +271,11 @@ describe('read, correct, import', () => {
       params: Promise.resolve({ id: docId }),
     });
     expect(served.headers.get('x-books-of-record')).toBe('true');
+    expect([served.headers.get('content-type'), served.headers.get('x-content-type-options'), served.headers.get('cross-origin-resource-policy')]).toEqual([
+      'application/pdf',
+      'nosniff',
+      'same-origin',
+    ]);
     expect(Buffer.from(await served.arrayBuffer()).equals(Buffer.from(bytes))).toBe(true);
     // Imported: its PDF beside the form is the stored original now.
     const after = await itemPdfRoute.GET(new Request(`http://localhost:3000/api/books/imports/${id}/pdf`, { headers: HEADERS }), { params: Promise.resolve({ id }) });
