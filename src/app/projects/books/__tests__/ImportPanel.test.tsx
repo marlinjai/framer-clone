@@ -525,7 +525,7 @@ describe('ImportPanel', () => {
   it('a batch raise that grows while its dialog is open asks again with the new number, nothing imported', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const lists = [
-      { items: [item({ id: 'i1', problems: [{ code: 'counter_raised', path: null, blocking: false, count: 71 }] }), item({ id: 'i9', status: 'extracting' })], importedTotal: 0, counter: null, limits: LIMITS },
+      { items: [item({ id: 'i1', problems: [{ code: 'counter_raised', path: null, blocking: false, count: 71 }] }), item({ id: 'i9', status: 'extracting', updatedAt: new Date().toISOString() })], importedTotal: 0, counter: null, limits: LIMITS },
       // Read meanwhile elsewhere: a second ready row that raises further.
       {
         items: [
@@ -552,7 +552,7 @@ describe('ImportPanel', () => {
   it('a row dialog whose row changed meanwhile closes and says so', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const lists = [
-      { items: [item({ id: 'i1', problems: [{ code: 'counter_raised', path: null, blocking: false, count: 71 }] }), item({ id: 'i9', status: 'extracting' })], importedTotal: 0, counter: null, limits: LIMITS },
+      { items: [item({ id: 'i1', problems: [{ code: 'counter_raised', path: null, blocking: false, count: 71 }] }), item({ id: 'i9', status: 'extracting', updatedAt: new Date().toISOString() })], importedTotal: 0, counter: null, limits: LIMITS },
       { items: [item({ id: 'i9' })], importedTotal: 0, counter: null, limits: LIMITS },
     ];
     server({ 'GET /api/books/imports': () => ({ status: 200, body: lists.length > 1 ? lists.shift()! : lists[0] }) });
