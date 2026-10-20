@@ -430,7 +430,8 @@ describe('review fixes: breaker, guarded writes, paging, cap race', () => {
     }
     const rows = await prisma.siteDomain.findMany({ where: { hostname: { startsWith: 'br' } } });
     expect(rows.every((r) => r.consecutiveFailures === 0 && r.customHostname !== null)).toBe(true);
-    // Fixed config: the next pass is ordinary again.
+    // Fixed config: the next pass (once the rows are due again) is ordinary.
+    later(7);
     expect(await service().recheckDue(CONFIG)).toMatchObject({ circuitOpen: false, ok: 6 });
   });
 
