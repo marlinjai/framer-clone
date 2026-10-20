@@ -23,9 +23,14 @@
 // The document number is required under both (it identifies the document, and
 // this renderer always prints it).
 //
-// Matching is on the sanitized text (format.ts toPdfText), and label plus value
+// Matching is on the normalized text (format.ts toPdfText) with ALL whitespace
+// removed on both sides, so a value wrapped over several lines (or a long word
+// broken as a last resort) still counts as present; and on label plus value
 // where a bare value could match elsewhere ("Rechnungsdatum 19.10.2026", not
 // just "19.10.2026", which the due date or the service date may also be).
+//
+// A credit note must name the invoice it cancels (number and date) in its
+// reference line; reverse charge must print the recipient's VAT id itself.
 
 import type { SalesDocumentLine, SalesDocumentWithSnapshots } from '../repository/read';
 import { formatDate, formatMoney, formatQuantity, formatRate, postalCity, toPdfText } from './format';
@@ -42,8 +47,17 @@ function present(v: string | null | undefined): v is string {
   return typeof v === 'string' && v.trim() !== '';
 }
 
+/** What a check needs besides the document: the invoice a credit note cancels. */
+export interface CompletenessContext {
+  corrects?: { documentNumber: string; issueDate: string } | null;
+}
+
 /** What the rendered text of an issued document must contain. */
-export function expectedFields(doc: SalesDocumentWithSnapshots, lines: SalesDocumentLine[]): Expectation[] {
+export function expectedFields(
+  doc: SalesDocumentWithSnapshots,
+  lines: SalesDocumentLine[],
+  context: CompletenessContext = {},
+): Expectation[] {
   const s = doc.senderSnapshot;
   const c = doc.customerSnapshot;
   if (!s || !c || !doc.documentNumber || !doc.issueDate) {
@@ -82,6 +96,13 @@ export function expectedFields(doc: SalesDocumentWithSnapshots, lines: SalesDocu
   const isCredit = doc.docType === 'credit_note';
   add('documentNumber', `${isCredit ? 'Gutschriftsnummer' : 'Rechnungsnummer'} ${doc.documentNumber}`);
   add('issueDate', `${isCredit ? 'Datum' : 'Rechnungsdatum'} ${formatDate(doc.issueDate)}`);
+  if (isCredit) {
+    const c2 = context.corrects;
+    add(
+      'correctsReference',
+      c2 ? `Storno der Rechnung ${c2.documentNumber} vom ${formatDate(c2.issueDate)}` : null,
+    );
+  }
 
   // Quantity and kind of every billable line.
   for (const l of lines) {
@@ -108,19 +129,23 @@ export function expectedFields(doc: SalesDocumentWithSnapshots, lines: SalesDocu
     add(`taxGroup${g.taxRate}.tax`, `Umsatzsteuer ${formatRate(g.taxRate)} ${formatMoney(sign * g.tax)}`);
   }
   if (doc.reverseCharge) {
-    add('recipient.vatId', `USt-IdNr. Leistungsempfänger ${c.vatId ?? ''}`.trim());
+    add('recipient.vatId', present(c.vatId) ? `USt-IdNr. Leistungsempfänger ${c.vatId}` : null);
     add('reverseChargeNote', doc.taxNote);
   }
   return out;
 }
+
+const squeeze = (s: string) => s.replace(/\s+/g, '');
 
 /** The names of the required fields missing from `renderedText` (empty when complete). */
 export function missingFields(
   doc: SalesDocumentWithSnapshots,
   lines: SalesDocumentLine[],
   renderedText: string,
+  context: CompletenessContext = {},
 ): string[] {
-  return expectedFields(doc, lines)
-    .filter((e) => e.text === '' || !renderedText.includes(e.text))
+  const haystack = squeeze(renderedText);
+  return expectedFields(doc, lines, context)
+    .filter((e) => e.text === '' || !haystack.includes(squeeze(e.text)))
     .map((e) => e.field);
 }

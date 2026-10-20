@@ -2,15 +2,16 @@
 //
 // Lay a render model out as an A4 PDF with pdf-lib, a pure JavaScript library:
 // no headless browser, no native module, no system font, so it runs unchanged
-// in the existing node:20-bookworm-slim image on linux/arm64 and adds no layer
-// to it. The two built-in PDF fonts (Helvetica, Helvetica-Bold) cover German
-// text (format.ts says what happens to anything else).
+// in the existing node:20-bookworm-slim image on linux/arm64. The text is set in
+// the embedded DejaVu Sans faces (fonts.ts), subset to the glyphs used, so every
+// European name prints exactly as written.
 //
 // Deterministic by construction: the same model gives the same bytes. The
 // metadata dates are the document's own `issued_at` (never "now"), the producer
-// and creator strings are fixed, and pdf-lib itself writes no random id. That
-// is what lets an issued document be re-rendered byte for byte from its frozen
-// snapshots, and what the tests assert.
+// and creator strings are fixed, and pdf-lib's font subsetting and resource
+// names are deterministic (pdf-lib writes no random id). That is what lets an
+// issued document be re-rendered byte for byte from its frozen snapshots, and
+// what the tests assert.
 //
 // Layout (DIN 5008 in spirit): the sender line and the recipient block in the
 // address window on the left, the document data on the right, the title, an
@@ -19,17 +20,20 @@
 // template's small print, and the sender footer on every page with "Seite n
 // von m".
 
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib';
+import { PDFDocument, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib';
 
+import { fontFiles, fontkit } from './fonts';
 import type { RenderModel } from './model';
 
 /** Recorded on every stored file, so a later renderer change is traceable. */
-export const RENDERER_ID = 'books-pdf-lib-1';
+export const RENDERER_ID = 'books-pdf-lib-2';
 
-const A4: [number, number] = [595.28, 841.89];
+export const A4: [number, number] = [595.28, 841.89];
 const MARGIN_X = 56.7; // 20 mm
-const FOOTER_TOP = 70;
-const CONTENT_BOTTOM = FOOTER_TOP + 24;
+/** The footer's top rule sits just above this; footer text is drawn below it. */
+export const FOOTER_TOP = 70;
+/** No body text is drawn below this line (the footer zone starts under it). */
+export const CONTENT_BOTTOM = FOOTER_TOP + 24;
 const BODY = 9.5;
 const SMALL = 7.5;
 const INK = rgb(0.1, 0.1, 0.12);
@@ -41,7 +45,10 @@ function accent(hex: string | null): RGB {
   return rgb(parseInt(m[1], 16) / 255, parseInt(m[2], 16) / 255, parseInt(m[3], 16) / 255);
 }
 
-/** Break `text` into lines no wider than `width` (a word longer than the width is split). */
+/**
+ * Break `text` into lines no wider than `width`, at spaces. A single word wider
+ * than a whole line is the only thing split inside a word (last resort).
+ */
 export function wrapText(text: string, font: PDFFont, size: number, width: number): string[] {
   if (text === '') return [''];
   const lines: string[] = [];
@@ -136,10 +143,11 @@ class Writer {
 const COL = {
   pos: MARGIN_X,
   title: MARGIN_X + 22,
-  qtyRight: MARGIN_X + 300,
-  unit: MARGIN_X + 306,
-  priceRight: MARGIN_X + 400,
-  rateRight: MARGIN_X + 435,
+  // Wide enough for the largest amount (21.474.836,47 EUR) in DejaVu Sans.
+  qtyRight: MARGIN_X + 262,
+  unit: MARGIN_X + 268,
+  priceRight: MARGIN_X + 362,
+  rateRight: MARGIN_X + 396,
   amountRight: A4[0] - MARGIN_X,
 };
 const TITLE_WIDTH = COL.qtyRight - 40 - COL.title;
@@ -197,11 +205,18 @@ function lineTable(w: Writer): void {
   const m = w.model;
   w.ensure(40);
   tableHeader(w);
+  const lead = BODY * 1.35;
+  const detailLead = 8 * 1.35;
   for (const line of m.lines) {
-    const titleLines = wrapText(line.title, line.text ? w.fonts.regular : w.fonts.bold, BODY, line.text ? w.width - 22 : TITLE_WIDTH);
-    const detailLines = line.details.flatMap((d) => wrapText(d, w.fonts.regular, 8, line.text ? w.width - 22 : TITLE_WIDTH));
-    const height = titleLines.length * BODY * 1.35 + detailLines.length * 8 * 1.35 + 6;
-    w.ensure(height, () => tableHeader(w));
+    const width = line.text ? w.width - 22 : TITLE_WIDTH;
+    const titleLines = wrapText(line.title, line.text ? w.fonts.regular : w.fonts.bold, BODY, width);
+    const detailLines = line.details.flatMap((d) => wrapText(d, w.fonts.regular, 8, width));
+    // Keep a row together when it fits on a page; otherwise start it on a new
+    // page only if not even its first line fits, and let it flow line by line
+    // across pages (a 4000-character description must never run into the footer).
+    const height = titleLines.length * lead + detailLines.length * detailLead + 6;
+    const fitsOnePage = height <= A4[1] - 50 - CONTENT_BOTTOM - 40;
+    w.ensure(fitsOnePage ? height : lead, () => tableHeader(w));
     const rowTop = w.y;
     if (!line.text) {
       w.text(line.pos, COL.pos);
@@ -212,15 +227,18 @@ function lineTable(w: Writer): void {
       w.text(line.amount, COL.amountRight, { right: true });
     }
     for (const t of titleLines) {
+      w.ensure(lead, () => tableHeader(w));
       w.text(t, COL.title, { bold: !line.text });
-      w.y -= BODY * 1.35;
+      w.y -= lead;
     }
     for (const d of detailLines) {
+      w.ensure(detailLead, () => tableHeader(w));
       w.text(d, COL.title, { size: 8, color: MUTED });
-      w.y -= 8 * 1.35;
+      w.y -= detailLead;
     }
-    w.y = Math.min(w.y, rowTop - BODY * 1.35) - 6;
+    w.y = (w.y < rowTop ? Math.min(w.y, rowTop - lead) : w.y) - 6;
   }
+  w.ensure(14);
   w.page.drawLine({
     start: { x: MARGIN_X, y: w.y + 4 },
     end: { x: A4[0] - MARGIN_X, y: w.y + 4 },
@@ -272,9 +290,11 @@ function footer(w: Writer, page: PDFPage, index: number, count: number): void {
 /** Render the model to PDF bytes (deterministic: same model, same bytes). */
 export async function renderPdf(model: RenderModel): Promise<Uint8Array> {
   const pdf = await PDFDocument.create({ updateMetadata: false });
+  pdf.registerFontkit(fontkit);
+  const files = fontFiles();
   const fonts: Fonts = {
-    regular: await pdf.embedFont(StandardFonts.Helvetica),
-    bold: await pdf.embedFont(StandardFonts.HelveticaBold),
+    regular: await pdf.embedFont(files.regular, { subset: true }),
+    bold: await pdf.embedFont(files.bold, { subset: true }),
   };
   const w = new Writer(pdf, fonts, model, accent(model.accentColor));
   w.newPage();

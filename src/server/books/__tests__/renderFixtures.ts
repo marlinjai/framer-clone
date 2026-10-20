@@ -126,6 +126,7 @@ export function smallBusinessInvoice(): { document: SalesDocumentWithSnapshots; 
     updatedAt: new Date('2026-10-19T09:30:00Z'),
     customerSnapshot: { ...CUSTOMER },
     senderSnapshot: { ...SENDER },
+    templateSnapshot: null,
   };
   return { document, lines };
 }
@@ -209,6 +210,8 @@ export function issuedInput(f: { document: SalesDocumentWithSnapshots; lines: Sa
       vatId: c.vatId,
     },
     corrects: null,
-    template: null,
+    template: f.document.templateSnapshot
+      ? { accentColor: f.document.templateSnapshot.accentColor, footerBlocks: f.document.templateSnapshot.footerBlocks }
+      : null,
   };
 }
