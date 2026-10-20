@@ -19,6 +19,7 @@
     "db:backfill-demo": "tsx scripts/db-backfill-demo.ts",
     "db:codegen-commerce": "tsx scripts/commerce-codegen.ts",
     "books:init-company": "tsx scripts/books-init-company.ts",
+    "books:import": "tsx scripts/books-import.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",

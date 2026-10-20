@@ -130,6 +130,8 @@ export interface DocumentListItem {
   id: string;
   docType: SalesDocument['docType'];
   status: SalesDocument['status'];
+  /** `import` for a historical invoice (its original PDF is the document of record). */
+  source: SalesDocument['source'];
   documentNumber: string | null;
   issueDate: string | null;
   dueDate: string | null;
@@ -169,6 +171,7 @@ function listFields(doc: SalesDocument): Omit<DocumentListItem, 'customerName' |
     id: doc.id,
     docType: doc.docType,
     status: doc.status,
+    source: doc.source,
     documentNumber: doc.documentNumber,
     issueDate: doc.issueDate,
     dueDate: doc.dueDate,

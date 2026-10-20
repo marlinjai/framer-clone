@@ -55,12 +55,20 @@ connections to the suite. The four lines below are in that order.
   Whiz-Art Media. Then the first real invoice from the editor closes this line. See
   [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md), sections "Phase 1 build
   specification" and "Phase 2 and 3 build notes (2026-10-20)". (2026-10-20)
-- [ ] 4. Existing invoices and the suite: import invoices 28 to 61 as historical documents
-  with their original PDFs attached (never re-rendered), then connect: the read-only endpoint
-  receipt-ocr-app pulls issued invoices from (service-account key from auth-brain; the receipts
-  session gets the contract when it exists), storage-brain for the PDFs, the shared contacts
-  database for recipients. After the import the receipts app's register rows map to the mirror
-  by invoice number. See the Books plan's amendment of 2026-10-15. (2026-10-15)
+- [ ] 4. Existing invoices and the suite. Built 2026-10-20: the historical import of invoices
+  1 to 61 (the full series, totals checked against the filed returns 2019 to 2025), `pnpm
+  books:import`, which writes each invoice as an issued document with `source = 'import'`, its
+  printed number, its own printed sender and recipient, and its original PDF stored as the
+  document of record (never re-rendered); migration `009_books_import` makes the lines-first
+  insert possible and refuses an import without its original. Open, the operator step: run
+  `pnpm books:init-company` (counter at 62), then `pnpm books:import --dry-run` and the real run
+  for Whiz-Art Media with the private input file, compare the printed yearly totals with the
+  returns, and import invoice 60 once its PDF is saved from the mail. Then connect: the
+  read-only endpoint receipt-ocr-app pulls issued invoices from (service-account key from
+  auth-brain; the receipts session gets the contract when it exists), storage-brain for the
+  PDFs, the shared contacts database for recipients in production. After the import the
+  receipts app's register rows map to the mirror by invoice number. See the Books plan's
+  amendment of 2026-10-15 and "Historical import build notes (2026-10-20)". (2026-10-20)
 - [x] The framer-clone Coolify Postgres database with the published port 5439: checked on
   2026-10-15, there is no framer-clone database or app in Coolify any more and port 5439 is closed
   on both servers, so nothing is left to restart. Done 2026-10-15.

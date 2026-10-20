@@ -48,6 +48,15 @@ export interface ContactBook {
   getMany(tenantId: string, ids: readonly string[]): Promise<RecipientContact[]>;
   /** Create a contact for the company. */
   create(tenantId: string, input: NewContactInput): Promise<RecipientContact>;
+  /**
+   * The company's contact with the same identity (the package's duplicate key:
+   * kind plus name, and for a person also company or role; case and repeated
+   * whitespace do not count), archived included; null when there is none.
+   */
+  findSame(
+    tenantId: string,
+    identity: { kind: 'person' | 'organization'; name: string; companyOrRole?: string | null },
+  ): Promise<RecipientContact | null>;
 }
 
 function errorCode(err: unknown): string | undefined {
@@ -98,6 +107,19 @@ export function contactsContactBook(handle: () => ContactsDb = contactsDb): Cont
       try {
         const rows = await contactsFor(db, tenantId).getMany(ids);
         return rows.map(toRecipientContact);
+      } catch (err) {
+        throw unavailable(err);
+      }
+    },
+    async findSame(tenantId, identity) {
+      const db = await open();
+      try {
+        const found = await contactsFor(db, tenantId).findSame({
+          kind: identity.kind,
+          name: identity.name,
+          companyOrRole: identity.companyOrRole ?? null,
+        });
+        return found ? toRecipientContact(found) : null;
       } catch (err) {
         throw unavailable(err);
       }

@@ -5,9 +5,10 @@
 // Details carry names and ids only, never a recipient's name, address or any
 // other personal value.
 //
-// Trigger errors from 007_books are mapped by SQLSTATE (BK001 -> NOT_DRAFT,
-// BK004 -> INVALID_TRANSITION, BK005 -> TOTALS_MISMATCH); every other database
-// error propagates unchanged. Errors surface, never swallowed.
+// Trigger errors from 007_books and 009_books_import are mapped by SQLSTATE
+// (BK001 -> NOT_DRAFT, BK004 -> INVALID_TRANSITION, BK005 -> TOTALS_MISMATCH,
+// BK007 -> IMPORT_INCOMPLETE); every other database error propagates
+// unchanged. Errors surface, never swallowed.
 
 export type BooksErrorCode =
   | 'INVALID_INPUT'
@@ -46,7 +47,11 @@ export type BooksErrorCode =
   | 'TEMPLATE_IN_USE'
   | 'NOT_RENDERABLE'
   | 'RENDER_INCOMPLETE'
-  | 'UNDRAWABLE_TEXT';
+  | 'UNDRAWABLE_TEXT'
+  // The historical import (009_books_import, importInvoices.ts).
+  | 'IMPORT_CONFLICT'
+  | 'IMPORT_INCOMPLETE'
+  | 'IMPORT_COUNTER_TOO_LOW';
 
 export class BooksError extends Error {
   readonly code: BooksErrorCode;
@@ -91,10 +96,11 @@ const TRIGGER_CODES: Record<string, BooksErrorCode> = {
   BK001: 'NOT_DRAFT',
   BK004: 'INVALID_TRANSITION',
   BK005: 'TOTALS_MISMATCH',
+  BK007: 'IMPORT_INCOMPLETE',
 };
 
 /**
- * Map a trigger error of 007_books to its BooksError; return every other error
+ * Map a trigger error of 007_books or 009_books_import to its BooksError; return every other error
  * unchanged (the caller rethrows it).
  */
 export function mapDbError(err: unknown): unknown {

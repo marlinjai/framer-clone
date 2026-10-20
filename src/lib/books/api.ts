@@ -58,6 +58,8 @@ export interface DocumentView {
   id: string;
   docType: 'invoice' | 'credit_note' | 'offer';
   status: 'draft' | 'issued' | 'sent' | 'accepted' | 'rejected' | 'paid' | 'cancelled';
+  /** `import` for the historical invoices: their stored original PDF is the document of record. */
+  source: 'editor' | 'import';
   version: number;
   customerId: string | null;
   templateId: string | null;
@@ -96,6 +98,7 @@ export interface DocumentListItem {
   id: string;
   docType: DocumentView['docType'];
   status: DocumentView['status'];
+  source: DocumentView['source'];
   documentNumber: string | null;
   issueDate: string | null;
   dueDate: string | null;

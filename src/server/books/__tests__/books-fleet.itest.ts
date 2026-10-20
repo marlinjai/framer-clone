@@ -114,7 +114,7 @@ function expectedPrivileges() {
 async function fleetMigrate(schema: string) {
   const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
   const mine = result.schemas.find((s) => s.schema === schema);
-  expect(mine?.applied).toEqual(['007_books', '008_books_files']);
+  expect(mine?.applied).toEqual(['007_books', '008_books_files', '009_books_import']);
 }
 
 describe('007_books through the fleet runner', () => {
@@ -169,7 +169,7 @@ describe('007_books through the fleet runner', () => {
     const { tgId, schema } = await provisionAt006WithId();
     const first = await ensureCommerceTenant({ tenantGroupId: tgId, slug: `fleet-${tgId.slice(0, 8)}`, connectionString: ownerUrl });
     expect(first.provisioned).toBe(true);
-    expect(first.applied).toEqual(['007_books', '008_books_files']);
+    expect(first.applied).toEqual(['007_books', '008_books_files', '009_books_import']);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     expect(await readCommerceTenantState(owner, tgId, schema)).toBe('ready');
     const second = await ensureCommerceTenant({ tenantGroupId: tgId, slug: `fleet-${tgId.slice(0, 8)}`, connectionString: ownerUrl });

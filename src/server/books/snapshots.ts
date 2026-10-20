@@ -48,8 +48,18 @@ export const senderBlockV1Schema = z.object({
 });
 export type SenderBlockV1 = z.infer<typeof senderBlockV1Schema>;
 
+/**
+ * The address lines exactly as an imported document printed them (the
+ * historical import, 009). Optional, so every snapshot written before stays
+ * valid; documents issued here never carry it (their fields are the print).
+ */
+const printedAddressLines = z.array(z.string()).max(12).optional();
+
 /** The sender block frozen on an issued document. */
-export const senderSnapshotV1Schema = senderBlockV1Schema.extend({ v: z.literal(1) });
+export const senderSnapshotV1Schema = senderBlockV1Schema.extend({
+  v: z.literal(1),
+  addressLines: printedAddressLines,
+});
 export type SenderSnapshotV1 = z.infer<typeof senderSnapshotV1Schema>;
 
 /** The recipient frozen on an issued document. */
@@ -69,6 +79,10 @@ export const customerSnapshotV1Schema = z.object({
   customerType: z.enum(['b2c', 'b2b']),
   vatId: optionalText,
   taxNumber: optionalText,
+  /** Imported documents only: the printed address lines, verbatim. */
+  addressLines: printedAddressLines,
+  /** Imported documents only: the customer number as printed, when it was not a plain integer. */
+  customerNumberText: z.string().max(64).optional(),
 });
 export type CustomerSnapshotV1 = z.infer<typeof customerSnapshotV1Schema>;
 
