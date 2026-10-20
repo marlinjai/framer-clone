@@ -46,9 +46,10 @@ import { booksImport } from './009_books_import';
  *                            becomes deferrable (lines first, then the issued import
  *                            document), an import's lines must sum to its totals
  *                            (BK005), an import commits only with its stored
- *                            original (BK007), and negative (discount) lines are
- *                            allowed on imports and their cancellations only (BK008),
- *                            and a currency other than EUR only on imports (BK009)
+ *                            original (BK007), negative (discount) lines are
+ *                            allowed on imports and their cancellations only
+ *                            (BK008), a currency other than EUR only on imports
+ *                            (BK009)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,

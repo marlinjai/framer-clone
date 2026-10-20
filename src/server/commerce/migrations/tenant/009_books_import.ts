@@ -42,6 +42,10 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      imported invoice (it copies the lines). Everywhere else a negative line
  *      is refused as before (BK008, mapped to INVALID_LINE). The document totals
  *      stay non-negative (007's CHECKs, untouched).
+ *   (Like 007's freeze, rules 2, 4 and 5 live in triggers, which bind every
+ *   role including the owner; like all of 007's invariants they do not hold
+ *   for a session that disables triggers, `session_replication_role = replica`,
+ *   which only a superuser can set and the application never does.)
  *   5. An imported document keeps the currency it was printed in (one historical
  *      invoice is in CHF): 007's `currency_code = 'EUR'` CHECK becomes a shape
  *      CHECK (three capital letters, ISO 4217), and the document guard allows a
@@ -143,10 +147,13 @@ export const booksImport: Migration = {
           END IF;
 
           -- The identity of a document never changes, not even on a draft: a draft
-          -- cannot become an import, change its type or move to another company.
+          -- cannot become an import, change its type or move to another company,
+          -- and (009) a credit note cannot be re-pointed to another invoice (its
+          -- currency and its copied lines follow the invoice it was created for).
           IF NEW."id" IS DISTINCT FROM OLD."id" OR NEW."tenant_id" IS DISTINCT FROM OLD."tenant_id"
-             OR NEW."doc_type" IS DISTINCT FROM OLD."doc_type" OR NEW."source" IS DISTINCT FROM OLD."source" THEN
-              RAISE EXCEPTION 'sales_document %: id, tenant_id, doc_type and source are fixed', OLD."id"
+             OR NEW."doc_type" IS DISTINCT FROM OLD."doc_type" OR NEW."source" IS DISTINCT FROM OLD."source"
+             OR NEW."corrects_document_id" IS DISTINCT FROM OLD."corrects_document_id" THEN
+              RAISE EXCEPTION 'sales_document %: id, tenant_id, doc_type, source and corrects_document_id are fixed', OLD."id"
                   USING ERRCODE = 'BK001';
           END IF;
 
@@ -243,11 +250,17 @@ export const booksImport: Migration = {
               -- A negative amount (a printed discount line): only while the parent
               -- does not exist yet (the import writes its lines first; the
               -- document's insert then requires source = 'import'), or on the
-              -- draft credit note cancelling an imported invoice.
+              -- draft credit note cancelling an imported invoice, as the exact
+              -- copy of one of that invoice's lines (position and amounts).
               IF (NEW."unit_price" < 0 OR NEW."subtotal" < 0) AND FOUND AND NOT (
                   parent_type = 'credit_note' AND EXISTS (
-                      SELECT 1 FROM "sales_document" o
+                      SELECT 1
+                        FROM "sales_document" o
+                        JOIN "sales_document_line" ol
+                          ON ol."tenant_id" = o."tenant_id" AND ol."document_id" = o."id"
                        WHERE o."tenant_id" = NEW."tenant_id" AND o."id" = parent_corrects AND o."source" = 'import'
+                         AND ol."position" = NEW."position" AND ol."quantity" = NEW."quantity"
+                         AND ol."unit_price" = NEW."unit_price" AND ol."subtotal" = NEW."subtotal"
                   )
               ) THEN
                   RAISE EXCEPTION 'sales_document_line: a negative amount is only allowed on an imported document'

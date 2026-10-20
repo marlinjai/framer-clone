@@ -200,7 +200,8 @@ export const historicalInvoiceSchema = z
      * for nearly all; the EUR value of another currency belongs to the
      * receipts app's income mirror, which matches the payment.
      */
-    currency: z.string().refine(isIsoCurrency, 'expected an ISO 4217 currency code').default('EUR'),
+    // Required, never defaulted: a missed extraction must not become a wrong currency.
+    currency: z.string().refine(isIsoCurrency, 'expected an ISO 4217 currency code'),
     taxTreatment: z.literal('small_business'),
     /** The small-business note as printed. */
     taxNote: text(500),
@@ -502,6 +503,7 @@ export async function resolveImportContact(
   book: ContactBook,
   recipient: HistoricalRecipient,
   session: ImportSession,
+  opts: { countryAssumed?: boolean } = {},
 ): Promise<RecipientContact> {
   const key = recipientKey(recipient);
   const cached = session.contacts.get(key);
@@ -519,7 +521,8 @@ export async function resolveImportContact(
         addressLine2: latest.addressLine2,
         postalCode: latest.postalCode === '' ? null : latest.postalCode,
         city: latest.city === '' ? null : latest.city,
-        country: latest.country,
+        // An assumed country stays in the Books; the shared contacts database gets none rather than a guess.
+        country: opts.countryAssumed && latest === recipient ? null : latest.country,
         vatId: latest.vatId,
       });
       session.stats.contactsCreated += 1;
@@ -824,7 +827,9 @@ export async function importHistoricalInvoice(
   const tax = importTaxFields(record);
   const taxSummary: TaxSummary = [{ taxRate: 0, taxTreatment: 'kleinunternehmer', net: record.total, tax: 0 }];
 
-  const contact = await resolveImportContact(scope, book, record.recipient, session);
+  const contact = await resolveImportContact(scope, book, record.recipient, session, {
+    countryAssumed: record.provenance.recipientCountryAssumed === true,
+  });
   const latest = session.newContactData.get(recipientKey(record.recipient)) ?? record.recipient;
   const customerSnapshot = importCustomerSnapshot(record, contact.id);
 

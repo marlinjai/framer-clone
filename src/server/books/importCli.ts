@@ -311,12 +311,21 @@ export function currencyCode(value: unknown): string | null {
   return isIsoCurrency(code) ? code : null;
 }
 
-/** The country prefixes of EU VAT ids (Greece is EL, Northern Ireland XI). */
-const EU_VAT_PREFIXES = new Set([
-  'AT', 'BE', 'BG', 'CY', 'CZ', 'DE', 'DK', 'EE', 'EL', 'ES', 'FI', 'FR', 'HR', 'HU', 'IE', 'IT', 'LT', 'LU', 'LV', 'MT', 'NL', 'PL',
-  'PT', 'RO', 'SE', 'SI', 'SK', 'XI',
-]);
 const VAT_SHAPE = /^[A-Z]{2}[A-Z0-9+*]{2,13}$/;
+
+/** The number part of an EU VAT id per country (the VIES formats), so a stray token is not taken for one. */
+const VAT_NUMBER: Record<string, RegExp> = {
+  AT: /^U\d{8}$/, BE: /^[01]\d{9}$/, BG: /^\d{9,10}$/, CY: /^\d{8}[A-Z]$/, CZ: /^\d{8,10}$/, DE: /^\d{9}$/, DK: /^\d{8}$/,
+  EE: /^\d{9}$/, EL: /^\d{9}$/, ES: /^[0-9A-Z]\d{7}[0-9A-Z]$/, FI: /^\d{8}$/, FR: /^[0-9A-Z]{2}\d{9}$/, HR: /^\d{11}$/,
+  HU: /^\d{8}$/, IE: /^(\d{7}[A-W][A-I]?|\d[A-Z+*]\d{5}[A-W])$/, IT: /^\d{11}$/, LT: /^(\d{9}|\d{12})$/, LU: /^\d{8}$/,
+  LV: /^\d{11}$/, MT: /^\d{8}$/, NL: /^\d{9}B\d{2}$/, PL: /^\d{10}$/, PT: /^\d{9}$/, RO: /^\d{2,10}$/, SE: /^\d{12}$/,
+  SI: /^\d{8}$/, SK: /^\d{10}$/, XI: /^(\d{9}|\d{12}|GD\d{3}|HA\d{3})$/,
+};
+
+function isEuVatId(value: string): boolean {
+  const pattern = VAT_NUMBER[value.slice(0, 2)];
+  return VAT_SHAPE.test(value) && pattern !== undefined && pattern.test(value.slice(2));
+}
 
 /**
  * The recipient's VAT id from the printed text: the whole text when it is one
@@ -326,11 +335,11 @@ const VAT_SHAPE = /^[A-Z]{2}[A-Z0-9+*]{2,13}$/;
  */
 export function extractVatId(text: string): string | null {
   const whole = normalizeVatId(text);
-  if (VAT_SHAPE.test(whole) && EU_VAT_PREFIXES.has(whole.slice(0, 2)) && /\d/.test(whole)) return whole;
+  if (isEuVatId(whole)) return whole;
   const tokens = text
     .toUpperCase()
     .split(/[\s;,:()]+/)
-    .filter((t) => VAT_SHAPE.test(t) && EU_VAT_PREFIXES.has(t.slice(0, 2)) && /\d/.test(t));
+    .filter(isEuVatId);
   return new Set(tokens).size === 1 ? tokens[0] : null;
 }
 
@@ -344,47 +353,61 @@ export function cutWhole(value: string, max: number): string {
   return out;
 }
 
-/** A decimal written either way ("10", "10.5", "10,5", "1.234,50"); null when it is not one. */
+/**
+ * A decimal in one unambiguous writing: "10", "10.5", "10,50", or German
+ * grouping "1.234,50"; null for anything else, also for what reads two ways
+ * ("1.234" could be 1234 or 1.234, "1,234.50" is English grouping), so a
+ * misread can never become a stored figure.
+ */
 function decimal(text: string): number | null {
   const t = text.trim();
-  const normalized = t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t;
-  return /^\d+(\.\d+)?$/.test(normalized) ? Number(normalized) : null;
+  if (/^\d+$/.test(t)) return Number(t);
+  if (/^\d+[.,]\d{1,2}$/.test(t)) return Number(t.replace(',', '.'));
+  if (/^\d{1,3}(\.\d{3})+,\d{1,2}$/.test(t)) return Number(t.replace(/\./g, '').replace(',', '.'));
+  return null;
 }
 
+/** Half away from zero, the same for negative amounts as for positive ones. */
+function roundHalfAway(x: number): number {
+  return Math.sign(x) * Math.round(Math.abs(x));
+}
+
+/** What a printed discount says: a percentage in basis points, or an amount in cents of the document's currency. */
+export type PrintedDiscount = { kind: 'percent'; bp: number } | { kind: 'amount'; cents: number };
+
 /**
- * A printed discount as basis points of the line's quantity times price: a
- * percentage ("10 %", "10%", "-10 %", {percent: 10}) directly, an amount
- * ("50 EUR", "50,00 €", {amount: 50}) relative to quantity times price. null
- * when it is something else. The printed line total stays authoritative either
- * way; this only records what the print said.
+ * Read a printed discount: a percentage ("10 %", "-10%", {percent: 10}) or an
+ * amount in the document's currency ("50,00 €", "EUR 50", "50 CHF" on a CHF
+ * invoice, {amount: 50}); null when it is something else (warned by the caller).
  */
-export function discountBp(discount: unknown, quantity: number, unitPrice: number): number | null {
-  const gross = Math.round((quantity * unitPrice) / 1000);
-  const fromPercent = (pct: number) => (pct >= 0 && pct <= 100 ? Math.round(pct * 100) : null);
-  const fromAmount = (euros: number) => {
-    const cents = Math.round(euros * 100);
-    return gross > 0 && cents >= 0 && cents <= gross ? Math.round((cents * 10000) / gross) : null;
-  };
+export function parseDiscount(discount: unknown, currency: string): PrintedDiscount | null {
+  const percent = (v: number | null): PrintedDiscount | null =>
+    v !== null && v >= 0 && v <= 100 ? { kind: 'percent', bp: Math.round(v * 100) } : null;
+  const amount = (v: number | null): PrintedDiscount | null => (v !== null && v >= 0 ? { kind: 'amount', cents: Math.round(v * 100) } : null);
   if (typeof discount === 'string') {
     const text = discount.trim().replace(/^-\s*/, '');
     const pct = /^(.+?)\s*%$/.exec(text);
-    if (pct) {
-      const v = decimal(pct[1]);
-      return v === null ? null : fromPercent(v);
-    }
-    const amount = /^(?:€|EUR)?\s*(.+?)\s*(?:€|EUR)?$/i.exec(text);
-    if (amount && /€|EUR/i.test(text)) {
-      const v = decimal(amount[1]);
-      return v === null ? null : fromAmount(v);
-    }
+    if (pct) return percent(decimal(pct[1]));
+    const marks = currency === 'EUR' ? '€|EUR' : `${currency}`;
+    const m = new RegExp(`^(?:(?:${marks})\\s*)?(.+?)(?:\\s*(?:${marks}))?$`, 'i').exec(text);
+    if (m && new RegExp(`(${marks})`, 'i').test(text)) return amount(decimal(m[1]));
     return null;
   }
   if (typeof discount === 'object' && discount !== null) {
     const d = discount as { percent?: unknown; amount?: unknown };
-    if (typeof d.percent === 'number') return fromPercent(Math.abs(d.percent));
-    if (typeof d.amount === 'number') return fromAmount(Math.abs(d.amount));
+    if (typeof d.percent === 'number') return percent(Math.abs(d.percent));
+    if (typeof d.amount === 'number') return amount(Math.abs(d.amount));
   }
   return null;
+}
+
+/** A printed discount as basis points of quantity times price (null when unread or not applicable to that line). */
+export function discountBp(discount: unknown, quantity: number, unitPrice: number, currency = 'EUR'): number | null {
+  const parsed = parseDiscount(discount, currency);
+  if (!parsed) return null;
+  if (parsed.kind === 'percent') return parsed.bp;
+  const gross = Math.round((quantity * unitPrice) / 1000);
+  return gross > 0 && parsed.cents <= gross ? Math.round((parsed.cents * 10000) / gross) : null;
 }
 
 interface MappedLines {
@@ -395,7 +418,7 @@ interface MappedLines {
   discountUnparsed: number;
 }
 
-function mapLines(raw: NonNullable<RawInvoice['lines']>): MappedLines | PlanIssue {
+function mapLines(raw: NonNullable<RawInvoice['lines']>, currency: string): MappedLines | PlanIssue {
   const out: HistoricalLine[] = [];
   let priceDerived = 0;
   let discountUnparsed = 0;
@@ -412,25 +435,6 @@ function mapLines(raw: NonNullable<RawInvoice['lines']>): MappedLines | PlanIssu
     let unitPrice = l.unitPrice == null ? null : scaled(l.unitPrice, 100);
     if (l.quantity != null && (quantity === null || quantity < 0)) return { kind: 'error', reason: 'line_quantity_invalid' };
     if (l.unitPrice != null && (unitPrice === null || Math.abs(unitPrice) > MAX_CENTS)) return { kind: 'error', reason: 'line_amount_invalid' };
-    if (lineTotal < 0) {
-      // A printed discount line ("Rabatt 10 %" with a minus amount): stored as
-      // printed, once, at its printed amount. Its discount text is the label of
-      // the line, already expressed by the negative amount.
-      const q = quantity ?? 1000;
-      if (q === 0) return { kind: 'error', reason: 'line_quantity_invalid' };
-      out.push({
-        kind: 'service',
-        title,
-        description,
-        quantity: q,
-        unitLabel,
-        unitPrice: unitPrice ?? Math.round((lineTotal * 1000) / q),
-        discountBp: 0,
-        subtotal: lineTotal,
-      });
-      continue;
-    }
-    if (unitPrice !== null && unitPrice < 0) return { kind: 'error', reason: 'line_amount_invalid' };
 
     // No quantity, no price and no amount (or an explicit zero quantity without amount): a text line.
     if ((quantity === null || quantity === 0) && lineTotal === 0 && (unitPrice === null || unitPrice === 0)) {
@@ -438,21 +442,46 @@ function mapLines(raw: NonNullable<RawInvoice['lines']>): MappedLines | PlanIssu
       continue;
     }
     if (quantity === 0) return { kind: 'error', reason: 'line_quantity_invalid' };
-    // A printed amount without a quantity or a unit price: imported as printed,
-    // the quantity once when missing, the unit price from the line total.
+    // A printed price and total of opposite signs cannot both be right.
+    if (unitPrice !== null && unitPrice !== 0 && lineTotal !== 0 && Math.sign(unitPrice) !== Math.sign(lineTotal)) {
+      return { kind: 'error', reason: 'line_sign_mismatch' };
+    }
+    if (quantity === null || unitPrice === null) priceDerived += 1;
     if (quantity === null) quantity = 1000;
-    if (unitPrice === null) {
-      unitPrice = Math.min(MAX_CENTS, Math.round((lineTotal * 1000) / quantity));
-      priceDerived += 1;
-    } else if (l.quantity == null) {
-      priceDerived += 1;
+
+    if (lineTotal < 0) {
+      // A printed discount line ("Rabatt 10 %" with a minus amount): stored as
+      // printed at its amount. Its discount text is the line's label, already
+      // expressed by the negative amount, so it is not read as a discount.
+      const price = unitPrice ?? roundHalfAway((lineTotal * 1000) / quantity);
+      if (Math.abs(price) > MAX_CENTS) return { kind: 'error', reason: 'line_amount_invalid' };
+      out.push({ kind: 'service', title, description, quantity, unitLabel, unitPrice: price, discountBp: 0, subtotal: lineTotal });
+      continue;
     }
+
     let bp = 0;
-    if (l.discount != null && l.discount !== '') {
-      const parsed = discountBp(l.discount, quantity, unitPrice);
-      if (parsed === null) discountUnparsed += 1;
-      else bp = parsed;
+    const printed = l.discount != null && l.discount !== '' ? parseDiscount(l.discount, currency) : null;
+    if (l.discount != null && l.discount !== '' && printed === null) discountUnparsed += 1;
+    if (unitPrice === null) {
+      // The price is derived from the printed total, which is AFTER the discount,
+      // so the discount is put back in: the stored line then reads consistently.
+      let gross = lineTotal;
+      if (printed?.kind === 'percent' && printed.bp < 10000) {
+        bp = printed.bp;
+        gross = (lineTotal * 10000) / (10000 - bp);
+      } else if (printed?.kind === 'amount') {
+        gross = lineTotal + printed.cents;
+        bp = gross > 0 ? Math.round((printed.cents * 10000) / gross) : 0;
+      } else if (printed) {
+        discountUnparsed += 1;
+      }
+      unitPrice = roundHalfAway((gross * 1000) / quantity);
+    } else if (printed) {
+      const read = discountBp(l.discount, quantity, unitPrice, currency);
+      if (read === null) discountUnparsed += 1;
+      else bp = read;
     }
+    if (unitPrice > MAX_CENTS) return { kind: 'error', reason: 'line_amount_invalid' };
     // Stored as printed: the printed line total is authoritative. When it is
     // not the arithmetic of the line, the core warns (line_not_quantity_times_price).
     out.push({ kind: 'service', title, description, quantity, unitLabel, unitPrice, discountBp: bp, subtotal: lineTotal });
@@ -518,6 +547,8 @@ export function planInvoice(
   // The printed country, else the extraction's inference, else DE assumed (flagged, warned).
   const countryInferred = blank(r.recipient.country);
   const countryAssumed = countryInferred && blank(r.recipient.countryInferred);
+  // DE is assumed only for a EUR invoice; an invoice in another currency without any country is not guessed.
+  if (countryAssumed && currency !== 'EUR') return issue('error', 'recipient_country_unknown');
   const recipientCountry = countryAssumed ? 'DE' : countryCode(countryInferred ? r.recipient.countryInferred : r.recipient.country);
   if (!recipientCountry) return issue('error', 'recipient_country_unknown');
   const senderAddress = splitAddress(r.sender.name, r.sender.addressLines);
@@ -527,7 +558,7 @@ export function planInvoice(
   if (!senderCountry) return issue('error', 'sender_country_unknown');
   if (!r.smallBusinessNote || r.smallBusinessNote.trim() === '') return issue('error', 'small_business_note_missing');
 
-  const mapped = mapLines(r.lines);
+  const mapped = mapLines(r.lines, currency);
   if ('reason' in mapped) return issue(mapped.kind, mapped.reason);
   const lines = mapped.lines;
   if (!lines.some((l) => l.kind !== 'text')) return issue('skipped', 'lines_missing');

@@ -178,6 +178,7 @@ describe('Books with the real contacts database', () => {
       },
       lines: [{ kind: 'service', title: 'Design work', description: null, quantity: 1000, unitLabel: 'Stk', unitPrice: 5000, discountBp: 0, subtotal: 5000 }],
       total: 5000,
+      currency: 'EUR',
       taxTreatment: 'small_business',
       taxNote: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
     });

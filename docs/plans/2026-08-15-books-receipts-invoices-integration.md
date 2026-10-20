@@ -1170,7 +1170,13 @@ Every choice below follows from the plan, the code or the law; decided, say so i
    imported invoice; everywhere else a negative line is refused as before (BK008, mapped to
    `INVALID_LINE`). Document totals stay non-negative (007's CHECKs, untouched). Tested: an
    import with a discount line, its cancellation and the rendered credit note, and the refusal
-   on editor drafts, deferred or not.
+   on editor drafts, deferred or not. The negative line on such a credit note must be the exact copy of one of the imported
+   invoice's lines (position, quantity, price, amount), and (009) a credit note's
+   `corrects_document_id` is fixed like its type and source, so a draft credit note can never
+   be re-pointed to an editor invoice with copied discount lines or a foreign currency. These
+   rules live in triggers like 007's freeze: they bind every role, and like all of 007's
+   invariants they do not hold for a session that disables triggers (a superuser setting the
+   application never uses).
 3. **Exactly one file, the original, never a render.** The JSON's `file` is stored in
    `sales_document_file` with its size and SHA-256 (renderer `import:original-pdf`) and pointed
    at by `rendered_pdf_file_id`, through the same file table the editor's documents use.
@@ -1250,7 +1256,11 @@ Every choice below follows from the plan, the code or the law; decided, say so i
    German (section 19 UStG is German law; flagged `senderCountryInferred`, no warning); a
    recipient with neither a printed nor an inferred country is assumed German and warned
    (`recipient_country_assumed`). The recipient's VAT id is also found inside a longer printed
-   line ("UID ...; USt-IdNr ...") when exactly one EU VAT id is in it.
+   line ("UID ...; USt-IdNr ...") when exactly one EU VAT id is in it. An assumed recipient country stays in the Books only: the contact created in the shared
+   contacts database gets no country rather than a guess, and on an invoice in another currency
+   than EUR no country is assumed at all (`recipient_country_unknown`). A VAT id pulled out of a
+   longer line must match its country's format (the VIES formats), so a stray token is never
+   taken for one.
 10. **The sender's tax number and VAT id.** The input holds only whether they were printed
     (`taxNumberPresent`, `vatIdPresent`), not the values. The snapshot records null for both and
     the event records the two booleans; the stored original is the document of record for the
@@ -1281,7 +1291,12 @@ Every choice below follows from the plan, the code or the law; decided, say so i
       warning `issue_date_out_of_number_order` (a swapped day and month, typically).
     A line without quantity, price and amount is a text line. A text longer than 300 characters
     becomes a 300-character title (cut between whole characters) with the full text as the
-    description.
+    description.    When the unit price is derived and a discount is printed, the discount is put back into the
+    price (the printed total is after the discount), so the stored line reads consistently on
+    any credit note; an amount discount is read in the invoice's own currency. Numbers that read
+    two ways ("1.234", "1,234.50") are never taken: the discount stays unread and warned. A line
+    whose printed price and total have opposite signs is an error (`line_sign_mismatch`); a
+    derived price beyond the money range is refused, never clamped.
 13. **Dates and terms.** `issued_at` is noon UTC of the printed issue date (the same calendar
     day in every European time zone). A service date or period is taken when it is a real date;
     otherwise it is left empty and the event records `serviceDateUnparsed`. Payment terms in
@@ -1320,8 +1335,12 @@ Every choice below follows from the plan, the code or the law; decided, say so i
     "Imported" marker; the document view says "imported, the original PDF is the document of
     record" and offers "Download original PDF", which serves the stored bytes (the route already
     preferred a stored file; tested byte for byte). Issue on an imported document answers
-    "already issued" as for any issued document; every edit answers 409.
-
+    "already issued" as for any issued document; every edit answers 409. An imported invoice whose printed recipient address is incomplete can still be cancelled:
+    the credit note, a document issued today, takes the missing street, postal code or city from
+    the recipient's current contact (read before the cancellation's transaction); the imported
+    invoice keeps what was printed. If the contact lacks them too, the credit note's
+    completeness check refuses and names the fields, nothing is written, and completing the
+    contact lets the cancellation through (tested).
 17. **One core for the CLI now and the in-editor upload next.** The owner's next step is an
     upload in `/projects/books`: many past-invoice PDFs at once, their data extracted by Claude,
     reviewed and corrected in a table, then imported (a separate pull request on top of this
@@ -1340,7 +1359,7 @@ Every choice below follows from the plan, the code or the law; decided, say so i
 18. **Checked against the real input (2026-10-20), without reading any value.** The mapping
     was run over the private JSON and the PDFs, printing per number only the status, the reason
     code and the warning codes. Warnings on the invoices (counts of invoices): a unit price
-    derived from the printed total 33, sender address not in the extraction 12, recipient
+    derived from the printed total 39, sender address not in the extraction 12, recipient
     address incomplete 2, recipient country assumed 1, a line not quantity times price 1 (the
     fixed fee). Flags recorded in the events only: payment terms not readable 15, service date
     or period not readable 9, a printed VAT-like identifier that is not an EU VAT id 2.

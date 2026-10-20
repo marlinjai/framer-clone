@@ -5,7 +5,8 @@
 // build's ICU data: a stored invoice must re-render to the same bytes on any
 // machine, today and in ten years (GoBD retention).
 //
-//   money      integer cents      -> "1.234,56 €" (a minus sign when negative)
+//   money      integer cents      -> "1.234,56 €" (a minus sign when negative;
+//                                     another currency prints its ISO code, "1.234,56 CHF")
 //   quantity   integer thousandths -> "1,5" (no trailing zeros)
 //   rate       integer basis points -> "19 %", "7 %", "5,5 %"
 //   date       "YYYY-MM-DD"        -> "31.12.2026"

@@ -70,7 +70,8 @@ connections to the suite. The four lines below are in that order.
   checked against the real input: all 61 ready; imports keep their printed currency (invoice 23
   is in CHF, never converted; its EUR value belongs to the receipts app's income mirror), and
   the yearly totals are printed per currency. Then connect: the
-  read-only endpoint receipt-ocr-app pulls issued invoices from (service-account key from
+  read-only endpoint receipt-ocr-app pulls issued invoices from (carrying each document's
+  `currency_code`, since imports keep their printed currency; service-account key from
   auth-brain; the receipts session gets the contract when it exists), storage-brain for the
   PDFs, the shared contacts database for recipients in production. After the import the
   receipts app's register rows map to the mirror by invoice number. See the Books plan's

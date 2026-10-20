@@ -71,6 +71,7 @@ function record(overrides: Record<string, unknown> = {}): HistoricalInvoiceInput
       { kind: 'service', title: 'Design work', description: null, quantity: 1500, unitLabel: 'h', unitPrice: 8000, discountBp: 0, subtotal: 12000 },
     ],
     total: 12000,
+    currency: 'EUR',
     taxTreatment: 'small_business',
     taxNote: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
     ...overrides,
@@ -160,8 +161,11 @@ describe('parseHistoricalInvoice', () => {
     expect(linesNotQuantityTimesPrice(parseHistoricalInvoice(discounted, NOW))).toBe(0);
   });
 
-  it('keeps the printed ISO 4217 currency (EUR by default) and refuses anything else', () => {
+  it('keeps the printed ISO 4217 currency, required, and refuses anything else', () => {
     expect(parseHistoricalInvoice(record(), NOW).currency).toBe('EUR');
+    const { currency: _omitted, ...withoutCurrency } = record() as Record<string, unknown>;
+    void _omitted;
+    expect(refusedPaths(withoutCurrency)).toEqual(['currency']);
     expect(parseHistoricalInvoice(record({ currency: 'CHF' }), NOW).currency).toBe('CHF');
     expect(refusedPaths(record({ currency: 'XYZ' }))).toEqual(['currency']);
     expect(refusedPaths(record({ currency: 'chf' }))).toEqual(['currency']);

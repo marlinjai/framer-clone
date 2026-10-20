@@ -16,6 +16,7 @@ import {
   cutWhole,
   discountBp,
   extractVatId,
+  parseDiscount,
   servicePeriodOf,
   errorCode,
   amount,
@@ -272,7 +273,9 @@ describe('planInvoice: skipped (missing) before error (inconsistent)', () => {
     ['small_business_note_missing', { smallBusinessNote: '' }],
     ['line_quantity_invalid', { lines: [{ description: 'x', quantity: 0.0005, unit: 'h', unitPrice: 1, lineTotal: 150.5 }] }],
     ['line_amount_invalid', { lines: [{ description: 'x', quantity: 1, unit: 'h', unitPrice: 1.005, lineTotal: 150.5 }] }],
-    ['line_amount_invalid', { lines: [{ description: 'x', quantity: 1, unit: 'h', unitPrice: -5, lineTotal: 150.5 }] }],
+    ['line_sign_mismatch', { lines: [{ description: 'x', quantity: 1, unit: 'h', unitPrice: -5, lineTotal: 150.5 }] }],
+    ['line_sign_mismatch', { lines: [{ description: 'x', quantity: 1, unit: 'h', unitPrice: 5, lineTotal: 150.5 }, { description: 'Rabatt', quantity: 1, unit: 'h', unitPrice: 5, lineTotal: -5 }], total: 145.5 }],
+    ['recipient_country_unknown', { currency: 'CHF', recipient: { name: 'Example Client GmbH', addressLines: ['Beispielweg 2', '20095 Hamburg'], country: null, countryInferred: null, customerNumber: null } }],
     ['line_text_missing', { lines: [{ description: '  ', quantity: 1, unit: 'h', unitPrice: 150.5, lineTotal: 150.5 }] }],
     ['invalid_field:recipient.name', { recipient: { name: '', addressLines: [] } }],
   ];
@@ -487,7 +490,8 @@ describe('the shapes of the real historical data, imported as printed', () => {
     const inv = one([line({ lineTotal: 1000 }), line({ description: 'Rabatt 10 %', quantity: null, unitPrice: null, discount: '10 %', lineTotal: -100 })], 900);
     expect(inv.lines[1]).toMatchObject({ kind: 'service', quantity: 1000, unitPrice: -10000, subtotal: -10000, discountBp: 0 });
     expect(inv.total).toBe(90000);
-    expect(recordWarnings(inv)).toEqual([]);
+    // Its price is derived from the printed amount like any other line's.
+    expect(recordWarnings(inv)).toEqual([{ code: 'line_price_derived', count: 1 }]);
   });
 
   it('a line with neither quantity, price nor amount is a text line', () => {
@@ -522,5 +526,44 @@ describe('the shapes of the real historical data, imported as printed', () => {
     expect(servicePeriodOf('01.02.2023 - 28.02.2023')).toEqual({ start: '2023-02-01', end: '2023-02-28' });
     expect(servicePeriodOf('März 2023')).toBeNull();
     expect(one([line({})], 1000, { servicePeriod: 'März 2023' }).provenance.serviceDateUnparsed).toBe(true);
+  });
+});
+
+describe('derived prices and printed discounts read together', () => {
+  const one = (lines: Array<Record<string, unknown>>, total: number, over: Record<string, unknown> = {}) => {
+    const p = planInvoice(7, entry({ lines, total, ...over }), FILE, NOW);
+    if (p.issue !== null) throw new Error(`${p.issue.kind}: ${p.issue.reason}`);
+    return p.record;
+  };
+  const line = (over: Record<string, unknown>) => ({ description: 'Workshop', quantity: 1, unit: 'Tag', unitPrice: null, discount: null, lineTotal: 900, ...over });
+
+  it('a derived price puts a printed percentage back, so the stored line reads consistently', () => {
+    const inv = one([line({ discount: '10 %' })], 900);
+    expect(inv.lines[0]).toMatchObject({ unitPrice: 100000, discountBp: 1000, subtotal: 90000 });
+    expect(linesNotQuantityTimesPrice(inv)).toBe(0);
+  });
+
+  it('a derived price puts a printed amount back, in the invoice currency', () => {
+    const inv = one([line({ discount: '100 CHF' })], 900, { currency: 'CHF' });
+    expect(inv.lines[0]).toMatchObject({ unitPrice: 100000, discountBp: 1000, subtotal: 90000 });
+    expect(linesNotQuantityTimesPrice(inv)).toBe(0);
+    // An amount in another currency than the invoice's is not read.
+    expect(one([line({ discount: '100 CHF' })], 900).provenance.linesDiscountUnparsed).toBe(1);
+  });
+
+  it('numbers that read two ways are never taken: the discount stays unread and warned', () => {
+    const priced = (discount: string) => one([line({ quantity: 1, unitPrice: 2000, discount, lineTotal: 900 })], 900);
+    expect(priced('1,234.50 EUR').provenance.linesDiscountUnparsed).toBe(1);
+    expect(priced('1.234 €').provenance.linesDiscountUnparsed).toBe(1);
+    expect(priced('1.100,00 €').lines[0].discountBp).toBe(5500);
+    expect(parseDiscount('10,5 %', 'EUR')).toEqual({ kind: 'percent', bp: 1050 });
+    expect(parseDiscount('Sonderrabatt', 'EUR')).toBeNull();
+  });
+
+  it('a VAT id is checked per country, so a short token is not taken for one', () => {
+    expect(extractVatId('Kunden-Nr. DE12 / Steuer 12345')).toBeNull();
+    expect(extractVatId('ATU12345678')).toBe('ATU12345678');
+    expect(extractVatId('NL123456789B01')).toBe('NL123456789B01');
+    expect(extractVatId('DE12345678')).toBeNull();
   });
 });

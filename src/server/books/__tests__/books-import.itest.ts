@@ -492,6 +492,7 @@ describe('importHistoricalInvoice: the core the planned upload calls', () => {
       sender: settings!.senderBlock,
       lines: [{ kind: 'service', title: 'Design work', description: null, quantity: 1000, unitLabel: 'Stk', unitPrice: 5000, discountBp: 0, subtotal: 5000 }],
       total: 5000,
+      currency: 'EUR',
       taxTreatment: 'small_business',
       taxNote: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
     };
@@ -551,6 +552,7 @@ describe('importHistoricalInvoice against what is already in the books', () => {
       },
       lines: [{ kind: 'service', title: 'Design work', description: null, quantity: 1000, unitLabel: 'Stk', unitPrice: 5000, discountBp: 0, subtotal: 5000 }],
       total: 5000,
+      currency: 'EUR',
       taxTreatment: 'small_business',
       taxNote: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
     };
@@ -668,7 +670,7 @@ describe('009_books_import: what holds for every role', () => {
   const tenantId = newTenantId();
 
   /** Insert, as the OWNER, a document of the given shape in one transaction; returns the SQLSTATE or 'ok'. */
-  async function ownerImport(opts: { lines: number[]; total: number; withFile: boolean }): Promise<string> {
+  async function ownerImport(opts: { lines: number[]; total: number; withFile: boolean; currency?: string }): Promise<string> {
     const id = randomUUID();
     const snapshot = { v: 1 };
     try {
@@ -688,7 +690,7 @@ describe('009_books_import: what holds for every role', () => {
           .values({
             id, tenant_id: tenantId, doc_type: 'invoice', status: 'issued', source: 'import', document_number: String(900 + opts.lines.length + opts.total),
             number_value: String(900 + opts.lines.length + opts.total), issue_date: '2020-01-01', issued_at: new Date('2020-01-01T12:00:00Z'),
-            payment_terms_days: 0, subtotal: opts.total, total: opts.total,
+            payment_terms_days: 0, subtotal: opts.total, total: opts.total, currency_code: opts.currency ?? 'EUR',
             customer_snapshot: sql`${JSON.stringify(snapshot)}::text::jsonb`, sender_snapshot: sql`${JSON.stringify(snapshot)}::text::jsonb`, updated_at: new Date(),
           } as never)
           .execute();
@@ -837,6 +839,65 @@ describe('009_books_import: what holds for every role', () => {
     // Not even the ISO 4217 shape: refused too (the guard answers before the shape CHECK).
     expect(await rejectionCode(draft('eur'))).toBe('BK009');
     await draft('EUR');
+  });
+
+  it('a credit note: fixed to its invoice, negative lines only as copies, the invoice currency only', async () => {
+    const lineRow = (documentId: string, position: number, amount: number) => ({
+      id: randomUUID(), tenant_id: tenantId, document_id: documentId, position, kind: 'service' as const, title: 'Line',
+      quantity: 1000, unit_price: amount, subtotal: amount, tax_rate: 0, tax_amount: 0, tax_treatment: 'kleinunternehmer' as const, updated_at: new Date(),
+    });
+    // The import with a discount line at position 2 (from the earlier case).
+    const negative = await env.ownerDb
+      .selectFrom('sales_document_line')
+      .select(['document_id', 'position', 'subtotal'])
+      .where('tenant_id', '=', tenantId)
+      .where('subtotal', '<', 0)
+      .executeTakeFirstOrThrow();
+    const importId = negative.document_id;
+    const creditDraft = async (corrects: string, currency = 'EUR') => {
+      const id = randomUUID();
+      await env.ownerDb
+        .insertInto('sales_document')
+        .values({ id, tenant_id: tenantId, doc_type: 'credit_note', corrects_document_id: corrects, currency_code: currency, payment_terms_days: 0, updated_at: new Date() } as never)
+        .execute();
+      return id;
+    };
+    const cn = await creditDraft(importId);
+    // The exact copy of the import's discount line: allowed.
+    await env.ownerDb.insertInto('sales_document_line').values(lineRow(cn, negative.position, negative.subtotal)).execute();
+    // Any other negative line, or a copied one changed to another amount: refused.
+    expect(await rejectionCode(env.ownerDb.insertInto('sales_document_line').values(lineRow(cn, 9, -1)).execute())).toBe('BK008');
+    expect(
+      await rejectionCode(env.ownerDb.updateTable('sales_document_line').set({ unit_price: -2, subtotal: -2 }).where('document_id', '=', cn).execute()),
+    ).toBe('BK008');
+    // An editor invoice to re-point to, and an editor draft to move a line to.
+    const editorDraft = randomUUID();
+    await env.ownerDb
+      .insertInto('sales_document')
+      .values({ id: editorDraft, tenant_id: tenantId, doc_type: 'invoice', payment_terms_days: 0, updated_at: new Date() } as never)
+      .execute();
+    expect(
+      await rejectionCode(env.ownerDb.updateTable('sales_document').set({ corrects_document_id: editorDraft }).where('id', '=', cn).execute()),
+    ).toBe('BK001');
+    expect(
+      await rejectionCode(env.ownerDb.updateTable('sales_document_line').set({ document_id: editorDraft }).where('document_id', '=', cn).execute()),
+    ).toBe('BK008');
+    // A positive line set negative on an editor draft: refused.
+    await env.ownerDb.insertInto('sales_document_line').values(lineRow(editorDraft, 1, 100)).execute();
+    expect(
+      await rejectionCode(env.ownerDb.updateTable('sales_document_line').set({ unit_price: -100, subtotal: -100 }).where('document_id', '=', editorDraft).execute()),
+    ).toBe('BK008');
+    // The credit note carries its invoice's currency, in both directions.
+    expect(await rejectionCode(creditDraft(importId, 'CHF'))).toBe('BK009');
+    expect(await ownerImport({ lines: [700], total: 700, withFile: true, currency: 'CHF' })).toBe('ok');
+    const chfImport = await env.ownerDb
+      .selectFrom('sales_document')
+      .select('id')
+      .where('tenant_id', '=', tenantId)
+      .where('currency_code', '=', 'CHF')
+      .executeTakeFirstOrThrow();
+    expect(await rejectionCode(creditDraft(chfImport.id, 'EUR'))).toBe('BK009');
+    await creditDraft(chfImport.id, 'CHF');
   });
 
   it('an editor document is still born a draft (BK004), deferred foreign key or not', async () => {

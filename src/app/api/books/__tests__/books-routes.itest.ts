@@ -614,7 +614,14 @@ describe('Books routes: imported historical invoices', () => {
   /** Import one synthetic invoice through the domain core the CLI and the planned upload use. */
   async function importOne(
     number: number,
-    opts: { sender?: string[]; issueDate?: string; lines?: Array<Record<string, unknown>>; total?: number; currency?: string } = {},
+    opts: {
+      sender?: string[];
+      issueDate?: string;
+      lines?: Array<Record<string, unknown>>;
+      total?: number;
+      currency?: string;
+      recipientLines?: string[];
+    } = {},
   ) {
     const bytes = original(`${tenantId}-${number}`);
     const plan = planInvoice(
@@ -624,7 +631,7 @@ describe('Books routes: imported historical invoices', () => {
         file: `${number}.pdf`,
         otherFiles: [],
         issueDate: opts.issueDate ?? '2021-03-04',
-        recipient: { name: 'Example Client GmbH', addressLines: ['Beispielweg 2', '20095 Hamburg'], country: 'DE', customerNumber: null },
+        recipient: { name: 'Example Client GmbH', addressLines: opts.recipientLines ?? ['Beispielweg 2', '20095 Hamburg'], country: 'DE', customerNumber: null },
         recipientVatId: null,
         sender: { name: 'Sample Studio', addressLines: opts.sender ?? ['Musterstrasse 1', '10115 Berlin'], country: 'DE' },
         lines: opts.lines ?? [{ description: 'Design work', quantity: 2, unit: 'h', unitPrice: 60, discount: null, lineTotal: 120 }],
@@ -746,6 +753,24 @@ describe('Books routes: imported historical invoices', () => {
     const text = await extractPdfText(new Uint8Array(await (await pdf(res.json.creditNote.document.id)).arrayBuffer()));
     expect(text).toContain('CHF');
     expect(text).not.toContain('€');
+  });
+
+  it('an import printed without a recipient address can still be cancelled: the credit note takes it from the contact', async () => {
+    const { id } = await importOne(17, { recipientLines: [] });
+    const snapshot = (await api.get(id)).json.document.customerSnapshot as Json;
+    expect(snapshot).toMatchObject({ addressLine1: '', postalCode: '', city: '' });
+    // The contact has no address either: refused, naming what is missing, nothing written.
+    const refused = await api.cancel(id, { reason: 'issued in error' });
+    expect(refused.status).toBe(422);
+    expect(refused.json.error.code).toBe('render_incomplete');
+    expect((await api.get(id)).json.document.status).toBe('issued');
+    // Once the contact has the address, the cancellation goes through with it.
+    dir.update(snapshot.contactId, { addressLine1: 'Neue Strasse 9', postalCode: '20095', city: 'Hamburg' });
+    const res = await api.cancel(id, { reason: 'issued in error' });
+    expect(res.status).toBe(200);
+    expect(res.json.creditNote.document.customerSnapshot).toMatchObject({ addressLine1: 'Neue Strasse 9', postalCode: '20095', city: 'Hamburg' });
+    // The imported invoice keeps what was printed.
+    expect((await api.get(id)).json.document.customerSnapshot).toMatchObject({ addressLine1: '' });
   });
 
   it('an editor draft cannot be put into another currency', async () => {

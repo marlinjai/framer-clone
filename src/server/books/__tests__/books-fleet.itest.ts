@@ -231,6 +231,8 @@ describe('009_books_import over a schema already holding issued documents (as pr
       await code(owner`INSERT INTO ${s}.sales_document_line (id, tenant_id, document_id, position, title, quantity, unit_price, subtotal, tax_rate, tax_amount, tax_treatment, updated_at)
                        VALUES (${randomUUID()}, ${tenantId}, ${draftId}, 1, 'Negative line', 1000, -1, -1, 0, 0, 'kleinunternehmer', now())`),
     ).toBe('BK008');
+    // A currency other than EUR on an editor draft: refused by the guard that replaced the EUR CHECK.
+    expect(await code(owner`UPDATE ${s}.sales_document SET currency_code = 'CHF' WHERE id = ${draftId}`)).toBe('BK009');
     // The issued document itself: still frozen.
     expect(await code(owner`UPDATE ${s}.sales_document SET total = 1, subtotal = 1 WHERE id = ${docId}`)).toBe('BK001');
   });
