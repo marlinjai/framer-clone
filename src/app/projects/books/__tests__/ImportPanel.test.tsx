@@ -181,7 +181,7 @@ describe('ImportPanel', () => {
     // Reading again replaces the correction: asked first, the focus on Cancel; confirmed, it is sent as a replacing read.
     fireEvent.click(within(screen.getByRole('form', { name: 'Invoice as printed' })).getByRole('button', { name: 'Read again with AI' }));
     const ask = screen.getByRole('alertdialog', { name: 'Replace what you entered' });
-    expect(document.activeElement).toBe(within(ask).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(document.activeElement).toBe(within(ask).getByRole('button', { name: 'Cancel' })));
     expect(calls.some((c) => c.url.includes('/extract'))).toBe(false);
     fireEvent.click(within(ask).getByRole('button', { name: 'Replace with a new reading' }));
     await waitFor(() =>
@@ -256,7 +256,7 @@ describe('ImportPanel', () => {
     expect(row.textContent).toContain('Importing sets your next invoice number to 71. It cannot be lowered later.');
     fireEvent.click(within(row).getByRole('button', { name: 'Import' }));
     // Not imported yet: the confirmation asks first.
-    const dialog = within(row).getByRole('alertdialog', { name: 'Confirm the new invoice number' });
+    const dialog = screen.getByRole('alertdialog', { name: 'Confirm the new invoice number' });
     expect(dialog.textContent).toContain('Your next invoice number will become 71. It cannot be lowered later.');
     expect(calls.some((c) => c.url.endsWith('/confirm'))).toBe(false);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Import and set the next number to 71' }));
@@ -383,8 +383,8 @@ describe('ImportPanel', () => {
     render(<ImportPanel />);
     const row = await screen.findByTestId('import-row-i1');
     fireEvent.click(within(row).getByRole('button', { name: 'Import' }));
-    const cancel = within(row).getByRole('button', { name: 'Cancel' });
-    expect(document.activeElement).toBe(cancel);
+    const cancel = within(screen.getByRole('alertdialog', { name: 'Confirm the new invoice number' })).getByRole('button', { name: 'Cancel' });
+    await waitFor(() => expect(document.activeElement).toBe(cancel));
     fireEvent.click(cancel);
     await waitFor(() => expect(document.activeElement).toBe(within(screen.getByTestId('import-row-i1')).getByRole('button', { name: 'Import' })));
   });
@@ -430,7 +430,7 @@ describe('ImportPanel', () => {
     const all = await screen.findByRole('button', { name: 'Import all ready (1)' });
     fireEvent.click(all);
     const dialog = screen.getByRole('alertdialog', { name: 'Confirm the new invoice number' });
-    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' })));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Import all ready (1)' })));
   });
@@ -445,10 +445,60 @@ describe('ImportPanel', () => {
     fireEvent.click(within(screen.getByRole('alertdialog', { name: 'Replace what you entered' })).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(document.activeElement).toBe(reread));
     fireEvent.click(reread);
-    fireEvent.keyDown(screen.getByRole('alertdialog', { name: 'Replace what you entered' }), { key: 'Escape' });
+    fireEvent.keyDown(await screen.findByRole('alertdialog', { name: 'Replace what you entered' }), { key: 'Escape' });
     await waitFor(() => expect(document.activeElement).toBe(reread));
     expect(screen.queryByRole('alertdialog', { name: 'Replace what you entered' })).toBeNull();
     expect(calls.some((c) => c.url.includes('/extract'))).toBe(false);
+  });
+
+  it('discarding asks first (the file is deleted at once); Cancel keeps the row, Discard sends it', async () => {
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: { items: [item()], importedTotal: 0, counter: null, limits: LIMITS } }),
+      'POST /api/books/imports/i1/discard': () => ({ status: 200, body: item({ status: 'discarded' }) }),
+    });
+    render(<ImportPanel />);
+    const discard = within(await screen.findByTestId('import-row-i1')).getByRole('button', { name: 'Discard' });
+    fireEvent.click(discard);
+    const dialog = screen.getByRole('alertdialog', { name: 'Discard this file' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(document.activeElement).toBe(discard));
+    expect(calls.some((c) => c.url.endsWith('/discard'))).toBe(false);
+    fireEvent.click(discard);
+    fireEvent.click(within(screen.getByRole('alertdialog', { name: 'Discard this file' })).getByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(screen.queryByTestId('import-row-i1')).toBeNull());
+  });
+
+  it('filling in by hand that fails keeps the busy retry of the reading', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ status: 'uploaded', printed: null, extractionId: null })], importedTotal: 0, counter: null, limits: LIMITS } }),
+      'POST /api/books/imports/i1/extract': [
+        () => ({ status: 429, body: { error: { code: 'extract_busy', message: 'busy', retryAfterSec: 2 } } }),
+        () => ({ status: 200, body: item() }),
+      ],
+      'POST /api/books/imports/i1/by-hand': () => ({ status: 409, body: { error: { code: 'concurrent_edit', message: 'the row changed meanwhile' } } }),
+    });
+    render(<ImportPanel />);
+    await waitFor(() => expect(calls.filter((c) => c.url.includes('/i1/extract'))).toHaveLength(1));
+    fireEvent.click(await within(screen.getByTestId('import-row-i1')).findByRole('button', { name: 'Fill in by hand' }));
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/by-hand'))).toBe(true));
+    await vi.advanceTimersByTimeAsync(3000);
+    await waitFor(() => expect(calls.filter((c) => c.url.includes('/i1/extract'))).toHaveLength(2));
+  });
+
+  it('after replacing with a new reading, the reopened form has the focus on its heading', async () => {
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ corrected: true })], importedTotal: 0, counter: null, limits: LIMITS } }),
+      'POST /api/books/imports/i1/extract': () => ({ status: 200, body: item({ version: 5, extractionId: 'x2', printed: printed({ number: '99' }) }) }),
+    });
+    render(<ImportPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Check' }));
+    fireEvent.click(within(screen.getByRole('form', { name: 'Invoice as printed' })).getByRole('button', { name: 'Read again with AI' }));
+    fireEvent.click(within(await screen.findByRole('alertdialog', { name: 'Replace what you entered' })).getByRole('button', { name: 'Replace with a new reading' }));
+    await waitFor(() =>
+      expect((within(screen.getByRole('form', { name: 'Invoice as printed' })).getByLabelText('Invoice number') as HTMLInputElement).value).toBe('99'),
+    );
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Check the invoice as printed' })));
   });
 
   it('shows how many imported invoices are not listed', async () => {

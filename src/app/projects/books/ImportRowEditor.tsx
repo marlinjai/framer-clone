@@ -12,12 +12,13 @@
 // when the invoice is read again the form starts from the new reading, never
 // from edits of the old one.
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { importPdfUrl, type ImportItemView, type PrintedInvoice, type PrintedLine } from '@/lib/books/api';
 import { pathLabel, problemText } from '@/lib/books/importProblems';
 
+import ImportConfirm from './ImportConfirm';
 import { Field } from './ui';
 
 /** A decimal typed either way ("1.234,50", "1234.5"); null for empty, NaN for not a number. */
@@ -201,6 +202,7 @@ export default function ImportRowEditor({
   onRecheck,
   onReadAgain,
   onClose,
+  autoFocusHeading = false,
 }: {
   item: ImportItemView;
   busy: boolean;
@@ -208,23 +210,25 @@ export default function ImportRowEditor({
   onRecheck: () => Promise<void>;
   onReadAgain: () => void;
   onClose: () => void;
+  /** Focus the heading when opening (the editor reopens on a new reading the user asked for). */
+  autoFocusHeading?: boolean;
 }) {
   const [form, setForm] = useState<Form>(() => toForm(item.printed));
   const [formError, setFormError] = useState<string | null>(null);
   /** "Read again with AI" would replace what the user entered: asked first. */
   const [confirmReread, setConfirmReread] = useState(false);
-  const rereadButton = useRef<HTMLButtonElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (autoFocusHeading) heading.current?.focus();
+  }, [autoFocusHeading]);
   const initial = useMemo(() => JSON.stringify(toForm(item.printed)), [item.printed]);
   const typedHere = item.corrected || item.extractionId?.startsWith('manual:') === true || JSON.stringify(form) !== initial;
   function readAgain() {
     if (typedHere) return setConfirmReread(true);
     onReadAgain();
   }
-  function closeReread() {
-    setConfirmReread(false);
-    requestAnimationFrame(() => rereadButton.current?.focus());
-  }
+  const replacedRef = useRef(false);
+  const rereadButton = useRef<HTMLButtonElement>(null);
   const unsure = useMemo(() => new Set(Object.keys(item.confidence)), [item.confidence]);
   const set = (change: Partial<Form>) => setForm((f) => ({ ...f, ...change }));
   const setLine = (i: number, change: Partial<LineForm>) =>
@@ -410,34 +414,26 @@ export default function ImportRowEditor({
             {formError}
           </p>
         ) : null}
-        {confirmReread ? (
-          <div
-            role="alertdialog"
-            aria-label="Replace what you entered"
-            aria-describedby={`${id}-reread-text`}
-            className="rounded-md border border-amber-500 p-3 text-sm"
-            onKeyDown={(e) => e.key === 'Escape' && closeReread()}
-          >
-            <p id={`${id}-reread-text`}>Reading again replaces what you entered or corrected here with a new reading by the AI.</p>
-            <div className="mt-2 flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  setConfirmReread(false);
-                  onReadAgain();
-                  // The dialog closes and the button waits: the focus goes to the form's heading.
-                  requestAnimationFrame(() => heading.current?.focus());
-                }}
-              >
-                Replace with a new reading
-              </Button>
-              <Button type="button" size="sm" variant="ghost" autoFocus onClick={closeReread}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        ) : null}
+        <ImportConfirm
+          open={confirmReread}
+          title="Replace what you entered"
+          description={<p>Reading again replaces what you entered or corrected here with a new reading by the AI.</p>}
+          confirmLabel="Replace with a new reading"
+          onConfirm={() => {
+            replacedRef.current = true;
+            setConfirmReread(false);
+            onReadAgain();
+          }}
+          onCancel={() => setConfirmReread(false)}
+          onCloseAutoFocus={(e) => {
+            // After replacing, the button waits: the focus goes to the form's heading instead.
+            // Otherwise back to "Read again with AI" (named: a click does not focus a button everywhere).
+            e.preventDefault();
+            if (replacedRef.current) heading.current?.focus();
+            else rereadButton.current?.focus();
+            replacedRef.current = false;
+          }}
+        />
         <div className="flex flex-wrap justify-end gap-2">
           <Button ref={rereadButton} type="button" variant="ghost" onClick={readAgain} disabled={busy}>
             Read again with AI

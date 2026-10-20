@@ -206,7 +206,12 @@ describe('VAT that does not add up', () => {
     expect(ok(printed({ lines: printedLines, total: 119, taxAmounts: [{ rate: 19, net: 100, tax: 19 }, { rate: 7, net: 0, tax: 0 }] })).lines[0].taxAmount).toBe(1900);
   });
 
-  it('per-line rounding against rounding the group: the total decides, within a cent per line', () => {
+  it('a 0,00 summary row at a rate a line prints is still checked', () => {
+    const line = { description: 'Design work', quantity: 1, unit: null, unitPrice: 100, discount: null, lineTotal: 100, taxRate: 19, taxAmount: 19 };
+    expect(issue(printed({ lines: [line], total: 119, taxAmounts: [{ rate: 19, net: null, tax: 0 }] })).reason).toBe('tax_summary_mismatch');
+  });
+
+  it('per-line rounding against rounding the group: the total decides, within rounding', () => {
     const two = [1, 2].map((n) => ({ description: `Item ${n}`, quantity: 1, unit: null, unitPrice: 10.03, discount: null, lineTotal: 10.03, taxRate: 19, taxAmount: 1.91 }));
     const summary = [{ rate: 19, net: 20.06, tax: 3.81 }];
     // The total was summed from the lines: the printed line VAT stands.

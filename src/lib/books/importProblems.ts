@@ -84,13 +84,13 @@ const REREAD_REASON: Record<string, string> = {
 
 /** What a failed import names, in words (the code an `import_failed:` problem carries). */
 const IMPORT_FAILED_REASON: Record<string, string> = {
-  import_conflict: 'an invoice with this number or this file is already in the Books',
-  invalid_input: 'a field is not valid',
-  recipient_unavailable: 'the contacts database could not be reached',
-  recipient_ambiguous: 'more than one contact carries this recipient name',
+  import_conflict: 'an invoice with this number or this file is already in the Books. Check the number',
+  invalid_input: 'a field is not valid. Check the row',
+  recipient_unavailable: 'the contacts database could not be reached. Nothing was imported; try again in a moment',
+  recipient_ambiguous: 'more than one contact carries this recipient name. Make the name unique in the contacts first',
   counter_missing: 'the Books are not set up for this company',
-  not_renderable: 'the uploaded file is no longer stored',
-  import_counter_too_low: 'the invoice counter is below this number',
+  import_failed: 'the Books could not save it. Nothing was imported; try again',
+  customer_not_found: 'the contact was removed meanwhile. Check the recipient and try again',
 };
 
 /** The sentence for one problem; counts are added where they say something. */
@@ -98,7 +98,7 @@ export function problemText(p: ImportProblem): string {
   const base =
     TEXT[p.code] ??
     (p.code.startsWith('import_failed:')
-      ? `The import failed: ${IMPORT_FAILED_REASON[p.code.slice(14)] ?? 'for a technical reason'}. Nothing was imported; check the row and try again.`
+      ? `The import failed: ${IMPORT_FAILED_REASON[p.code.slice(14)] ?? 'for a technical reason. Nothing was imported; check the row and try again'}.`
       : p.code.startsWith('reread_failed:')
         ? `Reading again failed: ${REREAD_REASON[p.code.slice(14)] ?? 'for a technical reason. The earlier reading is kept; try again later'}.`
         : p.code);

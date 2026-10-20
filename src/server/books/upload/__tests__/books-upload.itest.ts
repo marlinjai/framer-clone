@@ -644,18 +644,28 @@ describe('unhappy paths of reading and importing', () => {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`books-import-extract:${tenantId}`}, 0))`.execute(trx);
       await new Promise<void>((r) => (unlock = r));
     });
-    await new Promise((r) => setTimeout(r, 50));
+    const waiting = async (granted: boolean) => {
+      for (let i = 0; i < 200; i += 1) {
+        const n = await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted = ${granted}`.execute(env.ownerDb);
+        if (n.rows[0].n > 0) return;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      throw new Error('the advisory lock was never seen');
+    };
+    await waiting(true);
     const controller = new AbortController();
     const d = deps([{ ...toolTurn(toolInput()), wait: new Promise(() => {}) }], book, { signal: controller.signal, callBudgetMs: 60_000 });
     const pending = extractItem(scope, item.id, d.deps);
-    await new Promise((r) => setTimeout(r, 50));
+    // The reading is queued behind the lock (an ungranted advisory lock), then its caller leaves.
+    await waiting(false);
     controller.abort();
     unlock();
     await held;
-    // Without honouring the abort that came during the wait, this would run until its 60 s budget.
     const back = await pending;
     expect(back.status).toBe('uploaded');
-    expect(await env.ownerDb.selectFrom('historical_import_extraction').select('outcome').where('item_id', '=', item.id).execute()).toEqual([{ outcome: 'aborted' }]);
+    // Not called, and not counted against the day.
+    expect(d.fake.calls).toHaveLength(0);
+    expect(await env.ownerDb.selectFrom('historical_import_extraction').select('outcome').where('item_id', '=', item.id).execute()).toEqual([]);
   }, 20_000);
 
   it('010 keeps the claim id and time together outside a reading too', async () => {

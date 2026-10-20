@@ -25,6 +25,7 @@ import { BooksApiError, importsApi, type ImportItemView, type ImportList } from 
 import { problemText, pathLabel } from '@/lib/books/importProblems';
 import { date, money } from '@/lib/books/units';
 
+import ImportConfirm from './ImportConfirm';
 import ImportRowEditor from './ImportRowEditor';
 import { ErrorAlert, errorText } from './ui';
 
@@ -54,6 +55,21 @@ const STALE_READING_MS = 11 * 60 * 1000;
 const staleReadings = (items: ImportItemView[]) =>
   items.filter((i) => i.status === 'extracting' && Date.parse(i.updatedAt) < Date.now() - STALE_READING_MS).map((i) => i.id);
 
+/**
+ * A dialog's focus return to the button that opened it, named explicitly: a
+ * click does not focus a button in every browser (Safari), so "what was
+ * focused before" can be the page itself. Falls back to the default when the
+ * button is gone (the row was imported or discarded).
+ */
+function focusOn(selector: string | null): (event: Event) => void {
+  return (event) => {
+    const target = selector ? document.querySelector<HTMLElement>(selector) : null;
+    if (!target) return;
+    event.preventDefault();
+    target.focus();
+  };
+}
+
 /** The new next invoice number importing this row would set, or null when it does not raise the counter. */
 function raiseOf(item: ImportItemView): number | null {
   return item.problems.find((p) => p.code === 'counter_raised')?.count ?? null;
@@ -78,6 +94,12 @@ export default function ImportPanel() {
   const [raising, setRaising] = useState<{ id: string; to: number } | null>(null);
   /** The batch import waiting for its explicit confirmation of the highest new next number. */
   const [batchRaise, setBatchRaise] = useState<number | null>(null);
+  /** A row the user asked to discard, waiting for the confirmation (the file is deleted at once). */
+  const [discarding, setDiscarding] = useState<string | null>(null);
+  /** The row whose dialog is open or closing: the focus returns to its button after the state is cleared. */
+  const dialogRow = useRef<string | null>(null);
+  /** The row whose editor reopens on a reading the user asked for there. */
+  const headingFocus = useRef<string | null>(null);
   const queue = useRef<string[]>([]);
   /** Rows the user asked to read again although they hold what was typed or corrected. */
   const replacing = useRef<Set<string>>(new Set());
@@ -265,6 +287,7 @@ export default function ImportPanel() {
   async function importRow(item: ImportItemView, confirmedRaise: number | null = null) {
     const to = raiseOf(item);
     if (to !== null && confirmedRaise !== to) {
+      dialogRow.current = item.id;
       setRaising({ id: item.id, to });
       return;
     }
@@ -307,10 +330,6 @@ export default function ImportPanel() {
     enqueue([id]);
   }
 
-  /** Put the focus back on a row's Import button (or the batch button) after a dialog closes. */
-  function focusBack(selector: string) {
-    requestAnimationFrame(() => document.querySelector<HTMLElement>(selector)?.focus());
-  }
 
   /** Import every ready row; when any of them raises the counter, the highest new value is confirmed first. */
   async function confirmAllReady(confirmedRaise: number | null = null) {
@@ -411,42 +430,48 @@ export default function ImportPanel() {
       </header>
 
       <ErrorAlert message={error} onDismiss={() => setError(null)} />
-      {batchRaise !== null ? (
-        <section
-          role="alertdialog"
-          aria-label="Confirm the new invoice number"
-          aria-describedby="batch-raise-text"
-          className="mb-4 rounded-md border border-amber-500 px-4 py-3 text-sm"
-          onKeyDown={(e) => {
-            if (e.key !== 'Escape') return;
-            setBatchRaise(null);
-            focusBack('[data-import-all]');
-          }}
-        >
-          <p id="batch-raise-text" className="font-medium">Your next invoice number will become {batchRaise}. It cannot be lowered later.</p>
-          <p className="mt-1 text-muted-foreground">
-            Importing the ready invoices raises the invoice counter past the highest imported number. Check that number
-            against its PDF before you continue.
-          </p>
-          <span className="mt-3 flex gap-2">
-            <Button size="sm" onClick={() => void confirmAllReady(batchRaise)}>
-              Import and set the next number to {batchRaise}
-            </Button>
-            {/* The safe choice has the focus: the raise cannot be undone. */}
-            <Button
-              size="sm"
-              variant="ghost"
-              autoFocus
-              onClick={() => {
-                setBatchRaise(null);
-                focusBack('[data-import-all]');
-              }}
-            >
-              Cancel
-            </Button>
-          </span>
-        </section>
-      ) : null}
+      <ImportConfirm
+        open={batchRaise !== null}
+        title="Confirm the new invoice number"
+        description={
+          <>
+            <p className="font-medium text-foreground">Your next invoice number will become {batchRaise}. It cannot be lowered later.</p>
+            <p className="mt-1">
+              Importing the ready invoices raises the invoice counter past the highest imported number. Check that number
+              against its PDF before you continue.
+            </p>
+          </>
+        }
+        confirmLabel={`Import and set the next number to ${batchRaise ?? ''}`}
+        onConfirm={() => void confirmAllReady(batchRaise)}
+        onCancel={() => setBatchRaise(null)}
+        onCloseAutoFocus={focusOn('[data-import-all]')}
+      />
+      <ImportConfirm
+        open={raising !== null}
+        title="Confirm the new invoice number"
+        description={<p className="font-medium text-foreground">Your next invoice number will become {raising?.to}. It cannot be lowered later.</p>}
+        confirmLabel={`Import and set the next number to ${raising?.to ?? ''}`}
+        onConfirm={() => {
+          const row = raising && list?.items.find((i) => i.id === raising.id);
+          if (row && raising) void importRow(row, raising.to);
+        }}
+        onCancel={() => setRaising(null)}
+        onCloseAutoFocus={(e) => focusOn(dialogRow.current ? `[data-import-row="${dialogRow.current}"]` : null)(e)}
+      />
+      <ImportConfirm
+        open={discarding !== null}
+        title="Discard this file"
+        description={<p>The uploaded file and what was read from it are deleted now. To import it later, upload it again.</p>}
+        confirmLabel="Discard"
+        onConfirm={() => {
+          const id = discarding;
+          setDiscarding(null);
+          if (id) void act(id, () => importsApi.discard(id));
+        }}
+        onCancel={() => setDiscarding(null)}
+        onCloseAutoFocus={(e) => focusOn(dialogRow.current ? `[data-discard-row="${dialogRow.current}"]` : null)(e)}
+      />
       {notice ? (
         <div role="status" className="mb-4 rounded-md border px-4 py-3 text-sm">
           {notice}
@@ -559,43 +584,10 @@ export default function ImportPanel() {
                       {warnings.length > 0 && item.status !== 'imported' ? (
                         <span className="mt-1 block text-xs text-muted-foreground">{warnings.length} to check</span>
                       ) : null}
-                      {raiseOf(item) !== null && item.status !== 'imported' && raising?.id !== item.id ? (
+                      {raiseOf(item) !== null && item.status !== 'imported' ? (
                         <span className="mt-1 block text-xs text-amber-700 dark:text-amber-400">
                           Importing sets your next invoice number to {raiseOf(item)}. It cannot be lowered later.
                         </span>
-                      ) : null}
-                      {raising?.id === item.id ? (
-                        <div
-                          role="alertdialog"
-                          aria-label="Confirm the new invoice number"
-                          aria-describedby={`${item.id}-raise-text`}
-                          className="mt-2 rounded-md border border-amber-500 p-2 text-xs"
-                          onKeyDown={(e) => {
-                            if (e.key !== 'Escape') return;
-                            setRaising(null);
-                            focusBack(`[data-import-row="${item.id}"]`);
-                          }}
-                        >
-                          <p id={`${item.id}-raise-text`} className="font-medium">
-                            Your next invoice number will become {raising.to}. It cannot be lowered later.
-                          </p>
-                          <div className="mt-2 flex gap-2">
-                            <Button size="sm" onClick={() => void importRow(item, raising.to)} disabled={rowBusy}>
-                              Import and set the next number to {raising.to}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              autoFocus
-                              onClick={() => {
-                                setRaising(null);
-                                focusBack(`[data-import-row="${item.id}"]`);
-                              }}
-                            >
-                              Cancel
-                            </Button>
-                          </div>
-                        </div>
                       ) : null}
                     </td>
                     <td className="px-3 py-2">
@@ -641,7 +633,10 @@ export default function ImportPanel() {
                           </Button>
                         ) : null}
                         {item.status !== 'imported' ? (
-                          <Button variant="ghost" size="sm" onClick={() => void act(item.id, () => importsApi.discard(item.id))} disabled={rowBusy}>
+                          <Button variant="ghost" size="sm" data-discard-row={item.id} onClick={() => {
+                            dialogRow.current = item.id;
+                            setDiscarding(item.id);
+                          }} disabled={rowBusy}>
                             Discard
                           </Button>
                         ) : null}
@@ -669,8 +664,16 @@ export default function ImportPanel() {
           busy={busy.has(editing.id)}
           onSave={(printed) => act(editing.id, () => importsApi.correct(editing.id, printed, editing.extractionId!, editing.version))}
           onRecheck={() => act(editing.id, () => importsApi.recheck(editing.id))}
-          onReadAgain={() => readOne(editing.id, true)}
-          onClose={() => setOpen(null)}
+          onReadAgain={() => {
+            // The editor reopens on the new reading: its heading takes the focus then.
+            headingFocus.current = editing.id;
+            readOne(editing.id, true);
+          }}
+          autoFocusHeading={headingFocus.current === editing.id}
+          onClose={() => {
+            headingFocus.current = null;
+            setOpen(null);
+          }}
         />
       ) : null}
     </main>

@@ -233,15 +233,21 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
         await release();
         return getItem(scope.db, scope, itemId);
       }
-      // The daily ceiling, counted and recorded under one company lock.
-      await scope.db.transaction().execute(async (trx) => {
+      // The daily ceiling, counted and recorded under one company lock; a caller who left during the wait is not counted.
+      const counted = await scope.db.transaction().execute(async (trx) => {
         await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`books-import-extract:${scope.tenantId}`}, 0))`.execute(trx);
+        if (deps.signal.aborted) return false;
         const recent = await extractionsSince(trx, scope, new Date(started.getTime() - DAILY_WINDOW_MS));
         if (recent >= deps.dailyLimit) {
           throw new BooksError('IMPORT_LIMIT', `IMPORT_LIMIT: at most ${deps.dailyLimit} invoices are read per day for a company`, { limit: deps.dailyLimit });
         }
         await startExtraction(trx, scope, claimId, itemId, deps.modelId, started);
+        return true;
       });
+      if (!counted) {
+        await release();
+        return getItem(scope.db, scope, itemId);
+      }
     } catch (err) {
       await release();
       throw err;

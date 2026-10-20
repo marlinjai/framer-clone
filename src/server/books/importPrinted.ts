@@ -486,7 +486,11 @@ function taxLines(
   raw: NonNullable<RawInvoice['lines']>,
   allGroups: NonNullable<RawInvoice['taxAmounts']>,
 ): { lines: HistoricalLine[]; derived: number; alt: { lines: HistoricalLine[]; adjusted: number } | null } | PlanIssue {
-  const groups = allGroups.filter((g) => !(Math.round(g.tax * 100) === 0 && (g.net == null || Math.round(g.net * 100) === 0)));
+  // A 0,00 row for a rate no line prints is no summary (templates print every rate); at a rate a line carries, it is a reading to check.
+  const linePrintsRate = (rate: number) => raw.some((l) => l.taxRate != null && Math.round(l.taxRate * 100) === rate);
+  const groups = allGroups.filter(
+    (g) => !(Math.round(g.tax * 100) === 0 && (g.net == null || Math.round(g.net * 100) === 0) && !linePrintsRate(Math.round(g.rate * 100))),
+  );
   const groupRates = [...new Set(groups.map((g) => Math.round(g.rate * 100)))];
   const out = lines.map((l) => ({ ...l }));
   const printedTax = new Set<number>();
@@ -520,8 +524,8 @@ function taxLines(
     const want = Math.round(g.tax * 100);
     const have = members.reduce((acc, { l }) => acc + l.taxAmount, 0);
     if (want === have) continue;
-    // Rounding is a cent per line (per-line rounding against rounding the group); a 0 % group has none.
-    if (rate === 0 || Math.abs(want - have) > members.length) return { kind: 'error', reason: 'tax_summary_mismatch' };
+    // Rounding each line against rounding the group differs by at most about half a cent per line; a 0 % group has none.
+    if (rate === 0 || Math.abs(want - have) > Math.ceil((members.length + 1) / 2)) return { kind: 'error', reason: 'tax_summary_mismatch' };
     const pick = (pool: typeof members) => pool.reduce((x, y) => (Math.abs(y.l.subtotal) > Math.abs(x.l.subtotal) ? y : x));
     if (derivedMembers.length > 0) {
       const largest = pick(derivedMembers);

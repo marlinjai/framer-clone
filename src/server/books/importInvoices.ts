@@ -191,7 +191,7 @@ const provenanceSchema = z
     linesDiscountUnparsed: z.number().int().min(0).max(500),
     /** Billable lines whose VAT amount was derived from their rate and the printed tax groups (regular taxation). */
     linesTaxDerived: z.number().int().min(0).max(500),
-    /** Rate groups whose printed line VAT differed from the printed VAT summary by rounding, set to the summary because the total was summed from it (warned). */
+    /** Lines (one per rate group) whose printed VAT was set to the printed VAT summary, which differed by rounding, because the total was summed from it (warned). */
     linesTaxAdjusted: z.number().int().min(0).max(20),
     /** Sender fields the PDF does not show, filled from the company's current sender block (upload). */
     senderFieldsFromCompany: z.number().int().min(0).max(30),
