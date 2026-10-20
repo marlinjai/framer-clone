@@ -4,7 +4,7 @@
 // the owner when old links will redirect.
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, fireEvent, screen, within } from '@testing-library/react';
+import { render, cleanup, fireEvent, screen, within, waitFor } from '@testing-library/react';
 import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
 import type { PageModelType } from '@/models/PageModel';
 import { SiteAddressProvider, type SiteAddress } from '@/contexts/SiteAddressContext';
@@ -129,6 +129,10 @@ describe('saving', () => {
   });
 });
 
+function slugError(dialog: HTMLElement): string {
+  return dialog.querySelector('#page-settings-slug-error')?.textContent ?? '';
+}
+
 describe('invalid input', () => {
   function trySlug(value: string) {
     renderPanel();
@@ -142,7 +146,7 @@ describe('invalid input', () => {
 
   it('explains a slug another page uses and keeps the dialog open', () => {
     const { dialog, input } = trySlug('contact');
-    expect(within(dialog).getByText(/Another page already uses/)).toBeTruthy();
+    expect(slugError(dialog)).toMatch(/Another page already uses/);
     expect(input.getAttribute('aria-invalid')).toBe('true');
     expect(input.getAttribute('aria-describedby')).toContain('page-settings-slug-error');
     expect(about.slug).toBe('about');
@@ -150,19 +154,19 @@ describe('invalid input', () => {
 
   it('explains a reserved path', () => {
     const { dialog } = trySlug('api');
-    expect(within(dialog).getByText(/reserved by the site itself/)).toBeTruthy();
+    expect(slugError(dialog)).toMatch(/reserved by the site itself/);
     expect(about.slug).toBe('about');
   });
 
   it('explains bad characters', () => {
     const { dialog } = trySlug('café');
-    expect(within(dialog).getByText(/Use only lowercase letters/)).toBeTruthy();
+    expect(slugError(dialog)).toMatch(/Use only lowercase letters/);
   });
 
   it('explains double hyphens and an empty slug', () => {
-    expect(within(trySlug('a--b').dialog).getByText(/single hyphens/)).toBeTruthy();
+    expect(slugError(trySlug('a--b').dialog)).toMatch(/single hyphens/);
     cleanup();
-    expect(within(trySlug('').dialog).getByText(/Enter a URL slug/)).toBeTruthy();
+    expect(slugError(trySlug('').dialog)).toMatch(/Enter a URL slug/);
   });
 
   it('refuses an empty page name', () => {
@@ -170,7 +174,7 @@ describe('invalid input', () => {
     const dialog = openSettingsFor('About');
     fireEvent.change(within(dialog).getByLabelText('Page name'), { target: { value: '  ' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
-    expect(within(dialog).getByText('Enter a page name.')).toBeTruthy();
+    expect(dialog.querySelector('#page-settings-name-error')?.textContent).toBe('Enter a page name.');
     expect(about.metadata.title).toBe('About');
   });
 });
@@ -230,5 +234,108 @@ describe('deleting', () => {
     renderPanel();
     fireEvent.click(screen.getByRole('button', { name: 'Delete page About' }));
     expect(project.getPage(about.id)).toBeUndefined();
+  });
+});
+
+describe('keyboard and screen readers', () => {
+  it('focuses the first menu item, moves with the arrow keys and wraps', () => {
+    renderPanel();
+    fireEvent.contextMenu(screen.getByTestId(`page-row-${about.id}`), { clientX: 10, clientY: 10 });
+    const items = screen.getAllByRole('menuitem');
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(items[0], { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(items[1]);
+    fireEvent.keyDown(items[1], { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(items[0], { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(items[1]);
+  });
+
+  it('anchors the menu to the row when opened from the keyboard (Shift+F10)', () => {
+    renderPanel();
+    fireEvent.contextMenu(screen.getByTestId(`page-row-${about.id}`), { clientX: 0, clientY: 0 });
+    const menu = screen.getByRole('menu');
+    expect(menu.style.left).toBe('16px');
+  });
+
+  it('keeps editor shortcuts from firing inside the menu, the rows and the dialog', () => {
+    const editorShortcut = vi.fn();
+    window.addEventListener('keydown', editorShortcut);
+    try {
+      renderPanel();
+      const row = screen.getByTestId(`page-row-${about.id}`);
+      fireEvent.keyDown(within(row).getAllByRole('button')[0], { key: 'Delete' });
+      fireEvent.contextMenu(row, { clientX: 10, clientY: 10 });
+      fireEvent.keyDown(screen.getAllByRole('menuitem')[0], { key: 'Backspace' });
+      fireEvent.keyDown(screen.getAllByRole('menuitem')[0], { key: 'z', metaKey: true });
+      fireEvent.click(screen.getAllByRole('menuitem')[0]);
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Save' }), { key: 'Delete' });
+      expect(editorShortcut).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('keydown', editorShortcut);
+    }
+  });
+
+  it('returns focus to the row after Escape closes the menu', () => {
+    renderPanel();
+    const row = screen.getByTestId(`page-row-${about.id}`);
+    fireEvent.contextMenu(row, { clientX: 10, clientY: 10 });
+    fireEvent.keyDown(screen.getAllByRole('menuitem')[0], { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(within(row).getAllByRole('button')[0]);
+  });
+
+  it('returns focus to the settings button when the dialog closes', async () => {
+    renderPanel();
+    const button = screen.getByRole('button', { name: 'Page settings for About' });
+    button.focus();
+    fireEvent.click(button);
+    fireEvent.click(within(screen.getByTestId('page-settings-dialog')).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(document.activeElement).toBe(button));
+  });
+
+  it('on a failed save, focuses the slug field and announces the problem', () => {
+    renderPanel();
+    const dialog = openSettingsFor('About');
+    const slug = within(dialog).getByLabelText('URL slug');
+    fireEvent.change(slug, { target: { value: 'api' } });
+    within(dialog).getByRole('button', { name: 'Save' }).focus();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(document.activeElement).toBe(slug);
+    expect(screen.getByTestId('page-settings-announcement').textContent).toMatch(/Not saved\..*reserved/);
+  });
+});
+
+describe('older projects', () => {
+  it('keeps an untouched legacy slug exactly when only the name changes', () => {
+    about.setSlug('Old_Slug');
+    renderPanel();
+    const dialog = openSettingsFor('About');
+    fireEvent.change(within(dialog).getByLabelText('Page name'), { target: { value: 'About us' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(screen.queryByTestId('page-settings-dialog')).toBeNull();
+    expect(about.metadata.title).toBe('About us');
+    expect(about.slug).toBe('Old_Slug');
+  });
+
+  it('offers "Make home page" only when the project has no home page', () => {
+    renderPanel();
+    fireEvent.contextMenu(screen.getByTestId(`page-row-${about.id}`), { clientX: 10, clientY: 10 });
+    expect(screen.queryByRole('menuitem', { name: /Make home page/ })).toBeNull();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    cleanup();
+
+    project.removePage(home.id);
+    renderPanel();
+    fireEvent.contextMenu(screen.getByTestId(`page-row-${about.id}`), { clientX: 10, clientY: 10 });
+    fireEvent.click(screen.getByRole('menuitem', { name: /Make home page/ }));
+    expect(about.slug).toBe('');
+    expect(screen.queryByRole('button', { name: 'Delete page About' })).toBeNull();
+  });
+
+  it('explains a published site without a configured address', () => {
+    renderPanel({ host: null, everPublished: true });
+    const dialog = openSettingsFor('About');
+    expect(within(dialog).getByText(/no public address is configured/)).toBeTruthy();
   });
 });

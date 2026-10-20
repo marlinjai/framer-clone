@@ -17,7 +17,7 @@
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
-import { Plus, X, FileText, Search, Settings2, Trash2 } from 'lucide-react';
+import { Plus, X, FileText, Search, Settings2, Trash2, Home } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import type { PageModelType } from '@/models/PageModel';
 import PageSettingsDialog from './PageSettingsDialog';
@@ -33,11 +33,14 @@ interface MenuItem {
   disabled?: boolean;
 }
 
+/** Why the menu closed: Escape and choosing an item hand focus back to the row. */
+type MenuCloseReason = 'escape' | 'item' | 'outside';
+
 interface ContextMenuProps {
   x: number;
   y: number;
   items: MenuItem[];
-  onClose: () => void;
+  onClose: (reason: MenuCloseReason) => void;
 }
 
 const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
@@ -46,10 +49,10 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
   React.useEffect(() => {
     const onDown = (e: MouseEvent) => {
       if (!rootRef.current) return;
-      if (!rootRef.current.contains(e.target as Node)) onClose();
+      if (!rootRef.current.contains(e.target as Node)) onClose('outside');
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onClose('escape');
     };
     // Keyboard users land on the first item.
     rootRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not([disabled])')?.focus();
@@ -66,8 +69,16 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
     };
   }, [onClose]);
 
-  // Up and Down move between the enabled items, wrapping around.
+  // Up and Down move between the enabled items, wrapping around; Escape
+  // closes. No key pressed inside the menu travels further, so Delete or
+  // Cmd+Z on a focused item never reaches the editor's canvas shortcuts.
   const onMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose('escape');
+      return;
+    }
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
     const buttons = Array.from(
@@ -97,7 +108,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
           onClick={() => {
             if (item.disabled) return;
             item.onClick();
-            onClose();
+            onClose('item');
           }}
           className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left transition-colors ${
             item.disabled
@@ -122,7 +133,8 @@ interface PageRowProps {
   canDelete: boolean;
   onSelect: () => void;
   onDelete: () => void;
-  onOpenSettings: () => void;
+  /** `returnTo` gets the focus back when the dialog closes. */
+  onOpenSettings: (returnTo: HTMLElement | null) => void;
   onContextMenu: (event: React.MouseEvent) => void;
 }
 
@@ -145,7 +157,14 @@ const PageRow = observer(({
       onContextMenu={onContextMenu}
       onDoubleClick={e => {
         e.stopPropagation();
-        onOpenSettings();
+        onOpenSettings(
+          e.currentTarget.querySelector<HTMLElement>('[data-page-settings-button]'),
+        );
+      }}
+      // Delete and Backspace on a focused row control must not reach the
+      // editor's "delete the selected element" shortcut.
+      onKeyDown={e => {
+        if (e.key === 'Delete' || e.key === 'Backspace') e.stopPropagation();
       }}
     >
       <button
@@ -166,9 +185,10 @@ const PageRow = observer(({
       </button>
       <button
         type="button"
+        data-page-settings-button=""
         onClick={e => {
           e.stopPropagation();
-          onOpenSettings();
+          onOpenSettings(e.currentTarget);
         }}
         aria-label={`Page settings for ${title}`}
         title="Page settings"
@@ -201,6 +221,8 @@ const PagesPanel = observer(() => {
   const project = editorUI.currentProject;
   const [query, setQuery] = React.useState('');
   const [settingsPageId, setSettingsPageId] = React.useState<string | null>(null);
+  // The row control focus returns to when the menu or the dialog closes.
+  const returnFocusRef = React.useRef<HTMLElement | null>(null);
   const [menu, setMenu] = React.useState<{ x: number; y: number; pageId: string } | null>(null);
 
   if (!project) {
@@ -226,12 +248,13 @@ const PagesPanel = observer(() => {
     editorUI.setCurrentPage(page);
   };
 
-  // The home page (empty slug) is what the published site serves at its root;
-  // there is no other way to choose a home page, so deleting it would leave
-  // the site's address answering 404. It cannot be deleted.
+  // The home page (empty slug) is what the published site serves at its root,
+  // so deleting it would leave the site's address answering 404. It cannot be
+  // deleted (an extra empty-slug page in an older project can).
+  const canDeletePage = (pageId: string) =>
+    project.pages.size > 1 && !project.isSlugLocked(pageId);
   const handleDelete = (pageId: string) => {
-    if (project.pages.size <= 1) return;
-    if (project.getPage(pageId)?.isHome) return;
+    if (!canDeletePage(pageId)) return;
     if (editorUI.currentPage?.id === pageId) {
       const next = pages.find(p => p.id !== pageId);
       if (next) editorUI.setCurrentPage(next);
@@ -250,7 +273,21 @@ const PagesPanel = observer(() => {
       x = rect.left + 16;
       y = rect.bottom;
     }
+    returnFocusRef.current =
+      (event.currentTarget as HTMLElement).querySelector<HTMLElement>('button') ?? null;
     setMenu({ x, y, pageId });
+  };
+
+  const openSettings = (pageId: string, returnTo: HTMLElement | null) => {
+    returnFocusRef.current = returnTo;
+    setSettingsPageId(pageId);
+  };
+
+  // Escape or choosing an item hands focus back to the row the menu came
+  // from; a click elsewhere leaves focus where that click put it.
+  const closeMenu = (reason: MenuCloseReason) => {
+    setMenu(null);
+    if (reason !== 'outside') returnFocusRef.current?.focus();
   };
 
   const menuPage = menu ? project.getPage(menu.pageId) : undefined;
@@ -314,10 +351,10 @@ const PagesPanel = observer(() => {
               key={page.id}
               page={page}
               isActive={editorUI.currentPage?.id === page.id}
-              canDelete={pages.length > 1 && !page.isHome}
+              canDelete={canDeletePage(page.id)}
               onSelect={() => editorUI.setCurrentPage(page)}
               onDelete={() => handleDelete(page.id)}
-              onOpenSettings={() => setSettingsPageId(page.id)}
+              onOpenSettings={returnTo => openSettings(page.id, returnTo)}
               onContextMenu={openMenu(page.id)}
             />
           ))
@@ -328,19 +365,28 @@ const PagesPanel = observer(() => {
         <ContextMenu
           x={menu.x}
           y={menu.y}
-          onClose={() => setMenu(null)}
+          onClose={closeMenu}
           items={[
             {
               label: 'Page settings',
               icon: <Settings2 size={14} />,
               onClick: () => setSettingsPageId(menu.pageId),
             },
+            // A project without a home page (older projects could delete it)
+            // answers 404 at its root; any page can take that place.
+            ...(project.hasHomePage
+              ? []
+              : [{
+                  label: 'Make home page',
+                  icon: <Home size={14} />,
+                  onClick: () => project.makeHomePage(menu.pageId),
+                }]),
             {
               label: 'Delete',
               icon: <Trash2 size={14} />,
               onClick: () => handleDelete(menu.pageId),
               destructive: true,
-              disabled: pages.length <= 1 || menuPage.isHome,
+              disabled: !canDeletePage(menuPage.id),
             },
           ]}
         />
@@ -350,6 +396,7 @@ const PagesPanel = observer(() => {
         page={settingsPage}
         project={project}
         onClose={() => setSettingsPageId(null)}
+        returnFocusTo={returnFocusRef}
       />
     </div>
   );

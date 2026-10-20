@@ -204,4 +204,53 @@ describe('findProjectSlugProblem (the server save check)', () => {
   it('accepts a brand-new project with one home page', () => {
     expect(findProjectSlugProblem([{ pageId: 'h', slug: '' }], new Map())).toBeNull();
   });
+
+  it('refuses a non-home page taking the empty slug while a home page exists', () => {
+    const pages = base.map((p) => (p.pageId === 'about' ? { ...p, slug: '' } : p));
+    expect(findProjectSlugProblem(pages, stored)).toMatchObject({ pageId: 'about', code: 'taken' });
+  });
+
+  it('refuses a save that drops the home page', () => {
+    const pages = base.filter((p) => p.pageId !== 'home');
+    expect(findProjectSlugProblem(pages, stored)).toMatchObject({ pageId: 'home', code: 'home_locked' });
+  });
+
+  describe('older projects', () => {
+    const twoHomes = new Map([['h1', ''], ['h2', ''], ['about', 'about']]);
+    const twoHomePages = [
+      { pageId: 'h1', slug: '' },
+      { pageId: 'h2', slug: '' },
+      { pageId: 'about', slug: 'about' },
+    ];
+
+    it('keep saving with two empty-slug pages they already had', () => {
+      expect(findProjectSlugProblem(twoHomePages, twoHomes)).toBeNull();
+    });
+
+    it('may move or delete the extra one, as long as one home stays', () => {
+      const moved = twoHomePages.map((p) => (p.pageId === 'h2' ? { ...p, slug: 'old-home' } : p));
+      expect(findProjectSlugProblem(moved, twoHomes)).toBeNull();
+      expect(findProjectSlugProblem(twoHomePages.filter((p) => p.pageId !== 'h2'), twoHomes)).toBeNull();
+    });
+
+    it('validate the slug the extra one moves to', () => {
+      const moved = twoHomePages.map((p) => (p.pageId === 'h2' ? { ...p, slug: 'api' } : p));
+      expect(findProjectSlugProblem(moved, twoHomes)).toMatchObject({ pageId: 'h2', code: 'reserved' });
+    });
+
+    it('cannot move both away', () => {
+      const moved = twoHomePages.map((p) =>
+        p.pageId === 'about' ? p : { ...p, slug: `x-${p.pageId}` },
+      );
+      expect(findProjectSlugProblem(moved, twoHomes)).toMatchObject({ code: 'home_locked' });
+    });
+
+    it('without a home page may give exactly one page the empty slug', () => {
+      const noHome = new Map([['a', 'about'], ['b', 'blog']]);
+      expect(findProjectSlugProblem([{ pageId: 'a', slug: '' }, { pageId: 'b', slug: 'blog' }], noHome)).toBeNull();
+      expect(
+        findProjectSlugProblem([{ pageId: 'a', slug: '' }, { pageId: 'b', slug: '' }], noHome),
+      ).toMatchObject({ code: 'taken' });
+    });
+  });
 });

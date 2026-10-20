@@ -66,6 +66,14 @@ const ProjectMetadataModel = types.model('ProjectMetadata', {
 
 
 
+// How many pages hold the empty (home) slug. Normally exactly one; older
+// projects may have none (their home page was deleted) or, rarely, two.
+function homePageCount(pages: Iterable<{ slug: string }>): number {
+  let n = 0;
+  for (const p of pages) if (p.slug === '') n++;
+  return n;
+}
+
 // Main ProjectModel - Framer-style unified architecture
 export const ProjectModel = types
   .model('Project', {
@@ -86,7 +94,15 @@ export const ProjectModel = types
     lumitra: types.optional(LumitraBindingModel, () => ({})),
 
   })
-  .actions(self => ({
+  .actions(self => {
+  // A page's slug is locked when it is THE home page: it has the empty slug
+  // and no other page does. An extra empty-slug page in an older project may
+  // move to a real slug (one home page stays).
+  const isSlugLocked = (pageId: string): boolean => {
+    const page = self.pages.get(pageId);
+    return !!page && page.slug === '' && homePageCount(self.pages.values()) <= 1;
+  };
+  return {
 
     // Add a new page to the project
     addPage(page: SnapshotIn<typeof PageModel>) {
@@ -249,10 +265,10 @@ export const ProjectModel = types
     setPageSlug(pageId: string, slug: string): SlugValidation {
       const page = self.pages.get(pageId);
       if (!page) return { ok: false, code: 'empty', message: 'This page no longer exists.' };
-      if (page.slug === '') {
+      if (slug === page.slug) return { ok: true };
+      if (isSlugLocked(page.id)) {
         return { ok: false, code: 'home_locked', message: 'The home page always lives at the site root.' };
       }
-      if (slug === page.slug) return { ok: true };
       const result = validateSlug(slug, {
         pageId,
         pages: Array.from(self.pages.values(), p => ({ id: p.id, slug: p.slug })),
@@ -276,7 +292,7 @@ export const ProjectModel = types
       if (!title) errors.title = 'Enter a page name.';
       const slugChanged = input.slug !== page.slug;
       if (slugChanged) {
-        if (page.slug === '') {
+        if (isSlugLocked(page.id)) {
           errors.slug = 'The home page always lives at the site root.';
         } else {
           const result = validateSlug(input.slug, {
@@ -299,13 +315,41 @@ export const ProjectModel = types
       return { ok: true };
     },
     
+    // Give a project that has NO home page one: the chosen page takes the
+    // empty slug and is served at the site root. Only for projects without a
+    // home page (older projects could delete theirs); with a home page this is
+    // refused, since the home page itself can never move. On a published site
+    // the page's old path keeps working as a redirect to the root.
+    makeHomePage(pageId: string): boolean {
+      const page = self.pages.get(pageId);
+      if (!page) return false;
+      if (Array.from(self.pages.values()).some(p => p.slug === '')) return false;
+      page.setSlug('');
+      self.metadata.updatedAt = new Date();
+      return true;
+    },
+
     // Update project metadata
     updateMetadata(metadata: Partial<SnapshotIn<typeof ProjectMetadataModel>>) {
       Object.assign(self.metadata, metadata);
       self.metadata.updatedAt = new Date();
     },
-  }))
+  };
+  })
   .views(self => ({
+    // True when the page's slug cannot change: it is the project's only home
+    // page (see isSlugLocked in the actions above).
+    isSlugLocked(pageId: string): boolean {
+      const page = self.pages.get(pageId);
+      return !!page && page.slug === '' && homePageCount(self.pages.values()) <= 1;
+    },
+
+    // True when the project has no page at the site root (older projects
+    // whose home page was deleted); the page list then offers makeHomePage.
+    get hasHomePage(): boolean {
+      return homePageCount(self.pages.values()) > 0;
+    },
+
     // Get page by ID
     getPage(pageId: string): PageModelType | undefined {
       return self.pages.get(pageId);

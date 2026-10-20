@@ -132,3 +132,30 @@ describe('updatePageSettings', () => {
     expect(history.history.length).toBe(0);
   });
 });
+
+describe('home page edge cases of older projects', () => {
+  it('makeHomePage gives a project without a home page one, and only then', () => {
+    const p = project();
+    const home = p.pagesArray.find((pg) => pg.isHome)!;
+    const about = p.createPage('About');
+    expect(p.makeHomePage(about.id)).toBe(false);
+    p.removePage(home.id);
+    expect(p.hasHomePage).toBe(false);
+    expect(p.makeHomePage(about.id)).toBe(true);
+    expect(about.slug).toBe('');
+    expect(p.hasHomePage).toBe(true);
+    expect(p.isSlugLocked(about.id)).toBe(true);
+  });
+
+  it('lets an extra empty-slug page move, but never the last one', () => {
+    const p = project();
+    const extra = p.createPage('Duplicate home');
+    extra.setSlug('');
+    expect(p.isSlugLocked(extra.id)).toBe(false);
+    expect(p.setPageSlug(extra.id, 'old-home')).toEqual({ ok: true });
+    const home = p.pagesArray.find((pg) => pg.isHome)!;
+    expect(p.isSlugLocked(home.id)).toBe(true);
+    expect(p.setPageSlug(home.id, 'x')).toMatchObject({ ok: false, code: 'home_locked' });
+  });
+});
+

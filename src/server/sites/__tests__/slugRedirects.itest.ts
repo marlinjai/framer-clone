@@ -79,7 +79,7 @@ describe('slug changes on a real database', () => {
 
     const site = await resolvePublishedSiteByKey({ kind: 'subdomain', value: subdomain }, prisma);
     expect(site).not.toBeNull();
-    expect(findRedirectTarget(site!.redirects, site!.pages, ['about'])).toBe('about-us');
+    expect(findRedirectTarget(site!.redirects, site!.pages, ['about'])).toBe('/about-us');
   });
 
   it('refuses an invalid slug and leaves the stored rows alone', async () => {

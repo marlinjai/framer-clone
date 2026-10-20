@@ -66,7 +66,8 @@ function isStaticSlug(slug: string): boolean {
  *
  * Steps:
  *   1. record a redirect for every page whose static, non-empty slug changed
- *      to a different path (replacing an older entry for the same `from`);
+ *      to a different path, including a page that became the home page
+ *      (replacing an older entry for the same `from`);
  *   2. drop entries whose page no longer exists (nothing to send people to);
  *   3. drop entries whose `from` is now some page's own path (the page wins);
  *   4. keep at most MAX_SITE_REDIRECTS, newest last.
@@ -86,7 +87,7 @@ export function nextSiteRedirects(input: {
   if (everPublished) {
     for (const page of pages) {
       const before = storedSlugs.get(page.pageId);
-      if (before === undefined || !isStaticSlug(before) || page.slug === '') continue;
+      if (before === undefined || !isStaticSlug(before)) continue;
       if (slugKey(before) === slugKey(page.slug)) continue;
       const fromKey = slugKey(before);
       list = list.filter((r) => slugKey(r.from) !== fromKey);
@@ -103,10 +104,13 @@ export function nextSiteRedirects(input: {
 }
 
 /**
- * The path a request should be redirected to, or null. Called by the
- * published router only after no page matched. `requestSegments` are the
- * catch-all segments; the target is the redirect's page's current slug. Never
- * redirects to the same path, to a page with a dynamic slug, or from the root.
+ * The path a request should be redirected to (with its leading slash), or
+ * null. Called by the published router when no static page owns the path.
+ * `requestSegments` are the catch-all segments; the target is the redirect's
+ * page's current slug, rebuilt from its non-empty segments and percent-encoded
+ * per segment, so a stored slug can never turn into a protocol-relative
+ * (`//other.host`) or otherwise off-site address. Never redirects to the same
+ * path, to a page with a dynamic slug, or from the root.
  */
 export function findRedirectTarget(
   redirects: ReadonlyArray<SiteRedirect>,
@@ -121,5 +125,7 @@ export function findRedirectTarget(
   if (!page) return null;
   if (page.slug !== '' && !isStaticSlug(page.slug)) return null;
   if (slugKey(page.slug) === requestKey) return null;
-  return page.slug;
+  const segments = page.slug.split('/').map((seg) => seg.trim()).filter((seg) => seg.length > 0);
+  if (segments.some((seg) => seg === '.' || seg === '..')) return null;
+  return '/' + segments.map((seg) => encodeURIComponent(seg)).join('/');
 }

@@ -23,8 +23,11 @@ the slug"). Written after the build, so it records what exists and why, not a pr
   the resulting address live (`<site address>/<slug>`), explains every invalid input inline,
   and offers "Use page name" to fill the slug from the name.
 - The home page's URL is the site root and is shown read-only, with the reason. The home page
-  can also no longer be deleted from the list, because nothing else can take its place and the
-  site root would answer 404.
+  can also no longer be deleted from the list, because the site root would answer 404.
+- Older projects whose home page was deleted before this change get "Make home page" in a
+  row's context menu (only while the project has no home page); the chosen page takes the empty
+  slug, and on a published site its old path redirects to the root. Older projects that ended
+  up with two empty-slug pages keep saving and may move or delete the extra one.
 - On a site that has been published, a changed slug shows "Old links will redirect: /old will
   lead to /new after your next publish."
 
@@ -43,7 +46,9 @@ behind both `POST /api/projects/save` and `/publish`) call it.
 - Reserved first segments: `api`, `projects`, `preview` (routes in `src/app`), `_next`,
   `static` (Next assets), `images` (the folder in `public/`), `__home` (the root rewrite
   sentinel), `home` and `index` (the router's home aliases), `favicon`, `robots`, `sitemap`.
-- The home page's empty slug never changes, and only one page may have it.
+- The home page's empty slug never changes and the home page cannot be dropped from a save;
+  no other page may take the empty slug, except in a project that has no home page at all
+  (exactly one page may then take it). Two empty-slug pages already stored are grandfathered.
 - Suggestions from a name transliterate umlauts (ä to ae, ö to oe, ü to ue, ß to ss) and other
   accents, cap at 80, append `-page` to a reserved word and `-2`, `-3`, ... on collision. New
   pages (manual and AI generated) get their slug this way.
@@ -70,9 +75,16 @@ There was no redirect mechanism, so a minimal one was added.
   So renaming twice never chains (both old paths lead to the page), and a loop cannot exist.
 - Cleaned on every save: an entry whose page was deleted, or whose `from` is now a page's own
   path (the page wins), is dropped. At most 100 entries per site, oldest dropped first.
-- Served by the published route `(site)/[...slug]/page.tsx`: only when no page matches the
-  path, `findRedirectTarget` is asked, and a hit answers with Next's `permanentRedirect` (308)
-  to `/<current slug>`, keeping the query string, relative so a custom domain stays on its host.
+- Served by the published route `(site)/[...slug]/page.tsx`. Precedence: a static page that
+  owns the path wins, then a redirect, then a dynamic (`:handle`) page, then the 404. A hit
+  answers with Next's `permanentRedirect` (308) to the page's current path, keeping the query
+  string (rebuilt from the parsed parameters: the page never sees the raw URL), relative so a
+  custom domain stays on its host. The target is rebuilt from the slug's non-empty segments,
+  each percent-encoded, and dot segments are refused, so a stored slug can never produce an
+  off-site (`//other.host`) address.
+- Concurrency: the save runs as a SERIALIZABLE transaction (retried up to four times on a
+  serialization conflict, then a loud failure), so two overlapping saves cannot each write a
+  redirect list missing the other's entry.
 - Timing: the redirect list rides in the cached published-site resolution, which publish
   revalidates, so it takes effect with the next publish, together with the new slug.
 

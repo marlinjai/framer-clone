@@ -254,6 +254,17 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
     expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
   });
 
+  it('400s a request that drops the home page', async () => {
+    const prisma = await installRealRepo({ page_home: '', page_about: 'about' });
+    const body = { project: { ...PROJECT, pages: { page_about: { slug: 'about' } } } };
+
+    const res = await POST(saveReq(body));
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.message).toMatch(/home page cannot be deleted/);
+    expect(prisma.site.upsert).not.toHaveBeenCalled();
+  });
+
   it('saves a valid slug change and records the old path as a redirect', async () => {
     const prisma = await installRealRepo({ page_home: '', page_about: 'about' });
     const body = { project: { ...PROJECT, pages: { ...PROJECT.pages, page_about: { slug: 'about-us' } } } };

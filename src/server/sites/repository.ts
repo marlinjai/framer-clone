@@ -51,6 +51,26 @@ import { generateSubdomain } from './subdomain';
  */
 const SUBDOMAIN_ALLOCATION_ATTEMPTS = 5;
 
+/** How often a save that lost a serialization conflict (P2034) is retried. */
+const SERIALIZATION_ATTEMPTS = 4;
+
+/**
+ * Run a SERIALIZABLE transaction, retrying when Postgres aborted it because a
+ * concurrent transaction touched the same rows (Prisma code P2034). Any other
+ * error, or the last conflict, is rethrown unchanged.
+ */
+async function withSerializationRetry<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run();
+    } catch (err) {
+      const conflict =
+        err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034';
+      if (!conflict || attempt >= SERIALIZATION_ATTEMPTS) throw err;
+    }
+  }
+}
+
 /**
  * The tenant scope every repository call is bound to. Resolved by the caller
  * from the verified session (the workspace the request acts in, and that
@@ -199,7 +219,11 @@ export class SiteRepository {
     assertScope(scope);
     const persisted: PersistedSite = projectToPersisted(project);
 
-    await this.prisma.$transaction(async (tx) => {
+    // SERIALIZABLE: the redirect list is read, changed and written back, so
+    // two overlapping saves of one site must not each write a list missing
+    // the other's entry. Postgres aborts one of them (P2034) instead; it is
+    // retried a few times, then surfaces loudly as a failed save.
+    await withSerializationRetry(() => this.prisma.$transaction(async (tx) => {
       // Guard: if this site id already exists, it MUST be in the caller's
       // workspace. A row in another workspace means a cross-tenant collision —
       // refuse rather than overwrite or leak.
@@ -316,7 +340,7 @@ export class SiteRepository {
             ? { siteId: persisted.siteId, pageId: { notIn: keepPageIds } }
             : { siteId: persisted.siteId },
       });
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
   }
 
   /**
@@ -435,12 +459,11 @@ export class SiteRepository {
     scope: TenantScope,
     siteId: string,
     baseHost: string | null | undefined = process.env.PUBLIC_SITE_BASE_HOST,
-  ): Promise<{ status: string; host: string | null; everPublished: boolean }> {
+  ): Promise<{ host: string | null; everPublished: boolean }> {
     assertScope(scope);
     const site = await this.prisma.site.findFirst({
       where: { id: siteId, workspaceId: scope.workspaceId },
       select: {
-        status: true,
         domains: {
           select: {
             subdomain: true,
@@ -469,7 +492,7 @@ export class SiteRepository {
     const host =
       custom?.customHostname ??
       (platform?.subdomain && base ? `${platform.subdomain}.${base}` : null);
-    return { status: site.status, host, everPublished: Boolean(platform) };
+    return { host, everPublished: Boolean(platform) };
   }
 
   /**

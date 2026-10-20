@@ -256,8 +256,14 @@ export function tidySlugInput(raw: string): string {
  *   - a slug identical to the stored one for the same page is accepted as is
  *     (grandfathered: older pages may predate these rules, and refusing them
  *     would make an existing project impossible to save);
- *   - the home page's empty slug cannot change, and at most one page may have
- *     the empty slug;
+ *   - the HOME page (empty slug) keeps the site root: while the stored project
+ *     has one, at least one of its stored home pages must still be in the
+ *     snapshot with the empty slug (so it is neither deleted nor moved), and no
+ *     other page may take the empty slug. Older projects that ended up with two
+ *     empty-slug pages keep saving, and may move or delete the extra one;
+ *   - a project WITHOUT a home page (possible for older projects, whose home
+ *     page could be deleted) may give exactly one page the empty slug: that is
+ *     how the editor's "Make home page" recovers the site root;
  *   - every other new or changed slug must pass validateSlugFormat and be
  *     unique among all pages of the snapshot.
  * Returns the first problem found, naming the page, or null when all is well.
@@ -268,9 +274,32 @@ export function findProjectSlugProblem(
 ): { pageId: string; code: SlugErrorCode; message: string } | null {
   const label = (p: { pageId: string; title?: string }) => (p.title ? `"${p.title}"` : p.pageId);
 
-  const homes = pages.filter((p) => p.slug === '');
-  if (homes.length > 1) {
-    const second = homes[1];
+  const storedHomeIds = new Set([...stored].filter(([, slug]) => slug === '').map(([id]) => id));
+  const incomingHomes = pages.filter((p) => p.slug === '');
+  const keptHomes = incomingHomes.filter((p) => storedHomeIds.has(p.pageId));
+
+  if (storedHomeIds.size > 0) {
+    if (keptHomes.length === 0) {
+      const [homeId] = storedHomeIds;
+      const moved = pages.find((p) => p.pageId === homeId);
+      return {
+        pageId: homeId,
+        code: 'home_locked',
+        message: moved
+          ? `Page ${label(moved)} is the home page; its URL is always the site root and cannot change.`
+          : 'The home page cannot be deleted: it is what the site serves at its root.',
+      };
+    }
+    const newHome = incomingHomes.find((p) => !storedHomeIds.has(p.pageId));
+    if (newHome) {
+      return {
+        pageId: newHome.pageId,
+        code: 'taken',
+        message: `Page ${label(newHome)} has an empty slug, but only the home page may.`,
+      };
+    }
+  } else if (incomingHomes.length > 1) {
+    const second = incomingHomes[1];
     return {
       pageId: second.pageId,
       code: 'taken',
@@ -281,13 +310,8 @@ export function findProjectSlugProblem(
   for (const page of pages) {
     const before = stored.get(page.pageId);
     if (before === page.slug) continue;
-    if (before === '') {
-      return {
-        pageId: page.pageId,
-        code: 'home_locked',
-        message: `Page ${label(page)} is the home page; its URL is always the site root and cannot change.`,
-      };
-    }
+    // Empty slugs were settled above (a kept or recovered home page). An extra
+    // legacy home page moving to a real slug is validated like any other.
     if (page.slug === '') continue;
     const result = validateSlug(page.slug, {
       pageId: page.pageId,

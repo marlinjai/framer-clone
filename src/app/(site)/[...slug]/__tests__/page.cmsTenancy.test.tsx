@@ -41,7 +41,7 @@ vi.mock('@/server/sites/cachedResolver', () => ({
 }));
 
 vi.mock('@/server/sites/publicResolver', () => ({
-  matchPageBySlug: () => ({ page: { snapshot: {} }, params: {} }),
+  matchPageBySlug: () => ({ page: { slug: 'about', snapshot: {} }, params: {} }),
   resolvePublicIngestionKey: () => null,
   resolveTrackerScriptSrc: () => null,
   resolveIngestionEndpoint: () => null,

@@ -45,6 +45,8 @@ export interface PageSettingsDialogProps {
   page: PageModelType | null;
   project: ProjectModelType;
   onClose: () => void;
+  /** Where focus goes when the dialog closes (the row control that opened it). */
+  returnFocusTo?: React.RefObject<HTMLElement | null>;
 }
 
 const fieldLabel = 'text-[11px] font-semibold uppercase tracking-wide text-muted-foreground';
@@ -68,9 +70,19 @@ const PageSettingsForm = observer(({
   onClose: () => void;
 }) => {
   const { address } = useSiteAddress();
-  const isHome = page.isHome;
+  // Locked: THE home page, served at the site root (an extra empty-slug page
+  // of an older project is not locked and can move).
+  const isHome = project.isSlugLocked(page.id);
   const [name, setName] = React.useState(page.metadata.title);
   const [slug, setSlug] = React.useState(page.slug);
+  // Only a slug the person edited is tidied and saved: an untouched legacy
+  // slug (from before the slug rules) is kept exactly as stored, so renaming
+  // such a page never rewrites or blocks on its address.
+  const [slugTouched, setSlugTouched] = React.useState(false);
+  const nameRef = React.useRef<HTMLInputElement>(null);
+  const slugRef = React.useRef<HTMLInputElement>(null);
+  // Announced by the always-mounted live region below after a failed save.
+  const [announcement, setAnnouncement] = React.useState('');
   const [description, setDescription] = React.useState(page.metadata.description ?? '');
   // Errors show once a field was left or a save was attempted, never while the
   // person is still typing their first characters.
@@ -78,7 +90,7 @@ const PageSettingsForm = observer(({
   const [saveErrors, setSaveErrors] = React.useState<{ title?: string; slug?: string }>({});
 
   const otherPages = project.pagesArray.map((p) => ({ id: p.id, slug: p.slug }));
-  const cleanSlug = isHome ? '' : tidySlugInput(slug);
+  const cleanSlug = isHome ? '' : slugTouched ? tidySlugInput(slug) : page.slug;
   const slugChanged = !isHome && cleanSlug !== page.slug;
 
   const nameError = name.trim() ? undefined : 'Enter a page name.';
@@ -94,17 +106,30 @@ const PageSettingsForm = observer(({
   const hostLabel = address.host ?? 'your-site-address';
   const previewPath = isHome ? '/' : `/${cleanSlug}`;
 
+  // A failed save puts focus on the first field to fix and announces what is
+  // wrong, so keyboard and screen reader users are not left guessing.
+  const reportProblems = (problems: { title?: string; slug?: string }) => {
+    setAnnouncement(
+      ['Not saved.', problems.title, problems.slug].filter(Boolean).join(' '),
+    );
+    (problems.title ? nameRef : slugRef).current?.focus();
+  };
+
   const submit = (event?: React.FormEvent) => {
     event?.preventDefault();
     setShowErrors({ name: true, slug: true });
-    if (titleError || slugError) return;
+    if (titleError || slugError) {
+      reportProblems({ title: titleError, slug: slugError });
+      return;
+    }
     const result = project.updatePageSettings(page.id, {
       title: name,
-      slug: isHome ? '' : cleanSlug,
+      slug: isHome ? page.slug : cleanSlug,
       description,
     });
     if (!result.ok) {
       setSaveErrors(result.errors);
+      reportProblems(result.errors);
       return;
     }
     onClose();
@@ -113,18 +138,23 @@ const PageSettingsForm = observer(({
   const fillSlugFromName = () => {
     const taken = otherPages.filter((p) => p.id !== page.id).map((p) => p.slug);
     setSlug(suggestSlug(name || page.metadata.title, taken));
+    setSlugTouched(true);
     setSaveErrors((e) => ({ ...e, slug: undefined }));
     setShowErrors((s) => ({ ...s, slug: true }));
   };
 
   return (
     <form onSubmit={submit} noValidate className="flex flex-col gap-4">
+      <div className="sr-only" role="status" aria-live="polite" data-testid="page-settings-announcement">
+        {announcement}
+      </div>
       <div className="flex flex-col gap-1.5">
         <label htmlFor="page-settings-name" className={fieldLabel}>
           Page name
         </label>
         <input
           id="page-settings-name"
+          ref={nameRef}
           value={name}
           autoComplete="off"
           onChange={(e) => {
@@ -188,12 +218,14 @@ const PageSettingsForm = observer(({
               </span>
               <input
                 id="page-settings-slug"
+                ref={slugRef}
                 value={slug}
                 autoComplete="off"
                 spellCheck={false}
                 maxLength={SLUG_MAX_LENGTH + 20}
                 onChange={(e) => {
                   setSlug(typingTidy(e.target.value));
+                  setSlugTouched(true);
                   setSaveErrors((s) => ({ ...s, slug: undefined }));
                 }}
                 onBlur={() => setShowErrors((s) => ({ ...s, slug: true }))}
@@ -224,9 +256,11 @@ const PageSettingsForm = observer(({
             {hostLabel}
             {previewPath}
           </div>
-          {!address.host && !address.everPublished && (
+          {!address.host && (
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Your site gets its address when you publish it for the first time.
+              {address.everPublished
+                ? 'Your site is published, but no public address is configured for this environment yet.'
+                : 'Your site gets its address when you publish it for the first time.'}
             </p>
           )}
           {slugChanged && slugResult.ok && page.slug && address.everPublished && (
@@ -269,12 +303,26 @@ const PageSettingsForm = observer(({
 });
 PageSettingsForm.displayName = 'PageSettingsForm';
 
-const PageSettingsDialog: React.FC<PageSettingsDialogProps> = ({ page, project, onClose }) => (
+const PageSettingsDialog: React.FC<PageSettingsDialogProps> = ({
+  page,
+  project,
+  onClose,
+  returnFocusTo,
+}) => (
   <Dialog open={page !== null} onOpenChange={(open) => !open && onClose()}>
     {page && (
       <DialogContent
         data-testid="page-settings-dialog"
         data-editor-ui="true"
+        // Back to the row control that opened the dialog (the menu item it may
+        // have come from is gone by now).
+        onCloseAutoFocus={(e) => {
+          const target = returnFocusTo?.current;
+          if (target && target.isConnected) {
+            e.preventDefault();
+            target.focus();
+          }
+        }}
         // Keep editor shortcuts (Delete removes the selected element, and so
         // on) from firing while the dialog has focus. Escape still reaches
         // Radix, which closes the dialog.

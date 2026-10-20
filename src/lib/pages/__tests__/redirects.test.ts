@@ -51,8 +51,8 @@ describe('nextSiteRedirects', () => {
     const second = step(first, { p1: 'b' }, [['p1', 'c']]);
     expect(second.map((r) => r.from)).toEqual(['a', 'b']);
     const pages = [{ pageId: 'p1', slug: 'c' }];
-    expect(findRedirectTarget(second, pages, ['a'])).toBe('c');
-    expect(findRedirectTarget(second, pages, ['b'])).toBe('c');
+    expect(findRedirectTarget(second, pages, ['a'])).toBe('/c');
+    expect(findRedirectTarget(second, pages, ['b'])).toBe('/c');
   });
 
   it('refuses a loop: renaming back drops the redirect from the reclaimed path', () => {
@@ -105,8 +105,8 @@ describe('findRedirectTarget', () => {
   ];
 
   it('sends an old path to the page it belongs to, case-insensitively', () => {
-    expect(findRedirectTarget(redirects, pages, ['about'])).toBe('about-us');
-    expect(findRedirectTarget(redirects, pages, ['About'])).toBe('about-us');
+    expect(findRedirectTarget(redirects, pages, ['about'])).toBe('/about-us');
+    expect(findRedirectTarget(redirects, pages, ['About'])).toBe('/about-us');
   });
 
   it('returns null for an unknown path, the root, a deleted page or a dynamic target', () => {
@@ -139,3 +139,27 @@ describe('parseSiteRedirects', () => {
     ]);
   });
 });
+
+describe('redirect targets are always on-site', () => {
+  const r = (pageId: string): SiteRedirect[] => [{ from: 'old', pageId, createdAt: '' }];
+
+  it('never produces a protocol-relative address from a legacy slug', () => {
+    expect(findRedirectTarget(r('p'), [{ pageId: 'p', slug: '/evil.com' }], ['old'])).toBe('/evil.com');
+    expect(findRedirectTarget(r('p'), [{ pageId: 'p', slug: '//evil.com/x' }], ['old'])).toBe('/evil.com/x');
+  });
+
+  it('percent-encodes each segment, so a backslash cannot act as a slash', () => {
+    expect(findRedirectTarget(r('p'), [{ pageId: 'p', slug: '\\evil.com' }], ['old'])).toBe('/%5Cevil.com');
+  });
+
+  it('refuses dot segments', () => {
+    expect(findRedirectTarget(r('p'), [{ pageId: 'p', slug: 'a/../b' }], ['old'])).toBeNull();
+  });
+
+  it('sends the old path of a page that became the home page to the root', () => {
+    const list = step([], { p1: 'about' }, [['p1', '']]);
+    expect(list).toEqual([{ from: 'about', pageId: 'p1', createdAt: NOW.toISOString() }]);
+    expect(findRedirectTarget(list, [{ pageId: 'p1', slug: '' }], ['about'])).toBe('/');
+  });
+});
+

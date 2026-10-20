@@ -61,7 +61,7 @@ function makeFakePrisma() {
     site,
     sitePage,
     siteDomain,
-    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>, _opts?: unknown) =>
       fn(prisma),
     ),
   };
@@ -303,6 +303,62 @@ describe('SiteRepository.saveProject slug rules and redirects', () => {
   });
 });
 
+describe('SiteRepository.saveProject concurrency', () => {
+  function conflict(): Prisma.PrismaClientKnownRequestError {
+    return new Prisma.PrismaClientKnownRequestError('serialization failure', {
+      code: 'P2034',
+      clientVersion: 'test',
+    });
+  }
+
+  beforeEach(() => {
+    prisma.site.findUnique.mockResolvedValue(null);
+    prisma.site.upsert.mockResolvedValue({});
+    prisma.sitePage.upsert.mockResolvedValue({});
+    prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
+  });
+
+  const project = () =>
+    ({
+      id: 'site_1',
+      metadata: { title: 'S', description: '', createdAt: 1, updatedAt: 2 },
+      pages: { home: { id: 'home', slug: '', metadata: { title: 'Home' } } },
+    }) as never;
+
+  it('runs the save SERIALIZABLE, so overlapping saves cannot lose a redirect', async () => {
+    await repo.saveProject(SCOPE, project());
+    expect(prisma.$transaction.mock.calls[0][1]).toEqual({
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    });
+  });
+
+  it('retries a save that lost a serialization conflict', async () => {
+    const real = prisma.$transaction.getMockImplementation()!;
+    prisma.$transaction.mockImplementationOnce(async () => {
+      throw conflict();
+    });
+    prisma.$transaction.mockImplementation(real);
+    await repo.saveProject(SCOPE, project());
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(prisma.site.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives up loudly after repeated conflicts, and never retries other errors', async () => {
+    prisma.$transaction.mockImplementation(async () => {
+      throw conflict();
+    });
+    await expect(repo.saveProject(SCOPE, project())).rejects.toMatchObject({ code: 'P2034' });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(4);
+
+    prisma.$transaction.mockReset();
+    prisma.$transaction.mockImplementation(async () => {
+      throw new Error('db down');
+    });
+    await expect(repo.saveProject(SCOPE, project())).rejects.toThrow('db down');
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('SiteRepository.getSiteAddress', () => {
   const domain = (over: Record<string, unknown>) => ({
     subdomain: null,
@@ -320,9 +376,8 @@ describe('SiteRepository.getSiteAddress', () => {
   });
 
   it('is unpublished with no address before the first publish', async () => {
-    prisma.site.findFirst.mockResolvedValue({ status: 'draft', domains: [] });
+    prisma.site.findFirst.mockResolvedValue({ domains: [] });
     expect(await repo.getSiteAddress(SCOPE, 'site_1', 'sites.lumitra.co')).toEqual({
-      status: 'draft',
       host: null,
       everPublished: false,
     });
@@ -330,7 +385,6 @@ describe('SiteRepository.getSiteAddress', () => {
 
   it('uses the platform subdomain under the base host', async () => {
     prisma.site.findFirst.mockResolvedValue({
-      status: 'published',
       domains: [domain({ subdomain: 'abc123', verificationStatus: 'active' })],
     });
     expect(await repo.getSiteAddress(SCOPE, 'site_1', 'sites.lumitra.co')).toMatchObject({
@@ -341,7 +395,6 @@ describe('SiteRepository.getSiteAddress', () => {
 
   it('prefers a serving custom domain, never a pending one', async () => {
     prisma.site.findFirst.mockResolvedValue({
-      status: 'published',
       domains: [
         domain({ subdomain: 'abc123', verificationStatus: 'active' }),
         domain({ customHostname: 'pending.example', verificationStatus: 'pending' }),

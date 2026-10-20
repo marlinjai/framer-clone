@@ -40,8 +40,7 @@ vi.mock('@/lib/auth-brain', () => ({
 const mockLoadProject = vi.fn();
 // Where the site lives (page settings URL preview); a never-published draft.
 const mockGetSiteAddress = vi.fn(
-  async (): Promise<{ status: string; host: string | null; everPublished: boolean }> => ({
-    status: 'draft',
+  async (): Promise<{ host: string | null; everPublished: boolean }> => ({
     host: null,
     everPublished: false,
   }),
@@ -143,7 +142,6 @@ describe('loadProjectSnapshot — loads the caller-workspace project', () => {
     mockVerifySession.mockResolvedValue(sessionA());
     mockLoadProject.mockResolvedValue(projectNode('site-a1'));
     mockGetSiteAddress.mockResolvedValueOnce({
-      status: 'published',
       host: 'abc123.sites.lumitra.co',
       everPublished: true,
     });

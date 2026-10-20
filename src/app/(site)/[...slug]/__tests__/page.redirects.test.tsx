@@ -134,4 +134,14 @@ describe('published router after a slug change', () => {
     await visit(['__home']);
     expect(renderedPageId()).toBe('home');
   });
+
+  it('lets the redirect beat a dynamic page that would also match, but not a static one', async () => {
+    site.pages.push(page('p_dyn', ':handle'));
+    await expect(visit(['about'])).rejects.toBeInstanceOf(RedirectSignal);
+    expect(permanentRedirect).toHaveBeenCalledWith('/about-us');
+    // A path with no redirect is still served by the dynamic page.
+    await visit(['some-product']);
+    expect(renderedPageId()).toBe('p_dyn');
+  });
 });
+
