@@ -18,13 +18,16 @@
 # The image MUST be built for linux/arm64 (the shared Coolify host is Ampere
 # ARM); the deploy workflow builds on `ubuntu-24.04-arm` with `platforms:
 # linux/arm64`. Build and runtime share the SAME base image, but
-# node:20-bookworm-slim ships WITHOUT libssl: so the builder installs openssl
+# node:22-bookworm-slim ships WITHOUT libssl: so the builder installs openssl
 # before `prisma generate` (otherwise Prisma mis-detects and emits the
 # openssl-1.1.x engine while the runtime, which installs openssl 3.0.x, needs
 # openssl-3.0.x). schema.prisma also pins binaryTargets to linux-arm64-openssl-3.0.x
 # as a backstop.
 
-ARG NODE_IMAGE=node:20-bookworm-slim
+# Node 22 (the release CI tests on, see .nvmrc), pinned to major.minor so a
+# rebuild never jumps a minor unseen while patch releases (security fixes)
+# still arrive. Every stage uses it. Bump with .nvmrc and package.json engines.
+ARG NODE_IMAGE=node:22.23-bookworm-slim
 ARG PNPM_VERSION=9.15.0
 # Pin matches "prisma" in package.json (6.19.3). Bump both together.
 ARG PRISMA_VERSION=6.19.3
@@ -70,7 +73,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# node:20-bookworm-slim ships without libssl, so `prisma generate` cannot detect
+# node:22-bookworm-slim ships without libssl, so `prisma generate` cannot detect
 # the openssl version and would default to the openssl-1.1.x engine. Install
 # openssl (3.0.x on bookworm) BEFORE generate so native detection matches the
 # runtime stage; binaryTargets in schema.prisma pins linux-arm64-openssl-3.0.x too.

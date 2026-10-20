@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=22 <23"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "build:boot": "esbuild scripts/commerce-migrate.ts --bundle --platform=node --target=node20 --format=cjs --log-level=warning --outfile=dist-boot/commerce-migrate.cjs",
+    "build:boot": "esbuild scripts/commerce-migrate.ts --bundle --platform=node --target=node22 --format=cjs --log-level=warning --outfile=dist-boot/commerce-migrate.cjs",
     "start": "next start",
     "lint": "eslint .",
     "lint:guards": "node scripts/check-guards.mjs",

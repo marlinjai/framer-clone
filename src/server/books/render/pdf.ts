@@ -2,7 +2,7 @@
 //
 // Lay a render model out as an A4 PDF with pdf-lib, a pure JavaScript library:
 // no headless browser, no native module, no system font, so it runs unchanged
-// in the existing node:20-bookworm-slim image on linux/arm64. The text is set in
+// in the existing node:22-bookworm-slim image on linux/arm64. The text is set in
 // the embedded DejaVu Sans faces (fonts.ts), subset to the glyphs used, so every
 // European name prints exactly as written.
 //
