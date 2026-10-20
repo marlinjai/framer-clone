@@ -597,6 +597,27 @@ describe('unhappy paths of reading and importing', () => {
     expect(await env.ownerDb.selectFrom('historical_import_extraction').select('outcome').where('item_id', '=', item.id).execute()).toEqual([{ outcome: 'error' }]);
   });
 
+  it('the model answering without calling the tool (twice) is a named row problem, no empty record, and keeps an earlier reading', async () => {
+    const { tenantId, book, scope } = await company();
+    const item = await staged(scope, `notool-${tenantId}`);
+    const prose = { content: [{ type: 'text', text: 'This looks like an invoice from Sample Studio.' }], stop_reason: 'end_turn' };
+    const d = deps([prose, prose], book);
+    const failed = await extractItem(scope, item.id, d.deps);
+    // One repair turn was asked for, then it stops.
+    expect(d.fake.calls).toHaveLength(2);
+    expect(failed.status).toBe('needs_attention');
+    expect(failed.problems).toEqual([{ code: 'extraction_failed:invalid_output', path: null, blocking: true, count: null }]);
+    expect(failed.extracted).toBeNull();
+    expect(failed.extractionId).toBeNull();
+    expect(await env.ownerDb.selectFrom('historical_import_extraction').select('outcome').where('item_id', '=', item.id).execute()).toEqual([{ outcome: 'invalid_output' }]);
+    // With a reading already there, the same answer keeps it and notes the failure.
+    const read = await extractItem(scope, item.id, deps([toolTurn(toolInput({ number: '38' }))], book).deps);
+    const again = await extractItem(scope, item.id, deps([prose, prose], book).deps, { replace: true });
+    expect(again.extractionId).toBe(read.extractionId);
+    expect(again.extracted!.printed.number).toBe('38');
+    expect(again.problems).toContainEqual({ code: 'reread_failed:invalid_output', path: null, blocking: false, count: null });
+  });
+
   it('a failed reading again keeps the earlier reading and its status, the failure noted', async () => {
     const { tenantId, book, scope } = await company();
     const item = await staged(scope, `rf-${tenantId}`);
