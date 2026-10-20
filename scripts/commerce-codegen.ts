@@ -78,11 +78,12 @@ const JSON_COLUMNS: Record<string, string> = {
   'sales_document.tax_summary': 'TaxSummary',
   'sales_document.customer_snapshot': 'CustomerSnapshotV1',
   'sales_document.sender_snapshot': 'SenderSnapshotV1',
+  'sales_document.template_snapshot': 'TemplateSnapshotV1',
   'sales_document_event.payload': 'EventPayload',
 };
 
 /** The type-only imports the JSON shapes need. */
-const JSON_IMPORTS = "import type {\n  CustomerSnapshotV1,\n  EventPayload,\n  FooterBlocks,\n  SenderBlockV1,\n  SenderSnapshotV1,\n  TaxSummary,\n} from '../books/snapshots';";
+const JSON_IMPORTS = "import type {\n  CustomerSnapshotV1,\n  EventPayload,\n  FooterBlocks,\n  SenderBlockV1,\n  SenderSnapshotV1,\n  TaxSummary,\n  TemplateSnapshotV1,\n} from '../books/snapshots';";
 
 /** One doc comment per table (a table without one fails the run). */
 const TABLE_DOCS: Record<string, string> = {
@@ -124,6 +125,8 @@ const TABLE_DOCS: Record<string, string> = {
   sales_document_line:
     '007_books: a document line. `tax_class` / `tax_rate_override` are inputs;\n`tax_rate`, `tax_amount`, `tax_treatment` are derived.',
   sales_document_event: '007_books: the append-only audit trail (no updated_at).',
+  sales_document_file:
+    '008_books_files: the stored document of record (the rendered PDF of an issued\ndocument), one per document, append-only (no updated_at).',
 };
 
 /** Inline notes printed above a column. */
@@ -218,6 +221,8 @@ const SCALARS: Record<string, string> = {
   timestamp: 'Timestamp',
   timestamptz: 'Timestamp',
   date: 'DateString',
+  // postgres.js reads BYTEA as a Node Buffer and writes a Buffer (or Uint8Array) as BYTEA.
+  bytea: 'Buffer',
 };
 
 function pascal(name: string): string {

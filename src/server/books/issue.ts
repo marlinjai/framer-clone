@@ -36,7 +36,10 @@
 //      against the lines (BK005); the CHECKs check completeness.
 //   9. Insert the `issued` event. Commit.
 
+import type { Transaction } from 'kysely';
 import { z } from 'zod';
+
+import type { CommerceDB } from '../commerce/db-types';
 
 import { ReverseChargeNotAllowedError } from '../tax/germanVat';
 import { totalsExceedLimit } from './totals';
@@ -46,6 +49,7 @@ import { readRecipient } from './recipients';
 import { readPersistedView, selectDocumentRow, selectLineRows, type DocumentView } from './repository/read';
 import { profileFor, selectCustomerRow, syncDraftTaxState } from './repository/taxState';
 import { insertEvent } from './repository/events';
+import { templateSnapshotFor } from './repository/templates';
 import type { BooksScope } from './scope';
 import { requireSettings } from './settings';
 import {
@@ -59,6 +63,10 @@ import {
 const issueInput = z.object({
   actorUserId: z.string().trim().min(1).max(200),
   issueDate: z.string().optional(),
+  // The draft version the caller confirmed (phase 2's editor shows the totals
+  // and asks for confirmation; a change made elsewhere in between must not be
+  // issued unseen). Checked before and again under the document lock.
+  expectedVersion: z.number().int().min(0).optional(),
 });
 export type IssueInput = z.input<typeof issueInput>;
 
@@ -77,6 +85,14 @@ export interface IssueOptions {
   beforeTransaction?: () => void | Promise<void>;
   /** The clock: "today" (Europe/Berlin) and `issued_at`. */
   now?: Date;
+  /**
+   * Runs inside the issue transaction after the document is frozen and its
+   * event written, before the commit, with the issued view. A throw rolls the
+   * whole issue back: the document stays a draft and no number is taken. The
+   * routes render, check and store the PDF of record here (render/store.ts), so
+   * an invoice is never issued without a complete document of record.
+   */
+  beforeCommit?: (trx: Transaction<CommerceDB>, view: DocumentView) => Promise<void>;
 }
 
 const ISSUED_OR_LATER = new Set(['issued', 'sent', 'accepted', 'rejected', 'paid', 'cancelled']);
@@ -99,6 +115,11 @@ export async function issue(
   if (!before) throw new BooksError('NOT_FOUND', 'NOT_FOUND: document', { documentId: id });
   if (ISSUED_OR_LATER.has(before.status)) {
     return { document: await readPersistedView(scope.db, scope, id), alreadyIssued: true };
+  }
+  if (args.expectedVersion !== undefined && before.version !== args.expectedVersion) {
+    throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the draft changed since it was confirmed', {
+      documentId: id,
+    });
   }
   if (before.doc_type !== 'invoice') {
     throw new BooksError('DOC_TYPE_NOT_SUPPORTED', `DOC_TYPE_NOT_SUPPORTED: ${before.doc_type}`, {
@@ -136,6 +157,11 @@ export async function issue(
         if (!row) throw new BooksError('NOT_FOUND', 'NOT_FOUND: document', { documentId: id });
         if (row.status !== 'draft') {
           return { document: await readPersistedView(trx, scope, id), alreadyIssued: true };
+        }
+        if (args.expectedVersion !== undefined && row.version !== args.expectedVersion) {
+          throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the draft changed since it was confirmed', {
+            documentId: id,
+          });
         }
         if (row.customer_id !== customerBefore.id) {
           throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the customer changed during the issue', {
@@ -204,11 +230,19 @@ export async function issue(
           vatId: customer.vat_id,
           taxNumber: customer.tax_number,
         });
+        // Reverse charge must name the recipient's VAT id (section 14a (1) UStG).
+        if (profile.reverseCharge && !customerSnapshot.vatId?.trim()) {
+          throw new BooksError('REVERSE_CHARGE_NOT_ALLOWED', 'REVERSE_CHARGE_NOT_ALLOWED: the recipient has no VAT id', {
+            missing: ['recipient.vatId'],
+          });
+        }
+        const templateSnapshot = await templateSnapshotFor(trx, scope, row.template_id);
         await trx
           .updateTable('sales_document')
           .set({
             ...fields,
             tax_summary: toJsonb(fields.tax_summary),
+            template_snapshot: toJsonb(templateSnapshot),
             status: 'issued',
             document_number: number.documentNumber,
             number_value: number.numberValue,
@@ -239,7 +273,9 @@ export async function issue(
             taxProfileKey: fields.tax_profile_key,
           },
         });
-        return { document: await readPersistedView(trx, scope, id), alreadyIssued: false };
+        const issued = await readPersistedView(trx, scope, id);
+        if (options.beforeCommit) await options.beforeCommit(trx, issued);
+        return { document: issued, alreadyIssued: false };
       }),
   );
 }

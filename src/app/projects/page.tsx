@@ -112,7 +112,7 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
     redirect(next);
   }
 
-  const { sites, companies, activeCompany } = data;
+  const { sites, companies, activeCompany, booksEnabled } = data;
 
   return (
     <main className="mx-auto w-full max-w-3xl px-6 py-12">
@@ -133,7 +133,17 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
             ) : null}
           </p>
         </div>
-        <NewProjectButton />
+        <div className="flex items-center gap-3">
+          {booksEnabled ? (
+            <Link
+              href="/projects/books"
+              className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
+            >
+              Books
+            </Link>
+          ) : null}
+          <NewProjectButton />
+        </div>
       </header>
 
       {sites.length === 0 ? (

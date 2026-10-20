@@ -37,19 +37,19 @@ connections to the suite. The four lines below are in that order.
   is recorded in infra's deployments/framer-clone/RUNBOOK.md. Done 2026-10-19.
 - [ ] 3. The Books: the Customer + SalesDocument + DocumentTemplate document tier for Marlin's own
   accounting (invoices and credit notes now, offers later; joins with receipt-ocr-app's expense
-  side), in each company's own schema. Phase 1 is built (2026-10-17): migration `007_books` with
-  the seven tables and the triggers that freeze an issued document for every database role,
-  customers over the shared contacts database, gap-free numbering from a locked counter (invoices
-  continue the plain series at 62), the German VAT rules shared with the order path, the
-  repository API with idempotent issue and cancellation through a credit note, and the tests
-  (four stateful-flow paths, concurrency, two companies in one schema, the real contacts
-  package). Open: phase 2 (routes and the editor, with the `books` grant check) and phase 3
-  (templates, PDF rendering), then running `pnpm books:init-company` for Whiz-Art Media. Settings
-  from receipt-ocr-app's plan "Invoicing and income" of 2026-10-14: company Whiz-Art Media,
-  small-business treatment by default (section 19 of the value-added tax act, section 34a
-  invoice fields), `Customer` points to the shared contacts database for name and address.
-  See [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md), section "Phase 1
-  build specification" and its deviations in P1.12. (2026-10-17)
+  side), in each company's own schema. Built: phase 1 (2026-10-17, the document domain, migration
+  `007_books`), phase 2 (2026-10-20, the `/api/books` routes behind the active company, the
+  auth-brain app grant `books` and the workspace admin role, and the Books area in the editor:
+  customers, documents, the document editor with issue on confirmation) and phase 3 (2026-10-20,
+  templates, the PDF rendered with pdf-lib from the frozen snapshots, checked for the section 34a
+  UStDV and section 14 (4) UStG fields and stored once in `sales_document_file`, migration
+  `008_books_files`, download from the editor). Open, all operator steps: register the app
+  `books` in auth-brain and grant it to Whiz-Art Media and Lumitra, set
+  `CONTACTS_DATABASE_URL` in framer-clone's Infisical project (copied from the receipts project
+  with `copy_secret`), roll `008` out with the deploy, and run `pnpm books:init-company` for
+  Whiz-Art Media. Then the first real invoice from the editor closes this line. See
+  [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md), sections "Phase 1 build
+  specification" and "Phase 2 and 3 build notes (2026-10-20)". (2026-10-20)
 - [ ] 4. Existing invoices and the suite: import invoices 28 to 61 as historical documents
   with their original PDFs attached (never re-rendered), then connect: the read-only endpoint
   receipt-ocr-app pulls issued invoices from (service-account key from auth-brain; the receipts

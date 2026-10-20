@@ -33,11 +33,13 @@ import { documentTaxFields, profileFor, recomputeLines, selectCustomerRow } from
 import type { BooksScope } from '../scope';
 import {
   customerSnapshotV1Schema,
+  templateSnapshotV1Schema,
   senderSnapshotV1Schema,
   taxSummarySchema,
   type CustomerSnapshotV1,
   type EventPayload,
   type SenderSnapshotV1,
+  type TemplateSnapshotV1,
   type TaxSummary,
 } from '../snapshots';
 
@@ -92,6 +94,8 @@ export interface SalesDocument {
 /** A document with its frozen snapshots (null until issued). */
 export interface SalesDocumentWithSnapshots extends SalesDocument {
   customerSnapshot: CustomerSnapshotV1 | null;
+  /** The template layout frozen at issue (null on a draft, and on documents issued before 008). */
+  templateSnapshot: TemplateSnapshotV1 | null;
   senderSnapshot: SenderSnapshotV1 | null;
 }
 
@@ -192,6 +196,7 @@ export type DocumentRow = {
 export type DocumentRowWithSnapshots = DocumentRow & {
   customer_snapshot: CustomerSnapshotV1 | null;
   sender_snapshot: SenderSnapshotV1 | null;
+  template_snapshot: TemplateSnapshotV1 | null;
 };
 
 export function mapDocument(row: DocumentRow): SalesDocument {
@@ -244,6 +249,8 @@ export function mapDocumentWithSnapshots(row: DocumentRowWithSnapshots): SalesDo
     ...mapDocument(row),
     customerSnapshot: row.customer_snapshot === null ? null : customerSnapshotV1Schema.parse(row.customer_snapshot),
     senderSnapshot: row.sender_snapshot === null ? null : senderSnapshotV1Schema.parse(row.sender_snapshot),
+    templateSnapshot:
+      row.template_snapshot == null ? null : templateSnapshotV1Schema.parse(row.template_snapshot),
   };
 }
 
@@ -502,14 +509,25 @@ function decodeCursor(raw: string): Cursor {
   }
 }
 
+/** A list item: the document plus, once issued, the recipient's NAME from its frozen snapshot. */
+export interface SalesDocumentListItem extends SalesDocument {
+  /**
+   * `customer_snapshot->>'name'` for an issued document (the name the document
+   * was issued to), null for a draft. Only the name: the address and the rest
+   * of the snapshot never leave getDocument (P1.5).
+   */
+  recipientName: string | null;
+}
+
 export interface DocumentPage {
-  items: SalesDocument[];
+  items: SalesDocumentListItem[];
   nextCursor: string | null;
 }
 
 /**
  * The company's documents, ordered issue_date DESC NULLS FIRST (drafts first),
- * then created_at DESC, then id DESC, with a keyset cursor. Returns no snapshots.
+ * then created_at DESC, then id DESC, with a keyset cursor. Returns no snapshot,
+ * only the frozen recipient name of an issued document.
  */
 export async function listDocuments(scope: BooksScope, input: ListDocumentsInput = {}): Promise<DocumentPage> {
   const parsed = listInput.safeParse(input);
@@ -519,7 +537,7 @@ export async function listDocuments(scope: BooksScope, input: ListDocumentsInput
 
   let q = scope.db
     .selectFrom('sales_document')
-    .select((eb) => documentColumns(eb))
+    .select((eb) => [...documentColumns(eb), sql<string | null>`customer_snapshot->>'name'`.as('recipient_name')])
     .where('sales_document.tenant_id', '=', scope.tenantId);
   if (args.docType) q = q.where('sales_document.doc_type', '=', args.docType);
   if (args.status) q = q.where('sales_document.status', '=', args.status);
@@ -554,12 +572,12 @@ export async function listDocuments(scope: BooksScope, input: ListDocumentsInput
     .orderBy('sales_document.created_at', 'desc')
     .orderBy('sales_document.id', 'desc')
     .limit(args.limit + 1)
-    .execute()) as DocumentRow[];
+    .execute()) as Array<DocumentRow & { recipient_name: string | null }>;
 
   const page = rows.slice(0, args.limit);
   const last = page[page.length - 1];
   return {
-    items: page.map(mapDocument),
+    items: page.map((r) => ({ ...mapDocument(r), recipientName: r.recipient_name })),
     nextCursor:
       rows.length > args.limit && last
         ? encodeCursor({ issueDate: last.issue_date, createdAt: last.created_at_text, id: last.id })

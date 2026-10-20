@@ -40,6 +40,7 @@ import {
 } from '@/lib/authBrainAvailability';
 import { companySelectorsFromJar } from '@/lib/activeCompanyCookie';
 import { safeEditorReturnPath } from '@/server/auth/activeCompany';
+import { companyHasBooksGrant } from '@/server/books/access';
 import {
   getSiteRepository,
   grantedCompaniesWithoutWorkspace,
@@ -74,6 +75,8 @@ export type DashboardData =
       sites: SiteSummary[];
       companies: CompanyChoice[];
       activeCompany: CompanyChoice;
+      /** The active company holds the auth-brain app grant `books` (shows the Books link). */
+      booksEnabled: boolean;
     };
 
 /**
@@ -172,5 +175,11 @@ export async function loadDashboard(
   }
 
   const sites = await getSiteRepository().listSites(scopeResult.scope);
-  return { status: 'ok', sites, companies, activeCompany };
+  return {
+    status: 'ok',
+    sites,
+    companies,
+    activeCompany,
+    booksEnabled: companyHasBooksGrant(session, activeCompany.id),
+  };
 }
