@@ -7,6 +7,7 @@ import type {
   ReadBinding,
 } from '@/lib/bindings/types';
 import type { Query } from '@/lib/bindings/dataSource/types';
+import { resolveViewportFrameHeight } from '@/lib/canvas/viewportFrame';
 
 export type PropsRecord = Record<string, any>;
 
@@ -128,7 +129,25 @@ const ComponentModel: any = ComponentBase
   .props({
     children: types.optional(types.array(types.late((): any => ComponentModel)), []),
   })
+  // Editor-only layout state, never persisted, synced or recorded in history
+  // (volatile state produces no snapshot and no patch). A viewport frame grows
+  // with its page content, Framer-style: viewportHeight is the frame's MINIMUM
+  // height and renderedViewportHeight is what the frame actually measures on
+  // the canvas, reported by ViewportFrame's ResizeObserver. Each breakpoint
+  // frame measures independently, so the phone frame can be taller than the
+  // desktop one for the same page.
+  .volatile(() => ({
+    renderedViewportHeight: undefined as number | undefined,
+  }))
   .actions(self => ({
+    // Record the measured canvas height of a viewport frame (layout px, not
+    // zoomed screen px). No-op when unchanged so a ResizeObserver tick does
+    // not wake observers needlessly.
+    setRenderedViewportHeight(height: number | undefined) {
+      const next = height === undefined || !Number.isFinite(height) ? undefined : Math.round(height);
+      if (self.renderedViewportHeight !== next) self.renderedViewportHeight = next;
+    },
+
     // Canvas positioning actions (for root components)
     setCanvasPosition(x: number, y: number) {
       self.canvasX = Math.round(x);
@@ -389,11 +408,13 @@ const ComponentModel: any = ComponentBase
     // Viewport node specific views
     get viewportBounds() {
       if (!this.isViewportNode) return null;
+      // Height is the frame's real height on the canvas: at least the
+      // configured minimum (viewportHeight), grown to fit the page content.
       return {
         x: self.canvasX!,
         y: self.canvasY!,
         width: self.viewportWidth || 400,
-        height: self.viewportHeight || 600,
+        height: resolveViewportFrameHeight(self.viewportHeight || 600, self.renderedViewportHeight),
       };
     },
     
@@ -569,8 +590,10 @@ export const createViewportNode = (
     props: {
       className: 'viewport-frame',
       style: {
+        // Mirrors the canvas frame (ResponsivePageRenderer's ViewportFrame):
+        // viewportHeight is a minimum, the frame grows with its content.
         width: `${viewportWidth}px`,
-        height: `${viewportHeight}px`,
+        minHeight: `${viewportHeight}px`,
         backgroundColor: 'white',
         borderRadius: '8px',
         boxShadow: '0 4px 12px rgba(0,0,0,0.15)',

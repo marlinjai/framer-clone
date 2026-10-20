@@ -21,9 +21,10 @@ interface GroundWrapperProps {
   // Z-index for layering
   zIndex?: number;
   
-  // Dimensions (for optimization)
-  width?: number;
-  height?: number;
+  // Dimensions (for optimization). `'auto'` lets the wrapper follow its
+  // content, used by viewport frames, whose height grows with the page.
+  width?: number | 'auto';
+  height?: number | 'auto';
   
   // Additional CSS classes
   className?: string;
@@ -86,8 +87,8 @@ const GroundWrapper = observer(forwardRef<HTMLDivElement, GroundWrapperProps>(fu
     zIndex,
     display: visible ? 'block' : 'none',
     // Explicit dimensions - critical for proper sizing (like Framer)
-    width: width ? `${width}px` : 'auto',
-    height: height ? `${height}px` : 'auto',
+    width: typeof width === 'number' && width ? `${width}px` : 'auto',
+    height: typeof height === 'number' && height ? `${height}px` : 'auto',
     // Prevent default drag behaviors on images and other elements
     userSelect: 'none',
     WebkitUserSelect: 'none',
