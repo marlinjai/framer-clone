@@ -30,7 +30,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /** The shortest sync token accepted (a generated 32-byte value is far longer). */
-export const MIN_SYNC_TOKEN_LENGTH = 32;
+const MIN_SYNC_TOKEN_LENGTH = 32;
 
 function tokenMatches(presented: string, expected: string): boolean {
   // Hash both sides so the comparison is constant time and length-blind.
