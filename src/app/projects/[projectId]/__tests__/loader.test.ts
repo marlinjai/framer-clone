@@ -38,6 +38,14 @@ vi.mock('@/lib/auth-brain', () => ({
 }));
 
 const mockLoadProject = vi.fn();
+// Where the site lives (page settings URL preview); a never-published draft.
+const mockGetSiteAddress = vi.fn(
+  async (): Promise<{ status: string; host: string | null; everPublished: boolean }> => ({
+    status: 'draft',
+    host: null,
+    everPublished: false,
+  }),
+);
 const mockFindSiteWorkspaceAmong = vi.fn();
 vi.mock('@/server/sites', async (importActual) => {
   const actual = await importActual<typeof import('@/server/sites')>();
@@ -46,6 +54,7 @@ vi.mock('@/server/sites', async (importActual) => {
     getSiteRepository: () => ({
       loadProject: mockLoadProject,
       findSiteWorkspaceAmong: mockFindSiteWorkspaceAmong,
+      getSiteAddress: mockGetSiteAddress,
     }),
   };
 });
@@ -127,6 +136,26 @@ describe('loadProjectSnapshot — loads the caller-workspace project', () => {
     expect(result.snapshot.id).toBe('site-a1');
     const slugs = Object.values(result.snapshot.pages).map((p) => p.slug);
     expect(slugs).toContain('landing');
+  });
+
+  it('also returns where the site lives, read under the same scope', async () => {
+    mockCookieGet.mockReturnValue({ value: 'sess_a' });
+    mockVerifySession.mockResolvedValue(sessionA());
+    mockLoadProject.mockResolvedValue(projectNode('site-a1'));
+    mockGetSiteAddress.mockResolvedValueOnce({
+      status: 'published',
+      host: 'abc123.sites.lumitra.co',
+      everPublished: true,
+    });
+
+    const result = await loadProjectSnapshot('site-a1');
+
+    expect(mockGetSiteAddress).toHaveBeenCalledWith(
+      { workspaceId: 'ws_a', tenantGroupId: 'tg_a' },
+      'site-a1',
+    );
+    if (result.status !== 'ok') throw new Error('expected ok');
+    expect(result.site).toEqual({ host: 'abc123.sites.lumitra.co', everPublished: true });
   });
 });
 

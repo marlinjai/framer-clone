@@ -15,6 +15,7 @@ import { SiteRepository, type TenantScope } from '../repository';
 import {
   SiteNotFoundError,
   InvalidTenantScopeError,
+  InvalidPageSlugError,
   SubdomainAllocationError,
 } from '../errors';
 
@@ -46,11 +47,13 @@ function makeFakePrisma() {
     deleteMany: vi.fn(),
   };
   const sitePage = {
+    // The stored slugs saveProject checks the incoming ones against; none by default.
+    findMany: vi.fn(async () => [] as Array<{ pageId: string; slug: string }>),
     upsert: vi.fn(),
     deleteMany: vi.fn(),
   };
   const siteDomain = {
-    findFirst: vi.fn(),
+    findFirst: vi.fn(async () => null as unknown),
     create: vi.fn(),
     deleteMany: vi.fn(),
   };
@@ -196,6 +199,156 @@ describe('SiteRepository.saveProject', () => {
 
     const upsertArg = prisma.site.upsert.mock.calls[0][0];
     expect(upsertArg.where).toEqual({ id: 'site_save' });
+  });
+});
+
+describe('SiteRepository.saveProject slug rules and redirects', () => {
+  // A snapshot with a home page and the given extra pages (pageId -> slug).
+  function snapshot(pages: Record<string, string>) {
+    const all: Record<string, unknown> = {
+      home: { id: 'home', slug: '', metadata: { title: 'Home' } },
+    };
+    for (const [id, slug] of Object.entries(pages)) {
+      all[id] = { id, slug, metadata: { title: id } };
+    }
+    return {
+      id: 'site_1',
+      metadata: { title: 'Site', description: '', createdAt: 1, updatedAt: 2 },
+      pages: all,
+    } as never;
+  }
+
+  function existingSite(opts: {
+    stored: Record<string, string>;
+    published: boolean;
+    redirects?: unknown;
+  }) {
+    prisma.site.findUnique.mockResolvedValue({
+      id: 'site_1',
+      workspaceId: 'ws_marlin',
+      redirects: opts.redirects ?? [],
+    });
+    prisma.sitePage.findMany.mockResolvedValue(
+      Object.entries({ home: '', ...opts.stored }).map(([pageId, slug]) => ({ pageId, slug })),
+    );
+    prisma.siteDomain.findFirst.mockResolvedValue(opts.published ? { id: 'dom_1' } : null);
+    prisma.site.upsert.mockResolvedValue({});
+    prisma.sitePage.upsert.mockResolvedValue({});
+    prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
+  }
+
+  it('rejects an invalid changed slug with InvalidPageSlugError and writes nothing', async () => {
+    existingSite({ stored: { about: 'about' }, published: true });
+    const err = await repo.saveProject(SCOPE, snapshot({ about: 'About Us' })).catch((e) => e);
+    expect(err).toBeInstanceOf(InvalidPageSlugError);
+    expect(err.status).toBe(400);
+    expect(err.code).toBe('invalid_page_slug');
+    expect(prisma.site.upsert).not.toHaveBeenCalled();
+    expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects a reserved path, a duplicate and a moved home page', async () => {
+    existingSite({ stored: { about: 'about' }, published: false });
+    await expect(repo.saveProject(SCOPE, snapshot({ about: 'about', x: 'api' }))).rejects.toBeInstanceOf(InvalidPageSlugError);
+    await expect(repo.saveProject(SCOPE, snapshot({ about: 'about', x: 'about' }))).rejects.toBeInstanceOf(InvalidPageSlugError);
+    const movedHome = snapshot({ about: 'about' }) as unknown as { pages: Record<string, { slug: string }> };
+    movedHome.pages.home.slug = 'start';
+    await expect(repo.saveProject(SCOPE, movedHome as never)).rejects.toMatchObject({ reason: 'home_locked' });
+    expect(prisma.site.upsert).not.toHaveBeenCalled();
+  });
+
+  it('accepts an unchanged legacy slug that predates the rules', async () => {
+    existingSite({ stored: { legacy: 'Old_Slug' }, published: true });
+    await repo.saveProject(SCOPE, snapshot({ legacy: 'Old_Slug' }));
+    expect(prisma.site.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the old slug as a redirect when a page of a published site moves', async () => {
+    existingSite({ stored: { about: 'about' }, published: true });
+    await repo.saveProject(SCOPE, snapshot({ about: 'about-us' }));
+    const arg = prisma.site.upsert.mock.calls[0][0];
+    expect(arg.update.redirects).toEqual([
+      { from: 'about', pageId: 'about', createdAt: expect.any(String) },
+    ]);
+    expect(prisma.siteDomain.findFirst).toHaveBeenCalledWith({
+      where: { siteId: 'site_1', subdomain: { not: null } },
+      select: { id: true },
+    });
+  });
+
+  it('records no redirect for a site that was never published', async () => {
+    existingSite({ stored: { about: 'about' }, published: false });
+    await repo.saveProject(SCOPE, snapshot({ about: 'about-us' }));
+    expect(prisma.site.upsert.mock.calls[0][0].update.redirects).toEqual([]);
+  });
+
+  it('drops a stored redirect once a page claims its path', async () => {
+    existingSite({
+      stored: { about: 'about-us' },
+      published: true,
+      redirects: [{ from: 'about', pageId: 'about', createdAt: 't' }],
+    });
+    await repo.saveProject(SCOPE, snapshot({ about: 'about-us', team: 'about' }));
+    expect(prisma.site.upsert.mock.calls[0][0].update.redirects).toEqual([]);
+  });
+
+  it('starts a brand-new site with no redirects', async () => {
+    prisma.site.findUnique.mockResolvedValue(null);
+    prisma.site.upsert.mockResolvedValue({});
+    prisma.sitePage.upsert.mockResolvedValue({});
+    prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
+    await repo.saveProject(SCOPE, snapshot({ about: 'about' }));
+    expect(prisma.sitePage.findMany).not.toHaveBeenCalled();
+    expect(prisma.site.upsert.mock.calls[0][0].create.redirects).toEqual([]);
+  });
+});
+
+describe('SiteRepository.getSiteAddress', () => {
+  const domain = (over: Record<string, unknown>) => ({
+    subdomain: null,
+    customHostname: null,
+    verificationStatus: 'pending',
+    activatedAt: null,
+    createdAt: new Date('2026-01-01'),
+    ...over,
+  });
+
+  it('reads scoped by id AND workspace and throws for a foreign site', async () => {
+    prisma.site.findFirst.mockResolvedValue(null);
+    await expect(repo.getSiteAddress(SCOPE, 'site_x', 'sites.lumitra.co')).rejects.toBeInstanceOf(SiteNotFoundError);
+    expect(prisma.site.findFirst.mock.calls[0][0].where).toEqual({ id: 'site_x', workspaceId: 'ws_marlin' });
+  });
+
+  it('is unpublished with no address before the first publish', async () => {
+    prisma.site.findFirst.mockResolvedValue({ status: 'draft', domains: [] });
+    expect(await repo.getSiteAddress(SCOPE, 'site_1', 'sites.lumitra.co')).toEqual({
+      status: 'draft',
+      host: null,
+      everPublished: false,
+    });
+  });
+
+  it('uses the platform subdomain under the base host', async () => {
+    prisma.site.findFirst.mockResolvedValue({
+      status: 'published',
+      domains: [domain({ subdomain: 'abc123', verificationStatus: 'active' })],
+    });
+    expect(await repo.getSiteAddress(SCOPE, 'site_1', 'sites.lumitra.co')).toMatchObject({
+      host: 'abc123.sites.lumitra.co',
+      everPublished: true,
+    });
+  });
+
+  it('prefers a serving custom domain, never a pending one', async () => {
+    prisma.site.findFirst.mockResolvedValue({
+      status: 'published',
+      domains: [
+        domain({ subdomain: 'abc123', verificationStatus: 'active' }),
+        domain({ customHostname: 'pending.example', verificationStatus: 'pending' }),
+        domain({ customHostname: 'www.bakery.example', verificationStatus: 'active', activatedAt: new Date('2026-02-01') }),
+      ],
+    });
+    expect((await repo.getSiteAddress(SCOPE, 'site_1', 'sites.lumitra.co')).host).toBe('www.bakery.example');
   });
 });
 

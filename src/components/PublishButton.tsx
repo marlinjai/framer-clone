@@ -17,6 +17,7 @@ import { getSnapshot } from 'mobx-state-tree';
 import { UploadCloud } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
+import { useSiteAddress } from '@/contexts/SiteAddressContext';
 
 type PublishState =
   | { kind: 'idle' }
@@ -36,6 +37,7 @@ type PublishState =
 const PublishButton = observer(() => {
   const rootStore = useStore();
   const project = rootStore.editorUI.currentProject;
+  const { address, setAddress } = useSiteAddress();
   const [state, setState] = React.useState<PublishState>({ kind: 'idle' });
 
   const publish = React.useCallback(async () => {
@@ -71,6 +73,15 @@ const PublishButton = observer(() => {
       const subdomain = typeof ok?.subdomain === 'string' ? ok.subdomain : null;
       const liveLabel =
         liveUrl?.replace(/^https?:\/\//, '') ?? subdomain ?? null;
+      // The site now lives somewhere: tell the page settings panel, keeping a
+      // custom domain the loader already reported over the platform address.
+      let liveHost: string | null = null;
+      try {
+        liveHost = liveUrl ? new URL(liveUrl).host : null;
+      } catch {
+        liveHost = null;
+      }
+      setAddress({ host: address.host ?? liveHost, everPublished: true });
       setState({
         kind: 'success',
         message: `Published ${count} ${count === 1 ? 'page' : 'pages'}.`,
@@ -84,7 +95,7 @@ const PublishButton = observer(() => {
           err instanceof Error ? err.message : 'Network error while publishing.',
       });
     }
-  }, [project]);
+  }, [project, address.host, setAddress]);
 
   const publishing = state.kind === 'publishing';
 

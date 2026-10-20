@@ -16,6 +16,7 @@ import {
 } from '@testing-library/react';
 import ProjectModel from '@/models/ProjectModel';
 import PublishButton from '../PublishButton';
+import { SiteAddressProvider, useSiteAddress } from '@/contexts/SiteAddressContext';
 
 // A real MST project so getSnapshot(project) in the component works unmocked.
 function makeProject() {
@@ -142,6 +143,29 @@ describe('PublishButton', () => {
 
     await waitFor(() =>
       expect(screen.getByRole('alert').textContent).toContain('offline'),
+    );
+  });
+
+  it('tells the page settings panel where the site now lives', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ publishedPages: [''], liveUrl: 'https://abc123.sites.lumitra.co', subdomain: 'abc123' }),
+    });
+    const Address = () => {
+      const { address } = useSiteAddress();
+      return <span data-testid="address">{`${address.host ?? 'none'}|${address.everPublished}`}</span>;
+    };
+    render(
+      <SiteAddressProvider>
+        <PublishButton />
+        <Address />
+      </SiteAddressProvider>,
+    );
+    expect(screen.getByTestId('address').textContent).toBe('none|false');
+    fireEvent.click(screen.getByRole('button', { name: /publish/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId('address').textContent).toBe('abc123.sites.lumitra.co|true'),
     );
   });
 });

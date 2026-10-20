@@ -40,6 +40,7 @@ import {
   SiteNotFoundError,
 } from '@/server/sites';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
+import type { SiteAddress } from '@/contexts/SiteAddressContext';
 
 // Same default + cookie name the rest of the app uses (auth-brain.ts /
 // auth-api.ts / the MT-09 dashboard loader). The build has no runtime env; this
@@ -47,12 +48,14 @@ import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 const AUTH_BRAIN_URL = process.env.AUTH_BRAIN_URL ?? 'https://auth.lumitra.co';
 const SESSION_COOKIE = 'lumitra_session';
 
+export type { SiteAddress };
+
 export type ProjectLoadResult =
   | { status: 'unauthenticated'; loginUrl: string }
   | { status: 'auth_unavailable' }
   | { status: 'choose_company'; chooserUrl: string }
   | { status: 'not_found' }
-  | { status: 'ok'; snapshot: ProjectSnapshotOut };
+  | { status: 'ok'; snapshot: ProjectSnapshotOut; site: SiteAddress };
 
 /**
  * Build the auth-brain login URL whose `return_to` brings the user back to this
@@ -140,12 +143,13 @@ export async function loadProjectSnapshot(
     // workspace_id is in loadProject's where-clause: a cross-workspace id throws
     // SiteNotFoundError here, indistinguishable from a missing site, so a
     // foreign tenant's existence never leaks and its project is never rendered.
-    const project = await getSiteRepository().loadProject(
-      scopeResult.scope,
-      projectId,
-    );
+    const repo = getSiteRepository();
+    const project = await repo.loadProject(scopeResult.scope, projectId);
     const snapshot = getSnapshot(project) as ProjectSnapshotOut;
-    return { status: 'ok', snapshot };
+    // Where the site lives, for the page settings URL preview and its
+    // "old links will redirect" note. Same scope, so it cannot leak either.
+    const { host, everPublished } = await repo.getSiteAddress(scopeResult.scope, projectId);
+    return { status: 'ok', snapshot, site: { host, everPublished } };
   } catch (err) {
     if (err instanceof SiteNotFoundError) {
       // The link may point at a project of ANOTHER of the caller's companies

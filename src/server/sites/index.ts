@@ -18,6 +18,7 @@ export {
   SiteRepositoryError,
   SiteNotFoundError,
   InvalidTenantScopeError,
+  InvalidPageSlugError,
   siteRepositoryErrorResponse,
 } from './errors';
 

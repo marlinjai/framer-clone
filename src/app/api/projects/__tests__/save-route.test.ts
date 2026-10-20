@@ -204,3 +204,66 @@ describe('POST /api/projects/save (authorized)', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 });
+
+// The save path enforces the slug rules itself (src/lib/pages/slug.ts), so a
+// request built by hand cannot store a slug the editor would refuse. The REAL
+// repository runs here over a fake Prisma, so the route + repository + rules
+// are exercised together without a database.
+describe('POST /api/projects/save slug rules (real repository)', () => {
+  // Bypass the module mock: the real class, imported from its own module.
+  async function installRealRepo(stored: Record<string, string>) {
+    const { SiteRepository } = await vi.importActual<typeof import('@/server/sites/repository')>(
+      '@/server/sites/repository',
+    );
+    const prisma = {
+      site: {
+        findUnique: vi.fn(async () => ({ id: 'site_1', workspaceId: 'ws_marlin', redirects: [] })),
+        upsert: vi.fn(async () => ({})),
+      },
+      sitePage: {
+        findMany: vi.fn(async () => Object.entries(stored).map(([pageId, slug]) => ({ pageId, slug }))),
+        upsert: vi.fn(async () => ({})),
+        deleteMany: vi.fn(async () => ({ count: 0 })),
+      },
+      siteDomain: { findFirst: vi.fn(async () => ({ id: 'dom_1' })) },
+      $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
+    };
+    getRepoMock.mockReturnValue(new SiteRepository(prisma as never) as ReturnType<typeof getSiteRepository>);
+    return prisma;
+  }
+
+  beforeEach(() => {
+    mockVerifySession.mockResolvedValue(makeSession());
+    mockCan.mockResolvedValue(true);
+  });
+
+  it.each([
+    ['uppercase and spaces', 'About Us'],
+    ['a reserved path', 'api'],
+    ['a second home page (empty slug)', ''],
+    ['a leading slash', '/about'],
+  ])('400s invalid_page_slug for %s and writes nothing', async (_label, slug) => {
+    const prisma = await installRealRepo({ page_home: '', page_about: 'about' });
+    const body = { project: { ...PROJECT, pages: { ...PROJECT.pages, page_about: { slug } } } };
+
+    const res = await POST(saveReq(body));
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe('invalid_page_slug');
+    expect(prisma.site.upsert).not.toHaveBeenCalled();
+    expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
+  });
+
+  it('saves a valid slug change and records the old path as a redirect', async () => {
+    const prisma = await installRealRepo({ page_home: '', page_about: 'about' });
+    const body = { project: { ...PROJECT, pages: { ...PROJECT.pages, page_about: { slug: 'about-us' } } } };
+
+    const res = await POST(saveReq(body));
+
+    expect(res.status).toBe(200);
+    const siteUpsert = (prisma.site.upsert.mock.calls[0] as unknown as [{ update: { redirects: unknown } }])[0];
+    expect(siteUpsert.update.redirects).toEqual([
+      { from: 'about', pageId: 'page_about', createdAt: expect.any(String) },
+    ]);
+  });
+});

@@ -31,11 +31,19 @@ vi.mock('@/lib/auth-brain', () => ({
 }));
 
 const mockLoadProject = vi.fn();
+// Where the site lives (page settings URL preview); a never-published draft.
+const mockGetSiteAddress = vi.fn(
+  async (): Promise<{ status: string; host: string | null; everPublished: boolean }> => ({
+    status: 'draft',
+    host: null,
+    everPublished: false,
+  }),
+);
 vi.mock('@/server/sites', async (importActual) => {
   const actual = await importActual<typeof import('@/server/sites')>();
   return {
     ...actual,
-    getSiteRepository: () => ({ loadProject: mockLoadProject }),
+    getSiteRepository: () => ({ loadProject: mockLoadProject, getSiteAddress: mockGetSiteAddress }),
   };
 });
 

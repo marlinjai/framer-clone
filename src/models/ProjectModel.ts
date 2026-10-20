@@ -4,6 +4,7 @@ import { types, Instance, SnapshotIn, SnapshotOut } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 import PageModel, { PageModelType } from './PageModel';
 import { createIntrinsicComponent, createViewportNode, type ComponentSnapshotIn } from './ComponentModel';
+import { suggestSlug, validateSlug, type SlugValidation } from '@/lib/pages/slug';
 
 // ---- Lumitra Studio binding ---------------------------------------------
 //
@@ -41,11 +42,16 @@ export const LumitraBindingModel = types
 
 export type LumitraBindingType = Instance<typeof LumitraBindingModel>;
 
-function slugify(input: string): string {
-  const base = input.trim().toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return base || 'page';
+/** The outcome of ProjectModel.updatePageSettings: per-field problems, if any. */
+export type PageSettingsResult =
+  | { ok: true }
+  | { ok: false; errors: { title?: string; slug?: string } };
+
+/** What the page settings panel can change in one go. */
+export interface PageSettingsInput {
+  title: string;
+  slug: string;
+  description: string;
 }
 
 // Project metadata model
@@ -117,17 +123,12 @@ export const ProjectModel = types
 
     // Create a fresh page with default viewports and an empty app tree root.
     // Title defaults to "Page N" where N is one past the current page count.
-    // The slug is derived from the title; on collision a `-<short-uuid>`
-    // suffix is appended so every page has a unique URL path.
+    // The slug is suggested from the title by the shared slug rules
+    // (src/lib/pages/slug.ts): transliterated, capped, never reserved, and on
+    // collision suffixed `-2`, `-3`, ... so every page has a unique URL path.
     createPage(title?: string): PageModelType {
-      const existingSlugs = new Set(
-        Array.from(self.pages.values()).map(p => p.slug),
-      );
       const effectiveTitle = (title && title.trim()) || `Page ${self.pages.size + 1}`;
-      let slug = slugify(effectiveTitle);
-      if (existingSlugs.has(slug)) {
-        slug = `${slug}-${uuidv4().slice(0, 6)}`;
-      }
+      const slug = suggestSlug(effectiveTitle, Array.from(self.pages.values(), p => p.slug));
 
       const desktopBreakpointId = uuidv4();
       const tabletBreakpointId = uuidv4();
@@ -192,10 +193,8 @@ export const ProjectModel = types
         height: number;
       }>;
     }): PageModelType {
-      const existingSlugs = new Set(Array.from(self.pages.values()).map(p => p.slug));
       const title = input.title.trim() || `Page ${self.pages.size + 1}`;
-      let slug = slugify(title);
-      if (existingSlugs.has(slug) || slug === '') slug = `${slug || 'page'}-${uuidv4().slice(0, 6)}`;
+      const slug = suggestSlug(title, Array.from(self.pages.values(), p => p.slug));
 
       const canvasNodes: Record<string, ReturnType<typeof createViewportNode>> = {};
       for (const v of input.viewports) {
@@ -242,21 +241,62 @@ export const ProjectModel = types
       return true;
     },
 
-    // Set a page's slug with project-wide uniqueness enforcement. Returns
-    // false when the requested slug is already taken by a different page so
-    // the UI can signal "try another". Empty slugs are rejected — routing
-    // assumes every page has one.
-    setPageSlug(pageId: string, rawSlug: string): boolean {
+    // Set a page's slug through the shared rules (format, reserved paths,
+    // project-wide uniqueness). Returns the validation result so the UI can
+    // explain a refusal. The home page (empty slug) always lives at the site
+    // root, so its slug never changes. Nothing is rewritten silently: an
+    // invalid slug is refused, not normalized.
+    setPageSlug(pageId: string, slug: string): SlugValidation {
       const page = self.pages.get(pageId);
-      if (!page) return false;
-      const slug = slugify(rawSlug);
-      if (!slug) return false;
-      for (const other of self.pages.values()) {
-        if (other.id !== pageId && other.slug === slug) return false;
+      if (!page) return { ok: false, code: 'empty', message: 'This page no longer exists.' };
+      if (page.slug === '') {
+        return { ok: false, code: 'home_locked', message: 'The home page always lives at the site root.' };
       }
+      if (slug === page.slug) return { ok: true };
+      const result = validateSlug(slug, {
+        pageId,
+        pages: Array.from(self.pages.values(), p => ({ id: p.id, slug: p.slug })),
+      });
+      if (!result.ok) return result;
       page.setSlug(slug);
       self.metadata.updatedAt = new Date();
-      return true;
+      return { ok: true };
+    },
+
+    // The page settings panel's save: name, slug and meta description in ONE
+    // action, so it is one undo step and one history entry. All fields are
+    // validated first; on any problem nothing changes. An unchanged slug is
+    // not re-validated (pages from before the slug rules keep theirs), and the
+    // home page's slug can never change.
+    updatePageSettings(pageId: string, input: PageSettingsInput): PageSettingsResult {
+      const page = self.pages.get(pageId);
+      if (!page) return { ok: false, errors: { title: 'This page no longer exists.' } };
+      const errors: { title?: string; slug?: string } = {};
+      const title = input.title.trim();
+      if (!title) errors.title = 'Enter a page name.';
+      const slugChanged = input.slug !== page.slug;
+      if (slugChanged) {
+        if (page.slug === '') {
+          errors.slug = 'The home page always lives at the site root.';
+        } else {
+          const result = validateSlug(input.slug, {
+            pageId,
+            pages: Array.from(self.pages.values(), p => ({ id: p.id, slug: p.slug })),
+          });
+          if (!result.ok) errors.slug = result.message;
+        }
+      }
+      if (errors.title || errors.slug) return { ok: false, errors };
+
+      const description = input.description.trim();
+      const metadataChanged =
+        title !== page.metadata.title || description !== page.metadata.description;
+      // Nothing changed: no mutation, so no empty undo step.
+      if (!metadataChanged && !slugChanged) return { ok: true };
+      if (metadataChanged) page.updateMetadata({ title, description });
+      if (slugChanged) page.setSlug(input.slug);
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
     },
     
     // Update project metadata

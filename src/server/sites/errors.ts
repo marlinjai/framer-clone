@@ -70,6 +70,24 @@ export class SubdomainAllocationError extends SiteRepositoryError {
 }
 
 /**
+ * A page slug in the saved snapshot breaks the slug rules (src/lib/pages/slug.ts):
+ * a new or changed slug that is malformed, reserved or already used by another
+ * page, or a change to the home page's slug. The editor checks the same rules
+ * before it ever sends a slug, so this is the server's own guarantee against a
+ * request built by hand. Nothing is written. 400.
+ */
+export class InvalidPageSlugError extends SiteRepositoryError {
+  readonly pageId: string;
+  readonly reason: string;
+
+  constructor(pageId: string, reason: string, message: string) {
+    super('invalid_page_slug', message, 400);
+    this.pageId = pageId;
+    this.reason = reason;
+  }
+}
+
+/**
  * Map any {@link SiteRepositoryError} to its Track-0 error envelope. A route
  * matches `instanceof SiteRepositoryError` once and returns this.
  */

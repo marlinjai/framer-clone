@@ -113,6 +113,10 @@ function fakePrisma(): PrismaClient {
             ingestionEndpoint: 'https://ingest',
             apiKeyRef: 'AP_KEY_REF_X',
             lumitraEnabled: true,
+            redirects: [
+              { from: 'old-about', pageId: 'p1', createdAt: '2026-10-21T10:00:00.000Z' },
+              'malformed',
+            ],
             pages,
           };
         }
@@ -136,6 +140,13 @@ describe('resolvePublishedSite', () => {
     expect(site).not.toBeNull();
     expect(site!.workspaceId).toBe('framer-clone');
     expect(site!.tenantGroupId).toBe('demo-tenant-group');
+  });
+
+  it('carries the old-slug redirects, ignoring malformed entries', async () => {
+    const site = await resolvePublishedSite('demo.lumitra.site', fakePrisma(), 'lumitra.site');
+    expect(site!.redirects).toEqual([
+      { from: 'old-about', pageId: 'p1', createdAt: '2026-10-21T10:00:00.000Z' },
+    ]);
   });
 
   it('returns null for an unknown subdomain', async () => {
@@ -254,6 +265,13 @@ describe('matchPageBySlug', () => {
     expect(fromSentinel?.page.slug).toBe('');
     expect(fromSentinel?.page.slug).toBe(fromEmpty?.page.slug);
     expect(fromSentinel?.params).toEqual({});
+  });
+
+  it('prefers the empty-slug home page over a page slugged home, whatever the order', () => {
+    const m = matchPageBySlug(pages(['home', 'about', '']), [HOME_REWRITE_SENTINEL]);
+    expect(m?.page.slug).toBe('');
+    // ...and the page slugged `home` is still served at /home.
+    expect(matchPageBySlug(pages(['home', 'about', '']), ['home'])?.page.slug).toBe('home');
   });
 
   it('resolves a "home" alias slug via the sentinel', () => {

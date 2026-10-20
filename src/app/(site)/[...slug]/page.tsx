@@ -28,7 +28,8 @@
 import React, { cache } from 'react';
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
-import { notFound } from 'next/navigation';
+import { notFound, permanentRedirect } from 'next/navigation';
+import { findRedirectTarget } from '@/lib/pages/redirects';
 
 import {
   matchPageBySlug,
@@ -56,6 +57,24 @@ export const runtime = 'nodejs';
 
 interface SitePageProps {
   params: Promise<{ slug?: string[] }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}
+
+/**
+ * The query string of the request, rebuilt from Next's parsed search params so
+ * an old-slug redirect keeps it (`/old?ref=x` -> `/new?ref=x`). Empty or `?...`.
+ */
+async function queryStringOf(
+  searchParams: SitePageProps['searchParams'],
+): Promise<string> {
+  const parsed = (await searchParams) ?? {};
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(parsed)) {
+    if (Array.isArray(value)) for (const v of value) query.append(key, v);
+    else if (value !== undefined) query.append(key, value);
+  }
+  const text = query.toString();
+  return text ? `?${text}` : '';
 }
 
 /**
@@ -91,10 +110,18 @@ export async function generateMetadata({ params }: SitePageProps): Promise<Metad
   return pageSeoToMetadata(adapted.metadata);
 }
 
-export default async function SitePage({ params }: SitePageProps) {
+export default async function SitePage({ params, searchParams }: SitePageProps) {
   const { slug } = await params;
   const site = await resolveSiteForRequest();
   const matched = resolvePage(site, slug);
+  // No page at this path, but a page used to live here (its slug changed
+  // after the site was published): a permanent redirect (308) to the page's
+  // current path, relative so a custom domain stays on its own host. A page
+  // always wins over a redirect, since this runs only when nothing matched.
+  if (site && !matched) {
+    const target = findRedirectTarget(site.redirects ?? [], site.pages, slug ?? []);
+    if (target !== null) permanentRedirect(`/${target}${await queryStringOf(searchParams)}`);
+  }
   // A missing site OR no matching page -> 404 (never a blank 200).
   if (!site || !matched) notFound();
 
