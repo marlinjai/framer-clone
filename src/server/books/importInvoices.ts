@@ -16,7 +16,8 @@
 //
 //   - the record is parsed (INVALID_INPUT naming the fields, never values), the
 //     bytes must be a PDF, the issue date not in the future;
-//   - its number is the printed one (never allocated), and must lie below the
+//   - its number is the printed one, stored as printed (never allocated, never
+//     reformatted through the counter's format), and must lie below the
 //     company's invoice counter, which is never moved (COUNTER_MISSING,
 //     IMPORT_COUNTER_TOO_LOW);
 //   - a number already present is `already_imported` when it is an import whose
@@ -48,7 +49,7 @@ import type { CommerceDB, CustomerType } from '../commerce/db-types';
 import { resolveTaxProfile } from '../tax/germanVat';
 import type { ContactBook } from './contactBook';
 import { BooksError, constraintName, invalid, isBooksError, sqlState, withDbErrors } from './errors';
-import { berlinToday, formatDocumentNumber, isIsoDate } from './numbering';
+import { berlinToday, isIsoDate } from './numbering';
 import { insertEvent } from './repository/events';
 import { createCustomer, customersByContactIds } from './repository/customers';
 import type { BooksScope } from './scope';
@@ -107,7 +108,8 @@ const lineSchema = z
     if (l.kind === 'service' && l.quantity === 0) ctx.addIssue({ code: 'custom', path: ['quantity'], message: 'a billable line has a quantity' });
   });
 
-const recipientSchema = z.object({
+const recipientSchema = z
+  .object({
   kind: z.enum(['person', 'organization']),
   name: text(160),
   /** The printed address lines, verbatim, when known. */
@@ -122,7 +124,11 @@ const recipientSchema = z.object({
   customerNumberText: z.string().max(64).nullable(),
   /** Normalized (upper case, no spaces). */
   vatId: z.string().regex(/^[A-Z]{2}[A-Z0-9+*]{2,13}$/, 'expected a VAT id such as DE123456789').nullable(),
-});
+})
+  .superRefine((r, ctx) => {
+    // The contacts package's limit for a person's name (an organization's is 160).
+    if (r.kind === 'person' && r.name.length > 120) ctx.addIssue({ code: 'custom', path: ['name'], message: 'a person name has at most 120 characters' });
+  });
 
 /** The issuer as printed on the invoice: the sender block's fields, plus the printed lines when known. */
 const senderSchema = senderBlockV1Schema.extend({ addressLines: printedLines }).superRefine((s, ctx) => {
@@ -139,6 +145,12 @@ const provenanceSchema = z
     senderVatIdPrinted: z.boolean(),
     serviceDateUnparsed: z.boolean(),
     paidOnPresent: z.boolean(),
+    /** The printed payment terms could not be read: `paymentTermsDays` 0 and no due date are a fallback, not the print. */
+    paymentTermsUnparsed: z.boolean(),
+    /** A recipient VAT id was printed but is not a valid one; the record carries none. */
+    recipientVatIdUnparsed: z.boolean(),
+    /** The recipient's country was not printed; the record's country was inferred. */
+    recipientCountryInferred: z.boolean(),
     confidence: z.enum(['high', 'medium', 'low']),
   })
   .partial()
@@ -248,7 +260,7 @@ export async function checkImportCounter(
 
 export type ExistingNumber =
   | { state: 'absent' }
-  | { state: 'imported'; documentId: string; sha256: string | null }
+  | { state: 'imported'; documentId: string; sha256: string | null; total: number; issueDate: string | null }
   | { state: 'other'; documentId: string };
 
 /** What the company's books hold under an invoice number. */
@@ -260,19 +272,56 @@ export async function existingInvoice(db: Db, scope: BooksScope, numberValue: nu
         .onRef('sales_document_file.tenant_id', '=', 'sales_document.tenant_id')
         .onRef('sales_document_file.document_id', '=', 'sales_document.id'),
     )
-    .select(['sales_document.id', 'sales_document.source', 'sales_document_file.sha256'])
+    .select((eb) => [
+      'sales_document.id',
+      'sales_document.source',
+      'sales_document.total',
+      eb.cast<string | null>('sales_document.issue_date', 'text').as('issue_date'),
+      'sales_document_file.sha256',
+    ])
     .where('sales_document.tenant_id', '=', scope.tenantId)
     .where('sales_document.doc_type', '=', 'invoice')
     .where('sales_document.number_value', '=', String(numberValue))
     .executeTakeFirst();
   if (!row) return { state: 'absent' };
   if (row.source !== 'import') return { state: 'other', documentId: row.id };
-  return { state: 'imported', documentId: row.id, sha256: row.sha256 ?? null };
+  return { state: 'imported', documentId: row.id, sha256: row.sha256 ?? null, total: row.total, issueDate: row.issue_date };
+}
+
+/**
+ * What the import holds in the company's books, per issue year: the count and
+ * the sum of the totals (cents) of every invoice with `source = 'import'`. The
+ * figures to compare with the filed returns, read from the books themselves.
+ */
+export async function importedYearTotals(db: Db, scope: BooksScope): Promise<Array<{ year: string; count: number; total: number }>> {
+  const rows = await db
+    .selectFrom('sales_document')
+    .select((eb) => [
+      sql<string>`to_char(${eb.ref('sales_document.issue_date')}, 'YYYY')`.as('year'),
+      sql<string>`count(*)`.as('count'),
+      sql<string>`coalesce(sum(${eb.ref('sales_document.total')}), 0)`.as('total'),
+    ])
+    .where('sales_document.tenant_id', '=', scope.tenantId)
+    .where('sales_document.doc_type', '=', 'invoice')
+    .where('sales_document.source', '=', 'import')
+    .groupBy(sql`1`)
+    .orderBy(sql`1`)
+    .execute();
+  return rows.map((r) => ({ year: r.year, count: Number(r.count), total: Number(r.total) }));
 }
 
 export type ImportResult =
   | { status: 'imported'; documentId: string }
-  | { status: 'already_imported'; documentId: string };
+  | {
+      status: 'already_imported';
+      documentId: string;
+      /**
+       * True when the stored document's total or issue date differs from the
+       * record (same original, data corrected since). Nothing is changed: the
+       * caller reports it, so the difference is never silent.
+       */
+      differs: boolean;
+    };
 
 function conflict(numberValue: number, documentId: string, why: string): BooksError {
   return new BooksError('IMPORT_CONFLICT', `IMPORT_CONFLICT: invoice ${numberValue} ${why}; nothing was changed`, {
@@ -281,12 +330,18 @@ function conflict(numberValue: number, documentId: string, why: string): BooksEr
   });
 }
 
-/** Decide what an existing number means for an original with this digest. */
-export function judgeExisting(existing: ExistingNumber, numberValue: number, sha256: string): ImportResult | null {
+/** Decide what an existing number means for an original with this digest (and, given the record, whether its data still agrees). */
+export function judgeExisting(
+  existing: ExistingNumber,
+  numberValue: number,
+  sha256: string,
+  record?: Pick<HistoricalInvoice, 'total' | 'issueDate'>,
+): ImportResult | null {
   if (existing.state === 'absent') return null;
   if (existing.state === 'other') throw conflict(numberValue, existing.documentId, 'already exists as a document of this system');
   if (existing.sha256 !== sha256) throw conflict(numberValue, existing.documentId, 'was imported with a different file');
-  return { status: 'already_imported', documentId: existing.documentId };
+  const differs = record !== undefined && (existing.total !== record.total || existing.issueDate !== record.issueDate);
+  return { status: 'already_imported', documentId: existing.documentId, differs };
 }
 
 // --- recipients ----------------------------------------------------------------------
@@ -313,8 +368,8 @@ export interface RecipientStats {
 /**
  * What a batch of imports shares: the customers already resolved (one lookup
  * per client), the counts, and per client the recipient data a NEW contact is
- * created with (the batch passes the client's most recent invoice; without it
- * the invoice's own recipient is used).
+ * created with (the CLI passes the client's highest-numbered invoice in the
+ * input; without it the invoice's own recipient is used).
  */
 export interface ImportSession {
   readonly customers: Map<string, ImportCustomerRef>;
@@ -342,11 +397,28 @@ function sameAddress(a: { addressLine1: string | null; postalCode: string | null
   return n(a.addressLine1) === n(b.addressLine1) && n(a.postalCode) === n(b.postalCode) && n(a.city) === n(b.city);
 }
 
+/**
+ * The company's contact for a printed name: the organization of that name, else
+ * the person of that name without a company or role, else the ONE person of
+ * that name whatever their company or role (a person's identity includes it,
+ * which the print does not tell). Two or more such persons are
+ * RECIPIENT_AMBIGUOUS: the import never guesses between clients.
+ */
 async function findContact(scope: BooksScope, book: ContactBook, name: string): Promise<RecipientContact | null> {
-  return (
+  const exact =
     (await book.findSame(scope.tenantId, { kind: 'organization', name })) ??
-    (await book.findSame(scope.tenantId, { kind: 'person', name, companyOrRole: '' }))
+    (await book.findSame(scope.tenantId, { kind: 'person', name, companyOrRole: '' }));
+  if (exact) return exact;
+  const key = contactIdentityKey('person', name, '');
+  const persons = (await book.search(scope.tenantId, { search: name, limit: 50 })).filter(
+    (c) => c.kind === 'person' && contactIdentityKey('person', c.name, '') === key,
   );
+  if (persons.length > 1) {
+    throw new BooksError('RECIPIENT_AMBIGUOUS', 'RECIPIENT_AMBIGUOUS: more than one person contact carries this name', {
+      contactIds: persons.map((c) => c.id),
+    });
+  }
+  return persons[0] ?? null;
 }
 
 /**
@@ -357,8 +429,10 @@ async function findContact(scope: BooksScope, book: ContactBook, name: string): 
  * ignored; an organization is looked up first, then a person). That package
  * holds one contact per identity, so a matching name with a different address
  * is the same client at another address: the contact is reused unchanged and
- * counted. A new contact gets the session's data for that client (its most
- * recent invoice) or this invoice's. The customer row is the existing one for
+ * counted. A new contact gets the session's data for that client (its
+ * highest-numbered invoice) or this invoice's. A person is also matched
+ * whatever their company or role when exactly one person carries the name;
+ * two or more are RECIPIENT_AMBIGUOUS. The customer row is the existing one for
  * that contact, else a new one (business for an organization) with the
  * printed VAT id.
  */
@@ -442,7 +516,7 @@ export function importCustomerSnapshot(record: HistoricalInvoice, customer: Impo
     city: r.city,
     country: r.country,
     customerNumber: r.customerNumber,
-    customerType: customer.customerType,
+    customerType: printedCustomerType(record),
     vatId: r.vatId,
     taxNumber: null,
     ...(r.addressLines ? { addressLines: r.addressLines } : {}),
@@ -453,6 +527,28 @@ export function importCustomerSnapshot(record: HistoricalInvoice, customer: Impo
 /** The sender exactly as the record gives it (the CLI: as printed; the upload: the company's sender block). */
 export function importSenderSnapshot(record: HistoricalInvoice): SenderSnapshotV1 {
   return senderSnapshotV1Schema.parse({ v: 1, ...record.sender });
+}
+
+/** Business or consumer as printed: an organization is a business. */
+export function printedCustomerType(record: HistoricalInvoice): CustomerType {
+  return record.recipient.kind === 'organization' ? 'b2b' : 'b2c';
+}
+
+/**
+ * The document's frozen tax fields, from THIS invoice's printed recipient (never
+ * from today's customer row, which may have changed since): business or
+ * consumer, VAT id, country, and the small-business profile key they give.
+ */
+export function importTaxFields(record: HistoricalInvoice) {
+  const customerType = printedCustomerType(record);
+  const profile = resolveTaxProfile({
+    companyTaxStatus: 'small_business',
+    exemptionNote: record.taxNote,
+    customerType,
+    vatId: record.recipient.vatId,
+    countryCode: record.recipient.country,
+  });
+  return { customerType, vatId: record.recipient.vatId, taxProfileKey: profile.key };
 }
 
 /** `issued_at` of an imported invoice: noon UTC of its issue date, the same calendar day in every European time zone. */
@@ -475,13 +571,18 @@ export async function previewHistoricalInvoice(
   pdf: Uint8Array,
   session: ImportSession,
   opts: { now?: Date } = {},
-): Promise<{ status: 'would_import' | 'already_imported'; record: HistoricalInvoice }> {
+): Promise<
+  | { status: 'would_import'; record: HistoricalInvoice }
+  | { status: 'already_imported'; differs: boolean; record: HistoricalInvoice }
+> {
   const record = parseHistoricalInvoice(input, opts.now);
   const original = checkOriginal(pdf);
   await checkImportCounter(scope.db, scope, [record.numberValue]);
-  if (judgeExisting(await existingInvoice(scope.db, scope, record.numberValue), record.numberValue, original.sha256)) {
-    return { status: 'already_imported', record };
-  }
+  const existing = judgeExisting(await existingInvoice(scope.db, scope, record.numberValue), record.numberValue, original.sha256, record);
+  if (existing?.status === 'already_imported') return { status: 'already_imported', differs: existing.differs, record };
+  // Build what the write would build, so a preview refuses what the import would.
+  importSenderSnapshot(record);
+  importCustomerSnapshot(record, { customerId: 'preview', contactId: 'preview', customerType: printedCustomerType(record), vatId: null, countryCode: record.recipient.country });
   const key = recipientKey(record.recipient);
   if (!session.customers.has(key) && !session.previewed.has(key)) {
     session.previewed.add(key);
@@ -515,19 +616,13 @@ export async function importHistoricalInvoice(
 
   // Cheap refusals before anything is created in the contacts database.
   await checkImportCounter(scope.db, scope, [record.numberValue]);
-  const before = judgeExisting(await existingInvoice(scope.db, scope, record.numberValue), record.numberValue, original.sha256);
+  const before = judgeExisting(await existingInvoice(scope.db, scope, record.numberValue), record.numberValue, original.sha256, record);
   if (before) return before;
 
   const customer = await resolveImportRecipient(scope, book, record.recipient, session);
   const customerSnapshot = importCustomerSnapshot(record, customer);
   const senderSnapshot = importSenderSnapshot(record);
-  const profile = resolveTaxProfile({
-    companyTaxStatus: 'small_business',
-    exemptionNote: record.taxNote,
-    customerType: customer.customerType,
-    vatId: customer.vatId,
-    countryCode: customer.countryCode,
-  });
+  const tax = importTaxFields(record);
   const taxSummary: TaxSummary = [{ taxRate: 0, taxTreatment: 'kleinunternehmer', net: record.total, tax: 0 }];
 
   try {
@@ -538,8 +633,8 @@ export async function importHistoricalInvoice(
         .execute(async (trx) => {
           // The counter row FOR SHARE: the number check holds until commit (the
           // counter only ever moves up, and an issue would wait for this lock).
-          const counter = await checkImportCounter(trx, scope, [record.numberValue], { forShare: true });
-          const judged = judgeExisting(await existingInvoice(trx, scope, record.numberValue), record.numberValue, original.sha256);
+          await checkImportCounter(trx, scope, [record.numberValue], { forShare: true });
+          const judged = judgeExisting(await existingInvoice(trx, scope, record.numberValue), record.numberValue, original.sha256, record);
           if (judged) return judged;
 
           const documentId = randomUUID();
@@ -585,7 +680,8 @@ export async function importHistoricalInvoice(
               source: 'import',
               customer_id: customer.customerId,
               template_id: null,
-              document_number: formatDocumentNumber(counter.format, record.numberValue),
+              // The number exactly as printed (the historical series is plain integers).
+              document_number: String(record.numberValue),
               number_value: String(record.numberValue),
               issue_date: record.issueDate,
               service_date: record.serviceDate,
@@ -595,13 +691,13 @@ export async function importHistoricalInvoice(
               payment_terms_days: record.paymentTermsDays,
               currency_code: 'EUR',
               tax_region: 'DE',
-              customer_type: customer.customerType,
-              vat_id: customer.vatId,
+              customer_type: tax.customerType,
+              vat_id: tax.vatId,
               reverse_charge: false,
               net_or_gross: 'net',
               kleinunternehmer: true,
               tax_note: record.taxNote,
-              tax_profile_key: profile.key,
+              tax_profile_key: tax.taxProfileKey,
               subtotal: record.total,
               tax_amount: 0,
               total: record.total,
@@ -657,7 +753,7 @@ export async function importHistoricalInvoice(
   } catch (err) {
     // Two runs racing on one number: the loser sees the winner's row.
     if (sqlState(err) === '23505' && String(constraintName(err)).startsWith('sales_document_number')) {
-      const judged = judgeExisting(await existingInvoice(scope.db, scope, record.numberValue), record.numberValue, original.sha256);
+      const judged = judgeExisting(await existingInvoice(scope.db, scope, record.numberValue), record.numberValue, original.sha256, record);
       if (judged) return judged;
     }
     throw err;

@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { isBooksError } from '../errors';
+import { BooksError, isBooksError, mapDbError } from '../errors';
 import {
   checkOriginal,
   judgeExisting,
@@ -123,6 +123,11 @@ describe('parseHistoricalInvoice', () => {
     });
   });
 
+  it('holds a person name to the contacts limit of 120 characters', () => {
+    expect(refusedPaths(record({ recipient: { ...record().recipient, kind: 'person', name: 'x'.repeat(121) } }))).toEqual(['recipient.name']);
+    expect(parseHistoricalInvoice(record({ recipient: { ...record().recipient, name: 'x'.repeat(160) } }), NOW).recipient.name).toHaveLength(160);
+  });
+
   it('refuses unknown top-level fields instead of dropping them', () => {
     expect(refusedPaths({ ...record(), extra: 1 })).toEqual(['']);
   });
@@ -140,8 +145,12 @@ describe('checkOriginal', () => {
 describe('judgeExisting', () => {
   it('absent imports; the same original is already imported; anything else is a conflict', () => {
     expect(judgeExisting({ state: 'absent' }, 12, 'a')).toBeNull();
-    expect(judgeExisting({ state: 'imported', documentId: 'd', sha256: 'a' }, 12, 'a')).toEqual({ status: 'already_imported', documentId: 'd' });
-    expect(() => judgeExisting({ state: 'imported', documentId: 'd', sha256: 'b' }, 12, 'a')).toThrow(/IMPORT_CONFLICT: invoice 12 was imported with a different file/);
+    const stored = { state: 'imported' as const, documentId: 'd', sha256: 'a', total: 12000, issueDate: '2021-03-04' };
+    expect(judgeExisting(stored, 12, 'a', { total: 12000, issueDate: '2021-03-04' })).toEqual({ status: 'already_imported', documentId: 'd', differs: false });
+    // Same original, data corrected since: reported as differing, never changed.
+    expect(judgeExisting(stored, 12, 'a', { total: 12001, issueDate: '2021-03-04' })).toEqual({ status: 'already_imported', documentId: 'd', differs: true });
+    expect(judgeExisting(stored, 12, 'a', { total: 12000, issueDate: '2021-03-05' })).toMatchObject({ differs: true });
+    expect(() => judgeExisting({ ...stored, sha256: 'b' }, 12, 'a')).toThrow(/IMPORT_CONFLICT: invoice 12 was imported with a different file/);
     expect(() => judgeExisting({ state: 'other', documentId: 'd' }, 12, 'a')).toThrow(/IMPORT_CONFLICT: invoice 12 already exists as a document of this system/);
   });
 });
@@ -149,5 +158,14 @@ describe('judgeExisting', () => {
 describe('recipientKey', () => {
   it('one client per name, whatever the case, spacing or kind', () => {
     expect(recipientKey({ name: 'Example  Client gmbh' })).toBe(recipientKey({ name: 'example client GmbH' }));
+  });
+});
+
+describe('the 009 trigger codes surface as Books errors', () => {
+  it('BK007 is IMPORT_INCOMPLETE, BK005 TOTALS_MISMATCH', () => {
+    const bk007 = mapDbError(Object.assign(new Error('x'), { code: 'BK007' }));
+    expect(bk007).toBeInstanceOf(BooksError);
+    expect((bk007 as BooksError).code).toBe('IMPORT_INCOMPLETE');
+    expect((mapDbError(Object.assign(new Error('x'), { code: 'BK005' })) as BooksError).code).toBe('TOTALS_MISMATCH');
   });
 });

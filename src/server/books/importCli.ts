@@ -43,6 +43,7 @@ import { constraintName, isBooksError, sqlState } from './errors';
 import {
   checkImportCounter,
   existingInvoice,
+  importedYearTotals,
   importHistoricalInvoice,
   MAX_CENTS,
   MAX_ORIGINAL_BYTES,
@@ -200,11 +201,14 @@ const POSTAL_LINE = /^(?:[A-Z]{1,2}[- ])?(\d{4,5})\s+(\S.*)$/;
 
 /**
  * Split printed address lines into the snapshot's fields. The LAST line that
- * reads as postal code plus city gives `postalCode` and `city`; the lines before
- * it are the street block (first line `addressLine1`, the rest joined into
- * `addressLine2`); a first line repeating the name is dropped; lines after it
- * (a country line) are left out (the country is its own field). Null when no
- * line reads as postal code plus city, or no street line precedes it.
+ * reads as postal code plus city gives `postalCode` and `city`; the line right
+ * before it is the street (`addressLine1`, what a new contact gets as its
+ * street), and any lines between the name and the street (a "c/o" or "z. Hd."
+ * line, a department) are joined into `addressLine2`; a first line repeating
+ * the name is dropped; lines after the postal line (a country line) are left
+ * out (the country is its own field). The printed lines are kept verbatim in
+ * `addressLines`. Null when no line reads as postal code plus city, or no
+ * street line precedes it.
  */
 export function splitAddress(
   name: string,
@@ -225,8 +229,8 @@ export function splitAddress(
   if (street.length === 0) return null;
   return {
     addressLines: clean,
-    addressLine1: street[0],
-    addressLine2: street.length > 1 ? street.slice(1).join(', ') : null,
+    addressLine1: street[street.length - 1],
+    addressLine2: street.length > 1 ? street.slice(0, -1).join(', ') : null,
     postalCode: m[1],
     city: m[2].trim(),
   };
@@ -258,13 +262,23 @@ function servicePeriodOf(value: unknown): { start: string; end: string } | null 
   return isIsoDate(start) && isIsoDate(end) && start <= end ? { start, end } : null;
 }
 
+/** The longest prefix of whole code points within `max` UTF-16 units: an emoji is never cut in half. */
+export function cutWhole(value: string, max: number): string {
+  let out = '';
+  for (const ch of value) {
+    if (out.length + ch.length > max) break;
+    out += ch;
+  }
+  return out;
+}
+
 function mapLines(raw: NonNullable<RawInvoice['lines']>): HistoricalLine[] | PlanIssue {
   const out: HistoricalLine[] = [];
   for (const l of raw) {
     const text = l.description.trim();
     if (text === '') return { kind: 'error', reason: 'line_text_missing' };
     if (text.length > 4000) return { kind: 'error', reason: 'line_text_too_long' };
-    const title = text.length <= 300 ? text : `${text.slice(0, 299)}…`;
+    const title = text.length <= 300 ? text : `${cutWhole(text, 299)}…`;
     const description = text.length <= 300 ? null : text;
     const quantity = scaled(l.quantity, 1000);
     const unitPrice = scaled(l.unitPrice, 100);
@@ -352,7 +366,8 @@ export function planInvoice(
 
   const recipientAddress = splitAddress(r.recipient.name, r.recipient.addressLines);
   if (!recipientAddress) return issue('error', 'recipient_address_unparsed');
-  const recipientCountry = countryCode(r.recipient.country ?? r.recipient.countryInferred);
+  const countryInferred = r.recipient.country == null || r.recipient.country.trim() === '';
+  const recipientCountry = countryCode(countryInferred ? r.recipient.countryInferred : r.recipient.country);
   if (!recipientCountry) return issue('error', 'recipient_country_unknown');
   const senderAddress = splitAddress(r.sender.name, r.sender.addressLines);
   if (!senderAddress) return issue('error', 'sender_address_unparsed');
@@ -367,9 +382,12 @@ export function planInvoice(
   if (sum !== totalCents) return issue('error', 'lines_do_not_sum_to_total');
 
   let vatId: string | null = null;
+  // A printed VAT id that is not a valid one is not frozen, but recorded as such (never silently dropped).
+  let vatIdUnparsed = false;
   if (r.recipientVatId && r.recipientVatId.trim() !== '') {
     const v = normalizeVatId(r.recipientVatId);
     vatId = /^[A-Z]{2}[A-Z0-9+*]{2,13}$/.test(v) ? v : null;
+    vatIdUnparsed = vatId === null;
   }
   const rawNumber = r.recipient.customerNumber;
   const numberText = rawNumber == null ? null : String(rawNumber).trim() || null;
@@ -437,6 +455,9 @@ export function planInvoice(
           serviceDateUnparsed:
             (r.serviceDate != null && serviceDate === null) || (r.servicePeriod != null && servicePeriod === null),
           paidOnPresent: r.paidOn != null && r.paidOn.trim() !== '',
+          paymentTermsUnparsed: terms === null,
+          recipientVatIdUnparsed: vatIdUnparsed,
+          recipientCountryInferred: countryInferred,
           confidence: r.confidence ?? 'low',
         },
       },
@@ -451,6 +472,12 @@ export function planInvoice(
 
 // --- the originals -------------------------------------------------------------------
 
+/** `file_unreadable` with the system's error code (ENOENT, EACCES), which names no path. */
+function unreadable(err: unknown): string {
+  const code = (err as { code?: unknown })?.code;
+  return typeof code === 'string' && /^E[A-Z]+$/.test(code) ? `file_unreadable:${code}` : 'file_unreadable';
+}
+
 /**
  * Read one original from under `filesDir`. Refuses (whole run) a path that
  * leaves the directory (also through a symbolic link), a file that cannot be
@@ -463,17 +490,17 @@ export function readOriginal(filesDir: string, rel: string): Uint8Array | string
   try {
     root = realpathSync(filesDir);
     full = realpathSync(resolve(root, rel));
-  } catch {
-    return 'file_unreadable';
+  } catch (err) {
+    return unreadable(err);
   }
   const inside = relative(root, full);
   if (inside === '' || inside.startsWith(`..${sep}`) || inside === '..' || isAbsolute(inside)) return 'file_outside_files_dir';
   let bytes: Buffer;
   try {
-    if (!statSync(full).isFile()) return 'file_unreadable';
+    if (!statSync(full).isFile()) return 'file_unreadable:not_a_file';
     bytes = readFileSync(full);
-  } catch {
-    return 'file_unreadable';
+  } catch (err) {
+    return unreadable(err);
   }
   if (bytes.byteLength === 0) return 'file_empty';
   if (bytes.byteLength > MAX_ORIGINAL_BYTES) return 'file_too_large';
@@ -491,7 +518,7 @@ export interface ReportRow {
   /** Cents. */
   total: number | null;
   status: RowStatus;
-  /** The skip reason or the error code. */
+  /** The skip reason, the error code, or for an already imported number `differs` when its stored data no longer matches the input. */
   reason: string | null;
   otherFilesSkipped: number;
 }
@@ -500,7 +527,9 @@ export interface ImportReport {
   dryRun: boolean;
   rows: ReportRow[];
   counts: Record<RowStatus, number>;
-  /** Per issue year, what the import has in the books after this run (imported now plus already imported; in a dry run, plus would import). */
+  /** Already imported numbers whose stored total or issue date differs from the input. */
+  differing: number;
+  /** Per issue year, what the import holds in the books after this run (read from the books; in a dry run, plus what it would import). */
   years: Array<{ year: string; count: number; total: number }>;
   recipients: RecipientStats;
   paidOnPresent: number;
@@ -530,7 +559,9 @@ export function reportLine(row: ReportRow): string {
       : row.status === 'error'
         ? `error: ${row.reason}`
         : row.status === 'already_imported'
-          ? 'already imported'
+          ? row.reason === 'differs'
+            ? 'already imported, BUT the stored total or issue date differs from the input (nothing was changed)'
+            : 'already imported'
           : row.status === 'would_import'
             ? 'would import'
             : 'imported';
@@ -578,8 +609,9 @@ export async function runBooksImport(
   let text: string;
   try {
     text = readFileSync(inputPath, 'utf8');
-  } catch {
-    fail('the input file cannot be read');
+  } catch (err) {
+    const code = (err as { code?: unknown })?.code;
+    fail(`the input file cannot be read${typeof code === 'string' && /^E[A-Z]+$/.test(code) ? ` (${code})` : ''}`);
   }
   const entries = parseImportFile(text);
   const fileProblems: string[] = [];
@@ -616,14 +648,14 @@ export async function runBooksImport(
     // 3. The contacts database answers (a real query, not only a configured handle).
     await book.search(tenantId, { limit: 1 });
 
-    // 4. Each number in turn. A client's new contact gets its most recent invoice's data.
+    // 4. Each number in turn. A client's new contact gets the data of its highest-numbered invoice.
     const session = newImportSession();
     for (const p of plans) {
       if (p.issue === null) session.newContactData.set(recipientKey(p.record.recipient), p.record.recipient);
     }
     const stats: RecipientStats = session.stats;
     const rows: ReportRow[] = [];
-    const inBooks: Array<{ issueDate: string; total: number }> = [];
+    const wouldImport: Array<{ issueDate: string; total: number }> = [];
     let paidOnPresent = 0;
 
     for (const p of plans) {
@@ -647,7 +679,8 @@ export async function runBooksImport(
             ? await previewHistoricalInvoice(scope, book, p.record, p.pdf, session, { now })
             : await importHistoricalInvoice(scope, book, p.record, p.pdf, session, { now });
           row.status = result.status;
-          inBooks.push({ issueDate: p.record.issueDate, total: p.record.total });
+          if (result.status === 'already_imported' && result.differs) row.reason = 'differs';
+          if (result.status === 'would_import') wouldImport.push({ issueDate: p.record.issueDate, total: p.record.total });
           if (p.record.provenance.paidOnPresent) paidOnPresent += 1;
         } catch (err) {
           row.status = 'error';
@@ -660,8 +693,11 @@ export async function runBooksImport(
 
     const counts: Record<RowStatus, number> = { imported: 0, already_imported: 0, would_import: 0, skipped: 0, error: 0 };
     for (const r of rows) counts[r.status] += 1;
+    // The yearly figures are read from the books (what the import holds there,
+    // whatever this run did), plus in a dry run what it would add.
     const byYear = new Map<string, { count: number; total: number }>();
-    for (const r of inBooks) {
+    for (const y of await importedYearTotals(scope.db, scope)) byYear.set(y.year, { count: y.count, total: y.total });
+    for (const r of wouldImport) {
       const y = r.issueDate.slice(0, 4);
       const acc = byYear.get(y) ?? { count: 0, total: 0 };
       acc.count += 1;
@@ -675,6 +711,10 @@ export async function runBooksImport(
     log(
       `  ${dryRun ? `${counts.would_import} would import` : `${counts.imported} imported`}, ${counts.already_imported} already imported, ${counts.skipped} skipped, ${counts.error} error(s), of ${rows.length} in the input`,
     );
+    const differing = rows.filter((r) => r.reason === 'differs').length;
+    if (differing > 0) {
+      log(`  ATTENTION: ${differing} already imported invoice(s) differ from the input in total or issue date (listed above); the books were not changed`);
+    }
     log(`  invoice counter stays at ${counter.nextValue} (never moved by the import)`);
     log(
       dryRun
@@ -685,15 +725,32 @@ export async function runBooksImport(
     log(dryRun ? '  yearly totals the import would hold, by issue year:' : '  yearly totals of the imported invoices in the books, by issue year:');
     for (const y of years) log(`    ${y.year}: ${String(y.count).padStart(3)} invoice(s), ${euros(y.total)}`);
 
-    return { dryRun, rows, counts, years, recipients: stats, paidOnPresent, counterNextValue: counter.nextValue };
+    return { dryRun, rows, counts, differing, years, recipients: stats, paidOnPresent, counterNextValue: counter.nextValue };
   } finally {
     await base.destroy();
     if (contactsHandle) await (contactsHandle as ContactsDb).close();
   }
 }
 
-/** The process exit code for a report: 1 when any number ended in an error. */
+/** The process exit code for a report: 1 when any number ended in an error or differs from the books. */
 export function exitCodeFor(report: ImportReport): number {
-  return report.counts.error > 0 ? 1 : 0;
+  return report.counts.error > 0 || report.differing > 0 ? 1 : 0;
+}
+
+/** Whole-run refusals of the Books whose messages are built from numbers only. */
+const SAFE_MESSAGES = new Set(['COUNTER_MISSING', 'IMPORT_COUNTER_TOO_LOW']);
+
+/**
+ * The one line the script prints when the whole run is refused: our own
+ * refusals (built from numbers, codes and field names), the two counter
+ * refusals, and otherwise a code or an error class only, never a message that
+ * could quote a value or a connection string.
+ */
+export function scriptErrorLine(err: unknown): string {
+  if (err instanceof Error && err.message.startsWith('books:import:')) return err.message;
+  if (isBooksError(err) && SAFE_MESSAGES.has(err.code)) return `books:import: ${err.message}`;
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === 'string') return `books:import: refused (${code})`;
+  return `books:import: failed (${err instanceof Error ? err.name : 'unknown error'})`;
 }
 

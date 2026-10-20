@@ -30,27 +30,19 @@
 // The input and the originals stay on the operator's machine and are never
 // committed. The output carries invoice numbers, issue dates, totals, statuses,
 // counts and yearly sums only: never names, addresses, line texts, file names
-// or connection strings. Exit code 1 when any number ended in an error.
+// or connection strings. Exit code 1 when any number ended in an error, or an
+// already imported number's stored total or date differs from the input.
 //
 // The logic lives in src/server/books/importCli.ts (no `server-only` modules,
 // so it runs under tsx).
 
-import { isBooksError } from '../src/server/books/errors';
-import { exitCodeFor, runBooksImport } from '../src/server/books/importCli';
-
-/** Whole-run refusals of the Books whose messages are built from numbers only. */
-const SAFE_MESSAGES = new Set(['COUNTER_MISSING', 'IMPORT_COUNTER_TOO_LOW']);
+import { exitCodeFor, runBooksImport, scriptErrorLine } from '../src/server/books/importCli';
 
 runBooksImport(process.argv.slice(2), process.env, (line) => console.log(line))
   .then((report) => {
     process.exitCode = exitCodeFor(report);
   })
   .catch((err) => {
-    // Our own whole-run refusals carry no input values; anything else is named by code only.
-    const code = (err as { code?: unknown })?.code;
-    if (err instanceof Error && err.message.startsWith('books:import:')) console.error(err.message);
-    else if (isBooksError(err) && SAFE_MESSAGES.has(err.code)) console.error(`books:import: ${err.message}`);
-    else if (typeof code === 'string') console.error(`books:import: refused (${code})`);
-    else console.error(`books:import: failed (${err instanceof Error ? err.name : 'unknown error'})`);
+    console.error(scriptErrorLine(err));
     process.exitCode = 1;
   });

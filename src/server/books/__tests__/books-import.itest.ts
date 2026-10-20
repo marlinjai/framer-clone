@@ -6,8 +6,8 @@
 // tenant schema, the fake contacts database. The paths of the stateful-flow
 // standard: forward, re-run (idempotence), a changed file refused, resume of a
 // skipped invoice, and the whole-run refusals (counter missing or too low, dry
-// run) that write nothing. Plus what 009_books_import guarantees for every
-// role. The download, list and freeze through the real routes are in
+// run) that write nothing. Plus what 009_books_import guarantees at the
+// database, proven as the owner (the role every other role is weaker than). The download, list and freeze through the real routes are in
 // books-routes.itest.ts. Synthetic data only: invented names and addresses.
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -17,14 +17,19 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { runBooksImport, type Env, type ImportReport } from '../importCli';
+import { exitCodeFor, runBooksImport, type Env, type ImportReport } from '../importCli';
+import { issue } from '../issue';
+import { createDraft } from '../repository/documents';
+import { addLine } from '../repository/lines';
 import { importHistoricalInvoice, newImportSession, type HistoricalInvoiceInput } from '../importInvoices';
 import { readSettings } from '../settings';
 import { getDocument, listDocuments } from '../repository/read';
 import {
+  ACTOR,
   FakeContactBook,
   FakeDirectory,
   initCompany,
+  newCustomer,
   newTenantId,
   openBooksEnv,
   rejectionCode,
@@ -337,6 +342,29 @@ describe('books:import, the run in order: dry run, forward, re-run, changed file
     expect(await nextValue(tenantId)).toBe(62);
     expect(report.years.map((y) => y.year)).toEqual(['2019', '2020', '2026']);
   });
+
+  it('a corrected total for an imported number is reported as differing, never written, and the yearly sums stay those of the books', async () => {
+    const before = (await run(f, tenantId, book, dir)).report.years;
+    f.invoices[0] = invoice(1, {
+      lines: [{ description: 'Design work', quantity: 2, unit: 'h', unitPrice: 61, discount: null, lineTotal: 122 }],
+      total: 122,
+    });
+    writeFileSync(f.input, JSON.stringify({ meta: {}, invoices: f.invoices }));
+    const { report, lines, text } = await run(f, tenantId, book, dir);
+    expect(statuses(report)[1]).toBe('already_imported:differs');
+    expect(report.differing).toBe(1);
+    expect(exitCodeFor(report)).toBe(1);
+    expect(lines.find((l) => l.startsWith('invoice    1'))).toContain('already imported, BUT the stored total or issue date differs');
+    expect(text).toContain('ATTENTION: 1 already imported invoice(s) differ from the input');
+    expect(report.years).toEqual(before);
+    const stored = await env.ownerDb
+      .selectFrom('sales_document')
+      .select('total')
+      .where('tenant_id', '=', tenantId)
+      .where('number_value', '=', '1')
+      .executeTakeFirstOrThrow();
+    expect(stored.total).toBe(12000);
+  });
 });
 
 describe('books:import refuses the whole run and writes nothing', () => {
@@ -443,6 +471,102 @@ describe('importHistoricalInvoice: the core the planned upload calls', () => {
   });
 });
 
+describe('importHistoricalInvoice against what is already in the books', () => {
+  function record(numberValue: number, name = 'Example Client GmbH', kind: 'person' | 'organization' = 'organization'): HistoricalInvoiceInput {
+    return {
+      origin: 'upload_extracted',
+      numberValue,
+      issueDate: '2025-04-01',
+      serviceDate: null,
+      servicePeriod: null,
+      paymentTermsDays: 0,
+      dueDate: null,
+      recipient: {
+        kind,
+        name,
+        addressLine1: 'Beispielweg 2',
+        addressLine2: null,
+        postalCode: '20095',
+        city: 'Hamburg',
+        country: 'DE',
+        customerNumber: null,
+        customerNumberText: null,
+        vatId: null,
+      },
+      sender: {
+        legalName: 'Sample Studio', addressLine1: 'Musterstrasse 1', addressLine2: null, postalCode: '10115', city: 'Berlin', countryCode: 'DE',
+        taxNumber: null, vatId: null, smallBusinessId: null, email: null, phone: null, website: null, bankName: null, iban: null, bic: null,
+        registerCourt: null, registerNumber: null, managingDirector: null,
+      },
+      lines: [{ kind: 'service', title: 'Design work', description: null, quantity: 1000, unitLabel: 'Stk', unitPrice: 5000, discountBp: 0, subtotal: 5000 }],
+      total: 5000,
+      taxTreatment: 'small_business',
+      taxNote: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
+    };
+  }
+
+  async function freshCompany() {
+    const tenantId = newTenantId();
+    const dir = new FakeDirectory();
+    const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
+    await initCompany(scope, { invoiceNext: 62 });
+    return { tenantId, dir, book: new FakeContactBook(dir), scope };
+  }
+
+  it('a number the editor issued is a conflict, and no contact is created for it', async () => {
+    const { tenantId, dir, book, scope } = await freshCompany();
+    const { customer } = await newCustomer(scope, dir);
+    const draft = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id });
+    await addLine(scope, draft.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
+    await issue(scope, draft.document.id, { actorUserId: ACTOR });
+    const contactsBefore = dir.contactsOf(tenantId).length;
+    await expect(importHistoricalInvoice(scope, book, record(62, 'Brand New Client AG'), new Uint8Array(pdfBytes('editor-62')))).rejects.toMatchObject({
+      code: 'IMPORT_CONFLICT',
+    });
+    expect(dir.contactsOf(tenantId)).toHaveLength(contactsBefore);
+  });
+
+  it('two imports of the same invoice at once: one writes it, the other reports it as already imported', async () => {
+    const { tenantId, book, scope } = await freshCompany();
+    const pdf = new Uint8Array(pdfBytes(`race-${tenantId}`));
+    const results = await Promise.all([
+      importHistoricalInvoice(scope, book, record(30), pdf, newImportSession()),
+      importHistoricalInvoice(scope, book, record(30), pdf, newImportSession()),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(['already_imported', 'imported']);
+    expect((await countRows(tenantId)).docs).toBe(1);
+  });
+
+  it('a person is matched whatever their company or role, and two persons of one name are never guessed between', async () => {
+    const { tenantId, dir, book, scope } = await freshCompany();
+    const one = dir.add(tenantId, { kind: 'person', name: 'Erika Beispiel', companyOrRole: 'Studio A', legalForm: null });
+    const session = newImportSession();
+    const first = await importHistoricalInvoice(scope, book, record(31, 'Erika Beispiel', 'person'), new Uint8Array(pdfBytes(`p-${tenantId}-31`)), session);
+    expect(first.status).toBe('imported');
+    expect((await getDocument(scope, first.documentId)).document.customerSnapshot?.contactId).toBe(one.id);
+    expect(session.stats.contactsCreated).toBe(0);
+
+    dir.add(tenantId, { kind: 'person', name: 'Max Beispiel', companyOrRole: 'Studio A', legalForm: null });
+    dir.add(tenantId, { kind: 'person', name: 'Max Beispiel', companyOrRole: 'Studio B', legalForm: null });
+    await expect(
+      importHistoricalInvoice(scope, book, record(32, 'Max Beispiel', 'person'), new Uint8Array(pdfBytes(`p-${tenantId}-32`))),
+    ).rejects.toMatchObject({ code: 'RECIPIENT_AMBIGUOUS' });
+    expect((await countRows(tenantId)).docs).toBe(1);
+  });
+
+  it('the frozen tax fields are those printed on the invoice, not those of the reused customer today', async () => {
+    const { tenantId, dir, book, scope } = await freshCompany();
+    const { customer } = await newCustomer(scope, dir, { customerType: 'b2b', vatId: 'DE999999999', contact: { name: 'Example Client GmbH' } });
+    const r = { ...record(33), recipient: { ...record(33).recipient, vatId: null } };
+    const result = await importHistoricalInvoice(scope, book, r, new Uint8Array(pdfBytes(`tax-${tenantId}`)));
+    const doc = (await getDocument(scope, result.documentId)).document;
+    expect(doc.customerId).toBe(customer.id);
+    expect(doc.vatId).toBeNull();
+    expect(doc.customerSnapshot?.vatId).toBeNull();
+    expect(doc.documentNumber).toBe('33');
+  });
+});
+
 describe('009_books_import: what holds for every role', () => {
   const tenantId = newTenantId();
 
@@ -518,6 +642,54 @@ describe('009_books_import: what holds for every role', () => {
     expect(await rejectionCode(env.ownerDb.updateTable('sales_document').set({ status: 'draft' }).where('id', '=', doc.id).execute())).toBe('BK004');
     expect(await rejectionCode(env.ownerDb.deleteFrom('sales_document').where('id', '=', doc.id).execute())).toBe('BK001');
     expect(await rejectionCode(env.ownerDb.updateTable('sales_document_line').set({ title: 'x' }).where('document_id', '=', doc.id).execute())).toBe('BK001');
+  });
+
+  it('a deferred line whose document never arrives is refused at commit (23503)', async () => {
+    const code = await rejectionCode(
+      env.ownerDb.transaction().execute(async (trx) => {
+        await sql`SET CONSTRAINTS ALL DEFERRED`.execute(trx);
+        await trx
+          .insertInto('sales_document_line')
+          .values({
+            id: randomUUID(), tenant_id: tenantId, document_id: randomUUID(), position: 1, kind: 'service', title: 'Orphan line',
+            quantity: 1000, unit_price: 1, subtotal: 1, tax_rate: 0, tax_amount: 0, tax_treatment: 'kleinunternehmer', updated_at: new Date(),
+          })
+          .execute();
+      }),
+    );
+    expect(code).toBe('23503');
+  });
+
+  it('an import pointing at the original of another document does not commit (BK007)', async () => {
+    const other = await env.ownerDb
+      .selectFrom('sales_document')
+      .select(['id', 'rendered_pdf_file_id'])
+      .where('tenant_id', '=', tenantId)
+      .where('source', '=', 'import')
+      .executeTakeFirstOrThrow();
+    const id = randomUUID();
+    const code = await rejectionCode(
+      env.ownerDb.transaction().execute(async (trx) => {
+        await sql`SET CONSTRAINTS ALL DEFERRED`.execute(trx);
+        await trx
+          .insertInto('sales_document_line')
+          .values({
+            id: randomUUID(), tenant_id: tenantId, document_id: id, position: 1, kind: 'service', title: 'Synthetic line',
+            quantity: 1000, unit_price: 100, subtotal: 100, tax_rate: 0, tax_amount: 0, tax_treatment: 'kleinunternehmer', updated_at: new Date(),
+          })
+          .execute();
+        await trx
+          .insertInto('sales_document')
+          .values({
+            id, tenant_id: tenantId, doc_type: 'invoice', status: 'issued', source: 'import', document_number: '990', number_value: '990',
+            issue_date: '2020-01-01', issued_at: new Date('2020-01-01T12:00:00Z'), payment_terms_days: 0, subtotal: 100, total: 100,
+            customer_snapshot: sql`${'{"v":1}'}::text::jsonb`, sender_snapshot: sql`${'{"v":1}'}::text::jsonb`, updated_at: new Date(),
+          } as never)
+          .execute();
+        await trx.updateTable('sales_document').set({ rendered_pdf_file_id: other.rendered_pdf_file_id }).where('id', '=', id).execute();
+      }),
+    );
+    expect(code).toBe('BK007');
   });
 
   it('an editor document is still born a draft (BK004), deferred foreign key or not', async () => {

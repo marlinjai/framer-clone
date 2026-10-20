@@ -127,9 +127,14 @@ export class FakeContactBook implements ContactBook {
     // As the production book does: any failure of the database is RECIPIENT_UNAVAILABLE.
     if (this.dir.failing) throw new BooksError('RECIPIENT_UNAVAILABLE', 'synthetic contacts outage');
   }
-  async search(tenantId: string): Promise<RecipientContact[]> {
+  /** As the package does: the company's contacts whose name contains the search (case ignored), archived left out. */
+  async search(tenantId: string, opts: { search?: string; limit: number } = { limit: 50 }): Promise<RecipientContact[]> {
     this.outage();
-    return this.created.filter((c) => (c as RecipientContact & { tenantId?: string }).tenantId === tenantId);
+    const needle = (opts.search ?? '').trim().toLowerCase();
+    return this.dir
+      .contactsOf(tenantId)
+      .filter((c) => !c.archived && (needle === '' || c.name.toLowerCase().includes(needle)))
+      .slice(0, opts.limit);
   }
   async getMany(tenantId: string, ids: readonly string[]): Promise<RecipientContact[]> {
     this.outage();

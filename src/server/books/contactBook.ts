@@ -77,6 +77,24 @@ function unavailable(err: unknown): BooksError {
 /** The package refusals a create can produce that are the caller's input, mapped by field name only. */
 const INPUT_CODES = new Set(['invalid_name', 'invalid_field', 'too_long', 'invalid_organization']);
 
+/**
+ * A refusal of the package that is the caller's input (an invalid or too long
+ * field) becomes INVALID_INPUT naming the field only; anything else means the
+ * database could not be used (RECIPIENT_UNAVAILABLE).
+ */
+function inputOrUnavailable(err: unknown): BooksError {
+  if (isBooksError(err)) return err;
+  const code = errorCode(err);
+  if (code && INPUT_CODES.has(code)) {
+    const field = (err as { field?: unknown }).field;
+    const path = typeof field === 'string' ? field : code === 'invalid_name' ? 'name' : '(contact)';
+    return new BooksError('INVALID_INPUT', `INVALID_INPUT: ${path}`, {
+      issues: [{ path: `contact.${path}`, message: code }],
+    });
+  }
+  return unavailable(err);
+}
+
 /** The production contact book over a contacts handle (defaults to the shared one). */
 export function contactsContactBook(handle: () => ContactsDb = contactsDb): ContactBook {
   async function open(): Promise<ContactsDb> {
@@ -121,7 +139,7 @@ export function contactsContactBook(handle: () => ContactsDb = contactsDb): Cont
         });
         return found ? toRecipientContact(found) : null;
       } catch (err) {
-        throw unavailable(err);
+        throw inputOrUnavailable(err);
       }
     },
     async create(tenantId, input) {
@@ -150,14 +168,7 @@ export function contactsContactBook(handle: () => ContactsDb = contactsDb): Cont
             existingContactId: typeof existing?.id === 'string' ? existing.id : null,
           });
         }
-        if (code && INPUT_CODES.has(code)) {
-          const field = (err as { field?: unknown }).field;
-          const path = typeof field === 'string' ? field : code === 'invalid_name' ? 'name' : '(contact)';
-          throw new BooksError('INVALID_INPUT', `INVALID_INPUT: ${path}`, {
-            issues: [{ path: `contact.${path}`, message: code }],
-          });
-        }
-        throw unavailable(err);
+        throw inputOrUnavailable(err);
       }
     },
   };

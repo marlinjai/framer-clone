@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
   countryCode,
+  cutWhole,
   errorCode,
   euros,
   inferKind,
@@ -21,6 +22,7 @@ import {
   planInvoice,
   readOriginal,
   reportLine,
+  scriptErrorLine,
   splitAddress,
   type PlannedInvoice,
 } from '../importCli';
@@ -137,8 +139,30 @@ describe('planInvoice: forward mapping', () => {
       senderVatIdPrinted: false,
       serviceDateUnparsed: false,
       paidOnPresent: true,
+      paymentTermsUnparsed: false,
+      recipientVatIdUnparsed: false,
+      recipientCountryInferred: true,
       confidence: 'high',
     });
+  });
+
+  it('records what it could not take as printed: unreadable terms, an invalid VAT id, an inferred country', () => {
+    const inv = ready(
+      planInvoice(
+        7,
+        entry({
+          paymentTerms: 'nach Vereinbarung',
+          recipientVatId: 'not-a-vat-id',
+          recipient: { name: 'Example Client GmbH', addressLines: ['Beispielweg 2', '20095 Hamburg'], country: 'DE', countryInferred: null, customerNumber: null },
+        }),
+        FILE,
+        NOW,
+      ),
+    );
+    expect(inv.paymentTermsDays).toBe(0);
+    expect(inv.dueDate).toBeNull();
+    expect(inv.recipient.vatId).toBeNull();
+    expect(inv.provenance).toMatchObject({ paymentTermsUnparsed: true, recipientVatIdUnparsed: true, recipientCountryInferred: false });
   });
 
   it('keeps a non-numeric customer number as printed text, and a valid VAT id normalized', () => {
@@ -247,11 +271,11 @@ describe('planInvoice: skipped (missing) before error (inconsistent)', () => {
 });
 
 describe('the small parsers', () => {
-  it('splitAddress takes the last postal line, drops a repeated name and joins extra street lines', () => {
-    expect(splitAddress('Example Client GmbH', ['Example Client GmbH', 'c/o Office', 'Beispielweg 2', 'D-20095 Hamburg', 'Deutschland'])).toEqual({
-      addressLines: ['Example Client GmbH', 'c/o Office', 'Beispielweg 2', 'D-20095 Hamburg', 'Deutschland'],
-      addressLine1: 'c/o Office',
-      addressLine2: 'Beispielweg 2',
+  it('splitAddress takes the last postal line, the street right before it, and keeps c/o lines as the second line', () => {
+    expect(splitAddress('Example Client GmbH', ['Example Client GmbH', 'c/o Office', 'z. Hd. Accounting', 'Beispielweg 2', 'D-20095 Hamburg', 'Deutschland'])).toEqual({
+      addressLines: ['Example Client GmbH', 'c/o Office', 'z. Hd. Accounting', 'Beispielweg 2', 'D-20095 Hamburg', 'Deutschland'],
+      addressLine1: 'Beispielweg 2',
+      addressLine2: 'c/o Office, z. Hd. Accounting',
       postalCode: '20095',
       city: 'Hamburg',
     });
@@ -309,12 +333,12 @@ describe('readOriginal', () => {
   });
 
   it('refuses a path that leaves the directory, also through a link, and anything that is not a usable PDF', () => {
-    expect(readOriginal(dir, '../x.pdf')).toBe('file_unreadable');
+    expect(readOriginal(dir, '../x.pdf')).toBe('file_unreadable:ENOENT');
     expect(readOriginal(dir, `../${outside.split('/').pop()}/secret.pdf`)).toBe('file_outside_files_dir');
     expect(readOriginal(dir, 'a/link.pdf')).toBe('file_outside_files_dir');
     expect(readOriginal(dir, join(dir, 'a', 'ok.pdf'))).toBe('file_path_absolute');
-    expect(readOriginal(dir, 'a/missing.pdf')).toBe('file_unreadable');
-    expect(readOriginal(dir, 'a')).toBe('file_unreadable');
+    expect(readOriginal(dir, 'a/missing.pdf')).toBe('file_unreadable:ENOENT');
+    expect(readOriginal(dir, 'a')).toBe('file_unreadable:not_a_file');
     expect(readOriginal(dir, 'a/empty.pdf')).toBe('file_empty');
     expect(readOriginal(dir, 'a/text.pdf')).toBe('file_not_pdf');
   });
@@ -343,5 +367,28 @@ describe('the report never carries input values', () => {
     expect(euros(0)).toBe('0.00 EUR');
     expect(euros(123456)).toBe('1234.56 EUR');
     expect(euros(null)).toBe('?');
+  });
+});
+
+describe('cutWhole', () => {
+  it('never cuts a character made of two UTF-16 units in half', () => {
+    expect(cutWhole('ab😀c', 3)).toBe('ab');
+    expect(cutWhole('ab😀c', 4)).toBe('ab😀');
+    const inv = ready(planInvoice(7, entry({ lines: [{ description: `${'x'.repeat(298)}😀 rest of the text`, quantity: 1, unit: 'Stk', unitPrice: 150.5, lineTotal: 150.5 }] }), FILE, NOW));
+    expect(inv.lines[0].title).toBe(`${'x'.repeat(298)}…`);
+  });
+});
+
+describe('scriptErrorLine: what the script prints when the whole run is refused', () => {
+  it('our refusals and the counter refusals as written, anything else by code or class only', () => {
+    expect(scriptErrorLine(new Error('books:import: --input is required'))).toBe('books:import: --input is required');
+    expect(scriptErrorLine(new BooksError('IMPORT_COUNTER_TOO_LOW', 'IMPORT_COUNTER_TOO_LOW: the invoice counter is at 3'))).toBe(
+      'books:import: IMPORT_COUNTER_TOO_LOW: the invoice counter is at 3',
+    );
+    expect(scriptErrorLine(new BooksError('RECIPIENT_UNAVAILABLE', 'Example Client GmbH'))).toBe('books:import: refused (RECIPIENT_UNAVAILABLE)');
+    expect(scriptErrorLine(Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), { code: 'ECONNREFUSED' }))).toBe(
+      'books:import: refused (ECONNREFUSED)',
+    );
+    expect(scriptErrorLine(new TypeError('Example Client GmbH'))).toBe('books:import: failed (TypeError)');
   });
 });

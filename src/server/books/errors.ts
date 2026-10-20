@@ -51,7 +51,8 @@ export type BooksErrorCode =
   // The historical import (009_books_import, importInvoices.ts).
   | 'IMPORT_CONFLICT'
   | 'IMPORT_INCOMPLETE'
-  | 'IMPORT_COUNTER_TOO_LOW';
+  | 'IMPORT_COUNTER_TOO_LOW'
+  | 'RECIPIENT_AMBIGUOUS';
 
 export class BooksError extends Error {
   readonly code: BooksErrorCode;

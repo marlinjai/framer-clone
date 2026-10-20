@@ -192,8 +192,8 @@ export default function BooksHome() {
                   </span>
                   <span className="flex shrink-0 items-center gap-3">
                     <span className="text-sm tabular-nums">{money(d.docType === 'credit_note' ? -d.total : d.total)}</span>
-                    {d.source === 'import' ? <ImportedBadge /> : null}
                     <StatusBadge status={d.status} />
+                    {d.source === 'import' ? <ImportedBadge /> : null}
                   </span>
                 </Link>
               </li>

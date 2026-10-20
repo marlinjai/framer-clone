@@ -1171,12 +1171,13 @@ Every choice below follows from the plan, the code or the law; decided, say so i
    `NOT_RENDERABLE` for an import, so a missing original could never be replaced by a drawn
    one. `otherFiles` (an earlier version, the second document numbered 10) are not stored; the
    run reports how many per number, and the count is in the event.
-4. **Numbers as printed, the counter untouched.** The document number is the printed integer
-   through the company's own counter format (so it reads like 62 onwards). Every number in the
-   input must be below the invoice counter's `next_value` (62, set by `books:init-company`);
-   a missing counter (`COUNTER_MISSING`) or one too low (`IMPORT_COUNTER_TOO_LOW`) fails the
-   whole run before anything is written, and each invoice's transaction re-checks it with the
-   counter row held `FOR SHARE`. The counter is never moved.
+4. **Numbers as printed, the counter untouched.** The document number is stored exactly as
+   printed, the plain integer, never reformatted through the counter's format (a prefix or
+   padding there would make it differ from the original). Every number in the input must be
+   below the invoice counter's `next_value` (62, set by `books:init-company`); a missing
+   counter (`COUNTER_MISSING`) or one too low (`IMPORT_COUNTER_TOO_LOW`) fails the whole run
+   before anything is written, and each invoice's transaction re-checks it with the counter row
+   held `FOR SHARE`. The counter is never moved.
 5. **Whole run or one number.** Refused for the whole run, before the first write: input that
    is not JSON or not the expected shape, duplicate numbers, an original that cannot be used
    (missing, outside `--files-dir` also through a link, empty, over 25 MB, not starting with
@@ -1200,26 +1201,34 @@ Every choice below follows from the plan, the code or the law; decided, say so i
    invoices stay `issued`. Not dropped silently either: the event records whether a payment
    day was present, and the run prints how many imported invoices carried one, with the note
    that payment state stays in receipt-ocr-app.
-8. **Recipients.** Matched by the contacts package's own identity (kind plus name, case and
-   repeated whitespace ignored; an organization first, then a person), because that package
-   cannot hold two contacts of one identity: "exact name plus address" would have had nowhere to
-   put a second contact of the same name. A matching name with a different address is the same
-   client at another address: the contact is reused unchanged and counted ("with a different
-   current address"). A new contact (application name `books`) gets the address of that
-   client's most recent invoice in the input; it is an organization when the name carries a
-   legal form (GmbH, UG, AG, e.V., Ltd and others), otherwise a person, unless the entry says
-   `recipient.kind`. The Books customer is the existing one of that contact, else a new one
-   (business for an organization) with the printed VAT id when it is a valid one. Repeat clients
-   are therefore one customer.
-9. **Snapshots from the invoice's own print.** The customer snapshot is built from that
-   invoice's printed recipient (frozen as printed, not today's contact), the sender snapshot
-   from that invoice's printed sender (six sender blocks over the years; the current company
-   setting is never used). Printed address lines are split by one rule: the last line reading as
-   postal code plus city gives those two; the lines before it are the street block (first line
-   `addressLine1`, the rest joined into `addressLine2`), a first line repeating the name is
-   dropped. Both snapshots also keep the printed lines verbatim in a new optional
-   `addressLines` field (optional, so every earlier snapshot stays valid); a customer number
-   that is not a plain integer is kept as `customerNumberText`.
+8. **Recipients.** Matched by the contacts package's own identity (name, case and repeated
+   whitespace ignored; an organization first, then a person without a company or role), because
+   that package cannot hold two contacts of one identity: "exact name plus address" would have
+   had nowhere to put a second contact of the same name. A matching name with a different
+   address is the same client at another address: the contact is reused unchanged and counted
+   ("with a different current address"). A person whose contact carries a company or role (part
+   of a person's identity, which the print does not tell) is matched when exactly ONE person of
+   that name exists; two or more are `RECIPIENT_AMBIGUOUS` for that number, never a guess. A new
+   contact (application name `books`) gets the address of that client's highest-numbered
+   invoice in the input; it is an organization when the name carries a legal form (GmbH, UG, AG,
+   e.V., Ltd and others), otherwise a person, unless the entry says `recipient.kind`. The Books
+   customer is the existing one of that contact, else a new one (business for an organization)
+   with the printed VAT id when it is a valid one. Repeat clients are therefore one customer. A
+   number already in the books is judged before any contact is looked up or created, so a
+   re-run or a conflict never adds contacts.
+9. **Snapshots and tax fields from the invoice's own print.** The customer snapshot is built
+   from that invoice's printed recipient (frozen as printed, not today's contact), the sender
+   snapshot from that invoice's printed sender (six sender blocks over the years; the current
+   company setting is never used by the CLI). The document's frozen tax fields (business or
+   consumer, VAT id, the tax profile key) come from the same printed recipient, never from
+   today's customer row, so the columns agree with the snapshot and the original. Printed
+   address lines are split by one rule: the last line reading as postal code plus city gives
+   those two; the line right before it is the street (`addressLine1`, what a new contact gets
+   as its street); lines between the name and the street (a "c/o" or "z. Hd." line) are joined
+   into `addressLine2`; a first line repeating the name is dropped. Both snapshots also keep
+   the printed lines verbatim in a new optional `addressLines` field (optional, so every earlier
+   snapshot stays valid); a customer number that is not a plain integer is kept as
+   `customerNumberText`.
 10. **The sender's tax number and VAT id.** The input holds only whether they were printed
     (`taxNumberPresent`, `vatIdPresent`), not the values. The snapshot records null for both and
     the event records the two booleans; the stored original is the document of record for the
@@ -1228,30 +1237,42 @@ Every choice below follows from the plan, the code or the law; decided, say so i
 11. **Small business only, as printed.** Every line carries treatment `kleinunternehmer`, rate
     0, tax 0; the document `kleinunternehmer = true`, its tax note the printed small-business
     note, one tax summary entry. The tax profile key is derived as for an editor document of a
-    small business with that customer, so an imported row satisfies the full issued check and
-    an imported invoice can be cancelled through a credit note like any other (tested).
+    small business with that printed recipient, so an imported row satisfies the full issued
+    check and an imported invoice can be cancelled through a credit note like any other
+    (tested).
 12. **Amounts.** Money in cents and quantities in thousandths, exact (a value with finer digits
-    is an error, never rounded). The printed line total is the line's subtotal; when it is below
-    quantity times price, the discount in basis points is derived from the two (informational);
-    above it is an error. A line without quantity and amount is a text line. A text longer than
-    300 characters becomes a 300-character title with the full text as the description.
+    is an error, never rounded). The printed line total is the line's subtotal. Within one cent
+    of quantity times price either way it is rounding of the print and taken as it is; more than
+    one cent below gives the derived discount in basis points (informational); more than one
+    cent above is an error. A line without quantity and amount is a text line. A text longer
+    than 300 characters becomes a 300-character title (cut between whole characters, an emoji is
+    never split) with the full text as the description.
 13. **Dates and terms.** `issued_at` is noon UTC of the printed issue date (the same calendar
     day in every European time zone). A service date or period is taken when it is a real date;
     otherwise it is left empty and the event records `serviceDateUnparsed`. Payment terms in
     days are read from the printed text ("14 Tagen", "sofort" as 0) and give the due date;
-    otherwise `payment_terms_days` is 0 and there is no due date.
+    otherwise `payment_terms_days` is 0 (the column cannot be empty), there is no due date, and
+    the event records `paymentTermsUnparsed`, so the fallback is never mistaken for the print.
+    In the same way a printed recipient VAT id that is not a valid one is not frozen but
+    recorded as `recipientVatIdUnparsed`, and a country taken from the extraction's inference
+    instead of the print is recorded as `recipientCountryInferred`.
 14. **The audit trail.** Each import writes one `issued` event (from nothing to issued, no
     actor) whose payload holds only counts and flags: source, `importOrigin` (decision 17),
-    number, file digest, line count,
-    other files skipped, the two sender booleans, `serviceDateUnparsed`, `paidOnPresent` and the
-    extraction's confidence. No name, address or text.
+    number, file digest, line count, other files skipped, the two sender booleans,
+    `serviceDateUnparsed`, `paidOnPresent`, the three flags of decision 13 and the extraction's
+    confidence. The provenance is a strict schema of exactly these flags and counts, so no name,
+    address or text can reach the payload.
 15. **Logging.** A report line carries the number, the issue date, the total and the status
     (imported, already imported, would import, skipped with the reason, error with a code). The
     summary: counts, the untouched counter, the recipients (created, reused, with a different
     address), the payment-day count, and the totals per issue year of what the import holds in
-    the books (imported now plus already imported), to compare with the filed returns. Errors are
-    shown by code, SQLSTATE and constraint name, never by message, because a message can quote
-    a value. File names, paths and connection strings are never printed.
+    the books, read from the books themselves (in a dry run plus what it would add), to compare
+    with the filed returns. A number already imported whose stored total or issue date differs
+    from the input (same original, data corrected since) is reported as "already imported,
+    BUT ... differs", with an ATTENTION line in the summary and exit code 1; it never changes
+    the books. Errors are shown by code, SQLSTATE and constraint name, never by message, because
+    a message can quote a value; an unreadable file by its system code (ENOENT, EACCES). File
+    names, paths and connection strings are never printed.
 16. **The editor.** Lists show number, date, total and the printed recipient name with an
     "Imported" marker; the document view says "imported, the original PDF is the document of
     record" and offers "Download original PDF", which serves the stored bytes (the route already
