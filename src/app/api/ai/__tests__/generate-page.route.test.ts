@@ -16,7 +16,7 @@ type Turn =
       inputJson?: string[];
       wait?: Promise<void>;
     }
-  | { throws: unknown };
+  | { throws: unknown; currentUsage?: Record<string, number> };
 
 const anthropicState = vi.hoisted(() => ({
   turns: [] as Turn[],
@@ -42,14 +42,30 @@ vi.mock('@/lib/ai/anthropicClient', async (importActual) => {
           stop_reason: 'end_turn',
         };
         const handlers: Record<string, (chunk: string, snap: unknown) => void> = {};
+        const signal = (options as { signal?: AbortSignal } | undefined)?.signal;
         return {
           on(event: string, cb: (chunk: string, snap: unknown) => void) {
             handlers[event] = cb;
             return this;
           },
+          // The SDK's in-progress snapshot (usage counted so far).
+          get currentMessage() {
+            return 'throws' in turn && turn.currentUsage ? { usage: turn.currentUsage } : undefined;
+          },
           finalMessage: async () => {
             if ('throws' in turn) throw turn.throws;
-            if (turn.wait) await turn.wait;
+            if (turn.wait) {
+              // Like the SDK: an aborted signal rejects the pending stream.
+              await Promise.race([
+                turn.wait,
+                new Promise((_, reject) => {
+                  if (signal?.aborted) reject(Object.assign(new Error('aborted'), { name: 'APIUserAbortError' }));
+                  signal?.addEventListener('abort', () =>
+                    reject(Object.assign(new Error('aborted'), { name: 'APIUserAbortError' })),
+                  );
+                }),
+              ]);
+            }
             for (const chunk of turn.inputJson ?? []) handlers.inputJson?.(chunk, {});
             return {
               content: turn.content,
@@ -524,5 +540,62 @@ describe('POST /api/ai/generate-page generation', () => {
     const res = await POST(makeRequest(baseBody()));
     expect(res.status).toBe(200);
     await res.text();
+  });
+
+  it('records the usage of an attempt that ended in a JSON parse failure', async () => {
+    const { AnthropicError } = await import('@anthropic-ai/sdk');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    anthropicState.turns = [
+      {
+        throws: new AnthropicError('Unable to parse tool parameter JSON from model.'),
+        currentUsage: { input_tokens: 900, output_tokens: 700, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      },
+      toolTurn(VALID_PAGE),
+    ];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    // 900 + 100 input, 700 + 50 output: the failed attempt is billed too.
+    expect(evs.at(-1)!.data).toMatchObject({ inputTokens: 1000, outputTokens: 750, attempts: 2 });
+    const line = logSpy.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith('[ai] '))!;
+    expect(JSON.parse(line.slice(5))).toMatchObject({ inputTokens: 1000, outputTokens: 750 });
+  });
+});
+
+describe('POST /api/ai/generate-page cancellation', () => {
+  it('aborts the Anthropic stream when the client cancels the response, and frees the slot', async () => {
+    const never = new Promise<void>(() => {});
+    anthropicState.turns = [{ ...(toolTurn(VALID_PAGE) as object), wait: never } as Turn];
+    const res = await POST(makeRequest(baseBody()));
+    expect(res.status).toBe(200);
+    const signal = (anthropicState.calls[0].options as { signal: AbortSignal }).signal;
+    expect(signal.aborted).toBe(false);
+    await res.body!.cancel();
+    expect(signal.aborted).toBe(true);
+    // The run winds down and releases the user's slot.
+    await vi.waitFor(async () => {
+      anthropicState.turns = [toolTurn(VALID_PAGE)];
+      anthropicState.calls = [];
+      const next = await POST(makeRequest(baseBody()));
+      expect(next.status).toBe(200);
+      await next.text();
+    });
+  });
+
+  it('aborts the Anthropic stream when the request itself is aborted', async () => {
+    const never = new Promise<void>(() => {});
+    anthropicState.turns = [{ ...(toolTurn(VALID_PAGE) as object), wait: never } as Turn];
+    const controller = new AbortController();
+    const req = new Request('http://localhost/api/ai/generate-page', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: authCookie },
+      body: JSON.stringify(baseBody()),
+      signal: controller.signal,
+    });
+    const res = await POST(req);
+    const signal = (anthropicState.calls[0].options as { signal: AbortSignal }).signal;
+    controller.abort();
+    expect(signal.aborted).toBe(true);
+    const evs = await events(res);
+    // Cancelled runs end quietly: no result, and the stream still closes.
+    expect(evs.some((e) => e.event === 'gen:result')).toBe(false);
   });
 });

@@ -211,13 +211,13 @@ function newRequestId(): string {
 }
 
 async function runGeneration(args: RunArgs): Promise<void> {
-  const { anthropic, body, userId, sse, signal } = args;
-  const heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
+  const { anthropic, body, userId, sse } = args;
+  // Nothing that can throw runs before the try: whatever happens, the finally
+  // below closes the stream, logs the call and releases the user's slot.
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
   const requestId = newRequestId();
   const timer = startAiCallTimer();
-  const modelFields = modelRequestFields(body.model, PAGE_GEN_EFFORT);
-  const modelId = modelFields.model;
-  const breakpoints: BreakpointKey[] = deriveBreakpointKeys(body.breakpoints);
+  let modelId: string = body.model;
 
   let inputTokens = 0;
   let outputTokens = 0;
@@ -234,6 +234,15 @@ async function runGeneration(args: RunArgs): Promise<void> {
   };
 
   try {
+    heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
+    const modelFields = modelRequestFields(body.model, PAGE_GEN_EFFORT);
+    modelId = modelFields.model;
+    const breakpoints: BreakpointKey[] = deriveBreakpointKeys(body.breakpoints);
+    // Stop the Anthropic stream (and the spend) when the client disconnects:
+    // the request is aborted, or the SSE stream was cancelled / a write hit a
+    // closed connection.
+    const signal = AbortSignal.any([args.signal, sse.signal]);
+
     const system = buildSystemPrompt([
       { type: 'text', text: stableSystemText(), cache: true },
       {
@@ -299,6 +308,16 @@ async function runGeneration(args: RunArgs): Promise<void> {
         // is no assistant turn to send back, so the repair turn is a plain
         // user message. Every other error (API, network, abort) propagates.
         if (!isToolInputParseError(err)) throw err;
+        // The attempt was billed even though its output was unusable: count
+        // what the stream reported so far (input tokens and the output
+        // counted up to the failure).
+        const partial = stream.currentMessage?.usage;
+        if (partial) {
+          inputTokens += partial.input_tokens ?? 0;
+          outputTokens += partial.output_tokens ?? 0;
+          cacheReadTokens += partial.cache_read_input_tokens ?? 0;
+          cacheWriteTokens += partial.cache_creation_input_tokens ?? 0;
+        }
         lastProblems = [`the ${EMIT_TOOL_NAME} input was not valid JSON`];
         messages.push({ role: 'user', content: repairMessage(lastProblems) });
         continue;
@@ -389,7 +408,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
     fail(classifyProviderError(err));
   } finally {
     sse.send('usage', { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, attempts });
-    clearInterval(heartbeat);
+    if (heartbeat) clearInterval(heartbeat);
     // Release before closing, so a client that starts the next generation the
     // moment this stream ends is never told one is still running.
     args.release();

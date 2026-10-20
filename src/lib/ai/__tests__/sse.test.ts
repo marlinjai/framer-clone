@@ -103,3 +103,18 @@ describe('SSE heartbeat cadence', () => {
     expect(SSE_HEARTBEAT_MS).toBe(10_000);
   });
 });
+
+describe('createSseStream disconnect signal', () => {
+  it('aborts when the reader cancels the stream, not on a server-side close', async () => {
+    const closedByServer = createSseStream();
+    closedByServer.close();
+    expect(closedByServer.signal.aborted).toBe(false);
+
+    const sse = createSseStream();
+    expect(sse.signal.aborted).toBe(false);
+    await sse.stream.cancel();
+    expect(sse.signal.aborted).toBe(true);
+    // Writes after a disconnect are dropped silently.
+    expect(() => sse.send('x', {})).not.toThrow();
+  });
+});
