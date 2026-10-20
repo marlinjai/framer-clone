@@ -201,8 +201,12 @@ export default function DeleteProjectDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
 
+        {/* The explanation above (with its list of custom domains, which can be
+            long) is what scrolls in a short window: the shared alert dialog
+            lets its header scroll. The confirmation and the buttons below
+            never shrink, so they always stay on screen. */}
         {goneNotice ? (
-          <div className="flex flex-col gap-4">
+          <div className="flex shrink-0 flex-col gap-4" data-testid="delete-project-actions">
             <p role="alert" className="text-[13px]">
               {goneNotice.message}
             </p>
@@ -218,7 +222,8 @@ export default function DeleteProjectDialog({
               e.preventDefault();
               void run();
             }}
-            className="flex flex-col gap-4"
+            className="flex shrink-0 flex-col gap-4"
+            data-testid="delete-project-actions"
           >
             {needsName ? (
               <div className="flex flex-col gap-1.5">

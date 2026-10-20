@@ -4,11 +4,12 @@
 // the owner when old links will redirect.
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, fireEvent, screen, within, waitFor } from '@testing-library/react';
+import { render, cleanup, fireEvent, screen, within, waitFor, act } from '@testing-library/react';
+import { expectBodyScrollsFooterFixed } from '@/components/ui/__tests__/viewportFit';
 import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
 import type { PageModelType } from '@/models/PageModel';
 import { SiteAddressProvider, type SiteAddress } from '@/contexts/SiteAddressContext';
-import PagesPanel from '../PagesPanel';
+import PagesPanel, { clampMenuPosition } from '../PagesPanel';
 
 let project: ProjectModelType;
 let about: PageModelType;
@@ -339,3 +340,101 @@ describe('older projects', () => {
     expect(within(dialog).getByText(/no public address is configured/)).toBeTruthy();
   });
 });
+
+describe('fits a small window', () => {
+  it('keeps the fields in the scrolling body and Save / Cancel outside it', () => {
+    renderPanel();
+    const dialog = openSettingsFor('About');
+    expectBodyScrollsFooterFixed(dialog, within(dialog).getByLabelText('URL slug'));
+    const body = screen.getByTestId('page-settings-body');
+    expect(body.getAttribute('data-slot')).toBe('dialog-body');
+    expect(within(body).getByLabelText('URL slug')).toBeTruthy();
+    expect(within(body).queryByRole('button', { name: 'Save' })).toBeNull();
+    const footer = within(dialog).getByRole('button', { name: 'Save' }).closest('[data-slot="dialog-footer"]');
+    expect(footer).not.toBeNull();
+    expect(body.contains(footer)).toBe(false);
+  });
+});
+
+describe('the failed-save announcement', () => {
+  it('clears as soon as a field changes', () => {
+    renderPanel();
+    const dialog = openSettingsFor('About');
+    const slug = within(dialog).getByLabelText('URL slug');
+    fireEvent.change(slug, { target: { value: 'api' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    const announcement = screen.getByTestId('page-settings-announcement');
+    expect(announcement.textContent).toMatch(/Not saved/);
+
+    fireEvent.change(slug, { target: { value: 'team' } });
+    expect(announcement.textContent).toBe('');
+
+    fireEvent.change(slug, { target: { value: 'api' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(announcement.textContent).toMatch(/Not saved/);
+    fireEvent.change(within(dialog).getByLabelText('Page name'), { target: { value: 'Team' } });
+    expect(announcement.textContent).toBe('');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    fireEvent.change(within(dialog).getByLabelText('Meta description'), { target: { value: 'x' } });
+    expect(announcement.textContent).toBe('');
+  });
+});
+
+describe('context menu near the window edge', () => {
+  it('moves back inside the window', () => {
+    expect(clampMenuPosition(790, 470, { width: 160, height: 90 }, { width: 800, height: 480 })).toEqual({
+      left: 632,
+      top: 382,
+    });
+    expect(clampMenuPosition(20, 30, { width: 160, height: 90 }, { width: 800, height: 480 })).toEqual({
+      left: 20,
+      top: 30,
+    });
+    expect(clampMenuPosition(-5, -5, { width: 900, height: 900 }, { width: 800, height: 480 })).toEqual({
+      left: 8,
+      top: 8,
+    });
+  });
+
+  it('caps its height and scrolls when the window is tiny', () => {
+    renderPanel();
+    fireEvent.contextMenu(screen.getByTestId(`page-row-${about.id}`), { clientX: 10, clientY: 10 });
+    const classes = (screen.getByRole('menu').getAttribute('class') ?? '').split(/\s+/);
+    expect(classes).toEqual(
+      expect.arrayContaining([
+        'max-h-[calc(100vh-1rem)]',
+        'supports-[height:100dvh]:max-h-[calc(100dvh-1rem)]',
+        'overflow-y-auto',
+      ]),
+    );
+  });
+
+  it('opened at the bottom-right corner of an 800x480 window, it moves inside, and again on resize', () => {
+    const rect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ width: 160, height: 90, top: 0, left: 0, right: 160, bottom: 90, x: 0, y: 0, toJSON: () => ({}) });
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 480 });
+    try {
+      renderPanel();
+      fireEvent.contextMenu(screen.getByTestId(`page-row-${about.id}`), { clientX: 790, clientY: 470 });
+      const menu = screen.getByRole('menu');
+      expect(menu.style.left).toBe('632px');
+      expect(menu.style.top).toBe('382px');
+
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 300 });
+      act(() => {
+        window.dispatchEvent(new Event('resize'));
+      });
+      expect(menu.style.top).toBe('202px');
+    } finally {
+      rect.mockRestore();
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
+    }
+  });
+});
+

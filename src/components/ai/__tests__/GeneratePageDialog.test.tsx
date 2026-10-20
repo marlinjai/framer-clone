@@ -20,6 +20,7 @@ let initialPages = 0;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
 import { GeneratePageDialog } from '../GeneratePageDialog';
+import { expectBodyScrollsFooterFixed } from '@/components/ui/__tests__/viewportFit';
 
 /** A transport the test drives by hand: each call is captured and resolved later. */
 function manualTransport() {
@@ -324,5 +325,12 @@ describe('GeneratePageDialog model slider and stock photos', () => {
     });
     expect(screen.getByText(/stock photos are not set up on this server/)).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+});
+
+describe('GeneratePageDialog fits a small window', () => {
+  it('scrolls its body between a fixed header and the action footer', () => {
+    setup(vi.fn() as unknown as PageGenTransport);
+    expectBodyScrollsFooterFixed(screen.getByRole('dialog'), screen.getByLabelText('Brief'));
   });
 });

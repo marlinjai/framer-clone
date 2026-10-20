@@ -149,7 +149,11 @@ const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPicker
 
   return (
     <div
-      className="z-50 w-60 rounded-md border border-border bg-background p-2 shadow-lg"
+      // Opened below its field in the right sidebar: capped so a long list of
+      // data sources scrolls inside the picker instead of running off a short
+      // window.
+      className="z-50 w-60 max-h-[min(28rem,calc(100vh-10rem))] supports-[height:100dvh]:max-h-[min(28rem,calc(100dvh-10rem))] overflow-y-auto rounded-md border border-border bg-background p-2 shadow-lg"
+      data-testid="binding-picker"
       role="dialog"
       aria-label={`Bind ${meta.label}`}
     >

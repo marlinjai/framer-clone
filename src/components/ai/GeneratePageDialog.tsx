@@ -22,6 +22,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogBody,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -211,115 +212,117 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {state.phase === 'applied' ? (
-          <div className="grid gap-3" role="status" aria-live="polite">
-            <p className="text-sm">
-              {state.undone
-                ? 'The generation was undone.'
-                : `Added ${state.nodeCount} ${state.nodeCount === 1 ? 'component' : 'components'}${
-                    state.record.kind === 'newPage' ? ' on a new page' : ''
-                  }. Save the project to keep it.`}
-            </p>
-            {!state.undone && <StockImageNote images={state.images} />}
-            {state.warnings.length > 0 && !state.undone && (
-              <details className="text-xs text-muted-foreground">
-                <summary>{state.warnings.length} automatic fixes were made to the AI output</summary>
-                <ul className="mt-1 max-h-32 list-disc overflow-y-auto pl-4">
-                  {state.warnings.slice(0, 50).map((w, i) => (
-                    <li key={i}>{w}</li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            {state.undoError && (
-              <p role="alert" className="text-xs text-destructive">
-                Could not undo: {state.undoError}
+        <DialogBody>
+          {state.phase === 'applied' ? (
+            <div className="grid gap-3" role="status" aria-live="polite">
+              <p className="text-sm">
+                {state.undone
+                  ? 'The generation was undone.'
+                  : `Added ${state.nodeCount} ${state.nodeCount === 1 ? 'component' : 'components'}${
+                      state.record.kind === 'newPage' ? ' on a new page' : ''
+                    }. Save the project to keep it.`}
               </p>
-            )}
-          </div>
-        ) : (
-          <div className="grid gap-4">
-            <fieldset className="grid gap-2" disabled={running}>
-              <legend className="mb-1 text-xs font-medium text-muted-foreground">Where</legend>
-              <div className="flex flex-wrap gap-2">
-                {TARGETS.map((t) => (
-                  <Button
-                    key={t.kind}
-                    type="button"
-                    size="sm"
-                    variant={inputs.targetKind === t.kind ? 'default' : 'outline'}
-                    aria-pressed={inputs.targetKind === t.kind}
-                    onClick={() => edit({ targetKind: t.kind })}
-                  >
-                    {t.label}
-                  </Button>
-                ))}
-              </div>
-              <p className={`text-xs ${availability.ok ? 'text-muted-foreground' : 'text-destructive'}`}>
-                {availability.ok ? availability.label : availability.reason}
-              </p>
-            </fieldset>
-
-            {inputs.targetKind === 'newPage' && (
-              <div className="grid gap-1.5">
-                <Label htmlFor="pagegen-title">Page title (optional)</Label>
-                <Input
-                  id="pagegen-title"
-                  value={inputs.pageTitle}
-                  maxLength={120}
-                  disabled={running}
-                  onChange={(e) => edit({ pageTitle: e.target.value })}
-                  placeholder="The AI picks one if empty"
-                />
-              </div>
-            )}
-
-            <div className="grid gap-1.5">
-              <Label htmlFor="pagegen-brief">Brief</Label>
-              <textarea
-                id="pagegen-brief"
-                className="min-h-[110px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
-                value={inputs.brief}
-                disabled={running}
-                onChange={(e) => edit({ brief: e.target.value })}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canGenerate) void generate();
-                }}
-                placeholder="A landing page for a neighbourhood bakery: hero with opening hours, three signature breads, a short story, and a footer with the address."
-              />
-              <p className={`text-right text-[11px] ${briefTooLong ? 'text-destructive' : 'text-muted-foreground'}`}>
-                {inputs.brief.length} / {GENERATION_LIMITS.maxBriefChars}
-              </p>
-            </div>
-
-            <ModelSlider
-              id="pagegen-model"
-              value={inputs.model}
-              disabled={running}
-              onChange={(model) => edit({ model })}
-            />
-
-            {running && (
-              <p role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                {progressText(state.progress)}
-              </p>
-            )}
-
-            {state.phase === 'editing' && state.error && (
-              <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
-                <p>{state.error.message}</p>
-                {state.error.details && (
-                  <ul className="mt-1 max-h-24 list-disc overflow-y-auto pl-4">
-                    {state.error.details.map((d, i) => (
-                      <li key={i}>{d}</li>
+              {!state.undone && <StockImageNote images={state.images} />}
+              {state.warnings.length > 0 && !state.undone && (
+                <details className="text-xs text-muted-foreground">
+                  <summary>{state.warnings.length} automatic fixes were made to the AI output</summary>
+                  <ul className="mt-1 max-h-32 list-disc overflow-y-auto pl-4">
+                    {state.warnings.slice(0, 50).map((w, i) => (
+                      <li key={i}>{w}</li>
                     ))}
                   </ul>
-                )}
+                </details>
+              )}
+              {state.undoError && (
+                <p role="alert" className="text-xs text-destructive">
+                  Could not undo: {state.undoError}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="grid gap-4">
+              <fieldset className="grid gap-2" disabled={running}>
+                <legend className="mb-1 text-xs font-medium text-muted-foreground">Where</legend>
+                <div className="flex flex-wrap gap-2">
+                  {TARGETS.map((t) => (
+                    <Button
+                      key={t.kind}
+                      type="button"
+                      size="sm"
+                      variant={inputs.targetKind === t.kind ? 'default' : 'outline'}
+                      aria-pressed={inputs.targetKind === t.kind}
+                      onClick={() => edit({ targetKind: t.kind })}
+                    >
+                      {t.label}
+                    </Button>
+                  ))}
+                </div>
+                <p className={`text-xs ${availability.ok ? 'text-muted-foreground' : 'text-destructive'}`}>
+                  {availability.ok ? availability.label : availability.reason}
+                </p>
+              </fieldset>
+
+              {inputs.targetKind === 'newPage' && (
+                <div className="grid gap-1.5">
+                  <Label htmlFor="pagegen-title">Page title (optional)</Label>
+                  <Input
+                    id="pagegen-title"
+                    value={inputs.pageTitle}
+                    maxLength={120}
+                    disabled={running}
+                    onChange={(e) => edit({ pageTitle: e.target.value })}
+                    placeholder="The AI picks one if empty"
+                  />
+                </div>
+              )}
+
+              <div className="grid gap-1.5">
+                <Label htmlFor="pagegen-brief">Brief</Label>
+                <textarea
+                  id="pagegen-brief"
+                  className="min-h-[110px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                  value={inputs.brief}
+                  disabled={running}
+                  onChange={(e) => edit({ brief: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canGenerate) void generate();
+                  }}
+                  placeholder="A landing page for a neighbourhood bakery: hero with opening hours, three signature breads, a short story, and a footer with the address."
+                />
+                <p className={`text-right text-[11px] ${briefTooLong ? 'text-destructive' : 'text-muted-foreground'}`}>
+                  {inputs.brief.length} / {GENERATION_LIMITS.maxBriefChars}
+                </p>
               </div>
-            )}
-          </div>
-        )}
+
+              <ModelSlider
+                id="pagegen-model"
+                value={inputs.model}
+                disabled={running}
+                onChange={(model) => edit({ model })}
+              />
+
+              {running && (
+                <p role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  {progressText(state.progress)}
+                </p>
+              )}
+
+              {state.phase === 'editing' && state.error && (
+                <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+                  <p>{state.error.message}</p>
+                  {state.error.details && (
+                    <ul className="mt-1 max-h-24 list-disc overflow-y-auto pl-4">
+                      {state.error.details.map((d, i) => (
+                        <li key={i}>{d}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </DialogBody>
 
         <DialogFooter>
           {state.phase === 'applied' ? (

@@ -20,6 +20,7 @@ vi.mock('next/link', async () => {
 });
 
 import ProjectCard from '../ProjectCard';
+import { expectViewportFitPanel } from '@/components/ui/__tests__/viewportFit';
 
 const fetchMock = vi.fn();
 beforeEach(() => {
@@ -254,3 +255,28 @@ describe('Delete project dialog', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ confirmName: '' });
   });
 });
+
+describe('Delete project dialog in a small window', () => {
+  it('scrolls the explanation (a long domain list) while the confirmation and buttons stay on screen', async () => {
+    const domains = Array.from({ length: 30 }, (_, i) => `shop-${i}.bakery.de`);
+    renderCard({ customDomains: domains });
+    const dialog = await openDelete();
+    const classes = (el: Element | null) => (el?.getAttribute('class') ?? '').split(/\s+/);
+
+    expectViewportFitPanel(dialog);
+    const header = dialog.querySelector('[data-slot="alert-dialog-header"]');
+    // The title stays; the explanation with the domain list is what scrolls.
+    const message = dialog.querySelector('[data-slot="alert-dialog-description"]');
+    expect(classes(message)).toEqual(expect.arrayContaining(['min-h-0', 'flex-1', 'overflow-y-auto']));
+    expect(message!.textContent).toContain('shop-29.bakery.de');
+    expect(message!.contains(within(dialog).getByRole('heading'))).toBe(false);
+
+    const actions = within(dialog).getByTestId('delete-project-actions');
+    expect(classes(actions)).toContain('shrink-0');
+    expect(header!.contains(actions)).toBe(false);
+    expect(within(actions).getByRole('button', { name: 'Delete project' })).toBeTruthy();
+    expect(within(actions).getByRole('button', { name: 'Cancel' })).toBeTruthy();
+    expect(within(actions).getByLabelText(/to confirm/)).toBeTruthy();
+  });
+});
+
