@@ -14,7 +14,7 @@
 // placeholder value is enough for `next build`.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   // Runtime is node:20-bookworm-slim (Debian 12, openssl 3.0.x) on linux/arm64.
   // Pin the engine target explicitly so the generated client always carries the
   // matching query engine, even if the builder mis-detects openssl. "native"
@@ -328,17 +328,21 @@ model SiteDomain {
 
   // --- custom domains only (null on the platform subdomain row) ---
   // The hostname the owner asked for, normalized (lowercase ASCII).
-  hostname          String?   @map("hostname")
+  hostname            String?   @map("hostname")
   // The random token the owner publishes as TXT `_lumitra-verify.<hostname>`.
   // Minted fresh for every claim and never reused (unique across all rows).
-  verificationToken String?   @map("verification_token")
-  verifiedAt        DateTime? @map("verified_at")
-  activatedAt       DateTime? @map("activated_at")
-  lastCheckedAt     DateTime? @map("last_checked_at")
+  verificationToken   String?   @map("verification_token")
+  verifiedAt          DateTime? @map("verified_at")
+  activatedAt         DateTime? @map("activated_at")
+  lastCheckedAt       DateTime? @map("last_checked_at")
   // Why the last check did not succeed: a stable code plus a sentence for the
   // owner. Cleared by a successful check.
-  lastErrorCode     String?   @map("last_error_code")
-  lastError         String?   @map("last_error")
+  lastErrorCode       String?   @map("last_error_code")
+  lastError           String?   @map("last_error")
+  // Definitive routing failures in a row seen by the scheduled re-check of a
+  // live domain; the claim is released at RECHECK_RELEASE_AFTER. Transient
+  // DNS errors never count; any success resets it.
+  consecutiveFailures Int       @default(0) @map("consecutive_failures")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -353,6 +357,7 @@ model SiteDomain {
   @@unique([verificationToken])
   @@unique([siteId, hostname])
   @@index([hostname])
+  @@index([customHostname, lastCheckedAt])
   @@index([workspaceId])
   @@index([tenantGroupId])
   @@index([siteId])
