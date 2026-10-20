@@ -318,5 +318,7 @@ Before this, every generated image was the placeholder `/images/sample-image.jpg
 - **Remembered per browser** (decided): the editor has no user id on the client, so the last
   choice per surface is kept in `localStorage` (inside try/catch, a nicety only) and is therefore
   per browser profile. For page generation the remembered choice wins over a project's saved
-  draft, so it carries across projects.
+  draft, so it carries across projects. It is read after the first render (the components are server-rendered, and
+  reading storage during that render would make server and client HTML differ), so the agent's
+  slider can show the default for one frame before the remembered step.
 

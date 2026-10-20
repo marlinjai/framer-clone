@@ -46,7 +46,11 @@ const AgentInput = React.forwardRef<AgentInputHandle, AgentInputProps>(
   function AgentInput({ isRunning, onSend }, ref) {
     const [text, setText] = React.useState('');
     const [model, setModel] = React.useState<AgentModelKey>(DEFAULT_AGENT_MODEL);
-    // Read the remembered choice after mount (localStorage is browser-only).
+    // Read the remembered choice after mount, not in the state initializer: this
+    // component is server-rendered, and reading localStorage during the first
+    // render would make the server and client HTML differ (a hydration error).
+    // The slider can therefore show the default for one frame before the
+    // remembered step.
     React.useEffect(() => {
       setModel(loadModelChoice('cms-agent', DEFAULT_AGENT_MODEL));
     }, []);
