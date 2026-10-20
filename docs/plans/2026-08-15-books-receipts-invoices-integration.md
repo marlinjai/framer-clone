@@ -1187,13 +1187,16 @@ Every choice below follows from the plan, the code or the law; decided, say so i
    inconsistent (lines not summing to the total, an address or country that cannot be read, a
    tax treatment other than section 19, a currency other than EUR, an issue date that is not a
    date or lies in the future, a line amount with more than cent precision). Exit code 1 when any
-   number ended in an error.
+   number ended in an error. Also refused for the whole run: the same original named by two numbers (one revenue
+   stored twice), and an unset `CONTACTS_DATABASE_URL` (said as such, not as an outage).
 6. **Idempotent and resumable.** A number already imported whose stored file has the same
    SHA-256 is "already imported"; the same number with a different file, or a number the editor
    issued, is `IMPORT_CONFLICT` for that number and nothing is overwritten. A skipped number is
    imported by a later run once the input is complete. Each invoice is one transaction (lines,
    document, file, pointer, event), so a failure never leaves half a document. Two runs racing
-   on a number: the loser re-reads and reports what the winner wrote.
+   on a number: the loser re-reads and reports what the winner wrote. The same original stored under another number is `IMPORT_CONFLICT` too, checked before
+   anything is created and again inside the transaction under an advisory lock on the
+   original's digest, so two imports racing with one PDF can never both store it.
 7. **Payment day: not stored in the Books.** 007 has no column for it, and the receipts plan
    (`receipt-ocr-app` `docs/plans/2026-10-14-invoicing-and-income.md`, D6 and the mirror
    section) keeps payments, links and the cash-basis income in the receipts app, which mirrors
@@ -1215,7 +1218,12 @@ Every choice below follows from the plan, the code or the law; decided, say so i
    customer is the existing one of that contact, else a new one (business for an organization)
    with the printed VAT id when it is a valid one. Repeat clients are therefore one customer. A
    number already in the books is judged before any contact is looked up or created, so a
-   re-run or a conflict never adds contacts.
+   re-run or a conflict never adds contacts. The contact lives in another database and is created outside the Books transaction (a
+   network call must not hold the document locks), after every refusal that can be known
+   before; the customer row is written INSIDE the transaction, so a failed write leaves no
+   customer, and at worst a contact without invoices that a retry reuses. A person of a given
+   name is looked up with an exact-name listing of the package (up to 1000 hits; more cannot be
+   told apart and are `RECIPIENT_AMBIGUOUS`), archived included, like `findSame`.
 9. **Snapshots and tax fields from the invoice's own print.** The customer snapshot is built
    from that invoice's printed recipient (frozen as printed, not today's contact), the sender
    snapshot from that invoice's printed sender (six sender blocks over the years; the current
@@ -1240,13 +1248,20 @@ Every choice below follows from the plan, the code or the law; decided, say so i
     small business with that printed recipient, so an imported row satisfies the full issued
     check and an imported invoice can be cancelled through a credit note like any other
     (tested).
-12. **Amounts.** Money in cents and quantities in thousandths, exact (a value with finer digits
-    is an error, never rounded). The printed line total is the line's subtotal. Within one cent
-    of quantity times price either way it is rounding of the print and taken as it is; more than
-    one cent below gives the derived discount in basis points (informational); more than one
-    cent above is an error. A line without quantity and amount is a text line. A text longer
-    than 300 characters becomes a 300-character title (cut between whole characters, an emoji is
-    never split) with the full text as the description.
+12. **Amounts: the printed figures are authoritative.** Money in cents and quantities in
+    thousandths, exact (a value with finer digits is an error, never rounded). Lines are stored
+    as printed: quantity, unit price and the printed line total as the subtotal (discount 0,
+    since the input carries no reliable discount). The lines must sum exactly to the printed
+    total (else an error for that number). A line whose printed total is not quantity times
+    price (a rounding cent, as the real fixed fee of 3 x 1166.67 printed 3500.00; a discount
+    the extraction did not carry) is NEVER refused: the import reports the warning
+    `line_not_quantity_times_price` with the count and records it in the event (owner's rule
+    of 2026-10-20). A second warning, `issue_date_out_of_number_order`, flags an issue date
+    before an imported lower number's or after an imported higher number's (a swapped day and
+    month, typically, which the upload's extraction can produce). A line without quantity and
+    amount is a text line. A text longer than 300 characters becomes a 300-character title (cut
+    between whole characters, an emoji is never split) with the full text as the description.
+    The record's postal code is required for a German address and may be empty abroad.
 13. **Dates and terms.** `issued_at` is noon UTC of the printed issue date (the same calendar
     day in every European time zone). A service date or period is taken when it is a real date;
     otherwise it is left empty and the event records `serviceDateUnparsed`. Payment terms in
@@ -1261,7 +1276,9 @@ Every choice below follows from the plan, the code or the law; decided, say so i
     number, file digest, line count, other files skipped, the two sender booleans,
     `serviceDateUnparsed`, `paidOnPresent`, the three flags of decision 13 and the extraction's
     confidence. The provenance is a strict schema of exactly these flags and counts, so no name,
-    address or text can reach the payload.
+    address or text can reach the payload. The event also carries the fields of the editor's `issued` event (document number,
+    issue date, total, tax profile key) and the warnings, so every consumer of events sees one
+    shape.
 15. **Logging.** A report line carries the number, the issue date, the total and the status
     (imported, already imported, would import, skipped with the reason, error with a code). The
     summary: counts, the untouched counter, the recipients (created, reused, with a different
@@ -1272,7 +1289,13 @@ Every choice below follows from the plan, the code or the law; decided, say so i
     BUT ... differs", with an ATTENTION line in the summary and exit code 1; it never changes
     the books. Errors are shown by code, SQLSTATE and constraint name, never by message, because
     a message can quote a value; an unreadable file by its system code (ENOENT, EACCES). File
-    names, paths and connection strings are never printed.
+    names, paths and connection strings are never printed. Warnings are printed per number by kind and count, with a summary line. Imported invoices
+    cancelled since (through a credit note) are left out of the yearly totals and reported apart.
+    "Differs" compares the total and the issue date only (what the returns are checked against);
+    other corrections to an imported number are not detected. An unexpected database error of the
+    write is reported as `IMPORT_FAILED` with its SQLSTATE and constraint name only: postgres puts
+    the failing row (snapshots, names) into its message, so the original error is deliberately
+    not passed on, not even as a cause.
 16. **The editor.** Lists show number, date, total and the printed recipient name with an
     "Imported" marker; the document view says "imported, the original PDF is the document of
     record" and offers "Download original PDF", which serves the stored bytes (the route already
@@ -1298,8 +1321,8 @@ Every choice below follows from the plan, the code or the law; decided, say so i
 and `pnpm books:init-company` has set the invoice counter to 62 for Whiz-Art Media (done in
 production on 2026-10-20), run
 `pnpm books:import --dry-run` with the private input, fix what it reports, run it for real,
-compare the printed yearly totals with the filed returns, and import invoice 60 by a later run
-once its PDF is saved and its entry completed.
+and compare the printed yearly totals with the filed returns. All 61 originals are in hand
+(invoice 60's PDF was saved from the mail and its entry completed on 2026-10-20).
 
 ## 1. Audit: what actually exists today
 

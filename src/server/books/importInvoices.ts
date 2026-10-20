@@ -51,7 +51,6 @@ import type { ContactBook } from './contactBook';
 import { BooksError, constraintName, invalid, isBooksError, sqlState, withDbErrors } from './errors';
 import { berlinToday, isIsoDate } from './numbering';
 import { insertEvent } from './repository/events';
-import { createCustomer, customersByContactIds } from './repository/customers';
 import type { BooksScope } from './scope';
 import {
   customerSnapshotV1Schema,
@@ -96,7 +95,7 @@ const lineSchema = z
     unitLabel: text(40),
     /** Cents. */
     unitPrice: cents,
-    /** Basis points (informational; `subtotal` is the printed line total). */
+    /** Basis points as printed (0 when none); `subtotal` is the printed line total, authoritative even when it is not the arithmetic of the three. */
     discountBp: z.number().int().min(0).max(10000),
     /** Cents, the printed line total. */
     subtotal: cents,
@@ -110,24 +109,26 @@ const lineSchema = z
 
 const recipientSchema = z
   .object({
-  kind: z.enum(['person', 'organization']),
-  name: text(160),
-  /** The printed address lines, verbatim, when known. */
-  addressLines: printedLines,
-  addressLine1: text(300),
-  addressLine2: z.string().trim().max(300).nullable(),
-  postalCode: text(20),
-  city: text(120),
-  /** ISO 3166-1 alpha-2. */
-  country: z.string().regex(/^[A-Z]{2}$/, 'expected an ISO 3166-1 alpha-2 code'),
-  customerNumber: z.number().int().min(1).max(999_999_999).nullable(),
-  customerNumberText: z.string().max(64).nullable(),
-  /** Normalized (upper case, no spaces). */
-  vatId: z.string().regex(/^[A-Z]{2}[A-Z0-9+*]{2,13}$/, 'expected a VAT id such as DE123456789').nullable(),
-})
+    kind: z.enum(['person', 'organization']),
+    name: text(160),
+    /** The printed address lines, verbatim, when known. */
+    addressLines: printedLines,
+    addressLine1: text(300),
+    addressLine2: z.string().trim().max(300).nullable(),
+    /** Required for a German address; may be empty abroad, where some countries have none. */
+    postalCode: z.string().trim().max(20),
+    city: text(120),
+    /** ISO 3166-1 alpha-2. */
+    country: z.string().regex(/^[A-Z]{2}$/, 'expected an ISO 3166-1 alpha-2 code'),
+    customerNumber: z.number().int().min(1).max(999_999_999).nullable(),
+    customerNumberText: z.string().max(64).nullable(),
+    /** Normalized (upper case, no spaces). */
+    vatId: z.string().regex(/^[A-Z]{2}[A-Z0-9+*]{2,13}$/, 'expected a VAT id such as DE123456789').nullable(),
+  })
   .superRefine((r, ctx) => {
     // The contacts package's limit for a person's name (an organization's is 160).
     if (r.kind === 'person' && r.name.length > 120) ctx.addIssue({ code: 'custom', path: ['name'], message: 'a person name has at most 120 characters' });
+    if (r.country === 'DE' && r.postalCode === '') ctx.addIssue({ code: 'custom', path: ['postalCode'], message: 'a German address has a postal code' });
   });
 
 /** The issuer as printed on the invoice: the sender block's fields, plus the printed lines when known. */
@@ -290,8 +291,9 @@ export async function existingInvoice(db: Db, scope: BooksScope, numberValue: nu
 
 /**
  * What the import holds in the company's books, per issue year: the count and
- * the sum of the totals (cents) of every invoice with `source = 'import'`. The
- * figures to compare with the filed returns, read from the books themselves.
+ * the sum of the totals (cents) of every invoice with `source = 'import'` that
+ * is not cancelled (cancelled ones: importedCancelled). The figures to compare
+ * with the filed returns, read from the books themselves.
  */
 export async function importedYearTotals(db: Db, scope: BooksScope): Promise<Array<{ year: string; count: number; total: number }>> {
   const rows = await db
@@ -304,14 +306,28 @@ export async function importedYearTotals(db: Db, scope: BooksScope): Promise<Arr
     .where('sales_document.tenant_id', '=', scope.tenantId)
     .where('sales_document.doc_type', '=', 'invoice')
     .where('sales_document.source', '=', 'import')
+    .where('sales_document.status', '<>', 'cancelled')
     .groupBy(sql`1`)
     .orderBy(sql`1`)
     .execute();
   return rows.map((r) => ({ year: r.year, count: Number(r.count), total: Number(r.total) }));
 }
 
+/** Imported invoices cancelled since (through a credit note): left out of the yearly totals, reported apart. */
+export async function importedCancelled(db: Db, scope: BooksScope): Promise<{ count: number; total: number }> {
+  const row = await db
+    .selectFrom('sales_document')
+    .select([sql<string>`count(*)`.as('count'), sql<string>`coalesce(sum(total), 0)`.as('total')])
+    .where('tenant_id', '=', scope.tenantId)
+    .where('doc_type', '=', 'invoice')
+    .where('source', '=', 'import')
+    .where('status', '=', 'cancelled')
+    .executeTakeFirstOrThrow();
+  return { count: Number(row.count), total: Number(row.total) };
+}
+
 export type ImportResult =
-  | { status: 'imported'; documentId: string }
+  | { status: 'imported'; documentId: string; warnings: ImportWarning[] }
   | {
       status: 'already_imported';
       documentId: string;
@@ -346,33 +362,30 @@ export function judgeExisting(
 
 // --- recipients ----------------------------------------------------------------------
 
-/** The customer the import attaches an invoice to. */
+/** The contact and customer the import attaches an invoice to. */
 export interface ImportCustomerRef {
   customerId: string;
   contactId: string;
-  customerType: CustomerType;
-  /** The customer row's tax fields, from which the tax profile key is derived. */
-  vatId: string | null;
-  countryCode: string;
 }
 
 /** How a run met its recipients (counts only). */
 export interface RecipientStats {
   contactsCreated: number;
   contactsReused: number;
+  /** Customers created by committed imports. */
   customersCreated: number;
   /** Reused contacts whose current address differs from the printed one (the snapshot keeps the printed one). */
   addressDiffers: number;
 }
 
 /**
- * What a batch of imports shares: the customers already resolved (one lookup
- * per client), the counts, and per client the recipient data a NEW contact is
- * created with (the CLI passes the client's highest-numbered invoice in the
- * input; without it the invoice's own recipient is used).
+ * What a batch of imports shares: the contacts already found or created (one
+ * lookup per client), the counts, and per client the recipient data a NEW
+ * contact is created with (the CLI passes the client's highest-numbered invoice
+ * in the input; without it the invoice's own recipient is used).
  */
 export interface ImportSession {
-  readonly customers: Map<string, ImportCustomerRef>;
+  readonly contacts: Map<string, RecipientContact>;
   readonly previewed: Set<string>;
   readonly stats: RecipientStats;
   readonly newContactData: Map<string, HistoricalRecipient>;
@@ -380,7 +393,7 @@ export interface ImportSession {
 
 export function newImportSession(): ImportSession {
   return {
-    customers: new Map(),
+    contacts: new Map(),
     previewed: new Set(),
     stats: { contactsCreated: 0, contactsReused: 0, customersCreated: 0, addressDiffers: 0 },
     newContactData: new Map(),
@@ -409,10 +422,7 @@ async function findContact(scope: BooksScope, book: ContactBook, name: string): 
     (await book.findSame(scope.tenantId, { kind: 'organization', name })) ??
     (await book.findSame(scope.tenantId, { kind: 'person', name, companyOrRole: '' }));
   if (exact) return exact;
-  const key = contactIdentityKey('person', name, '');
-  const persons = (await book.search(scope.tenantId, { search: name, limit: 50 })).filter(
-    (c) => c.kind === 'person' && contactIdentityKey('person', c.name, '') === key,
-  );
+  const persons = await book.personsNamed(scope.tenantId, name);
   if (persons.length > 1) {
     throw new BooksError('RECIPIENT_AMBIGUOUS', 'RECIPIENT_AMBIGUOUS: more than one person contact carries this name', {
       contactIds: persons.map((c) => c.id),
@@ -421,91 +431,115 @@ async function findContact(scope: BooksScope, book: ContactBook, name: string): 
   return persons[0] ?? null;
 }
 
+function countFound(session: ImportSession, contact: RecipientContact, recipient: HistoricalRecipient): void {
+  session.stats.contactsReused += 1;
+  if (!sameAddress(contact, recipient)) session.stats.addressDiffers += 1;
+}
+
 /**
- * Find or create the recipient's contact and the company's customer for it.
+ * Find or create the recipient's contact in the shared contacts database.
  *
  * The rule (decided in the plan): a contact is the same client when the
  * contacts package's own identity matches (name, case and repeated whitespace
- * ignored; an organization is looked up first, then a person). That package
- * holds one contact per identity, so a matching name with a different address
- * is the same client at another address: the contact is reused unchanged and
- * counted. A new contact gets the session's data for that client (its
- * highest-numbered invoice) or this invoice's. A person is also matched
- * whatever their company or role when exactly one person carries the name;
- * two or more are RECIPIENT_AMBIGUOUS. The customer row is the existing one for
- * that contact, else a new one (business for an organization) with the
- * printed VAT id.
+ * ignored; an organization is looked up first, then a person, see
+ * findContact). That package holds one contact per identity, so a matching name
+ * with a different address is the same client at another address: the contact
+ * is reused unchanged and counted. A new contact gets the session's data for
+ * that client (its highest-numbered invoice) or this invoice's.
+ *
+ * This runs OUTSIDE the Books transaction (another database; a network call
+ * must not hold the document locks). Every refusal that can be known before is
+ * checked before it, so the only way to leave a contact without a document is
+ * a failure of the write itself; the contact then stays (a contact without
+ * invoices is harmless and a retry reuses it), the customer row does not (it is
+ * written inside the transaction).
  */
-export async function resolveImportRecipient(
+export async function resolveImportContact(
   scope: BooksScope,
   book: ContactBook,
   recipient: HistoricalRecipient,
   session: ImportSession,
-): Promise<ImportCustomerRef> {
+): Promise<RecipientContact> {
   const key = recipientKey(recipient);
-  const cached = session.customers.get(key);
+  const cached = session.contacts.get(key);
   if (cached) return cached;
   const latest = session.newContactData.get(key) ?? recipient;
 
   let contact = await findContact(scope, book, recipient.name);
-  if (contact) {
-    session.stats.contactsReused += 1;
-    if (!sameAddress(contact, recipient)) session.stats.addressDiffers += 1;
-  } else {
+  if (contact) countFound(session, contact, recipient);
+  else {
     try {
       contact = await book.create(scope.tenantId, {
         kind: latest.kind,
         name: latest.name,
         addressLine1: latest.addressLine1,
         addressLine2: latest.addressLine2,
-        postalCode: latest.postalCode,
+        postalCode: latest.postalCode === '' ? null : latest.postalCode,
         city: latest.city,
         country: latest.country,
         vatId: latest.vatId,
       });
       session.stats.contactsCreated += 1;
     } catch (err) {
+      // Created meanwhile by someone else: take that one.
       if (!isBooksError(err, 'DUPLICATE_CONTACT')) throw err;
       contact = await findContact(scope, book, latest.name);
       if (!contact) throw err;
-      session.stats.contactsReused += 1;
+      countFound(session, contact, recipient);
     }
   }
+  session.contacts.set(key, contact);
+  return contact;
+}
 
-  let [customer] = await customersByContactIds(scope, [contact.id]);
-  if (!customer) {
-    try {
-      customer = await createCustomer(scope, {
-        contactId: contact.id,
-        customerType: contact.kind === 'organization' ? 'b2b' : 'b2c',
-        vatId: latest.vatId,
-        countryCode: latest.country,
-      });
-      session.stats.customersCreated += 1;
-    } catch (err) {
-      if (!isBooksError(err, 'DUPLICATE_CUSTOMER')) throw err;
-      [customer] = await customersByContactIds(scope, [contact.id]);
-      if (!customer) throw err;
-    }
-  }
-  const ref: ImportCustomerRef = {
-    customerId: customer.id,
-    contactId: contact.id,
-    customerType: customer.customerType,
-    vatId: customer.vatId,
-    countryCode: customer.countryCode,
-  };
-  session.customers.set(key, ref);
-  return ref;
+/**
+ * Inside the import transaction: the company's customer for the contact, or a
+ * new one (business for an organization, the printed VAT id and country of the
+ * client's highest-numbered invoice). Rolled back with the document.
+ */
+async function ensureCustomerIn(
+  trx: Transaction<CommerceDB>,
+  scope: BooksScope,
+  contact: RecipientContact,
+  latest: HistoricalRecipient,
+): Promise<{ customerId: string; created: boolean }> {
+  const find = () =>
+    trx
+      .selectFrom('customer')
+      .select('id')
+      .where('tenant_id', '=', scope.tenantId)
+      .where('contact_id', '=', contact.id)
+      .executeTakeFirst();
+  const existing = await find();
+  if (existing) return { customerId: existing.id, created: false };
+  const inserted = await trx
+    .insertInto('customer')
+    .values({
+      id: randomUUID(),
+      tenant_id: scope.tenantId,
+      contact_id: contact.id,
+      customer_type: contact.kind === 'organization' ? 'b2b' : 'b2c',
+      vat_id: latest.vatId,
+      country_code: latest.country,
+      tax_number: null,
+      updated_at: new Date(),
+    })
+    .onConflict((oc) => oc.columns(['tenant_id', 'contact_id']).doNothing())
+    .returning('id')
+    .executeTakeFirst();
+  if (inserted) return { customerId: inserted.id, created: true };
+  const raced = await find();
+  if (!raced) throw new BooksError('CUSTOMER_NOT_FOUND', 'CUSTOMER_NOT_FOUND: the customer of the contact vanished');
+  return { customerId: raced.id, created: false };
 }
 
 // --- the snapshots ---------------------------------------------------------------
 
-export function importCustomerSnapshot(record: HistoricalInvoice, customer: ImportCustomerRef): CustomerSnapshotV1 {
+export function importCustomerSnapshot(record: HistoricalInvoice, contactId: string): CustomerSnapshotV1 {
   const r = record.recipient;
   return customerSnapshotV1Schema.parse({
     v: 1,
-    contactId: customer.contactId,
+    contactId,
     kind: r.kind,
     name: r.name,
     companyOrRole: '',
@@ -556,12 +590,104 @@ export function importIssuedAt(issueDate: string): Date {
   return new Date(`${issueDate}T12:00:00.000Z`);
 }
 
-// --- preview and import ------------------------------------------------------------
+// --- warnings ------------------------------------------------------------------------
 
 /**
- * What importing this record would do, writing nothing: `would_import` or
- * `already_imported` (IMPORT_CONFLICT and the counter refusals are thrown as
- * the import would throw them). Counts, once per client, whether its contact
+ * What an import takes as given but reports: the printed figures are
+ * authoritative for a historical invoice, so these never refuse it.
+ *   - `line_not_quantity_times_price`: billable lines whose printed total is not
+ *     quantity times unit price less the discount (a fixed fee of 3 x 1166.67
+ *     printed as 3500.00, a discount the extraction did not carry). Stored as
+ *     printed; `count` lines.
+ *   - `issue_date_out_of_number_order`: the issue date lies before an imported
+ *     lower number's date or after an imported higher number's (a swapped day
+ *     and month, typically). Stored as given.
+ */
+export type ImportWarning =
+  | { code: 'line_not_quantity_times_price'; count: number }
+  | { code: 'issue_date_out_of_number_order' };
+
+/** The lines whose printed total is not their arithmetic (any difference, a rounding cent included). */
+export function linesNotQuantityTimesPrice(record: Pick<HistoricalInvoice, 'lines'>): number {
+  return record.lines.filter(
+    (l) =>
+      l.kind !== 'text' &&
+      Math.round((l.quantity * l.unitPrice * (10000 - l.discountBp)) / (1000 * 10000)) !== l.subtotal,
+  ).length;
+}
+
+async function issueDateOutOfOrder(db: Db, scope: BooksScope, record: HistoricalInvoice): Promise<boolean> {
+  const row = await db
+    .selectFrom('sales_document')
+    .select([
+      sql<string | null>`max(issue_date) FILTER (WHERE number_value < ${String(record.numberValue)})::text`.as('before'),
+      sql<string | null>`min(issue_date) FILTER (WHERE number_value > ${String(record.numberValue)})::text`.as('after'),
+    ])
+    .where('tenant_id', '=', scope.tenantId)
+    .where('doc_type', '=', 'invoice')
+    .where('source', '=', 'import')
+    .executeTakeFirst();
+  return (row?.before != null && record.issueDate < row.before) || (row?.after != null && record.issueDate > row.after);
+}
+
+async function warningsFor(db: Db, scope: BooksScope, record: HistoricalInvoice): Promise<ImportWarning[]> {
+  const out: ImportWarning[] = [];
+  const lines = linesNotQuantityTimesPrice(record);
+  if (lines > 0) out.push({ code: 'line_not_quantity_times_price', count: lines });
+  if (await issueDateOutOfOrder(db, scope, record)) out.push({ code: 'issue_date_out_of_number_order' });
+  return out;
+}
+
+// --- the same original under another number -------------------------------------------
+
+/** The number of another imported invoice that already holds these exact bytes, if any. */
+async function otherNumberWithOriginal(db: Db, scope: BooksScope, sha256: string, numberValue: number): Promise<number | null> {
+  const row = await db
+    .selectFrom('sales_document_file')
+    .innerJoin('sales_document', (join) =>
+      join
+        .onRef('sales_document.tenant_id', '=', 'sales_document_file.tenant_id')
+        .onRef('sales_document.id', '=', 'sales_document_file.document_id'),
+    )
+    .select('sales_document.number_value')
+    .where('sales_document_file.tenant_id', '=', scope.tenantId)
+    .where('sales_document_file.renderer', '=', IMPORT_RENDERER)
+    .where('sales_document_file.sha256', '=', sha256)
+    .where('sales_document.number_value', '<>', String(numberValue))
+    .executeTakeFirst();
+  return row?.number_value == null ? null : Number(row.number_value);
+}
+
+function sameOriginalConflict(numberValue: number, other: number): BooksError {
+  return new BooksError(
+    'IMPORT_CONFLICT',
+    `IMPORT_CONFLICT: invoice ${numberValue}: the same original is already stored as invoice ${other}; nothing was changed`,
+    { numberValue, otherNumberValue: other },
+  );
+}
+
+// --- preview and import ------------------------------------------------------------
+
+export type PreviewResult =
+  | { status: 'would_import'; record: HistoricalInvoice; warnings: ImportWarning[] }
+  | { status: 'already_imported'; differs: boolean; record: HistoricalInvoice };
+
+/** The checks both the preview and the import make before anything is created. */
+async function checkBefore(scope: BooksScope, record: HistoricalInvoice, sha256: string): Promise<ImportResult | null> {
+  await checkImportCounter(scope.db, scope, [record.numberValue]);
+  const existing = judgeExisting(await existingInvoice(scope.db, scope, record.numberValue), record.numberValue, sha256, record);
+  if (existing) return existing;
+  const other = await otherNumberWithOriginal(scope.db, scope, sha256, record.numberValue);
+  if (other !== null) throw sameOriginalConflict(record.numberValue, other);
+  return null;
+}
+
+/**
+ * What importing this record would do, writing nothing: `would_import` (with
+ * the warnings the import would report) or `already_imported`. Every refusal
+ * the import would make before writing is made here the same way (the record,
+ * the PDF, the counter, a conflicting number or original, an ambiguous
+ * recipient, the snapshots). Counts, once per client, whether its contact
  * would be created or reused.
  */
 export async function previewHistoricalInvoice(
@@ -571,37 +697,45 @@ export async function previewHistoricalInvoice(
   pdf: Uint8Array,
   session: ImportSession,
   opts: { now?: Date } = {},
-): Promise<
-  | { status: 'would_import'; record: HistoricalInvoice }
-  | { status: 'already_imported'; differs: boolean; record: HistoricalInvoice }
-> {
+): Promise<PreviewResult> {
   const record = parseHistoricalInvoice(input, opts.now);
   const original = checkOriginal(pdf);
-  await checkImportCounter(scope.db, scope, [record.numberValue]);
-  const existing = judgeExisting(await existingInvoice(scope.db, scope, record.numberValue), record.numberValue, original.sha256, record);
-  if (existing?.status === 'already_imported') return { status: 'already_imported', differs: existing.differs, record };
-  // Build what the write would build, so a preview refuses what the import would.
+  const before = await checkBefore(scope, record, original.sha256);
+  if (before?.status === 'already_imported') return { status: 'already_imported', differs: before.differs, record };
   importSenderSnapshot(record);
-  importCustomerSnapshot(record, { customerId: 'preview', contactId: 'preview', customerType: printedCustomerType(record), vatId: null, countryCode: record.recipient.country });
+  importCustomerSnapshot(record, 'preview');
   const key = recipientKey(record.recipient);
-  if (!session.customers.has(key) && !session.previewed.has(key)) {
+  if (!session.contacts.has(key) && !session.previewed.has(key)) {
     session.previewed.add(key);
     const contact = await findContact(scope, book, record.recipient.name);
     if (!contact) session.stats.contactsCreated += 1;
-    else {
-      session.stats.contactsReused += 1;
-      if (!sameAddress(contact, record.recipient)) session.stats.addressDiffers += 1;
-    }
+    else countFound(session, contact, record.recipient);
   }
-  return { status: 'would_import', record };
+  return { status: 'would_import', record, warnings: await warningsFor(scope.db, scope, record) };
+}
+
+/**
+ * The write's own database errors, without their detail: postgres reports a
+ * failing row (snapshots, names, addresses) in the message and detail, which
+ * must never reach a log. The SQLSTATE and the constraint name are kept; the
+ * original error is deliberately NOT attached as the cause.
+ */
+function writeFailed(err: unknown): BooksError {
+  const state = sqlState(err) ?? null;
+  const constraint = constraintName(err) ?? null;
+  return new BooksError('IMPORT_FAILED', `IMPORT_FAILED: SQLSTATE ${state ?? 'unknown'}${constraint ? ` (${constraint})` : ''}`, {
+    sqlState: state,
+    constraint,
+  });
 }
 
 /**
  * Import one historical invoice with its original PDF: every check above, the
- * recipient found or created, then ONE transaction for the lines, the
- * document, the original, the pointer and the `issued` event. A number already
- * imported with the same original is `already_imported` (and creates nothing);
- * any other number already present is IMPORT_CONFLICT.
+ * contact found or created, then ONE transaction for the customer (when new),
+ * the lines, the document, the original, the pointer and the `issued` event. A
+ * number already imported with the same original is `already_imported` (and
+ * creates nothing); any other number already present, or the same original
+ * stored under another number, is IMPORT_CONFLICT.
  */
 export async function importHistoricalInvoice(
   scope: BooksScope,
@@ -613,30 +747,38 @@ export async function importHistoricalInvoice(
 ): Promise<ImportResult> {
   const record = parseHistoricalInvoice(input, opts.now);
   const original = checkOriginal(pdf);
-
-  // Cheap refusals before anything is created in the contacts database.
-  await checkImportCounter(scope.db, scope, [record.numberValue]);
-  const before = judgeExisting(await existingInvoice(scope.db, scope, record.numberValue), record.numberValue, original.sha256, record);
+  const before = await checkBefore(scope, record, original.sha256);
   if (before) return before;
-
-  const customer = await resolveImportRecipient(scope, book, record.recipient, session);
-  const customerSnapshot = importCustomerSnapshot(record, customer);
+  // Both snapshots are built before any contact is created, so a record they refuse creates nothing.
+  importCustomerSnapshot(record, 'probe');
   const senderSnapshot = importSenderSnapshot(record);
   const tax = importTaxFields(record);
   const taxSummary: TaxSummary = [{ taxRate: 0, taxTreatment: 'kleinunternehmer', net: record.total, tax: 0 }];
 
+  const contact = await resolveImportContact(scope, book, record.recipient, session);
+  const latest = session.newContactData.get(recipientKey(record.recipient)) ?? record.recipient;
+  const customerSnapshot = importCustomerSnapshot(record, contact.id);
+
+  let outcome: { result: ImportResult; customerCreated: boolean };
   try {
-    return await withDbErrors(() =>
+    outcome = await withDbErrors(() =>
       scope.db
         .transaction()
         .setIsolationLevel('read committed')
         .execute(async (trx) => {
+          // One import of these bytes at a time for the company, so two numbers can
+          // never both store the same original (there is no unique index on it).
+          await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`books-import:${scope.tenantId}:${original.sha256}`}, 0))`.execute(trx);
           // The counter row FOR SHARE: the number check holds until commit (the
           // counter only ever moves up, and an issue would wait for this lock).
           await checkImportCounter(trx, scope, [record.numberValue], { forShare: true });
           const judged = judgeExisting(await existingInvoice(trx, scope, record.numberValue), record.numberValue, original.sha256, record);
-          if (judged) return judged;
+          if (judged) return { result: judged, customerCreated: false };
+          const other = await otherNumberWithOriginal(trx, scope, original.sha256, record.numberValue);
+          if (other !== null) throw sameOriginalConflict(record.numberValue, other);
+          const warnings = await warningsFor(trx, scope, record);
 
+          const customer = await ensureCustomerIn(trx, scope, contact, latest);
           const documentId = randomUUID();
           const now = new Date();
           // Lines first, then the document (009: the line's foreign key is deferred
@@ -670,6 +812,7 @@ export async function importHistoricalInvoice(
               .execute();
           }
 
+          const documentNumber = String(record.numberValue);
           await trx
             .insertInto('sales_document')
             .values({
@@ -681,7 +824,7 @@ export async function importHistoricalInvoice(
               customer_id: customer.customerId,
               template_id: null,
               // The number exactly as printed (the historical series is plain integers).
-              document_number: String(record.numberValue),
+              document_number: documentNumber,
               number_value: String(record.numberValue),
               issue_date: record.issueDate,
               service_date: record.serviceDate,
@@ -732,6 +875,7 @@ export async function importHistoricalInvoice(
             .where('id', '=', documentId)
             .execute();
 
+          // The editor's `issued` event fields, plus how the import came about.
           await insertEvent(trx, scope, {
             documentId,
             eventType: 'issued',
@@ -739,15 +883,21 @@ export async function importHistoricalInvoice(
             toStatus: 'issued',
             actorUserId: null,
             payload: {
+              documentNumber,
+              issueDate: record.issueDate,
+              total: record.total,
+              taxProfileKey: tax.taxProfileKey,
               source: 'import',
               importOrigin: record.origin,
               numberValue: record.numberValue,
               fileSha256: original.sha256,
               lineCount: record.lines.length,
+              warnings: warnings.map((w) => w.code),
+              linesNotQuantityTimesPrice: linesNotQuantityTimesPrice(record),
               ...record.provenance,
             },
           });
-          return { status: 'imported' as const, documentId };
+          return { result: { status: 'imported' as const, documentId, warnings }, customerCreated: customer.created };
         }),
     );
   } catch (err) {
@@ -756,6 +906,9 @@ export async function importHistoricalInvoice(
       const judged = judgeExisting(await existingInvoice(scope.db, scope, record.numberValue), record.numberValue, original.sha256, record);
       if (judged) return judged;
     }
-    throw err;
+    if (isBooksError(err)) throw err;
+    throw writeFailed(err);
   }
+  if (outcome.customerCreated) session.stats.customersCreated += 1;
+  return outcome.result;
 }

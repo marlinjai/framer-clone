@@ -27,6 +27,7 @@ import {
   type PlannedInvoice,
 } from '../importCli';
 import { BooksError } from '../errors';
+import { linesNotQuantityTimesPrice } from '../importInvoices';
 
 const NOW = new Date('2026-10-20T10:00:00Z');
 const FILE = new Uint8Array(Buffer.from('%PDF-1.4 synthetic', 'latin1'));
@@ -183,11 +184,17 @@ describe('planInvoice: forward mapping', () => {
     expect(inv.recipient.country).toBe('DE');
   });
 
-  it('derives a discount from the printed amounts and keeps the printed line total', () => {
-    const inv = ready(
-      planInvoice(7, entry({ lines: [{ description: 'Workshop', quantity: 2, unit: 'Tag', unitPrice: 500, discount: { percent: 10 }, lineTotal: 900 }], total: 900 }), FILE, NOW),
-    );
-    expect(inv.lines[0]).toMatchObject({ subtotal: 90000, discountBp: 1000, quantity: 2000, unitPrice: 50000 });
+  it('stores a line as printed when its total is not quantity times price, and the core counts it as a warning', () => {
+    // The real case: a fixed fee of 3 x 1166.67 printed as 3500.00.
+    const fee = ready(planInvoice(7, entry({ lines: [{ description: 'Fixed fee', quantity: 3, unit: 'Monat', unitPrice: 1166.67, discount: null, lineTotal: 3500 }], total: 3500 }), FILE, NOW));
+    expect(fee.lines[0]).toMatchObject({ quantity: 3000, unitPrice: 116667, subtotal: 350000, discountBp: 0 });
+    expect(linesNotQuantityTimesPrice(fee)).toBe(1);
+    // A printed discount the extraction did not carry, and a total above the arithmetic: stored as printed too.
+    const below = ready(planInvoice(7, entry({ lines: [{ description: 'Workshop', quantity: 2, unit: 'Tag', unitPrice: 500, discount: { percent: 10 }, lineTotal: 900 }], total: 900 }), FILE, NOW));
+    expect(below.lines[0]).toMatchObject({ subtotal: 90000, discountBp: 0 });
+    const above = ready(planInvoice(7, entry({ lines: [{ description: 'x', quantity: 1, unit: 'h', unitPrice: 100, lineTotal: 150.5 }] }), FILE, NOW));
+    expect(above.lines[0].subtotal).toBe(15050);
+    expect(linesNotQuantityTimesPrice(ready(planInvoice(7, entry(), FILE, NOW)))).toBe(0);
   });
 
   it('turns a line without quantity and amount into a text line, and takes a service date and period when they are dates', () => {
@@ -260,7 +267,6 @@ describe('planInvoice: skipped (missing) before error (inconsistent)', () => {
     ['line_quantity_invalid', { lines: [{ description: 'x', quantity: 0.0005, unit: 'h', unitPrice: 1, lineTotal: 150.5 }] }],
     ['line_amount_invalid', { lines: [{ description: 'x', quantity: 1, unit: 'h', unitPrice: 1.005, lineTotal: 150.5 }] }],
     ['line_amount_invalid', { lines: [{ description: 'x', quantity: 1, unit: 'h', unitPrice: -5, lineTotal: 150.5 }] }],
-    ['line_total_above_quantity_times_price', { lines: [{ description: 'x', quantity: 1, unit: 'h', unitPrice: 100, lineTotal: 150.5 }] }],
     ['line_text_missing', { lines: [{ description: '  ', quantity: 1, unit: 'h', unitPrice: 150.5, lineTotal: 150.5 }] }],
     ['invalid_field:recipient.name', { recipient: { name: '', addressLines: [] } }],
   ];
@@ -304,6 +310,8 @@ describe('the small parsers', () => {
     expect(paymentTermsDays('zahlbar innerhalb von 14 Tagen')).toBe(14);
     expect(paymentTermsDays('Zahlbar sofort ohne Abzug')).toBe(0);
     expect(paymentTermsDays('nach Vereinbarung')).toBeNull();
+    // Two day counts cannot be told apart: not read, so the fallback is flagged.
+    expect(paymentTermsDays('2 % Skonto innerhalb 7 Tagen, netto 30 Tage')).toBeNull();
     expect(paymentTermsDays(null)).toBeNull();
   });
 });
@@ -345,19 +353,31 @@ describe('readOriginal', () => {
 });
 
 describe('the report never carries input values', () => {
+  it('warnings are named by kind and count only', () => {
+    expect(
+      reportLine({
+        number: 9, issueDate: '2021-01-01', total: 350000, status: 'imported', reason: null, otherFilesSkipped: 0,
+        warnings: [{ code: 'line_not_quantity_times_price', count: 1 }, { code: 'issue_date_out_of_number_order' }],
+      }),
+    ).toBe(
+      'invoice    9  2021-01-01     3500.00 EUR  imported [warning: 1 line(s) not quantity x price, stored as printed] [warning: issue date out of order with the neighbouring numbers]',
+    );
+  });
+
   it('a report line holds number, date, total and status only', () => {
     const p = planInvoice(7, entry({ otherFiles: ['other.pdf'] }), FILE, NOW);
-    const line = reportLine({ number: 7, issueDate: p.issueDate, total: p.total, status: 'imported', reason: null, otherFilesSkipped: p.otherFiles });
+    const line = reportLine({ number: 7, issueDate: p.issueDate, total: p.total, status: 'imported', reason: null, otherFilesSkipped: p.otherFiles, warnings: [] });
     expect(line).toBe('invoice    7  2021-03-04      150.50 EUR  imported (1 other file(s) not stored)');
     for (const value of ['Example', 'Client', 'Beispielweg', 'Hamburg', 'Sample', 'Design', 'other.pdf', 'invoices/']) {
       expect(line).not.toContain(value);
     }
-    expect(reportLine({ number: 60, issueDate: null, total: null, status: 'skipped', reason: 'file_missing', otherFilesSkipped: 0 })).toBe(
+    expect(reportLine({ number: 60, issueDate: null, total: null, status: 'skipped', reason: 'file_missing', otherFilesSkipped: 0, warnings: [] })).toBe(
       'invoice   60  ????-??-??               ?  skipped: file_missing',
     );
   });
 
   it('errorCode names a code, a SQLSTATE or a class, never a message', () => {
+    expect(errorCode(new BooksError('IMPORT_FAILED', 'IMPORT_FAILED: SQLSTATE 23514', { sqlState: '23514', constraint: 'x_check' }))).toBe('IMPORT_FAILED:SQLSTATE_23514:x_check');
     expect(errorCode(new BooksError('IMPORT_CONFLICT', 'IMPORT_CONFLICT: Example Client GmbH'))).toBe('IMPORT_CONFLICT');
     expect(errorCode(Object.assign(new Error('Key (name)=(Example Client GmbH)'), { code: '23505', constraint_name: 'x_key' }))).toBe('SQLSTATE_23505:x_key');
     expect(errorCode(new TypeError('Example Client GmbH'))).toBe('UNEXPECTED:TypeError');

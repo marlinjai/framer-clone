@@ -11,6 +11,7 @@ import { BooksError, isBooksError, mapDbError } from '../errors';
 import {
   checkOriginal,
   judgeExisting,
+  linesNotQuantityTimesPrice,
   parseHistoricalInvoice,
   recipientKey,
   type HistoricalInvoiceInput,
@@ -126,6 +127,26 @@ describe('parseHistoricalInvoice', () => {
   it('holds a person name to the contacts limit of 120 characters', () => {
     expect(refusedPaths(record({ recipient: { ...record().recipient, kind: 'person', name: 'x'.repeat(121) } }))).toEqual(['recipient.name']);
     expect(parseHistoricalInvoice(record({ recipient: { ...record().recipient, name: 'x'.repeat(160) } }), NOW).recipient.name).toHaveLength(160);
+  });
+
+  it('a postal code is required in Germany and may be empty abroad', () => {
+    expect(refusedPaths(record({ recipient: { ...record().recipient, postalCode: '' } }))).toEqual(['recipient.postalCode']);
+    expect(parseHistoricalInvoice(record({ recipient: { ...record().recipient, postalCode: '', country: 'IE' } }), NOW).recipient.postalCode).toBe('');
+  });
+
+  it('takes any line arithmetic as printed (the warnings report it), but the lines must sum to the total', () => {
+    const fee = record({
+      lines: [{ kind: 'service', title: 'Fixed fee', description: null, quantity: 3000, unitLabel: 'Monat', unitPrice: 116667, discountBp: 0, subtotal: 350000 }],
+      total: 350000,
+    });
+    expect(parseHistoricalInvoice(fee, NOW).lines[0].subtotal).toBe(350000);
+    expect(linesNotQuantityTimesPrice(parseHistoricalInvoice(fee, NOW))).toBe(1);
+    expect(linesNotQuantityTimesPrice(parseHistoricalInvoice(record(), NOW))).toBe(0);
+    const discounted = record({
+      lines: [{ kind: 'service', title: 'Workshop', description: null, quantity: 2000, unitLabel: 'Tag', unitPrice: 50000, discountBp: 1000, subtotal: 90000 }],
+      total: 90000,
+    });
+    expect(linesNotQuantityTimesPrice(parseHistoricalInvoice(discounted, NOW))).toBe(0);
   });
 
   it('refuses unknown top-level fields instead of dropping them', () => {

@@ -65,6 +65,7 @@ const STATUS: Record<BooksErrorCode, number> = {
   UNDRAWABLE_TEXT: 422,
   IMPORT_INCOMPLETE: 422,
   RECIPIENT_UNAVAILABLE: 503,
+  IMPORT_FAILED: 500,
 };
 
 /** The two codes that mean "this company was never set up for the Books". */

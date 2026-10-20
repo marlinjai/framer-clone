@@ -7,7 +7,8 @@
 // standard: forward, re-run (idempotence), a changed file refused, resume of a
 // skipped invoice, and the whole-run refusals (counter missing or too low, dry
 // run) that write nothing. Plus what 009_books_import guarantees at the
-// database, proven as the owner (the role every other role is weaker than). The download, list and freeze through the real routes are in
+// database, proven as the owner (the role every other role is weaker than).
+// The download, list and freeze through the real routes are in
 // books-routes.itest.ts. Synthetic data only: invented names and addresses.
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -17,11 +18,12 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { cancelInvoice } from '../cancel';
 import { exitCodeFor, runBooksImport, type Env, type ImportReport } from '../importCli';
 import { issue } from '../issue';
 import { createDraft } from '../repository/documents';
 import { addLine } from '../repository/lines';
-import { importHistoricalInvoice, newImportSession, type HistoricalInvoiceInput } from '../importInvoices';
+import { importHistoricalInvoice, newImportSession, previewHistoricalInvoice, type HistoricalInvoiceInput } from '../importInvoices';
 import { readSettings } from '../settings';
 import { getDocument, listDocuments } from '../repository/read';
 import {
@@ -365,6 +367,20 @@ describe('books:import, the run in order: dry run, forward, re-run, changed file
       .executeTakeFirstOrThrow();
     expect(stored.total).toBe(12000);
   });
+
+  it('an imported invoice cancelled since leaves the yearly totals and is reported apart', async () => {
+    const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
+    const doc = await env.ownerDb
+      .selectFrom('sales_document')
+      .select('id')
+      .where('tenant_id', '=', tenantId)
+      .where('number_value', '=', '3')
+      .executeTakeFirstOrThrow();
+    await cancelInvoice(scope, doc.id, { actorUserId: ACTOR, reason: 'synthetic cancellation' });
+    const { report, text } = await run(f, tenantId, book, dir);
+    expect(report.years.find((y) => y.year === '2020')).toBeUndefined();
+    expect(text).toContain('not in these totals: 1 imported invoice(s) cancelled since by a credit note, 450.50 EUR');
+  });
 });
 
 describe('books:import refuses the whole run and writes nothing', () => {
@@ -398,6 +414,26 @@ describe('books:import refuses the whole run and writes nothing', () => {
       'books:import: originals that cannot be used, by invoice number: 3 (file_not_pdf)',
     );
     expect(await countRows(tenantId)).toEqual({ docs: 0, files: 0, customers: 0 });
+  });
+
+  it('when the same original is named by two numbers', async () => {
+    const tenantId = newTenantId();
+    const dir = new FakeDirectory();
+    await initCompany(scopeFor(env.appDb, env.tgId, tenantId, dir), { invoiceNext: 62 });
+    const f = fixture('samefile');
+    f.invoices[1] = { ...f.invoices[1], file: 'pdf/1.pdf' };
+    f.write();
+    await expect(run(f, tenantId, new FakeContactBook(dir), dir)).rejects.toThrow(
+      'books:import: the same original is named by more than one invoice number: 1 and 2',
+    );
+    expect(await countRows(tenantId)).toEqual({ docs: 0, files: 0, customers: 0 });
+  });
+
+  it('when CONTACTS_DATABASE_URL is not set, saying so (not "unavailable")', async () => {
+    const f = fixture('nocontactsurl');
+    await expect(
+      runBooksImport(['--tenant-group', env.tgId, '--tenant', newTenantId(), '--input', f.input, '--files-dir', f.files], cliEnv(), () => {}),
+    ).rejects.toThrow('books:import: CONTACTS_DATABASE_URL is not set');
   });
 
   it('when the contacts database does not answer', async () => {
@@ -535,6 +571,52 @@ describe('importHistoricalInvoice against what is already in the books', () => {
     ]);
     expect(results.map((r) => r.status).sort()).toEqual(['already_imported', 'imported']);
     expect((await countRows(tenantId)).docs).toBe(1);
+  });
+
+  it('the same original under another number is a conflict, also when two imports race, and the loser leaves no customer', async () => {
+    const { tenantId, book, scope } = await freshCompany();
+    const pdf = new Uint8Array(pdfBytes(`same-${tenantId}`));
+    const results = await Promise.allSettled([
+      importHistoricalInvoice(scope, book, record(50, 'First Example GmbH'), pdf, newImportSession()),
+      importHistoricalInvoice(scope, book, record(51, 'Second Example GmbH'), pdf, newImportSession()),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(rejected.reason).toMatchObject({ code: 'IMPORT_CONFLICT' });
+    expect(await countRows(tenantId)).toMatchObject({ docs: 1, files: 1, customers: 1 });
+  });
+
+  it('a line that is not quantity times price and an issue date out of order are imported as given, with warnings', async () => {
+    const { book, scope } = await freshCompany();
+    await importHistoricalInvoice(scope, book, record(40), new Uint8Array(pdfBytes(`w-40-${scope.tenantId}`)));
+    await importHistoricalInvoice(scope, book, { ...record(42), issueDate: '2025-04-03' }, new Uint8Array(pdfBytes(`w-42-${scope.tenantId}`)));
+    const fee = {
+      ...record(41),
+      issueDate: '2025-01-04',
+      lines: [{ kind: 'service' as const, title: 'Fixed fee', description: null, quantity: 3000, unitLabel: 'Monat', unitPrice: 116667, discountBp: 0, subtotal: 350000 }],
+      total: 350000,
+    };
+    const preview = await previewHistoricalInvoice(scope, book, fee, new Uint8Array(pdfBytes(`w-41-${scope.tenantId}`)), newImportSession());
+    const result = await importHistoricalInvoice(scope, book, fee, new Uint8Array(pdfBytes(`w-41-${scope.tenantId}`)));
+    const expected = [{ code: 'line_not_quantity_times_price', count: 1 }, { code: 'issue_date_out_of_number_order' }];
+    expect(preview).toMatchObject({ status: 'would_import', warnings: expected });
+    expect(result).toMatchObject({ status: 'imported', warnings: expected });
+    const view = await getDocument(scope, result.documentId);
+    expect(view.lines[0]).toMatchObject({ quantity: 3000, unitPrice: 116667, subtotal: 350000 });
+    expect(view.events[0].payload).toMatchObject({
+      documentNumber: '41', issueDate: '2025-01-04', total: 350000, linesNotQuantityTimesPrice: 1,
+      warnings: ['line_not_quantity_times_price', 'issue_date_out_of_number_order'],
+    });
+  });
+
+  it('the preview refuses an ambiguous recipient exactly as the import does', async () => {
+    const { tenantId, dir, book, scope } = await freshCompany();
+    dir.add(tenantId, { kind: 'person', name: 'Max Beispiel', companyOrRole: 'Studio A', legalForm: null });
+    dir.add(tenantId, { kind: 'person', name: 'Max Beispiel', companyOrRole: 'Studio B', legalForm: null });
+    const r = record(34, 'Max Beispiel', 'person');
+    const pdf = new Uint8Array(pdfBytes(`amb-${tenantId}`));
+    await expect(previewHistoricalInvoice(scope, book, r, pdf, newImportSession())).rejects.toMatchObject({ code: 'RECIPIENT_AMBIGUOUS' });
+    await expect(importHistoricalInvoice(scope, book, r, pdf)).rejects.toMatchObject({ code: 'RECIPIENT_AMBIGUOUS' });
   });
 
   it('a person is matched whatever their company or role, and two persons of one name are never guessed between', async () => {

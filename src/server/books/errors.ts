@@ -52,7 +52,8 @@ export type BooksErrorCode =
   | 'IMPORT_CONFLICT'
   | 'IMPORT_INCOMPLETE'
   | 'IMPORT_COUNTER_TOO_LOW'
-  | 'RECIPIENT_AMBIGUOUS';
+  | 'RECIPIENT_AMBIGUOUS'
+  | 'IMPORT_FAILED';
 
 export class BooksError extends Error {
   readonly code: BooksErrorCode;

@@ -66,7 +66,7 @@ connections to the suite. The four lines below are in that order.
   (`pnpm books:init-company` already set the counter to 62 in production): `pnpm books:import
   --dry-run` and the real run
   for Whiz-Art Media with the private input file, compare the printed yearly totals with the
-  returns, and import invoice 60 once its PDF is saved from the mail. Then connect: the
+  returns (all 61 originals are in hand, invoice 60's saved from the mail). Then connect: the
   read-only endpoint receipt-ocr-app pulls issued invoices from (service-account key from
   auth-brain; the receipts session gets the contract when it exists), storage-brain for the
   PDFs, the shared contacts database for recipients in production. After the import the

@@ -28,6 +28,7 @@
 // contact and customer included, is importHistoricalInvoice in
 // importInvoices.ts, the core the in-editor upload will call too.
 
+import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -43,6 +44,7 @@ import { constraintName, isBooksError, sqlState } from './errors';
 import {
   checkImportCounter,
   existingInvoice,
+  importedCancelled,
   importedYearTotals,
   importHistoricalInvoice,
   MAX_CENTS,
@@ -53,6 +55,7 @@ import {
   recipientKey,
   type HistoricalInvoice,
   type HistoricalLine,
+  type ImportWarning,
   type RecipientStats,
 } from './importInvoices';
 import { addDays, berlinToday, isIsoDate } from './numbering';
@@ -63,7 +66,6 @@ import type { SenderBlockV1 } from './snapshots';
 
 /** The environment the run reads (process.env in the script, a plain object in tests). */
 export type Env = Record<string, string | undefined>;
-
 
 function fail(message: string): never {
   throw new Error(`books:import: ${message}`);
@@ -242,12 +244,14 @@ function scaled(x: number, factor: 100 | 1000): number | null {
   return Math.abs(x * factor - v) < 1e-6 ? v : null;
 }
 
-/** Payment terms in days when the printed text states them ("14 Tage", "zahlbar sofort"); null otherwise. */
+/** Payment terms in days when the printed text states exactly one ("14 Tage", "zahlbar sofort"); null otherwise. */
 export function paymentTermsDays(text: string | null | undefined): number | null {
   if (!text) return null;
-  const days = /(\d{1,3})\s*(?:Tage|Tagen|Tag|days?)\b/i.exec(text);
-  if (days) {
-    const n = Number(days[1]);
+  const all = [...text.matchAll(/(\d{1,3})\s*(?:Tage|Tagen|Tag|days?)\b/gi)];
+  // Two day counts ("2 % Skonto innerhalb 7 Tagen, netto 30 Tage") cannot be told apart: not read.
+  if (all.length > 1) return null;
+  if (all.length === 1) {
+    const n = Number(all[0][1]);
     return n <= 365 ? n : null;
   }
   if (/\bsofort\b|\bimmediately\b/i.test(text)) return 0;
@@ -280,6 +284,7 @@ function mapLines(raw: NonNullable<RawInvoice['lines']>): HistoricalLine[] | Pla
     if (text.length > 4000) return { kind: 'error', reason: 'line_text_too_long' };
     const title = text.length <= 300 ? text : `${cutWhole(text, 299)}…`;
     const description = text.length <= 300 ? null : text;
+    const unitLabel = cutWhole((l.unit ?? '').trim(), 40) || 'Stk';
     const quantity = scaled(l.quantity, 1000);
     const unitPrice = scaled(l.unitPrice, 100);
     const lineTotal = scaled(l.lineTotal, 100);
@@ -290,26 +295,13 @@ function mapLines(raw: NonNullable<RawInvoice['lines']>): HistoricalLine[] | Pla
     if (quantity === 0) {
       // A line without quantity is a text line, and carries no amount.
       if (unitPrice !== 0 || lineTotal !== 0) return { kind: 'error', reason: 'line_quantity_invalid' };
-      out.push({ kind: 'text', title, description, quantity: 0, unitLabel: (l.unit ?? '').trim() || 'Stk', unitPrice: 0, discountBp: 0, subtotal: 0 });
+      out.push({ kind: 'text', title, description, quantity: 0, unitLabel, unitPrice: 0, discountBp: 0, subtotal: 0 });
       continue;
     }
-    // The printed line total is the subtotal; a discount is derived from it.
-    const gross = Math.round((quantity * unitPrice) / 1000);
-    let discountBp = 0;
-    if (Math.abs(lineTotal - gross) > 1) {
-      if (lineTotal > gross) return { kind: 'error', reason: 'line_total_above_quantity_times_price' };
-      discountBp = Math.round(((gross - lineTotal) * 10000) / gross);
-    }
-    out.push({
-      kind: 'service',
-      title,
-      description,
-      quantity,
-      unitLabel: (l.unit ?? '').trim().slice(0, 40) || 'Stk',
-      unitPrice,
-      discountBp,
-      subtotal: lineTotal,
-    });
+    // Stored as printed: the printed line total is authoritative. When it is not
+    // quantity times price (a rounding cent, a fixed fee, a discount the
+    // extraction did not carry) the import reports a warning, never refuses.
+    out.push({ kind: 'service', title, description, quantity, unitLabel, unitPrice, discountBp: 0, subtotal: lineTotal });
   }
   return out;
 }
@@ -521,6 +513,8 @@ export interface ReportRow {
   /** The skip reason, the error code, or for an already imported number `differs` when its stored data no longer matches the input. */
   reason: string | null;
   otherFilesSkipped: number;
+  /** What was imported (or would be) as printed but is reported: never values, codes and counts only. */
+  warnings: ImportWarning[];
 }
 
 export interface ImportReport {
@@ -566,11 +560,20 @@ export function reportLine(row: ReportRow): string {
             ? 'would import'
             : 'imported';
   const other = row.otherFilesSkipped > 0 ? ` (${row.otherFilesSkipped} other file(s) not stored)` : '';
-  return `invoice ${String(row.number).padStart(4)}  ${row.issueDate ?? '????-??-??'}  ${euros(row.total).padStart(14)}  ${status}${other}`;
+  const warned = row.warnings.map((w) =>
+    w.code === 'line_not_quantity_times_price'
+      ? ` [warning: ${w.count} line(s) not quantity x price, stored as printed]`
+      : ' [warning: issue date out of order with the neighbouring numbers]',
+  );
+  return `invoice ${String(row.number).padStart(4)}  ${row.issueDate ?? '????-??-??'}  ${euros(row.total).padStart(14)}  ${status}${other}${warned.join('')}`;
 }
 
 /** An error's code for the report: a BooksError's code, else the SQLSTATE and constraint, never a message. */
 export function errorCode(err: unknown): string {
+  if (isBooksError(err, 'IMPORT_FAILED')) {
+    const d = err.details as { sqlState?: string | null; constraint?: string | null } | undefined;
+    return `IMPORT_FAILED:SQLSTATE_${d?.sqlState ?? 'unknown'}${d?.constraint ? `:${d.constraint}` : ''}`;
+  }
   if (isBooksError(err)) return err.code;
   const state = sqlState(err);
   if (state) return `SQLSTATE_${state}${constraintName(err) ? `:${constraintName(err)}` : ''}`;
@@ -626,9 +629,19 @@ export async function runBooksImport(
     return planInvoice(number, raw, file, now);
   });
   if (fileProblems.length > 0) fail(`originals that cannot be used, by invoice number: ${fileProblems.join(', ')}`);
+  // One original, one number: the same bytes named by two entries would store one revenue twice.
+  const byDigest = new Map<string, number[]>();
+  for (const p of plans) {
+    if (p.issue !== null) continue;
+    const digest = createHash('sha256').update(p.pdf).digest('hex');
+    byDigest.set(digest, [...(byDigest.get(digest) ?? []), p.number]);
+  }
+  const shared = [...byDigest.values()].filter((ns) => ns.length > 1);
+  if (shared.length > 0) fail(`the same original is named by more than one invoice number: ${shared.map((ns) => ns.join(' and ')).join(', ')}`);
 
   // 2. The database: the counter above every number (nothing written yet).
   const connectionString = env.COMMERCE_APP_DATABASE_URL ?? fail('COMMERCE_APP_DATABASE_URL is not set');
+  if (!deps.contactBook && !env.CONTACTS_DATABASE_URL) fail('CONTACTS_DATABASE_URL is not set');
   let contactsHandle: ContactsDb | null = null;
   const contactsOf = (): ContactsDb => {
     if (!contactsHandle) {
@@ -666,6 +679,7 @@ export async function runBooksImport(
         status: 'error',
         reason: null,
         otherFilesSkipped: p.otherFiles,
+        warnings: [],
       };
       if (p.issue !== null) {
         row.status = p.issue.kind;
@@ -680,6 +694,7 @@ export async function runBooksImport(
             : await importHistoricalInvoice(scope, book, p.record, p.pdf, session, { now });
           row.status = result.status;
           if (result.status === 'already_imported' && result.differs) row.reason = 'differs';
+          if (result.status !== 'already_imported') row.warnings = result.warnings;
           if (result.status === 'would_import') wouldImport.push({ issueDate: p.record.issueDate, total: p.record.total });
           if (p.record.provenance.paidOnPresent) paidOnPresent += 1;
         } catch (err) {
@@ -712,6 +727,8 @@ export async function runBooksImport(
       `  ${dryRun ? `${counts.would_import} would import` : `${counts.imported} imported`}, ${counts.already_imported} already imported, ${counts.skipped} skipped, ${counts.error} error(s), of ${rows.length} in the input`,
     );
     const differing = rows.filter((r) => r.reason === 'differs').length;
+    const warned = rows.filter((r) => r.warnings.length > 0).length;
+    if (warned > 0) log(`  warnings on ${warned} invoice(s) (listed above): imported as printed, check them against the originals`);
     if (differing > 0) {
       log(`  ATTENTION: ${differing} already imported invoice(s) differ from the input in total or issue date (listed above); the books were not changed`);
     }
@@ -724,6 +741,8 @@ export async function runBooksImport(
     log(`  payment day present on ${paidOnPresent} of them; payment state stays in receipt-ocr-app (not stored in the Books)`);
     log(dryRun ? '  yearly totals the import would hold, by issue year:' : '  yearly totals of the imported invoices in the books, by issue year:');
     for (const y of years) log(`    ${y.year}: ${String(y.count).padStart(3)} invoice(s), ${euros(y.total)}`);
+    const cancelled = await importedCancelled(scope.db, scope);
+    if (cancelled.count > 0) log(`  not in these totals: ${cancelled.count} imported invoice(s) cancelled since by a credit note, ${euros(cancelled.total)}`);
 
     return { dryRun, rows, counts, differing, years, recipients: stats, paidOnPresent, counterNextValue: counter.nextValue };
   } finally {

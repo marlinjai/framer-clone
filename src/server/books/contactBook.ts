@@ -20,7 +20,7 @@
 // other refusal of the package (an invalid or too long field) is INVALID_INPUT
 // with the field name only.
 
-import { contactsFor, type ContactsDb } from '@marlinjai/contacts-core';
+import { contactIdentityKey, contactsFor, type ContactsDb } from '@marlinjai/contacts-core';
 
 import { BooksError, isBooksError } from './errors';
 import { contactsDb, toRecipientContact } from './recipients';
@@ -57,7 +57,17 @@ export interface ContactBook {
     tenantId: string,
     identity: { kind: 'person' | 'organization'; name: string; companyOrRole?: string | null },
   ): Promise<RecipientContact | null>;
+  /**
+   * Every person contact of the company whose name is this one (case and
+   * repeated whitespace ignored), whatever their company or role, archived
+   * included (like findSame). Refuses with RECIPIENT_AMBIGUOUS rather than
+   * return a cut list.
+   */
+  personsNamed(tenantId: string, name: string): Promise<RecipientContact[]>;
 }
+
+/** How many contacts one name lookup reads at most; more hits than this cannot be told apart and are refused. */
+export const NAME_LOOKUP_LIMIT = 1000;
 
 function errorCode(err: unknown): string | undefined {
   if (typeof err !== 'object' || err === null) return undefined;
@@ -141,6 +151,20 @@ export function contactsContactBook(handle: () => ContactsDb = contactsDb): Cont
       } catch (err) {
         throw inputOrUnavailable(err);
       }
+    },
+    async personsNamed(tenantId, name) {
+      const db = await open();
+      let rows;
+      try {
+        rows = await contactsFor(db, tenantId).list({ kind: 'person', includeArchived: true, search: name.trim().replace(/\s+/g, ' '), limit: NAME_LOOKUP_LIMIT });
+      } catch (err) {
+        throw inputOrUnavailable(err);
+      }
+      if (rows.length >= NAME_LOOKUP_LIMIT) {
+        throw new BooksError('RECIPIENT_AMBIGUOUS', 'RECIPIENT_AMBIGUOUS: too many contacts match this name to tell them apart');
+      }
+      const key = contactIdentityKey('person', name, '');
+      return rows.filter((c) => contactIdentityKey('person', c.name, '') === key).map(toRecipientContact);
     },
     async create(tenantId, input) {
       const db = await open();

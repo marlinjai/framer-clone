@@ -155,6 +155,11 @@ export class FakeContactBook implements ContactBook {
       this.dir.contactsOf(tenantId).find((c) => c.kind === identity.kind && contactIdentityKey(c.kind, c.name, c.companyOrRole) === key) ?? null
     );
   }
+  async personsNamed(tenantId: string, name: string): Promise<RecipientContact[]> {
+    this.outage();
+    const key = contactIdentityKey('person', name, '');
+    return this.dir.contactsOf(tenantId).filter((c) => c.kind === 'person' && contactIdentityKey('person', c.name, '') === key);
+  }
   async create(tenantId: string, input: NewContactInput): Promise<RecipientContact> {
     this.outage();
     const same = await this.findSame(tenantId, { kind: input.kind, name: input.name, companyOrRole: input.companyOrRole ?? '' });
