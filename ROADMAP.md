@@ -10,6 +10,7 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
 
 ## Open
 
+- [ ] Builder UX gaps: typed property controls for components (a form per component instead of raw props), a navbar component with editable links, theme colours and fonts, and marketing section components (hero, features, pricing, testimonials). These are what stops a non-developer from building a real marketing site in the editor today. Needs a plan before building; the archived ArboSano builder plan of 2026-06-26 (under docs/specs, sections 1 to 3) has the model map and component inventory to start from. (2026-10-20)
 - [ ] AI-driven page generation: let AI agents write pages directly as MST (MobX-State-Tree, the
   in-memory tree that backs the editor) snapshot JSON, so the data format is the API. Decided and
   in progress since 2026-10-19: phases 1 to 3 (registry-generated schema docs with validation, the
