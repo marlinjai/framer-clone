@@ -32,7 +32,7 @@ function manualTransport() {
 function resultFor(req: PageGenRequest, raw: unknown, generationId = 'gen-1'): PageGenResultPayload {
   const out = validateGeneration(raw, { breakpoints: deriveBreakpointKeys(req.breakpoints) });
   if (!out.ok) throw new Error(out.errors.join('; '));
-  return { generationId, model: 'claude-sonnet-4-6', ...out.result };
+  return { generationId, model: 'claude-sonnet-5-5', ...out.result };
 }
 
 const PAGE = {

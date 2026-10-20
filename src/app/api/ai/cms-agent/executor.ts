@@ -24,7 +24,7 @@ import type {
   SelectOption,
   Table,
 } from '@marlinjai/data-table-core';
-import { AI_MODELS } from '@/lib/ai/anthropicClient';
+import { modelRequestFields, refusalMessage } from '@/lib/ai/anthropicClient';
 import type { AgentChangeSummary } from '@/lib/ai/cmsAgentProtocol';
 import { isAgentToolName, toolInputSchemas, type AgentToolName } from './tools';
 
@@ -657,14 +657,22 @@ function extractJson(text: string): string {
 }
 
 async function innerHaiku(anthropic: Anthropic, system: string, prompt: string): Promise<unknown> {
-  const res = await anthropic.messages.create({
-    model: AI_MODELS.HAIKU,
-    max_tokens: 4096,
+  // Haiku 5.5 (no server-side fallback), low effort: a bulk JSON transform.
+  // Thinking counts toward max_tokens on current models, hence the headroom.
+  const res = await anthropic.beta.messages.create({
+    ...modelRequestFields('HAIKU', 'low'),
+    max_tokens: 8192,
     system,
     messages: [{ role: 'user', content: prompt }],
   });
+  const refusal = refusalMessage(res);
+  if (refusal) throw new Error(refusal);
+  if (res.stop_reason === 'max_tokens') {
+    throw new Error('the generated content was too long; ask for fewer items');
+  }
+  // Read by block type: the response can start with (empty) thinking blocks.
   const text = res.content
-    .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+    .filter((block): block is Extract<typeof block, { type: 'text' }> => block.type === 'text')
     .map((block) => block.text)
     .join('');
   return JSON.parse(extractJson(text));

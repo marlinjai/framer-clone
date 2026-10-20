@@ -13,7 +13,7 @@
 // hard-delete adapter methods still exist; they are simply never exposed here.
 
 import { z } from 'zod';
-import type Anthropic from '@anthropic-ai/sdk';
+import type { BetaTool } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
 // A cell map: column id -> value. Values are unknown at the schema boundary;
 // the adapter coerces per column type.
@@ -106,7 +106,7 @@ export function isAgentToolName(name: string): name is AgentToolName {
 // `csv_import` content is supplied server-side from the request body (the model
 // cannot see the base64), so its schema only asks for the table + optional
 // mapping.
-export const agentToolDefs: Anthropic.Tool[] = [
+export const agentToolDefsBase: BetaTool[] = [
   {
     name: 'list_collections',
     description:
@@ -304,3 +304,13 @@ export const agentToolDefs: Anthropic.Tool[] = [
     },
   },
 ];
+
+// Every tool streams its input eagerly (the loop is streamed), so arguments
+// arrive unbuffered and unvalidated by the API. That is safe because the
+// executor Zod-validates every input before running anything
+// (executeAgentTool -> toolInputSchemas), and the loop never runs the tools of
+// a turn that stopped on max_tokens or a refusal.
+export const agentToolDefs: BetaTool[] = agentToolDefsBase.map((tool) => ({
+  ...tool,
+  eager_input_streaming: true,
+}));

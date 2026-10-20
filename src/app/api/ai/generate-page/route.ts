@@ -32,6 +32,10 @@
 
 import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
+import type {
+  BetaMessageParam,
+  BetaToolUseBlock,
+} from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { readCompanySelectors } from '@/lib/activeCompanyCookie';
 import { getVerifiedSession, authenticateRequest } from '@/lib/auth-api';
@@ -39,8 +43,11 @@ import { activeScopeDenial, resolveActiveScope } from '@/server/sites';
 import { jsonError } from '@/lib/api/respond';
 import {
   getAnthropicClient,
+  isToolInputParseError,
   MissingAnthropicKeyError,
-  resolveModelId,
+  modelRequestFields,
+  refusalMessage,
+  replayableAssistantContent,
 } from '@/lib/ai/anthropicClient';
 import { buildSystemPrompt } from '@/lib/ai/promptCache';
 import { createSseStream, SSE_HEADERS } from '@/lib/ai/sse';
@@ -70,8 +77,19 @@ export const runtime = 'nodejs';
 
 /** Heartbeat cadence, same as the CMS agent (proxy idle timeouts). */
 const SSE_HEARTBEAT_MS = 5_000;
-/** Output ceiling per attempt. A 200-node page is roughly 15k tokens of JSON. */
-const MAX_OUTPUT_TOKENS = 24_000;
+/**
+ * Output ceiling per attempt. A 200-node page is roughly 15k tokens of JSON,
+ * and on current models adaptive thinking counts toward the same limit, so
+ * the cap leaves room for both. Worst case per request (two full attempts on
+ * Sonnet 5.5 at $10 per million output tokens): about $0.64.
+ */
+const MAX_OUTPUT_TOKENS = 32_000;
+/**
+ * Effort for page generation: `medium`. It is a single structured design pass
+ * with a validation gate after it; raise to `high` only if evals show better
+ * layouts are worth the extra thinking tokens.
+ */
+const PAGE_GEN_EFFORT = 'medium' as const;
 /** Attempts per request: the first, plus one repair round. */
 const MAX_ATTEMPTS = 2;
 /** Serialized replace/insert context ceiling (the client truncates to ~8k tokens first). */
@@ -197,7 +215,8 @@ async function runGeneration(args: RunArgs): Promise<void> {
   const heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
   const requestId = newRequestId();
   const timer = startAiCallTimer();
-  const modelId = resolveModelId(body.model);
+  const modelFields = modelRequestFields(body.model, PAGE_GEN_EFFORT);
+  const modelId = modelFields.model;
   const breakpoints: BreakpointKey[] = deriveBreakpointKeys(body.breakpoints);
 
   let inputTokens = 0;
@@ -229,7 +248,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
       },
     ]);
     const tools = [emitPageTool()];
-    const messages: Anthropic.MessageParam[] = [{ role: 'user', content: briefMessage(body.brief) }];
+    const messages: BetaMessageParam[] = [{ role: 'user', content: briefMessage(body.brief) }];
 
     let lastProblems: string[] = [];
     while (attempts < MAX_ATTEMPTS) {
@@ -237,15 +256,17 @@ async function runGeneration(args: RunArgs): Promise<void> {
       const attempt = attempts;
       sse.send('gen:progress', { phase: attempt === 1 ? 'generating' : 'repairing', receivedChars: 0, attempt });
 
-      const stream = anthropic.messages.stream(
+      // Sonnet 5.5 carries the server-side fallback opt-in (modelRequestFields);
+      // Haiku 5.5 has none.
+      const stream = anthropic.beta.messages.stream(
         {
-          model: modelId,
+          ...modelFields,
           max_tokens: MAX_OUTPUT_TOKENS,
           system,
           tools,
-          // `auto` plus the instruction, not a forced tool: newer models reject
-          // forced tool_choice, and a missing call is handled as a repairable
-          // problem below.
+          // `auto` plus the instruction, not a forced tool: current models
+          // reject forced tool_choice, and a missing call is handled as a
+          // repairable problem below.
           tool_choice: { type: 'auto', disable_parallel_tool_use: true },
           messages,
         },
@@ -261,24 +282,43 @@ async function runGeneration(args: RunArgs): Promise<void> {
         }
       });
 
-      const final = await stream.finalMessage();
+      let final;
+      try {
+        final = await stream.finalMessage();
+      } catch (err) {
+        // Eager input streaming hands over unvalidated JSON; JSON the SDK
+        // cannot parse at all is invalid model output, not an outage. There
+        // is no assistant turn to send back, so the repair turn is a plain
+        // user message. Every other error (API, network, abort) propagates.
+        if (!isToolInputParseError(err)) throw err;
+        lastProblems = [`the ${EMIT_TOOL_NAME} input was not valid JSON`];
+        messages.push({ role: 'user', content: repairMessage(lastProblems) });
+        continue;
+      }
       inputTokens += final.usage.input_tokens;
       outputTokens += final.usage.output_tokens;
       cacheReadTokens += final.usage.cache_read_input_tokens ?? 0;
       cacheWriteTokens += final.usage.cache_creation_input_tokens ?? 0;
 
-      if (final.stop_reason === 'refusal') {
-        fail({ code: 'refused', message: 'The AI declined this brief. Rephrase it and try again.' });
+      // A classifier decline (after any server-side fallback) is an HTTP 200:
+      // checked before content, never repaired (a refusal can also cut the
+      // tool input off mid-way).
+      const refusal = refusalMessage(final);
+      if (refusal) {
+        fail({ code: 'refused', message: refusal });
         return;
       }
 
+      // Read by block type: the response may start with thinking blocks.
       const toolUse = final.content.find(
-        (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use' && b.name === EMIT_TOOL_NAME,
+        (b): b is BetaToolUseBlock => b.type === 'tool_use' && b.name === EMIT_TOOL_NAME,
       );
       sse.send('gen:progress', { phase: 'validating', receivedChars: received, attempt });
 
       let problems: string[];
       if (final.stop_reason === 'max_tokens') {
+        // Checked before validation: a cut-off eager input usually still
+        // parses as a valid-looking partial object.
         problems = [`the output was cut off at ${MAX_OUTPUT_TOKENS} tokens (too long)`];
       } else if (!toolUse) {
         problems = [`no ${EMIT_TOOL_NAME} call was made`];
@@ -299,8 +339,8 @@ async function runGeneration(args: RunArgs): Promise<void> {
       // Feed the problems back for one repair round. The assistant turn is
       // appended as returned; a tool_use block must be answered by a
       // tool_result in the next user turn.
-      messages.push({ role: 'assistant', content: final.content as Anthropic.ContentBlockParam[] });
-      const toolUses = final.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
+      messages.push({ role: 'assistant', content: replayableAssistantContent(final.content) });
+      const toolUses = final.content.filter((b): b is BetaToolUseBlock => b.type === 'tool_use');
       if (toolUses.length > 0) {
         messages.push({
           role: 'user',

@@ -5,7 +5,7 @@
 // docs) is prompt-cached; the per-request part (breakpoints, target, brief)
 // sits after the cache breakpoint (see buildSystemPrompt).
 
-import type Anthropic from '@anthropic-ai/sdk';
+import type { BetaTool } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { stableStringify } from '@/lib/ai/serializers/normalize';
 import { buildSchemaDocs } from './schemaDocs';
 import { BASE_KEY, type BreakpointKey } from './schema';
@@ -41,7 +41,7 @@ const INSTRUCTIONS = [
  * and repairs every node anyway (./validate.ts), so a schema the API might
  * treat differently across models buys nothing.
  */
-export function emitPageTool(): Anthropic.Tool {
+export function emitPageTool(): BetaTool {
   return {
     name: EMIT_TOOL_NAME,
     description:

@@ -9,7 +9,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // --- Scriptable Anthropic client -------------------------------------------
 type Turn =
-  | { content: unknown[]; stop_reason: string; inputJson?: string[]; wait?: Promise<void> }
+  | {
+      content: unknown[];
+      stop_reason: string;
+      stop_details?: unknown;
+      inputJson?: string[];
+      wait?: Promise<void>;
+    }
   | { throws: unknown };
 
 const anthropicState = vi.hoisted(() => ({
@@ -18,49 +24,43 @@ const anthropicState = vi.hoisted(() => ({
   missingKey: false,
 }));
 
-vi.mock('@/lib/ai/anthropicClient', () => {
-  class MissingAnthropicKeyError extends Error {
-    readonly code = 'missing_anthropic_key';
-  }
+vi.mock('@/lib/ai/anthropicClient', async (importActual) => {
+  // The real model registry and request helpers; only the client is scripted.
+  const actual = await importActual<typeof import('@/lib/ai/anthropicClient')>();
   return {
-    AI_MODELS: { HAIKU: 'claude-haiku-4-5', SONNET: 'claude-sonnet-4-6', OPUS: 'claude-opus-4-8' },
-    MissingAnthropicKeyError,
-    resolveModelId: (key: 'HAIKU' | 'SONNET' | 'OPUS') =>
-      ({ HAIKU: 'claude-haiku-4-5', SONNET: 'claude-sonnet-4-6', OPUS: 'claude-opus-4-8' })[key],
+    ...actual,
     getAnthropicClient: () => {
-      if (anthropicState.missingKey) throw new MissingAnthropicKeyError('ANTHROPIC_API_KEY is not set.');
-      return {
-        messages: {
-          stream: (params: Record<string, unknown>, options: unknown) => {
-            // Snapshot the messages: the route mutates the array between attempts.
-            anthropicState.calls.push({
-              params: { ...params, messages: structuredClone(params.messages) },
-              options,
-            });
-            const turn = anthropicState.turns[anthropicState.calls.length - 1] ?? {
-              content: [],
-              stop_reason: 'end_turn',
-            };
-            const handlers: Record<string, (chunk: string, snap: unknown) => void> = {};
+      if (anthropicState.missingKey) throw new actual.MissingAnthropicKeyError();
+      const stream = (params: Record<string, unknown>, options: unknown) => {
+        // Snapshot the messages: the route mutates the array between attempts.
+        anthropicState.calls.push({
+          params: { ...params, messages: structuredClone(params.messages) },
+          options,
+        });
+        const turn = anthropicState.turns[anthropicState.calls.length - 1] ?? {
+          content: [],
+          stop_reason: 'end_turn',
+        };
+        const handlers: Record<string, (chunk: string, snap: unknown) => void> = {};
+        return {
+          on(event: string, cb: (chunk: string, snap: unknown) => void) {
+            handlers[event] = cb;
+            return this;
+          },
+          finalMessage: async () => {
+            if ('throws' in turn) throw turn.throws;
+            if (turn.wait) await turn.wait;
+            for (const chunk of turn.inputJson ?? []) handlers.inputJson?.(chunk, {});
             return {
-              on(event: string, cb: (chunk: string, snap: unknown) => void) {
-                handlers[event] = cb;
-                return this;
-              },
-              finalMessage: async () => {
-                if ('throws' in turn) throw turn.throws;
-                if (turn.wait) await turn.wait;
-                for (const chunk of turn.inputJson ?? []) handlers.inputJson?.(chunk, {});
-                return {
-                  content: turn.content,
-                  stop_reason: turn.stop_reason,
-                  usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 10, cache_creation_input_tokens: 5 },
-                };
-              },
+              content: turn.content,
+              stop_reason: turn.stop_reason,
+              stop_details: turn.stop_details ?? null,
+              usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 10, cache_creation_input_tokens: 5 },
             };
           },
-        },
+        };
       };
+      return { beta: { messages: { stream } } };
     },
   };
 });
@@ -299,7 +299,7 @@ describe('POST /api/ai/generate-page generation', () => {
       model: string;
     };
     expect(result.title).toBe('Bakery');
-    expect(result.model).toBe('claude-sonnet-4-6');
+    expect(result.model).toBe('claude-sonnet-5-5');
     expect(result.nodes[0].props.style.padding).toEqual({ base: '64px', mobile: '24px', desktop: '64px' });
     expect(result.nodes[0].children[0].parentId).toBe(result.nodes[0].id);
 
@@ -312,15 +312,96 @@ describe('POST /api/ai/generate-page generation', () => {
     expect(system[1].text).toContain('"desktop": Desktop, from 1280px');
     expect(system[1].text).toContain('Existing pages');
     expect(params.tool_choice).toEqual({ type: 'auto', disable_parallel_tool_use: true });
-    expect(params.max_tokens).toBe(24_000);
+    expect(params.max_tokens).toBe(32_000);
+    // Current-model request surface: explicit effort, server-side fallback on
+    // Sonnet, no thinking/sampling fields, no forced tool choice.
+    expect(params.output_config).toEqual({ effort: 'medium' });
+    expect(params.betas).toEqual(['server-side-fallback-2026-07-01']);
+    expect(params.fallbacks).toBe('default');
+    for (const banned of ['thinking', 'temperature', 'top_p', 'top_k']) expect(params).not.toHaveProperty(banned);
+    expect((params.tools as Array<{ eager_input_streaming?: boolean }>)[0].eager_input_streaming).toBe(true);
     expect((options as { signal: unknown }).signal).toBeDefined();
     expect(evs.at(-1)!.data).toMatchObject({ inputTokens: 100, outputTokens: 50, attempts: 1 });
   });
 
-  it('honours the HAIKU model choice', async () => {
+  it('honours the HAIKU model choice, without fallbacks (Haiku 5.5 has none)', async () => {
     const res = await POST(makeRequest(baseBody({ model: 'HAIKU' })));
     await res.text();
-    expect(anthropicState.calls[0].params.model).toBe('claude-haiku-4-5');
+    const { params } = anthropicState.calls[0];
+    expect(params.model).toBe('claude-haiku-5-5');
+    expect(params.output_config).toEqual({ effort: 'medium' });
+    expect(params).not.toHaveProperty('fallbacks');
+    expect(params).not.toHaveProperty('betas');
+  });
+
+  it('reads content by type: leading (empty) thinking blocks do not hide the tool call', async () => {
+    anthropicState.turns = [
+      {
+        content: [
+          { type: 'thinking', thinking: '', signature: 'sig' },
+          { type: 'tool_use', id: 'tu_1', name: 'emit_page', input: VALID_PAGE },
+        ],
+        stop_reason: 'tool_use',
+      },
+    ];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(evs.some((e) => e.event === 'gen:result')).toBe(true);
+  });
+
+  it('sends the assistant turn back unchanged in the repair round (thinking blocks kept)', async () => {
+    const thinking = { type: 'thinking', thinking: '', signature: 'sig-1' };
+    anthropicState.turns = [
+      { content: [thinking, { type: 'tool_use', id: 'tu_1', name: 'emit_page', input: { nodes: [] } }], stop_reason: 'tool_use' },
+      toolTurn(VALID_PAGE),
+    ];
+    await (await POST(makeRequest(baseBody()))).text();
+    const msgs = anthropicState.calls[1].params.messages as Array<{ role: string; content: unknown[] }>;
+    expect(msgs[1].role).toBe('assistant');
+    expect(msgs[1].content[0]).toEqual(thinking);
+  });
+
+  it('after a mid-output fallback, replays without the declined model thinking and tool calls', async () => {
+    anthropicState.turns = [
+      {
+        content: [
+          { type: 'thinking', thinking: '', signature: 'declined' },
+          { type: 'text', text: 'Starting' },
+          { type: 'fallback', from: { model: 'claude-sonnet-5-5' }, to: { model: 'claude-sonnet-5' } },
+          { type: 'tool_use', id: 'tu_2', name: 'emit_page', input: { nodes: [] } },
+        ],
+        stop_reason: 'tool_use',
+      },
+      toolTurn(VALID_PAGE),
+    ];
+    await (await POST(makeRequest(baseBody()))).text();
+    const assistant = (anthropicState.calls[1].params.messages as Array<{ content: Array<{ type: string }> }>)[1];
+    expect(assistant.content.map((b) => b.type)).toEqual(['text', 'fallback', 'tool_use']);
+  });
+
+  it('JSON the SDK cannot parse (eager streaming) gets a repair round, not an outage error', async () => {
+    const { AnthropicError } = await import('@anthropic-ai/sdk');
+    anthropicState.turns = [
+      { throws: new AnthropicError('Unable to parse tool parameter JSON from model. Please retry your request.') },
+      toolTurn(VALID_PAGE),
+    ];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(evs.some((e) => e.event === 'gen:result')).toBe(true);
+    const repair = (anthropicState.calls[1].params.messages as Array<{ role: string; content: unknown }>).at(-1)!;
+    expect(repair.role).toBe('user');
+    expect(String(repair.content)).toContain('not valid JSON');
+  });
+
+  it('a truncated eager tool input that still parses is never applied', async () => {
+    // A cut-off input parses as a valid-looking partial object: stop_reason
+    // max_tokens is what catches it, on both attempts here.
+    const partial = { nodes: [{ type: 'section', label: 'Hero' }] };
+    anthropicState.turns = [
+      toolTurn(partial, { stop_reason: 'max_tokens' }),
+      toolTurn(partial, { stop_reason: 'max_tokens' }),
+    ];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(evs.some((e) => e.event === 'gen:result')).toBe(false);
+    expect(evs.find((e) => e.event === 'gen:error')!.data.code).toBe('invalid_output');
   });
 
   it('sends the selected component as context for replace', async () => {
@@ -369,10 +450,19 @@ describe('POST /api/ai/generate-page generation', () => {
     expect(String(repairTurn.content)).toContain('no emit_page call was made');
   });
 
-  it('surfaces a refusal without a repair round', async () => {
-    anthropicState.turns = [{ content: [], stop_reason: 'refusal' }];
+  it('surfaces a refusal (with its category) without a repair round, even with a partial tool call', async () => {
+    anthropicState.turns = [
+      {
+        content: [{ type: 'tool_use', id: 'tu_1', name: 'emit_page', input: VALID_PAGE }],
+        stop_reason: 'refusal',
+        stop_details: { type: 'refusal', category: 'cyber', explanation: null },
+      },
+    ];
     const evs = await events(await POST(makeRequest(baseBody())));
-    expect(evs.find((e) => e.event === 'gen:error')!.data.code).toBe('refused');
+    const err = evs.find((e) => e.event === 'gen:error')!.data;
+    expect(err.code).toBe('refused');
+    expect(err.message).toContain('cyber');
+    expect(evs.some((e) => e.event === 'gen:result')).toBe(false);
     expect(anthropicState.calls).toHaveLength(1);
   });
 

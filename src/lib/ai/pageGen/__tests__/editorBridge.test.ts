@@ -29,7 +29,7 @@ function result(raw: unknown, target: CapturedTarget): PageGenResultPayload {
     breakpoints: deriveBreakpointKeys(target.breakpoints.map(({ label, minWidth }) => ({ label, minWidth }))),
   });
   if (!out.ok) throw new Error(out.errors.join('; '));
-  return { generationId: 'gen-1', model: 'claude-sonnet-4-6', ...out.result };
+  return { generationId: 'gen-1', model: 'claude-sonnet-5-5', ...out.result };
 }
 
 const HERO = {

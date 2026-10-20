@@ -33,9 +33,9 @@ export interface AgentInputProps {
 }
 
 const MODEL_OPTIONS: { key: AgentModelKey; label: string }[] = [
-  { key: 'HAIKU', label: 'Claude Haiku 4.5' },
-  { key: 'SONNET', label: 'Claude Sonnet 4.6' },
-  { key: 'OPUS', label: 'Claude Opus 4.8' },
+  { key: 'HAIKU', label: 'Claude Haiku 5.5' },
+  { key: 'SONNET', label: 'Claude Sonnet 5.5' },
+  { key: 'OPUS', label: 'Claude Opus 5.5' },
 ];
 
 function toBase64Utf8(text: string): string {

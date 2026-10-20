@@ -3,7 +3,7 @@
 // POST /api/ai/edit
 //
 // Wave-1 scaffold for the Pattern A AI surface. Accepts a prompt, opens
-// a Server-Sent Events stream, runs a non-tool messages.create against
+// a Server-Sent Events stream, runs a non-tool beta messages stream against
 // Anthropic, and forwards token deltas + a usage summary + a done
 // event. No tool registry, no MST mutations — those land in later
 // specs. The system prompt is a stub that announces "AI not yet
@@ -21,8 +21,10 @@
 import { z } from 'zod';
 import {
   getAnthropicClient,
+  getDefaultModelKey,
   MissingAnthropicKeyError,
-  resolveModelId,
+  modelRequestFields,
+  refusalMessage,
 } from '@/lib/ai/anthropicClient';
 import { buildSystemPrompt, type SystemBlock } from '@/lib/ai/promptCache';
 import {
@@ -129,7 +131,10 @@ export async function POST(req: Request): Promise<Response> {
   const sse = createSseStream();
   const requestId = newRequestId();
   const timer = startAiCallTimer();
-  const modelId = resolveModelId();
+  // The repo default (AI_DEFAULT_MODEL, Haiku unless set). Low effort: this is a
+  // short conversational turn, and effort is the thinking and spend control.
+  const modelFields = modelRequestFields(getDefaultModelKey(), 'low');
+  const modelId = modelFields.model;
 
   // Heartbeat keeper. Cleared in finally below.
   const heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
@@ -146,13 +151,17 @@ export async function POST(req: Request): Promise<Response> {
 
     try {
       const system = buildSystemPrompt(stubSystemBlocks(body));
-      const stream = client.messages.stream({
-        model: modelId,
-        max_tokens: 256,
+      const stream = client.beta.messages.stream({
+        ...modelFields,
+        // Thinking counts toward max_tokens on current models (adaptive and
+        // always on), so the cap leaves room for it as well as the reply.
+        max_tokens: 4096,
         system,
         messages: [{ role: 'user', content: body.prompt }],
       });
 
+      // Only text deltas are forwarded; thinking blocks (empty text by
+      // default) never reach the client as tokens.
       stream.on('text', (delta: string) => {
         sse.send('token', { delta });
       });
@@ -162,6 +171,15 @@ export async function POST(req: Request): Promise<Response> {
       outputTokens = finalMessage.usage.output_tokens;
       cachedReadTokens = finalMessage.usage.cache_read_input_tokens ?? 0;
       cachedWriteTokens = finalMessage.usage.cache_creation_input_tokens ?? 0;
+
+      // A classifier decline is an HTTP 200: surface it, never as a reply.
+      const refusal = refusalMessage(finalMessage);
+      if (refusal) {
+        status = 'error';
+        errorCode = 'refused';
+        sse.send('error', { message: refusal, code: 'refused' });
+        return;
+      }
 
       sse.send('usage', {
         inputTokens,
