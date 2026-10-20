@@ -35,24 +35,49 @@
 //     runs longer than Coolify's health-check window needs that window raised
 //     for the deploy.
 //   PROVISION_TIMEOUTS (a company's first project, inline in the HTTP request):
-//     lock 10 s, statement 30 s. A provision takes well under a second when
-//     nobody else holds the lock; ten seconds of queueing is the most a person
-//     should wait on "New project" before seeing a retryable error.
+//     lock 10 s, statement 30 s, queue 30 s (so at most 40 s in all, the last
+//     wait running its full 10 s). A provision takes well under a
+//     second when nobody else holds the lock. Every provision queues behind one
+//     global lock, so with several companies at once a fixed wait would fail a
+//     request whose queue is moving fine (it did, under load, with four). The
+//     wait is therefore sized to the queue: `lockTimeoutMs` bounds how long ONE
+//     holder may keep the lock while we wait (longer is a stuck provision: fail
+//     fast with a retryable error), and as long as the holder keeps changing
+//     the queue is moving and we keep waiting, up to `queueWaitMs` in all. A
+//     waiter that times out rejoins at the back of the queue: right for a burst
+//     of companies at once (the incident); under arrivals that never stop it
+//     fails at `queueWaitMs`, retryably. A holder is told apart by its pid AND
+//     a name it sets when it takes the lock (a session-mode pooler can hand the
+//     same backend to the next client). A stuck holder is noticed within two
+//     waits at most (one when the holder was known when the wait began).
+
+import { randomUUID } from 'node:crypto';
 
 import postgres from 'postgres';
 
 export interface OwnerTimeouts {
-  /** Longest wait for any lock, advisory locks included (ms). */
+  /**
+   * Longest wait for any lock, advisory locks included (ms). For an advisory
+   * lock taken with a `queueWaitMs`, the longest one holder may keep it while
+   * we wait.
+   */
   lockTimeoutMs: number;
   /** Longest any single statement may run (ms); 0 means no limit. */
   statementTimeoutMs: number;
+  /**
+   * Advisory locks only: keep waiting while the queue moves (the holder
+   * changes within each `lockTimeoutMs`), starting no new wait after this long
+   * (ms), so the whole wait is at most this plus one `lockTimeoutMs`. Unset:
+   * one bounded wait of `lockTimeoutMs`.
+   */
+  queueWaitMs?: number;
 }
 
 /** The start step's lock session. See the module comment. */
 export const BOOT_LOCK_TIMEOUTS: OwnerTimeouts = { lockTimeoutMs: 30_000, statementTimeoutMs: 35_000 };
 
 /** First-project provisioning inside a request. See the module comment. */
-export const PROVISION_TIMEOUTS: OwnerTimeouts = { lockTimeoutMs: 10_000, statementTimeoutMs: 30_000 };
+export const PROVISION_TIMEOUTS: OwnerTimeouts = { lockTimeoutMs: 10_000, statementTimeoutMs: 30_000, queueWaitMs: 30_000 };
 
 /** Lock wait for DDL inside the start-time migrations. See the module comment. */
 export const MIGRATION_LOCK_TIMEOUT_MS = 5_000;
@@ -103,12 +128,15 @@ export async function openOwnerSql(connectionString: string, timeouts: OwnerTime
   return sql;
 }
 
-/** A commerce advisory lock was not granted within the lock timeout. */
+/** A commerce advisory lock was not granted within the lock timeout (or the queue stopped moving). */
 export class CommerceLockTimeoutError extends Error {
-  constructor(what: string, timeoutMs: number, options?: { cause?: unknown }) {
+  constructor(what: string, timeoutMs: number, options?: { cause?: unknown; queued?: boolean }) {
     super(
-      `${what}: lock not granted within ${timeoutMs} ms (lock_timeout). Another ` +
-        'process holds it; check for a stuck container start or provision, then retry.',
+      options?.queued
+        ? `${what}: lock not granted within ${timeoutMs} ms of queueing. Other processes kept it ` +
+            'busy the whole time; retry in a moment.'
+        : `${what}: lock not granted within ${timeoutMs} ms (lock_timeout). Another ` +
+            'process holds it; check for a stuck container start or provision, then retry.',
       options,
     );
     this.name = 'CommerceLockTimeoutError';
@@ -123,8 +151,12 @@ export function isLockTimeout(err: unknown): boolean {
 /**
  * Take a session advisory lock on `sql`, bounded by the session's lock_timeout.
  * Logs once when the lock is busy (so a queued start is visible), then waits.
+ * With `timeouts.queueWaitMs`, a wait that times out while the lock changed
+ * hands (the queue moves) is started again, until `queueWaitMs` has passed;
+ * one holder keeping the lock for a whole wait (stuck) fails at once.
  *
- * @throws CommerceLockTimeoutError when the wait exceeds the lock timeout.
+ * @throws CommerceLockTimeoutError when one holder outlasts a wait, or the
+ *   queue outlasts `queueWaitMs`.
  */
 export async function acquireAdvisoryLock(
   sql: postgres.Sql,
@@ -134,14 +166,55 @@ export async function acquireAdvisoryLock(
   onBusy?: () => void,
 ): Promise<void> {
   const [{ locked }] = await sql<{ locked: boolean }[]>`SELECT pg_try_advisory_lock(${key}) AS locked`;
-  if (locked) return;
+  if (locked) return markHolder(sql);
   onBusy?.();
-  try {
-    await sql`SELECT pg_advisory_lock(${key})`;
-  } catch (err) {
-    if (isLockTimeout(err)) throw new CommerceLockTimeoutError(what, timeouts.lockTimeoutMs, { cause: err });
-    throw err;
+  const started = Date.now();
+  let holder = await advisoryLockHolder(sql, key);
+  for (;;) {
+    try {
+      await sql`SELECT pg_advisory_lock(${key})`;
+      return markHolder(sql);
+    } catch (err) {
+      if (!isLockTimeout(err)) throw err;
+      if (timeouts.queueWaitMs === undefined) throw new CommerceLockTimeoutError(what, timeouts.lockTimeoutMs, { cause: err });
+      // The queue moved when the lock changed hands (or was free a moment) during this wait.
+      const current = await advisoryLockHolder(sql, key);
+      const moved = holder === null || current === null || current !== holder;
+      if (!moved) throw new CommerceLockTimeoutError(what, timeouts.lockTimeoutMs, { cause: err });
+      const waited = Date.now() - started;
+      if (waited >= timeouts.queueWaitMs) throw new CommerceLockTimeoutError(what, waited, { cause: err, queued: true });
+      holder = current;
+    }
   }
+}
+
+/**
+ * Give this session an identity of its own while it holds a lock: behind a
+ * session-mode pooler the next client can get the same server backend (the
+ * same pid) right after the previous holder left, so a waiter compares the pid
+ * AND this name, and sees a new holder as one.
+ */
+async function markHolder(sql: postgres.Sql): Promise<void> {
+  await sql`SELECT set_config('application_name', ${`framer-clone-commerce-owner:${randomUUID()}`}, false)`;
+}
+
+/**
+ * Who holds a session advisory lock on `key` in this database (null when
+ * nobody does): the backend pid and its application name (see markHolder).
+ * `pg_advisory_lock(bigint)` keys are stored as their high and low 32 bits in
+ * classid and objid, with objsubid 1.
+ */
+async function advisoryLockHolder(sql: postgres.Sql, key: number): Promise<string | null> {
+  const rows = await sql<{ holder: string }[]>`
+    SELECT l.pid::text || ':' || COALESCE(a.application_name, '') AS holder
+      FROM pg_locks l
+      LEFT JOIN pg_stat_activity a ON a.pid = l.pid
+     WHERE l.locktype = 'advisory' AND l.objsubid = 1 AND l.granted
+       AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+       AND ((l.classid::bigint << 32) | l.objid::bigint) = ${key}::bigint
+     LIMIT 1
+  `;
+  return rows[0]?.holder ?? null;
 }
 
 /** Release a session advisory lock; never masks the caller's own error. */

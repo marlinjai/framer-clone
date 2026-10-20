@@ -97,8 +97,9 @@ export const APPEND_ONLY_TABLES = [
  * database. The runner's own lock is per tenant group; this one makes
  * provisions of DIFFERENT tenant groups (two companies creating their first
  * project at the same moment) queue instead of running their schema DDL side by
- * side, and bounds how long a request waits for that queue (the session's
- * lock_timeout, CommerceLockTimeoutError beyond it). Under tenant-db 0.1 it also
+ * side, and bounds how long a request waits for that queue: as long as it moves
+ * (PROVISION_TIMEOUTS.queueWaitMs), but no longer than one lock_timeout behind
+ * a single holder that keeps it (CommerceLockTimeoutError beyond either). Under tenant-db 0.1 it also
  * kept two provisions from both running `ALTER ROLE commerce_app` and failing
  * with "tuple concurrently updated"; since provisioning only verifies the app
  * role ('verify', see the module comment) that collision cannot happen any more,
@@ -246,7 +247,7 @@ export function commerceSlugFor(tenantGroupId: string, displaySlug?: string | nu
 
 /**
  * Run the full provision on an already open OWNER session, under the global
- * provisioning lock (bounded by the session's lock_timeout).
+ * provisioning lock (waiting as long as its queue moves, see PROVISION_TIMEOUTS).
  */
 async function provisionUnderLock(
   sql: postgres.Sql,
@@ -278,7 +279,8 @@ async function provisionUnderLock(
  *
  * Serialized: every provision takes {@link COMMERCE_PROVISION_LOCK_KEY} first,
  * so concurrent provisions of different tenant groups queue. A wait longer than
- * the lock timeout fails with CommerceLockTimeoutError.
+ * the queue's budget (or one holder keeping the lock a whole lock timeout)
+ * fails with CommerceLockTimeoutError.
  *
  * @param opts.tenantGroupId The tenant_group id (validated to a strict UUID by
  *   the runner's chokepoint; the schema name is DERIVED, never echoed).

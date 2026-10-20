@@ -105,8 +105,10 @@ project in the editor (`src/app/api/projects/route.ts`, owner connection), befor
 the site row is written. Every later project of that company costs one read of
 the registry and nothing else: no lock, no DDL. Only a company without a complete
 schema runs the full provision, under a provisioning lock that serializes
-companies provisioning at the same moment, with bounded waits of 10 seconds for
-the lock and 30 seconds per statement. "Complete" means: the registry row is
+companies provisioning at the same moment, with bounded waits: as long as that
+queue moves, at most about 40 seconds, but 10 seconds behind one provision that
+keeps the lock, and 30 seconds per statement; a request that waits too long
+answers 503 `commerce_busy` (retry in a moment). "Complete" means: the registry row is
 `active`, the `tg_<id>` schema exists, and every commerce tenant migration is
 recorded for it; a row still `provisioning`, a dropped schema or a missing progress
 row all count as a miss and are provisioned again. If it fails, project creation

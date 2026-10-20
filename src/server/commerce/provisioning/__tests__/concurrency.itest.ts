@@ -48,7 +48,7 @@ import {
   provisionCommerceTenant,
 } from '../provision';
 import { COMMERCE_DEPLOY_LOCK_KEY, runCommerceDeployMigrations } from '../deploy';
-import { CommerceLockTimeoutError, openOwnerSql } from '../ownerSql';
+import { acquireAdvisoryLock, CommerceLockTimeoutError, openOwnerSql, PROVISION_TIMEOUTS, releaseAdvisoryLock } from '../ownerSql';
 
 const provisionSpy = vi.mocked(provisionTenant);
 /** Short waits for the timeout cases, so the suite stays fast. */
@@ -172,6 +172,122 @@ describe('commerce advisory locks', () => {
     } finally {
       await su!`SELECT pg_advisory_unlock(${COMMERCE_PROVISION_LOCK_KEY})`;
     }
+  });
+
+  describe('a wait sized to the queue (queueWaitMs)', () => {
+    // A key of its own, so these holders never meet a real provision. Each holder keeps the lock
+    // well under one wait (200 ms of 600 ms), and the queue as a whole well over one wait.
+    const KEY = 74_610_099;
+    const HOLD_MS = 200;
+    const QUEUED = { lockTimeoutMs: 600, statementTimeoutMs: 5_000, queueWaitMs: 5_000 };
+    const SINGLE = { lockTimeoutMs: 600, statementTimeoutMs: 5_000 };
+
+    /** Sessions all queued for the lock before the waiter arrives, each holding it HOLD_MS: a queue that moves. */
+    async function movingQueue(holders: number) {
+      const sessions = Array.from({ length: holders }, () => postgres(superUrl, { max: 1, prepare: false }));
+      // Connected first, so no handshake eats into a hold.
+      await Promise.all(sessions.map((s) => s`SELECT 1`));
+      await sessions[0]`SELECT pg_advisory_lock(${KEY})`;
+      let release!: () => void;
+      const go = new Promise<void>((r) => (release = r));
+      const runs = sessions.map(async (s, i) => {
+        if (i > 0) await s`SELECT pg_advisory_lock(${KEY})`;
+        await go;
+        await new Promise((r) => setTimeout(r, HOLD_MS));
+        await s`SELECT pg_advisory_unlock(${KEY})`;
+      });
+      for (let i = 0; ; i += 1) {
+        const [{ n }] = await su!<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = ${KEY}`;
+        if (n >= holders - 1) break;
+        if (i >= 500) throw new Error(`the queue never formed (${n} of ${holders - 1} waiting)`);
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      const done = Promise.all(runs);
+      return {
+        /** Start the holders' clocks once the waiter is in the queue too. */
+        start: async () => {
+          for (let i = 0; ; i += 1) {
+            const [{ n }] = await su!<{ n: number }[]>`
+              SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = ${KEY}`;
+            if (n >= holders) break;
+            if (i >= 500) throw new Error('the waiter never queued');
+            await new Promise((r) => setTimeout(r, 10));
+          }
+          release();
+        },
+        done,
+        end: async () => {
+          release();
+          await done.catch(() => undefined);
+          await Promise.all(sessions.map((s) => s.end()));
+        },
+      };
+    }
+
+    it('keeps waiting while the lock changes hands, far beyond one lock wait', async () => {
+      const queue = await movingQueue(6);
+      const waiter = await openOwnerSql(ownerUrl, QUEUED);
+      try {
+        const started = Date.now();
+        const acquired = acquireAdvisoryLock(waiter, KEY, 'test lock', QUEUED);
+        await queue.start();
+        await acquired;
+        // Six holders of 200 ms: well past the 600 ms a single wait would have allowed.
+        expect(Date.now() - started).toBeGreaterThan(QUEUED.lockTimeoutMs);
+        await releaseAdvisoryLock(waiter, KEY);
+      } finally {
+        await waiter.end();
+        await queue.end();
+      }
+    });
+
+    it('a single wait (no queueWaitMs) still fails after one lock wait, the old contract', async () => {
+      const queue = await movingQueue(6);
+      const waiter = await openOwnerSql(ownerUrl, SINGLE);
+      try {
+        const acquired = acquireAdvisoryLock(waiter, KEY, 'test lock', SINGLE);
+        await queue.start();
+        await expect(acquired).rejects.toThrow(/not granted within 600 ms \(lock_timeout\)/);
+      } finally {
+        await waiter.end();
+        await queue.end();
+      }
+    });
+
+    it('fails fast behind one holder that keeps the lock (a stuck provision), queue or not', async () => {
+      await su!`SELECT pg_advisory_lock(${KEY})`;
+      const waiter = await openOwnerSql(ownerUrl, QUEUED);
+      try {
+        const started = Date.now();
+        await expect(acquireAdvisoryLock(waiter, KEY, 'test lock', QUEUED)).rejects.toThrow(/not granted within 600 ms \(lock_timeout\)/);
+        expect(Date.now() - started).toBeLessThan(3 * QUEUED.lockTimeoutMs);
+      } finally {
+        await su!`SELECT pg_advisory_unlock(${KEY})`;
+        await waiter.end();
+      }
+    });
+
+    it('gives up when the queue keeps moving longer than queueWaitMs, saying how long it queued', async () => {
+      const queue = await movingQueue(12);
+      const capped = { ...QUEUED, queueWaitMs: 700 };
+      const waiter = await openOwnerSql(ownerUrl, capped);
+      try {
+        const acquired = acquireAdvisoryLock(waiter, KEY, 'test lock', capped);
+        await queue.start();
+        await expect(acquired).rejects.toThrow(/within \d+ ms of queueing/);
+      } finally {
+        await waiter.end();
+        await queue.end();
+      }
+    });
+
+    it('the provisioning budget: a wait is never cancelled as a statement, and the whole wait fits a request', () => {
+      // Each lock wait is one statement: the statement budget must outlast it.
+      expect(PROVISION_TIMEOUTS.statementTimeoutMs).toBeGreaterThan(PROVISION_TIMEOUTS.lockTimeoutMs);
+      // The longest a "New project" request waits for the lock: the queue budget plus one last wait.
+      expect(PROVISION_TIMEOUTS.queueWaitMs! + PROVISION_TIMEOUTS.lockTimeoutMs).toBeLessThanOrEqual(45_000);
+    });
   });
 
   it('a start step behind a held migration lock logs that it waits, then fails with CommerceLockTimeoutError', async () => {

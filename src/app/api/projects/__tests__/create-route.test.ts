@@ -295,6 +295,23 @@ describe('POST /api/projects (authorized)', () => {
     errorSpy.mockRestore();
   });
 
+  it('503s with commerce_busy and Retry-After, writes nothing, when the provisioning lock was not granted', async () => {
+    const { CommerceLockTimeoutError } = await import('@/server/commerce/provisioning/ownerSql');
+    mockProvision.mockRejectedValue(new CommerceLockTimeoutError('commerce provisioning lock', 31_000, { queued: true }));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const save = vi.fn();
+    installRepo({ saveProject: save });
+
+    const res = await POST(createReq({ name: 'Shop' }));
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('10');
+    expect((await res.json()).error.code).toBe('commerce_busy');
+    expect(save).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/waited too long/));
+    errorSpy.mockRestore();
+  });
+
   it('500s with commerce_misconfigured, logs the repair command only, and writes nothing on a wrong app-role search_path', async () => {
     const { AppRoleSearchPathError } = await import('@marlinjai/tenant-db');
     mockProvision.mockRejectedValue(new AppRoleSearchPathError('commerce_app', 'mismatch', '"$user", public'));
