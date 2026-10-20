@@ -16,11 +16,16 @@
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
+import { isAlive } from 'mobx-state-tree';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import ComponentRenderer from './ComponentRenderer';
 import GroundWrapper from './GroundWrapper';
 import { useStore } from '@/hooks/useStore';
 import { useDragSource } from '@/lib/drag';
+import {
+  viewportFrameContentStyle,
+  viewportFrameLabel,
+} from '@/lib/canvas/viewportFrame';
 import {
   createScope,
   pushPageFrame,
@@ -111,7 +116,7 @@ interface ViewportFrameProps {
   scope: BindingScope;
 }
 
-const ViewportFrame = observer(({
+export const ViewportFrame = observer(({
   viewport,
   appComponentTree,
   breakpoints,
@@ -123,12 +128,20 @@ const ViewportFrame = observer(({
     { kind: 'moveNode', nodeId: viewport.id },
     viewport,
   );
+  const frameRef = useRenderedFrameHeight(viewport);
+
+  const width = viewport.viewportWidth ?? 400;
+  const minHeight = viewport.viewportHeight ?? 600;
+  const label = viewportFrameLabel(width, minHeight, viewport.renderedViewportHeight);
 
   return (
     <GroundWrapper
       id={viewport.id}
       x={viewport.canvasX!}
       y={viewport.canvasY!}
+      // The wrapper follows the frame: fixed width, height grows with content.
+      width={width}
+      height="auto"
       visible={viewport.canvasVisible}
       className="viewport-node cursor-grab hover:cursor-grab"
       onClick={(e) => {
@@ -137,12 +150,16 @@ const ViewportFrame = observer(({
       }}
       onPointerDown={onPointerDown}
     >
+      {/*
+        Outer box: the frame's chrome (background, shadow, rounded corners),
+        the drop / hit-test marker and the anchor for the label above it. It
+        has no height of its own; it is exactly as tall as the clipping box
+        below, which is at least viewportHeight and grows with the page.
+      */}
       <div
+        ref={frameRef}
         className="relative bg-white shadow-lg rounded-lg transition-shadow"
-        style={{
-          width: `${viewport.viewportWidth}px`,
-          height: `${viewport.viewportHeight}px`,
-        }}
+        style={{ width: `${width}px` }}
         data-viewport-id={viewport.id}
         data-breakpoint-id={viewport.breakpointId}
       >
@@ -154,19 +171,33 @@ const ViewportFrame = observer(({
             editorUI.setSelectedViewportNode(viewport);
           }}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 whitespace-nowrap">
             <div className="text-gray-600">{viewport.label}</div>
             <div className="px-2 py-0.5 bg-gray-200 rounded text-xs">
               {viewport.breakpointMinWidth}px
             </div>
-            <div className="px-2 py-0.5 bg-brand/15 text-brand rounded text-xs">
-              {viewport.viewportWidth}×{viewport.viewportHeight}
+            <div
+              className="px-2 py-0.5 bg-brand/15 text-brand rounded text-xs"
+              title={`Frame size on the canvas. Minimum height ${minHeight}px; the frame grows with the page content.`}
+              data-testid="viewport-frame-size"
+            >
+              {label.size}
+              {label.minNote && <span className="ml-1 opacity-70">({label.minNote})</span>}
             </div>
           </div>
         </div>
 
-        {/* Render the same app tree with this viewport's breakpoint resolution */}
-        <div className="w-full h-full overflow-auto">
+        {/*
+          Clipping box for the page tree. See viewportFrameContentStyle: no
+          inner scroller (the canvas owns the wheel, so one would be
+          unreachable), grows with the content, and clips absolutely and
+          fixed positioned descendants so nothing paints outside the frame.
+        */}
+        <div
+          className="rounded-lg"
+          style={viewportFrameContentStyle(minHeight)}
+          data-viewport-content-id={viewport.id}
+        >
           {appComponentTree && (
             <ComponentRenderer
               component={appComponentTree}
@@ -181,6 +212,40 @@ const ViewportFrame = observer(({
     </GroundWrapper>
   );
 });
+
+/**
+ * Measures a viewport frame's rendered height and reports it to the model
+ * (ComponentModel.renderedViewportHeight, volatile) so MobX-driven consumers
+ * (the frame label, the HUD's frame selection overlay and resize handles) see
+ * the frame's real height. Uses offsetHeight, which is layout px and ignores
+ * the canvas zoom transform. Writing back is safe from loops: the measured
+ * value only feeds overlays and the label, never the frame's own CSS height.
+ */
+function useRenderedFrameHeight(viewport: ComponentInstance) {
+  const [el, setEl] = React.useState<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    if (!el) return;
+    // A deleted viewport node is destroyed before React unmounts its frame;
+    // never write to a dead MobX-State-Tree node.
+    const report = () => {
+      if (isAlive(viewport)) viewport.setRenderedViewportHeight(el.offsetHeight);
+    };
+    report();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(report);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [el, viewport]);
+
+  // Forget the measurement when the frame unmounts (page switch), so a stale
+  // height never outlives its DOM.
+  React.useEffect(() => () => {
+    if (isAlive(viewport)) viewport.setRenderedViewportHeight(undefined);
+  }, [viewport]);
+
+  return setEl;
+}
 
 // --- FloatingElement -----------------------------------------------------
 

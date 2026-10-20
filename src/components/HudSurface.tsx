@@ -2,6 +2,7 @@
 // High-performance component selection overlay using TransformContext subscription
 'use client';
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { frameHeightsKey, viewportResizeUpdate, visibleRectInFrame } from '@/lib/canvas/viewportFrame';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 import { useTransformContext } from '@/contexts/TransformContext';
@@ -191,8 +192,12 @@ const HudSurface = observer(() => {
       const secondaryInstances = getSecondaryRenderInstances(crossViewportSelection);
 
       // Primary highlight (where selection happened)
-      if (primaryInstance?.domElement) {
-        const rect = primaryInstance.domElement.getBoundingClientRect();
+      // Clipped to the frame: the frame hides content outside it, so the
+      // overlay must not outline what is not shown (and is hidden when the
+      // element is clipped away entirely).
+      const primaryRect = primaryInstance?.domElement ? visibleRectInFrame(primaryInstance.domElement) : null;
+      if (primaryInstance?.domElement && primaryRect) {
+        const rect = primaryRect;
         const x = rect.left - 2;
         const y = rect.top - 2;
 
@@ -205,6 +210,7 @@ const HudSurface = observer(() => {
 
         console.log('🎯 HudSurface: Primary highlight positioned for component:', primaryInstance.componentId, 'in breakpoint:', primaryInstance.breakpointId);
       } else {
+        primaryOverlay.style.display = 'none';
         hideRadiusHandles();
       }
 
@@ -217,7 +223,8 @@ const HudSurface = observer(() => {
         secondaryInstances.forEach((instance, index) => {
           if (!instance.domElement) return;
 
-          const rect = instance.domElement.getBoundingClientRect();
+          const rect = visibleRectInFrame(instance.domElement);
+          if (!rect) return; // clipped away entirely in that frame
           const x = rect.left - 2;
           const y = rect.top - 2;
 
@@ -245,8 +252,9 @@ const HudSurface = observer(() => {
         `[data-component-id="${primaryComponentId}"]`
       ) as HTMLElement;
 
-      if (primaryElement) {
-        const rect = primaryElement.getBoundingClientRect();
+      const primaryRect = primaryElement ? visibleRectInFrame(primaryElement) : null;
+      if (primaryElement && primaryRect) {
+        const rect = primaryRect;
         const x = rect.left - 2;
         const y = rect.top - 2;
 
@@ -264,11 +272,20 @@ const HudSurface = observer(() => {
 
         return;
       }
+      if (primaryElement) {
+        // Selected element is clipped away entirely by its frame: no overlay.
+        primaryOverlay.style.display = 'none';
+        hideRadiusHandles();
+        if (secondaryOverlaysContainer) secondaryOverlaysContainer.style.display = 'none';
+        return;
+      }
     }
 
     // === Case 2: Selected viewport node (highlight viewport frame) ===
     // This handles when a viewport node itself is selected from the layers panel
-    // We highlight the viewport frame on the canvas
+    // We highlight the viewport frame on the canvas. viewportBounds.height is
+    // the frame's real rendered height (at least viewportHeight, grown to the
+    // page content), so the overlay wraps the whole grown frame.
     if (editorUI.selectedViewportNode && !editorUI.selectedComponent) {
       const viewportBounds = editorUI.selectedViewportNode.viewportBounds;
       if (viewportBounds) {
@@ -393,11 +410,16 @@ const HudSurface = observer(() => {
   // Read props here so MobX observer tracks the dependency
   const selectedProps = editorUI.selectedComponent?.props;
   const selectedVPProps = editorUI.selectedViewportNode?.props;
+  // Breakpoint frames grow and shrink with their content (each measured by
+  // ViewportFrame). Reading every frame's rendered height here makes this
+  // observer re-run the overlay placement whenever a frame changes height,
+  // which is also when content inside it has moved.
+  const frameLayoutKey = frameHeightsKey(editorUI.currentPage?.viewportNodes);
   useEffect(() => {
     // Wait one frame for ComponentRenderer to apply new styles to the DOM
     const rafId = requestAnimationFrame(() => updateOverlayPosition());
     return () => cancelAnimationFrame(rafId);
-  }, [selectedProps, selectedVPProps, updateOverlayPosition]);
+  }, [selectedProps, selectedVPProps, frameLayoutKey, updateOverlayPosition]);
 
   // ===== Resize interaction =====
   //
@@ -448,9 +470,16 @@ const HudSurface = observer(() => {
     const startWidth = kind === 'viewport'
       ? (target.viewportWidth ?? startScreenWidth / zoom)
       : startScreenWidth / zoom;
+    // A viewport frame's height is a minimum that grows with its content, so
+    // the gesture starts from the frame's RENDERED height (what the overlay
+    // and handles show), not the stored minimum; otherwise the edge would jump
+    // on the first move. The gesture writes the new minimum: dragging the
+    // bottom edge above the content line leaves the frame at content height,
+    // as in Framer. ESC restores the original minimum (startMinHeight).
     const startHeight = kind === 'viewport'
-      ? (target.viewportHeight ?? startScreenHeight / zoom)
+      ? (target.viewportBounds?.height ?? target.viewportHeight ?? startScreenHeight / zoom)
       : startScreenHeight / zoom;
+    const startMinHeight = kind === 'viewport' ? target.viewportHeight : undefined;
 
     const startPos = { x: event.clientX, y: event.clientY };
     const startCanvasPos = { x: target.canvasX ?? 0, y: target.canvasY ?? 0 };
@@ -520,10 +549,12 @@ const HudSurface = observer(() => {
           });
         }
       } else if (kind === 'viewport') {
-        target!.setViewportProperties({
-          viewportWidth: widthPx,
-          viewportHeight: heightPx,
-        });
+        target!.setViewportProperties(viewportResizeUpdate({
+          newWidth,
+          newHeight,
+          startHeight,
+          vertical: isTop || isBottom,
+        }));
       }
 
       // Keep the overlay glued to the resized target without waiting for React.
@@ -539,10 +570,9 @@ const HudSurface = observer(() => {
         target!.updateResponsiveStyle('height', `${Math.round(startHeight)}px`);
         target!.updateCanvasTransform({ x: startCanvasPos.x, y: startCanvasPos.y });
       } else if (kind === 'viewport') {
-        target!.setViewportProperties({
-          viewportWidth: Math.round(startWidth),
-          viewportHeight: Math.round(startHeight),
-        });
+        // Restore the stored minimum exactly; a node that had none keeps none.
+        target!.setViewportProperties({ viewportWidth: Math.round(startWidth) });
+        target!.restoreViewportHeight(startMinHeight);
       }
       updateOverlayPosition();
     };

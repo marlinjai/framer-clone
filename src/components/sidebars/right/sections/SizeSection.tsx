@@ -25,7 +25,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
       {/* Viewport-specific controls */}
       {component.isViewportNode && (
         <div className="flex flex-col gap-2.5 pb-1">
-          {/* Two-up: Min Width (BP) + Viewport Height */}
+          {/* Two-up: Min Width (BP) + Min Height (the frame grows with its content) */}
           <div className="flex gap-2">
             <div className="flex-1">
               <div className="flex flex-col gap-1">
@@ -44,7 +44,13 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
             </div>
             <div className="flex-1">
               <div className="flex flex-col gap-1">
-                <label className="text-muted-foreground" style={{ fontSize: '11px' }}>Viewport Height</label>
+                <label
+                  className="text-muted-foreground"
+                  style={{ fontSize: '11px' }}
+                  title="Minimum frame height on the canvas. The frame grows to fit the page content."
+                >
+                  Min Height
+                </label>
                 <input
                   type="number"
                   value={component.viewportHeight || 600}
