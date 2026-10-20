@@ -30,7 +30,7 @@ import type { AiModelKey } from '@/lib/ai/anthropicClient';
 
 import type { ContactBook } from '../contactBook';
 import { BooksError, isBooksError } from '../errors';
-import { IMPORT_RENDERER, importHistoricalInvoice, newImportSession } from '../importInvoices';
+import { counterRaiseUnconfirmed, IMPORT_RENDERER, importHistoricalInvoice, newImportSession } from '../importInvoices';
 import type { BooksScope } from '../scope';
 import { readSettings } from '../settings';
 import { extractPrintedInvoice } from './extract';
@@ -50,7 +50,7 @@ import {
   type ImportItem,
   type Problem,
 } from './staging';
-import { validateItem } from './validate';
+import { stagedNumber, validateItem } from './validate';
 
 /** The largest PDF one upload takes (plan: 10 MB). */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -290,6 +290,34 @@ export async function recheckItem(scope: BooksScope, book: ContactBook, itemId: 
   return revalidate(scope, book, item, now);
 }
 
+/**
+ * The user confirms that a number jumping far ahead (`number_jump`) is right,
+ * for exactly the row's current printed number and version; changing the
+ * number afterwards makes the problem return. Validated again.
+ */
+export async function confirmNumber(
+  scope: BooksScope,
+  book: ContactBook,
+  itemId: string,
+  input: { documentNumber: string; expectedVersion: number },
+  now: Date = new Date(),
+): Promise<ImportItem> {
+  const item = await getItem(scope.db, scope, itemId);
+  if (item.status !== 'ready' && item.status !== 'needs_attention') {
+    throw new BooksError('CONCURRENT_EDIT', `CONCURRENT_EDIT: the row is ${item.status}`, { itemId, status: item.status });
+  }
+  const current = stagedNumber(item);
+  if (item.version !== input.expectedVersion || current === null || current !== input.documentNumber.trim()) {
+    throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the number changed meanwhile; check it again', { itemId });
+  }
+  const stored = await updateItem(scope.db, scope, itemId, { numberConfirmed: current }, {
+    expectedVersion: input.expectedVersion,
+    whenStatus: ['ready', 'needs_attention'],
+  });
+  if (!stored) throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the row changed meanwhile; reload it', { itemId });
+  return revalidate(scope, book, stored, now);
+}
+
 export interface ConfirmResult {
   item: ImportItem;
   documentId: string | null;
@@ -299,7 +327,11 @@ export interface ConfirmResult {
 
 /**
  * Import one row at `expectedVersion`. It is validated again first (a row with
- * a blocking problem is refused with IMPORT_NOT_READY and stays as it is);
+ * a blocking problem is refused with IMPORT_NOT_READY and stays as it is).
+ * When importing it raises the invoice counter, the caller must name the new
+ * next value it showed the user (`confirmCounterRaiseTo`): a missing or other
+ * value is COUNTER_RAISE_UNCONFIRMED and nothing is imported (the raise cannot
+ * be undone), and the core refuses any raise but that one in its transaction;
  * then the core imports it and, in the same transaction, the row becomes
  * `imported` with its bytes cleared (they live on in sales_document_file). A
  * failed import leaves the row `ready` with the failure named.
@@ -308,7 +340,7 @@ export async function confirmItem(
   scope: BooksScope,
   book: ContactBook,
   itemId: string,
-  input: { expectedVersion: number },
+  input: { expectedVersion: number; confirmCounterRaiseTo?: number | null },
   now: Date = new Date(),
 ): Promise<ConfirmResult> {
   const item = await getItem(scope.db, scope, itemId);
@@ -334,10 +366,15 @@ export async function confirmItem(
       problems: v.problems.filter((p) => p.blocking).map((p) => p.code),
     });
   }
+  const raiseTo = v.problems.find((p) => p.code === 'counter_raised')?.count ?? null;
+  const confirmed = input.confirmCounterRaiseTo ?? null;
+  if (raiseTo !== null && confirmed !== raiseTo) throw counterRaiseUnconfirmed(raiseTo, confirmed);
   try {
     const result = await importHistoricalInvoice(scope, book, v.record, bytes, newImportSession(), {
       now,
       counterPolicy: 'raise',
+      // Only the raise the user confirmed (or none): a counter moved meanwhile is refused, not followed.
+      confirmedCounterRaiseTo: raiseTo,
       inTransaction: async (trx, documentId) => {
         const marked = await updateItem(trx, scope, itemId, { status: 'imported', documentId, clearContent: true, problems: [], claimedAt: null }, {
           expectedVersion: checked.version,
@@ -356,7 +393,7 @@ export async function confirmItem(
     }
     return { item: await getItem(scope.db, scope, itemId), documentId: result.documentId, counterRaisedTo: result.counterRaisedTo };
   } catch (err) {
-    if (!isBooksError(err) || err.code === 'CONCURRENT_EDIT') throw err;
+    if (!isBooksError(err) || err.code === 'CONCURRENT_EDIT' || err.code === 'COUNTER_RAISE_UNCONFIRMED') throw err;
     // The row stays `ready`, with the failure named; nothing was written by the import.
     const named: Problem = { code: `import_failed:${err.code.toLowerCase()}`, path: null, blocking: false, count: null };
     await updateItem(scope.db, scope, itemId, { problems: [...v.problems.filter((p) => !p.code.startsWith('import_failed:')), named] }, {

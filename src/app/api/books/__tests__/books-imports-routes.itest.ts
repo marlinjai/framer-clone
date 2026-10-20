@@ -54,6 +54,7 @@ import * as confirmRoute from '../imports/[id]/confirm/route';
 import * as discardRoute from '../imports/[id]/discard/route';
 import * as recheckRoute from '../imports/[id]/recheck/route';
 import * as itemPdfRoute from '../imports/[id]/pdf/route';
+import * as confirmNumberRoute from '../imports/[id]/confirm-number/route';
 import * as documentPdfRoute from '../documents/[id]/pdf/route';
 
 let env: BooksEnv;
@@ -222,6 +223,22 @@ describe('read, correct, import', () => {
     expect(read.json.status).toBe('needs_attention');
     const refused = await call(confirmRoute.POST, 'POST', `/api/books/imports/${id}/confirm`, { id }, { expectedVersion: read.json.version });
     expect(refused).toMatchObject({ status: 422, json: { error: { code: 'import_not_ready' } } });
+  });
+
+  it('a raise of the counter needs the confirmed value; a number jumping far ahead needs its own confirmation', async () => {
+    const id = (await upload(pdfBytes(`raise-${tenantId}`))).json.item.id as string;
+    fake.turns.push(toolTurn(toolInput({ number: '200' })));
+    const read = await call(extractRoute.POST, 'POST', `/api/books/imports/${id}/extract`, { id });
+    expect(read.json.problems).toContainEqual({ code: 'number_jump', path: 'number', blocking: true, count: 62 });
+    const confirmed = await call(confirmNumberRoute.POST, 'POST', `/api/books/imports/${id}/confirm-number`, { id }, { documentNumber: '200', expectedVersion: read.json.version });
+    expect(confirmed.json.status).toBe('ready');
+    expect(confirmed.json.problems).toContainEqual({ code: 'counter_raised', path: null, blocking: false, count: 201 });
+    const unconfirmed = await call(confirmRoute.POST, 'POST', `/api/books/imports/${id}/confirm`, { id }, { expectedVersion: confirmed.json.version });
+    expect(unconfirmed).toMatchObject({ status: 409, json: { error: { code: 'counter_raise_unconfirmed', raiseTo: 201 } } });
+    // The refusal re-checked the row (its version moved): the page reloads it before confirming again.
+    const current = await call(itemRoute.GET, 'GET', `/api/books/imports/${id}`, { id });
+    const done = await call(confirmRoute.POST, 'POST', `/api/books/imports/${id}/confirm`, { id }, { expectedVersion: current.json.version, confirmCounterRaiseTo: 201 });
+    expect(done.json).toMatchObject({ item: { status: 'imported' }, counterRaisedTo: 201 });
   });
 
   it('without an AI key the reading answers 401 like the other AI routes, and the row stays unread', async () => {

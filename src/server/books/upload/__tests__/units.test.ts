@@ -121,7 +121,7 @@ describe('the review form', () => {
 describe('problem texts', () => {
   it('names every code, adds counts, labels paths, and shows an unknown code as itself', () => {
     expect(problemText({ code: 'number_taken', path: 'number', blocking: true, count: null })).toMatch(/already in the Books/);
-    expect(problemText({ code: 'counter_raised', path: null, blocking: false, count: 63 })).toBe('Importing raises the invoice counter to 63.');
+    expect(problemText({ code: 'counter_raised', path: null, blocking: false, count: 63 })).toBe('Your next invoice number will become 63. It cannot be lowered later.');
     expect(problemText({ code: 'line_price_derived', path: null, blocking: false, count: 3 })).toMatch(/\(3 lines\)$/);
     expect(problemText({ code: 'import_failed:totals_mismatch', path: null, blocking: false, count: null })).toMatch(/totals_mismatch/);
     expect(problemText({ code: 'something_new', path: null, blocking: true, count: null })).toBe('something_new');

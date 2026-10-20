@@ -165,6 +165,7 @@ const MESSAGES: Record<string, string> = {
   extraction_running: 'This invoice is being read already.',
   stale_extraction: 'This invoice was read again meanwhile. The table shows the new reading; check it again.',
   import_not_ready: 'This row has a problem to fix before it can be imported.',
+  counter_raise_unconfirmed: 'The invoice number this import would set has changed. Check the row again and confirm the new value.',
   file_too_large: 'The file is larger than 10 MB.',
   upload_truncated: 'The file did not arrive whole. Upload it again.',
   missing_anthropic_key: 'Reading invoices is not set up on this server (no AI key). Ask an administrator.',
@@ -380,12 +381,15 @@ export const importsApi = {
   correct: (id: string, printed: PrintedInvoice, extractionId: string, expectedVersion: number) =>
     request<ImportItemView>('PATCH', `/api/books/imports/${id}`, { printed, extractionId, expectedVersion }),
   recheck: (id: string) => request<ImportItemView>('POST', `/api/books/imports/${id}/recheck`),
-  confirm: (id: string, expectedVersion: number) =>
+  /** `confirmCounterRaiseTo`: the new next invoice number the user was shown and confirmed (required when the import raises the counter). */
+  confirm: (id: string, expectedVersion: number, confirmCounterRaiseTo: number | null = null) =>
     request<{ item: ImportItemView; documentId: string | null; counterRaisedTo: number | null }>(
       'POST',
       `/api/books/imports/${id}/confirm`,
-      { expectedVersion },
+      { expectedVersion, confirmCounterRaiseTo },
     ),
+  confirmNumber: (id: string, documentNumber: string, expectedVersion: number) =>
+    request<ImportItemView>('POST', `/api/books/imports/${id}/confirm-number`, { documentNumber, expectedVersion }),
   discard: (id: string) => request<ImportItemView>('POST', `/api/books/imports/${id}/discard`),
 };
 

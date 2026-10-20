@@ -137,7 +137,7 @@ describe('ImportPanel', () => {
     expect(row.textContent).toContain('800,00 €');
     fireEvent.click(within(row).getByRole('button', { name: 'Import' }));
     await screen.findByText(/counter was raised to 71/);
-    expect(calls.find((c) => c.url.endsWith('/i1/confirm'))!.body).toEqual({ expectedVersion: 3 });
+    expect(calls.find((c) => c.url.endsWith('/i1/confirm'))!.body).toEqual({ expectedVersion: 3, confirmCounterRaiseTo: null });
     expect(within(screen.getByTestId('import-row-i1')).getByRole('link', { name: 'Open' }).getAttribute('href')).toBe('/projects/books/documents/doc-1');
   });
 
@@ -238,6 +238,68 @@ describe('ImportPanel', () => {
     await waitFor(() => expect(screen.getAllByText('Imported')).toHaveLength(2));
     expect(calls.filter((c) => c.url.endsWith('/confirm')).map((c) => c.url)).toEqual(['/api/books/imports/i1/confirm', '/api/books/imports/i3/confirm']);
     expect(within(screen.getByTestId('import-row-i2')).getByText('The invoice number is missing.')).toBeTruthy();
+  });
+
+  it('a row that raises the counter says so before import and imports only after the explicit confirmation of that value', async () => {
+    const raising = item({ problems: [{ code: 'counter_raised', path: null, blocking: false, count: 71 }] });
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: { items: [raising], counter: { format: '{n}', nextValue: 62 }, limits: LIMITS } }),
+      'POST /api/books/imports/i1/confirm': () => ({ status: 200, body: { item: item({ status: 'imported', documentId: 'd1' }), documentId: 'd1', counterRaisedTo: 71 } }),
+    });
+    render(<ImportPanel />);
+    const row = await screen.findByTestId('import-row-i1');
+    expect(row.textContent).toContain('Importing sets your next invoice number to 71. It cannot be lowered later.');
+    fireEvent.click(within(row).getByRole('button', { name: 'Import' }));
+    // Not imported yet: the confirmation asks first.
+    const dialog = within(row).getByRole('alertdialog', { name: 'Confirm the new invoice number' });
+    expect(dialog.textContent).toContain('Your next invoice number will become 71. It cannot be lowered later.');
+    expect(calls.some((c) => c.url.endsWith('/confirm'))).toBe(false);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import and set the next number to 71' }));
+    await screen.findByText(/counter was raised to 71/);
+    expect(calls.find((c) => c.url.endsWith('/i1/confirm'))!.body).toEqual({ expectedVersion: 3, confirmCounterRaiseTo: 71 });
+  });
+
+  it('"Import all ready" with a raising row confirms the highest new number first, then sends each row its own value', async () => {
+    server({
+      'GET /api/books/imports': () => ({
+        status: 200,
+        body: {
+          items: [
+            item({ id: 'i1', problems: [{ code: 'counter_raised', path: null, blocking: false, count: 66 }] }),
+            item({ id: 'i2', problems: [{ code: 'counter_raised', path: null, blocking: false, count: 71 }] }),
+            item({ id: 'i3' }),
+          ],
+          counter: null,
+          limits: LIMITS,
+        },
+      }),
+      'POST /api/books/imports/i1/confirm': () => ({ status: 200, body: { item: item({ id: 'i1', status: 'imported' }), documentId: 'd1', counterRaisedTo: 66 } }),
+      'POST /api/books/imports/i2/confirm': () => ({ status: 200, body: { item: item({ id: 'i2', status: 'imported' }), documentId: 'd2', counterRaisedTo: 71 } }),
+      'POST /api/books/imports/i3/confirm': () => ({ status: 200, body: { item: item({ id: 'i3', status: 'imported' }), documentId: 'd3', counterRaisedTo: null } }),
+    });
+    render(<ImportPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Import all ready (3)' }));
+    const dialog = screen.getByRole('alertdialog', { name: 'Confirm the new invoice number' });
+    expect(dialog.textContent).toContain('Your next invoice number will become 71. It cannot be lowered later.');
+    expect(calls.some((c) => c.url.endsWith('/confirm'))).toBe(false);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import and set the next number to 71' }));
+    await waitFor(() => expect(screen.getAllByText('Imported')).toHaveLength(3));
+    expect(calls.filter((c) => c.url.endsWith('/confirm')).map((c) => (c.body as Json).confirmCounterRaiseTo)).toEqual([66, 71, null]);
+  });
+
+  it('a number jumping far ahead is confirmed for exactly that number', async () => {
+    const jumping = item({ status: 'needs_attention', printed: printed({ number: '9999' }), problems: [{ code: 'number_jump', path: 'number', blocking: true, count: 62 }] });
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: { items: [jumping], counter: null, limits: LIMITS } }),
+      'POST /api/books/imports/i1/confirm-number': () => ({ status: 200, body: item({ version: 4, printed: printed({ number: '9999' }) }) }),
+    });
+    render(<ImportPanel />);
+    const row = await screen.findByTestId('import-row-i1');
+    expect(row.textContent).toMatch(/more than 50 above 62/);
+    expect(within(row).queryByRole('button', { name: 'Import' })).toBeNull();
+    fireEvent.click(within(row).getByRole('button', { name: 'The number is right' }));
+    await waitFor(() => expect(within(screen.getByTestId('import-row-i1')).getByText('Ready to check')).toBeTruthy());
+    expect(calls.find((c) => c.url.endsWith('/confirm-number'))!.body).toEqual({ documentNumber: '9999', expectedVersion: 3 });
   });
 
   it('everything imported: says so', async () => {

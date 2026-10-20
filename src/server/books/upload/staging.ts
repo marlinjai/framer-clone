@@ -66,6 +66,8 @@ export interface ImportItem {
   extractionError: string | null;
   /** The user's correction, only when it corrects the CURRENT extraction (else null: stale). */
   corrected: Record<string, unknown> | null;
+  /** The printed number the user confirmed as right although it jumps far ahead (counts only while it is the current number). */
+  numberConfirmed: string | null;
   problems: Problem[];
   model: string | null;
   claimedAt: Date | null;
@@ -92,6 +94,7 @@ const ITEM_COLUMNS = [
   'extraction_error',
   'corrected',
   'corrected_extraction_id',
+  'number_confirmed',
   'problems',
   'model',
   'claimed_at',
@@ -113,6 +116,7 @@ type ItemRow = {
   extraction_error: string | null;
   corrected: unknown;
   corrected_extraction_id: string | null;
+  number_confirmed: string | null;
   problems: unknown;
   model: string | null;
   claimed_at: Date | null;
@@ -142,6 +146,7 @@ function mapItem(row: ItemRow): ImportItem {
     extracted: extracted && extracted.success ? extracted.data : null,
     extractionError: row.extraction_error,
     corrected,
+    numberConfirmed: row.number_confirmed,
     problems: problems.success ? problems.data : [],
     model: row.model,
     claimedAt: row.claimed_at,
@@ -229,6 +234,7 @@ export interface ItemUpdate {
   extracted?: Extracted | null;
   extractionError?: string | null;
   corrected?: { printed: Record<string, unknown>; extractionId: string } | null;
+  numberConfirmed?: string | null;
   problems?: Problem[];
   model?: string | null;
   claimedAt?: Date | null;
@@ -273,6 +279,7 @@ export async function updateItem(
           : { corrected: toJsonb(change.corrected.printed), corrected_extraction_id: change.corrected.extractionId }
         : {}),
       ...(change.problems !== undefined ? { problems: toJsonb(change.problems) } : {}),
+      ...(change.numberConfirmed !== undefined ? { number_confirmed: change.numberConfirmed } : {}),
       ...(change.model !== undefined ? { model: change.model } : {}),
       ...(change.claimedAt !== undefined ? { claimed_at: change.claimedAt } : {}),
       ...(change.documentId !== undefined ? { document_id: change.documentId } : {}),

@@ -19,6 +19,7 @@ import type { ContactBook } from '../contactBook';
 import { isBooksError } from '../errors';
 import {
   newImportSession,
+  numberValueFor,
   parseHistoricalInvoice,
   previewHistoricalInvoice,
   type HistoricalInvoice,
@@ -83,11 +84,52 @@ export function withCompanySender(
   return { printed: { ...printed, sender }, filled };
 }
 
+/**
+ * When the row's number jumps too far ahead (see NUMBER_JUMP_LIMIT): the
+ * reference it jumps from (the counter's next value, or the highest number of
+ * the other staged rows); null when it does not.
+ */
+async function numberJump(
+  scope: BooksScope,
+  item: ImportItem,
+  numberValue: number | null,
+  raiseTo: number | null,
+  others: readonly ImportItem[],
+): Promise<number | null> {
+  if (numberValue === null) return null;
+  const counter = await scope.db
+    .selectFrom('document_number_counter')
+    .select(['next_value', 'format'])
+    .where('tenant_id', '=', scope.tenantId)
+    .where('doc_type', '=', 'invoice')
+    .executeTakeFirst();
+  if (!counter) return null;
+  const next = Number(counter.next_value);
+  if (raiseTo !== null && raiseTo - next > NUMBER_JUMP_LIMIT) return next;
+  const batch = others
+    .filter((o) => o.id !== item.id && o.status !== 'discarded')
+    .map((o) => stagedNumber(o))
+    .map((n) => (n === null ? null : numberValueFor(n, counter.format)))
+    .filter((v): v is number => v !== null);
+  if (batch.length === 0) return null;
+  const highest = Math.max(...batch);
+  return numberValue - highest > NUMBER_JUMP_LIMIT ? highest : null;
+}
+
 /** The printed number of a staged row now (for the duplicate check among staged rows). */
 export function stagedNumber(item: ImportItem): string | null {
   const n = valueAt(effectivePrinted(item), 'number');
   return typeof n === 'string' && n.trim() !== '' ? n.trim() : typeof n === 'number' ? String(n) : null;
 }
+
+/**
+ * How far ahead a number may jump before the user must confirm it: a number
+ * that raises the invoice counter more than this above its current next value,
+ * or lies more than this above the highest number of the other staged rows, is
+ * a blocking `number_jump` (a misread "9999" for "99" would otherwise push the
+ * company's next invoice number up for good; the counter is never lowered).
+ */
+export const NUMBER_JUMP_LIMIT = 50;
 
 export interface Validation {
   status: 'ready' | 'needs_attention';
@@ -145,6 +187,8 @@ export async function validateItem(
     } else {
       for (const w of preview.warnings) problems.push(problem(w.code, { blocking: false, count: 'count' in w ? w.count : null }));
       if (preview.counterRaisedTo !== null) problems.push(problem('counter_raised', { blocking: false, count: preview.counterRaisedTo }));
+      const jump = await numberJump(scope, item, preview.numberValue, preview.counterRaisedTo, ctx.others);
+      if (jump !== null && item.numberConfirmed !== number) problems.push(problem('number_jump', { path: 'number', count: jump }));
     }
   } catch (err) {
     if (!isBooksError(err)) throw err;

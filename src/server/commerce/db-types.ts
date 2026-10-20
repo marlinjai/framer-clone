@@ -584,6 +584,7 @@ export interface HistoricalImportItemTable {
   extraction_error: string | null;
   corrected: JsonColumn<Record<string, unknown>> | null;
   corrected_extraction_id: string | null;
+  number_confirmed: string | null;
   problems: Generated<JsonColumn<Array<Record<string, unknown>>>>;
   model: string | null;
   claimed_at: Timestamp | null;

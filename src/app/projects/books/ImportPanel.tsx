@@ -49,6 +49,11 @@ const STATUS_TEXT: Record<ImportItemView['status'], string> = {
 const MAX_FILES = 50;
 const MAX_BYTES = 10 * 1024 * 1024;
 
+/** The new next invoice number importing this row would set, or null when it does not raise the counter. */
+function raiseOf(item: ImportItemView): number | null {
+  return item.problems.find((p) => p.code === 'counter_raised')?.count ?? null;
+}
+
 /** A printed amount in its printed currency ("1.234,50 €", "500,00 CHF"); "?" when not an amount. */
 function printedMoney(amount: unknown, currency: unknown): string {
   if (typeof amount !== 'number' || !Number.isFinite(amount)) return '?';
@@ -64,6 +69,10 @@ export default function ImportPanel() {
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [blocked, setBlocked] = useState<BooksApiError | null>(null);
+  /** A row whose import would raise the invoice counter, waiting for the user's explicit confirmation. */
+  const [raising, setRaising] = useState<{ id: string; to: number } | null>(null);
+  /** The batch import waiting for its explicit confirmation of the highest new next number. */
+  const [batchRaise, setBatchRaise] = useState<number | null>(null);
   const queue = useRef<string[]>([]);
   const running = useRef<Set<string>>(new Set());
   const stopped = useRef(false);
@@ -218,9 +227,9 @@ export default function ImportPanel() {
     }
   }
 
-  async function confirm(item: ImportItemView): Promise<boolean> {
+  async function confirm(item: ImportItemView, confirmedRaise: number | null = null): Promise<boolean> {
     try {
-      const res = await importsApi.confirm(item.id, item.version);
+      const res = await importsApi.confirm(item.id, item.version, confirmedRaise);
       upsert(res.item);
       if (res.counterRaisedTo !== null) setNotice(`The invoice counter was raised to ${res.counterRaisedTo}: your next invoice continues after the imported ones.`);
       return true;
@@ -231,12 +240,34 @@ export default function ImportPanel() {
     }
   }
 
-  async function confirmAllReady() {
+  /** Import a row; one that raises the counter first asks for the explicit confirmation. */
+  async function importRow(item: ImportItemView, confirmedRaise: number | null = null) {
+    const to = raiseOf(item);
+    if (to !== null && confirmedRaise !== to) {
+      setRaising({ id: item.id, to });
+      return;
+    }
+    setRaising(null);
+    await act(item.id, async () => {
+      await confirm(item, to);
+    });
+  }
+
+  /** Import every ready row; when any of them raises the counter, the highest new value is confirmed first. */
+  async function confirmAllReady(confirmedRaise: number | null = null) {
     if (!list) return;
     setError(null);
-    for (const item of list.items.filter((i) => i.status === 'ready')) {
+    const ready = list.items.filter((i) => i.status === 'ready');
+    const highest = ready.map(raiseOf).reduce<number | null>((a, b) => (b !== null && (a === null || b > a) ? b : a), null);
+    if (highest !== null && confirmedRaise !== highest) {
+      setBatchRaise(highest);
+      return;
+    }
+    setBatchRaise(null);
+    for (const item of ready) {
       setBusy((b) => new Set(b).add(item.id));
-      await confirm(item);
+      // Each row names its own new next value; the batch confirmation covered the highest.
+      await confirm(item, raiseOf(item));
       setBusy((b) => {
         const n = new Set(b);
         n.delete(item.id);
@@ -276,12 +307,29 @@ export default function ImportPanel() {
             {list?.counter ? ` Next invoice number: ${list.counter.nextValue}.` : ''}
           </p>
         </div>
-        <Button onClick={confirmAllReady} disabled={readyCount === 0 || busy.size > 0}>
+        <Button onClick={() => void confirmAllReady()} disabled={readyCount === 0 || busy.size > 0}>
           {readyCount > 0 ? `Import all ready (${readyCount})` : 'Import all ready'}
         </Button>
       </header>
 
       <ErrorAlert message={error} onDismiss={() => setError(null)} />
+      {batchRaise !== null ? (
+        <section role="alertdialog" aria-label="Confirm the new invoice number" className="mb-4 rounded-md border border-amber-500 px-4 py-3 text-sm">
+          <p className="font-medium">Your next invoice number will become {batchRaise}. It cannot be lowered later.</p>
+          <p className="mt-1 text-muted-foreground">
+            Importing the ready invoices raises the invoice counter past the highest imported number. Check that number
+            against its PDF before you continue.
+          </p>
+          <span className="mt-3 flex gap-2">
+            <Button size="sm" onClick={() => void confirmAllReady(batchRaise)}>
+              Import and set the next number to {batchRaise}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setBatchRaise(null)}>
+              Cancel
+            </Button>
+          </span>
+        </section>
+      ) : null}
       {notice ? (
         <div role="status" className="mb-4 rounded-md border px-4 py-3 text-sm">
           {notice}
@@ -394,6 +442,24 @@ export default function ImportPanel() {
                       {warnings.length > 0 && item.status !== 'imported' ? (
                         <span className="mt-1 block text-xs text-muted-foreground">{warnings.length} to check</span>
                       ) : null}
+                      {raiseOf(item) !== null && item.status !== 'imported' && raising?.id !== item.id ? (
+                        <span className="mt-1 block text-xs text-amber-700 dark:text-amber-400">
+                          Importing sets your next invoice number to {raiseOf(item)}. It cannot be lowered later.
+                        </span>
+                      ) : null}
+                      {raising?.id === item.id ? (
+                        <span role="alertdialog" aria-label="Confirm the new invoice number" className="mt-2 block rounded-md border border-amber-500 p-2 text-xs">
+                          <span className="block font-medium">Your next invoice number will become {raising.to}. It cannot be lowered later.</span>
+                          <span className="mt-2 flex gap-2">
+                            <Button size="sm" onClick={() => void importRow(item, raising.to)} disabled={rowBusy}>
+                              Import and set the next number to {raising.to}
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => setRaising(null)}>
+                              Cancel
+                            </Button>
+                          </span>
+                        </span>
+                      ) : null}
                     </td>
                     <td className="px-3 py-2">
                       <span className="flex flex-wrap justify-end gap-2">
@@ -408,8 +474,18 @@ export default function ImportPanel() {
                           </Button>
                         ) : null}
                         {item.status === 'ready' ? (
-                          <Button size="sm" onClick={() => void act(item.id, async () => { await confirm(item); })} disabled={rowBusy}>
+                          <Button size="sm" onClick={() => void importRow(item)} disabled={rowBusy}>
                             Import
+                          </Button>
+                        ) : null}
+                        {item.problems.some((x) => x.code === 'number_jump') && p?.number != null ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void act(item.id, () => importsApi.confirmNumber(item.id, String(p.number), item.version))}
+                            disabled={rowBusy}
+                          >
+                            The number is right
                           </Button>
                         ) : null}
                         {item.status === 'needs_attention' && item.extractionError ? (

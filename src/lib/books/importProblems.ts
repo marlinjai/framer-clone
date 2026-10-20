@@ -55,6 +55,7 @@ const TEXT: Record<string, string> = {
   tax_note_missing: 'The tax note (section 19 or reverse charge) is not printed.',
   sender_from_company: 'Sender fields not on the PDF are taken from the company settings.',
   counter_raised: 'Importing raises the invoice counter.',
+  number_jump: 'This number jumps far ahead. Check it against the PDF, then confirm it if it is right.',
   unsure_medium: 'The AI was not sure about this field.',
   unsure_low: 'The AI could hardly read this field.',
 };
@@ -62,7 +63,12 @@ const TEXT: Record<string, string> = {
 /** The sentence for one problem; counts are added where they say something. */
 export function problemText(p: ImportProblem): string {
   const base = TEXT[p.code] ?? (p.code.startsWith('import_failed:') ? `The import failed (${p.code.slice(14)}). Nothing was imported; try again.` : p.code);
-  if (p.code === 'counter_raised' && p.count !== null) return `Importing raises the invoice counter to ${p.count}.`;
+  if (p.code === 'counter_raised' && p.count !== null) {
+    return `Your next invoice number will become ${p.count}. It cannot be lowered later.`;
+  }
+  if (p.code === 'number_jump' && p.count !== null) {
+    return `This number is more than 50 above ${p.count} (the next invoice number, or the highest of the other invoices here). Check it against the PDF; if it is right, confirm it.`;
+  }
   if (p.count !== null && p.count > 1 && p.code.startsWith('line')) return `${base} (${p.count} lines)`;
   return base;
 }

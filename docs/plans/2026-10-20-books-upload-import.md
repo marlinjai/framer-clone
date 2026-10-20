@@ -198,6 +198,24 @@ Books home.
     into JavaScript can carry the machine's offset, so comparing there took a fresh claim for a
     stale one (found by the resume test).
 
+15. **Raising the counter is confirmed, value by value (lead's decision of 2026-10-20).** A raise
+    cannot be undone (BK003), and a misread "9999" for "99" would push the company's next
+    invoice number up for good. Whenever importing a row would raise the counter, the review
+    table says so plainly before the import ("Your next invoice number will become X. It cannot
+    be lowered later.") and asks for an explicit confirmation of that value, per row or, for
+    "Import all ready", once for the highest value of the batch (each row then sends its own).
+    The server requires the confirmation to name exactly the value the import would set
+    (`counter_raise_unconfirmed` otherwise, with the value to confirm; a confirmation from before
+    the number was changed is refused), and the core refuses any other raise inside its
+    transaction (`confirmedCounterRaiseTo`), so a counter moved meanwhile is never followed
+    unconfirmed.
+16. **Numbers that jump far ahead block until confirmed.** A number that would raise the counter
+    more than 50 above its current next value, or lies more than 50 above the highest number of
+    the other staged rows (the batch's sequence, imported rows included), is the blocking problem
+    `number_jump`. The user confirms that the number is printed that way ("The number is right");
+    the confirmation is stored for exactly that number (`number_confirmed` on the staging row, in
+    010) and the problem returns when the number changes.
+
 **Operator steps** (live actions, not done here): deploy, which rolls `010_books_upload_import`
 across every tenant schema at boot; optionally set `AI_INVOICE_EXTRACT_MODEL` and
 `BOOKS_IMPORT_DAILY_LIMIT` (defaults: Sonnet 5.5, 500); prove the first real upload in the

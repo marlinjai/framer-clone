@@ -61,7 +61,8 @@ export type BooksErrorCode =
   | 'IMPORT_NOT_READY'
   | 'EXTRACT_BUSY'
   | 'EXTRACTION_RUNNING'
-  | 'STALE_EXTRACTION';
+  | 'STALE_EXTRACTION'
+  | 'COUNTER_RAISE_UNCONFIRMED';
 
 export class BooksError extends Error {
   readonly code: BooksErrorCode;

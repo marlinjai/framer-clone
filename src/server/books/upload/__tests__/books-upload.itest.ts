@@ -37,7 +37,7 @@ import {
   type BooksEnv,
 } from '../../__tests__/booksFixtures';
 import { createCompanySlots } from '../limits';
-import { confirmItem, correctItem, discardItem, extractItem, listImportItems, stageUpload, type ExtractDeps } from '../service';
+import { confirmItem, confirmNumber, correctItem, discardItem, extractItem, listImportItems, stageUpload, type ExtractDeps } from '../service';
 import { getItem } from '../staging';
 import { fakeAnthropic, pdfBytes, toolInput, toolTurn, type Turn } from './fakeAnthropic';
 
@@ -127,7 +127,13 @@ describe('forward', () => {
     const high = await staged(scope, `high-${tenantId}`);
     const r1 = await extractItem(scope, high.id, deps([toolTurn(toolInput({ number: '70', issueDate: '2023-01-10' }))], book).deps);
     expect(r1.problems).toContainEqual({ code: 'counter_raised', path: null, blocking: false, count: 71 });
-    const c1 = await confirmItem(scope, book, high.id, { expectedVersion: r1.version });
+    // The raise is irreversible: without the confirmed value, or with another one, nothing is imported.
+    await expect(confirmItem(scope, book, high.id, { expectedVersion: r1.version })).rejects.toMatchObject({ code: 'COUNTER_RAISE_UNCONFIRMED', details: { raiseTo: 71 } });
+    const afterRefusal = await getItem(scope.db, scope, high.id);
+    await expect(confirmItem(scope, book, high.id, { expectedVersion: afterRefusal.version, confirmCounterRaiseTo: 70 })).rejects.toMatchObject({ code: 'COUNTER_RAISE_UNCONFIRMED' });
+    expect(await counter()).toBe(62);
+    const fresh = await getItem(scope.db, scope, high.id);
+    const c1 = await confirmItem(scope, book, high.id, { expectedVersion: fresh.version, confirmCounterRaiseTo: 71 });
     expect(c1.counterRaisedTo).toBe(71);
     expect(await counter()).toBe(71);
 
@@ -181,6 +187,63 @@ describe('forward', () => {
   });
 });
 
+describe('the invoice counter: confirmed raises and numbers that jump far ahead', () => {
+  it('a confirmation of an earlier target is refused after the number changed', async () => {
+    const { tenantId, book, scope } = await company();
+    const item = await staged(scope, `st-${tenantId}`);
+    const read = await extractItem(scope, item.id, deps([toolTurn(toolInput({ number: '70' }))], book).deps);
+    expect(read.problems).toContainEqual({ code: 'counter_raised', path: null, blocking: false, count: 71 });
+    const corrected = await correctItem(scope, book, item.id, {
+      printed: { ...read.extracted!.printed, number: '80' },
+      extractionId: read.extractionId!,
+      expectedVersion: read.version,
+    });
+    // The user saw "71" earlier; the row now raises to 81.
+    await expect(confirmItem(scope, book, item.id, { expectedVersion: corrected.version, confirmCounterRaiseTo: 71 })).rejects.toMatchObject({
+      code: 'COUNTER_RAISE_UNCONFIRMED',
+      details: { raiseTo: 81, confirmed: 71 },
+    });
+    const now = await getItem(scope.db, scope, item.id);
+    expect(now.status).toBe('ready');
+    expect((await confirmItem(scope, book, item.id, { expectedVersion: now.version, confirmCounterRaiseTo: 81 })).counterRaisedTo).toBe(81);
+  });
+
+  it('a number more than 50 above the next value blocks until the user confirms that exact number', async () => {
+    const { tenantId, book, scope } = await company({ invoiceNext: 62 });
+    const item = await staged(scope, `j-${tenantId}`);
+    const read = await extractItem(scope, item.id, deps([toolTurn(toolInput({ number: '9999' }))], book).deps);
+    expect(read.status).toBe('needs_attention');
+    expect(read.problems).toContainEqual({ code: 'number_jump', path: 'number', blocking: true, count: 62 });
+    await expect(confirmItem(scope, book, item.id, { expectedVersion: read.version, confirmCounterRaiseTo: 10000 })).rejects.toMatchObject({ code: 'IMPORT_NOT_READY' });
+    // A confirmation of another number than the current one is refused.
+    await expect(confirmNumber(scope, book, item.id, { documentNumber: '999', expectedVersion: (await getItem(scope.db, scope, item.id)).version })).rejects.toMatchObject({ code: 'CONCURRENT_EDIT' });
+    const confirmed = await confirmNumber(scope, book, item.id, { documentNumber: '9999', expectedVersion: (await getItem(scope.db, scope, item.id)).version });
+    expect(confirmed.status).toBe('ready');
+    expect(codes(confirmed)).not.toContain('number_jump');
+    // Changing the number makes the problem come back: the confirmation was for 9999 only.
+    const changed = await correctItem(scope, book, item.id, {
+      printed: { ...read.extracted!.printed, number: '8888' },
+      extractionId: read.extractionId!,
+      expectedVersion: confirmed.version,
+    });
+    expect(changed.problems).toContainEqual({ code: 'number_jump', path: 'number', blocking: true, count: 62 });
+  });
+
+  it('a number more than 50 above the highest of the other staged rows blocks, below the counter too', async () => {
+    const { tenantId, book, scope } = await company({ invoiceNext: 200 });
+    for (const n of ['10', '11']) {
+      const row = await staged(scope, `seq-${n}-${tenantId}`);
+      await extractItem(scope, row.id, deps([toolTurn(toolInput({ number: n }))], book).deps);
+    }
+    const odd = await staged(scope, `seq-odd-${tenantId}`);
+    const read = await extractItem(scope, odd.id, deps([toolTurn(toolInput({ number: '99' }))], book).deps);
+    expect(read.problems).toContainEqual({ code: 'number_jump', path: 'number', blocking: true, count: 11 });
+    const near = await staged(scope, `seq-near-${tenantId}`);
+    const ok = await extractItem(scope, near.id, deps([toolTurn(toolInput({ number: '12' }))], book).deps);
+    expect(codes(ok)).not.toContain('number_jump');
+  });
+});
+
 describe('backtrack and revise', () => {
   it('a corrected number re-checks uniqueness and the counter; the same input changes nothing; old readings are refused', async () => {
     const { tenantId, book, scope } = await company();
@@ -198,11 +261,11 @@ describe('backtrack and revise', () => {
     expect(taken.status).toBe('needs_attention');
     expect(taken.problems).toContainEqual({ code: 'number_taken', path: 'number', blocking: true, count: null });
     // To one above the counter: ready again, with the counter effect recomputed.
-    const raised = await correctItem(scope, book, second.id, { printed: { ...printed, number: '80' }, extractionId: r2.extractionId!, expectedVersion: taken.version });
+    const raised = await correctItem(scope, book, second.id, { printed: { ...printed, number: '65' }, extractionId: r2.extractionId!, expectedVersion: taken.version });
     expect(raised.status).toBe('ready');
-    expect(raised.problems).toContainEqual({ code: 'counter_raised', path: null, blocking: false, count: 81 });
+    expect(raised.problems).toContainEqual({ code: 'counter_raised', path: null, blocking: false, count: 66 });
     // The same input again: nothing re-spent, no version bump.
-    const same = await correctItem(scope, book, second.id, { printed: { ...printed, number: '80' }, extractionId: r2.extractionId!, expectedVersion: raised.version });
+    const same = await correctItem(scope, book, second.id, { printed: { ...printed, number: '65' }, extractionId: r2.extractionId!, expectedVersion: raised.version });
     expect(same.version).toBe(raised.version);
     // A stale version and a stale reading are refused.
     await expect(correctItem(scope, book, second.id, { printed, extractionId: r2.extractionId!, expectedVersion: r2.version })).rejects.toMatchObject({ code: 'CONCURRENT_EDIT' });
@@ -335,7 +398,7 @@ describe('010_books_upload_import: staging rows and the ledger', () => {
       await rejectionCode(env.ownerDb.updateTable('historical_import_item').set({ content: Buffer.from('%PDF-other') }).where('id', '=', item.id).execute()),
     ).toBe('BK010');
     expect(await rejectionCode(env.ownerDb.updateTable('historical_import_item').set({ status: 'imported' }).where('id', '=', item.id).execute())).toBe('BK010');
-    const r = await extractItem(scope, item.id, deps([toolTurn(toolInput({ number: '95' }))], book).deps);
+    const r = await extractItem(scope, item.id, deps([toolTurn(toolInput({ number: '45' }))], book).deps);
     await confirmItem(scope, book, item.id, { expectedVersion: r.version });
     expect(await rejectionCode(env.ownerDb.updateTable('historical_import_item').set({ file_name: 'x.pdf' }).where('id', '=', item.id).execute())).toBe('BK010');
     expect(await rejectionCode(env.ownerDb.deleteFrom('historical_import_item').where('id', '=', item.id).execute())).toBe('BK010');

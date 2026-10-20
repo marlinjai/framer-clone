@@ -32,7 +32,9 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      (`corrected_extraction_id`), the named problems, the claim time of a
  *      running extraction and, once imported, the document. When imported, the
  *      bytes are cleared (they live on in `sales_document_file`) and the row is
- *      frozen for every role (BK010). One live row per file and company: a
+ *      frozen for every role (BK010). `number_confirmed` holds the printed number
+ *      the user confirmed as right when it jumps far ahead (validate.ts); it
+ *      counts only while it equals the current number. One live row per file and company: a
  *      partial unique index on the SHA-256 for every status but `discarded`, so
  *      a discarded file can be staged again.
  *   4. `historical_import_extraction`: one row per model call (started,
@@ -292,6 +294,7 @@ export const booksUploadImport: Migration = {
         "extraction_error" TEXT,
         "corrected" JSONB,
         "corrected_extraction_id" TEXT,
+        "number_confirmed" TEXT,
         "problems" JSONB NOT NULL DEFAULT '[]',
         "model" TEXT,
         "claimed_at" TIMESTAMP(3),

@@ -927,6 +927,23 @@ export interface ImportOptions {
    * here); a throw rolls the whole import back.
    */
   inTransaction?: (trx: Transaction<CommerceDB>, documentId: string) => Promise<void>;
+  /**
+   * Counter policy `raise` only: the one raise the caller confirmed (the new
+   * next value). A raise to any other value, or a raise when none was
+   * confirmed (`null`), is COUNTER_RAISE_UNCONFIRMED and nothing is written:
+   * raising the counter cannot be undone (BK003). Undefined: no confirmation
+   * is asked (tests and callers that decide themselves).
+   */
+  confirmedCounterRaiseTo?: number | null;
+}
+
+/** A raise of the counter that was not confirmed for exactly this value. */
+export function counterRaiseUnconfirmed(raiseTo: number, confirmed: number | null): BooksError {
+  return new BooksError(
+    'COUNTER_RAISE_UNCONFIRMED',
+    `COUNTER_RAISE_UNCONFIRMED: importing raises the invoice counter to ${raiseTo}${confirmed === null ? '' : ` (confirmed: ${confirmed})`}; confirm that value`,
+    { raiseTo, confirmed },
+  );
 }
 
 /** The counter value of the record's number and what the counter policy makes of it. */
@@ -1064,6 +1081,9 @@ export async function importHistoricalInvoice(
           // FOR UPDATE when this import may raise it.
           const counter = await readCounter(trx, scope, policy === 'raise' ? 'update' : 'share');
           const effect = counterEffect(counter, record.documentNumber, policy);
+          if (opts.confirmedCounterRaiseTo !== undefined && effect.raiseTo !== null && effect.raiseTo !== opts.confirmedCounterRaiseTo) {
+            throw counterRaiseUnconfirmed(effect.raiseTo, opts.confirmedCounterRaiseTo);
+          }
           const number = { documentNumber: record.documentNumber, numberValue: effect.numberValue };
           const judged = judgeExisting(await existingInvoice(trx, scope, number), record.documentNumber, original.sha256, record);
           if (judged) return { result: judged, customerCreated: false };
