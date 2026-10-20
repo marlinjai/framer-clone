@@ -213,3 +213,17 @@ already talks to Anthropic through `/api/ai/*`:
   until the user saves.
 - **Phase 4 (design intelligence)**: only the cheap part, page-pattern and spacing guidance in the
   system prompt. Style references from URLs and the screenshot feedback loop stay open.
+
+### Models and cost (re-baselined 2026-10-20)
+
+The AI layer runs on the current models: Claude Sonnet 5.5 (`claude-sonnet-5-5`, $2 input / $10
+output per million tokens) is the page generator's default, Claude Haiku 5.5 (`claude-haiku-5-5`,
+$0.10 / $0.50) is its "Fast" option, and Claude Opus 5.5 (`claude-opus-5-5`, $4 / $20) stays the
+CMS content agent's default; Opus is not offered for page generation (whether it should become a
+default anywhere is Marlin's call). Page generation runs at effort `medium` with adaptive thinking,
+so thinking shares the 32,000-token output cap per attempt. A typical page (about 8,000 output
+tokens plus a cached system prompt) costs roughly $0.08 to $0.10 on Sonnet 5.5 and well under one
+cent on Haiku 5.5; the worst case, two full attempts on Sonnet 5.5, is about $0.64. Sonnet and Opus
+requests carry the server-side fallback opt-in (`fallbacks: "default"`), so a classifier false
+positive is retried on another model instead of failing; Haiku 5.5 has no server-side fallback, so
+a refusal there is shown to the user.
