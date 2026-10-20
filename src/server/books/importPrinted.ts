@@ -475,8 +475,9 @@ export type MappedPrinted =
  * or, when the line shows none, its net times the rate. Against the printed
  * VAT summary per rate (a row of 0,00 for a rate no line uses is no summary):
  * derived line taxes of a rate are adjusted (on the largest line) to the
- * printed group tax when they differ by rounding (at most (n + 1) / 2 cents
- * for n lines, rounded down); printed
+ * printed group tax when they differ by rounding (at most a cent per line,
+ * which also covers software that truncates or rounds halves to even per
+ * line); printed
  * line taxes stand, and when they differ from their group by rounding, `alt`
  * holds the lines adjusted to the summary instead, for an invoice whose total
  * was summed from the summary (the caller picks the one the total confirms).
@@ -525,8 +526,10 @@ function taxLines(
     const want = Math.round(g.tax * 100);
     const have = members.reduce((acc, { l }) => acc + l.taxAmount, 0);
     if (want === have) continue;
-    // Rounding each line against rounding the group differs by at most about half a cent per line; a 0 % group has none.
-    if (rate === 0 || Math.abs(want - have) > Math.floor((members.length + 1) / 2)) return { kind: 'error', reason: 'tax_summary_mismatch' };
+    // Rounding allows a cent per line: half away from zero per line differs from the group by up to half a cent a line,
+    // and invoice software that truncates each line or rounds halves to even differs by up to a full cent a line.
+    // A 0 % group has nothing to round.
+    if (rate === 0 || Math.abs(want - have) > members.length) return { kind: 'error', reason: 'tax_summary_mismatch' };
     const pick = (pool: typeof members) => pool.reduce((x, y) => (Math.abs(y.l.subtotal) > Math.abs(x.l.subtotal) ? y : x));
     if (derivedMembers.length > 0) {
       const largest = pick(derivedMembers);

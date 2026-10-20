@@ -211,11 +211,17 @@ describe('VAT that does not add up', () => {
     expect(issue(printed({ lines: [line], total: 119, taxAmounts: [{ rate: 19, net: null, tax: 0 }] })).reason).toBe('tax_summary_mismatch');
   });
 
-  it('the rounding allowance is (n + 1) / 2 cents for n lines, rounded down', () => {
-    const three = [1, 2, 3].map((n) => ({ description: `Item ${n}`, quantity: 1, unit: null, unitPrice: 10, discount: null, lineTotal: 10, taxRate: 19, taxAmount: null }));
-    // Derived 3 x 1,90 = 5,70; a summary 2 cents off is rounding, 3 cents is not.
-    expect(ok(printed({ lines: three, total: 35.72, taxAmounts: [{ rate: 19, net: 30, tax: 5.72 }] })).lines.reduce((a, l) => a + l.taxAmount, 0)).toBe(572);
-    expect(issue(printed({ lines: three, total: 35.73, taxAmounts: [{ rate: 19, net: 30, tax: 5.73 }] })).reason).toBe('tax_summary_mismatch');
+  it('the rounding allowance is a cent per line, so truncating and half-to-even software is accepted', () => {
+    const line = (net: number, tax: number | null) => ({ description: 'Item', quantity: 1, unit: null, unitPrice: net, discount: null, lineTotal: net, taxRate: 19, taxAmount: tax });
+    // Software rounding halves to even: two lines of 13,50 at 19 % (2,565 each) summed as 2,56 + 2,56 = 5,12; derived here 2,57 + 2,57.
+    const even = ok(printed({ lines: [line(13.5, null), line(13.5, null)], total: 32.12, taxAmounts: [{ rate: 19, net: 27, tax: 5.12 }] }));
+    expect(even.lines.reduce((a, l) => a + l.taxAmount, 0)).toBe(512);
+    // Software truncating each printed line (1,9988 printed as 1,99), the summary rounding the group (3,9976 as 4,00): the total decides.
+    const cut = ok(printed({ lines: [line(10.52, 1.99), line(10.52, 1.99)], total: 25.02, taxAmounts: [{ rate: 19, net: 21.04, tax: 4.0 }] }));
+    expect(cut.lines.reduce((a, l) => a + l.taxAmount, 0)).toBe(398);
+    // The boundary: two lines, 2 cents off is allowed, 3 cents is not (a misreading).
+    expect(issue(printed({ lines: [line(10, null), line(10, null)], total: 23.83, taxAmounts: [{ rate: 19, net: 20, tax: 3.83 }] })).reason).toBe('tax_summary_mismatch');
+    expect(ok(printed({ lines: [line(10, null), line(10, null)], total: 23.82, taxAmounts: [{ rate: 19, net: 20, tax: 3.82 }] })).lines.reduce((a, l) => a + l.taxAmount, 0)).toBe(382);
   });
 
   it('per-line rounding against rounding the group: the total decides, within rounding', () => {

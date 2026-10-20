@@ -241,8 +241,9 @@ Books home.
     supported by this import, the row says to keep the invoice outside the Books and discard it;
     the lead decided on 2026-10-20 not to support it now: the Books cannot issue such documents
     either, so the import must not hold them; tracked as ROADMAP line 6). VAT that does not add up is named,
-    never absorbed: a VAT summary off from the lines by more than rounding (about half a cent per
-    line) or naming a rate no line carries is `tax_summary_mismatch` (a 0,00 row for a rate no line
+    never absorbed: a VAT summary off from the lines by more than rounding (a cent per line, which
+    also covers invoice software that truncates or rounds halves to even per line) or naming a rate
+    no line carries is `tax_summary_mismatch` (a 0,00 row for a rate no line
     prints is no summary). Within rounding, derived line VAT is adjusted to the summary, and
     printed line VAT stands unless the total was summed from the summary, when the lines follow
     it (warned: `line_tax_rounded_to_summary`). Also named: VAT on a 0 % line (`line_tax_on_zero_rate`, also refused by the
