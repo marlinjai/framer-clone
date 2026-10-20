@@ -85,6 +85,10 @@ describe('captureTarget / buildRequest', () => {
     expect(describeTargetAvailability('insert', page, viewport)).toMatchObject({ ok: false });
     expect(describeTargetAvailability('replace', page, tree())).toEqual({ ok: true, label: 'Everything on this page' });
     expect(describeTargetAvailability('newPage', page, undefined)).toEqual({ ok: true, label: 'A new page' });
+    // A void tag cannot receive children: the dialog says so, matching applyGeneratedNodes.
+    page.insertRegistryComponent('image', { kind: 'appTree' });
+    const img = tree().children.at(-1) as ComponentInstance;
+    expect(describeTargetAvailability('insert', page, img)).toMatchObject({ ok: false });
   });
 });
 

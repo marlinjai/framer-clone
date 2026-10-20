@@ -12,6 +12,7 @@ import type { ProjectModelType } from '@/models/ProjectModel';
 import type { PageModelType } from '@/models/PageModel';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { serializeSubtree } from '@/lib/ai/serializers/subtree';
+import { isVoidTag } from '@/lib/drag/voidTags';
 import {
   DEFAULT_BREAKPOINTS,
   breakpointKeyMap,
@@ -74,7 +75,7 @@ export function describeTargetAvailability(
       ? { ok: true, label: 'Everything on this page' }
       : { ok: true, label: `Replace "${name}"` };
   }
-  if (typeof selected.props?.children === 'string' || ['img'].includes(selected.type) || selected.props?.['data-component-kind']) {
+  if (typeof selected.props?.children === 'string' || isVoidTag(selected.type) || selected.props?.['data-component-kind']) {
     return { ok: false, reason: `"${name}" cannot contain components; select a container.` };
   }
   return { ok: true, label: `Inside "${name}"` };
