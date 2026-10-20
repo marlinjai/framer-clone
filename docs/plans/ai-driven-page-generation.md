@@ -219,7 +219,10 @@ already talks to Anthropic through `/api/ai/*`:
 The AI layer runs on the current models: Claude Sonnet 5.5 (`claude-sonnet-5-5`, $2 input / $10
 output per million tokens) is the page generator's default, Claude Haiku 5.5 (`claude-haiku-5-5`,
 $0.10 / $0.50) is its "Fast" option, and Claude Opus 5.5 (`claude-opus-5-5`, $4 / $20) stays the
-CMS content agent's default; Opus is not offered for page generation (whether it should become a
+CMS content agent's default. The content agent runs at effort `medium` on Opus and Sonnet
+(multi-step tool work over real data, where a wrong write costs an undo) and `low` on Haiku, with a
+16,000-token cap per turn that thinking shares; its cost per run therefore depends mostly on how
+many tool turns a request takes. Opus is not offered for page generation (whether it should become a
 default anywhere is Marlin's call). Page generation runs at effort `medium` with adaptive thinking,
 so thinking shares the 32,000-token output cap per attempt. A typical page (about 8,000 output
 tokens plus a cached system prompt) costs roughly $0.08 to $0.10 on Sonnet 5.5 and well under one

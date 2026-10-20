@@ -180,6 +180,13 @@ export async function POST(req: Request): Promise<Response> {
         sse.send('error', { message: refusal, code: 'refused' });
         return;
       }
+      // A reply cut off at max_tokens is incomplete: an error, never "done".
+      if (finalMessage.stop_reason === 'max_tokens') {
+        status = 'error';
+        errorCode = 'truncated';
+        sse.send('error', { message: 'The reply was cut off before it finished. Try a shorter request.', code: 'truncated' });
+        return;
+      }
 
       sse.send('usage', {
         inputTokens,

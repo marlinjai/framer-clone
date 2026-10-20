@@ -253,4 +253,12 @@ describe('POST /api/ai/edit on current models', () => {
     expect(text).toContain('"code":"refused"');
     expect(text).not.toContain('event: done');
   });
+
+  it('surfaces a max_tokens stop as an error event, never as done', async () => {
+    mockGetAnthropicClient.mockReturnValue(fakeStreamingClient(['partial'], { stop_reason: 'max_tokens' }));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const text = await readSse(await POST(makeReq({ prompt: 'hi', sessionId: 's1', pageId: 'p1' })));
+    expect(text).toContain('"code":"truncated"');
+    expect(text).not.toContain('event: done');
+  });
 });

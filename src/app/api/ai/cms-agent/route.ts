@@ -324,10 +324,12 @@ async function runAgentLoop(args: LoopArgs): Promise<void> {
     };
 
     const messages: BetaMessageParam[] = [{ role: 'user', content: body.prompt }];
-    // Low effort: each turn is a short tool-choosing step; effort is the
-    // thinking and spend control on current models. Sonnet and Opus add the
-    // server-side fallback opt-in and progress-update narration.
-    const modelFields = modelRequestFields(modelKey, 'low');
+    // Effort is the thinking and spend control on current models. Opus and
+    // Sonnet run at `medium` (multi-step tool work over real data, where a
+    // wrong write costs an undo); Haiku stays at `low` (its fast, cheap tier).
+    // Sonnet and Opus also add the server-side fallback opt-in and
+    // progress-update narration.
+    const modelFields = modelRequestFields(modelKey, modelKey === 'HAIKU' ? 'low' : 'medium');
     const progress = progressUpdateFields(modelKey);
     const betas = mergeBetas<string>(modelFields.betas, progress.betas);
 

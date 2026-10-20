@@ -425,11 +425,11 @@ describe('POST /api/ai/cms-agent on current models', () => {
     stop_reason: 'tool_use',
   };
 
-  it('defaults to Opus 5.5 at low effort with fallbacks, progress updates and eager tool input', async () => {
+  it('defaults to Opus 5.5 at medium effort with fallbacks, progress updates and eager tool input', async () => {
     await readStream(await POST(makeRequest(baseBody({ model: undefined }), { cookie: authCookie })));
     const params = anthropicState.streamCalls[0];
     expect(params.model).toBe('claude-opus-5-5');
-    expect(params.output_config).toEqual({ effort: 'low' });
+    expect(params.output_config).toEqual({ effort: 'medium' });
     expect(params.fallbacks).toBe('default');
     expect(params.betas).toEqual(['server-side-fallback-2026-07-01', 'thinking-display-updates-2026-08-18']);
     expect(params.thinking).toEqual({ type: 'adaptive', display: 'updates' });
@@ -438,10 +438,16 @@ describe('POST /api/ai/cms-agent on current models', () => {
     expect((params.tools as Array<{ eager_input_streaming?: boolean }>).every((t) => t.eager_input_streaming)).toBe(true);
   });
 
-  it('Haiku 5.5: no fallbacks, no betas, adaptive thinking left at its default', async () => {
+  it('Sonnet 5.5 also runs at medium effort', async () => {
+    await readStream(await POST(makeRequest(baseBody({ model: 'SONNET' }), { cookie: authCookie })));
+    expect(anthropicState.streamCalls[0]).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'medium' } });
+  });
+
+  it('Haiku 5.5: low effort, no fallbacks, no betas, adaptive thinking left at its default', async () => {
     await readStream(await POST(makeRequest(baseBody({ model: 'HAIKU' }), { cookie: authCookie })));
     const params = anthropicState.streamCalls[0];
     expect(params.model).toBe('claude-haiku-5-5');
+    expect(params.output_config).toEqual({ effort: 'low' });
     for (const absent of ['fallbacks', 'betas', 'thinking']) expect(params).not.toHaveProperty(absent);
   });
 
