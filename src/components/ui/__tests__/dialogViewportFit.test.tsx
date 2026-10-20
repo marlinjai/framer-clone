@@ -115,8 +115,12 @@ describe('AlertDialogContent', () => {
       expect(overflowing.getAttribute('role')).toBe('region');
       expect(overflowing.getAttribute('aria-label')).toBe('Details');
     } finally {
+      // jsdom defines these on Element.prototype, so without an own descriptor
+      // the override must be deleted, not restored.
       if (scrollHeight) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeight);
+      else delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
       if (clientHeight) Object.defineProperty(HTMLElement.prototype, 'clientHeight', clientHeight);
+      else delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
     }
   });
 });
