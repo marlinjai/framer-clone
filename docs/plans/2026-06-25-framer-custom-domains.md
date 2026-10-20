@@ -151,7 +151,16 @@ unique index, never reused), plus check timestamps and the last error. New statu
   the domain as server name (never to whatever the domain resolves to, so no request forgery).
 - *Unpublished sites keep their proxy routes and certificates*, so publish and unpublish never spend
   Let's Encrypt quota; the resolver alone decides whether a site is served.
-- *At most 10 custom domains per site*, 1000 hostnames in the proxy feed.
+- *At most 10 custom domains per site and 50 per workspace*, 1000 hostnames in the proxy feed. When
+  the cap bites, active domains keep their routes first, then the oldest verifications; the app logs
+  it and the feed says so (`x-hostname-truncated`).
+- *Live domains are re-checked on a schedule* (security review, 2026-10-20): every live claim whose
+  last check is over six hours old gets a routing-only check (the TXT record may be gone), at most 20
+  per call. Three definitive failures in a row release the claim; transient errors never count. It
+  runs from the host timer (`POST /api/internal/custom-domains/recheck`), not an in-app interval, so
+  there is exactly one scheduler however many replicas run.
+- *Internationalized lookalikes of the platform* (`lumіtra.co` with a Cyrillic i) are reserved, by a
+  confusables skeleton over a curated subset of Unicode's data.
 
 **TLS on Traefik: pull, not push.** The June options (Coolify per-host labels, Cloudflare for SaaS)
 were replaced by Traefik's file provider on the shared server, which watches
@@ -159,9 +168,13 @@ were replaced by Traefik's file provider on the shared server, which watches
 hostnames as plain-text data on `GET /api/internal/custom-domains/hostnames` (editor host only,
 bearer token `CUSTOM_DOMAIN_SYNC_TOKEN`, constant-time comparison, 503 when unset). The host script
 `deploy/custom-domains/sync-traefik.sh` (systemd timer, every minute) re-validates every line with its
-own strict rule, caps the count, writes one http-to-https redirect router and one https router with
-`certResolver: letsencrypt` per hostname, keeps the current file when the feed fails, and renames
-atomically only on change. Rejected: mounting the proxy directory into the app container (the app
+own strict rule (including the reserved endings and `BLOCKED_ZONES`), requires text/plain and a body
+matching the `x-content-sha256` and `x-hostname-count` headers, refuses the whole feed on one bad
+line, refuses a drop to zero or by more than half unless `FORCE=1`, writes one http-to-https redirect
+router and one https router with `certResolver: letsencrypt` per hostname (priority 1, so Coolify's
+routers always win), keeps the current file on every refusal, and renames atomically only on change.
+The systemd unit runs root without capabilities in a read-only system with only the dynamic
+directory writable (a dedicated user would need ownership changes in Coolify's proxy directory). Rejected: mounting the proxy directory into the app container (the app
 could write any router), and Traefik's HTTP provider pointed at the app (same problem).
 
 **Resolution and cache.** `hostLookupKeys` in `publicResolver.ts`: a host under the base host is a

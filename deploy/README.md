@@ -241,7 +241,7 @@ says where each comes from.
 | `CUSTOM_DOMAIN_TARGET_IPV6` | no | Comma-separated IPv6 address(es) Traefik answers on. Unset means "no AAAA record allowed": a customer AAAA record pointing elsewhere is reported, because Let's Encrypt would try it first and fail |
 | `CUSTOM_DOMAIN_DNS_SERVERS` | no, recommended | Resolver IPs for the ownership check, e.g. `1.1.1.1,8.8.8.8`, so a TXT record a customer just added is not hidden by the container resolver's negative cache |
 | `CUSTOM_DOMAIN_TLS_PROBE` | no | `off` skips the certificate probe that moves a domain from verified to active (it then stays verified) |
-| `CUSTOM_DOMAIN_SYNC_TOKEN` | for custom domains | Bearer token (at least 32 characters, generated) the host-side Traefik sync presents to `GET /api/internal/custom-domains/hostnames`. Unset means the feed answers 503 and the proxy keeps its last file |
+| `CUSTOM_DOMAIN_SYNC_TOKEN` | for custom domains | Bearer token (at least 32 characters, generated) the host timer presents to `GET /api/internal/custom-domains/hostnames` and `POST /api/internal/custom-domains/recheck`. Unset means both answer 503, the proxy keeps its last file and live domains are not re-checked |
 
 A published site only injects analytics when its `lumitraEnabled` flag is set.
 
@@ -259,8 +259,14 @@ shared server. The app never writes proxy configuration: the host runs
 which fetches the verified hostnames from the token-guarded feed, re-validates
 each line, and writes `framer-clone-custom-domains.yml` into Traefik's watched
 file-provider directory (`/data/coolify/proxy/dynamic/`) with one http redirect
-router and one https router (`certResolver: letsencrypt`) per hostname. The
-ordered operator steps live in the infra RUNBOOK.
+router and one https router (`certResolver: letsencrypt`, priority 1) per
+hostname. The script refuses (and keeps the current file) when the answer is not
+text/plain, does not match its `x-content-sha256` / `x-hostname-count` headers,
+contains one invalid or blocked line, or would drop the routes to zero or by
+more than half (`FORCE=1` accepts such a drop once). The same timer first calls
+`POST /api/internal/custom-domains/recheck`, which re-checks live domains that
+are due (routing only, every six hours, three definitive failures in a row
+release a domain). The ordered operator steps live in the infra RUNBOOK.
 
 ## Operator commands (from a checkout, against a forwarded database)
 
