@@ -664,7 +664,7 @@ export default function ImportPanel() {
                             Read
                           </Button>
                         ) : null}
-                        {item.status === 'needs_attention' && item.extractionError && item.extractionError !== 'unreadable' ? (
+                        {item.status === 'needs_attention' && item.extractionError && !['unreadable', 'max_tokens'].includes(item.extractionError) ? (
                           <Button variant="outline" size="sm" onClick={() => readOne(item.id, true)} disabled={rowBusy}>
                             Read again
                           </Button>

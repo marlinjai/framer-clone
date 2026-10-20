@@ -28,6 +28,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type Anthropic from '@anthropic-ai/sdk';
+import { APIError } from '@anthropic-ai/sdk';
 import { sql } from 'kysely';
 
 import type { AiModelKey } from '@/lib/ai/anthropicClient';
@@ -254,6 +255,8 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
     }
 
     let outcome: ExtractionOutcome = 'error';
+    // Why it failed, for the row and the review table (finer than the ledger's outcome).
+    let reason: FailureReason = 'unavailable';
     // Accumulated by the call across its attempts, also when a later attempt throws.
     const usage = { inputTokens: 0, outputTokens: 0 };
     let read: { printed: Record<string, unknown>; confidence: Record<string, 'high' | 'medium' | 'low'> } | null = null;
@@ -277,14 +280,16 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
         read = { printed: result.printed, confidence: result.confidence };
       } else {
         outcome = result.outcome;
+        reason = result.outcome;
       }
     } catch (err) {
-      outcome = deps.signal.aborted ? 'aborted' : budget.signal.aborted ? 'error' : failureOutcome(err);
-      if (outcome !== 'aborted') {
-        const status = (err as { status?: unknown })?.status;
-        console.error(
-          `[books-import] item ${itemId}: extraction failed (${typeof status === 'number' ? status : budget.signal.aborted ? 'time budget' : 'no status'}, ${outcome})`,
-        );
+      if (deps.signal.aborted) {
+        outcome = 'aborted';
+      } else {
+        const failure = budget.signal.aborted ? { outcome: 'error' as const, reason: 'unavailable' as const } : classifyFailure(err);
+        outcome = failure.outcome;
+        reason = failure.reason;
+        console.error(`[books-import] item ${itemId}: extraction failed (${budget.signal.aborted ? 'time budget' : describeApiError(err)}, ${reason})`);
       }
     } finally {
       clearTimeout(timer);
@@ -303,7 +308,7 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
       return (await release()) ?? (await getItem(scope.db, scope, itemId));
     }
     // A failed call: a row without a reading says why (blocking); a row with one keeps it and its status, the failure noted.
-    const failRow = async (code: ExtractionOutcome): Promise<ImportItem | null> => {
+    const failRow = async (code: FailureReason): Promise<ImportItem | null> => {
       try {
         return await updateItem(
           scope.db,
@@ -331,7 +336,7 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
         return null;
       }
     };
-    if (!read) return (await failRow(outcome)) ?? (await getItem(scope.db, scope, itemId));
+    if (!read) return (await failRow(reason)) ?? (await getItem(scope.db, scope, itemId));
     // The new extraction replaces the old one; a correction of the old one is dropped (keyed).
     let stored: ImportItem | null;
     try {
@@ -355,7 +360,7 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
       );
     } catch (err) {
       // The reading could not be stored: the row says so instead of staying claimed.
-      await failRow('error');
+      await failRow('store');
       throw err;
     }
     // Discarded, or taken over by another call, while being read: this reading is not attached.
@@ -367,18 +372,70 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
 }
 
 /**
- * How a thrown provider error ends a call: `unreadable` only when the API
- * refused the PDF itself (a 413, or a 400 about the document), which reading
- * again cannot change; any other error (a 400 about the account or the
- * request, a 5xx, the network) stays `error`, which may be read again.
+ * Why a reading failed, as the review table says it: the model's own outcomes
+ * (refused, invalid_output, max_tokens), or for a provider error:
+ *   unreadable   the API refused the PDF itself (413, or a 400 about the document);
+ *   request      the API refused the request (any other 400: our side, a bug);
+ *   config       the API key or account is not accepted (401, 403);
+ *   busy         rate limited or overloaded (429, 529);
+ *   unavailable  no answer: a 5xx, a timeout, the network;
+ *   store        the reading came back but could not be stored here.
  */
-export function failureOutcome(err: unknown): ExtractionOutcome {
+export const FAILURE_REASONS = ['refused', 'invalid_output', 'max_tokens', 'unreadable', 'request', 'config', 'busy', 'unavailable', 'store'] as const;
+export type FailureReason = (typeof FAILURE_REASONS)[number];
+
+/**
+ * A thrown provider error as the ledger records it (its outcomes are fixed by
+ * 010) and as the row names it.
+ */
+export function classifyFailure(err: unknown): { outcome: ExtractionOutcome; reason: FailureReason } {
   const status = (err as { status?: unknown })?.status;
-  if (status === 413) return 'unreadable';
-  if (status !== 400) return 'error';
-  const e = err as { error?: { error?: { message?: unknown } }; message?: unknown };
-  const message = typeof e.error?.error?.message === 'string' ? e.error.error.message : typeof e.message === 'string' ? e.message : '';
-  return /\b(pdf|document)\b/i.test(message) && !/credit|billing|balance|api key/i.test(message) ? 'unreadable' : 'error';
+  const { type, message = '' } = apiErrorBody(err);
+  if (status === 413) return { outcome: 'unreadable', reason: 'unreadable' };
+  if (status === 400) {
+    // The account (credit, billing) is configuration; the PDF itself is unreadable; anything else is our request.
+    if (/credit|billing|balance|api key/i.test(message)) return { outcome: 'error', reason: 'config' };
+    if (/\bpdf\b/i.test(message)) return { outcome: 'unreadable', reason: 'unreadable' };
+    return { outcome: 'error', reason: 'request' };
+  }
+  // 404: an unknown or retired model id, a setting.
+  if (status === 401 || status === 403 || status === 404) return { outcome: 'error', reason: 'config' };
+  if (status === 429 || status === 529) return { outcome: 'error', reason: 'busy' };
+  // An error that arrives inside the stream has no status, only its type.
+  if (typeof status !== 'number') {
+    if (type === 'overloaded_error' || type === 'rate_limit_error') return { outcome: 'error', reason: 'busy' };
+    if (type === 'authentication_error' || type === 'permission_error' || type === 'not_found_error') return { outcome: 'error', reason: 'config' };
+    if (type === 'invalid_request_error') return { outcome: 'error', reason: 'request' };
+  }
+  return { outcome: 'error', reason: 'unavailable' };
+}
+
+/** The ledger outcome of a thrown provider error (see classifyFailure). */
+export function failureOutcome(err: unknown): ExtractionOutcome {
+  return classifyFailure(err).outcome;
+}
+
+/** The API's own error type and message (the SDK keeps the response body on `error`). */
+function apiErrorBody(err: unknown): { type?: string; message?: string } {
+  const body = (err as { error?: { error?: { type?: unknown; message?: unknown } } })?.error?.error;
+  // Without a parsed body (a proxy's answer), the API error's own message stands in; never another error's.
+  const own = err instanceof APIError ? err.message : undefined;
+  return {
+    type: typeof body?.type === 'string' ? body.type : undefined,
+    message: typeof body?.message === 'string' ? body.message : typeof own === 'string' ? own : undefined,
+  };
+}
+
+/**
+ * A provider error for the log: the HTTP status, the API's error type and its
+ * message (about the request: a parameter, the schema, the account; the API
+ * does not echo the PDF's text), bounded and on one line.
+ */
+export function describeApiError(err: unknown): string {
+  const status = (err as { status?: unknown })?.status;
+  const { type, message } = apiErrorBody(err);
+  const parts = [typeof status === 'number' ? String(status) : 'no status', type, message?.replace(/\s+/g, ' ').slice(0, 300)];
+  return parts.filter(Boolean).join(', ');
 }
 
 /** The printed invoice a manual reading starts from: the shared shape, nothing filled in. */

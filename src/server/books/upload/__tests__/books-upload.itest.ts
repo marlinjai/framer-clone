@@ -20,7 +20,7 @@
 // and what 010 guarantees for staging rows and the ledger. Synthetic data only.
 
 import { sql } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { ContactBook } from '../../contactBook';
 import { BooksError } from '../../errors';
@@ -52,6 +52,7 @@ import {
   stageUpload,
   type ExtractDeps,
 } from '../service';
+import { printedFromToolInput, type ToolInput } from '../extract';
 import { getItem, itemContent } from '../staging';
 import { fakeAnthropic, pdfBytes, toolInput, toolTurn, type Turn } from './fakeAnthropic';
 
@@ -99,11 +100,9 @@ async function staged(scope: Parameters<typeof stageUpload>[0], label: string) {
 
 const codes = (item: { problems: Array<{ code: string }> }) => item.problems.map((p) => p.code).sort();
 
-/** A printed invoice as the user types it in the form: the model's tool input without its unsure fields. */
+/** A printed invoice as the user submits it from the form: the shared printed shape (nulls, no wire format). */
 function typedByUser(input: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...input };
-  delete out.uncertainFields;
-  return out;
+  return printedFromToolInput(input as unknown as ToolInput).printed;
 }
 
 describe('forward', () => {
@@ -439,7 +438,11 @@ describe('unhappy paths of reading and importing', () => {
     const { tenantId, book, scope } = await company();
     const item = await staged(scope, `hand-${tenantId}`);
     // The API refuses the PDF itself: unreadable, not offered again.
-    const unreadable = await extractItem(scope, item.id, deps([{ throws: Object.assign(new Error('bad pdf'), { status: 400 }) }], book).deps);
+    const pdfRefused = Object.assign(new Error('400 pdf'), {
+      status: 400,
+      error: { type: 'error', error: { type: 'invalid_request_error', message: 'The PDF specified was not valid.' } },
+    });
+    const unreadable = await extractItem(scope, item.id, deps([{ throws: pdfRefused }], book).deps);
     expect(unreadable.problems).toEqual([{ code: 'extraction_failed:unreadable', path: null, blocking: true, count: null }]);
     expect(unreadable.extractionId).toBeNull();
 
@@ -577,6 +580,47 @@ describe('unhappy paths of reading and importing', () => {
     expect(typed.status).toBe('ready');
   });
 
+  it('a 400 about the request is our fault, not the PDF: named so, logged with the API type, and offered again', async () => {
+    const { tenantId, book, scope } = await company();
+    const item = await staged(scope, `req-${tenantId}`);
+    const apiError = Object.assign(new Error('400 schema'), {
+      status: 400,
+      error: { type: 'error', error: { type: 'invalid_request_error', message: 'Schemas contains too many parameters with union types' } },
+    });
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => void logged.push(args.map(String).join(' ')));
+    try {
+      const failed = await extractItem(scope, item.id, deps([{ throws: apiError }], book).deps);
+      expect(failed.problems).toEqual([{ code: 'extraction_failed:request', path: null, blocking: true, count: null }]);
+      expect(failed.extractionError).toBe('request');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(logged.join('\n')).toMatch(/extraction failed \(400, invalid_request_error, Schemas contains too many parameters with union types, request\)/);
+    expect(await env.ownerDb.selectFrom('historical_import_extraction').select('outcome').where('item_id', '=', item.id).execute()).toEqual([{ outcome: 'error' }]);
+  });
+
+  it('the model answering without calling the tool (twice) is a named row problem, no empty record, and keeps an earlier reading', async () => {
+    const { tenantId, book, scope } = await company();
+    const item = await staged(scope, `notool-${tenantId}`);
+    const prose = { content: [{ type: 'text', text: 'This looks like an invoice from Sample Studio.' }], stop_reason: 'end_turn' };
+    const d = deps([prose, prose], book);
+    const failed = await extractItem(scope, item.id, d.deps);
+    // One repair turn was asked for, then it stops.
+    expect(d.fake.calls).toHaveLength(2);
+    expect(failed.status).toBe('needs_attention');
+    expect(failed.problems).toEqual([{ code: 'extraction_failed:invalid_output', path: null, blocking: true, count: null }]);
+    expect(failed.extracted).toBeNull();
+    expect(failed.extractionId).toBeNull();
+    expect(await env.ownerDb.selectFrom('historical_import_extraction').select('outcome').where('item_id', '=', item.id).execute()).toEqual([{ outcome: 'invalid_output' }]);
+    // With a reading already there, the same answer keeps it and notes the failure.
+    const read = await extractItem(scope, item.id, deps([toolTurn(toolInput({ number: '38' }))], book).deps);
+    const again = await extractItem(scope, item.id, deps([prose, prose], book).deps, { replace: true });
+    expect(again.extractionId).toBe(read.extractionId);
+    expect(again.extracted!.printed.number).toBe('38');
+    expect(again.problems).toContainEqual({ code: 'reread_failed:invalid_output', path: null, blocking: false, count: null });
+  });
+
   it('a failed reading again keeps the earlier reading and its status, the failure noted', async () => {
     const { tenantId, book, scope } = await company();
     const item = await staged(scope, `rf-${tenantId}`);
@@ -585,7 +629,7 @@ describe('unhappy paths of reading and importing', () => {
     const failed = await extractItem(scope, item.id, deps([{ throws: Object.assign(new Error('overloaded'), { status: 529 }) }], book).deps);
     expect(failed.status).toBe('ready');
     expect(failed.extractionId).toBe(r.extractionId);
-    expect(failed.problems).toContainEqual({ code: 'reread_failed:error', path: null, blocking: false, count: null });
+    expect(failed.problems).toContainEqual({ code: 'reread_failed:busy', path: null, blocking: false, count: null });
     expect(failed.problems.every((p) => !p.blocking)).toBe(true);
   });
 
@@ -594,7 +638,7 @@ describe('unhappy paths of reading and importing', () => {
     const item = await staged(scope, `slow-${tenantId}`);
     const stalled = await extractItem(scope, item.id, deps([{ ...toolTurn(toolInput()), wait: new Promise(() => {}) }], book, { callBudgetMs: 100 }).deps);
     expect(stalled.status).toBe('needs_attention');
-    expect(stalled.problems).toEqual([{ code: 'extraction_failed:error', path: null, blocking: true, count: null }]);
+    expect(stalled.problems).toEqual([{ code: 'extraction_failed:unavailable', path: null, blocking: true, count: null }]);
     expect(await env.ownerDb.selectFrom('historical_import_extraction').select('outcome').where('item_id', '=', item.id).execute()).toEqual([{ outcome: 'error' }]);
   });
 

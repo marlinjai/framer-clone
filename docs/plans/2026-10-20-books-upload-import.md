@@ -272,6 +272,19 @@ Books home.
     010) and the problem returns when the number changes. "Import all ready" goes on after a failed
     row with the rows as they are then (never with versions that moved) and names every failure.
 
+19. **The strict tool schema as the API compiles it (fixed 2026-10-20, after the first live upload).**
+    Every reading on app.lumitra.co failed with a 400: the API refuses a strict tool schema with
+    more than 16 parameters of a union type (a type array such as `["string", "null"]`, or
+    `anyOf`), and the schema had 24, one per nullable field. The stubbed tests could not see it.
+    Text that is not printed is now an empty string on the wire (the recipient and sender are
+    always objects, an empty name when none is printed), only numbers stay nullable (6 unions),
+    and the server turns the empty values back into the nulls of the shared shape. A test checks
+    the request the extractor really sends against the API's constraints (`strictSchemaProblems`),
+    and a reading recorded from the real API (synthetic PDF) is a fixture. Provider errors now say
+    whose side they are on: 400 "the AI service refused the request (our side)", 401/403
+    configuration, 429/529 busy, 5xx or a timeout "did not answer", a PDF the API refuses
+    unreadable; the log carries the HTTP status, the API's error type and its message.
+
 **Operator steps** (live actions, not done here): deploy, which rolls `010_books_upload_import`
 across every tenant schema at boot; optionally set `AI_INVOICE_EXTRACT_MODEL` and
 `BOOKS_IMPORT_DAILY_LIMIT` (defaults: Sonnet 5.5, 500); prove the first real upload in the
