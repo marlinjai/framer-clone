@@ -14,7 +14,7 @@
 // the row after creation, and the working copy is updated outside undo
 // history, so Cmd+Z can never show a name the database does not have.
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import type { ProjectModelType } from '@/models/ProjectModel';
 import { getHistoryStore } from '@/stores/RootStore';
@@ -36,11 +36,27 @@ const EditableProjectTitle = observer(({ project }: { project: ProjectModelType 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const title = project?.metadata.title || FALLBACK_NAME;
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  // Set when the field closes by save or cancel, so focus returns to the name
+  // (otherwise the unmounted input drops keyboard focus to <body>).
+  const returnFocus = useRef(false);
 
   useEffect(() => {
     if (!project) return;
+    const before = document.title;
     document.title = `${title} | Lumitra Sites`;
+    // Leaving the editor (client-side navigation) puts the old title back.
+    return () => {
+      document.title = before;
+    };
   }, [project, title]);
+
+  useEffect(() => {
+    if (!editing && returnFocus.current) {
+      returnFocus.current = false;
+      buttonRef.current?.focus();
+    }
+  }, [editing]);
 
   if (!project) {
     return (
@@ -48,8 +64,13 @@ const EditableProjectTitle = observer(({ project }: { project: ProjectModelType 
     );
   }
 
-  const save = async (next: string) => {
+  const close = () => {
+    returnFocus.current = true;
     setEditing(false);
+  };
+
+  const save = async (next: string) => {
+    close();
     const previous = project.metadata.title;
     if (next === previous) return;
     setError(null);
@@ -73,31 +94,45 @@ const EditableProjectTitle = observer(({ project }: { project: ProjectModelType 
         <ProjectNameInput
           initialName={project.metadata.title}
           onSubmit={(next) => void save(next)}
-          onCancel={() => setEditing(false)}
+          onCancel={close}
           className="w-[200px] font-semibold"
         />
       ) : (
         <button
+          ref={buttonRef}
           type="button"
           onClick={() => {
+            // One rename at a time: a second one started while the first is
+            // in flight would carry a precondition the server has not caught
+            // up with and report a false conflict. aria-disabled (not
+            // disabled) keeps the button focusable for the returning focus.
+            if (saving) return;
             setError(null);
             setEditing(true);
           }}
-          title={`${title} (click to rename)`}
+          title={saving ? `${title} (saving)` : `${title} (click to rename)`}
           aria-label={`Project name: ${title}. Rename project`}
           aria-busy={saving || undefined}
+          aria-disabled={saving || undefined}
           className="truncate rounded px-1 -mx-1 text-left text-sm font-semibold text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         >
           {title}
         </button>
       )}
       {error ? (
-        <p
-          role="alert"
-          className="absolute left-0 top-full z-10 mt-1 w-max max-w-[320px] rounded bg-background px-2 py-1 text-xs text-destructive shadow"
-        >
-          {error}
-        </p>
+        <div className="absolute left-0 top-full z-10 mt-1 flex w-max max-w-[340px] items-start gap-2 rounded bg-background px-2 py-1 text-xs shadow">
+          <p role="alert" className="text-destructive">
+            {error}
+          </p>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            aria-label="Dismiss rename error"
+            className="shrink-0 rounded px-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            ×
+          </button>
+        </div>
       ) : null}
     </div>
   );

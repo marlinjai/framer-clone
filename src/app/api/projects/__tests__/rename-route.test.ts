@@ -20,7 +20,7 @@ vi.mock('@/lib/auth-brain', () => ({
 }));
 
 // An in-memory sites table behind the real repository.
-type Row = { id: string; workspaceId: string; name: string };
+type Row = { id: string; workspaceId: string; tenantGroupId: string; name: string; projectUpdatedAt: Date };
 let rows: Row[] = [];
 const fakePrisma = {
   site: {
@@ -29,14 +29,17 @@ const fakePrisma = {
         (r) =>
           r.id === where.id &&
           r.workspaceId === where.workspaceId &&
+          r.tenantGroupId === where.tenantGroupId &&
           (where.name === undefined || r.name === where.name),
       );
       for (const r of hits) r.name = data.name;
       return { count: hits.length };
     }),
     findFirst: vi.fn(async ({ where }: { where: Partial<Row> }) => {
-      const r = rows.find((x) => x.id === where.id && x.workspaceId === where.workspaceId);
-      return r ? { name: r.name } : null;
+      const r = rows.find(
+        (x) => x.id === where.id && x.workspaceId === where.workspaceId && x.tenantGroupId === where.tenantGroupId,
+      );
+      return r ? { name: r.name, projectUpdatedAt: r.projectUpdatedAt } : null;
     }),
   },
 };
@@ -93,8 +96,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.EDITOR_HOST = 'app.lumitra.co';
   rows = [
-    { id: 'site_1', workspaceId: 'ws_marlin', name: 'Framer Clone Demo' },
-    { id: 'site_foreign', workspaceId: 'ws_other', name: 'Other company site' },
+    { id: 'site_1', workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra', name: 'Framer Clone Demo', projectUpdatedAt: new Date(0) },
+    { id: 'site_foreign', workspaceId: 'ws_other', tenantGroupId: 'tg_other', name: 'Other company site', projectUpdatedAt: new Date(0) },
   ];
   mockVerifySession.mockResolvedValue(makeSession());
   mockCan.mockResolvedValue(true);
@@ -164,6 +167,8 @@ describe('PATCH /api/projects/<id> validation', () => {
     ['101 characters', 'a'.repeat(101)],
     ['a line break', 'two\nlines'],
     ['a NUL character', 'a\u0000b'],
+    ['a right-to-left override', 'abc\u202Edef'],
+    ['only a zero-width space', '\u200B'],
     ['not a string', 42],
   ])('400s for %s and writes nothing', async (_label, name) => {
     const res = await patch('site_1', { name });
@@ -204,6 +209,13 @@ describe('PATCH /api/projects/<id> rename', () => {
     expect(body.error.code).toBe('name_conflict');
     expect(body.error.currentName).toBe(rows[0].name);
     expect(['Tab A', 'Tab B']).toContain(rows[0].name);
+  });
+
+  it('a stored name longer than today\'s limit still works as expectedName', async () => {
+    rows[0].name = 'L'.repeat(1500);
+    const res = await patch('site_1', { name: 'Short again', expectedName: 'L'.repeat(1500) });
+    expect(res.status).toBe(200);
+    expect(rows[0].name).toBe('Short again');
   });
 
   it('without expectedName the last write wins', async () => {

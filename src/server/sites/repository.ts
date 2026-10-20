@@ -309,6 +309,9 @@ export class SiteRepository {
       where: {
         id: siteId,
         workspaceId: scope.workspaceId,
+        // Defence in depth, as the per-project guards do: the row must also
+        // carry the tenant group the session names for this workspace.
+        tenantGroupId: scope.tenantGroupId,
         ...(expectedName !== undefined ? { name: expectedName } : {}),
       },
       data: { name, projectUpdatedAt: updatedAt },
@@ -317,14 +320,14 @@ export class SiteRepository {
 
     // Nothing matched: tell a missing (or foreign) site from a lost race.
     const current = await this.prisma.site.findFirst({
-      where: { id: siteId, workspaceId: scope.workspaceId },
-      select: { name: true },
+      where: { id: siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId },
+      select: { name: true, projectUpdatedAt: true },
     });
     if (!current) throw new SiteNotFoundError(siteId);
     if (current.name === name) {
       // Someone (often this same user in another tab) already set exactly this
       // name: the outcome the caller asked for, so it is not a conflict.
-      return { name, updatedAt };
+      return { name, updatedAt: current.projectUpdatedAt };
     }
     throw new SiteNameConflictError(siteId, current.name);
   }

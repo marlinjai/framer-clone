@@ -9,12 +9,13 @@ const refreshMock = vi.fn();
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: refreshMock, push: vi.fn() }),
 }));
-vi.mock('next/link', () => ({
-  __esModule: true,
-  default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
-    <a href={href} {...rest}>{children}</a>
-  ),
-}));
+vi.mock('next/link', async () => {
+  const R = await import('react');
+  const Link = R.forwardRef<HTMLAnchorElement, { href: string; children: React.ReactNode }>(
+    ({ href, children, ...rest }, ref) => <a ref={ref} href={href} {...rest}>{children}</a>,
+  );
+  return { __esModule: true, default: Link };
+});
 
 import ProjectCard from '../ProjectCard';
 
@@ -60,7 +61,9 @@ describe('ProjectCard', () => {
     const input = await openRename();
     fireEvent.change(input, { target: { value: 'Bakery' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(screen.getByRole('link', { name: 'Bakery' })).toBeTruthy();
+    const link = screen.getByRole('link', { name: 'Bakery' });
+    // Focus returns to the card's name, not to <body>.
+    expect(document.activeElement).toBe(link);
     await waitFor(() => expect(refreshMock).toHaveBeenCalled());
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
       name: 'Bakery',
@@ -84,7 +87,7 @@ describe('ProjectCard', () => {
     fireEvent.keyDown(input, { key: 'Escape' });
     fireEvent.blur(input);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByRole('link', { name: 'Framer Clone Demo' })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Framer Clone Demo' }));
   });
 
   it('an empty name is refused with a message', async () => {
@@ -107,6 +110,35 @@ describe('ProjectCard', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('Could not rename the project: database down');
     expect(screen.getByRole('link', { name: 'Framer Clone Demo' })).toBeTruthy();
     expect(refreshMock).not.toHaveBeenCalled();
+  });
+
+  it("a lost race shows the other person's name and says so", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: { code: 'name_conflict', message: 'x', currentName: 'Their name' } }),
+        { status: 409 },
+      ),
+    );
+    renderCard();
+    const input = await openRename();
+    fireEvent.change(input, { target: { value: 'Mine' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect((await screen.findByRole('alert')).textContent).toContain('Their name');
+    expect(screen.getByRole('link', { name: 'Their name' })).toBeTruthy();
+  });
+
+  it('Rename is unavailable while a save is in flight', async () => {
+    let resolveFirst!: (r: Response) => void;
+    fetchMock.mockReturnValueOnce(new Promise<Response>((r) => { resolveFirst = r; }));
+    renderCard();
+    const input = await openRename();
+    fireEvent.change(input, { target: { value: 'Slow' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.keyDown(screen.getByRole('button', { name: 'More actions for Slow' }), { key: 'Enter' });
+    const item = screen.getByRole('menuitem', { name: 'Rename' });
+    expect(item.getAttribute('aria-disabled')).toBe('true');
+    resolveFirst(new Response(JSON.stringify({ name: 'Slow' }), { status: 200 }));
+    await waitFor(() => expect(refreshMock).toHaveBeenCalled());
   });
 
   it('follows a refreshed name from the server', () => {

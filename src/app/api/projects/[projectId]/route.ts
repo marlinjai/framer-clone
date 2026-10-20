@@ -54,7 +54,9 @@ type Ctx = { params: Promise<{ projectId: string }> };
 
 const renameBodySchema = z.object({
   name: projectNameSchema,
-  expectedName: z.string().max(1000).optional(),
+  // Compared verbatim with the stored name, never stored itself, so it takes
+  // whatever that name is (including names written before this rule existed).
+  expectedName: z.string().optional(),
 });
 
 async function handlePATCH(req: Request, { params }: Ctx): Promise<Response> {

@@ -6,13 +6,21 @@
 //
 // A name is trimmed, then must be 1 to 100 characters and contain no control
 // characters (C0/C1, DEL, and the Unicode line and paragraph separators), which
-// would break the single-line places the name is shown.
+// would break the single-line places the name is shown, and no bidirectional
+// override characters. A name of only invisible characters counts as empty.
 
 import { z } from 'zod';
 
 export const PROJECT_NAME_MAX_LENGTH = 100;
 
 const CONTROL_CHARS = /[\p{Cc}\u2028\u2029]/u;
+// Bidirectional embedding, override and isolate controls: they let a name
+// render as different text than it is (for example reversed), which matters in
+// a dashboard a whole company shares.
+const BIDI_CONTROLS = /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
+// A name made only of invisible format characters (zero-width space, joiner,
+// soft hyphen, ...) and whitespace reads as empty.
+const ONLY_INVISIBLE = /^[\p{Cf}\s]*$/u;
 
 export type ProjectNameResult =
   | { ok: true; name: string }
@@ -21,7 +29,7 @@ export type ProjectNameResult =
 /** Validate and normalise (trim) a project name typed by a person. */
 export function validateProjectName(raw: string): ProjectNameResult {
   const name = raw.trim();
-  if (name.length === 0) {
+  if (name.length === 0 || ONLY_INVISIBLE.test(name)) {
     return { ok: false, message: 'A project needs a name.' };
   }
   // Count code points, not UTF-16 units, so an emoji counts as one character.
@@ -31,7 +39,7 @@ export function validateProjectName(raw: string): ProjectNameResult {
       message: `A project name can be at most ${PROJECT_NAME_MAX_LENGTH} characters.`,
     };
   }
-  if (CONTROL_CHARS.test(name)) {
+  if (CONTROL_CHARS.test(name) || BIDI_CONTROLS.test(name)) {
     return { ok: false, message: 'A project name cannot contain line breaks or control characters.' };
   }
   return { ok: true, name };

@@ -40,6 +40,22 @@ export default function ProjectCard({ siteId, name: serverName, status, updatedL
   // open it traps focus, so a field focused earlier would be blurred straight
   // away (and blur saves). Set on select, consumed when the menu has closed.
   const renameChosen = useRef(false);
+  const linkRef = useRef<HTMLAnchorElement>(null);
+  // Set when the field closes by save or cancel: focus returns to the card's
+  // name instead of dropping to <body> with the unmounted input.
+  const returnFocus = useRef(false);
+
+  useEffect(() => {
+    if (!editing && returnFocus.current) {
+      returnFocus.current = false;
+      linkRef.current?.focus();
+    }
+  }, [editing]);
+
+  const close = () => {
+    returnFocus.current = true;
+    setEditing(false);
+  };
 
   // A refreshed server list (after this or another rename) wins over the
   // local copy, unless a save of ours is still in flight.
@@ -51,7 +67,7 @@ export default function ProjectCard({ siteId, name: serverName, status, updatedL
   const shown = name || FALLBACK_NAME;
 
   const save = async (next: string) => {
-    setEditing(false);
+    close();
     const previous = name;
     if (next === previous) return;
     setError(null);
@@ -75,13 +91,14 @@ export default function ProjectCard({ siteId, name: serverName, status, updatedL
           <ProjectNameInput
             initialName={name}
             onSubmit={(next) => void save(next)}
-            onCancel={() => setEditing(false)}
+            onCancel={close}
             className="w-full max-w-sm font-medium"
           />
         ) : (
           // The link covers the whole card (after:inset-0) so the card stays
           // one big click target, while the menu button sits above it.
           <Link
+            ref={linkRef}
             href={`/projects/${siteId}`}
             aria-busy={saving || undefined}
             className="block truncate font-medium after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-brand"
@@ -120,6 +137,9 @@ export default function ProjectCard({ siteId, name: serverName, status, updatedL
           }}
         >
           <DropdownMenuItem
+            // One rename at a time: a second one started while the first is
+            // in flight would report a false conflict.
+            disabled={saving}
             onSelect={() => {
               renameChosen.current = true;
             }}

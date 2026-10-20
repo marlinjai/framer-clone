@@ -45,9 +45,16 @@ export async function renameProject(
   let serverMessage: string | undefined;
   let currentName: string | undefined;
   try {
-    const body: { error?: { code?: string; message?: string; currentName?: unknown } } = await res.json();
+    const body: {
+      error?: { code?: string; message?: string; currentName?: unknown; issues?: Array<{ message?: unknown }> };
+    } = await res.json();
     code = body.error?.code;
     serverMessage = body.error?.message;
+    // A refused name: show the rule it broke rather than "invalid request body".
+    const issue = body.error?.issues?.[0]?.message;
+    if (code === 'bad_body' && typeof issue === 'string') {
+      return { ok: false, message: issue };
+    }
     if (typeof body.error?.currentName === 'string') currentName = body.error.currentName;
   } catch {
     // Non-JSON error body: fall back to the status code below.

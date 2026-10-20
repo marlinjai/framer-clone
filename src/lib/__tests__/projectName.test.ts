@@ -27,6 +27,21 @@ describe('validateProjectName', () => {
     }
   });
 
+  it('refuses bidirectional override and isolate characters', () => {
+    for (const bad of ['abc\u202Edef', 'a\u202Ab', 'a\u2066b\u2069', 'a\u200Fb']) {
+      expect(validateProjectName(bad).ok, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('treats a name of only invisible characters as empty', () => {
+    expect(validateProjectName('\u200B')).toEqual({ ok: false, message: 'A project needs a name.' });
+    expect(validateProjectName(' \u200B\u00AD ')).toEqual({ ok: false, message: 'A project needs a name.' });
+  });
+
+  it('keeps emoji joined with a zero-width joiner', () => {
+    expect(validateProjectName('Family \u{1F468}\u200D\u{1F469}\u200D\u{1F467}').ok).toBe(true);
+  });
+
   it('the zod form parses to the trimmed name', () => {
     expect(projectNameSchema.parse('  X  ')).toBe('X');
     expect(projectNameSchema.safeParse(' ').success).toBe(false);

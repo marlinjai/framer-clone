@@ -225,7 +225,7 @@ describe('SiteRepository.renameSite', () => {
     prisma.site.updateMany.mockResolvedValue({ count: 1 });
     const out = await repo.renameSite(SCOPE, 'site_1', 'New name');
     const arg = prisma.site.updateMany.mock.calls[0][0];
-    expect(arg.where).toEqual({ id: 'site_1', workspaceId: 'ws_marlin' });
+    expect(arg.where).toEqual({ id: 'site_1', workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra' });
     expect(arg.data.name).toBe('New name');
     expect(arg.data.projectUpdatedAt).toBeInstanceOf(Date);
     expect(out.name).toBe('New name');
@@ -237,6 +237,7 @@ describe('SiteRepository.renameSite', () => {
     expect(prisma.site.updateMany.mock.calls[0][0].where).toEqual({
       id: 'site_1',
       workspaceId: 'ws_marlin',
+      tenantGroupId: 'tg_lumitra',
       name: 'Old name',
     });
     expect(prisma.site.findFirst).not.toHaveBeenCalled();
@@ -249,13 +250,19 @@ describe('SiteRepository.renameSite', () => {
     expect(err).toBeInstanceOf(SiteNameConflictError);
     expect(err.status).toBe(409);
     expect(err.currentName).toBe('Renamed by someone else');
-    expect(prisma.site.findFirst.mock.calls[0][0].where).toEqual({ id: 'site_1', workspaceId: 'ws_marlin' });
+    expect(prisma.site.findFirst.mock.calls[0][0].where).toEqual({
+      id: 'site_1',
+      workspaceId: 'ws_marlin',
+      tenantGroupId: 'tg_lumitra',
+    });
   });
 
   it('two tabs setting the same name is not a conflict', async () => {
     prisma.site.updateMany.mockResolvedValue({ count: 0 });
-    prisma.site.findFirst.mockResolvedValue({ name: 'Same' });
-    await expect(repo.renameSite(SCOPE, 'site_1', 'Same', 'Old')).resolves.toMatchObject({ name: 'Same' });
+    const stored = new Date('2026-10-20T10:00:00Z');
+    prisma.site.findFirst.mockResolvedValue({ name: 'Same', projectUpdatedAt: stored });
+    // The stored timestamp, not a made-up "now": nothing was written.
+    await expect(repo.renameSite(SCOPE, 'site_1', 'Same', 'Old')).resolves.toEqual({ name: 'Same', updatedAt: stored });
   });
 
   it('a missing or foreign site is a 404, indistinguishable', async () => {

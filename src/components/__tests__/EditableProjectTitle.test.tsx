@@ -78,7 +78,7 @@ describe('EditableProjectTitle', () => {
     expect(project.metadata.title).toBe('Blurred');
   });
 
-  it('Escape cancels, and the blur that follows does not save', () => {
+  it('Escape cancels without saving and returns focus to the name', () => {
     const project = makeProject();
     render(<EditableProjectTitle project={project} />);
     const input = openEditor();
@@ -88,6 +88,79 @@ describe('EditableProjectTitle', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(project.metadata.title).toBe('Framer Clone Demo');
     expect(screen.queryByRole('textbox')).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /rename project/i }));
+  });
+
+  it('after Enter focus returns to the name', async () => {
+    fetchMock.mockResolvedValue(ok('Saved'));
+    render(<EditableProjectTitle project={makeProject()} />);
+    const input = openEditor();
+    fireEvent.change(input, { target: { value: 'Saved' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /rename project/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  });
+
+  it('a second rename cannot start while the first is saving (no false conflict)', async () => {
+    let resolveFirst!: (r: Response) => void;
+    fetchMock.mockReturnValueOnce(new Promise<Response>((r) => { resolveFirst = r; }));
+    const project = makeProject();
+    render(<EditableProjectTitle project={project} />);
+    const input = openEditor();
+    fireEvent.change(input, { target: { value: 'First' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    const button = screen.getByRole('button', { name: /rename project/i });
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(button);
+    expect(screen.queryByRole('textbox')).toBeNull();
+
+    await act(async () => resolveFirst(ok('First')));
+    expect(button.getAttribute('aria-disabled')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(project.metadata.title).toBe('First');
+    // Now a second rename opens and uses the saved name as its precondition.
+    fetchMock.mockResolvedValue(ok('Second'));
+    const again = openEditor();
+    fireEvent.change(again, { target: { value: 'Second' } });
+    fireEvent.keyDown(again, { key: 'Enter' });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).expectedName).toBe('First');
+  });
+
+  it('the error can be dismissed', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: 'rename_failed', message: 'down' } }), { status: 500 }),
+    );
+    render(<EditableProjectTitle project={makeProject()} />);
+    const input = openEditor();
+    fireEvent.change(input, { target: { value: 'X' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss rename error' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('a name refused by the server shows the rule it broke', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: { code: 'bad_body', message: 'invalid request body', issues: [{ message: 'A project name can be at most 100 characters.' }] } }),
+        { status: 400 },
+      ),
+    );
+    render(<EditableProjectTitle project={makeProject()} />);
+    const input = openEditor();
+    fireEvent.change(input, { target: { value: 'Valid here' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect((await screen.findByRole('alert')).textContent).toBe('A project name can be at most 100 characters.');
+  });
+
+  it('puts the previous tab title back when the editor goes away', () => {
+    document.title = 'Projects';
+    const { unmount } = render(<EditableProjectTitle project={makeProject()} />);
+    expect(document.title).toBe('Framer Clone Demo | Lumitra Sites');
+    unmount();
+    expect(document.title).toBe('Projects');
   });
 
   it('an empty name is refused with an announced message and the field stays open', () => {
