@@ -107,11 +107,46 @@ export class SiteNameConflictError extends SiteRepositoryError {
 }
 
 /**
+ * A save or publish of a project that no longer exists in the caller's
+ * workspace (deleted, typically while an editor tab was still open). Save and
+ * publish only ever UPDATE an existing site; creating one is the create
+ * route's job. 404, with a message the editor shows as is.
+ */
+export class SiteGoneError extends SiteRepositoryError {
+  constructor() {
+    super(
+      'site_not_found',
+      'This project no longer exists (it may have been deleted). Your changes were not saved.',
+      404,
+    );
+  }
+}
+
+/**
+ * Deleting a PUBLISHED project needs its exact current name as confirmation
+ * (`confirmName`). Missing or different (for example a dashboard that still
+ * shows the name from before a rename): nothing is deleted. Carries the
+ * current name. 409.
+ */
+export class SiteDeleteConfirmationError extends SiteRepositoryError {
+  readonly currentName: string;
+
+  constructor(currentName: string) {
+    super(
+      'confirmation_mismatch',
+      'This project is published. Type its exact current name to confirm deleting it.',
+      409,
+    );
+    this.currentName = currentName;
+  }
+}
+
+/**
  * Map any {@link SiteRepositoryError} to its Track-0 error envelope. A route
  * matches `instanceof SiteRepositoryError` once and returns this.
  */
 export function siteRepositoryErrorResponse(err: SiteRepositoryError): Response {
-  if (err instanceof SiteNameConflictError) {
+  if (err instanceof SiteNameConflictError || err instanceof SiteDeleteConfirmationError) {
     return jsonError(err.code, err.message, err.status, { currentName: err.currentName });
   }
   return jsonError(err.code, err.message, err.status);

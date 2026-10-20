@@ -1,0 +1,140 @@
+// SiteRepository.deleteSite against a real Postgres (the shared integration
+// container). Proves what the unit tests can only model: the schema's
+// ON DELETE CASCADE removes the site's pages, domains and experiment rows in
+// the same transaction, the subdomain and the live custom-domain claim stop
+// resolving, the claim leaves the proxy feed, a refused delete changes
+// nothing, other sites are untouched, and Save cannot bring the site back.
+
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PrismaClient } from '@prisma/client';
+
+vi.mock('next/cache', () => ({ unstable_cache: vi.fn(), revalidateTag: vi.fn() }));
+
+import { getPrismaClient } from '@/server/db';
+import ProjectModel from '@/models/ProjectModel';
+import { SiteRepository, type TenantScope } from '../repository';
+import { SiteDeleteConfirmationError, SiteGoneError, SiteNotFoundError } from '../errors';
+import { resolvePublishedSite } from '../publicResolver';
+import { DomainService } from '@/server/domains/service';
+
+const TG = '018f9c10-0000-7000-8000-0000000000e1';
+const OTHER_TG = '018f9c10-0000-7000-8000-0000000000e2';
+const SCOPE: TenantScope = { workspaceId: 'ws_del', tenantGroupId: TG };
+const BASE = 'sites.lumitra.co';
+
+let prisma: PrismaClient;
+let repo: SiteRepository;
+
+async function makeSite(id: string, opts: { status?: 'draft' | 'published'; workspaceId?: string; tg?: string } = {}) {
+  const now = new Date();
+  await prisma.site.create({
+    data: {
+      id,
+      workspaceId: opts.workspaceId ?? SCOPE.workspaceId,
+      tenantGroupId: opts.tg ?? TG,
+      name: `Name of ${id}`,
+      status: opts.status ?? 'published',
+      projectCreatedAt: now,
+      projectUpdatedAt: now,
+    },
+  });
+  const ws = opts.workspaceId ?? SCOPE.workspaceId;
+  const tg = opts.tg ?? TG;
+  await prisma.sitePage.create({
+    data: { siteId: id, workspaceId: ws, tenantGroupId: tg, pageId: `${id}-home`, slug: '', snapshot: {} },
+  });
+  await prisma.siteExperiment.create({
+    data: { siteId: id, workspaceId: ws, tenantGroupId: tg, experimentKey: `${id}-exp` },
+  });
+  await prisma.siteDomain.create({
+    data: { siteId: id, workspaceId: ws, tenantGroupId: tg, subdomain: `${id}lbl`, verificationStatus: 'active', isPrimary: true },
+  });
+  await prisma.siteDomain.create({
+    data: {
+      siteId: id,
+      workspaceId: ws,
+      tenantGroupId: tg,
+      hostname: `www.${id}.example.com`,
+      customHostname: `www.${id}.example.com`,
+      verificationStatus: 'active',
+      verificationToken: `tok-${id}`,
+      verifiedAt: now,
+    },
+  });
+}
+
+async function counts(siteId: string) {
+  const [pages, domains, experiments, site] = await Promise.all([
+    prisma.sitePage.count({ where: { siteId } }),
+    prisma.siteDomain.count({ where: { siteId } }),
+    prisma.siteExperiment.count({ where: { siteId } }),
+    prisma.site.count({ where: { id: siteId } }),
+  ]);
+  return { site, pages, domains, experiments };
+}
+
+async function cleanup() {
+  for (const tg of [TG, OTHER_TG]) {
+    await prisma.siteDomain.deleteMany({ where: { tenantGroupId: tg } });
+    await prisma.site.deleteMany({ where: { tenantGroupId: tg } });
+  }
+}
+
+beforeAll(() => {
+  prisma = getPrismaClient();
+  repo = new SiteRepository(prisma);
+});
+beforeEach(cleanup);
+afterAll(cleanup);
+
+describe('deleteSite (real database)', () => {
+  it('cascades pages, domains and experiments, and the site stops resolving everywhere', async () => {
+    await makeSite('delpub');
+    await makeSite('keepme');
+    expect((await resolvePublishedSite(`delpublbl.${BASE}`, prisma, BASE))?.siteId).toBe('delpub');
+    expect((await resolvePublishedSite('www.delpub.example.com', prisma, BASE))?.siteId).toBe('delpub');
+    const feedBefore = (await new DomainService({ prisma, invalidateHost: () => {} }).listProxyHostnames()).hostnames;
+    expect(feedBefore).toContain('www.delpub.example.com');
+
+    const out = await repo.deleteSite(SCOPE, 'delpub', { confirmName: 'Name of delpub' });
+
+    expect(out).toEqual({
+      siteId: 'delpub',
+      name: 'Name of delpub',
+      wasPublished: true,
+      subdomain: 'delpublbl',
+      hostnames: ['www.delpub.example.com'],
+    });
+    expect(await counts('delpub')).toEqual({ site: 0, pages: 0, domains: 0, experiments: 0 });
+    expect(await resolvePublishedSite(`delpublbl.${BASE}`, prisma, BASE)).toBeNull();
+    expect(await resolvePublishedSite('www.delpub.example.com', prisma, BASE)).toBeNull();
+    const feedAfter = (await new DomainService({ prisma, invalidateHost: () => {} }).listProxyHostnames()).hostnames;
+    expect(feedAfter).not.toContain('www.delpub.example.com');
+    expect(feedAfter).toContain('www.keepme.example.com');
+    expect(await counts('keepme')).toEqual({ site: 1, pages: 1, domains: 2, experiments: 1 });
+  });
+
+  it('a refused delete (published, wrong name) changes nothing', async () => {
+    await makeSite('refused');
+    await expect(repo.deleteSite(SCOPE, 'refused', { confirmName: 'nope' })).rejects.toBeInstanceOf(
+      SiteDeleteConfirmationError,
+    );
+    expect(await counts('refused')).toEqual({ site: 1, pages: 1, domains: 2, experiments: 1 });
+  });
+
+  it("another company's site is a 404 and stays whole", async () => {
+    await makeSite('foreign', { workspaceId: 'ws_other', tg: OTHER_TG });
+    await expect(repo.deleteSite(SCOPE, 'foreign', { confirmName: 'Name of foreign' })).rejects.toBeInstanceOf(
+      SiteNotFoundError,
+    );
+    expect(await counts('foreign')).toEqual({ site: 1, pages: 1, domains: 2, experiments: 1 });
+  });
+
+  it('an unpublished site needs no name, and Save cannot recreate it afterwards', async () => {
+    await makeSite('draftone', { status: 'draft' });
+    await repo.deleteSite(SCOPE, 'draftone');
+    const stale = ProjectModel.create({ id: 'draftone', metadata: { title: 'Name of draftone', description: '' }, pages: {} });
+    await expect(repo.saveProject(SCOPE, stale, { mustExist: true })).rejects.toBeInstanceOf(SiteGoneError);
+    expect(await counts('draftone')).toEqual({ site: 0, pages: 0, domains: 0, experiments: 0 });
+  });
+});

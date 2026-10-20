@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import ProjectNameInput from '@/components/ProjectNameInput';
+import DeleteProjectDialog from './DeleteProjectDialog';
 import { renameProject } from '@/lib/projects/renameProject';
 
 const FALLBACK_NAME = 'Untitled Project';
@@ -28,19 +29,32 @@ export interface ProjectCardProps {
   name: string;
   status: string;
   updatedLabel: string;
+  /** `<label>.sites.lumitra.co` once the project has a published address. */
+  liveHost?: string | null;
+  customDomains?: string[];
 }
 
-export default function ProjectCard({ siteId, name: serverName, status, updatedLabel }: ProjectCardProps) {
+export default function ProjectCard({
+  siteId,
+  name: serverName,
+  status,
+  updatedLabel,
+  liveHost = null,
+  customDomains = [],
+}: ProjectCardProps) {
   const router = useRouter();
   const [name, setName] = useState(serverName);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Rename opens the field only once the menu has CLOSED: while the menu is
-  // open it traps focus, so a field focused earlier would be blurred straight
-  // away (and blur saves). Set on select, consumed when the menu has closed.
-  const renameChosen = useRef(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleted, setDeleted] = useState(false);
+  // Rename and Delete act only once the menu has CLOSED: while the menu is
+  // open it traps focus, so a field or dialog focused earlier would lose it
+  // straight away. Set on select, consumed when the menu has closed.
+  const chosen = useRef<'rename' | 'delete' | null>(null);
   const linkRef = useRef<HTMLAnchorElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   // Set when the field closes by save or cancel: focus returns to the card's
   // name instead of dropping to <body> with the unmounted input.
   const returnFocus = useRef(false);
@@ -65,6 +79,20 @@ export default function ProjectCard({ siteId, name: serverName, status, updatedL
   }, [serverName]);
 
   const shown = name || FALLBACK_NAME;
+
+  // Once deleted the card is gone: focus moves to the page heading (nothing
+  // else would take it) and a status line tells screen readers what happened.
+  useEffect(() => {
+    if (deleted) document.getElementById('projects-heading')?.focus();
+  }, [deleted]);
+
+  if (deleted) {
+    return (
+      <p role="status" className="sr-only">
+        Deleted the project {shown}.
+      </p>
+    );
+  }
 
   const save = async (next: string) => {
     close();
@@ -118,6 +146,7 @@ export default function ProjectCard({ siteId, name: serverName, status, updatedL
       </span>
       <DropdownMenu>
         <DropdownMenuTrigger
+          ref={triggerRef}
           aria-label={`More actions for ${shown}`}
           className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         >
@@ -128,11 +157,16 @@ export default function ProjectCard({ siteId, name: serverName, status, updatedL
           // Instead of returning focus to the trigger, hand it to the rename
           // field, which focuses itself when it mounts.
           onCloseAutoFocus={(e) => {
-            if (renameChosen.current) {
-              renameChosen.current = false;
+            const action = chosen.current;
+            chosen.current = null;
+            if (action === 'rename') {
               e.preventDefault();
               setError(null);
               setEditing(true);
+            } else if (action === 'delete') {
+              e.preventDefault();
+              setError(null);
+              setDeleteOpen(true);
             }
           }}
         >
@@ -141,13 +175,39 @@ export default function ProjectCard({ siteId, name: serverName, status, updatedL
             // in flight would report a false conflict.
             disabled={saving}
             onSelect={() => {
-              renameChosen.current = true;
+              chosen.current = 'rename';
             }}
           >
             Rename
           </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={saving}
+            className="text-destructive focus:text-destructive"
+            onSelect={() => {
+              chosen.current = 'delete';
+            }}
+          >
+            Delete project
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <DeleteProjectDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        siteId={siteId}
+        name={name}
+        published={status === 'published'}
+        liveHost={liveHost}
+        customDomains={customDomains}
+        onDeleted={() => {
+          setDeleteOpen(false);
+          setDeleted(true);
+          router.refresh();
+        }}
+        // Cancelled: back to this card's menu button. (Deleted: the card
+        // unmounts and the effect above moves focus to the page heading.)
+        returnFocusTo={() => triggerRef.current}
+      />
     </div>
   );
 }

@@ -15,6 +15,8 @@ import { SiteRepository, type TenantScope } from '../repository';
 import {
   SiteNotFoundError,
   SiteNameConflictError,
+  SiteGoneError,
+  SiteDeleteConfirmationError,
   InvalidTenantScopeError,
   InvalidPageSlugError,
   SubdomainAllocationError,
@@ -99,6 +101,24 @@ describe('SiteRepository.listSites', () => {
     expect(prisma.site.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { workspaceId: 'ws_marlin' } }),
     );
+  });
+
+  it('carries the subdomain and connected custom domains (what a delete would take offline)', async () => {
+    const at = new Date('2026-10-20T00:00:00Z');
+    prisma.site.findMany.mockResolvedValue([
+      {
+        id: 'site_1', name: 'Bakery', description: '', status: 'published', lumitraEnabled: false,
+        createdAt: at, updatedAt: at,
+        domains: [{ subdomain: 'k3j9x0abcd12', hostname: null }, { subdomain: null, hostname: 'www.bakery.de' }],
+      },
+      {
+        id: 'site_2', name: 'Draft', description: '', status: 'draft', lumitraEnabled: false,
+        createdAt: at, updatedAt: at, domains: [],
+      },
+    ]);
+    const [a, b] = await repo.listSites(SCOPE);
+    expect(a).toMatchObject({ siteId: 'site_1', subdomain: 'k3j9x0abcd12', customDomains: ['www.bakery.de'] });
+    expect(b).toMatchObject({ siteId: 'site_2', subdomain: null, customDomains: [] });
   });
 });
 
@@ -643,18 +663,93 @@ describe('SiteRepository.unpublishProject', () => {
 });
 
 describe('SiteRepository.deleteSite', () => {
-  it('scopes the delete by workspace_id and throws when nothing matched', async () => {
-    prisma.site.deleteMany.mockResolvedValue({ count: 0 });
-    await expect(repo.deleteSite(SCOPE, 'site_other_ws')).rejects.toBeInstanceOf(
-      SiteNotFoundError,
+  const WHERE = { id: 'site_1', workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra' };
+
+  function siteRow(status: string, domains: Array<Record<string, string | null>> = []) {
+    return {
+      name: 'Bakery',
+      status,
+      domains: domains.map((d) => ({ subdomain: null, hostname: null, customHostname: null, ...d })),
+    };
+  }
+
+  it('reads and deletes scoped by id, workspace AND tenant group, in one transaction', async () => {
+    prisma.site.findFirst.mockResolvedValue(siteRow('draft'));
+    prisma.site.deleteMany.mockResolvedValue({ count: 1 });
+    await repo.deleteSite(SCOPE, 'site_1');
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.site.findFirst.mock.calls[0][0].where).toEqual(WHERE);
+    expect(prisma.site.deleteMany).toHaveBeenCalledWith({ where: WHERE });
+  });
+
+  it('a missing or foreign site is a 404 and nothing is deleted', async () => {
+    prisma.site.findFirst.mockResolvedValue(null);
+    await expect(repo.deleteSite(SCOPE, 'site_other_ws')).rejects.toBeInstanceOf(SiteNotFoundError);
+    expect(prisma.site.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('captures the subdomain and every custom hostname BEFORE the cascade removes them', async () => {
+    prisma.site.findFirst.mockResolvedValue(
+      siteRow('draft', [
+        { subdomain: 'k3j9x0abcd12' },
+        { hostname: 'www.bakery.de', customHostname: 'www.bakery.de' },
+        { hostname: 'bakery.de' },
+      ]),
     );
-    expect(prisma.site.deleteMany).toHaveBeenCalledWith({
-      where: { id: 'site_other_ws', workspaceId: 'ws_marlin' },
+    prisma.site.deleteMany.mockResolvedValue({ count: 1 });
+    await expect(repo.deleteSite(SCOPE, 'site_1')).resolves.toEqual({
+      siteId: 'site_1',
+      name: 'Bakery',
+      wasPublished: false,
+      subdomain: 'k3j9x0abcd12',
+      hostnames: ['www.bakery.de', 'bakery.de'],
     });
   });
 
-  it('succeeds when a row in the workspace was deleted', async () => {
+  it('a published site needs its exact current name, else nothing is deleted (409)', async () => {
+    prisma.site.findFirst.mockResolvedValue(siteRow('published'));
+    for (const confirmName of [undefined, 'bakery', 'Old name before a rename']) {
+      const err = await repo.deleteSite(SCOPE, 'site_1', { confirmName }).catch((e) => e);
+      expect(err).toBeInstanceOf(SiteDeleteConfirmationError);
+      expect(err.status).toBe(409);
+      expect(err.currentName).toBe('Bakery');
+    }
+    expect(prisma.site.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('a published site with the right name is deleted', async () => {
+    prisma.site.findFirst.mockResolvedValue(siteRow('published'));
     prisma.site.deleteMany.mockResolvedValue({ count: 1 });
-    await expect(repo.deleteSite(SCOPE, 'site_1')).resolves.toBeUndefined();
+    await expect(repo.deleteSite(SCOPE, 'site_1', { confirmName: 'Bakery' })).resolves.toMatchObject({
+      wasPublished: true,
+    });
+  });
+
+  it('a concurrent delete between read and delete is a 404', async () => {
+    prisma.site.findFirst.mockResolvedValue(siteRow('draft'));
+    prisma.site.deleteMany.mockResolvedValue({ count: 0 });
+    await expect(repo.deleteSite(SCOPE, 'site_1')).rejects.toBeInstanceOf(SiteNotFoundError);
+  });
+});
+
+describe('SiteRepository.saveProject with mustExist (editor Save and Publish)', () => {
+  function project() {
+    return ProjectModel.create({ id: 'site_gone', metadata: { title: 'Gone', description: '' }, pages: {} });
+  }
+
+  it('refuses a site that no longer exists instead of re-creating it', async () => {
+    prisma.site.findUnique.mockResolvedValue(null);
+    const err = await repo.saveProject(SCOPE, project(), { mustExist: true }).catch((e) => e);
+    expect(err).toBeInstanceOf(SiteGoneError);
+    expect(err.message).toBe('This project no longer exists (it may have been deleted). Your changes were not saved.');
+    expect(prisma.site.upsert).not.toHaveBeenCalled();
+    expect(prisma.sitePage.upsert).not.toHaveBeenCalled();
+  });
+
+  it('still updates a site that exists', async () => {
+    prisma.site.findUnique.mockResolvedValue({ id: 'site_gone', workspaceId: 'ws_marlin' });
+    prisma.site.upsert.mockResolvedValue({});
+    prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
+    await expect(repo.saveProject(SCOPE, project(), { mustExist: true })).resolves.toBeUndefined();
   });
 });

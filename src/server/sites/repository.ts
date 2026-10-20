@@ -34,6 +34,8 @@ import {
 import {
   InvalidPageSlugError,
   InvalidTenantScopeError,
+  SiteDeleteConfirmationError,
+  SiteGoneError,
   SiteNameConflictError,
   SiteNotFoundError,
   SubdomainAllocationError,
@@ -92,6 +94,10 @@ export interface SiteSummary {
   lumitraEnabled: boolean;
   createdAt: Date;
   updatedAt: Date;
+  /** The `<label>` of `<label>.sites.lumitra.co`, once first published. */
+  subdomain: string | null;
+  /** Connected custom domains (requested hostnames), oldest first. */
+  customDomains: string[];
 }
 
 function assertScope(scope: TenantScope): void {
@@ -126,9 +132,15 @@ export class SiteRepository {
         lumitraEnabled: true,
         createdAt: true,
         updatedAt: true,
+        domains: {
+          select: { subdomain: true, hostname: true },
+          orderBy: { createdAt: 'asc' },
+        },
       },
     });
     return rows.map((r) => ({
+      subdomain: r.domains.find((d) => d.subdomain)?.subdomain ?? null,
+      customDomains: r.domains.flatMap((d) => (d.hostname ? [d.hostname] : [])),
       siteId: r.id,
       name: r.name,
       description: r.description,
@@ -216,6 +228,7 @@ export class SiteRepository {
   async saveProject(
     scope: TenantScope,
     project: ProjectModelType | Parameters<typeof projectToPersisted>[0],
+    options: { mustExist?: boolean } = {},
   ): Promise<void> {
     assertScope(scope);
     const persisted: PersistedSite = projectToPersisted(project);
@@ -234,6 +247,12 @@ export class SiteRepository {
       });
       if (existing && existing.workspaceId !== scope.workspaceId) {
         throw new SiteNotFoundError(persisted.siteId);
+      }
+      // The editor's Save and Publish pass `mustExist`: they update a site, never
+      // create one. Without this, an editor tab still open on a DELETED project
+      // would bring it back on its next save (the upsert below creates).
+      if (options.mustExist && !existing) {
+        throw new SiteGoneError();
       }
 
       // Slug rules (src/lib/pages/slug.ts), checked against the slugs stored
@@ -573,17 +592,75 @@ export class SiteRepository {
   }
 
   /**
-   * Delete a site (and, by FK cascade, its pages/domains/experiments), scoped
-   * to the caller's workspace. A delete for a site in another workspace affects
-   * zero rows and throws SiteNotFoundError rather than silently succeeding.
+   * Delete a site for good, scoped to the caller's workspace and tenant group,
+   * in ONE transaction. The database cascade removes everything that belongs
+   * only to this site: its pages, its domain rows (the platform subdomain and
+   * every custom domain, which releases their live claims) and its experiment
+   * references. Company-wide data is never touched: CMS collections are per
+   * workspace, the commerce catalog, orders and Books live in the company's
+   * tenant schema without any site column.
+   *
+   * A PUBLISHED site is only deleted when `confirmName` equals its current
+   * name exactly (SiteDeleteConfirmationError otherwise, nothing deleted).
+   *
+   * Returns what the caller must invalidate AFTER the commit: the subdomain
+   * and every custom hostname (requested and live claim). They are captured
+   * here, before the cascade, because afterwards no row names them any more.
+   *
+   * A site in another workspace or tenant group is reported exactly like a
+   * missing one (SiteNotFoundError), so existence never leaks.
    */
-  async deleteSite(scope: TenantScope, siteId: string): Promise<void> {
+  async deleteSite(
+    scope: TenantScope,
+    siteId: string,
+    options: { confirmName?: string } = {},
+  ): Promise<DeletedSite> {
     assertScope(scope);
-    const result = await this.prisma.site.deleteMany({
-      where: { id: siteId, workspaceId: scope.workspaceId },
+    const where = { id: siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId };
+    return this.prisma.$transaction(async (tx) => {
+      const site = await tx.site.findFirst({
+        where,
+        select: {
+          name: true,
+          status: true,
+          domains: { select: { subdomain: true, hostname: true, customHostname: true } },
+        },
+      });
+      if (!site) throw new SiteNotFoundError(siteId);
+      if (site.status === 'published' && options.confirmName !== site.name) {
+        throw new SiteDeleteConfirmationError(site.name);
+      }
+
+      let subdomain: string | null = null;
+      const hostnames = new Set<string>();
+      for (const d of site.domains) {
+        if (d.subdomain) subdomain = d.subdomain;
+        if (d.hostname) hostnames.add(d.hostname);
+        if (d.customHostname) hostnames.add(d.customHostname);
+      }
+
+      const result = await tx.site.deleteMany({ where });
+      // Deleted by a concurrent request between the read and here.
+      if (result.count === 0) throw new SiteNotFoundError(siteId);
+
+      return {
+        siteId,
+        name: site.name,
+        wasPublished: site.status === 'published',
+        subdomain,
+        hostnames: [...hostnames],
+      };
     });
-    if (result.count === 0) throw new SiteNotFoundError(siteId);
   }
+}
+
+/** What {@link SiteRepository.deleteSite} removed, for the caller's cache invalidation. */
+export interface DeletedSite {
+  siteId: string;
+  name: string;
+  wasPublished: boolean;
+  subdomain: string | null;
+  hostnames: string[];
 }
 
 let cached: SiteRepository | null = null;

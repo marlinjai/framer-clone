@@ -153,9 +153,12 @@ describe('POST /api/projects/save (authorized)', () => {
       savedPages: ['', 'about'],
     });
     // Scope comes from the SERVER session, not the body.
+    // ...and only UPDATES an existing site: it never creates (or re-creates a
+    // deleted) one; creating is POST /api/projects.
     expect(save).toHaveBeenCalledWith(
       SCOPE,
       expect.objectContaining({ id: 'site_1' }),
+      { mustExist: true },
     );
     // Save is non-destructive: it must NEVER flip the site to published.
     expect(publish).not.toHaveBeenCalled();
@@ -276,5 +279,24 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
     expect(siteUpsert.update.redirects).toEqual([
       { from: 'about', pageId: 'page_about', createdAt: expect.any(String) },
     ]);
+
+describe('save of a deleted project', () => {
+  it('is refused with a message the editor shows as is, and nothing is written', async () => {
+    mockVerifySession.mockResolvedValue(makeSession());
+    mockCan.mockResolvedValue(true);
+    const { SiteGoneError } = await import('@/server/sites');
+    const save = vi.fn().mockRejectedValue(new SiteGoneError());
+    const publish = vi.fn();
+    installRepo({ saveProject: save, publishProject: publish });
+
+    const res = await POST(saveReq({ project: PROJECT }));
+
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error.code).toBe('site_not_found');
+    expect(body.error.message).toBe(
+      'This project no longer exists (it may have been deleted). Your changes were not saved.',
+    );
+    expect(publish).not.toHaveBeenCalled();
   });
 });
