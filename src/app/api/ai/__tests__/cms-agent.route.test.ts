@@ -13,7 +13,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // --- Scriptable Anthropic client -------------------------------------------
 const anthropicState = vi.hoisted(() => ({
   // Each entry is the `finalMessage()` for one stream() call, in order.
-  turns: [] as Array<{ content: unknown[]; stop_reason: string; stop_details?: unknown } | { throws: unknown }>,
+  turns: [] as Array<
+    | { content: unknown[]; stop_reason: string; stop_details?: unknown; rawInputs?: Record<number, string> }
+    | { throws: unknown }
+  >,
   // The inner non-streaming Haiku reply (translate/generate); JSON text.
   innerJson: '[]',
   streamCalls: [] as Array<Record<string, unknown>>,
@@ -24,16 +27,28 @@ function makeClient() {
   let turnIndex = 0;
   const stream = (params: Record<string, unknown>) => {
     anthropicState.streamCalls.push({ ...params, messages: structuredClone(params.messages) });
+    const handlers: Record<string, (event: unknown) => void> = {};
     return {
-      on() {
+      on(event: string, cb: (event: unknown) => void) {
+        handlers[event] = cb;
         return this;
       },
       finalMessage: async () => {
         const turn = anthropicState.turns[turnIndex++] ?? { content: [], stop_reason: 'end_turn' };
         if ('throws' in turn) throw turn.throws;
+        // Replay the raw input_json deltas the real stream would have sent.
+        for (const [index, json] of Object.entries(turn.rawInputs ?? {})) {
+          handlers.streamEvent?.({
+            type: 'content_block_delta',
+            index: Number(index),
+            delta: { type: 'input_json_delta', partial_json: json },
+          });
+        }
+        const { rawInputs: _raw, ...message } = turn;
+        void _raw;
         return {
           stop_details: null,
-          ...turn,
+          ...message,
           usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 2 },
         };
       },
@@ -501,5 +516,39 @@ describe('POST /api/ai/cms-agent on current models', () => {
     expect(inner.output_config).toEqual({ effort: 'low' });
     expect(inner).not.toHaveProperty('fallbacks');
     expect(adapter.bulkCreateRows).toHaveBeenCalledWith([{ tableId: 't1', cells: { c1: 'Hello' } }]);
+  });
+
+  it('malformed raw tool JSON runs nothing from that block and answers INVALID_JSON', async () => {
+    // The raw stream is broken JSON; the tolerant parser handed over a
+    // shorter, schema-valid input (the cut-off string "say ").
+    anthropicState.turns = [
+      {
+        content: [
+          { type: 'thinking', thinking: '', signature: 's' },
+          { type: 'tool_use', id: 'tu1', name: 'create_row', input: { tableId: 't1', cells: { t: 'say ' } } },
+        ],
+        stop_reason: 'tool_use',
+        rawInputs: { 1: '{"tableId":"t1","cells":{"t":"say "hi" now"}}' },
+      },
+      { content: [{ type: 'text', text: 'sorry' }], stop_reason: 'end_turn' },
+    ];
+    const body = await readStream(await POST(makeRequest(baseBody(), { cookie: authCookie })));
+    expect(adapter.createRow).not.toHaveBeenCalled();
+    expect(prisma.agentChange.create).not.toHaveBeenCalled();
+    expect(body).toContain('INVALID_JSON');
+    const resultTurn = (anthropicState.streamCalls[1].messages as Array<{ role: string; content: unknown }>).at(-1)!;
+    expect(resultTurn.content).toEqual([
+      expect.objectContaining({ type: 'tool_result', tool_use_id: 'tu1', is_error: true, content: expect.stringContaining('INVALID_JSON') }),
+    ]);
+  });
+
+  it('valid raw tool JSON runs the tool as before', async () => {
+    adapter.createRow.mockResolvedValue({ id: 'row1', tableId: 't1', cells: { c1: 'x' } });
+    anthropicState.turns = [
+      { ...createTurn, rawInputs: { 1: '{"tableId":"t1","cells":{"c1":"x"}}' } },
+      { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+    ];
+    await readStream(await POST(makeRequest(baseBody(), { cookie: authCookie })));
+    expect(adapter.createRow).toHaveBeenCalledWith({ tableId: 't1', cells: { c1: 'x' } });
   });
 });

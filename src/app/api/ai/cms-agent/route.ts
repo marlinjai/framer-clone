@@ -248,6 +248,17 @@ async function handlePOST(request: Request): Promise<Response> {
   return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
 }
 
+/** Strict JSON check of a raw streamed tool input (empty means `{}`: no fragments). */
+function isStrictJson(raw: string): boolean {
+  if (raw.trim() === '') return true;
+  try {
+    JSON.parse(raw);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** A deliberate stop of the loop with a user-facing code (refusal, truncation, bad tool JSON). */
 class AgentStopError extends Error {
   constructor(readonly code: 'refused' | 'truncated' | 'invalid_tool_input', message: string) {
@@ -346,6 +357,17 @@ async function runAgentLoop(args: LoopArgs): Promise<void> {
         messages,
       });
       stream.on('text', (delta: string) => sse.send('agent:thinking', { text: delta }));
+      // Raw tool-input JSON per content block index. With eager input
+      // streaming the SDK parses inputs tolerantly, so malformed JSON can
+      // arrive as a silently SHORTER object (a cut-off string value) that
+      // still passes the executor's schema check. The raw text is parsed
+      // strictly below before any tool of the turn runs.
+      const rawToolInput = new Map<number, string>();
+      stream.on('streamEvent', (event) => {
+        if (event.type === 'content_block_delta' && event.delta.type === 'input_json_delta') {
+          rawToolInput.set(event.index, (rawToolInput.get(event.index) ?? '') + event.delta.partial_json);
+        }
+      });
       // Progress-update notes between tool calls (display: "updates").
       stream.on('thinking', (delta: string) => {
         if (delta) sse.send('agent:thinking', { text: delta });
@@ -383,6 +405,14 @@ async function runAgentLoop(args: LoopArgs): Promise<void> {
 
       const toolResults: BetaToolResultBlockParam[] = [];
       for (const toolUse of toolUses) {
+        const raw = rawToolInput.get(final.content.indexOf(toolUse));
+        if (raw !== undefined && !isStrictJson(raw)) {
+          // Run nothing from this block; tell the model so it can call again.
+          const summary = `INVALID_JSON: the input for ${toolUse.name} was not valid JSON, so nothing was run. Call the tool again with valid JSON.`;
+          sse.send('agent:tool_result', { tool: toolUse.name, success: false, summary });
+          toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: summary, is_error: true });
+          continue;
+        }
         sse.send('agent:tool_call', { tool: toolUse.name, input: toolUse.input });
         const result = await executeAgentTool(toolUse.name, toolUse.input, ctx);
         sse.send('agent:tool_result', {
