@@ -24,6 +24,7 @@ import { useStore } from '@/hooks/useStore';
 import { getHistoryStore } from '@/stores/RootStore';
 import PublishButton from '@/components/PublishButton';
 import SaveButton from '@/components/SaveButton';
+import GeneratePageButton from '@/components/ai/GeneratePageDialog';
 
 function relativeTime(ts: number, now: number): string {
   const s = Math.max(0, Math.round((now - ts) / 1000));
@@ -196,6 +197,10 @@ const TopBar = observer(() => {
           Vector / CMS) in a future iteration. Left empty rather than with
           placeholder boxes so the bar reads as intentional, not unfinished. */}
       <div className="flex-1" />
+
+      {/* Generate: AI page / section generation (plan ai-driven-page-generation).
+          Applies as one undoable action; Save persists it like any other edit. */}
+      <GeneratePageButton />
 
       {/* Save: persist the working copy WITHOUT publishing (MT-10). Sits just
           before Publish so the non-destructive action reads first. */}
