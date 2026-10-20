@@ -5,11 +5,14 @@
 // The scheduled re-check of live custom domains (DomainService.recheckDue):
 // each call checks at most 20 verified or active domains whose last check is
 // older than six hours, routing only, and releases a domain after three
-// definitive failures in a row (transient DNS errors never count). Called by
-// the same systemd timer on the shared server that runs the Traefik sync,
-// once a minute; with nothing due a call costs one indexed query.
+// definitive failures in a row (transient DNS errors never count). When most
+// of a pass fails at once (at least 5 checked), the circuit breaker counts
+// nothing and this answers 503 recheck_circuit_open, so a wrong platform
+// target can never release every domain. Called by its own systemd timer on
+// the shared server every 10 minutes; with nothing due a call costs one
+// indexed query.
 //
-// Why the host timer and not an interval inside the app: the timer is already
+// Why a host timer and not an interval inside the app: the timer is already
 // a single, authenticated caller, so there is exactly one scheduler however
 // many app replicas run, with no leader election, and nothing runs during
 // `next build` or in tests. Concurrent calls (a slow pass overlapping the next
@@ -37,6 +40,16 @@ export async function POST(req: Request): Promise<Response> {
   }
   try {
     const summary = await getDomainService().recheckDue(config.config);
+    if (summary.circuitOpen) {
+      // A non-2xx so the host unit (curl --fail) fails and the journal and any
+      // monitor show it; the summary rides along for the operator.
+      return jsonError(
+        'recheck_circuit_open',
+        'most live domains failed the re-check at once; nothing was counted, check the CUSTOM_DOMAIN_TARGET_* values',
+        503,
+        { summary },
+      );
+    }
     if (summary.released > 0 || summary.failing > 0) {
       console.error(`[domains] scheduled re-check: ${JSON.stringify(summary)}`);
     }

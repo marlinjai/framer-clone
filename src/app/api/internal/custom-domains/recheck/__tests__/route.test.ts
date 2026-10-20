@@ -41,7 +41,7 @@ afterEach(() => {
 
 describe('POST /api/internal/custom-domains/recheck', () => {
   it('runs a pass and answers its summary', async () => {
-    const summary = { checked: 3, ok: 1, transient: 1, failing: 1, released: 0 };
+    const summary = { checked: 3, ok: 1, transient: 1, failing: 1, released: 0, skipped: 0, circuitOpen: false };
     recheckDue.mockResolvedValue(summary);
     const res = await POST(req());
     expect(res.status).toBe(200);
@@ -63,6 +63,16 @@ describe('POST /api/internal/custom-domains/recheck', () => {
     const res = await POST(req());
     expect(res.status).toBe(503);
     expect((await res.json()).error.code).toBe('custom_domains_not_configured');
+  });
+
+  it('answers 503 recheck_circuit_open (so the host unit fails loudly) when the breaker opened', async () => {
+    const summary = { checked: 10, ok: 2, transient: 0, failing: 0, released: 0, skipped: 0, circuitOpen: true };
+    recheckDue.mockResolvedValue(summary);
+    const res = await POST(req());
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error.code).toBe('recheck_circuit_open');
+    expect(body.error.summary).toEqual(summary);
   });
 
   it('500s when the pass fails', async () => {

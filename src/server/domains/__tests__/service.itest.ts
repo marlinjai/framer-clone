@@ -24,7 +24,7 @@ import { getPrismaClient } from '@/server/db';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
 import type { CustomDomainConfig } from '../config';
 import type { DnsLookup } from '../dnsCheck';
-import { DomainError, DomainService, RECHECK_INTERVAL_MS } from '../service';
+import { DomainError, DomainService, RECHECK_INTERVAL_MS, type DomainServiceDeps } from '../service';
 import type { TlsProbe } from '../tlsProbe';
 
 const CONFIG: CustomDomainConfig = {
@@ -65,13 +65,14 @@ const probe: TlsProbe = async () => (certReady ? { ok: true } : { ok: false, rea
 const invalidated: string[] = [];
 
 let clock = new Date('2026-10-20T00:00:00Z');
-function service(): DomainService {
+function service(extra: Partial<DomainServiceDeps> = {}): DomainService {
   return new DomainService({
     prisma,
     dns,
     probe,
     invalidateHost: (h) => invalidated.push(h),
     now: () => clock,
+    ...extra,
   });
 }
 
@@ -402,5 +403,122 @@ describe('scheduled re-check of live domains', () => {
     await service().recheckDue(CONFIG);
     const [after] = await service().listDomains(site.id, CONFIG);
     expect(after.status).toBe('active');
+  });
+});
+
+describe('review fixes: breaker, guarded writes, paging, cap race', () => {
+  const later = (hours: number) => {
+    clock = new Date(clock.getTime() + hours * 60 * 60 * 1000);
+  };
+  async function live(siteId: string, host: string) {
+    const site = await makeSite(siteId);
+    const d = (await service().addDomain(site, host, CONFIG)).domain;
+    publishDns(host, tokenOf(d));
+    certReady = true;
+    await service().verifyDomain(site.id, d.id, CONFIG);
+    return { site, d };
+  }
+
+  it('the circuit breaker counts nothing when most of a pass fails (a wrong target value)', async () => {
+    for (let i = 0; i < 6; i += 1) await live(`dom_site_br${i}`, `br${i}.example.com`);
+    // The platform target is misconfigured: every domain "points elsewhere".
+    const wrong = { ...CONFIG, ipv4: ['192.0.2.99'] };
+    for (let pass = 0; pass < 4; pass += 1) {
+      later(7);
+      const summary = await service().recheckDue(wrong);
+      expect(summary).toMatchObject({ checked: 6, circuitOpen: true, failing: 0, released: 0 });
+    }
+    const rows = await prisma.siteDomain.findMany({ where: { hostname: { startsWith: 'br' } } });
+    expect(rows.every((r) => r.consecutiveFailures === 0 && r.customHostname !== null)).toBe(true);
+    // Fixed config: the next pass is ordinary again.
+    expect(await service().recheckDue(CONFIG)).toMatchObject({ circuitOpen: false, ok: 6 });
+  });
+
+  it('a minority of failures in a pass of five or more still counts', async () => {
+    for (let i = 0; i < 5; i += 1) await live(`dom_site_mn${i}`, `mn${i}.example.com`);
+    routes.set('mn0.example.com', ['198.51.100.9']);
+    later(7);
+    expect(await service().recheckDue(CONFIG)).toMatchObject({ circuitOpen: false, failing: 1, ok: 4 });
+  });
+
+  it('a re-check write never overwrites a row that changed after it was read', async () => {
+    const { site, d } = await live('dom_site_race', 'race.example.com');
+    routes.set('race.example.com', ['198.51.100.9']);
+    later(7);
+    // A DNS lookup slow enough that the owner disconnects and re-adds meanwhile.
+    const slowDns: DnsLookup = {
+      ...dns,
+      resolve4: async (name) => {
+        await prisma.siteDomain.update({
+          where: { id: d.id },
+          data: { consecutiveFailures: 2, lastErrorCode: 'changed_meanwhile' },
+        });
+        return dns.resolve4(name);
+      },
+    };
+    const summary = await service({ dns: slowDns }).recheckDue(CONFIG);
+    expect(summary).toMatchObject({ skipped: 1, failing: 0, released: 0 });
+    const [after] = await service().listDomains(site.id, CONFIG);
+    expect(after).toMatchObject({ status: 'active', serving: true, lastErrorCode: 'changed_meanwhile' });
+  });
+
+  it('a row whose claim does not match its hostname is stamped, so it frees its batch slot', async () => {
+    const { d } = await live('dom_site_mm', 'mm.example.com');
+    await prisma.siteDomain.update({ where: { id: d.id }, data: { hostname: 'mm-renamed.example.com' } });
+    later(7);
+    await service().recheckDue(CONFIG);
+    const row = await prisma.siteDomain.findUnique({ where: { id: d.id } });
+    expect(row?.lastCheckedAt?.getTime()).toBe(clock.getTime());
+  });
+
+  it('skipped feed rows never let a verified domain displace an active one; truncated is exact', async () => {
+    const site = await makeSite('dom_site_page');
+    const now = new Date();
+    const mk = (host: string, status: 'active' | 'verified', minutes: number) =>
+      prisma.siteDomain.create({
+        data: {
+          siteId: site.id,
+          workspaceId: site.workspaceId,
+          tenantGroupId: TG,
+          hostname: host,
+          customHostname: host,
+          verificationToken: `tok-${host}`,
+          verificationStatus: status,
+          verifiedAt: new Date(now.getTime() + minutes * 60_000),
+        },
+      });
+    // Oldest active rows are invalid (a tampered platform name), so they are
+    // skipped; the valid active rows come after them on a later page.
+    await mk('a.lumitra.co', 'active', 0);
+    await mk('b.lumitra.co', 'active', 1);
+    await mk('act1.example.com', 'active', 2);
+    await mk('act2.example.com', 'active', 3);
+    await mk('ver1.example.com', 'verified', 0);
+
+    const capped = await service({ maxProxyHostnames: 2, proxyPageSize: 2 }).listProxyHostnames();
+    expect(capped).toEqual({ hostnames: ['act1.example.com', 'act2.example.com'], truncated: true });
+
+    const exact = await service({ maxProxyHostnames: 3, proxyPageSize: 2 }).listProxyHostnames();
+    expect(exact).toEqual({
+      hostnames: ['act1.example.com', 'act2.example.com', 'ver1.example.com'],
+      truncated: false,
+    });
+  });
+
+  it('concurrent adds can never exceed the workspace cap', async () => {
+    const sites = [];
+    for (let i = 0; i < 6; i += 1) sites.push(await makeSite(`dom_site_cc${i}`, 'ws_race'));
+    const attempts = sites.flatMap((site, i) =>
+      Array.from({ length: 10 }, (_, j) =>
+        service().addDomain(site, `c${i}-${j}.example.com`, CONFIG).then(
+          () => 'ok' as const,
+          (err: unknown) => (err as DomainError).code,
+        ),
+      ),
+    );
+    const results = await Promise.all(attempts);
+    expect(results.filter((r) => r === 'ok')).toHaveLength(50);
+    expect(results.filter((r) => r === 'workspace_domain_limit_reached')).toHaveLength(10);
+    expect(await prisma.siteDomain.count({ where: { workspaceId: 'ws_race' } })).toBe(50);
   });
 });

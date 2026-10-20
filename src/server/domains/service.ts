@@ -61,6 +61,9 @@ export const MAX_DOMAINS_PER_WORKSPACE = 50;
 /** The most hostnames the proxy feed returns (a backstop against runaway rows). */
 export const MAX_PROXY_HOSTNAMES = 1_000;
 
+/** Rows per page while building the proxy feed. */
+export const PROXY_PAGE_SIZE = 500;
+
 /** A live domain is re-checked when its last check is older than this. */
 export const RECHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
@@ -83,7 +86,14 @@ export interface RecheckSummary {
   transient: number;
   failing: number;
   released: number;
+  /** Writes not applied because the row changed meanwhile. */
+  skipped: number;
+  /** True when the circuit breaker held back every failure of this pass. */
+  circuitOpen: boolean;
 }
+
+/** The breaker needs at least this many rows in a pass to judge it. */
+export const RECHECK_BREAKER_MIN_CHECKED = 5;
 
 export type DomainStatus = 'pending' | 'verified' | 'active' | 'failed';
 
@@ -241,6 +251,9 @@ export interface DomainServiceDeps {
   invalidateHost?: (hostname: string) => void;
   now?: () => Date;
   mintToken?: () => string;
+  /** Test seams for the proxy feed's cap and page size. */
+  maxProxyHostnames?: number;
+  proxyPageSize?: number;
 }
 
 export class DomainService {
@@ -282,43 +295,53 @@ export class DomainService {
     const existing = await this.findBySiteAndHostname(site.id, hostname);
     if (existing) return { domain: toView(existing, config), created: false };
 
-    const count = await this.prisma.siteDomain.count({
-      where: { siteId: site.id, hostname: { not: null } },
-    });
-    if (count >= MAX_DOMAINS_PER_SITE) {
-      throw new DomainError(
-        'domain_limit_reached',
-        `A site can have at most ${MAX_DOMAINS_PER_SITE} custom domains. Disconnect one first.`,
-        409,
-      );
-    }
-    // Fairness across companies: one workspace cannot take the whole proxy
-    // feed (and the Let's Encrypt account's quota) by spreading over sites.
-    const workspaceCount = await this.prisma.siteDomain.count({
-      where: { workspaceId: site.workspaceId, hostname: { not: null } },
-    });
-    if (workspaceCount >= MAX_DOMAINS_PER_WORKSPACE) {
-      throw new DomainError(
-        'workspace_domain_limit_reached',
-        `This company already has ${MAX_DOMAINS_PER_WORKSPACE} custom domains across its sites. Disconnect one first.`,
-        409,
-      );
-    }
-
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const row = await this.prisma.siteDomain.create({
-          data: {
-            siteId: site.id,
-            workspaceId: site.workspaceId,
-            tenantGroupId: site.tenantGroupId,
-            hostname,
-            verificationToken: this.mintToken(),
-            verificationStatus: 'pending',
-            isPrimary: false,
+        const row = await this.prisma.$transaction(
+          async (tx) => {
+            // Count-then-create runs under a per-workspace advisory lock (held
+            // until the transaction ends), so two concurrent adds can never
+            // both pass the caps. A site belongs to one workspace, so the same
+            // lock also serializes the per-site cap.
+            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`site_domains:${site.workspaceId}`}))::text AS locked`;
+            const count = await tx.siteDomain.count({
+              where: { siteId: site.id, hostname: { not: null } },
+            });
+            if (count >= MAX_DOMAINS_PER_SITE) {
+              throw new DomainError(
+                'domain_limit_reached',
+                `A site can have at most ${MAX_DOMAINS_PER_SITE} custom domains. Disconnect one first.`,
+                409,
+              );
+            }
+            // Fairness across companies: one workspace cannot take the whole
+            // proxy feed (and the Let's Encrypt account's quota) by spreading
+            // over sites.
+            const workspaceCount = await tx.siteDomain.count({
+              where: { workspaceId: site.workspaceId, hostname: { not: null } },
+            });
+            if (workspaceCount >= MAX_DOMAINS_PER_WORKSPACE) {
+              throw new DomainError(
+                'workspace_domain_limit_reached',
+                `This company already has ${MAX_DOMAINS_PER_WORKSPACE} custom domains across its sites. Disconnect one first.`,
+                409,
+              );
+            }
+            return tx.siteDomain.create({
+              data: {
+                siteId: site.id,
+                workspaceId: site.workspaceId,
+                tenantGroupId: site.tenantGroupId,
+                hostname,
+                verificationToken: this.mintToken(),
+                verificationStatus: 'pending',
+                isPrimary: false,
+              },
+              select: ROW_SELECT,
+            });
           },
-          select: ROW_SELECT,
-        });
+          { maxWait: 10_000, timeout: 15_000 },
+        );
         return { domain: toView(row, config), created: true };
       } catch (err) {
         if (!isUniqueViolation(err)) throw err;
@@ -408,36 +431,39 @@ export class DomainService {
    */
   async listProxyHostnames(): Promise<ProxyHostnameList> {
     const zones = platformZones();
+    const cap = this.deps.maxProxyHostnames ?? MAX_PROXY_HOSTNAMES;
+    const pageSize = this.deps.proxyPageSize ?? PROXY_PAGE_SIZE;
     const names: string[] = [];
     const seen = new Set<string>();
-    let truncated = false;
+    // Pages through each status until the cap is full or the rows run out, so
+    // rows skipped by the hostname check can never let a verified domain take
+    // the place of an active one. Once the cap is full, the scan continues only
+    // until it finds ONE more valid hostname: `truncated` is then exact.
     for (const status of ['active', 'verified'] as const) {
-      const remaining = MAX_PROXY_HOSTNAMES - names.length;
-      const rows = await this.prisma.siteDomain.findMany({
-        where: { customHostname: { not: null }, verificationStatus: status },
-        select: { customHostname: true },
-        orderBy: [{ verifiedAt: 'asc' }, { customHostname: 'asc' }],
-        // One extra row tells whether the cap cut the list.
-        take: remaining + 1,
-      });
-      for (const row of rows) {
-        const name = row.customHostname;
-        if (!name || seen.has(name) || !isClaimableHostname(name, zones)) continue;
-        if (names.length >= MAX_PROXY_HOSTNAMES) {
-          truncated = true;
-          break;
+      for (let skip = 0; ; skip += pageSize) {
+        const rows = await this.prisma.siteDomain.findMany({
+          where: { customHostname: { not: null }, verificationStatus: status },
+          select: { customHostname: true },
+          orderBy: [{ verifiedAt: 'asc' }, { id: 'asc' }],
+          skip,
+          take: pageSize,
+        });
+        for (const row of rows) {
+          const name = row.customHostname;
+          if (!name || seen.has(name) || !isClaimableHostname(name, zones)) continue;
+          if (names.length >= cap) {
+            console.error(
+              `[domains] the proxy feed reached its cap of ${cap} hostnames; the newest verified domains get no route until some are removed`,
+            );
+            return { hostnames: names, truncated: true };
+          }
+          seen.add(name);
+          names.push(name);
         }
-        seen.add(name);
-        names.push(name);
+        if (rows.length < pageSize) break;
       }
-      if (truncated) break;
     }
-    if (truncated) {
-      console.error(
-        `[domains] the proxy feed reached its cap of ${MAX_PROXY_HOSTNAMES} hostnames; the newest verified domains get no route until some are removed`,
-      );
-    }
-    return { hostnames: names, truncated };
+    return { hostnames: names, truncated: false };
   }
 
   /**
@@ -469,59 +495,147 @@ export class DomainService {
       take: RECHECK_BATCH_SIZE,
       select: ROW_SELECT,
     });
-    const summary: RecheckSummary = { checked: 0, ok: 0, transient: 0, failing: 0, released: 0 };
+    const summary: RecheckSummary = {
+      checked: rows.length,
+      ok: 0,
+      transient: 0,
+      failing: 0,
+      released: 0,
+      skipped: 0,
+      circuitOpen: false,
+    };
     const dns = this.deps.dns ?? createDnsLookup(config);
+
+    // Phase 1: look everything up, write nothing.
+    type Outcome =
+      | { kind: 'mismatch' }
+      | { kind: 'error' }
+      | { kind: 'check'; check: Awaited<ReturnType<typeof checkDomainDns>> };
+    const outcomes: Outcome[] = [];
     for (const row of rows) {
-      summary.checked += 1;
-      const hostname = row.hostname as string;
-      if (row.customHostname !== hostname) continue;
+      if (row.customHostname !== row.hostname) {
+        outcomes.push({ kind: 'mismatch' });
+        continue;
+      }
       try {
         const check = await checkDomainDns({
-          hostname,
+          hostname: row.hostname as string,
           token: row.verificationToken ?? '',
           requireTxt: false,
           config,
           dns,
         });
+        outcomes.push({ kind: 'check', check });
+      } catch (err) {
+        console.error(`[domains] re-check of ${row.hostname} failed:`, err);
+        outcomes.push({ kind: 'error' });
+      }
+    }
+
+    // Circuit breaker: when most of a pass fails definitively, the likeliest
+    // cause is OUR side (a wrong CUSTOM_DOMAIN_TARGET_* value, a broken
+    // resolver), not dozens of customers changing DNS at once. Then no failure
+    // is counted, so a misconfiguration can never release every domain.
+    const definitive = outcomes.filter(
+      (o) => o.kind === 'check' && !o.check.ok && !o.check.transient,
+    ).length;
+    if (rows.length >= RECHECK_BREAKER_MIN_CHECKED && definitive * 2 > rows.length) {
+      summary.circuitOpen = true;
+      console.error(
+        `[domains] RE-CHECK CIRCUIT OPEN: ${definitive} of ${rows.length} live domains failed definitively in one pass; no failure was counted. Check CUSTOM_DOMAIN_TARGET_HOST / CUSTOM_DOMAIN_TARGET_IPV4 / CUSTOM_DOMAIN_TARGET_IPV6 and the resolver.`,
+      );
+    }
+
+    // Phase 2: record, each write guarded on the row as it was read, so a
+    // concurrent verify, disconnect, claim move or overlapping pass is never
+    // overwritten (nothing matched: skipped, the newer state wins).
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      const outcome = outcomes[i];
+      const hostname = row.hostname as string;
+      try {
+        if (outcome.kind === 'mismatch' || outcome.kind === 'error') {
+          // Stamp the check so a broken row cannot hold a batch slot forever.
+          await this.guardedRecheckWrite(row, { lastCheckedAt: now }, summary);
+          summary.transient += outcome.kind === 'error' ? 1 : 0;
+          continue;
+        }
+        const { check } = outcome;
         if (check.ok) {
-          await this.probeAndRecord(row, hostname, now, config);
-          summary.ok += 1;
+          const data = await this.probeData(row, hostname, now, config);
+          if (await this.guardedRecheckWrite(row, data, summary)) summary.ok += 1;
           continue;
         }
         if (check.transient) {
-          await this.prisma.siteDomain.update({
-            where: { id: row.id },
-            data: { lastCheckedAt: now, lastErrorCode: check.code, lastError: check.message },
-          });
-          summary.transient += 1;
+          if (
+            await this.guardedRecheckWrite(
+              row,
+              { lastCheckedAt: now, lastErrorCode: check.code, lastError: check.message },
+              summary,
+            )
+          ) {
+            summary.transient += 1;
+          }
           continue;
         }
+        if (summary.circuitOpen) continue; // counted nothing, retried next pass
         const failures = row.consecutiveFailures + 1;
         if (failures >= RECHECK_RELEASE_AFTER) {
-          await this.recordFailure(row, true, now, config, {
-            code: check.code,
-            message: `${check.message} (Checked ${failures} times in a row, so the domain was disconnected from the site. Fix the record and verify again.)`,
-          });
-          summary.released += 1;
-        } else {
-          await this.prisma.siteDomain.update({
-            where: { id: row.id },
-            data: {
+          const released = await this.guardedRecheckWrite(
+            row,
+            this.failureData(now, true, {
+              code: check.code,
+              message: `${check.message} (Checked ${failures} times in a row, so the domain was disconnected from the site. Fix the record and verify again.)`,
+            }),
+            summary,
+          );
+          if (released) {
+            this.invalidateHost(hostname);
+            summary.released += 1;
+          }
+        } else if (
+          await this.guardedRecheckWrite(
+            row,
+            {
               consecutiveFailures: failures,
               lastCheckedAt: now,
               lastErrorCode: check.code,
               lastError: `${check.message} (Failed check ${failures} of ${RECHECK_RELEASE_AFTER}; the domain keeps serving until then.)`,
             },
-          });
+            summary,
+          )
+        ) {
           summary.failing += 1;
         }
       } catch (err) {
         // One broken row must not stop the pass; it is retried next time.
-        console.error(`[domains] re-check of ${hostname} failed:`, err);
-        summary.transient += 1;
+        console.error(`[domains] recording the re-check of ${hostname} failed:`, err);
       }
     }
     return summary;
+  }
+
+  /**
+   * One re-check write, applied only if the row is still exactly as it was
+   * read (id, live claim, status, failure counter). Returns whether it applied;
+   * a miss is counted as skipped.
+   */
+  private async guardedRecheckWrite(
+    row: DomainRow,
+    data: Prisma.SiteDomainUpdateManyMutationInput,
+    summary: RecheckSummary,
+  ): Promise<boolean> {
+    const result = await this.prisma.siteDomain.updateMany({
+      where: {
+        id: row.id,
+        customHostname: row.customHostname,
+        verificationStatus: row.verificationStatus as DomainStatus,
+        consecutiveFailures: row.consecutiveFailures,
+      },
+      data,
+    });
+    if (result.count === 0) summary.skipped += 1;
+    return result.count > 0;
   }
 
   // --- internals ------------------------------------------------------------
@@ -592,48 +706,64 @@ export class DomainService {
     now: Date,
     config: CustomDomainConfig,
   ): Promise<DomainView> {
+    const updated = await this.prisma.siteDomain.update({
+      where: { id: row.id },
+      data: await this.probeData(row, hostname, now, config),
+      select: ROW_SELECT,
+    });
+    return toView(updated, config);
+  }
+
+  /** The write after DNS passed: probe the certificate, decide verified or active. */
+  private async probeData(
+    row: DomainRow,
+    hostname: string,
+    now: Date,
+    config: CustomDomainConfig,
+  ): Promise<Prisma.SiteDomainUpdateManyMutationInput> {
     if (!config.tlsProbe) {
-      const updated = await this.prisma.siteDomain.update({
-        where: { id: row.id },
-        data: { lastCheckedAt: now, lastErrorCode: null, lastError: null, consecutiveFailures: 0 },
-        select: ROW_SELECT,
-      });
-      return toView(updated, config);
+      return { lastCheckedAt: now, lastErrorCode: null, lastError: null, consecutiveFailures: 0 };
     }
     const probe = this.deps.probe ?? probeCertificate;
     const result = await probe(hostname, config.ipv4[0]);
-    const wasActive = row.verificationStatus === 'active';
     if (result.ok) {
-      const updated = await this.prisma.siteDomain.update({
-        where: { id: row.id },
-        data: {
-          verificationStatus: 'active',
-          activatedAt: row.activatedAt ?? now,
-          lastCheckedAt: now,
-          lastErrorCode: null,
-          lastError: null,
-          consecutiveFailures: 0,
-        },
-        select: ROW_SELECT,
-      });
-      return toView(updated, config);
+      return {
+        verificationStatus: 'active',
+        activatedAt: row.activatedAt ?? now,
+        lastCheckedAt: now,
+        lastErrorCode: null,
+        lastError: null,
+        consecutiveFailures: 0,
+      };
     }
     // DNS is fine; the certificate is not (yet). A verified domain waits for
     // it; an active one keeps serving and gets the warning (a probe hiccup must
     // not take a live domain down, the DNS check is what decides that).
-    const updated = await this.prisma.siteDomain.update({
-      where: { id: row.id },
-      data: {
-        lastCheckedAt: now,
-        consecutiveFailures: 0,
-        lastErrorCode: wasActive ? 'certificate_check_failed' : 'certificate_pending',
-        lastError: wasActive
-          ? `DNS is correct, but the certificate check failed (${result.reason}). The domain keeps serving; check again in a few minutes.`
-          : `DNS is verified. The certificate is being issued (${result.reason}); this usually takes a minute or two. Check again shortly.`,
-      },
-      select: ROW_SELECT,
-    });
-    return toView(updated, config);
+    const wasActive = row.verificationStatus === 'active';
+    return {
+      lastCheckedAt: now,
+      consecutiveFailures: 0,
+      lastErrorCode: wasActive ? 'certificate_check_failed' : 'certificate_pending',
+      lastError: wasActive
+        ? `DNS is correct, but the certificate check failed (${result.reason}). The domain keeps serving; check again in a few minutes.`
+        : `DNS is verified. The certificate is being issued (${result.reason}); this usually takes a minute or two. Check again shortly.`,
+    };
+  }
+
+  /** The write for a definitive failure (releasing the live claim if held). */
+  private failureData(
+    now: Date,
+    holdsClaim: boolean,
+    failure: { code: string; message: string },
+  ): Prisma.SiteDomainUpdateManyMutationInput {
+    return {
+      verificationStatus: 'failed',
+      lastCheckedAt: now,
+      lastErrorCode: failure.code,
+      lastError: failure.message,
+      consecutiveFailures: 0,
+      ...(holdsClaim ? { customHostname: null, activatedAt: null } : {}),
+    };
   }
 
   private async recordFailure(
@@ -645,14 +775,7 @@ export class DomainService {
   ): Promise<DomainView> {
     const updated = await this.prisma.siteDomain.update({
       where: { id: row.id },
-      data: {
-        verificationStatus: 'failed',
-        lastCheckedAt: now,
-        lastErrorCode: failure.code,
-        lastError: failure.message,
-        consecutiveFailures: 0,
-        ...(holdsClaim ? { customHostname: null, activatedAt: null } : {}),
-      },
+      data: this.failureData(now, holdsClaim, failure),
       select: ROW_SELECT,
     });
     if (holdsClaim && row.hostname) this.invalidateHost(row.hostname);
