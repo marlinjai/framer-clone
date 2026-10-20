@@ -23,6 +23,7 @@ import { useRouter } from 'next/navigation';
 import { useStore } from '@/hooks/useStore';
 import { getHistoryStore } from '@/stores/RootStore';
 import PublishButton from '@/components/PublishButton';
+import DomainsButton from '@/components/domains/DomainsButton';
 import SaveButton from '@/components/SaveButton';
 
 function relativeTime(ts: number, now: number): string {
@@ -204,6 +205,9 @@ const TopBar = observer(() => {
       {/* Publish: the primary rightward action. Serializes the live project
           and pushes it live via the admin-guarded publish endpoint. */}
       <PublishButton />
+
+      {/* Domains: connect a custom domain to this project (its own dialog). */}
+      <DomainsButton />
 
       {/* Preview entry — sits just before the undo/redo cluster so it's
           visually grouped with the other rightward actions. */}
