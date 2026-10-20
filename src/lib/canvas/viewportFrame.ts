@@ -80,3 +80,55 @@ export function frameHeightsKey(
   if (!viewportNodes) return '';
   return viewportNodes.map(v => `${v.id}:${v.renderedViewportHeight ?? ''}`).join('|');
 }
+
+export interface ScreenRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Intersects an element's screen rect with its frame's clipping rect. A frame
+ * clips its content (wide content on the sides, positioned content anywhere),
+ * so a selection overlay must not outline the clipped-away part. Returns null
+ * when the element is clipped away entirely.
+ */
+export function clipRectToFrame(rect: ScreenRect, frame: ScreenRect | null): ScreenRect | null {
+  if (!frame) return rect;
+  const left = Math.max(rect.left, frame.left);
+  const top = Math.max(rect.top, frame.top);
+  const right = Math.min(rect.left + rect.width, frame.left + frame.width);
+  const bottom = Math.min(rect.top + rect.height, frame.top + frame.height);
+  if (right <= left || bottom <= top) return null;
+  return { left, top, width: right - left, height: bottom - top };
+}
+
+/** Screen rect of an element inside a frame, clipped to what the frame shows. */
+export function visibleRectInFrame(el: Element): ScreenRect | null {
+  const frame = el.closest('[data-viewport-content-id]');
+  return clipRectToFrame(el.getBoundingClientRect(), frame ? frame.getBoundingClientRect() : null);
+}
+
+/**
+ * The viewport properties a frame resize gesture writes on one move.
+ *
+ * The gesture starts from the frame's rendered height (its minimum grown to
+ * the content), so the height is written as the new minimum ONLY when the
+ * gesture is vertical and actually moved the edge. A width-only drag, or a
+ * corner drag that stayed level, leaves the stored minimum alone; otherwise it
+ * would silently freeze the current content height as the minimum and the
+ * frame could never shrink back.
+ */
+export function viewportResizeUpdate(input: {
+  newWidth: number;
+  newHeight: number;
+  startHeight: number;
+  vertical: boolean;
+}): { viewportWidth: number; viewportHeight?: number } {
+  const viewportWidth = Math.round(input.newWidth);
+  const heightMoved = Math.round(input.newHeight) !== Math.round(input.startHeight);
+  return input.vertical && heightMoved
+    ? { viewportWidth, viewportHeight: Math.round(input.newHeight) }
+    : { viewportWidth };
+}

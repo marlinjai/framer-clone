@@ -5,6 +5,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 
 import { useStore } from '@/hooks/useStore';
+import { visibleRectInFrame } from '@/lib/canvas/viewportFrame';
 
 interface SecondarySelectionOverlaysProps {
   isVisible: boolean;
@@ -49,8 +50,9 @@ const SecondarySelectionOverlays = observer(({ isVisible }: SecondarySelectionOv
         const domId = `${bp.id}-${selectedComponent.id}`;
         const el = document.querySelector<HTMLElement>(`[data-component-id="${domId}"]`);
         if (el) {
-          const rect = el.getBoundingClientRect();
-          next.push({ left: rect.left, top: rect.top, width: rect.width, height: rect.height, breakpoint: bp });
+          // Clipped to the frame, which hides content outside it.
+          const rect = visibleRectInFrame(el);
+          if (rect) next.push({ left: rect.left, top: rect.top, width: rect.width, height: rect.height, breakpoint: bp });
         }
       }
       setBoxes(next);

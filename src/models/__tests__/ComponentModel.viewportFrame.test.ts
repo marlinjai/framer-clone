@@ -58,9 +58,18 @@ describe('viewport frame height', () => {
     expect(snap.viewportHeight).toBe(800);
   });
 
-  it('the stored viewport style describes a minimum height, not a fixed one', () => {
+  it('the stored viewport style mirrors the canvas frame: a minimum height, not a fixed one', () => {
     const style = desktop().props.style;
     expect(style.minHeight).toBe('800px');
     expect(style.height).toBeUndefined();
+  });
+
+  it('a cancelled resize restores the stored minimum exactly, including none', () => {
+    const vp = desktop();
+    vp.setViewportProperties({ viewportHeight: 2600 });
+    vp.restoreViewportHeight(800);
+    expect(vp.viewportHeight).toBe(800);
+    vp.restoreViewportHeight(undefined);
+    expect(vp.viewportHeight).toBeUndefined();
   });
 });

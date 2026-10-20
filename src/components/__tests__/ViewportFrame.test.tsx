@@ -109,7 +109,10 @@ describe('ViewportFrame', () => {
     expect(screen.getByTestId('viewport-frame-size').textContent).toBe('1280×800');
   });
 
-  it('100%-height content cannot feed back: the frame CSS ignores the measurement', () => {
+  // jsdom cannot lay out a `height: 100%` root; that it sits at the minimum
+  // instead of growing the frame was checked in real Chrome (see the pull
+  // request). Here: no code path feeds the measured height back into CSS.
+  it('the frame CSS ignores the measured height (no feedback path)', () => {
     const vp = createViewportNode('vp-p', 'bp-p', 'Phone', 320, 2248, 100, 375, 667);
     renderFrame(vp);
     const content = () => document.querySelector('[data-viewport-content-id="vp-p"]') as HTMLElement;

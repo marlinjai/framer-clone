@@ -2,7 +2,7 @@
 // High-performance component selection overlay using TransformContext subscription
 'use client';
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { frameHeightsKey } from '@/lib/canvas/viewportFrame';
+import { frameHeightsKey, viewportResizeUpdate, visibleRectInFrame } from '@/lib/canvas/viewportFrame';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 import { useTransformContext } from '@/contexts/TransformContext';
@@ -192,8 +192,12 @@ const HudSurface = observer(() => {
       const secondaryInstances = getSecondaryRenderInstances(crossViewportSelection);
 
       // Primary highlight (where selection happened)
-      if (primaryInstance?.domElement) {
-        const rect = primaryInstance.domElement.getBoundingClientRect();
+      // Clipped to the frame: the frame hides content outside it, so the
+      // overlay must not outline what is not shown (and is hidden when the
+      // element is clipped away entirely).
+      const primaryRect = primaryInstance?.domElement ? visibleRectInFrame(primaryInstance.domElement) : null;
+      if (primaryInstance?.domElement && primaryRect) {
+        const rect = primaryRect;
         const x = rect.left - 2;
         const y = rect.top - 2;
 
@@ -206,6 +210,7 @@ const HudSurface = observer(() => {
 
         console.log('🎯 HudSurface: Primary highlight positioned for component:', primaryInstance.componentId, 'in breakpoint:', primaryInstance.breakpointId);
       } else {
+        primaryOverlay.style.display = 'none';
         hideRadiusHandles();
       }
 
@@ -218,7 +223,8 @@ const HudSurface = observer(() => {
         secondaryInstances.forEach((instance, index) => {
           if (!instance.domElement) return;
 
-          const rect = instance.domElement.getBoundingClientRect();
+          const rect = visibleRectInFrame(instance.domElement);
+          if (!rect) return; // clipped away entirely in that frame
           const x = rect.left - 2;
           const y = rect.top - 2;
 
@@ -246,8 +252,9 @@ const HudSurface = observer(() => {
         `[data-component-id="${primaryComponentId}"]`
       ) as HTMLElement;
 
-      if (primaryElement) {
-        const rect = primaryElement.getBoundingClientRect();
+      const primaryRect = primaryElement ? visibleRectInFrame(primaryElement) : null;
+      if (primaryElement && primaryRect) {
+        const rect = primaryRect;
         const x = rect.left - 2;
         const y = rect.top - 2;
 
@@ -263,6 +270,13 @@ const HudSurface = observer(() => {
           secondaryOverlaysContainer.style.display = 'none';
         }
 
+        return;
+      }
+      if (primaryElement) {
+        // Selected element is clipped away entirely by its frame: no overlay.
+        primaryOverlay.style.display = 'none';
+        hideRadiusHandles();
+        if (secondaryOverlaysContainer) secondaryOverlaysContainer.style.display = 'none';
         return;
       }
     }
@@ -535,10 +549,12 @@ const HudSurface = observer(() => {
           });
         }
       } else if (kind === 'viewport') {
-        target!.setViewportProperties({
-          viewportWidth: widthPx,
-          viewportHeight: heightPx,
-        });
+        target!.setViewportProperties(viewportResizeUpdate({
+          newWidth,
+          newHeight,
+          startHeight,
+          vertical: isTop || isBottom,
+        }));
       }
 
       // Keep the overlay glued to the resized target without waiting for React.
@@ -554,10 +570,9 @@ const HudSurface = observer(() => {
         target!.updateResponsiveStyle('height', `${Math.round(startHeight)}px`);
         target!.updateCanvasTransform({ x: startCanvasPos.x, y: startCanvasPos.y });
       } else if (kind === 'viewport') {
-        target!.setViewportProperties({
-          viewportWidth: Math.round(startWidth),
-          viewportHeight: startMinHeight !== undefined ? startMinHeight : Math.round(startHeight),
-        });
+        // Restore the stored minimum exactly; a node that had none keeps none.
+        target!.setViewportProperties({ viewportWidth: Math.round(startWidth) });
+        target!.restoreViewportHeight(startMinHeight);
       }
       updateOverlayPosition();
     };

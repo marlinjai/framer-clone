@@ -183,6 +183,12 @@ const ComponentModel: any = ComponentBase
       if (updates.viewportHeight !== undefined) self.viewportHeight = updates.viewportHeight;
     },
     
+    // Put back a frame's stored minimum height exactly as it was, including
+    // "none" (undefined); used when a frame resize gesture is cancelled.
+    restoreViewportHeight(height: number | undefined) {
+      self.viewportHeight = height;
+    },
+
     // Universal label setter for all component types
     setLabel(label: string) {
       self.label = label;
