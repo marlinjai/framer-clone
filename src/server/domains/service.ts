@@ -578,7 +578,12 @@ export class DomainService {
           }
           continue;
         }
-        if (summary.circuitOpen) continue; // counted nothing, retried next pass
+        if (summary.circuitOpen) {
+          // Count nothing, but move the row to the back of the queue so a
+          // cluster of genuine failures cannot hold every batch slot forever.
+          await this.guardedRecheckWrite(row, { lastCheckedAt: now }, summary);
+          continue;
+        }
         const failures = row.consecutiveFailures + 1;
         if (failures >= RECHECK_RELEASE_AFTER) {
           const released = await this.guardedRecheckWrite(

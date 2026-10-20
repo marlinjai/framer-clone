@@ -82,6 +82,9 @@ TOKEN_OWNER_UID="${TOKEN_OWNER_UID:-0}"
 if ! [[ "$TRAEFIK_SERVICE" =~ ^[A-Za-z0-9._-]+@[a-z]+$ ]]; then
   log "TRAEFIK_SERVICE has an unexpected shape, refusing"; exit 2
 fi
+if [[ "$TRAEFIK_SERVICE" == REPLACE_WITH_* ]]; then
+  log "TRAEFIK_SERVICE is still the unit's placeholder, refusing"; exit 2
+fi
 if ! [[ "$CERT_RESOLVER" =~ ^[A-Za-z0-9_-]+$ ]]; then
   log "CERT_RESOLVER has an unexpected shape, refusing"; exit 2
 fi

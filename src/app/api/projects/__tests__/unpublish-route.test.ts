@@ -201,6 +201,17 @@ describe('POST /api/projects/unpublish (authorized)', () => {
     expect(vi.mocked(revalidateCustomHostsForSiteId)).toHaveBeenCalledWith('site_1');
   });
 
+  it('reports a failed custom-domain revalidation so the caller retries', async () => {
+    installRepo({ unpublishProject: vi.fn().mockResolvedValue(undefined) });
+    resolveSubdomainMock.mockResolvedValue(null);
+    vi.mocked(revalidateCustomHostsForSiteId).mockRejectedValueOnce(new Error('db hiccup'));
+
+    const res = await POST(unpublishReq({ siteId: 'site_1' }));
+
+    expect(res.status).toBe(500);
+    expect((await res.json()).error.code).toBe('unpublish_failed');
+  });
+
   it('does not revalidate when the site has no allocated subdomain', async () => {
     installRepo({ unpublishProject: vi.fn().mockResolvedValue(undefined) });
     resolveSubdomainMock.mockResolvedValue(null);

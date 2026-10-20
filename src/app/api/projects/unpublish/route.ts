@@ -99,12 +99,10 @@ async function handlePOST(req: Request): Promise<Response> {
     if (subdomain) revalidateSiteCache(subdomain);
     // Its custom domains too: an unpublished site must stop serving on every
     // host at once, never linger on a connected domain from cache.
-    // The write already committed: a failure to read the site's hosts here must
-    // not turn it into a reported failure. Logged; those hosts catch up within
-    // the 30 s miss TTL or on the next publish.
-    await revalidateCustomHostsForSiteId(siteId).catch((err: unknown) => {
-      console.error('[sites] custom-domain cache revalidation failed for ' + siteId, err);
-    });
+    // Cached custom-host hits never expire on their own, so a failure here
+    // would leave the unpublished site live on its custom domains. Unpublish is
+    // idempotent: surface the failure so the caller retries.
+    await revalidateCustomHostsForSiteId(siteId);
   } catch (err) {
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
     return jsonError(
