@@ -2,7 +2,6 @@
 type: plan
 status: in-progress
 date: 2026-06-25
-decided: 2026-10-19
 title: Framer-clone custom domains (B): connect a customer-owned domain to a published site
 summary: The "Option B" upgrade over the demo's default subdomain hosting (Option A). Let a site owner connect their own domain (demo-custom-domain.com) to a published framer-clone site, with domain-control validation, automatic per-domain TLS, and an in-editor onboarding flow. The host-aware routing and the SiteDomain.customHostname model already exist; this plan wires resolution, certs, and UX on top. Background work, sequenced AFTER the hosted-demo (Option A) is live.
 tags: [framer-clone, custom-domains, hosting, tls, dcv, multi-tenant, north-star]
@@ -121,3 +120,62 @@ exact DNS records to add, poll for verification, flip to `verified`, then trigge
   business model). This plan is the framer-clone-side detail for the custom-domain half of it.
 - Shipped foundation: PRs #37 (commerce read repo), #38 (content agent), #39 (publish write), #40 (SSR
   render layer), #41 (host-aware root routing), #36 (CI integration tests).
+
+## Reality and decisions (2026-10-19)
+
+Marlin decided on 2026-10-19 to build this. Built on branch `feat/custom-domains`. What was built,
+and the decisions taken on the way (decided, say so if you disagree):
+
+**Data.** Custom domains are extra rows in `site_domains` (migration `20261019000000_custom_domains`,
+additive). `hostname` is what the owner asked for (not unique), `custom_hostname` is the live claim
+(unique, set only after verification), `verification_token` is minted per claim (32 random bytes,
+unique index, never reused), plus check timestamps and the last error. New status `verified`
+(ownership and routing proven, certificate pending) between `pending` and `active`.
+
+**Decisions.**
+- *A pending claim never reserves a hostname.* Otherwise anyone could block a domain by adding it
+  first. Several sites may hold pending claims; the one that proves DNS control takes the live claim.
+- *The latest DNS proof wins.* If a domain verified for site A is verified again with a fresh token
+  for site B, the claim moves to B in one transaction and A shows "claimed elsewhere". Only the
+  domain's DNS owner can publish the token, so this is the DNS owner deciding (Vercel does the same).
+- *Ownership is TXT plus routing.* TXT `_lumitra-verify.<host>` = `lumitra-verify=<token>` proves
+  control; a CNAME to the platform target, or A records that are all platform IPv4 addresses (apex),
+  proves routing. A stray AAAA blocks verification with a clear message (Let's Encrypt prefers IPv6).
+  Re-checking a live domain needs routing only, so removing the TXT later does not take it down.
+- *Cloudflare-proxied customer records are refused* (they resolve to Cloudflare addresses): the
+  message tells the owner to set the record to DNS only. Supporting proxied customer domains is
+  Cloudflare for SaaS territory, still out of scope.
+- *Transient DNS failures change nothing.* Timeouts and server failures only update the note; a
+  definitive failure on a live domain removes the claim and stops serving.
+- *`active` means a trusted certificate answered.* The app opens TLS to the platform's own IPv4 with
+  the domain as server name (never to whatever the domain resolves to, so no request forgery).
+- *Unpublished sites keep their proxy routes and certificates*, so publish and unpublish never spend
+  Let's Encrypt quota; the resolver alone decides whether a site is served.
+- *At most 10 custom domains per site*, 1000 hostnames in the proxy feed.
+
+**TLS on Traefik: pull, not push.** The June options (Coolify per-host labels, Cloudflare for SaaS)
+were replaced by Traefik's file provider on the shared server, which watches
+`/data/coolify/proxy/dynamic/`. The app never writes proxy configuration: it serves the verified
+hostnames as plain-text data on `GET /api/internal/custom-domains/hostnames` (editor host only,
+bearer token `CUSTOM_DOMAIN_SYNC_TOKEN`, constant-time comparison, 503 when unset). The host script
+`deploy/custom-domains/sync-traefik.sh` (systemd timer, every minute) re-validates every line with its
+own strict rule, caps the count, writes one http-to-https redirect router and one https router with
+`certResolver: letsencrypt` per hostname, keeps the current file when the feed fails, and renames
+atomically only on change. Rejected: mounting the proxy directory into the app container (the app
+could write any router), and Traefik's HTTP provider pointed at the app (same problem).
+
+**Resolution and cache.** `hostLookupKeys` in `publicResolver.ts`: a host under the base host is a
+subdomain, any other host that passes the hostname contract (`src/server/domains/hostname.ts`) is a
+custom hostname, served only while `verified` or `active` on a published site. The origin cache keeps
+its rules under the `site-host:<hostname>` tag; verify, claim loss and disconnect revalidate the host,
+publish and unpublish revalidate every host of the site.
+
+**Editor.** A Domains button in the top bar opens the panel (add, records with copy buttons, verify,
+status, disconnect). Routes under `/api/projects/<id>/domains` use the editor guard chain (editor
+host, session, `sites` grant, tenant group, `viewSite` / `manageDomain`, 503 on outages).
+
+**Open until the infra change is applied** (steps for `infra/deployments/framer-clone/RUNBOOK.md`,
+not applied by the build session): a DNS-only `domains.lumitra.co` A record, the five
+`CUSTOM_DOMAIN_*` values and the sync token in Infisical, the token header file and the systemd
+units on the server, a check that the proxy's file provider watches `/data/coolify/proxy/dynamic/`,
+then one real domain end to end.
