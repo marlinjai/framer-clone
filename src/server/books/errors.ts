@@ -7,7 +7,7 @@
 //
 // Trigger errors from 007_books and 009_books_import are mapped by SQLSTATE
 // (BK001 -> NOT_DRAFT, BK004 -> INVALID_TRANSITION, BK005 -> TOTALS_MISMATCH,
-// BK007 -> IMPORT_INCOMPLETE, BK008 -> INVALID_LINE); every other database error propagates
+// BK007 -> IMPORT_INCOMPLETE, BK008 -> INVALID_LINE, BK009 -> CURRENCY_NOT_SUPPORTED); every other database error propagates
 // unchanged. Errors surface, never swallowed.
 
 export type BooksErrorCode =
@@ -53,7 +53,8 @@ export type BooksErrorCode =
   | 'IMPORT_INCOMPLETE'
   | 'IMPORT_COUNTER_TOO_LOW'
   | 'RECIPIENT_AMBIGUOUS'
-  | 'IMPORT_FAILED';
+  | 'IMPORT_FAILED'
+  | 'CURRENCY_NOT_SUPPORTED';
 
 export class BooksError extends Error {
   readonly code: BooksErrorCode;
@@ -100,6 +101,7 @@ const TRIGGER_CODES: Record<string, BooksErrorCode> = {
   BK005: 'TOTALS_MISMATCH',
   BK007: 'IMPORT_INCOMPLETE',
   BK008: 'INVALID_LINE',
+  BK009: 'CURRENCY_NOT_SUPPORTED',
 };
 
 /**

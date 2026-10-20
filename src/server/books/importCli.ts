@@ -45,6 +45,7 @@ import {
   checkImportCounter,
   existingInvoice,
   importedCancelled,
+  isIsoCurrency,
   importedYearTotals,
   importHistoricalInvoice,
   MAX_CENTS,
@@ -171,8 +172,17 @@ export type PlanIssue = { kind: 'skipped' | 'error'; reason: string };
 
 /** What the plan holds for one number. */
 export type PlannedInvoice =
-  | { number: number; issueDate: string | null; total: number | null; otherFiles: number; issue: PlanIssue }
-  | { number: number; issueDate: string; total: number; otherFiles: number; issue: null; record: HistoricalInvoice; pdf: Uint8Array };
+  | { number: number; issueDate: string | null; total: number | null; currency: string | null; otherFiles: number; issue: PlanIssue }
+  | {
+      number: number;
+      issueDate: string;
+      total: number;
+      currency: string;
+      otherFiles: number;
+      issue: null;
+      record: HistoricalInvoice;
+      pdf: Uint8Array;
+    };
 
 const LEGAL_FORM = /(^|[\s,(])(GmbH|gGmbH|mbH|UG|AG|SE|KG|KGaA|OHG|GbR|PartG|PartGmbB|eG|e\.\s?V\.|e\.\s?K\.|Ltd\.?|LLC|Inc\.?|S\.A\.|S\.L\.|B\.V\.|N\.V\.|S\.r\.l\.|Sp\. z o\.o\.)(?=$|[\s,.)])/;
 
@@ -291,6 +301,14 @@ export function servicePeriodOf(value: unknown): { start: string; end: string } 
   const start = 'start' in p.data ? p.data.start : p.data.from;
   const end = 'end' in p.data ? p.data.end : p.data.to;
   return isIsoDate(start) && isIsoDate(end) && start <= end ? { start, end } : null;
+}
+
+/** The printed currency as an ISO 4217 code ("EUR", "chf", "€" for EUR); null when it is none. */
+export function currencyCode(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const v = value.trim().toUpperCase();
+  const code = v === '€' ? 'EUR' : v;
+  return isIsoCurrency(code) ? code : null;
 }
 
 /** The country prefixes of EU VAT ids (Greece is EL, Northern Ireland XI). */
@@ -458,7 +476,8 @@ export function planInvoice(
   now: Date = new Date(),
 ): PlannedInvoice {
   const parsed = rawInvoiceSchema.safeParse(rawValue);
-  const loose = (rawValue ?? {}) as { issueDate?: unknown; total?: unknown; otherFiles?: unknown };
+  const loose = (rawValue ?? {}) as { issueDate?: unknown; total?: unknown; otherFiles?: unknown; currency?: unknown };
+  const currency = currencyCode(loose.currency);
   const issueDate = typeof loose.issueDate === 'string' && isIsoDate(loose.issueDate) ? loose.issueDate : null;
   const totalCents = typeof loose.total === 'number' ? scaled(loose.total, 100) : null;
   const otherFiles = Array.isArray(loose.otherFiles) ? loose.otherFiles.length : 0;
@@ -466,6 +485,7 @@ export function planInvoice(
     number,
     issueDate,
     total: totalCents,
+    currency,
     otherFiles,
     issue: { kind, reason },
   });
@@ -485,7 +505,8 @@ export function planInvoice(
   // Then consistency.
   if (!issueDate) return issue('error', 'issue_date_invalid');
   if (issueDate > berlinToday(now)) return issue('error', 'issue_date_in_future');
-  if (r.currency.trim().toUpperCase() !== 'EUR') return issue('error', 'currency_unsupported');
+  // Kept as printed, never converted (an imported invoice keeps its currency).
+  if (!currency) return issue('error', 'currency_invalid');
   if (r.taxTreatment !== 'small_business') return issue('error', 'tax_treatment_unsupported');
   if (r.taxAmounts != null && !(Array.isArray(r.taxAmounts) && r.taxAmounts.length === 0)) {
     return issue('error', 'tax_amounts_present');
@@ -578,6 +599,7 @@ export function planInvoice(
         sender,
         lines,
         total: totalCents,
+        currency,
         taxTreatment: 'small_business',
         taxNote: r.smallBusinessNote.trim(),
         provenance: {
@@ -603,7 +625,7 @@ export function planInvoice(
     const paths = isBooksError(err) ? ((err.details?.issues as Array<{ path: string }> | undefined) ?? []).map((i) => i.path) : [];
     return issue('error', `invalid_record:${paths.join(',') || 'record'}`);
   }
-  return { number, issueDate, total: totalCents, otherFiles, issue: null, record, pdf: file };
+  return { number, issueDate, total: totalCents, currency, otherFiles, issue: null, record, pdf: file };
 }
 
 // --- the originals -------------------------------------------------------------------
@@ -659,6 +681,8 @@ export interface ReportRow {
   otherFilesSkipped: number;
   /** What was imported (or would be) as printed but is reported: never values, codes and counts only. */
   warnings: ImportWarning[];
+  /** ISO 4217 of `total`; null when the entry carries none. */
+  currency: string | null;
 }
 
 export interface ImportReport {
@@ -668,7 +692,7 @@ export interface ImportReport {
   /** Already imported numbers whose stored total or issue date differs from the input. */
   differing: number;
   /** Per issue year, what the import holds in the books after this run (read from the books; in a dry run, plus what it would import). */
-  years: Array<{ year: string; count: number; total: number }>;
+  years: Array<{ year: string; currency: string; count: number; total: number }>;
   recipients: RecipientStats;
   paidOnPresent: number;
   counterNextValue: number;
@@ -681,12 +705,17 @@ export interface ImportDeps {
   now?: Date;
 }
 
-/** Euro amount from cents, `1234.50 EUR`; nothing locale-dependent. */
-export function euros(cents: number | null): string {
+/** An amount from cents with its currency, `1234.50 EUR`, `500.00 CHF`; nothing locale-dependent. */
+export function amount(cents: number | null, currency: string | null = 'EUR'): string {
   if (cents === null) return '?';
+  return `${decimalAmount(cents)} ${currency ?? '???'}`;
+}
+
+/** Cents as a plain decimal, `1234.50`. */
+export function decimalAmount(cents: number): string {
   const sign = cents < 0 ? '-' : '';
   const abs = Math.abs(cents);
-  return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, '0')} EUR`;
+  return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, '0')}`;
 }
 
 /** The report line of one number: number, date, total, status. Nothing else. */
@@ -705,7 +734,7 @@ export function reportLine(row: ReportRow): string {
             : 'imported';
   const other = row.otherFilesSkipped > 0 ? ` (${row.otherFilesSkipped} other file(s) not stored)` : '';
   const warned = row.warnings.map((w) => ` [warning: ${w.code}${'count' in w ? ` x${w.count}` : ''}]`);
-  return `invoice ${String(row.number).padStart(4)}  ${row.issueDate ?? '????-??-??'}  ${euros(row.total).padStart(14)}  ${status}${other}${warned.join('')}`;
+  return `invoice ${String(row.number).padStart(4)}  ${row.issueDate ?? '????-??-??'}  ${amount(row.total, row.currency).padStart(14)}  ${status}${other}${warned.join('')}`;
 }
 
 /** An error's code for the report: a BooksError's code, else the SQLSTATE and constraint, never a message. */
@@ -808,7 +837,7 @@ export async function runBooksImport(
     }
     const stats: RecipientStats = session.stats;
     const rows: ReportRow[] = [];
-    const wouldImport: Array<{ issueDate: string; total: number }> = [];
+    const wouldImport: Array<{ issueDate: string; currency: string; total: number }> = [];
     let paidOnPresent = 0;
 
     for (const p of plans) {
@@ -820,6 +849,7 @@ export async function runBooksImport(
         reason: null,
         otherFilesSkipped: p.otherFiles,
         warnings: [],
+        currency: p.currency,
       };
       if (p.issue !== null) {
         row.status = p.issue.kind;
@@ -835,7 +865,7 @@ export async function runBooksImport(
           row.status = result.status;
           if (result.status === 'already_imported' && result.differs) row.reason = 'differs';
           if (result.status !== 'already_imported') row.warnings = result.warnings;
-          if (result.status === 'would_import') wouldImport.push({ issueDate: p.record.issueDate, total: p.record.total });
+          if (result.status === 'would_import') wouldImport.push({ issueDate: p.record.issueDate, currency: p.record.currency, total: p.record.total });
           if (p.record.provenance.paidOnPresent) paidOnPresent += 1;
         } catch (err) {
           row.status = 'error';
@@ -850,16 +880,17 @@ export async function runBooksImport(
     for (const r of rows) counts[r.status] += 1;
     // The yearly figures are read from the books (what the import holds there,
     // whatever this run did), plus in a dry run what it would add.
-    const byYear = new Map<string, { count: number; total: number }>();
-    for (const y of await importedYearTotals(scope.db, scope)) byYear.set(y.year, { count: y.count, total: y.total });
+    // Per year and currency: amounts of different currencies are never added up.
+    const byYear = new Map<string, { year: string; currency: string; count: number; total: number }>();
+    for (const y of await importedYearTotals(scope.db, scope)) byYear.set(`${y.year}|${y.currency}`, { ...y });
     for (const r of wouldImport) {
-      const y = r.issueDate.slice(0, 4);
-      const acc = byYear.get(y) ?? { count: 0, total: 0 };
+      const key = `${r.issueDate.slice(0, 4)}|${r.currency}`;
+      const acc = byYear.get(key) ?? { year: r.issueDate.slice(0, 4), currency: r.currency, count: 0, total: 0 };
       acc.count += 1;
       acc.total += r.total;
-      byYear.set(y, acc);
+      byYear.set(key, acc);
     }
-    const years = [...byYear.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([year, v]) => ({ year, ...v }));
+    const years = [...byYear.values()].sort((a, b) => a.year.localeCompare(b.year) || a.currency.localeCompare(b.currency));
 
     log('');
     log(dryRun ? 'Dry run: nothing was written.' : 'Summary:');
@@ -880,9 +911,13 @@ export async function runBooksImport(
     );
     log(`  payment day present on ${paidOnPresent} of them; payment state stays in receipt-ocr-app (not stored in the Books)`);
     log(dryRun ? '  yearly totals the import would hold, by issue year:' : '  yearly totals of the imported invoices in the books, by issue year:');
-    for (const y of years) log(`    ${y.year}: ${String(y.count).padStart(3)} invoice(s), ${euros(y.total)}`);
-    const cancelled = await importedCancelled(scope.db, scope);
-    if (cancelled.count > 0) log(`  not in these totals: ${cancelled.count} imported invoice(s) cancelled since by a credit note, ${euros(cancelled.total)}`);
+    for (const year of [...new Set(years.map((y) => y.year))]) {
+      const parts = years.filter((y) => y.year === year).map((y) => `${y.currency} ${decimalAmount(y.total)} (${y.count} invoice(s))`);
+      log(`    ${year}: ${parts.join(', ')}`);
+    }
+    for (const c of await importedCancelled(scope.db, scope)) {
+      log(`  not in these totals: ${c.count} imported invoice(s) in ${c.currency} cancelled since by a credit note, ${amount(c.total, c.currency)}`);
+    }
 
     return { dryRun, rows, counts, differing, years, recipients: stats, paidOnPresent, counterNextValue: counter.nextValue };
   } finally {

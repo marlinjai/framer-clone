@@ -42,6 +42,14 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      imported invoice (it copies the lines). Everywhere else a negative line
  *      is refused as before (BK008, mapped to INVALID_LINE). The document totals
  *      stay non-negative (007's CHECKs, untouched).
+ *   5. An imported document keeps the currency it was printed in (one historical
+ *      invoice is in CHF): 007's `currency_code = 'EUR'` CHECK becomes a shape
+ *      CHECK (three capital letters, ISO 4217), and the document guard allows a
+ *      currency other than EUR only on an import, while a credit note always
+ *      carries the currency of the invoice it corrects (so the one cancelling a
+ *      CHF import is in CHF). Editor documents stay EUR only (BK009, mapped to
+ *      CURRENCY_NOT_SUPPORTED). Amounts are never converted; the EUR value of a
+ *      foreign-currency invoice belongs to the receipts app's income mirror.
  *
  * House style as 007: BARE names, trigger functions `SET search_path FROM
  * CURRENT`, custom SQLSTATEs.
@@ -50,6 +58,10 @@ import type { Migration } from '@marlinjai/tenant-db';
 export const booksImport: Migration = {
   id: '009_books_import',
   up: async (tx) => {
+    // Change 5 (structure): the currency is any ISO 4217 code by shape; the guard below decides where.
+    await tx`ALTER TABLE "sales_document" DROP CONSTRAINT IF EXISTS "sales_document_currency_code_check"`;
+    await tx`ALTER TABLE "sales_document" ADD CONSTRAINT "sales_document_currency_code_check" CHECK ("currency_code" ~ '^[A-Z]{3}$')`;
+
     // Change 1: the line's foreign key may be deferred by a transaction that asks.
     await tx`
       ALTER TABLE "sales_document_line"
@@ -70,10 +82,26 @@ export const booksImport: Migration = {
           lines_subtotal BIGINT;
           lines_tax BIGINT;
           line_count BIGINT;
+          corrected_currency TEXT;
       BEGIN
           IF TG_OP = 'DELETE' THEN
               RAISE EXCEPTION 'sales_document % cannot be deleted', OLD."id"
                   USING ERRCODE = 'BK001';
+          END IF;
+
+          -- Change 5, on every insert and update: a credit note carries its
+          -- invoice's currency; any other currency than EUR only on an import.
+          IF NEW."doc_type" = 'credit_note' AND NEW."corrects_document_id" IS NOT NULL THEN
+              SELECT "currency_code" INTO corrected_currency
+                FROM "sales_document"
+               WHERE "tenant_id" = NEW."tenant_id" AND "id" = NEW."corrects_document_id";
+              IF FOUND AND NEW."currency_code" IS DISTINCT FROM corrected_currency THEN
+                  RAISE EXCEPTION 'sales_document %: a credit note carries the currency of the invoice it corrects', NEW."id"
+                      USING ERRCODE = 'BK009';
+              END IF;
+          ELSIF NEW."currency_code" <> 'EUR' AND NEW."source" <> 'import' THEN
+              RAISE EXCEPTION 'sales_document %: a currency other than EUR is only kept on an imported document', NEW."id"
+                  USING ERRCODE = 'BK009';
           END IF;
 
           IF TG_OP = 'INSERT' THEN

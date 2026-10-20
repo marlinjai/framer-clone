@@ -18,7 +18,8 @@ import {
   extractVatId,
   servicePeriodOf,
   errorCode,
-  euros,
+  amount,
+  currencyCode,
   inferKind,
   parseImportFile,
   paymentTermsDays,
@@ -261,7 +262,7 @@ describe('planInvoice: skipped (missing) before error (inconsistent)', () => {
 
   const errors: Array<[string, Record<string, unknown>]> = [
     ['lines_do_not_sum_to_total', { total: 150.51 }],
-    ['currency_unsupported', { currency: 'USD' }],
+    ['currency_invalid', { currency: 'Taler' }],
     ['tax_treatment_unsupported', { taxTreatment: 'regular' }],
     ['tax_amounts_present', { taxAmounts: [{ rate: 19, amount: 1 }] }],
     ['issue_date_invalid', { issueDate: '2021-02-30' }],
@@ -364,20 +365,20 @@ describe('the report never carries input values', () => {
   it('warnings are named by kind and count only', () => {
     expect(
       reportLine({
-        number: 9, issueDate: '2021-01-01', total: 350000, status: 'imported', reason: null, otherFilesSkipped: 0,
+        number: 9, issueDate: '2021-01-01', total: 350000, currency: 'CHF', status: 'imported', reason: null, otherFilesSkipped: 0,
         warnings: [{ code: 'line_not_quantity_times_price', count: 1 }, { code: 'issue_date_out_of_number_order' }],
       }),
-    ).toBe('invoice    9  2021-01-01     3500.00 EUR  imported [warning: line_not_quantity_times_price x1] [warning: issue_date_out_of_number_order]');
+    ).toBe('invoice    9  2021-01-01     3500.00 CHF  imported [warning: line_not_quantity_times_price x1] [warning: issue_date_out_of_number_order]');
   });
 
   it('a report line holds number, date, total and status only', () => {
     const p = planInvoice(7, entry({ otherFiles: ['other.pdf'] }), FILE, NOW);
-    const line = reportLine({ number: 7, issueDate: p.issueDate, total: p.total, status: 'imported', reason: null, otherFilesSkipped: p.otherFiles, warnings: [] });
+    const line = reportLine({ number: 7, issueDate: p.issueDate, total: p.total, status: 'imported', reason: null, otherFilesSkipped: p.otherFiles, warnings: [], currency: p.currency });
     expect(line).toBe('invoice    7  2021-03-04      150.50 EUR  imported (1 other file(s) not stored)');
     for (const value of ['Example', 'Client', 'Beispielweg', 'Hamburg', 'Sample', 'Design', 'other.pdf', 'invoices/']) {
       expect(line).not.toContain(value);
     }
-    expect(reportLine({ number: 60, issueDate: null, total: null, status: 'skipped', reason: 'file_missing', otherFilesSkipped: 0, warnings: [] })).toBe(
+    expect(reportLine({ number: 60, issueDate: null, total: null, status: 'skipped', reason: 'file_missing', otherFilesSkipped: 0, warnings: [], currency: null })).toBe(
       'invoice   60  ????-??-??               ?  skipped: file_missing',
     );
   });
@@ -389,10 +390,26 @@ describe('the report never carries input values', () => {
     expect(errorCode(new TypeError('Example Client GmbH'))).toBe('UNEXPECTED:TypeError');
   });
 
-  it('euros formats cents without a locale', () => {
-    expect(euros(0)).toBe('0.00 EUR');
-    expect(euros(123456)).toBe('1234.56 EUR');
-    expect(euros(null)).toBe('?');
+  it('amount formats cents with their currency, without a locale', () => {
+    expect(amount(0)).toBe('0.00 EUR');
+    expect(amount(123456, 'CHF')).toBe('1234.56 CHF');
+    expect(amount(-500, 'EUR')).toBe('-5.00 EUR');
+    expect(amount(null)).toBe('?');
+  });
+
+  it('currencyCode keeps the printed ISO 4217 code and refuses anything else', () => {
+    expect(currencyCode('EUR')).toBe('EUR');
+    expect(currencyCode(' chf ')).toBe('CHF');
+    expect(currencyCode('€')).toBe('EUR');
+    expect(currencyCode('XYZ')).toBeNull();
+    expect(currencyCode('Franken')).toBeNull();
+  });
+
+  it('an invoice printed in CHF keeps its currency, never converted', () => {
+    const p = planInvoice(7, entry({ currency: 'CHF' }), FILE, NOW);
+    expect(ready(p).currency).toBe('CHF');
+    expect(ready(p).total).toBe(15050);
+    expect(p.currency).toBe('CHF');
   });
 });
 

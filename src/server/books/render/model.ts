@@ -179,9 +179,9 @@ function modelLines(doc: SalesDocumentWithSnapshots, lines: SalesDocumentLine[])
         details,
         quantity: formatQuantity(l.quantity),
         unit: toPdfText(l.unitLabel),
-        unitPrice: formatMoney(l.unitPrice),
+        unitPrice: formatMoney(l.unitPrice, doc.currencyCode),
         rate: formatRate(l.taxRate),
-        amount: formatMoney(sign * lineAmount(doc, l)),
+        amount: formatMoney(sign * lineAmount(doc, l), doc.currencyCode),
         text: false,
       };
     });
@@ -189,7 +189,7 @@ function modelLines(doc: SalesDocumentWithSnapshots, lines: SalesDocumentLine[])
 
 function modelTotals(doc: SalesDocumentWithSnapshots): RenderModel['totals'] {
   const sign = amountSign(doc.docType);
-  const money = (c: number) => formatMoney(sign * c);
+  const money = (c: number) => formatMoney(sign * c, doc.currencyCode);
   if (doc.kleinunternehmer) return [{ label: 'Gesamtbetrag', value: money(doc.total), strong: true }];
   const out: RenderModel['totals'] = [];
   for (const g of doc.taxSummary) {

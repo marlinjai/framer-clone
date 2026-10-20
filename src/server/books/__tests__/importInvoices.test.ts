@@ -160,6 +160,13 @@ describe('parseHistoricalInvoice', () => {
     expect(linesNotQuantityTimesPrice(parseHistoricalInvoice(discounted, NOW))).toBe(0);
   });
 
+  it('keeps the printed ISO 4217 currency (EUR by default) and refuses anything else', () => {
+    expect(parseHistoricalInvoice(record(), NOW).currency).toBe('EUR');
+    expect(parseHistoricalInvoice(record({ currency: 'CHF' }), NOW).currency).toBe('CHF');
+    expect(refusedPaths(record({ currency: 'XYZ' }))).toEqual(['currency']);
+    expect(refusedPaths(record({ currency: 'chf' }))).toEqual(['currency']);
+  });
+
   it('refuses unknown top-level fields instead of dropping them', () => {
     expect(refusedPaths({ ...record(), extra: 1 })).toEqual(['']);
   });
@@ -177,11 +184,13 @@ describe('checkOriginal', () => {
 describe('judgeExisting', () => {
   it('absent imports; the same original is already imported; anything else is a conflict', () => {
     expect(judgeExisting({ state: 'absent' }, 12, 'a')).toBeNull();
-    const stored = { state: 'imported' as const, documentId: 'd', sha256: 'a', total: 12000, issueDate: '2021-03-04' };
-    expect(judgeExisting(stored, 12, 'a', { total: 12000, issueDate: '2021-03-04' })).toEqual({ status: 'already_imported', documentId: 'd', differs: false });
+    const stored = { state: 'imported' as const, documentId: 'd', sha256: 'a', total: 12000, issueDate: '2021-03-04', currency: 'EUR' };
+    const same = { total: 12000, issueDate: '2021-03-04', currency: 'EUR' };
+    expect(judgeExisting(stored, 12, 'a', same)).toEqual({ status: 'already_imported', documentId: 'd', differs: false });
     // Same original, data corrected since: reported as differing, never changed.
-    expect(judgeExisting(stored, 12, 'a', { total: 12001, issueDate: '2021-03-04' })).toEqual({ status: 'already_imported', documentId: 'd', differs: true });
-    expect(judgeExisting(stored, 12, 'a', { total: 12000, issueDate: '2021-03-05' })).toMatchObject({ differs: true });
+    expect(judgeExisting(stored, 12, 'a', { ...same, total: 12001 })).toEqual({ status: 'already_imported', documentId: 'd', differs: true });
+    expect(judgeExisting(stored, 12, 'a', { ...same, issueDate: '2021-03-05' })).toMatchObject({ differs: true });
+    expect(judgeExisting(stored, 12, 'a', { ...same, currency: 'CHF' })).toMatchObject({ differs: true });
     expect(() => judgeExisting({ ...stored, sha256: 'b' }, 12, 'a')).toThrow(/IMPORT_CONFLICT: invoice 12 was imported with a different file/);
     expect(() => judgeExisting({ state: 'other', documentId: 'd' }, 12, 'a')).toThrow(/IMPORT_CONFLICT: invoice 12 already exists as a document of this system/);
   });

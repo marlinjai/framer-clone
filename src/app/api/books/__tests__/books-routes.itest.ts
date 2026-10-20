@@ -614,7 +614,7 @@ describe('Books routes: imported historical invoices', () => {
   /** Import one synthetic invoice through the domain core the CLI and the planned upload use. */
   async function importOne(
     number: number,
-    opts: { sender?: string[]; issueDate?: string; lines?: Array<Record<string, unknown>>; total?: number } = {},
+    opts: { sender?: string[]; issueDate?: string; lines?: Array<Record<string, unknown>>; total?: number; currency?: string } = {},
   ) {
     const bytes = original(`${tenantId}-${number}`);
     const plan = planInvoice(
@@ -629,7 +629,7 @@ describe('Books routes: imported historical invoices', () => {
         sender: { name: 'Sample Studio', addressLines: opts.sender ?? ['Musterstrasse 1', '10115 Berlin'], country: 'DE' },
         lines: opts.lines ?? [{ description: 'Design work', quantity: 2, unit: 'h', unitPrice: 60, discount: null, lineTotal: 120 }],
         total: opts.total ?? 120,
-        currency: 'EUR',
+        currency: opts.currency ?? 'EUR',
         taxTreatment: 'small_business',
         taxAmounts: null,
         smallBusinessNote: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
@@ -730,6 +730,29 @@ describe('Books routes: imported historical invoices', () => {
     const credit = await pdf(res.json.creditNote.document.id);
     expect(credit.headers.get('x-books-of-record')).toBe('true');
     expect(await extractPdfText(new Uint8Array(await credit.arrayBuffer()))).toContain('Storno der Rechnung 14');
+  });
+
+  it('an imported invoice printed in CHF keeps CHF in the list, the document and its credit note', async () => {
+    const { id, bytes } = await importOne(15, { currency: 'CHF' });
+    await importOne(16);
+    const items = (await api.listDocuments()).json.items as Json[];
+    expect(items.find((d) => d.id === id)).toMatchObject({ currencyCode: 'CHF', total: 12000 });
+    expect(items.filter((d) => d.currencyCode === 'EUR').map((d) => d.documentNumber)).toEqual(['16']);
+    expect((await api.get(id)).json.document.currencyCode).toBe('CHF');
+    expect(Buffer.from(await (await pdf(id)).arrayBuffer()).equals(bytes)).toBe(true);
+    const res = await api.cancel(id, { reason: 'issued in error' });
+    expect(res.status).toBe(200);
+    expect(res.json.creditNote.document).toMatchObject({ currencyCode: 'CHF', total: 12000 });
+    const text = await extractPdfText(new Uint8Array(await (await pdf(res.json.creditNote.document.id)).arrayBuffer()));
+    expect(text).toContain('CHF');
+    expect(text).not.toContain('€');
+  });
+
+  it('an editor draft cannot be put into another currency', async () => {
+    const id = (await api.createDraft({})).json.document.id as string;
+    expect(
+      await rejectionCode(env.appDb.updateTable('sales_document').set({ currency_code: 'CHF' }).where('id', '=', id).execute()),
+    ).toBe('BK009');
   });
 
   it('an imported invoice is cancelled through a credit note like any other', async () => {

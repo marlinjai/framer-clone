@@ -35,14 +35,18 @@ function groupThousands(digits: string): string {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 }
 
-/** Integer cents as German money: 123456 -> "1.234,56 €". */
-export function formatMoney(cents: number): string {
+/**
+ * Integer cents (hundredths of the currency) as German money: 123456 ->
+ * "1.234,56 €"; another currency prints its ISO code ("1.234,56 CHF"), since
+ * an imported invoice keeps the currency it was printed in.
+ */
+export function formatMoney(cents: number, currency = 'EUR'): string {
   if (!Number.isInteger(cents)) throw new Error(`formatMoney: not an integer amount: ${cents}`);
   const sign = cents < 0 ? '-' : '';
   const abs = Math.abs(cents);
-  const euros = Math.floor(abs / 100);
+  const units = Math.floor(abs / 100);
   const rest = String(abs % 100).padStart(2, '0');
-  return `${sign}${groupThousands(String(euros))},${rest} €`;
+  return `${sign}${groupThousands(String(units))},${rest} ${currency === 'EUR' ? '€' : currency}`;
 }
 
 /** Integer thousandths as a German quantity: 1500 -> "1,5", 2000 -> "2", 1250 -> "1,25". */

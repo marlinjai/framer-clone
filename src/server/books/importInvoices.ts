@@ -81,6 +81,14 @@ export type ImportOrigin = (typeof IMPORT_ORIGINS)[number];
 // --- the record ------------------------------------------------------------------
 
 const isoDate = z.string().refine(isIsoDate, 'expected a calendar day YYYY-MM-DD');
+
+/** The ISO 4217 codes this runtime knows (Intl's list of currencies in use). */
+const ISO_CURRENCIES = new Set(Intl.supportedValuesOf('currency'));
+
+/** True for an ISO 4217 currency code in use (EUR, CHF, USD, ...). */
+export function isIsoCurrency(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Z]{3}$/.test(value) && ISO_CURRENCIES.has(value);
+}
 const text = (max: number) => z.string().trim().min(1).max(max);
 const cents = z.number().int().min(0).max(MAX_CENTS);
 const printedLines = z.array(z.string().max(300)).max(12).optional();
@@ -187,6 +195,12 @@ export const historicalInvoiceSchema = z
     sender: senderSchema,
     lines: z.array(lineSchema).min(1).max(500),
     total: cents,
+    /**
+     * The currency printed (ISO 4217). Kept as printed, never converted: EUR
+     * for nearly all; the EUR value of another currency belongs to the
+     * receipts app's income mirror, which matches the payment.
+     */
+    currency: z.string().refine(isIsoCurrency, 'expected an ISO 4217 currency code').default('EUR'),
     taxTreatment: z.literal('small_business'),
     /** The small-business note as printed. */
     taxNote: text(500),
@@ -273,7 +287,7 @@ export async function checkImportCounter(
 
 export type ExistingNumber =
   | { state: 'absent' }
-  | { state: 'imported'; documentId: string; sha256: string | null; total: number; issueDate: string | null }
+  | { state: 'imported'; documentId: string; sha256: string | null; total: number; issueDate: string | null; currency: string }
   | { state: 'other'; documentId: string };
 
 /** What the company's books hold under an invoice number. */
@@ -289,6 +303,7 @@ export async function existingInvoice(db: Db, scope: BooksScope, numberValue: nu
       'sales_document.id',
       'sales_document.source',
       'sales_document.total',
+      'sales_document.currency_code',
       eb.cast<string | null>('sales_document.issue_date', 'text').as('issue_date'),
       'sales_document_file.sha256',
     ])
@@ -298,7 +313,14 @@ export async function existingInvoice(db: Db, scope: BooksScope, numberValue: nu
     .executeTakeFirst();
   if (!row) return { state: 'absent' };
   if (row.source !== 'import') return { state: 'other', documentId: row.id };
-  return { state: 'imported', documentId: row.id, sha256: row.sha256 ?? null, total: row.total, issueDate: row.issue_date };
+  return {
+    state: 'imported',
+    documentId: row.id,
+    sha256: row.sha256 ?? null,
+    total: row.total,
+    issueDate: row.issue_date,
+    currency: row.currency_code,
+  };
 }
 
 /**
@@ -307,11 +329,16 @@ export async function existingInvoice(db: Db, scope: BooksScope, numberValue: nu
  * is not cancelled (cancelled ones: importedCancelled). The figures to compare
  * with the filed returns, read from the books themselves.
  */
-export async function importedYearTotals(db: Db, scope: BooksScope): Promise<Array<{ year: string; count: number; total: number }>> {
+export async function importedYearTotals(
+  db: Db,
+  scope: BooksScope,
+): Promise<Array<{ year: string; currency: string; count: number; total: number }>> {
+  // Per year AND currency: amounts of different currencies are never added up.
   const rows = await db
     .selectFrom('sales_document')
     .select((eb) => [
       sql<string>`to_char(${eb.ref('sales_document.issue_date')}, 'YYYY')`.as('year'),
+      'sales_document.currency_code as currency',
       sql<string>`count(*)`.as('count'),
       sql<string>`coalesce(sum(${eb.ref('sales_document.total')}), 0)`.as('total'),
     ])
@@ -319,23 +346,25 @@ export async function importedYearTotals(db: Db, scope: BooksScope): Promise<Arr
     .where('sales_document.doc_type', '=', 'invoice')
     .where('sales_document.source', '=', 'import')
     .where('sales_document.status', '<>', 'cancelled')
-    .groupBy(sql`1`)
-    .orderBy(sql`1`)
+    .groupBy(sql`1, 2`)
+    .orderBy(sql`1, 2`)
     .execute();
-  return rows.map((r) => ({ year: r.year, count: Number(r.count), total: Number(r.total) }));
+  return rows.map((r) => ({ year: r.year, currency: r.currency, count: Number(r.count), total: Number(r.total) }));
 }
 
 /** Imported invoices cancelled since (through a credit note): left out of the yearly totals, reported apart. */
-export async function importedCancelled(db: Db, scope: BooksScope): Promise<{ count: number; total: number }> {
-  const row = await db
+export async function importedCancelled(db: Db, scope: BooksScope): Promise<Array<{ currency: string; count: number; total: number }>> {
+  const rows = await db
     .selectFrom('sales_document')
-    .select([sql<string>`count(*)`.as('count'), sql<string>`coalesce(sum(total), 0)`.as('total')])
+    .select(['currency_code as currency', sql<string>`count(*)`.as('count'), sql<string>`coalesce(sum(total), 0)`.as('total')])
     .where('tenant_id', '=', scope.tenantId)
     .where('doc_type', '=', 'invoice')
     .where('source', '=', 'import')
     .where('status', '=', 'cancelled')
-    .executeTakeFirstOrThrow();
-  return { count: Number(row.count), total: Number(row.total) };
+    .groupBy('currency_code')
+    .orderBy('currency_code')
+    .execute();
+  return rows.map((r) => ({ currency: r.currency, count: Number(r.count), total: Number(r.total) }));
 }
 
 export type ImportResult =
@@ -344,7 +373,7 @@ export type ImportResult =
       status: 'already_imported';
       documentId: string;
       /**
-       * True when the stored document's total or issue date differs from the
+       * True when the stored document's total, issue date or currency differs from the
        * record (same original, data corrected since). Nothing is changed: the
        * caller reports it, so the difference is never silent.
        */
@@ -363,12 +392,14 @@ export function judgeExisting(
   existing: ExistingNumber,
   numberValue: number,
   sha256: string,
-  record?: Pick<HistoricalInvoice, 'total' | 'issueDate'>,
+  record?: Pick<HistoricalInvoice, 'total' | 'issueDate' | 'currency'>,
 ): ImportResult | null {
   if (existing.state === 'absent') return null;
   if (existing.state === 'other') throw conflict(numberValue, existing.documentId, 'already exists as a document of this system');
   if (existing.sha256 !== sha256) throw conflict(numberValue, existing.documentId, 'was imported with a different file');
-  const differs = record !== undefined && (existing.total !== record.total || existing.issueDate !== record.issueDate);
+  const differs =
+    record !== undefined &&
+    (existing.total !== record.total || existing.issueDate !== record.issueDate || existing.currency !== record.currency);
   return { status: 'already_imported', documentId: existing.documentId, differs };
 }
 
@@ -870,7 +901,7 @@ export async function importHistoricalInvoice(
               service_period_end: record.servicePeriod?.end ?? null,
               due_date: record.dueDate,
               payment_terms_days: record.paymentTermsDays,
-              currency_code: 'EUR',
+              currency_code: record.currency,
               tax_region: 'DE',
               customer_type: tax.customerType,
               vat_id: tax.vatId,

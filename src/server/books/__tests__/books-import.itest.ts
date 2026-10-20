@@ -230,7 +230,7 @@ describe('books:import, the run in order: dry run, forward, re-run, changed file
     expect(await countRows(tenantId)).toEqual(before);
     expect(dir.contactsOf(tenantId)).toHaveLength(contactsBefore);
     expect(text).toContain('Dry run: nothing was written.');
-    expect(text).toContain('2019:   2 invoice(s), 420.00 EUR');
+    expect(text).toContain('2019: EUR 420.00 (2 invoice(s))');
     for (const v of PRIVATE_VALUES) expect(text).not.toContain(v);
   });
 
@@ -239,8 +239,8 @@ describe('books:import, the run in order: dry run, forward, re-run, changed file
     expect(statuses(report)).toEqual({ 1: 'imported', 2: 'imported', 3: 'imported', 60: 'skipped:file_missing' });
     expect(report.counts).toMatchObject({ imported: 3, skipped: 1, error: 0 });
     expect(report.years).toEqual([
-      { year: '2019', count: 2, total: 42000 },
-      { year: '2020', count: 1, total: 45050 },
+      { year: '2019', currency: 'EUR', count: 2, total: 42000 },
+      { year: '2020', currency: 'EUR', count: 1, total: 45050 },
     ]);
     expect(report.paidOnPresent).toBe(2);
     // One contact created for the company (the GmbH, at its latest printed address), the person reused.
@@ -310,8 +310,8 @@ describe('books:import, the run in order: dry run, forward, re-run, changed file
     expect(await countRows(tenantId)).toEqual(before);
     expect(dir.contactsOf(tenantId)).toHaveLength(contactsBefore);
     expect(report.years).toEqual([
-      { year: '2019', count: 2, total: 42000 },
-      { year: '2020', count: 1, total: 45050 },
+      { year: '2019', currency: 'EUR', count: 2, total: 42000 },
+      { year: '2020', currency: 'EUR', count: 1, total: 45050 },
     ]);
   });
 
@@ -331,18 +331,32 @@ describe('books:import, the run in order: dry run, forward, re-run, changed file
     writeFileSync(join(f.files, 'pdf', '2.pdf'), pdfBytes('main-2'));
   });
 
-  it('resume: 60 completed in the input is imported by the next run, the rest stays as it was', async () => {
+  it('resume: 60 completed in the input (printed in CHF) is imported by the next run; totals never mix currencies', async () => {
     f.invoices[3] = invoice(60, {
-      issueDate: '2026-06-01',
+      issueDate: '2020-05-05',
+      currency: 'CHF',
       lines: [{ description: 'Design work', quantity: 1, unit: 'Stk', unitPrice: 99, discount: null, lineTotal: 99 }],
       total: 99,
     });
     f.write();
-    const { report } = await run(f, tenantId, book, dir);
+    const { report, lines, text } = await run(f, tenantId, book, dir);
     expect(statuses(report)).toEqual({ 1: 'already_imported', 2: 'already_imported', 3: 'already_imported', 60: 'imported' });
     expect((await countRows(tenantId)).docs).toBe(4);
     expect(await nextValue(tenantId)).toBe(62);
-    expect(report.years.map((y) => y.year)).toEqual(['2019', '2020', '2026']);
+    expect(lines).toContain('invoice   60  2020-05-05       99.00 CHF  imported');
+    expect(report.years).toEqual([
+      { year: '2019', currency: 'EUR', count: 2, total: 42000 },
+      { year: '2020', currency: 'CHF', count: 1, total: 9900 },
+      { year: '2020', currency: 'EUR', count: 1, total: 45050 },
+    ]);
+    expect(text).toContain('2020: CHF 99.00 (1 invoice(s)), EUR 450.50 (1 invoice(s))');
+    const stored = await env.ownerDb
+      .selectFrom('sales_document')
+      .select(['currency_code', 'total'])
+      .where('tenant_id', '=', tenantId)
+      .where('number_value', '=', '60')
+      .executeTakeFirstOrThrow();
+    expect(stored).toEqual({ currency_code: 'CHF', total: 9900 });
   });
 
   it('a corrected total for an imported number is reported as differing, never written, and the yearly sums stay those of the books', async () => {
@@ -378,8 +392,9 @@ describe('books:import, the run in order: dry run, forward, re-run, changed file
       .executeTakeFirstOrThrow();
     await cancelInvoice(scope, doc.id, { actorUserId: ACTOR, reason: 'synthetic cancellation' });
     const { report, text } = await run(f, tenantId, book, dir);
-    expect(report.years.find((y) => y.year === '2020')).toBeUndefined();
-    expect(text).toContain('not in these totals: 1 imported invoice(s) cancelled since by a credit note, 450.50 EUR');
+    expect(report.years.find((y) => y.year === '2020' && y.currency === 'EUR')).toBeUndefined();
+    expect(report.years.find((y) => y.year === '2020' && y.currency === 'CHF')).toMatchObject({ total: 9900 });
+    expect(text).toContain('not in these totals: 1 imported invoice(s) in EUR cancelled since by a credit note, 450.50 EUR');
   });
 });
 
@@ -803,6 +818,25 @@ describe('009_books_import: what holds for every role', () => {
     ).toBe('BK008');
     // And a positive line on the draft is still fine.
     await env.ownerDb.insertInto('sales_document_line').values(lineFor(draftId, 100)).execute();
+  });
+
+  it('a currency other than EUR: only on an import and on the credit note of its own invoice (BK009)', async () => {
+    const draft = (currency: string) =>
+      env.ownerDb
+        .insertInto('sales_document')
+        .values({ id: randomUUID(), tenant_id: tenantId, doc_type: 'invoice', payment_terms_days: 0, currency_code: currency, updated_at: new Date() } as never)
+        .execute();
+    expect(await rejectionCode(draft('CHF'))).toBe('BK009');
+    // A draft cannot be switched to another currency either.
+    const id = randomUUID();
+    await env.ownerDb
+      .insertInto('sales_document')
+      .values({ id, tenant_id: tenantId, doc_type: 'invoice', payment_terms_days: 0, updated_at: new Date() } as never)
+      .execute();
+    expect(await rejectionCode(env.ownerDb.updateTable('sales_document').set({ currency_code: 'CHF' }).where('id', '=', id).execute())).toBe('BK009');
+    // Not even the ISO 4217 shape: refused too (the guard answers before the shape CHECK).
+    expect(await rejectionCode(draft('eur'))).toBe('BK009');
+    await draft('EUR');
   });
 
   it('an editor document is still born a draft (BK004), deferred foreign key or not', async () => {

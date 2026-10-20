@@ -1339,14 +1339,22 @@ Every choice below follows from the plan, the code or the law; decided, say so i
 
 18. **Checked against the real input (2026-10-20), without reading any value.** The mapping
     was run over the private JSON and the PDFs, printing per number only the status, the reason
-    code and the warning codes. Result: **60 of 61 ready, 1 error.** The error is invoice 23,
-    `currency_unsupported`: it is billed in CHF, and the Books hold EUR only (007's currency
-    CHECK). Converting it would invent a EUR amount, so it is not imported; how to book it is the
-    owner's decision (roadmap line 4). Warnings on the 60 (counts of invoices): a unit price
-    derived from the printed total 32, sender address not in the extraction 12, recipient
+    code and the warning codes. Warnings on the invoices (counts of invoices): a unit price
+    derived from the printed total 33, sender address not in the extraction 12, recipient
     address incomplete 2, recipient country assumed 1, a line not quantity times price 1 (the
     fixed fee). Flags recorded in the events only: payment terms not readable 15, service date
     or period not readable 9, a printed VAT-like identifier that is not an EU VAT id 2.
+    **Imported documents keep the currency they were printed in** (decided 2026-10-20; invoice
+    23 is billed in CHF). 009 replaces 007's `currency_code = 'EUR'` CHECK by a shape CHECK
+    (ISO 4217) and lets the document guard allow a currency other than EUR only on an import;
+    a credit note always carries the currency of the invoice it corrects, so the one cancelling
+    a CHF import is in CHF; editor documents stay EUR only (BK009, `CURRENCY_NOT_SUPPORTED`).
+    Amounts are stored as printed in that currency and never converted: there is no exchange
+    rate in the Books, the EUR value of a foreign-currency invoice belongs to the receipts app's
+    income mirror, which owns payment matching (receipts plan D6). Nothing that sums money
+    mixes currencies: the CLI's yearly totals are per year and currency ("2023: EUR x, CHF y"),
+    the editor shows every amount in its document's currency and adds none across documents,
+    and the rendered credit note of a CHF import prints CHF. With this, all 61 map.
 
 **Operator steps** (live actions, not done here): after the deploy rolls `009_books_import` out
 and `pnpm books:init-company` has set the invoice counter to 62 for Whiz-Art Media (done in

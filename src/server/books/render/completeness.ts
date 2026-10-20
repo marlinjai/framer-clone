@@ -113,7 +113,7 @@ export function expectedFields(
 
   // The amount.
   const sign = amountSign(doc.docType);
-  add('total', `Gesamtbetrag ${formatMoney(sign * doc.total)}`);
+  add('total', `Gesamtbetrag ${formatMoney(sign * doc.total, doc.currencyCode)}`);
 
   if (doc.kleinunternehmer) {
     add('exemptionNote', doc.taxNote);
@@ -125,8 +125,8 @@ export function expectedFields(
   add('serviceDate', `${service.label} ${service.value}`);
   for (const g of doc.taxSummary) {
     const rc = g.taxTreatment === 'reverse_charge' ? ' (Reverse Charge)' : '';
-    add(`taxGroup${g.taxRate}.net`, `Nettobetrag zu ${formatRate(g.taxRate)}${rc} ${formatMoney(sign * g.net)}`);
-    add(`taxGroup${g.taxRate}.tax`, `Umsatzsteuer ${formatRate(g.taxRate)} ${formatMoney(sign * g.tax)}`);
+    add(`taxGroup${g.taxRate}.net`, `Nettobetrag zu ${formatRate(g.taxRate)}${rc} ${formatMoney(sign * g.net, doc.currencyCode)}`);
+    add(`taxGroup${g.taxRate}.tax`, `Umsatzsteuer ${formatRate(g.taxRate)} ${formatMoney(sign * g.tax, doc.currencyCode)}`);
   }
   if (doc.reverseCharge) {
     add('recipient.vatId', present(c.vatId) ? `USt-IdNr. Leistungsempfänger ${c.vatId}` : null);
