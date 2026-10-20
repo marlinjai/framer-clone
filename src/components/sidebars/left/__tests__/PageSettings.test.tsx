@@ -57,6 +57,41 @@ function openSettingsFor(title: string) {
 }
 
 describe('opening page settings', () => {
+  it('opens on a double-click of the HOME row, also when it is the project\'s only page', () => {
+    // The live report: a project whose only page is the home page ("/").
+    project.removePage(about.id);
+    for (const p of project.pagesArray) if (!p.isHome) project.removePage(p.id);
+    expect(project.pagesArray).toHaveLength(1);
+    currentPage = home;
+    renderPanel();
+    const row = screen.getByTestId(`page-row-${home.id}`);
+
+    // On the row itself, on the select button, and on the title and slug text.
+    const targets = [
+      row,
+      within(row).getAllByRole('button')[0],
+      within(row).getByText('Hearth & Crumb Bakery'),
+      within(row).getByText('/'),
+    ];
+    for (const target of targets) {
+      fireEvent.doubleClick(target);
+      const dialog = screen.getByTestId('page-settings-dialog');
+      expect(within(dialog).getByLabelText('Page name')).toHaveProperty('value', 'Hearth & Crumb Bakery');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByTestId('page-settings-dialog')).toBeNull();
+    }
+  });
+
+  it('opens on a double-click of every row, the home row included', () => {
+    renderPanel();
+    for (const page of project.pagesArray) {
+      fireEvent.doubleClick(within(screen.getByTestId(`page-row-${page.id}`)).getAllByRole('button')[0]);
+      const dialog = screen.getByTestId('page-settings-dialog');
+      expect(within(dialog).getByLabelText('Page name')).toHaveProperty('value', page.metadata.title);
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    }
+  });
+
   it('opens from the row settings button with the page values', () => {
     renderPanel();
     const dialog = openSettingsFor('About');
