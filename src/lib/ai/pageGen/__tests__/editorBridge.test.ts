@@ -20,6 +20,8 @@ import {
 } from '../editorBridge';
 import type { PageGenResultPayload } from '../protocol';
 
+const NO_IMAGES = { requested: 0, resolved: 0, fellBack: {}, credits: [] };
+
 let store: RootStoreType;
 let project: ProjectModelType;
 let page: PageModelType;
@@ -29,7 +31,10 @@ function result(raw: unknown, target: CapturedTarget): PageGenResultPayload {
     breakpoints: deriveBreakpointKeys(target.breakpoints.map(({ label, minWidth }) => ({ label, minWidth }))),
   });
   if (!out.ok) throw new Error(out.errors.join('; '));
-  return { generationId: 'gen-1', model: 'claude-sonnet-5-5', ...out.result };
+  // The image requests are server-side data the route never sends.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { imageRequests, ...result } = out.result;
+  return { generationId: 'gen-1', model: 'claude-sonnet-5-5', ...result, images: NO_IMAGES };
 }
 
 const HERO = {

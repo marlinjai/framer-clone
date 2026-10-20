@@ -234,3 +234,64 @@ describe('validateGeneration output shape', () => {
     );
   });
 });
+
+describe('validateGeneration: stock-photo queries', () => {
+  it('collects an img query with the box shape and keeps it out of the props', () => {
+    const result = ok({
+      nodes: [
+        {
+          type: 'section',
+          children: [
+            { type: 'img', props: { imageQuery: '  fresh   sourdough loaves ', alt: 'Brote', style: { width: '600px', height: '400px' } } },
+            { type: 'img', props: { imageQuery: 'baker portrait', style: { width: { desktop: '300px', mobile: '200px' }, height: '450px' } } },
+            { type: 'img', preset: 'image', props: { imageQuery: 'flour on a table' } },
+            { type: 'img', props: { imageQuery: 'wide shot', style: { width: '100%', height: '400px' } } },
+          ],
+        },
+      ],
+    });
+    const imgs = result.nodes[0].children;
+    expect(result.imageRequests).toEqual([
+      { nodeId: imgs[0].id, query: 'fresh sourdough loaves', orientation: 'landscape', widthPx: 600 },
+      { nodeId: imgs[1].id, query: 'baker portrait', orientation: 'portrait', widthPx: 300 },
+      // The Image preset's 240 x 160 box.
+      { nodeId: imgs[2].id, query: 'flour on a table', orientation: 'landscape', widthPx: 240 },
+      // A fluid width says nothing about the shape.
+      { nodeId: imgs[3].id, query: 'wide shot' },
+    ]);
+    for (const img of imgs) {
+      expect(img.props).not.toHaveProperty('imageQuery');
+      expect(img.props.src).toBe(PLACEHOLDER_IMAGE_SRC); // until the route resolves it
+    }
+    expect(imgs[0].props.alt).toBe('Brote');
+  });
+
+  it('a src from the brief wins over a query', () => {
+    const result = ok({ nodes: [{ type: 'img', props: { src: 'https://example.com/a.jpg', imageQuery: 'bread', alt: 'A' } }] });
+    expect(result.imageRequests).toEqual([]);
+    expect(result.nodes[0].props.src).toBe('https://example.com/a.jpg');
+  });
+
+  it('a broken src still lets the query resolve', () => {
+    const result = ok({ nodes: [{ type: 'img', props: { src: 'javascript:alert(1)', imageQuery: 'bread', alt: 'A' } }] });
+    expect(result.imageRequests.map((r) => r.query)).toEqual(['bread']);
+  });
+
+  it.each([
+    ['a URL', 'https://example.com/photo'],
+    ['markup', '<b>bread</b>'],
+    ['too long', 'bread '.repeat(GENERATION_LIMITS.maxImageQueryChars)],
+    ['no letters', '1234'],
+    ['not a string', 42],
+  ])('drops an unusable query (%s) with a warning', (_label, imageQuery) => {
+    const result = ok({ nodes: [{ type: 'img', props: { imageQuery, alt: 'A' } }] });
+    expect(result.imageRequests).toEqual([]);
+    expect(result.warnings.some((w) => w.includes('imageQuery'))).toBe(true);
+  });
+
+  it('never accepts a query on anything but an img', () => {
+    const result = ok({ nodes: [{ type: 'div', props: { imageQuery: 'bread' } }] });
+    expect(result.imageRequests).toEqual([]);
+    expect(result.warnings.some((w) => w.includes('"imageQuery" is not allowed'))).toBe(true);
+  });
+});

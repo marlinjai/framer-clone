@@ -461,6 +461,14 @@ describe('POST /api/ai/cms-agent on current models', () => {
     expect(anthropicState.streamCalls[0]).toMatchObject({ model: 'claude-sonnet-5-5', output_config: { effort: 'medium' } });
   });
 
+  it('refuses a raw model id or an unknown step (the slider allowlist), before any model call', async () => {
+    for (const model of ['claude-opus-5-5', 'opus', 'GPT']) {
+      const res = await POST(makeRequest(baseBody({ model }), { cookie: authCookie }));
+      expect(res.status).toBe(400);
+    }
+    expect(anthropicState.streamCalls).toHaveLength(0);
+  });
+
   it('Haiku 5.5: low effort, no fallbacks, no betas, adaptive thinking left at its default', async () => {
     await readStream(await POST(makeRequest(baseBody({ model: 'HAIKU' }), { cookie: authCookie })));
     const params = anthropicState.streamCalls[0];

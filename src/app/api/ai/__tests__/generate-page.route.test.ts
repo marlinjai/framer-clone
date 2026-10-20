@@ -5,7 +5,7 @@
 // mocked while resolveActiveScope stays REAL, so the session -> scope ->
 // permission contract runs for real, exactly like the CMS agent route tests.
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // --- Scriptable Anthropic client -------------------------------------------
 type Turn =
@@ -247,7 +247,11 @@ describe('POST /api/ai/generate-page validation and budget', () => {
       baseBody({ brief: '   ' }),
       baseBody({ brief: 'x'.repeat(GENERATION_LIMITS.maxBriefChars + 1) }),
       baseBody({ breakpoints: [] }),
-      baseBody({ model: 'OPUS' }),
+      // The model allowlist: keys only, never a raw model id or an unknown step.
+      baseBody({ model: 'claude-opus-5-5' }),
+      baseBody({ model: 'GPT' }),
+      // Unknown fields are refused rather than silently ignored.
+      baseBody({ modelId: 'claude-opus-5-5' }),
     ]) {
       const res = await POST(makeRequest(body));
       expect(res.status).toBe(400);
@@ -597,5 +601,140 @@ describe('POST /api/ai/generate-page cancellation', () => {
     const evs = await events(res);
     // Cancelled runs end quietly: no result, and the stream still closes.
     expect(evs.some((e) => e.event === 'gen:result')).toBe(false);
+  });
+});
+
+// --- Model slider mapping ------------------------------------------------------
+describe('POST /api/ai/generate-page model choice', () => {
+  it('maps each slider step to its configured model id, with an explicit effort', async () => {
+    for (const [key, id, fallbacks] of [
+      ['HAIKU', 'claude-haiku-5-5', false],
+      ['SONNET', 'claude-sonnet-5-5', true],
+      ['OPUS', 'claude-opus-5-5', true],
+    ] as const) {
+      anthropicState.calls = [];
+      __resetPageGenRateLimiterForTests();
+      const res = await POST(makeRequest(baseBody({ model: key })));
+      await res.text();
+      const { params } = anthropicState.calls[0];
+      expect(params.model).toBe(id);
+      expect(params.output_config).toEqual({ effort: 'medium' });
+      expect('fallbacks' in params).toBe(fallbacks);
+    }
+  });
+
+  it('defaults to Sonnet 5.5 when no model is sent', async () => {
+    const res = await POST(makeRequest(baseBody()));
+    await res.text();
+    expect(anthropicState.calls[0].params.model).toBe('claude-sonnet-5-5');
+  });
+});
+
+// --- Stock photos --------------------------------------------------------------
+const PAGE_WITH_IMAGES = {
+  title: 'Bakery',
+  nodes: [
+    {
+      type: 'section',
+      label: 'Hero',
+      children: [
+        { type: 'h1', props: { children: 'Frisches Brot' } },
+        {
+          type: 'img',
+          props: { imageQuery: 'sourdough bread loaves', alt: 'Sauerteigbrote', style: { width: '640px', height: '400px' } },
+        },
+        { type: 'img', props: { imageQuery: 'Sourdough  bread loaves', alt: 'Noch mehr Brot', style: { width: '320px', height: '200px' } } },
+      ],
+    },
+  ],
+};
+
+function unsplashPhoto(id: string) {
+  return {
+    id,
+    urls: {
+      raw: `https://images.unsplash.com/photo-${id}?ixid=abc`,
+      regular: `https://images.unsplash.com/photo-${id}?ixid=abc&w=1080`,
+    },
+    user: { name: `Photographer ${id}`, links: { html: `https://unsplash.com/@p${id}` } },
+    links: { download_location: `https://api.unsplash.com/photos/${id}/download?ixid=abc` },
+  };
+}
+
+describe('POST /api/ai/generate-page stock photos', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(async () => {
+    const { __resetStockImageCacheForTests } = await import('@/lib/ai/pageGen/stockImages');
+    __resetStockImageCacheForTests();
+    fetchMock = vi.fn(async (url: string) => {
+      if (url.startsWith('https://api.unsplash.com/search/photos')) {
+        return new Response(JSON.stringify({ results: [unsplashPhoto('a'), unsplashPhoto('b')] }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubEnv('UNSPLASH_ACCESS_KEY', 'test-unsplash-key');
+    anthropicState.turns = [toolTurn(PAGE_WITH_IMAGES)];
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('places distinct hotlinked photos with credit, and triggers each download once', async () => {
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(evs.some((e) => e.event === 'gen:progress' && e.data.phase === 'images')).toBe(true);
+    const result = evs.find((e) => e.event === 'gen:result')!.data as {
+      nodes: Array<{ children: Array<{ type: string; props: Record<string, unknown> }> }>;
+      images: { requested: number; resolved: number; credits: unknown[] };
+    };
+    expect(result).not.toHaveProperty('imageRequests');
+    const imgs = result.nodes[0].children.filter((c) => c.type === 'img');
+    expect(imgs.map((i) => i.props.src)).toEqual([
+      expect.stringMatching(/^https:\/\/images\.unsplash\.com\/photo-a\?.*w=1280/),
+      expect.stringMatching(/^https:\/\/images\.unsplash\.com\/photo-b\?.*w=640/),
+    ]);
+    expect(imgs[0].props).toMatchObject({ alt: 'Sauerteigbrote', title: 'Photo by Photographer a on Unsplash' });
+    expect(imgs[0].props).not.toHaveProperty('imageQuery');
+    expect(result.images).toMatchObject({ requested: 2, resolved: 2 });
+
+    // One search for the one distinct query and orientation (same photo search twice on the page).
+    const searches = fetchMock.mock.calls.filter(([u]) => String(u).includes('/search/photos'));
+    expect(searches).toHaveLength(1);
+    expect((searches[0][1] as RequestInit).headers).toMatchObject({ Authorization: 'Client-ID test-unsplash-key' });
+    await vi.waitFor(() => {
+      const downloads = fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.includes('/download'));
+      expect(downloads.sort()).toEqual([
+        'https://api.unsplash.com/photos/a/download?ixid=abc',
+        'https://api.unsplash.com/photos/b/download?ixid=abc',
+      ]);
+    });
+  });
+
+  it('keeps the placeholder and says why when the key is not set (never an error)', async () => {
+    vi.stubEnv('UNSPLASH_ACCESS_KEY', '');
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(evs.some((e) => e.event === 'gen:error')).toBe(false);
+    const result = evs.find((e) => e.event === 'gen:result')!.data as {
+      nodes: Array<{ children: Array<{ type: string; props: Record<string, unknown> }> }>;
+      images: unknown;
+    };
+    const imgs = result.nodes[0].children.filter((c) => c.type === 'img');
+    expect(imgs.every((i) => i.props.src === '/images/sample-image.jpg')).toBe(true);
+    expect(result.images).toEqual({ requested: 2, resolved: 0, fellBack: { disabled: 2 }, credits: [] });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a rate-limited Unsplash still yields the page, with the fallback counted', async () => {
+    fetchMock.mockImplementation(async () => new Response('Rate Limit Exceeded', { status: 429 }));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const evs = await events(await POST(makeRequest(baseBody())));
+    const result = evs.find((e) => e.event === 'gen:result')!.data as { images: unknown };
+    expect(result.images).toMatchObject({ resolved: 0, fellBack: { rate_limited: 2 } });
+  });
+
+  it('never sends the key to the browser', async () => {
+    const res = await POST(makeRequest(baseBody()));
+    expect(await res.text()).not.toContain('test-unsplash-key');
   });
 });

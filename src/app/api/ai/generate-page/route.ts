@@ -71,6 +71,13 @@ import {
 } from '@/lib/ai/pageGen/protocol';
 import { classifyProviderError } from '@/lib/ai/pageGen/providerError';
 import { getPageGenRateLimiter } from '@/lib/ai/pageGen/rateLimit';
+import {
+  applyStockPhotos,
+  resolveStockImages,
+  triggerStockDownloads,
+  type StockImageResolution,
+} from '@/lib/ai/pageGen/stockImages';
+import type { AiEffort, AiModelKey } from '@/lib/ai/anthropicClient';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -80,16 +87,23 @@ const SSE_HEARTBEAT_MS = 5_000;
 /**
  * Output ceiling per attempt. A 200-node page is roughly 15k tokens of JSON,
  * and on current models adaptive thinking counts toward the same limit, so
- * the cap leaves room for both. Worst case per request (two full attempts on
- * Sonnet 5.5 at $10 per million output tokens): about $0.64.
+ * the cap leaves room for both. Worst case per request (two full attempts):
+ * about $0.03 on Haiku 5.5, $0.64 on Sonnet 5.5 and $1.28 on Opus 5.5 ($0.50,
+ * $10 and $20 per million output tokens).
  */
 const MAX_OUTPUT_TOKENS = 32_000;
 /**
- * Effort for page generation: `medium`. It is a single structured design pass
- * with a validation gate after it; raise to `high` only if evals show better
- * layouts are worth the extra thinking tokens.
+ * Effort per model (explicit, because the models' defaults differ). Page
+ * generation is a single structured design pass with a validation gate after
+ * it, so every step runs at `medium`, the level the generator used before the
+ * slider existed; raise one only if evals show better layouts are worth the
+ * thinking tokens. (Not exported: a route module may only export handlers.)
  */
-const PAGE_GEN_EFFORT = 'medium' as const;
+const PAGE_GEN_EFFORT: Record<AiModelKey, AiEffort> = {
+  HAIKU: 'medium',
+  SONNET: 'medium',
+  OPUS: 'medium',
+};
 /** Attempts per request: the first, plus one repair round. */
 const MAX_ATTEMPTS = 2;
 /** Serialized replace/insert context ceiling (the client truncates to ~8k tokens first). */
@@ -108,7 +122,7 @@ const TargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('insert'), context: z.unknown() }),
 ]);
 
-const BodySchema = z.object({
+const BodySchema = z.strictObject({
   brief: z
     .string()
     .trim()
@@ -235,7 +249,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
 
   try {
     heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
-    const modelFields = modelRequestFields(body.model, PAGE_GEN_EFFORT);
+    const modelFields = modelRequestFields(body.model, PAGE_GEN_EFFORT[body.model]);
     modelId = modelFields.model;
     const breakpoints: BreakpointKey[] = deriveBreakpointKeys(body.breakpoints);
     // Stop the Anthropic stream (and the spend) when the client disconnects:
@@ -368,11 +382,23 @@ async function runGeneration(args: RunArgs): Promise<void> {
       } else {
         const outcome = validateGeneration(toolUse.input, { breakpoints });
         if (outcome.ok) {
+          // The image requests are server-side data: resolved here, never sent.
+          const { imageRequests, ...result } = outcome.result;
+          if (imageRequests.length > 0) {
+            sse.send('gen:progress', { phase: 'images', receivedChars: received, attempt });
+          }
+          const stock = await resolveStockImagesSafely(imageRequests, signal);
+          if (signal.aborted) return;
           sse.send('gen:result', {
             generationId: requestId,
-            ...outcome.result,
+            ...result,
+            nodes: applyStockPhotos(result.nodes, stock.placed),
             model: modelId,
+            images: stock.summary,
           });
+          // The photos are now in a result the editor applies: tell Unsplash
+          // (its download tracking), unless the client already went away.
+          if (!signal.aborted) triggerStockDownloads(stock.placed);
           return;
         }
         problems = outcome.errors;
@@ -434,6 +460,31 @@ async function runGeneration(args: RunArgs): Promise<void> {
       status,
       errorCode,
     });
+  }
+}
+
+/**
+ * Stock photos are a nicety on top of a valid generation: whatever goes wrong
+ * there (the resolver itself never throws, this is the belt and braces), the
+ * generation still succeeds with placeholders and a note.
+ */
+async function resolveStockImagesSafely(
+  requests: Parameters<typeof resolveStockImages>[0],
+  signal: AbortSignal,
+): Promise<StockImageResolution> {
+  try {
+    return await resolveStockImages(requests, { signal });
+  } catch (err) {
+    console.warn(`[stock-images] resolver failed ${err instanceof Error ? err.name : 'error'}`);
+    return {
+      placed: [],
+      summary: {
+        requested: requests.length,
+        resolved: 0,
+        fellBack: requests.length > 0 ? { unavailable: requests.length } : {},
+        credits: [],
+      },
+    };
   }
 }
 

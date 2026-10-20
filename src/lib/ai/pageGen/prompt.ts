@@ -30,8 +30,12 @@ const INSTRUCTIONS = [
   '- Lay sections out with flex or grid; constrain content width with maxWidth (e.g. 1120px) and',
   '  margin "0 auto". Make every section work on mobile through responsive maps.',
   '- Use semantic tags: header, nav, main, section, footer, h1 (once per page), h2 for section titles.',
-  '- Images: use https URLs only when the brief provides them; otherwise use an img with a descriptive',
-  '  alt and no src (the editor inserts a placeholder the user replaces).',
+  '- Write all copy, labels shown to visitors and alt texts in the language of the brief.',
+  '- Images: use an https src only when the brief provides the URL. Otherwise give every img an',
+  '  imageQuery (a short English stock-photo search, 2 to 6 concrete words such as "fresh sourdough',
+  '  loaves on a wooden table"; no brand names, no names of real people, no text in the photo) and',
+  '  an alt describing the picture in the language of the page, and no src. The server finds a',
+  '  matching photo; give each image its own query so a page never repeats a photo.',
   '- Label every section and important node so the layers panel reads like an outline.',
 ].join('\n');
 

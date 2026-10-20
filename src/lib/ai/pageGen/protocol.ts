@@ -5,10 +5,15 @@
 
 import type { GeneratedNodeSnapshot } from './validate';
 import type { BreakpointInput } from './schema';
+import { MODEL_CHOICES, type ModelChoice } from '@/lib/ai/modelChoice';
 
-/** Models the page generator may run on (Opus is deliberately not offered: cost per page). */
-export const PAGE_GEN_MODELS = ['SONNET', 'HAIKU'] as const;
-export type PageGenModel = (typeof PAGE_GEN_MODELS)[number];
+/**
+ * Models the page generator may run on: the slider's three steps (Fast =
+ * Haiku 5.5, Balanced = Sonnet 5.5, Best = Opus 5.5). The route validates the
+ * key against this list and maps it to a model id on the server.
+ */
+export const PAGE_GEN_MODELS = MODEL_CHOICES;
+export type PageGenModel = ModelChoice;
 export const DEFAULT_PAGE_GEN_MODEL: PageGenModel = 'SONNET';
 
 /** Where the generated nodes go. */
@@ -33,7 +38,7 @@ export interface PageGenRequest {
 
 /** SSE `gen:progress`: the model is writing (or the server is checking / repairing). */
 export interface PageGenProgress {
-  phase: 'generating' | 'validating' | 'repairing';
+  phase: 'generating' | 'validating' | 'repairing' | 'images';
   /** Characters of structured output received so far in this attempt. */
   receivedChars: number;
   attempt: number;
@@ -48,6 +53,48 @@ export interface PageGenResultPayload {
   warnings: string[];
   stats: { nodeCount: number; maxDepth: number };
   model: string;
+  /** What happened to the images the model asked stock photos for. */
+  images: StockImageSummary;
+}
+
+/**
+ * Why some (or all) images kept the placeholder instead of a stock photo:
+ *   disabled      no UNSPLASH_ACCESS_KEY on the server (the feature is off)
+ *   auth          Unsplash refused the key (401 / 403)
+ *   rate_limited  the hourly Unsplash request limit is used up (429)
+ *   unavailable   Unsplash answered 5xx or could not be reached
+ *   timeout       Unsplash did not answer in time
+ *   no_results    no (unused) photo matched the image's description
+ *   cap           more images than one generation resolves
+ */
+export type StockImageFallbackReason =
+  | 'disabled'
+  | 'auth'
+  | 'rate_limited'
+  | 'unavailable'
+  | 'timeout'
+  | 'no_results'
+  | 'cap';
+
+/** Photographer credit for one placed photo (Unsplash attribution). */
+export interface StockPhotoCredit {
+  photoId: string;
+  photographerName: string;
+  /** The photographer's Unsplash profile, with the referral utm parameters. */
+  photographerUrl: string;
+  /** unsplash.com, with the referral utm parameters. */
+  unsplashUrl: string;
+}
+
+export interface StockImageSummary {
+  /** Images the model described with an imageQuery. */
+  requested: number;
+  /** Images that now show a stock photo. */
+  resolved: number;
+  /** Images that kept the placeholder, counted per reason. */
+  fellBack: Partial<Record<StockImageFallbackReason, number>>;
+  /** One credit per placed photo, in page order. */
+  credits: StockPhotoCredit[];
 }
 
 /**

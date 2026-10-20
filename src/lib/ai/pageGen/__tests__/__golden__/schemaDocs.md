@@ -9,7 +9,8 @@ component (a MobX-State-Tree ComponentSnapshotIn). Shape of one node:
   "label": "<short name shown in the layers panel, e.g. Hero, Pricing card>",
   "props": {
     "children": "<text content, only on non-void tags without child nodes>",
-    "src": "<img only>", "alt": "<img only>", "href": "<a only>", "target": "<a only: _blank or _self>",
+    "src": "<img only>", "alt": "<img only>", "imageQuery": "<img only: English stock-photo search>",
+    "href": "<a only>", "target": "<a only: _blank or _self>",
     "style": { "<camelCase CSS property>": <value or responsive map> }
   },
   "children": [ <nodes> ]
@@ -26,7 +27,10 @@ Rules:
 - Only the style keys listed below are kept; anything else is dropped. No class names, no CSS text,
   no event handlers, no HTML strings.
 - Links: href must start with https://, http://, mailto:, tel:, # or a single /. Images: src must be https://,
-  http:// or a site path starting with /. Always give images a meaningful alt.
+  http:// or a site path starting with /. Always give images a meaningful alt in the page's language.
+- Stock photos: an img without src gets "imageQuery", 2 to 6 English words describing the photo
+  (at most 80 characters, plain words only). The server resolves at most
+  12 images per generation to photos; the rest keep a placeholder.
 - Never use these tags: base, embed, form, frame, frameset, iframe, input, link, math, meta, object, script, select, style, svg, template, textarea.
 - Budget: at most 200 nodes in total, nesting at most 10 levels,
   text at most 2000 characters per node. Prefer fewer, well-structured nodes.
@@ -55,7 +59,7 @@ desktop value would not fit a phone.
 - h5: may have children or text
 - h6: may have children or text
 - header: may have children or text
-- img: void (no children, no text); props: src, alt
+- img: void (no children, no text); props: src, alt, imageQuery
 - label: may have children or text
 - main: may have children or text
 - nav: may have children or text

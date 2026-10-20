@@ -4,6 +4,7 @@ import { observer } from 'mobx-react-lite';
 import { MoveDiagonal, ChevronDown, ChevronRight } from 'lucide-react';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { CollapsibleSection, DimensionInput } from '../primitives';
+import { withoutStockCredit } from '@/lib/ai/pageGen/stockCredit';
 
 interface SizeSectionProps {
   component: ComponentInstance;
@@ -190,7 +191,8 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
             type="text"
             value={component.props?.src as string || ''}
             onChange={(e) => {
-              const currentProps = component.props || {};
+              // A new image no longer matches a stock photo's credit: drop it with the same edit.
+              const currentProps = withoutStockCredit((component.props || {}) as Record<string, unknown>);
               component.props = { ...currentProps, src: e.target.value } as Record<string, unknown>;
             }}
             className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
