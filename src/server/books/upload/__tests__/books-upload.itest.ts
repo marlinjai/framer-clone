@@ -19,6 +19,7 @@
 // Plus the daily ceiling, the parallel limit, a refusal, VAT and CHF invoices,
 // and what 010 guarantees for staging rows and the ledger. Synthetic data only.
 
+import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { ContactBook } from '../../contactBook';
@@ -632,5 +633,35 @@ describe('unhappy paths of reading and importing', () => {
     expect(
       await rejectionCode(env.ownerDb.updateTable('historical_import_item').set({ status: 'discarded', discarded_at: new Date() }).where('id', '=', item.id).execute()),
     ).toBe('23514');
+  });
+
+  it('a caller who leaves while the ceiling is being counted gets no model call that runs on', async () => {
+    const { tenantId, book, scope } = await company();
+    const item = await staged(scope, `lock-${tenantId}`);
+    // Another reading holds the company's ceiling lock for a moment.
+    let unlock!: () => void;
+    const held = env.ownerDb.transaction().execute(async (trx) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`books-import-extract:${tenantId}`}, 0))`.execute(trx);
+      await new Promise<void>((r) => (unlock = r));
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const controller = new AbortController();
+    const d = deps([{ ...toolTurn(toolInput()), wait: new Promise(() => {}) }], book, { signal: controller.signal, callBudgetMs: 60_000 });
+    const pending = extractItem(scope, item.id, d.deps);
+    await new Promise((r) => setTimeout(r, 50));
+    controller.abort();
+    unlock();
+    await held;
+    // Without honouring the abort that came during the wait, this would run until its 60 s budget.
+    const back = await pending;
+    expect(back.status).toBe('uploaded');
+    expect(await env.ownerDb.selectFrom('historical_import_extraction').select('outcome').where('item_id', '=', item.id).execute()).toEqual([{ outcome: 'aborted' }]);
+  }, 20_000);
+
+  it('010 keeps the claim id and time together outside a reading too', async () => {
+    const { tenantId, scope } = await company();
+    const item = await staged(scope, `half-${tenantId}`);
+    expect(await rejectionCode(env.ownerDb.updateTable('historical_import_item').set({ claim_id: 'x' }).where('id', '=', item.id).execute())).toBe('23514');
+    expect(await rejectionCode(env.ownerDb.updateTable('historical_import_item').set({ claimed_at: new Date() }).where('id', '=', item.id).execute())).toBe('23514');
   });
 });

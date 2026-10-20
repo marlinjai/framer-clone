@@ -435,6 +435,22 @@ describe('ImportPanel', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Import all ready (1)' })));
   });
 
+  it('the replace question in the editor gives the focus back to "Read again with AI" on Cancel and on Escape', async () => {
+    server({ 'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ corrected: true })], importedTotal: 0, counter: null, limits: LIMITS } }) });
+    render(<ImportPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Check' }));
+    const form = screen.getByRole('form', { name: 'Invoice as printed' });
+    const reread = within(form).getByRole('button', { name: 'Read again with AI' });
+    fireEvent.click(reread);
+    fireEvent.click(within(screen.getByRole('alertdialog', { name: 'Replace what you entered' })).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(document.activeElement).toBe(reread));
+    fireEvent.click(reread);
+    fireEvent.keyDown(screen.getByRole('alertdialog', { name: 'Replace what you entered' }), { key: 'Escape' });
+    await waitFor(() => expect(document.activeElement).toBe(reread));
+    expect(screen.queryByRole('alertdialog', { name: 'Replace what you entered' })).toBeNull();
+    expect(calls.some((c) => c.url.includes('/extract'))).toBe(false);
+  });
+
   it('shows how many imported invoices are not listed', async () => {
     server({ 'GET /api/books/imports': () => ({ status: 200, body: { items: [item({ status: 'imported', documentId: 'd1' })], importedTotal: 140, counter: null, limits: LIMITS } }) });
     render(<ImportPanel />);

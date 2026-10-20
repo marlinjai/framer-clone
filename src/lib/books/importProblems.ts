@@ -62,6 +62,8 @@ const TEXT: Record<string, string> = {
   recipient_country_assumed: 'The recipient country is not printed; Germany is assumed.',
   tax_note_missing: 'The tax note (section 19 or reverse charge) is not printed.',
   sender_from_company: 'Sender fields not on the PDF are taken from the company settings.',
+  line_tax_rounded_to_summary: 'Line VAT differed from the printed VAT summary by rounding; the summary is kept because the total follows it.',
+  check_failed: 'This row could not be checked. Use "Check again"; if it stays, discard the row and report it.',
   service_date_unparsed: 'The service date or period is printed but could not be read. Enter it as a date or two dates.',
   payment_terms_unparsed: 'The payment terms are printed but could not be read as a number of days (imported without a due date).',
   recipient_vat_id_unparsed: 'The recipient VAT id is printed but is not a valid VAT id (imported without it).',
@@ -73,24 +75,32 @@ const TEXT: Record<string, string> = {
 
 /** Why reading again failed, in words (the outcome a `reread_failed:` code carries). */
 const REREAD_REASON: Record<string, string> = {
-  refused: 'the AI declined',
-  invalid_output: 'the AI gave no usable reading',
-  max_tokens: 'the invoice is too long to read in one go',
-  unreadable: 'the AI service could not open the PDF',
-  error: 'the AI service did not answer',
+  refused: 'the AI declined. The earlier reading is kept; correct it by hand if needed',
+  invalid_output: 'the AI gave no usable reading. The earlier reading is kept; try again, or correct it by hand',
+  max_tokens: 'the invoice is too long to read in one go. The earlier reading is kept; correct it by hand',
+  unreadable: 'the AI service could not open the PDF. The earlier reading is kept; correct it by hand',
+  error: 'the AI service did not answer. The earlier reading is kept; try again later',
 };
 
-/** Every problem code the server writes as such (the prefixed families are handled by their prefix). */
-export const KNOWN_PROBLEM_CODES: readonly string[] = Object.keys(TEXT);
+/** What a failed import names, in words (the code an `import_failed:` problem carries). */
+const IMPORT_FAILED_REASON: Record<string, string> = {
+  import_conflict: 'an invoice with this number or this file is already in the Books',
+  invalid_input: 'a field is not valid',
+  recipient_unavailable: 'the contacts database could not be reached',
+  recipient_ambiguous: 'more than one contact carries this recipient name',
+  counter_missing: 'the Books are not set up for this company',
+  not_renderable: 'the uploaded file is no longer stored',
+  import_counter_too_low: 'the invoice counter is below this number',
+};
 
 /** The sentence for one problem; counts are added where they say something. */
 export function problemText(p: ImportProblem): string {
   const base =
     TEXT[p.code] ??
     (p.code.startsWith('import_failed:')
-      ? `The import failed (${p.code.slice(14)}). Nothing was imported; try again.`
+      ? `The import failed: ${IMPORT_FAILED_REASON[p.code.slice(14)] ?? 'for a technical reason'}. Nothing was imported; check the row and try again.`
       : p.code.startsWith('reread_failed:')
-        ? `Reading again failed (${REREAD_REASON[p.code.slice(14)] ?? p.code.slice(14)}). The earlier reading is kept; try again later.`
+        ? `Reading again failed: ${REREAD_REASON[p.code.slice(14)] ?? 'for a technical reason. The earlier reading is kept; try again later'}.`
         : p.code);
   if (p.code === 'counter_raised' && p.count !== null) {
     return `Your next invoice number will become ${p.count}. It cannot be lowered later.`;

@@ -282,8 +282,18 @@ export default function ImportPanel() {
   async function byHand(item: ImportItemView) {
     queue.current = queue.current.filter((id) => id !== item.id);
     replacing.current.delete(item.id);
+    // Drops a pending busy retry while the request runs; cleared again if filling in fails.
     handFilled.current.add(item.id);
-    await act(item.id, () => importsApi.byHand(item.id, item.version));
+    let done = false;
+    await act(item.id, async () => {
+      const filled = await importsApi.byHand(item.id, item.version);
+      done = true;
+      return filled;
+    });
+    if (!done) {
+      handFilled.current.delete(item.id);
+      return;
+    }
     setOpen(item.id);
   }
 

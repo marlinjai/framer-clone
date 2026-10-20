@@ -202,5 +202,22 @@ describe('VAT that does not add up', () => {
     expect(ok(printed({ lines: printedLines, total: 119, taxAmounts: [{ rate: 19, net: 100, tax: 19 }] })).lines[0].taxAmount).toBe(1900);
     expect(issue(printed({ lines: printedLines, total: 119, taxAmounts: [{ rate: 19, net: 100, tax: 18 }] })).reason).toBe('tax_summary_mismatch');
     expect(issue(printed({ lines: printedLines, total: 119, taxAmounts: [{ rate: 7, net: 100, tax: 19 }] })).reason).toBe('tax_summary_mismatch');
+    // A template that prints every rate: a 0,00 row for a rate no line uses is no summary.
+    expect(ok(printed({ lines: printedLines, total: 119, taxAmounts: [{ rate: 19, net: 100, tax: 19 }, { rate: 7, net: 0, tax: 0 }] })).lines[0].taxAmount).toBe(1900);
+  });
+
+  it('per-line rounding against rounding the group: the total decides, within a cent per line', () => {
+    const two = [1, 2].map((n) => ({ description: `Item ${n}`, quantity: 1, unit: null, unitPrice: 10.03, discount: null, lineTotal: 10.03, taxRate: 19, taxAmount: 1.91 }));
+    const summary = [{ rate: 19, net: 20.06, tax: 3.81 }];
+    // The total was summed from the lines: the printed line VAT stands.
+    const byLines = ok(printed({ lines: two, total: 23.88, taxAmounts: summary }));
+    expect(byLines.lines.map((l) => l.taxAmount)).toEqual([191, 191]);
+    expect(recordWarnings(byLines).map((w) => w.code)).not.toContain('line_tax_rounded_to_summary');
+    // The total was summed from the summary: the lines follow it, warned.
+    const bySummary = ok(printed({ lines: two, total: 23.87, taxAmounts: summary }));
+    expect(bySummary.lines.reduce((a, l) => a + l.taxAmount, 0)).toBe(381);
+    expect(recordWarnings(bySummary)).toContainEqual({ code: 'line_tax_rounded_to_summary', count: 1 });
+    // More than a cent per line is a misreading.
+    expect(issue(printed({ lines: two, total: 23.88, taxAmounts: [{ rate: 19, net: 20.06, tax: 3.70 }] })).reason).toBe('tax_summary_mismatch');
   });
 });

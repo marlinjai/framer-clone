@@ -210,8 +210,14 @@ export async function validateItem(
     } else if (err.code === 'RECIPIENT_UNAVAILABLE') {
       // The contacts database could not be read: nothing can be confirmed until it can.
       problems.push(problem('contacts_unavailable'));
+    } else if (err.code === 'RECIPIENT_AMBIGUOUS') {
+      problems.push(problem('recipient_ambiguous', { path: 'recipient.name' }));
+    } else if (err.code === 'COUNTER_MISSING') {
+      problems.push(problem('counter_missing'));
     } else {
-      problems.push(problem(err.code.toLowerCase(), { path: err.code === 'RECIPIENT_AMBIGUOUS' ? 'recipient.name' : null }));
+      // Anything else the check could refuse: named as such (with a sentence), never as a raw code.
+      console.error(`[books-import] item ${item.id}: the check was refused (${err.code})`);
+      problems.push(problem('check_failed'));
     }
   }
 

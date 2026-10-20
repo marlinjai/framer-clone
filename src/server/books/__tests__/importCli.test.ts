@@ -155,6 +155,7 @@ describe('planInvoice: forward mapping', () => {
       linesPriceDerived: 0,
       linesDiscountUnparsed: 0,
       linesTaxDerived: 0,
+      linesTaxAdjusted: 0,
       confidence: 'high',
     });
   });

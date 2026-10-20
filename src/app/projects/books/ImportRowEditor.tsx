@@ -214,6 +214,7 @@ export default function ImportRowEditor({
   /** "Read again with AI" would replace what the user entered: asked first. */
   const [confirmReread, setConfirmReread] = useState(false);
   const rereadButton = useRef<HTMLButtonElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
   const initial = useMemo(() => JSON.stringify(toForm(item.printed)), [item.printed]);
   const typedHere = item.corrected || item.extractionId?.startsWith('manual:') === true || JSON.stringify(form) !== initial;
   function readAgain() {
@@ -258,7 +259,9 @@ export default function ImportRowEditor({
       </div>
       <form aria-label="Invoice as printed" onSubmit={save} className="flex flex-col gap-4">
         <div className="flex items-start justify-between gap-2">
-          <h2 className="font-medium">Check the invoice as printed</h2>
+          <h2 ref={heading} tabIndex={-1} className="font-medium outline-none">
+            Check the invoice as printed
+          </h2>
           <button type="button" className="text-sm underline underline-offset-4" onClick={onClose}>
             Close
           </button>
@@ -423,6 +426,8 @@ export default function ImportRowEditor({
                 onClick={() => {
                   setConfirmReread(false);
                   onReadAgain();
+                  // The dialog closes and the button waits: the focus goes to the form's heading.
+                  requestAnimationFrame(() => heading.current?.focus());
                 }}
               >
                 Replace with a new reading

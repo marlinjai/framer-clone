@@ -193,6 +193,30 @@ describe('the guard chain on the import routes', () => {
     expect(await res.text()).not.toContain('<script>');
   });
 
+  it('a stored original that is not a PDF is not served by either download, even after import', async () => {
+    const id = (await upload(pdfBytes(`stored-${tenantId}`))).json.item.id as string;
+    fake.turns.push(toolTurn(toolInput({ number: '29' })));
+    const read = await call(extractRoute.POST, 'POST', `/api/books/imports/${id}/extract`, { id });
+    const done = await call(confirmRoute.POST, 'POST', `/api/books/imports/${id}/confirm`, { id }, { expectedVersion: read.json.version });
+    const docId = done.json.documentId as string;
+    // Stored files are frozen; the test lifts the guard as the owner to plant HTML bytes past every check.
+    const owner = env.fx.owner;
+    const html = Buffer.from('<html><script>alert(1)</script></html>');
+    await owner`ALTER TABLE ${owner(env.schema)}.sales_document_file DISABLE TRIGGER USER`;
+    try {
+      await env.ownerDb.updateTable('sales_document_file').set({ content: html, byte_size: html.byteLength } as never).where('document_id', '=', docId).execute();
+    } finally {
+      await owner`ALTER TABLE ${owner(env.schema)}.sales_document_file ENABLE TRIGGER USER`;
+    }
+    for (const res of [
+      await documentPdfRoute.GET(new Request(`http://localhost:3000/api/books/documents/${docId}/pdf`, { headers: HEADERS }), { params: Promise.resolve({ id: docId }) }),
+      await itemPdfRoute.GET(new Request(`http://localhost:3000/api/books/imports/${id}/pdf`, { headers: HEADERS }), { params: Promise.resolve({ id }) }),
+    ]) {
+      expect(res.status).toBe(409);
+      expect(await res.text()).not.toContain('<script>');
+    }
+  });
+
   it("another company's row answers 404", async () => {
     const staged = (await upload(pdfBytes(`own-${tenantId}`))).json.item.id as string;
     state.session = sessionFor(newTenantId());

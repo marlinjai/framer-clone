@@ -55,6 +55,7 @@ import { tenantSchemaRef } from '@marlinjai/tenant-db';
 import { z } from 'zod';
 
 import type { CommerceDB, CustomerType } from '../commerce/db-types';
+import { isPdfBytes } from './pdfBytes';
 import { resolveTaxProfile } from '../tax/germanVat';
 import type { ContactBook } from './contactBook';
 import { BooksError, constraintName, invalid, isBooksError, sqlState, withDbErrors } from './errors';
@@ -190,6 +191,8 @@ const provenanceSchema = z
     linesDiscountUnparsed: z.number().int().min(0).max(500),
     /** Billable lines whose VAT amount was derived from their rate and the printed tax groups (regular taxation). */
     linesTaxDerived: z.number().int().min(0).max(500),
+    /** Rate groups whose printed line VAT differed from the printed VAT summary by rounding, set to the summary because the total was summed from it (warned). */
+    linesTaxAdjusted: z.number().int().min(0).max(20),
     /** Sender fields the PDF does not show, filled from the company's current sender block (upload). */
     senderFieldsFromCompany: z.number().int().min(0).max(30),
     confidence: z.enum(['high', 'medium', 'low']),
@@ -289,8 +292,7 @@ export function parseHistoricalInvoice(input: unknown, now: Date = new Date()): 
 
 /** The original's bytes checked (a non-empty PDF within the size limit) and digested. */
 export function checkOriginal(pdf: Uint8Array): { bytes: Uint8Array; sha256: string } {
-  const head = Buffer.from(pdf.subarray(0, 5)).toString('latin1');
-  if (pdf.byteLength === 0 || pdf.byteLength > MAX_ORIGINAL_BYTES || head !== '%PDF-') {
+  if (pdf.byteLength > MAX_ORIGINAL_BYTES || !isPdfBytes(pdf)) {
     throw invalid('INVALID_INPUT', [{ path: ['pdf'], message: `expected a PDF of at most ${MAX_ORIGINAL_BYTES} bytes` }]);
   }
   return { bytes: pdf, sha256: createHash('sha256').update(pdf).digest('hex') };
@@ -821,6 +823,7 @@ export type ImportWarning =
   | { code: 'line_tax_not_rate_times_net'; count: number }
   | { code: 'tax_note_missing' }
   | { code: 'line_tax_derived'; count: number }
+  | { code: 'line_tax_rounded_to_summary'; count: number }
   | { code: 'sender_from_company'; count: number }
   | { code: 'line_price_derived'; count: number }
   | { code: 'discount_unparsed'; count: number }
@@ -883,6 +886,8 @@ export function recordWarnings(record: HistoricalInvoice): ImportWarning[] {
   if (record.taxTreatment !== 'regular' && record.taxNote === null) out.push({ code: 'tax_note_missing' });
   const taxDerived = record.provenance.linesTaxDerived ?? 0;
   if (taxDerived > 0) out.push({ code: 'line_tax_derived', count: taxDerived });
+  const taxAdjusted = record.provenance.linesTaxAdjusted ?? 0;
+  if (taxAdjusted > 0) out.push({ code: 'line_tax_rounded_to_summary', count: taxAdjusted });
   const fromCompany = record.provenance.senderFieldsFromCompany ?? 0;
   if (fromCompany > 0) out.push({ code: 'sender_from_company', count: fromCompany });
   // Printed but not readable: the record carries none, the stored original has it.

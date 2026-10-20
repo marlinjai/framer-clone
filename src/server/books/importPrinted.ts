@@ -472,16 +472,21 @@ export type MappedPrinted =
 /**
  * The VAT of the lines under regular taxation, as printed: each billable
  * line's rate (printed, or the invoice's only printed rate), its printed tax
- * or, when the line shows none, its net times the rate; when the invoice
- * prints its tax per rate, the derived line taxes of a rate are adjusted (on
- * the largest line) so that their sum is the printed group tax. Counts the
- * lines whose tax was derived.
+ * or, when the line shows none, its net times the rate. Against the printed
+ * VAT summary per rate (a row of 0,00 for a rate no line uses is no summary):
+ * derived line taxes of a rate are adjusted (on the largest line) to the
+ * printed group tax when they differ by rounding (a cent per line); printed
+ * line taxes stand, and when they differ from their group by rounding, `alt`
+ * holds the lines adjusted to the summary instead, for an invoice whose total
+ * was summed from the summary (the caller picks the one the total confirms).
+ * More than rounding, or a summary rate no line carries, is a misreading.
  */
 function taxLines(
   lines: HistoricalLine[],
   raw: NonNullable<RawInvoice['lines']>,
-  groups: NonNullable<RawInvoice['taxAmounts']>,
-): { lines: HistoricalLine[]; derived: number } | PlanIssue {
+  allGroups: NonNullable<RawInvoice['taxAmounts']>,
+): { lines: HistoricalLine[]; derived: number; alt: { lines: HistoricalLine[]; adjusted: number } | null } | PlanIssue {
+  const groups = allGroups.filter((g) => !(Math.round(g.tax * 100) === 0 && (g.net == null || Math.round(g.net * 100) === 0)));
   const groupRates = [...new Set(groups.map((g) => Math.round(g.rate * 100)))];
   const out = lines.map((l) => ({ ...l }));
   const printedTax = new Set<number>();
@@ -504,24 +509,35 @@ function taxLines(
       l.taxAmount = roundHalfAway((l.subtotal * rate) / 10000);
     }
   }
+  const alt = out.map((l) => ({ ...l }));
+  let adjusted = 0;
   for (const g of groups) {
     const rate = Math.round(g.rate * 100);
     const members = out.map((l, i) => ({ l, i })).filter(({ l }) => l.kind !== 'text' && l.taxRate === rate);
+    // A summary rate no line carries: a misreading of the summary or of a line.
+    if (members.length === 0) return { kind: 'error', reason: 'tax_summary_mismatch' };
     const derivedMembers = members.filter(({ i }) => !printedTax.has(i));
     const want = Math.round(g.tax * 100);
     const have = members.reduce((acc, { l }) => acc + l.taxAmount, 0);
-    // A summary rate no line carries, or printed line VAT that disagrees with its summary: a misreading.
-    if (members.length === 0 || (derivedMembers.length === 0 && want !== have)) return { kind: 'error', reason: 'tax_summary_mismatch' };
-    if (want !== have) {
-      // Only a rounding difference (a cent per derived line) is put on a line; anything more
-      // means the summary and the lines disagree, which is named, never absorbed. A 0 % group
-      // has nothing to round.
-      if (rate === 0 || Math.abs(want - have) > derivedMembers.length) return { kind: 'error', reason: 'tax_summary_mismatch' };
-      const largest = derivedMembers.reduce((a, b) => (Math.abs(b.l.subtotal) > Math.abs(a.l.subtotal) ? b : a));
-      largest.l.taxAmount += want - have;
+    if (want === have) continue;
+    // Rounding is a cent per line (per-line rounding against rounding the group); a 0 % group has none.
+    if (rate === 0 || Math.abs(want - have) > members.length) return { kind: 'error', reason: 'tax_summary_mismatch' };
+    const pick = (pool: typeof members) => pool.reduce((x, y) => (Math.abs(y.l.subtotal) > Math.abs(x.l.subtotal) ? y : x));
+    if (derivedMembers.length > 0) {
+      const largest = pick(derivedMembers);
+      out[largest.i].taxAmount += want - have;
+      alt[largest.i].taxAmount += want - have;
+    } else {
+      // Every line printed its VAT: they stand; the alternative follows the summary.
+      alt[pick(members).i].taxAmount += want - have;
+      adjusted += 1;
     }
   }
-  return { lines: out, derived: out.filter((l, i) => l.kind !== 'text' && !printedTax.has(i)).length };
+  return {
+    lines: out,
+    derived: out.filter((l, i) => l.kind !== 'text' && !printedTax.has(i)).length,
+    alt: adjusted > 0 ? { lines: alt, adjusted } : null,
+  };
 }
 
 /**
@@ -590,7 +606,8 @@ export function mapPrintedInvoice(
   // case is named for its own way forward.
   if (treatment === 'reverse_charge' && (recipientCountry === 'DE' || !EU_MEMBER_STATES.has(recipientCountry))) {
     if (countryAssumed || countryInferred) return issue('error', 'reverse_charge_country_unknown');
-    return issue('error', recipientCountry === 'DE' ? 'reverse_charge_domestic' : 'reverse_charge_outside_eu');
+    if (recipientCountry === 'DE') return issue('error', 'reverse_charge_domestic');
+    return issue('error', 'reverse_charge_outside_eu');
   }
   const taxNoteText = (r.taxNote ?? r.smallBusinessNote ?? '').trim();
 
@@ -599,11 +616,18 @@ export function mapPrintedInvoice(
   let lines = mapped.lines;
   if (!lines.some((l) => l.kind !== 'text')) return issue('skipped', 'lines_missing');
   let taxDerived = 0;
+  let taxAdjusted = 0;
   if (treatment === 'regular') {
     const taxed = taxLines(lines, r.lines, groups);
     if ('reason' in taxed) return issue(taxed.kind, taxed.reason);
     lines = taxed.lines;
     taxDerived = taxed.derived;
+    // The total decides between the printed line VAT and the summary when they differ by rounding.
+    const sumOf = (ls: HistoricalLine[]) => ls.reduce((acc, l) => acc + l.subtotal + l.taxAmount, 0);
+    if (taxed.alt && sumOf(lines) !== totalCents && sumOf(taxed.alt.lines) === totalCents) {
+      lines = taxed.alt.lines;
+      taxAdjusted = taxed.alt.adjusted;
+    }
   }
   const sum = lines.reduce((acc, l) => acc + l.subtotal + l.taxAmount, 0);
   if (sum !== totalCents) return issue('error', 'lines_do_not_sum_to_total');
@@ -694,6 +718,7 @@ export function mapPrintedInvoice(
           linesPriceDerived: mapped.priceDerived,
           linesDiscountUnparsed: mapped.discountUnparsed,
           linesTaxDerived: taxDerived,
+          linesTaxAdjusted: taxAdjusted,
           confidence: r.confidence ?? 'low',
         },
       },

@@ -241,8 +241,11 @@ Books home.
     supported by this import, the row says to keep the invoice outside the Books and discard it;
     the lead decided on 2026-10-20 not to support it now: the Books cannot issue such documents
     either, so the import must not hold them; tracked as ROADMAP line 6). VAT that does not add up is named,
-    never absorbed: a VAT summary off from the lines by more than rounding, off at all where every
-    line prints its VAT, or naming a rate no line carries (`tax_summary_mismatch`), VAT on a 0 % line (`line_tax_on_zero_rate`, also refused by the
+    never absorbed: a VAT summary off from the lines by more than rounding (a cent per line) or
+    naming a rate no line carries (`tax_summary_mismatch`; a 0,00 row for an unused rate is no
+    summary). Within rounding, derived line VAT is adjusted to the summary, and printed line VAT
+    stands unless the total was summed from the summary, when the lines follow it (warned:
+    `line_tax_rounded_to_summary`), VAT on a 0 % line (`line_tax_on_zero_rate`, also refused by the
     record schema), and a summary row in the editor with its rate or VAT left empty.
 16. **The operator CLI after the shared core changed.** `pnpm books:import` now also imports
     regular-VAT and reverse-charge entries, and a section 19 invoice without the printed notice

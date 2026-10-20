@@ -10,12 +10,16 @@
 // stored digest. A draft answers a preview rendered from live data, marked
 // "ENTWURF" on every page and never stored (`x-books-of-record: false`).
 // 422 `render_incomplete` names the missing fields when a document of record
-// would lack a required field (nothing is stored then).
+// would lack a required field (nothing is stored then). An imported document
+// answers its stored original (the uploaded or operator's PDF). Whatever is
+// served must start with `%PDF-`, or the route answers 409 `not_renderable`
+// and serves nothing: a file that is really HTML never reaches the editor
+// origin as a document. Always nosniff and same-origin only.
 
 import { booksRoute } from '@/server/books/http/route';
 import { BooksError } from '@/server/books/errors';
 import { documentPdf } from '@/server/books/render/store';
-import { isPdfBytes } from '@/server/books/upload/service';
+import { isPdfBytes } from '@/server/books/pdfBytes';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

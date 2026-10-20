@@ -35,6 +35,7 @@ import type { AiModelKey } from '@/lib/ai/anthropicClient';
 import type { ContactBook } from '../contactBook';
 import { BooksError, isBooksError } from '../errors';
 import { counterRaiseUnconfirmed, IMPORT_RENDERER, importHistoricalInvoice, newImportSession } from '../importInvoices';
+import { isPdfBytes } from '../pdfBytes';
 import type { BooksScope } from '../scope';
 import { readSettings } from '../settings';
 import { extractPrintedInvoice } from './extract';
@@ -257,6 +258,8 @@ export async function extractItem(scope: BooksScope, itemId: string, deps: Extra
     const call = new AbortController();
     const onAbort = () => call.abort();
     deps.signal.addEventListener('abort', onAbort, { once: true });
+    // Left while waiting for the ceiling's lock: the listener came too late to hear it.
+    if (deps.signal.aborted) call.abort();
     const timer = setTimeout(() => {
       budget.abort();
       call.abort();
@@ -559,7 +562,7 @@ export async function confirmItem(
       // Only the raise the user confirmed (or none): a counter moved meanwhile is refused, not followed.
       confirmedCounterRaiseTo: raiseTo,
       inTransaction: async (trx, documentId) => {
-        const marked = await updateItem(trx, scope, itemId, { status: 'imported', documentId, clearContent: true, problems: [], claimedAt: null }, {
+        const marked = await updateItem(trx, scope, itemId, { status: 'imported', documentId, clearContent: true, problems: [] }, {
           expectedVersion: checked.version,
           whenStatus: ['ready'],
         });
@@ -608,11 +611,6 @@ export async function discardItem(scope: BooksScope, itemId: string, now: Date =
 export async function listImportItems(scope: BooksScope): Promise<{ items: ImportItem[]; importedTotal: number }> {
   const [open, imported] = await Promise.all([listOpenItems(scope.db, scope), listImportedItems(scope.db, scope, IMPORTED_SHOWN)]);
   return { items: [...open, ...imported.items], importedTotal: imported.total };
-}
-
-/** Whether bytes start like a PDF (`%PDF-`), the check every upload passed. */
-export function isPdfBytes(bytes: Uint8Array): boolean {
-  return Buffer.from(bytes.subarray(0, 5)).toString('latin1') === '%PDF-';
 }
 
 /**

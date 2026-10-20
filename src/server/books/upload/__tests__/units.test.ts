@@ -6,7 +6,8 @@
 // Synthetic data only.
 
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -194,7 +195,7 @@ describe('problem texts', () => {
     expect(problemText({ code: 'number_taken', path: 'number', blocking: true, count: null })).toMatch(/already in the Books/);
     expect(problemText({ code: 'counter_raised', path: null, blocking: false, count: 63 })).toBe('Your next invoice number will become 63. It cannot be lowered later.');
     expect(problemText({ code: 'line_price_derived', path: null, blocking: false, count: 3 })).toMatch(/\(3 lines\)$/);
-    expect(problemText({ code: 'import_failed:totals_mismatch', path: null, blocking: false, count: null })).toMatch(/totals_mismatch/);
+    expect(problemText({ code: 'import_failed:totals_mismatch', path: null, blocking: false, count: null })).toMatch(/technical reason/);
     expect(problemText({ code: 'something_new', path: null, blocking: true, count: null })).toBe('something_new');
     expect(pathLabel('lines.2.lineTotal')).toBe('Line 3, lineTotal');
     expect(pathLabel('recipient.name')).toBe('Recipient name');
@@ -202,12 +203,14 @@ describe('problem texts', () => {
   });
 });
 
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../../..');
+
 describe('every problem the server writes has a text', () => {
   it('codes named in the mapping, the core, the validation and the service all have a sentence', () => {
     const files = ['src/server/books/importPrinted.ts', 'src/server/books/importInvoices.ts', 'src/server/books/upload/validate.ts', 'src/server/books/upload/service.ts'];
     const codes = new Set<string>();
     for (const f of files) {
-      const text = readFileSync(join(process.cwd(), f), 'utf8');
+      const text = readFileSync(join(repoRoot, f), 'utf8');
       for (const m of text.matchAll(/(?:issue\(\s*'(?:error|skipped)',\s*|reason: |problem\(|code: )'([a-z][a-z0-9_]+)'/g)) codes.add(m[1]);
     }
     // zod's own issue kind, not a problem code.
@@ -219,6 +222,9 @@ describe('every problem the server writes has a text', () => {
       expect(problemText({ code: `extraction_failed:${outcome}`, path: null, blocking: true, count: null })).not.toBe(`extraction_failed:${outcome}`);
       expect(problemText({ code: `reread_failed:${outcome}`, path: null, blocking: false, count: null })).toMatch(/earlier reading is kept/);
     }
+    // A failed import says why in words, never as a raw code.
+    expect(problemText({ code: 'import_failed:import_conflict', path: null, blocking: false, count: null })).toMatch(/already in the Books/);
+    expect(problemText({ code: 'import_failed:something_new', path: null, blocking: false, count: null })).not.toContain('something_new');
   });
 });
 
