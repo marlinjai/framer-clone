@@ -236,6 +236,22 @@ describe('POST /api/projects/publish (authorized)', () => {
     expect(revalidateCustomHostsForSiteId).toHaveBeenCalledWith(PROJECT.id);
   });
 
+  it('a failing custom-domain revalidation does not turn a committed publish into a failure', async () => {
+    installRepo({
+      saveProject: vi.fn().mockResolvedValue(undefined),
+      publishProject: vi.fn().mockResolvedValue(undefined),
+      ensureSiteDomain: vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' }),
+    });
+    vi.mocked(revalidateCustomHostsForSiteId).mockRejectedValueOnce(new Error('db hiccup'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await POST(publishReq({ project: PROJECT }));
+
+    expect(res.status).toBe(200);
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
   it('composes liveUrl from PUBLIC_SITE_BASE_HOST when it is set', async () => {
     process.env.PUBLIC_SITE_BASE_HOST = 'sites.lumitra.co';
     const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });

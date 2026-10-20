@@ -36,7 +36,10 @@ const DomainsButton = observer(() => {
         <Globe size={16} />
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[85vh] max-w-[560px] overflow-y-auto">
+        <DialogContent
+          data-editor-ui="true"
+          className="max-h-[85vh] max-w-[560px] overflow-y-auto"
+        >
           <DialogHeader>
             <DialogTitle>Domains</DialogTitle>
             <DialogDescription>

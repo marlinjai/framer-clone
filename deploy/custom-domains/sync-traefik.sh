@@ -124,6 +124,9 @@ tmp="$workdir/out.yml"
 if [[ -f "$OUTPUT_FILE" ]] && cmp -s "$tmp" "$OUTPUT_FILE"; then
   exit 0
 fi
+# The staged name ends in .tmp on purpose: Traefik's file provider only parses
+# .yml, .yaml and .toml, so it never reads the half-written file, and the rename
+# into place is atomic on the same filesystem.
 staged="${OUTPUT_FILE}.tmp"
 install -m 0644 "$tmp" "$staged"
 mv -f "$staged" "$OUTPUT_FILE"
