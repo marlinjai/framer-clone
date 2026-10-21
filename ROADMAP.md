@@ -96,6 +96,12 @@ connections to the suite. The four lines below are in that order.
   NODE_IMAGE, `.nvmrc`, package.json engines and `@types/node` move together, as in the move to
   Node 22 of 2026-10-20 (pinned by digest, Dependabot proposes patch and minor releases but never a
   new major). (2026-10-20)
+- [ ] 8. A visual invoice template composer in the Books (asked by the owner on 2026-10-21): a
+  block-based A4 composer like the email editor whose canvas is the real PDF, versioned templates,
+  legally required blocks that move but cannot be removed, a save gate running the completeness
+  check, logos in the tenant schema, and a Correct flow (credit note plus a prefilled replacement
+  draft). Draft, waiting for the owner's approval and four questions. See
+  [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-21)
 - [x] The framer-clone Coolify Postgres database with the published port 5439: checked on
   2026-10-15, there is no framer-clone database or app in Coolify any more and port 5439 is closed
   on both servers, so nothing is left to restart. Done 2026-10-15.
