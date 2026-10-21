@@ -529,6 +529,13 @@ export interface DocumentPage {
 }
 
 /** A LIKE pattern matching `text` anywhere, its own %, _ and backslash taken literally. */
+/**
+ * Date and time parameters below are sent as TEXT and cast in SQL
+ * (`${x}::text::timestamp`): a parameter Postgres types as timestamp or date
+ * is converted by the driver through a JavaScript Date in the machine's local
+ * time zone, which shifted a cursor by the offset (two hours in Berlin) and
+ * dropped the rows that shared the last row's date from the next page.
+ */
 function containsPattern(text: string): string {
   return `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 }
@@ -550,8 +557,8 @@ export async function listDocuments(scope: BooksScope, input: ListDocumentsInput
     if (args.docType) c.push(eb('sales_document.doc_type', '=', args.docType));
     if (args.status) c.push(eb('sales_document.status', '=', args.status));
     if (args.customerId) c.push(eb('sales_document.customer_id', '=', args.customerId));
-    if (args.issuedFrom) c.push(eb('sales_document.issue_date', '>=', sql<string>`${args.issuedFrom}::date`));
-    if (args.issuedTo) c.push(eb('sales_document.issue_date', '<=', sql<string>`${args.issuedTo}::date`));
+    if (args.issuedFrom) c.push(eb('sales_document.issue_date', '>=', sql<string>`${args.issuedFrom}::text::date`));
+    if (args.issuedTo) c.push(eb('sales_document.issue_date', '<=', sql<string>`${args.issuedTo}::text::date`));
     if (args.numberContains) c.push(eb('sales_document.document_number', 'ilike', containsPattern(args.numberContains)));
     return eb.and(c);
   };
@@ -562,9 +569,9 @@ export async function listDocuments(scope: BooksScope, input: ListDocumentsInput
   if (cursor) {
     const after = (eb: DocEb) =>
       eb.or([
-        eb('sales_document.created_at', '<', sql<Date>`${cursor.createdAt}::timestamp`),
+        eb('sales_document.created_at', '<', sql<Date>`${cursor.createdAt}::text::timestamp`),
         eb.and([
-          eb('sales_document.created_at', '=', sql<Date>`${cursor.createdAt}::timestamp`),
+          eb('sales_document.created_at', '=', sql<Date>`${cursor.createdAt}::text::timestamp`),
           eb('sales_document.id', '<', cursor.id),
         ]),
       ]);
@@ -577,23 +584,26 @@ export async function listDocuments(scope: BooksScope, input: ListDocumentsInput
         )
       : q.where((eb) =>
           eb.or([
-            eb('sales_document.issue_date', '<', sql<string>`${cursor.issueDate}::date`),
-            eb.and([eb('sales_document.issue_date', '=', sql<string>`${cursor.issueDate}::date`), after(eb)]),
+            eb('sales_document.issue_date', '<', sql<string>`${cursor.issueDate}::text::date`),
+            eb.and([eb('sales_document.issue_date', '=', sql<string>`${cursor.issueDate}::text::date`), after(eb)]),
           ]),
         );
   }
-  const rows = (await q
-    .orderBy(sql`issue_date DESC NULLS FIRST`)
-    .orderBy('sales_document.created_at', 'desc')
-    .orderBy('sales_document.id', 'desc')
-    .limit(args.limit + 1)
-    .execute()) as Array<DocumentRow & { recipient_name: string | null }>;
-
-  const counted = await scope.db
-    .selectFrom('sales_document')
-    .select((eb) => eb.fn.countAll<string>().as('n'))
-    .where(filters)
-    .executeTakeFirstOrThrow();
+  // The page and its total (same filters), side by side.
+  const [found, counted] = await Promise.all([
+    q
+      .orderBy(sql`issue_date DESC NULLS FIRST`)
+      .orderBy('sales_document.created_at', 'desc')
+      .orderBy('sales_document.id', 'desc')
+      .limit(args.limit + 1)
+      .execute(),
+    scope.db
+      .selectFrom('sales_document')
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .where(filters)
+      .executeTakeFirstOrThrow(),
+  ]);
+  const rows = found as Array<DocumentRow & { recipient_name: string | null }>;
 
   const page = rows.slice(0, args.limit);
   const last = page[page.length - 1];

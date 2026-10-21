@@ -75,16 +75,25 @@ export default function BooksHome() {
   }, [numberInput]);
 
   const validYear = /^(19|20)\d{2}$/.test(year) ? year : '';
+  const yearIncomplete = year !== '' && validYear === '';
+  // A list's own failure is shown in the list (with a retry); only a page-wide refusal blocks the page.
+  const blockOnly = useCallback(
+    (err: unknown) => {
+      if (err instanceof BooksApiError && BLOCKING.has(err.code)) setBlocked(err);
+    },
+    [],
+  );
   const documents = useCursorList<DocumentListItem>(
     `${number}|${validYear}`,
     (cursor) => booksApi.documents({ number: number || undefined, year: validYear || undefined, cursor }),
-    { onFirstPageError: fail, errorText },
+    { onFirstPageError: blockOnly, errorText },
   );
   const customers = useCursorList<CustomerView>('customers', (cursor) => booksApi.customers({ cursor }), {
-    onFirstPageError: fail,
+    onFirstPageError: blockOnly,
     errorText,
   });
-  const filtered = number !== '' || validYear !== '';
+  // What the user typed counts, also during the short pause before a number is applied.
+  const filtered = numberInput.trim() !== '' || year !== '';
 
   async function newInvoice() {
     setCreating(true);
@@ -102,7 +111,7 @@ export default function BooksHome() {
     setError(null);
     try {
       await booksApi.archiveCustomer(id);
-      await customers.reload();
+      await customers.reload({ keepShown: true });
     } catch (err) {
       fail(err);
     }
@@ -201,9 +210,16 @@ export default function BooksHome() {
                 placeholder="e.g. 2023"
                 min={1900}
                 max={2099}
+                aria-invalid={yearIncomplete}
+                aria-describedby={yearIncomplete ? 'books-year-hint' : undefined}
                 className="h-9 w-28 rounded-md border bg-transparent px-2 text-sm text-foreground"
               />
             </label>
+            {yearIncomplete ? (
+              <p id="books-year-hint" className="self-center text-xs text-muted-foreground">
+                Enter a four-digit year; until then all years are shown.
+              </p>
+            ) : null}
             {filtered ? (
               <Button
                 size="sm"
@@ -219,11 +235,9 @@ export default function BooksHome() {
             ) : null}
           </div>
           {documents.items === null ? (
-            <p className="text-sm text-muted-foreground">Loading documents…</p>
+            <FirstPage list={documents} noun="documents" />
           ) : documents.items.length === 0 ? (
-            filtered ? (
-              <p className="text-sm text-muted-foreground">No document matches this number and year.</p>
-            ) : (
+            filtered ? null : (
               <section className="rounded-lg border border-dashed p-10 text-center">
                 <h2 className="text-base font-medium">No invoices yet</h2>
                 <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
@@ -263,7 +277,7 @@ export default function BooksHome() {
             ))}
           </ul>
           )}
-          <MoreRows list={documents} noun="documents" />
+          <MoreRows list={documents} noun={['document', 'documents']} emptyText={filtered ? 'No document matches these filters.' : ''} />
         </section>
       ) : null}
 
@@ -275,7 +289,7 @@ export default function BooksHome() {
                 onCancel={() => setAdding(false)}
                 onCreated={async () => {
                   setAdding(false);
-                  await customers.reload();
+                  await customers.reload({ keepShown: true });
                 }}
               />
             </div>
@@ -287,7 +301,7 @@ export default function BooksHome() {
             </div>
           )}
           {customers.items === null ? (
-            <p className="text-sm text-muted-foreground">Loading customers…</p>
+            <FirstPage list={customers} noun="customers" />
           ) : customers.items.length === 0 ? (
             <p className="text-sm text-muted-foreground">No customers yet.</p>
           ) : (
@@ -311,7 +325,7 @@ export default function BooksHome() {
               ))}
             </ul>
           )}
-          <MoreRows list={customers} noun="customers" />
+          <MoreRows list={customers} noun={['customer', 'customers']} emptyText="" />
         </section>
       ) : null}
 
@@ -320,26 +334,53 @@ export default function BooksHome() {
   );
 }
 
+/** Where a list's first page goes: loading, or why it failed with a retry. */
+function FirstPage<T>({ list, noun }: { list: CursorList<T>; noun: string }) {
+  if (list.firstError === null) return <p className="text-sm text-muted-foreground">Loading {noun}…</p>;
+  return (
+    <div role="alert" className="flex flex-wrap items-center gap-3 rounded-md border border-destructive px-4 py-3 text-sm">
+      <span>
+        The {noun} could not be loaded: {list.firstError}
+      </span>
+      <Button size="sm" variant="outline" onClick={() => void list.reload()}>
+        Try again
+      </Button>
+    </div>
+  );
+}
+
 /**
- * Below a paged list: how many rows are shown of how many, and "Load more"
- * while there are more. A page that failed says so beside the button; the rows
- * shown stay, and the button tries again.
+ * Below a paged list: one status line that is always there (so screen readers
+ * announce its changes): how many rows are shown of how many, or why none
+ * are; "Load more" while there are more. A page that failed says so; the rows
+ * shown stay, and "Load more" tries again. The button never loses the focus
+ * while it waits (aria-disabled, not disabled).
  */
-function MoreRows<T>({ list, noun }: { list: CursorList<T>; noun: string }) {
-  if (list.items === null || list.items.length === 0) return null;
+function MoreRows<T>({ list, noun, emptyText }: { list: CursorList<T>; noun: [string, string]; emptyText: string }) {
+  const count = list.items?.length ?? 0;
+  const text =
+    list.items === null ? '' : count === 0 ? emptyText : `Showing ${count} of ${list.total} ${list.total === 1 ? noun[0] : noun[1]}`;
   return (
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
-      <p className="text-muted-foreground" aria-live="polite">
-        Showing {list.items.length} of {list.total} {noun}
+      <p role="status" className="text-muted-foreground">
+        {text}
       </p>
-      {list.hasMore ? (
-        <Button variant="outline" size="sm" onClick={() => void list.loadMore()} disabled={list.loadingMore} aria-busy={list.loadingMore}>
+      {list.hasMore && count > 0 ? (
+        <Button
+          variant="outline"
+          size="sm"
+          aria-disabled={list.loadingMore}
+          aria-busy={list.loadingMore}
+          onClick={() => {
+            if (!list.loadingMore) void list.loadMore();
+          }}
+        >
           {list.loadingMore ? 'Loading…' : 'Load more'}
         </Button>
       ) : null}
       {list.moreError ? (
         <p role="alert" className="w-full text-destructive">
-          The next {noun} could not be loaded: {list.moreError} Your list is kept; use Load more to try again.
+          The next {noun[1]} could not be loaded: {list.moreError} Your list is kept; use Load more to try again.
         </p>
       ) : null}
     </div>

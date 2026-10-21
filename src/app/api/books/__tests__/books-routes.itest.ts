@@ -655,38 +655,67 @@ describe('Books routes: imported historical invoices', () => {
   }
 
   it('the documents list reaches every document page by page, counts them all, and finds by number and year', async () => {
-    // 61 imported invoices, 1 to 61, over three years (the shape of a real series).
+    // Not UTC: a timestamp parameter the driver converted through a local Date shifted the cursor by
+    // the offset and dropped rows sharing the last row's date (the servers in CI run in UTC, so pin it).
+    const tz = process.env.TZ;
+    process.env.TZ = 'Europe/Berlin';
+    try {
+    // 61 imported invoices, 1 to 61 (55 in 2021, 6 in 2022), and 3 drafts, which come first and have no issue date.
     for (let n = 1; n <= 61; n += 1) {
-      const year = n <= 20 ? 2021 : n <= 40 ? 2022 : 2023;
+      const year = n <= 55 ? 2021 : 2022;
       await importOne(n, { issueDate: `${year}-03-${String(((n - 1) % 28) + 1).padStart(2, '0')}` });
     }
-    const seen: string[] = [];
-    let cursor: string | null = null;
-    let pages = 0;
-    do {
-      const res = await call(documentsRoute.GET, 'GET', `/api/books/documents${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
-      expect(res.status).toBe(200);
-      expect(res.json.total).toBe(61);
-      seen.push(...(res.json.items as Json[]).map((d) => d.documentNumber as string));
-      cursor = res.json.nextCursor as string | null;
-      pages += 1;
-    } while (cursor && pages < 5);
-    // Every one of the 61, once, the last page without a further cursor.
-    expect(pages).toBe(2);
-    expect(new Set(seen).size).toBe(61);
-    expect(seen).toContain('1');
+    const drafts: string[] = [];
+    for (let i = 0; i < 3; i += 1) drafts.push(((await api.createDraft()).json.document as Json).id as string);
 
-    const byNumber = await call(documentsRoute.GET, 'GET', '/api/books/documents?number=17');
-    expect((byNumber.json.items as Json[]).map((d) => d.documentNumber)).toEqual(['17']);
-    expect(byNumber.json).toMatchObject({ total: 1, nextCursor: null });
-    const byYear = await call(documentsRoute.GET, 'GET', '/api/books/documents?year=2022');
-    expect(byYear.json.total).toBe(20);
-    expect((byYear.json.items as Json[]).every((d) => String(d.issueDate).startsWith('2022'))).toBe(true);
-    const both = await call(documentsRoute.GET, 'GET', '/api/books/documents?number=3&year=2021');
-    expect((both.json.items as Json[]).map((d) => d.documentNumber).sort()).toEqual(['13', '3']);
-    // LIKE wildcards in the search are taken literally.
-    expect((await call(documentsRoute.GET, 'GET', '/api/books/documents?number=%25')).json.total).toBe(0);
+    /** Every page of a query, with each page's total. */
+    const walk = async (filters: string) => {
+      const seen: Json[] = [];
+      const totals: number[] = [];
+      let cursor: string | null = null;
+      let pages = 0;
+      do {
+        const sep: string = filters ? '&' : '?';
+        const res = await call(documentsRoute.GET, 'GET', `/api/books/documents${filters ? `?${filters}` : ''}${cursor ? `${sep}cursor=${encodeURIComponent(cursor)}` : ''}`);
+        expect(res.status).toBe(200);
+        totals.push(res.json.total as number);
+        seen.push(...(res.json.items as Json[]));
+        cursor = res.json.nextCursor as string | null;
+        pages += 1;
+      } while (cursor && pages < 5);
+      return { seen, totals, pages };
+    };
+
+    // All 64 over two pages: the drafts first, a page boundary inside the issued ones, each once.
+    const all = await walk('');
+    expect(all.pages).toBe(2);
+    expect(all.totals).toEqual([64, 64]);
+    expect(new Set(all.seen.map((d) => d.id)).size).toBe(64);
+    expect(all.seen.slice(0, 3).map((d) => d.id).sort()).toEqual([...drafts].sort());
+    expect(all.seen.map((d) => d.documentNumber)).toContain('1');
+
+    // A filter with more than one page of matches pages too; a year never includes a draft.
+    const y2021 = await walk('year=2021');
+    expect(y2021.pages).toBe(2);
+    expect(y2021.totals).toEqual([55, 55]);
+    expect(new Set(y2021.seen.map((d) => d.id)).size).toBe(55);
+    expect(y2021.seen.every((d) => String(d.issueDate).startsWith('2021'))).toBe(true);
+    expect(y2021.seen.some((d) => drafts.includes(d.id as string))).toBe(false);
+
+    const byNumber = await walk('number=17');
+    expect(byNumber.seen.map((d) => d.documentNumber)).toEqual(['17']);
+    expect(byNumber.totals).toEqual([1]);
+    const both = await walk('number=6&year=2022');
+    expect(both.seen.map((d) => d.documentNumber).sort()).toEqual(['56', '60', '61']);
+    // LIKE wildcards and the escape character in the search are taken literally.
+    for (const literal of ['%25', '_', '%5C']) {
+      expect((await call(documentsRoute.GET, 'GET', `/api/books/documents?number=${literal}`)).json.total).toBe(0);
+    }
     expect((await call(documentsRoute.GET, 'GET', '/api/books/documents?year=22')).status).toBe(400);
+    } finally {
+      if (tz === undefined) delete process.env.TZ;
+      else process.env.TZ = tz;
+    }
   }, 120_000);
 
   it('the download serves the stored original byte for byte and never renders one', async () => {

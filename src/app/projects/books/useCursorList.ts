@@ -4,28 +4,36 @@
 //
 // A cursor-paged Books list on the page: the first page on load (and again
 // whenever `key`, the filters, changes), then one more page per "Load more",
-// appended. A page that fails to load keeps every row already shown and says
-// so, with the next "Load more" trying again. Answers that arrive after the
-// filters changed are dropped, so a slow old page never mixes into a new list.
+// appended. A first page that fails says so where the list would be, with a
+// retry; a later page that fails keeps every row already shown and says so,
+// the next "Load more" trying again. Answers that arrive after the filters
+// changed or the list was reloaded are dropped, so an old page never mixes
+// into a new list. A reload after a change (an archived customer) can keep as
+// many rows as were shown, page by page, so the user keeps their place.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { ListPage } from '@/lib/books/api';
 
 export interface CursorList<T> {
-  /** null until the first page arrived. */
+  /** null until the first page arrived (or while it is being loaded again). */
   items: T[] | null;
-  /** How many rows the filters match in all (0 until the first page arrived). */
+  /** How many rows the filters match in all. */
   total: number;
   /** Whether a further page exists. */
   hasMore: boolean;
   loadingMore: boolean;
+  /** Why the first page failed (no rows yet); `reload` tries again. */
+  firstError: string | null;
   /** Why the last "Load more" failed (the rows shown stay). */
   moreError: string | null;
   loadMore: () => Promise<void>;
-  /** Load the first page again (after a change), replacing the rows. */
-  reload: () => Promise<void>;
+  /** Load the list again; `keepShown` reloads as many rows as were shown. */
+  reload: (opts?: { keepShown?: boolean }) => Promise<void>;
 }
+
+/** Bound on the pages one reload fetches to keep the rows shown. */
+const MAX_RELOAD_PAGES = 20;
 
 export function useCursorList<T>(
   key: string,
@@ -36,27 +44,43 @@ export function useCursorList<T>(
   const [total, setTotal] = useState(0);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [firstError, setFirstError] = useState<string | null>(null);
   const [moreError, setMoreError] = useState<string | null>(null);
-  // Every load is numbered; an answer for an older number (other filters) is dropped.
+  // Every load is numbered; an answer for an older number is dropped.
   const generation = useRef(0);
+  // One "Load more" at a time, whatever the render: two quick clicks never fetch the same cursor twice.
+  const inFlight = useRef(false);
+  const shown = useRef(0);
+  shown.current = items?.length ?? 0;
   const fetchRef = useRef(fetchPage);
   fetchRef.current = fetchPage;
   const optsRef = useRef(opts);
   optsRef.current = opts;
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (reloadOpts: { keepShown?: boolean } = {}) => {
     const mine = ++generation.current;
+    const want = reloadOpts.keepShown ? shown.current : 0;
+    // The old cursor belongs to the old list: no "Load more" on it from now on.
+    setNextCursor(null);
     setMoreError(null);
-    // A "Load more" of the old list may still be running: it no longer counts.
+    setFirstError(null);
     setLoadingMore(false);
+    inFlight.current = false;
     try {
-      const page = await fetchRef.current(null);
+      let page = await fetchRef.current(null);
+      const rows = [...page.items];
+      for (let i = 1; rows.length < want && page.nextCursor && i < MAX_RELOAD_PAGES; i += 1) {
+        page = await fetchRef.current(page.nextCursor);
+        if (mine !== generation.current) return;
+        rows.push(...page.items);
+      }
       if (mine !== generation.current) return;
-      setItems(page.items);
-      setTotal(page.total ?? page.items.length);
+      setItems(rows);
+      setTotal(page.total ?? rows.length);
       setNextCursor(page.nextCursor ?? null);
     } catch (err) {
       if (mine !== generation.current) return;
+      setFirstError(optsRef.current.errorText(err));
       optsRef.current.onFirstPageError(err);
     }
   }, []);
@@ -67,7 +91,8 @@ export function useCursorList<T>(
   }, [key, reload]);
 
   const loadMore = useCallback(async () => {
-    if (!nextCursor || loadingMore) return;
+    if (!nextCursor || inFlight.current) return;
+    inFlight.current = true;
     const mine = generation.current;
     setLoadingMore(true);
     setMoreError(null);
@@ -80,9 +105,12 @@ export function useCursorList<T>(
     } catch (err) {
       if (mine === generation.current) setMoreError(optsRef.current.errorText(err));
     } finally {
-      if (mine === generation.current) setLoadingMore(false);
+      if (mine === generation.current) {
+        inFlight.current = false;
+        setLoadingMore(false);
+      }
     }
-  }, [nextCursor, loadingMore]);
+  }, [nextCursor]);
 
-  return { items, total, hasMore: nextCursor !== null, loadingMore, moreError, loadMore, reload };
+  return { items, total, hasMore: nextCursor !== null, loadingMore, firstError, moreError, loadMore, reload };
 }

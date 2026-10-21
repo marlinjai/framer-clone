@@ -392,16 +392,62 @@ describe('BooksHome', () => {
     );
     render(<BooksHome />);
     await screen.findByText('Invoice 61');
+    // An incomplete year is not sent, and says so; "Clear" is there at once.
+    fireEvent.change(screen.getByLabelText('Year'), { target: { value: '20' } });
+    expect(screen.getByText(/Enter a four-digit year/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 400));
+    expect(calls.some((c) => c.url.includes('year='))).toBe(false);
     fireEvent.change(screen.getByLabelText('Number'), { target: { value: '17' } });
     fireEvent.change(screen.getByLabelText('Year'), { target: { value: '2023' } });
-    await screen.findByText('Showing 1 of 1 documents');
+    await screen.findByText('Showing 1 of 1 document');
     expect(screen.queryByText('Invoice 61')).toBeNull();
     expect(calls.some((c) => c.url === '/api/books/documents?number=17&year=2023')).toBe(true);
-    // An incomplete year is not sent.
-    expect(calls.some((c) => /year=20(&|$)/.test(c.url))).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
     await screen.findByText('Invoice 61');
     expect(screen.getByText('Showing 50 of 61 documents')).toBeTruthy();
+  });
+
+  it('a first page that fails says so in the list with a retry, never "Loading" forever', async () => {
+    let fail = true;
+    server(
+      shell((_body, url) => {
+        if (fail) {
+          fail = false;
+          return { status: 503, body: { error: { code: 'books_unavailable', message: 'The Books are temporarily unavailable.' } } };
+        }
+        return pagedDocuments()(null, url);
+      }),
+    );
+    render(<BooksHome />);
+    expect((await screen.findByRole('alert')).textContent).toMatch(/documents could not be loaded: The Books are temporarily unavailable/);
+    expect(screen.queryByText('Loading documents…')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await screen.findByText('Invoice 61');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('a reload while "Load more" is waiting never appends the old page; the button keeps the focus', async () => {
+    let release!: () => void;
+    let page2Requests = 0;
+    server(
+      shell((_body, url) => {
+        if (new URL(url, 'http://x').searchParams.get('cursor')) page2Requests += 1;
+        return pagedDocuments()(null, url);
+      }),
+    );
+    render(<BooksHome />);
+    await screen.findByText('Invoice 61');
+    const more = screen.getByRole('button', { name: 'Load more' });
+    more.focus();
+    // Two quick clicks fetch the next page once.
+    fireEvent.click(more);
+    fireEvent.click(more);
+    await screen.findByText('Invoice 1');
+    expect(page2Requests).toBe(1);
+    expect(document.activeElement === more || more.isConnected === false).toBe(true);
+    expect(within(screen.getByRole('list', { name: 'Documents' })).getAllByRole('listitem')).toHaveLength(61);
+    void release;
   });
 
   it('customers page with "Load more" too', async () => {
