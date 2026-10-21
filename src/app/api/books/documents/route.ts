@@ -1,10 +1,13 @@
 // src/app/api/books/documents/route.ts
 //
-// GET  /api/books/documents[?status=&docType=&cursor=]  -> { items, nextCursor }
+// GET  /api/books/documents[?status=&docType=&number=&year=&cursor=]  -> { items, nextCursor, total }
 // POST /api/books/documents                              -> 201 DocumentDetail
 //
 // The active company's documents (Books plan P1.6, phase 2), drafts first, then
-// by issue date. Each item carries its number (null on a draft: a draft never
+// by issue date, 50 a page (`nextCursor` fetches the next, `total` counts every
+// match). `number` finds documents whose number contains it (case-insensitive),
+// `year` those issued in that year (a draft has no issue date and is not in
+// any year). Each item carries its number (null on a draft: a draft never
 // has one), status, dates, total and the customer's current contact name.
 //
 // POST starts a NEW draft invoice, always a fresh row with a new id: no number,
@@ -56,16 +59,23 @@ export const GET = booksRoute('read', async (ctx, req) => {
   if (docType && !(DOC_TYPES as readonly string[]).includes(docType)) {
     return jsonError('bad_query', 'unknown document type', 400);
   }
+  const number = q.get('number')?.trim() || undefined;
+  if (number !== undefined && number.length > 40) return jsonError('bad_query', 'number is at most 40 characters', 400);
+  const year = q.get('year')?.trim() || undefined;
+  if (year !== undefined && !/^(19|20)\d{2}$/.test(year)) return jsonError('bad_query', 'year is a four-digit year', 400);
   const page = await listDocuments(ctx.scope, {
     status: (status as (typeof STATUSES)[number] | null) ?? undefined,
     docType: (docType as (typeof DOC_TYPES)[number] | null) ?? undefined,
+    numberContains: number,
+    issuedFrom: year ? `${year}-01-01` : undefined,
+    issuedTo: year ? `${year}-12-31` : undefined,
     cursor: q.get('cursor') ?? undefined,
     limit: 50,
   });
   const items = await documentListItems(ctx.contactBook, ctx.companyId, page.items, (ids) =>
     getCustomers(ctx.scope, ids),
   );
-  return Response.json({ items, nextCursor: page.nextCursor });
+  return Response.json({ items, nextCursor: page.nextCursor, total: page.total });
 });
 
 export const POST = booksRoute('write', async (ctx, req) => {

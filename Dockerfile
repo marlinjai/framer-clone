@@ -105,6 +105,10 @@ ARG PRISMA_VERSION
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
+# UTC, explicitly (it was only the base image's default): postgres.js reads a
+# TIMESTAMP-without-time-zone column as a local Date, so any other zone shifts
+# every stored time by its offset. The dev script and the test configs pin it too.
+ENV TZ=UTC
 # Next.js standalone binds to process.env.HOSTNAME; the container runtime sets
 # HOSTNAME to the container id, which would make the server listen on that host
 # only and fail Coolify's loopback healthcheck. Force 0.0.0.0 so it is reachable.

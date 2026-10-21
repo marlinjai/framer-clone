@@ -160,9 +160,10 @@ export default function DocumentEditor({ id }: { id: string }) {
 
   const load = useCallback(async () => {
     try {
-      const [d, c, s] = await Promise.all([booksApi.document(id), booksApi.customers(), booksApi.settings()]);
+      // Every customer, not only the first page: the picker must offer all of them.
+      const [d, c, s] = await Promise.all([booksApi.document(id), booksApi.allCustomers(), booksApi.settings()]);
       setDetail(d);
-      setCustomers(c.items);
+      setCustomers(c);
       setSettings(s);
     } catch (err) {
       if (err instanceof BooksApiError && err.status !== 409 && err.status !== 503) setFatal(errorText(err));
