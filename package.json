@@ -7,7 +7,7 @@
     "node": ">=22 <23"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "TZ=UTC next dev",
     "build": "next build",
     "build:boot": "esbuild scripts/commerce-migrate.ts --bundle --platform=node --target=node22 --format=cjs --log-level=warning --outfile=dist-boot/commerce-migrate.cjs",
     "start": "next start",

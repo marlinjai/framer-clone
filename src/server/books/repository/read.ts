@@ -529,16 +529,17 @@ export interface DocumentPage {
 }
 
 /** A LIKE pattern matching `text` anywhere, its own %, _ and backslash taken literally. */
-/**
- * Date and time parameters below are sent as TEXT and cast in SQL
+function containsPattern(text: string): string {
+  return `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
+
+/*
+ * Date and time parameters in listDocuments are sent as TEXT and cast in SQL
  * (`${x}::text::timestamp`): a parameter Postgres types as timestamp or date
  * is converted by the driver through a JavaScript Date in the machine's local
  * time zone, which shifted a cursor by the offset (two hours in Berlin) and
  * dropped the rows that shared the last row's date from the next page.
  */
-function containsPattern(text: string): string {
-  return `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-}
 
 /**
  * The company's documents, ordered issue_date DESC NULLS FIRST (drafts first),

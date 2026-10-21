@@ -92,8 +92,9 @@ export default function BooksHome() {
     onFirstPageError: blockOnly,
     errorText,
   });
-  // What the user typed counts, also during the short pause before a number is applied.
-  const filtered = numberInput.trim() !== '' || year !== '';
+  // What the list shows is filtered only by the applied filters; "Clear" appears as soon as anything is typed.
+  const filtered = number !== '' || validYear !== '';
+  const typed = numberInput.trim() !== '' || year !== '';
 
   async function newInvoice() {
     setCreating(true);
@@ -220,7 +221,7 @@ export default function BooksHome() {
                 Enter a four-digit year; until then all years are shown.
               </p>
             ) : null}
-            {filtered ? (
+            {typed ? (
               <Button
                 size="sm"
                 variant="ghost"
@@ -246,7 +247,7 @@ export default function BooksHome() {
               </section>
             )
           ) : (
-          <ul className="flex flex-col gap-2" aria-label="Documents">
+          <ul className="flex flex-col gap-2" aria-label="Documents" aria-busy={documents.loadingMore}>
             {documents.items.map((d) => (
               <li key={d.id}>
                 <Link
@@ -305,7 +306,7 @@ export default function BooksHome() {
           ) : customers.items.length === 0 ? (
             <p className="text-sm text-muted-foreground">No customers yet.</p>
           ) : (
-            <ul className="flex flex-col gap-2" aria-label="Customers">
+            <ul className="flex flex-col gap-2" aria-label="Customers" aria-busy={customers.loadingMore}>
               {customers.items.map((c) => (
                 <li key={c.id} className="flex items-center justify-between gap-4 rounded-lg border p-4">
                   <span className="min-w-0">
@@ -353,24 +354,38 @@ function FirstPage<T>({ list, noun }: { list: CursorList<T>; noun: string }) {
  * Below a paged list: one status line that is always there (so screen readers
  * announce its changes): how many rows are shown of how many, or why none
  * are; "Load more" while there are more. A page that failed says so; the rows
- * shown stay, and "Load more" tries again. The button never loses the focus
- * while it waits (aria-disabled, not disabled).
+ * shown stay, and "Load more" tries again. A refresh that failed says so with a
+ * retry. The button never loses the focus while it waits (aria-disabled, not
+ * disabled); when the last page arrives and the button goes, the focus moves
+ * to the status line.
  */
 function MoreRows<T>({ list, noun, emptyText }: { list: CursorList<T>; noun: [string, string]; emptyText: string }) {
   const count = list.items?.length ?? 0;
   const text =
     list.items === null ? '' : count === 0 ? emptyText : `Showing ${count} of ${list.total} ${list.total === 1 ? noun[0] : noun[1]}`;
+  const status = React.useRef<HTMLParagraphElement>(null);
+  const button = React.useRef<HTMLButtonElement>(null);
+  const hadFocus = React.useRef(false);
+  React.useEffect(() => {
+    // The button was focused and is gone (the last page arrived): keep the user's place.
+    if (!list.hasMore && hadFocus.current) {
+      hadFocus.current = false;
+      status.current?.focus();
+    }
+  }, [list.hasMore]);
   return (
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
-      <p role="status" className="text-muted-foreground">
+      <p ref={status} role="status" tabIndex={-1} className="text-muted-foreground outline-none">
         {text}
       </p>
       {list.hasMore && count > 0 ? (
         <Button
+          ref={button}
           variant="outline"
           size="sm"
           aria-disabled={list.loadingMore}
-          aria-busy={list.loadingMore}
+          onFocus={() => (hadFocus.current = true)}
+          onBlur={() => (hadFocus.current = false)}
           onClick={() => {
             if (!list.loadingMore) void list.loadMore();
           }}
@@ -382,6 +397,16 @@ function MoreRows<T>({ list, noun, emptyText }: { list: CursorList<T>; noun: [st
         <p role="alert" className="w-full text-destructive">
           The next {noun[1]} could not be loaded: {list.moreError} Your list is kept; use Load more to try again.
         </p>
+      ) : null}
+      {list.refreshError ? (
+        <div role="alert" className="flex w-full flex-wrap items-center gap-3 text-destructive">
+          <span>
+            The {noun[1]} could not be refreshed: {list.refreshError} The list may be out of date.
+          </span>
+          <Button size="sm" variant="outline" onClick={() => void list.reload({ keepShown: true })}>
+            Try again
+          </Button>
+        </div>
       ) : null}
     </div>
   );

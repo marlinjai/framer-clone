@@ -24,6 +24,9 @@ export default defineConfig({
   test: {
     name: 'integration',
     environment: 'node',
+    // The app runs in UTC (the production image sets TZ=UTC): timestamps read back from Postgres
+    // through postgres.js are local Dates, so tests run in the same zone as production.
+    env: { TZ: 'UTC' },
     globals: false,
     include: ['test/integration/**/*.{test,spec}.ts', 'src/**/*.itest.ts'],
     globalSetup: ['./vitest.integration.setup.ts'],

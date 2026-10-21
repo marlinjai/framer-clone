@@ -427,27 +427,97 @@ describe('BooksHome', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('a reload while "Load more" is waiting never appends the old page; the button keeps the focus', async () => {
-    let release!: () => void;
+  it('a filter change while "Load more" waits never appends the old page; the button keeps the focus across pages', async () => {
+    // Three pages of the unfiltered list; the second is held until the filter has changed.
+    let releasePage2!: () => void;
+    const page2Held = new Promise<void>((r) => (releasePage2 = r));
     let page2Requests = 0;
-    server(
-      shell((_body, url) => {
-        if (new URL(url, 'http://x').searchParams.get('cursor')) page2Requests += 1;
-        return pagedDocuments()(null, url);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        calls.push({ method: 'GET', url, body: null });
+        const path = url.split('?')[0];
+        const q = new URL(url, 'http://x').searchParams;
+        if (path === '/api/books/settings') return new Response(JSON.stringify(SETTINGS), { status: 200 });
+        if (path === '/api/books/customers') return new Response(JSON.stringify({ ...CUSTOMERS, nextCursor: null, total: 2 }), { status: 200 });
+        if (q.get('number') === '17') return new Response(JSON.stringify({ items: [doc(17)], nextCursor: null, total: 1 }), { status: 200 });
+        const cursor = q.get('cursor');
+        if (cursor === 'p2') {
+          page2Requests += 1;
+          await page2Held;
+          return new Response(JSON.stringify({ items: Array.from({ length: 50 }, (_, i) => doc(100 - i)), nextCursor: 'p3', total: 150 }), { status: 200 });
+        }
+        if (cursor === 'p3') return new Response(JSON.stringify({ items: Array.from({ length: 50 }, (_, i) => doc(50 - i)), nextCursor: null, total: 150 }), { status: 200 });
+        return new Response(JSON.stringify({ items: Array.from({ length: 50 }, (_, i) => doc(150 - i)), nextCursor: 'p2', total: 150 }), { status: 200 });
       }),
     );
+    calls = [];
+    render(<BooksHome />);
+    await screen.findByText('Invoice 150');
+    const more = screen.getByRole('button', { name: 'Load more' });
+    more.focus();
+    fireEvent.click(more);
+    // Waiting: a second click (or Enter) fetches nothing more, and the button keeps the focus.
+    fireEvent.click(screen.getByRole('button', { name: 'Loading…' }));
+    expect(page2Requests).toBe(1);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Loading…' }));
+    // The filter changes while page 2 is still on its way; then page 2 arrives.
+    fireEvent.change(screen.getByLabelText('Number'), { target: { value: '17' } });
+    await screen.findByText('Showing 1 of 1 document');
+    releasePage2();
+    await new Promise((r) => setTimeout(r, 50));
+    // The old page never mixes into the new list.
+    expect(within(screen.getByRole('list', { name: 'Documents' })).getAllByRole('listitem')).toHaveLength(1);
+    expect(screen.queryByText('Invoice 100')).toBeNull();
+    expect(screen.getByText('Showing 1 of 1 document')).toBeTruthy();
+  });
+
+  it('the focus stays with the list: on "Load more" across pages, and on the count when the last page arrives', async () => {
+    server(shell(pagedDocuments()));
     render(<BooksHome />);
     await screen.findByText('Invoice 61');
     const more = screen.getByRole('button', { name: 'Load more' });
     more.focus();
-    // Two quick clicks fetch the next page once.
-    fireEvent.click(more);
     fireEvent.click(more);
     await screen.findByText('Invoice 1');
-    expect(page2Requests).toBe(1);
-    expect(document.activeElement === more || more.isConnected === false).toBe(true);
-    expect(within(screen.getByRole('list', { name: 'Documents' })).getAllByRole('listitem')).toHaveLength(61);
-    void release;
+    // The button is gone (no further page): the focus is on the count, not lost to the page.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByText('Showing 61 of 61 documents')));
+  });
+
+  it('a refresh that fails after archiving keeps the rows, says so, and offers a retry', async () => {
+    let failNext = false;
+    server({
+      'GET /api/books/settings': () => ({ status: 200, body: SETTINGS }),
+      'GET /api/books/documents': () => ({ status: 200, body: { items: [], nextCursor: null, total: 0 } }),
+      'GET /api/books/customers': () => {
+        if (failNext) {
+          failNext = false;
+          return { status: 503, body: { error: { code: 'books_unavailable', message: 'The Books are temporarily unavailable.' } } };
+        }
+        return { status: 200, body: { ...CUSTOMERS, nextCursor: null, total: 2 } };
+      },
+      'DELETE /api/books/customers/cust-de': () => {
+        failNext = true;
+        return { status: 200, body: { ...CUSTOMERS.items[0], archivedAt: '2026-10-21T10:00:00.000Z' } };
+      },
+    });
+    render(<BooksHome />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Customers' }));
+    await screen.findByText('Alex Example');
+    fireEvent.click(within(screen.getByText('Alex Example').closest('li')!).getByRole('button', { name: 'Archive' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/customers could not be refreshed: The Books are temporarily unavailable\. The list may be out of date/);
+    expect(screen.getByText('Société Exemple')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('an incomplete year shows the list unfiltered, with its real empty state', async () => {
+    server(shell(() => ({ status: 200, body: { items: [], nextCursor: null, total: 0 } })));
+    render(<BooksHome />);
+    await screen.findByText('No invoices yet');
+    fireEvent.change(screen.getByLabelText('Year'), { target: { value: '20' } });
+    expect(screen.getByText('No invoices yet')).toBeTruthy();
+    expect(screen.queryByText('No document matches these filters.')).toBeNull();
   });
 
   it('customers page with "Load more" too', async () => {

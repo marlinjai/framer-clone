@@ -32,6 +32,9 @@ export default defineConfig({
         test: {
           name: 'jsdom',
           environment: 'jsdom',
+          // The app runs in UTC (the production image sets TZ=UTC): timestamps read back from Postgres
+        // through postgres.js are local Dates, so tests run in the same zone as production.
+        env: { TZ: 'UTC' },
           globals: false,
           setupFiles: ['./test/setup.client.ts'],
           include: ['src/**/*.{test,spec}.{ts,tsx}'],
@@ -47,6 +50,9 @@ export default defineConfig({
         test: {
           name: 'node',
           environment: 'node',
+          // The app runs in UTC (the production image sets TZ=UTC): timestamps read back from Postgres
+        // through postgres.js are local Dates, so tests run in the same zone as production.
+        env: { TZ: 'UTC' },
           globals: false,
           include: [
             'src/server/**/*.{test,spec}.{ts,tsx}',

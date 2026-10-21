@@ -27,6 +27,8 @@ export interface CursorList<T> {
   firstError: string | null;
   /** Why the last "Load more" failed (the rows shown stay). */
   moreError: string | null;
+  /** Why a reload of rows already shown failed (they stay, possibly out of date); `reload` tries again. */
+  refreshError: string | null;
   loadMore: () => Promise<void>;
   /** Load the list again; `keepShown` reloads as many rows as were shown. */
   reload: (opts?: { keepShown?: boolean }) => Promise<void>;
@@ -46,6 +48,8 @@ export function useCursorList<T>(
   const [loadingMore, setLoadingMore] = useState(false);
   const [firstError, setFirstError] = useState<string | null>(null);
   const [moreError, setMoreError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const cursorRef = useRef<string | null>(null);
   // Every load is numbered; an answer for an older number is dropped.
   const generation = useRef(0);
   // One "Load more" at a time, whatever the render: two quick clicks never fetch the same cursor twice.
@@ -60,10 +64,13 @@ export function useCursorList<T>(
   const reload = useCallback(async (reloadOpts: { keepShown?: boolean } = {}) => {
     const mine = ++generation.current;
     const want = reloadOpts.keepShown ? shown.current : 0;
-    // The old cursor belongs to the old list: no "Load more" on it from now on.
+    const hadRows = shown.current > 0;
+    const previousCursor = cursorRef.current;
+    // The old cursor belongs to the old list: no "Load more" on it while this runs.
     setNextCursor(null);
     setMoreError(null);
     setFirstError(null);
+    setRefreshError(null);
     setLoadingMore(false);
     inFlight.current = false;
     try {
@@ -80,8 +87,14 @@ export function useCursorList<T>(
       setNextCursor(page.nextCursor ?? null);
     } catch (err) {
       if (mine !== generation.current) return;
-      setFirstError(optsRef.current.errorText(err));
       optsRef.current.onFirstPageError(err);
+      if (hadRows && reloadOpts.keepShown) {
+        // The rows shown stay (they may be out of date now), the user is told, paging goes on as before.
+        setRefreshError(optsRef.current.errorText(err));
+        setNextCursor(previousCursor);
+      } else {
+        setFirstError(optsRef.current.errorText(err));
+      }
     }
   }, []);
 
@@ -112,5 +125,6 @@ export function useCursorList<T>(
     }
   }, [nextCursor]);
 
-  return { items, total, hasMore: nextCursor !== null, loadingMore, firstError, moreError, loadMore, reload };
+  cursorRef.current = nextCursor;
+  return { items, total, hasMore: nextCursor !== null, loadingMore, firstError, moreError, refreshError, loadMore, reload };
 }
