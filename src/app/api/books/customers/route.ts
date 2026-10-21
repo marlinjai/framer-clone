@@ -1,6 +1,6 @@
 // src/app/api/books/customers/route.ts
 //
-// GET  /api/books/customers[?includeArchived=1&cursor=...]  -> { items, nextCursor }
+// GET  /api/books/customers[?includeArchived=1&cursor=...]  -> { items, nextCursor, total }
 // POST /api/books/customers                                  -> 201 CustomerView
 //
 // The active company's customers (Books plan P1.2, phase 2). A customer row
@@ -65,7 +65,7 @@ export const GET = booksRoute('read', async (ctx, req) => {
     limit: 100,
   });
   const items = await customerViews(ctx.contactBook, ctx.companyId, page.items);
-  return Response.json({ items, nextCursor: page.nextCursor });
+  return Response.json({ items, nextCursor: page.nextCursor, total: page.total });
 });
 
 export const POST = booksRoute('write', async (ctx, req) => {

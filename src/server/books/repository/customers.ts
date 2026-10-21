@@ -202,16 +202,21 @@ export type ListCustomersInput = z.input<typeof listInput>;
 export async function listCustomers(
   scope: BooksScope,
   input: ListCustomersInput = {},
-): Promise<{ items: Customer[]; nextCursor: string | null }> {
+): Promise<{ items: Customer[]; nextCursor: string | null; total: number }> {
   const parsed = listInput.safeParse(input);
   if (!parsed.success) throw invalid('INVALID_INPUT', parsed.error.issues);
   const args = parsed.data;
   let q = scope.db.selectFrom('customer').select(CUSTOMER_COLUMNS).where('tenant_id', '=', scope.tenantId);
-  if (!args.includeArchived) q = q.where('archived_at', 'is', null);
+  let count = scope.db.selectFrom('customer').select((eb) => eb.fn.countAll<string>().as('n')).where('tenant_id', '=', scope.tenantId);
+  if (!args.includeArchived) {
+    q = q.where('archived_at', 'is', null);
+    count = count.where('archived_at', 'is', null);
+  }
   if (args.cursor) q = q.where('id', '>', args.cursor);
-  const rows = await q.orderBy('id').limit(args.limit + 1).execute();
+  const [rows, counted] = await Promise.all([q.orderBy('id').limit(args.limit + 1).execute(), count.executeTakeFirstOrThrow()]);
   const page = rows.slice(0, args.limit);
   return {
+    total: Number(counted.n),
     items: page.map(mapCustomer),
     nextCursor: rows.length > args.limit ? (page[page.length - 1]?.id ?? null) : null,
   };

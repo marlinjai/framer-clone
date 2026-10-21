@@ -219,17 +219,47 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return json as T;
 }
 
+/** One page of a cursor-paged list: `nextCursor` (null on the last page) fetches the next; `total` counts every match. */
+export interface ListPage<T> {
+  items: T[];
+  nextCursor: string | null;
+  total: number;
+}
+
+/** A query string from the given values, empty ones left out. */
+function query(values: Record<string, string | null | undefined>): string {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(values)) if (v !== undefined && v !== null && v !== '') params.set(k, v);
+  const text = params.toString();
+  return text === '' ? '' : `?${text}`;
+}
+
 export const booksApi = {
   settings: () => request<SettingsView>('GET', '/api/books/settings'),
-  customers: (includeArchived = false) =>
-    request<{ items: CustomerView[] }>('GET', `/api/books/customers${includeArchived ? '?includeArchived=1' : ''}`),
+  /** One page of customers (100 a page); `nextCursor` fetches the next, `total` counts them all. */
+  customers: (opts: { includeArchived?: boolean; cursor?: string | null } = {}) =>
+    request<ListPage<CustomerView>>('GET', `/api/books/customers${query({ includeArchived: opts.includeArchived ? '1' : undefined, cursor: opts.cursor })}`),
+  /** Every customer, page by page (for pickers that must offer all of them). */
+  allCustomers: async (opts: { includeArchived?: boolean } = {}): Promise<CustomerView[]> => {
+    const out: CustomerView[] = [];
+    let cursor: string | null = null;
+    // Bounded: 100 pages of 100 is far beyond any company; a cursor that never ends must not loop forever.
+    for (let i = 0; i < 100; i += 1) {
+      const page: ListPage<CustomerView> = await booksApi.customers({ ...opts, cursor });
+      out.push(...page.items);
+      cursor = page.nextCursor;
+      if (!cursor) return out;
+    }
+    throw new BooksApiError(500, 'list_too_long', 'The customer list did not end; reload the page.');
+  },
   createCustomer: (body: unknown) => request<CustomerView>('POST', '/api/books/customers', body),
   updateCustomer: (id: string, body: unknown) => request<CustomerView>('PATCH', `/api/books/customers/${id}`, body),
   archiveCustomer: (id: string) => request<CustomerView>('DELETE', `/api/books/customers/${id}`),
   searchContacts: (search: string) =>
     request<{ items: ContactLabel[] }>('GET', `/api/books/contacts?search=${encodeURIComponent(search)}`),
-  documents: (status?: string) =>
-    request<{ items: DocumentListItem[] }>('GET', `/api/books/documents${status ? `?status=${status}` : ''}`),
+  /** One page of documents (50 a page), optionally by number (contains) and issue year. */
+  documents: (opts: { status?: string; number?: string; year?: string; cursor?: string | null } = {}) =>
+    request<ListPage<DocumentListItem>>('GET', `/api/books/documents${query(opts)}`),
   createDraft: (body: unknown = {}) => request<DocumentDetail>('POST', '/api/books/documents', body),
   document: (id: string) => request<DocumentDetail>('GET', `/api/books/documents/${id}`),
   updateDraft: (id: string, body: unknown) => request<DocumentDetail>('PATCH', `/api/books/documents/${id}`, body),

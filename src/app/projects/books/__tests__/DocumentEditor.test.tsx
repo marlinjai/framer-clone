@@ -327,6 +327,101 @@ describe('BooksHome', () => {
     expect(within(screen.getByText('Invoice 62').closest('a')!).queryByText('Imported')).toBeNull();
   });
 
+  /** A synthetic issued invoice numbered n (the newest first in the list). */
+  const doc = (n: number): Json => ({
+    id: `doc-${n}`, docType: 'invoice', status: 'issued', source: 'import', currencyCode: 'EUR', documentNumber: String(n),
+    issueDate: '2023-03-04', dueDate: null, total: 12000, customerName: 'Example Client GmbH', contactStatus: 'ok', correctsDocumentId: null, createdAt: '',
+  });
+  /** 61 documents, 50 a page, newest first, as the API pages them. */
+  function pagedDocuments(opts: { failSecond?: number } = {}): Handler {
+    let failures = opts.failSecond ?? 0;
+    return (_body, url) => {
+      const cursor = new URL(url, 'http://x').searchParams.get('cursor');
+      if (cursor === null) return { status: 200, body: { items: Array.from({ length: 50 }, (_, i) => doc(61 - i)), nextCursor: 'page-2', total: 61 } };
+      if (failures > 0) {
+        failures -= 1;
+        return { status: 503, body: { error: { code: 'books_unavailable', message: 'The Books are temporarily unavailable.' } } };
+      }
+      return { status: 200, body: { items: Array.from({ length: 11 }, (_, i) => doc(11 - i)), nextCursor: null, total: 61 } };
+    };
+  }
+  const shell = (documents: Handler): Record<string, Handler> => ({
+    'GET /api/books/settings': () => ({ status: 200, body: SETTINGS }),
+    'GET /api/books/customers': () => ({ status: 200, body: { ...CUSTOMERS, nextCursor: null, total: 2 } }),
+    'GET /api/books/documents': documents,
+  });
+
+  it('a list longer than one page reaches its last document with "Load more"; the last page hides the button', async () => {
+    server(shell(pagedDocuments()));
+    render(<BooksHome />);
+    await screen.findByText('Invoice 61');
+    expect(screen.queryByText('Invoice 1')).toBeNull();
+    expect(screen.getByText('Showing 50 of 61 documents')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await screen.findByText('Invoice 1');
+    expect(screen.getByText('Showing 61 of 61 documents')).toBeTruthy();
+    // Appended, not replaced: the first page is still there, and every invoice once.
+    expect(screen.getByText('Invoice 61')).toBeTruthy();
+    expect(within(screen.getByRole('list', { name: 'Documents' })).getAllByRole('listitem')).toHaveLength(61);
+    // nextCursor null: no button.
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+    expect(calls.filter((c) => c.url.startsWith('/api/books/documents')).map((c) => c.url)).toEqual(['/api/books/documents', '/api/books/documents?cursor=page-2']);
+  });
+
+  it('a page that fails to load says so and keeps the rows shown; the next "Load more" tries again', async () => {
+    server(shell(pagedDocuments({ failSecond: 1 })));
+    render(<BooksHome />);
+    await screen.findByText('Invoice 61');
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/could not be loaded: The Books are temporarily unavailable\. Your list is kept/);
+    expect(within(screen.getByRole('list', { name: 'Documents' })).getAllByRole('listitem')).toHaveLength(50);
+    expect(screen.getByText('Showing 50 of 61 documents')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await screen.findByText('Invoice 1');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('finds documents by number and year on the server, and "Clear" shows them all again', async () => {
+    server(
+      shell((_body, url) => {
+        const q = new URL(url, 'http://x').searchParams;
+        if (q.get('number') === '17' && q.get('year') === '2023') return { status: 200, body: { items: [doc(17)], nextCursor: null, total: 1 } };
+        if (q.get('number') === '17') return { status: 200, body: { items: [doc(17)], nextCursor: null, total: 1 } };
+        return pagedDocuments()(null, url);
+      }),
+    );
+    render(<BooksHome />);
+    await screen.findByText('Invoice 61');
+    fireEvent.change(screen.getByLabelText('Number'), { target: { value: '17' } });
+    fireEvent.change(screen.getByLabelText('Year'), { target: { value: '2023' } });
+    await screen.findByText('Showing 1 of 1 documents');
+    expect(screen.queryByText('Invoice 61')).toBeNull();
+    expect(calls.some((c) => c.url === '/api/books/documents?number=17&year=2023')).toBe(true);
+    // An incomplete year is not sent.
+    expect(calls.some((c) => /year=20(&|$)/.test(c.url))).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    await screen.findByText('Invoice 61');
+    expect(screen.getByText('Showing 50 of 61 documents')).toBeTruthy();
+  });
+
+  it('customers page with "Load more" too', async () => {
+    server({
+      'GET /api/books/settings': () => ({ status: 200, body: SETTINGS }),
+      'GET /api/books/documents': () => ({ status: 200, body: { items: [], nextCursor: null, total: 0 } }),
+      'GET /api/books/customers': (_body, url) =>
+        new URL(url, 'http://x').searchParams.get('cursor')
+          ? { status: 200, body: { items: [CUSTOMERS.items[1]], nextCursor: null, total: 2 } }
+          : { status: 200, body: { items: [CUSTOMERS.items[0]], nextCursor: 'c-2', total: 2 } },
+    });
+    render(<BooksHome />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Customers' }));
+    await screen.findByText('Alex Example');
+    expect(screen.getByText('Showing 1 of 2 customers')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await screen.findByText('Société Exemple');
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+
   it('a company without the Books grant gets a page that says so', async () => {
     server({
       'GET /api/books/settings': () => ({ status: 403, body: { error: { code: 'books_not_enabled', message: 'x' } } }),

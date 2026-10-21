@@ -96,6 +96,9 @@ describe('Books isolation: two companies in one tenant group schema', () => {
     expect(listed.items.every((d) => d.tenantId === a.scope.tenantId)).toBe(true);
     const customers = await listCustomers(a.scope, { includeArchived: true });
     expect(customers.items.map((c) => c.id)).toEqual([a.customer.id]);
+    // The totals count only the company's own rows too.
+    expect(listed.total).toBe(listed.items.length);
+    expect(customers.total).toBe(1);
   });
 
   it('company A cannot attach company B\'s customer', async () => {

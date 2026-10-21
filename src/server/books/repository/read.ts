@@ -474,6 +474,8 @@ const listInput = z.object({
   issuedFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   issuedTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   customerId: z.string().min(1).optional(),
+  /** Documents whose number contains this text (case-insensitive): "17" finds 17, 117 and RE-2017-3. */
+  numberContains: z.string().trim().min(1).max(40).optional(),
   limit: z.number().int().min(1).max(100).default(50),
   cursor: z.string().min(1).optional(),
 });
@@ -522,6 +524,13 @@ export interface SalesDocumentListItem extends SalesDocument {
 export interface DocumentPage {
   items: SalesDocumentListItem[];
   nextCursor: string | null;
+  /** How many documents the filters match in all (every page), so a list can say "50 of 61". */
+  total: number;
+}
+
+/** A LIKE pattern matching `text` anywhere, its own %, _ and backslash taken literally. */
+function containsPattern(text: string): string {
+  return `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 }
 
 /**
@@ -535,15 +544,21 @@ export async function listDocuments(scope: BooksScope, input: ListDocumentsInput
   const args = parsed.data;
   const cursor = args.cursor ? decodeCursor(args.cursor) : null;
 
+  // The filters, shared by the page and its total.
+  const filters = (eb: DocEb) => {
+    const c = [eb('sales_document.tenant_id', '=', scope.tenantId)];
+    if (args.docType) c.push(eb('sales_document.doc_type', '=', args.docType));
+    if (args.status) c.push(eb('sales_document.status', '=', args.status));
+    if (args.customerId) c.push(eb('sales_document.customer_id', '=', args.customerId));
+    if (args.issuedFrom) c.push(eb('sales_document.issue_date', '>=', sql<string>`${args.issuedFrom}::date`));
+    if (args.issuedTo) c.push(eb('sales_document.issue_date', '<=', sql<string>`${args.issuedTo}::date`));
+    if (args.numberContains) c.push(eb('sales_document.document_number', 'ilike', containsPattern(args.numberContains)));
+    return eb.and(c);
+  };
   let q = scope.db
     .selectFrom('sales_document')
     .select((eb) => [...documentColumns(eb), sql<string | null>`customer_snapshot->>'name'`.as('recipient_name')])
-    .where('sales_document.tenant_id', '=', scope.tenantId);
-  if (args.docType) q = q.where('sales_document.doc_type', '=', args.docType);
-  if (args.status) q = q.where('sales_document.status', '=', args.status);
-  if (args.customerId) q = q.where('sales_document.customer_id', '=', args.customerId);
-  if (args.issuedFrom) q = q.where('sales_document.issue_date', '>=', sql<string>`${args.issuedFrom}::date`);
-  if (args.issuedTo) q = q.where('sales_document.issue_date', '<=', sql<string>`${args.issuedTo}::date`);
+    .where(filters);
   if (cursor) {
     const after = (eb: DocEb) =>
       eb.or([
@@ -574,9 +589,16 @@ export async function listDocuments(scope: BooksScope, input: ListDocumentsInput
     .limit(args.limit + 1)
     .execute()) as Array<DocumentRow & { recipient_name: string | null }>;
 
+  const counted = await scope.db
+    .selectFrom('sales_document')
+    .select((eb) => eb.fn.countAll<string>().as('n'))
+    .where(filters)
+    .executeTakeFirstOrThrow();
+
   const page = rows.slice(0, args.limit);
   const last = page[page.length - 1];
   return {
+    total: Number(counted.n),
     items: page.map((r) => ({ ...mapDocument(r), recipientName: r.recipient_name })),
     nextCursor:
       rows.length > args.limit && last

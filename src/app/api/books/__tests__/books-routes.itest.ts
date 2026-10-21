@@ -501,6 +501,7 @@ describe('Books routes: cancellation, rendering, templates', () => {
     const c = await newCustomer({ customerType: 'b2b' });
     const listed = await api.listCustomers();
     expect(listed.json.items.map((x: Json) => x.contact?.name)).toEqual(['Sample Customer GmbH']);
+    expect(listed.json).toMatchObject({ total: 1, nextCursor: null });
     const dup = await api.createCustomer({ contactId: c.contactId, customerType: 'b2b' });
     expect(dup.status).toBe(409);
     expect(dup.json.error.code).toBe('duplicate_customer');
@@ -652,6 +653,41 @@ describe('Books routes: imported historical invoices', () => {
     expect(result.status).toBe('imported');
     return { id: result.documentId, bytes };
   }
+
+  it('the documents list reaches every document page by page, counts them all, and finds by number and year', async () => {
+    // 61 imported invoices, 1 to 61, over three years (the shape of a real series).
+    for (let n = 1; n <= 61; n += 1) {
+      const year = n <= 20 ? 2021 : n <= 40 ? 2022 : 2023;
+      await importOne(n, { issueDate: `${year}-03-${String(((n - 1) % 28) + 1).padStart(2, '0')}` });
+    }
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const res = await call(documentsRoute.GET, 'GET', `/api/books/documents${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+      expect(res.status).toBe(200);
+      expect(res.json.total).toBe(61);
+      seen.push(...(res.json.items as Json[]).map((d) => d.documentNumber as string));
+      cursor = res.json.nextCursor as string | null;
+      pages += 1;
+    } while (cursor && pages < 5);
+    // Every one of the 61, once, the last page without a further cursor.
+    expect(pages).toBe(2);
+    expect(new Set(seen).size).toBe(61);
+    expect(seen).toContain('1');
+
+    const byNumber = await call(documentsRoute.GET, 'GET', '/api/books/documents?number=17');
+    expect((byNumber.json.items as Json[]).map((d) => d.documentNumber)).toEqual(['17']);
+    expect(byNumber.json).toMatchObject({ total: 1, nextCursor: null });
+    const byYear = await call(documentsRoute.GET, 'GET', '/api/books/documents?year=2022');
+    expect(byYear.json.total).toBe(20);
+    expect((byYear.json.items as Json[]).every((d) => String(d.issueDate).startsWith('2022'))).toBe(true);
+    const both = await call(documentsRoute.GET, 'GET', '/api/books/documents?number=3&year=2021');
+    expect((both.json.items as Json[]).map((d) => d.documentNumber).sort()).toEqual(['13', '3']);
+    // LIKE wildcards in the search are taken literally.
+    expect((await call(documentsRoute.GET, 'GET', '/api/books/documents?number=%25')).json.total).toBe(0);
+    expect((await call(documentsRoute.GET, 'GET', '/api/books/documents?year=22')).status).toBe(400);
+  }, 120_000);
 
   it('the download serves the stored original byte for byte and never renders one', async () => {
     const { id, bytes } = await importOne(12);

@@ -3,7 +3,8 @@
 // src/app/projects/books/BooksHome.tsx
 //
 // The Books area of the editor (Books plan phase 2): the active company's
-// documents (drafts first, each with its status and, once issued, its number),
+// documents (drafts first, each with its status and, once issued, its number;
+// 50 at a time with "Load more" and a count, findable by number and year),
 // its customers and its templates, plus the company configuration the Books
 // run under (tax status, sender, the next number), read-only because an
 // operator sets it with `pnpm books:init-company`.
@@ -17,6 +18,8 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import React, { useCallback, useEffect, useState } from 'react';
+
+import { useCursorList, type CursorList } from './useCursorList';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -48,9 +51,11 @@ export default function BooksHome() {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>('documents');
   const [settings, setSettings] = useState<SettingsView | null>(null);
-  const [documents, setDocuments] = useState<DocumentListItem[] | null>(null);
-  const [customers, setCustomers] = useState<CustomerView[] | null>(null);
   const [blocked, setBlocked] = useState<BooksApiError | null>(null);
+  // The documents' filters: the typed number (applied after a short pause) and the issue year.
+  const [numberInput, setNumberInput] = useState('');
+  const [number, setNumber] = useState('');
+  const [year, setYear] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -60,20 +65,26 @@ export default function BooksHome() {
     else setError(errorText(err));
   }, []);
 
-  const reload = useCallback(async () => {
-    try {
-      const [s, d, c] = await Promise.all([booksApi.settings(), booksApi.documents(), booksApi.customers()]);
-      setSettings(s);
-      setDocuments(d.items);
-      setCustomers(c.items);
-    } catch (err) {
-      fail(err);
-    }
+  useEffect(() => {
+    booksApi.settings().then(setSettings, fail);
   }, [fail]);
 
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    const t = setTimeout(() => setNumber(numberInput.trim()), 300);
+    return () => clearTimeout(t);
+  }, [numberInput]);
+
+  const validYear = /^(19|20)\d{2}$/.test(year) ? year : '';
+  const documents = useCursorList<DocumentListItem>(
+    `${number}|${validYear}`,
+    (cursor) => booksApi.documents({ number: number || undefined, year: validYear || undefined, cursor }),
+    { onFirstPageError: fail, errorText },
+  );
+  const customers = useCursorList<CustomerView>('customers', (cursor) => booksApi.customers({ cursor }), {
+    onFirstPageError: fail,
+    errorText,
+  });
+  const filtered = number !== '' || validYear !== '';
 
   async function newInvoice() {
     setCreating(true);
@@ -91,7 +102,7 @@ export default function BooksHome() {
     setError(null);
     try {
       await booksApi.archiveCustomer(id);
-      await reload();
+      await customers.reload();
     } catch (err) {
       fail(err);
     }
@@ -167,18 +178,62 @@ export default function BooksHome() {
       </nav>
 
       {tab === 'documents' ? (
-        documents === null ? (
-          <p className="text-sm text-muted-foreground">Loading documents…</p>
-        ) : documents.length === 0 ? (
-          <section className="rounded-lg border border-dashed p-10 text-center">
-            <h2 className="text-base font-medium">No invoices yet</h2>
-            <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
-              Create a customer, then a new invoice. Numbers are given only when an invoice is issued.
-            </p>
-          </section>
-        ) : (
+        <section aria-label="Documents list">
+          <div className="mb-4 flex flex-wrap items-end gap-3" role="search" aria-label="Find documents">
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              Number
+              <input
+                type="search"
+                value={numberInput}
+                onChange={(e) => setNumberInput(e.target.value)}
+                placeholder="e.g. 17"
+                maxLength={40}
+                className="h-9 w-40 rounded-md border bg-transparent px-2 text-sm text-foreground"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              Year
+              <input
+                type="number"
+                inputMode="numeric"
+                value={year}
+                onChange={(e) => setYear(e.target.value.slice(0, 4))}
+                placeholder="e.g. 2023"
+                min={1900}
+                max={2099}
+                className="h-9 w-28 rounded-md border bg-transparent px-2 text-sm text-foreground"
+              />
+            </label>
+            {filtered ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setNumberInput('');
+                  setNumber('');
+                  setYear('');
+                }}
+              >
+                Clear
+              </Button>
+            ) : null}
+          </div>
+          {documents.items === null ? (
+            <p className="text-sm text-muted-foreground">Loading documents…</p>
+          ) : documents.items.length === 0 ? (
+            filtered ? (
+              <p className="text-sm text-muted-foreground">No document matches this number and year.</p>
+            ) : (
+              <section className="rounded-lg border border-dashed p-10 text-center">
+                <h2 className="text-base font-medium">No invoices yet</h2>
+                <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
+                  Create a customer, then a new invoice. Numbers are given only when an invoice is issued.
+                </p>
+              </section>
+            )
+          ) : (
           <ul className="flex flex-col gap-2" aria-label="Documents">
-            {documents.map((d) => (
+            {documents.items.map((d) => (
               <li key={d.id}>
                 <Link
                   href={`/projects/books/documents/${d.id}`}
@@ -207,7 +262,9 @@ export default function BooksHome() {
               </li>
             ))}
           </ul>
-        )
+          )}
+          <MoreRows list={documents} noun="documents" />
+        </section>
       ) : null}
 
       {tab === 'customers' ? (
@@ -218,7 +275,7 @@ export default function BooksHome() {
                 onCancel={() => setAdding(false)}
                 onCreated={async () => {
                   setAdding(false);
-                  await reload();
+                  await customers.reload();
                 }}
               />
             </div>
@@ -229,13 +286,13 @@ export default function BooksHome() {
               </Button>
             </div>
           )}
-          {customers === null ? (
+          {customers.items === null ? (
             <p className="text-sm text-muted-foreground">Loading customers…</p>
-          ) : customers.length === 0 ? (
+          ) : customers.items.length === 0 ? (
             <p className="text-sm text-muted-foreground">No customers yet.</p>
           ) : (
-            <ul className="flex flex-col gap-2">
-              {customers.map((c) => (
+            <ul className="flex flex-col gap-2" aria-label="Customers">
+              {customers.items.map((c) => (
                 <li key={c.id} className="flex items-center justify-between gap-4 rounded-lg border p-4">
                   <span className="min-w-0">
                     <span className="block truncate font-medium">
@@ -254,10 +311,37 @@ export default function BooksHome() {
               ))}
             </ul>
           )}
+          <MoreRows list={customers} noun="customers" />
         </section>
       ) : null}
 
       {tab === 'templates' ? <TemplatesPanel /> : null}
     </main>
+  );
+}
+
+/**
+ * Below a paged list: how many rows are shown of how many, and "Load more"
+ * while there are more. A page that failed says so beside the button; the rows
+ * shown stay, and the button tries again.
+ */
+function MoreRows<T>({ list, noun }: { list: CursorList<T>; noun: string }) {
+  if (list.items === null || list.items.length === 0) return null;
+  return (
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
+      <p className="text-muted-foreground" aria-live="polite">
+        Showing {list.items.length} of {list.total} {noun}
+      </p>
+      {list.hasMore ? (
+        <Button variant="outline" size="sm" onClick={() => void list.loadMore()} disabled={list.loadingMore} aria-busy={list.loadingMore}>
+          {list.loadingMore ? 'Loading…' : 'Load more'}
+        </Button>
+      ) : null}
+      {list.moreError ? (
+        <p role="alert" className="w-full text-destructive">
+          The next {noun} could not be loaded: {list.moreError} Your list is kept; use Load more to try again.
+        </p>
+      ) : null}
+    </div>
   );
 }
