@@ -85,6 +85,9 @@ describe('007_books structure', () => {
       'sales_document_line_guard',
       'sales_document_line_no_truncate',
       'sales_document_no_truncate',
+      // 011_books_replacement: a replacement is issued only with the cancellation it replaces.
+      'sales_document_replacement_complete',
+      'sales_document_replaces_guard',
     ]);
     const again = await provisionTenant(
       env.fx.owner,

@@ -1,6 +1,6 @@
 ---
 type: plan
-status: decided
+status: in-progress
 date: 2026-10-21
 title: "Books: a visual invoice template composer that previews the real PDF"
 summary: "A block-based A4 composer for Books document templates (blocks panel, the real PDF as canvas with a selection overlay, inspector), a versioned template document model consumed by a new deterministic pdf-lib layout engine, legally required blocks that can be moved and styled but never removed, a save gate that runs the completeness check against probe documents, logos stored in the tenant schema, and a Correct flow for issued invoices (credit note plus a prefilled replacement draft). Adds an EPC QR payment block (GiroCode). Sliced into seven phases; approved by the owner on 2026-10-22, all phases to be built."
@@ -314,8 +314,9 @@ corrected invoice together and leaves nothing dangling.
   import may be in CHF (editor documents are EUR only, `CURRENCY_NOT_SUPPORTED`) or carry an
   incomplete printed address, so a copied replacement draft could dead-end at issue. The button is
   not shown on them; the document view says "Importierte Rechnung: stornieren und neu anlegen".
-- **Guards**: only one open replacement draft per invoice (partial unique index on
-  `replaces_document_id` where status is draft); a replacement draft of an invoice that meanwhile
+- **Guards**: one replacement per invoice, draft or issued (a unique index on
+  `replaces_document_id` wherever it is set; built stricter than first written, which said
+  "where status is draft", with the same effect); a replacement draft of an invoice that meanwhile
   got cancelled by another path refuses to issue (`REPLACED_INVOICE_CANCELLED`, with the option to
   issue it as an ordinary invoice). The plain "Stornieren" (cancel only) stays for invoices that
   should simply go away.
@@ -584,3 +585,88 @@ phase 7, stay as decided above). Two further decisions came with the approval:
    renderer in phase 2, the composer's palette and inspector in phase 4.
 
 No questions remain open.
+
+## Phase 1 build notes (2026-10-22): the Correct flow
+
+Built on branch `feat/books-correct-flow`. Decided while building, say so if you disagree.
+
+**What exists now.**
+
+- Migration `011_books_replacement`: `sales_document.replaces_document_id` (composite foreign
+  key, invoices only, never the document itself), a partial unique index (one replacement per
+  invoice), a trigger that allows the link only to an issued, not cancelled invoice made in the
+  editor (BK011, mapped to `NOT_CORRECTABLE`), and a deferred constraint trigger that refuses, at
+  commit, a replacement that is issued while the invoice it replaces is not cancelled (BK013,
+  mapped to `REPLACEMENT_INCOMPLETE`; BK012 belongs to phase 2's 012). The column is
+  frozen after issue by 007's whole-row guard like every other column.
+- `src/server/books/correct.ts` (`startCorrection`): locks the invoice, refuses anything but an
+  issued, not cancelled editor invoice, returns an existing replacement (`existing: true`), and
+  otherwise inserts the draft with the invoice's customer, template, net or gross mode, service
+  date or period, payment terms, contract reference, intro, outro and copies of its lines, then
+  recomputes every figure under today's tax profile.
+- `src/server/books/cancel.ts`: the cancellation's steps moved into `cancelInvoiceIn`, which runs
+  in the caller's transaction; `cancelInvoice` wraps it unchanged. `issue.ts` calls it for a
+  replacement between the tax recomputation and its own number, with the reason "Ersetzt durch
+  eine korrigierte Rechnung" and the replacement's id in the `cancelled` event. The routes' PDF
+  hook runs for both documents, so the credit note and the replacement are each rendered, checked
+  and stored inside the one transaction; any failure rolls all of it back.
+- Lock order: the replacement draft, the old invoice, the credit note counter, the invoice
+  counter. The credit note takes its number first.
+- Every document view now carries `related` (`corrects`, `correctedBy`, `replaces`,
+  `replacedBy`), read in one query, so the editor shows the chain and the receipts mirror's pull
+  endpoint, when it is built, can serve `replacesDocumentId` from the same view.
+- Routes: `POST /api/books/documents/:id/correct` (201 created, 200 existing, 409
+  `not_correctable`), the issue answer gains `replaced: { invoiceId, creditNoteId }` and 409
+  `replaced_invoice_cancelled`, and `PATCH /api/books/documents/:id` accepts
+  `replacesDocumentId: null` (never a value) to turn a replacement into an ordinary invoice.
+- The editor: "Correct…" next to "Cancel with a credit note…" on an issued editor invoice (it
+  opens the new draft; nothing is cancelled by the click), "Open the correction draft" when one
+  exists, a banner on the replacement draft that says what issuing does, the confirmation naming
+  the invoice that is cancelled with it, "Make it an ordinary invoice" when the replaced invoice
+  was cancelled in the meantime, a hint on imported invoices, and a "Linked documents" list.
+- `scripts/commerce-codegen.ts` regenerates `db-types.ts` again (it had failed since 010 for
+  lack of table docs and overrides for the upload-import tables).
+
+**Decisions.**
+
+1. **The editor's labels are English** ("Correct…"), because the whole editor is English; the
+   documents themselves stay German.
+2. **The replacement is recomputed under today's tax profile**, not copied figure for figure: it
+   is a new document issued today, so a changed company tax status or customer VAT id applies.
+   The credit note still offsets exactly what was invoiced (it copies the invoice, as before).
+3. **No new event type**: the replacement's `draft_created` and `issued` events and the old
+   invoice's `cancelled` event carry the ids. Detaching a replacement is a draft edit (version
+   bump), like every other draft edit, which writes no event.
+4. **A cancelled invoice cannot be corrected**, even when it was cancelled by its own
+   replacement: correcting the corrected invoice means correcting the replacement (a chain works,
+   tested).
+5. **The optional printed line "Ersetzt Rechnung 62 vom 14.10.2026" moves to phase 2.** It is a
+   label on the PDF, and phase 2 owns the label dictionary (`template/labels.ts`); phase 1 prints
+   nothing new, so no second dictionary exists. Phase 2 adds the label and a per-document switch.
+
+6. **A retried issue answers what the first one did**: an already issued replacement reports
+   `replaced` (the old invoice and its credit note) on every later call too.
+7. **The credit note counter stays locked through both PDF renders** of a replacement issue (the
+   credit note's and the replacement's). A plain cancellation elsewhere in the same company waits
+   that long (well under a second); no deadlock is possible with the lock order above.
+
+**Review (2026-10-22).** A fresh review of the final diff found no serious defect; its findings
+are fixed on the branch: the link guard also refuses an already cancelled invoice, the
+commit-time check has its own code (BK013), the editor labels an open correction draft as such
+and warns on the cancel form when one exists, a retry keeps `replaced`, "Correct" carries no
+ellipsis (it opens no dialog) and disables the cancel button while it runs, the issue-date
+message names both series, and the concurrency, retry and refused-Correct tests below were added.
+
+**Tests.** `src/server/books/__tests__/books-correct.itest.ts` (the four paths on real Postgres
+with the real PDF pipeline, the rollback when the last render fails, the race with a plain
+cancellation sequential and in parallel, two Correct clicks at once, the replacement issued twice
+at once and retried later, imports refused, and 011's database guarantees including the deferred
+trigger), two route tests in `books-routes.itest.ts`, six interface tests in
+`DocumentEditor.test.tsx`.
+
+**Receipts side**: when this merges, a line goes on receipt-ocr-app's `ROADMAP.md` for moving a
+payment already matched to a replaced invoice onto its replacement (the receipts app owns payment
+matching, D6 there).
+
+**Operator step**: deploy, which rolls `011_books_replacement` across every tenant schema at boot.
+Nothing else is new (no secret, no variable).

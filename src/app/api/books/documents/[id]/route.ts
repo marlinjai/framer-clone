@@ -13,7 +13,9 @@
 //
 // PATCH edits a draft's header: `templateId`, `netOrGross`, `serviceDate`,
 // `servicePeriod`, `paymentTermsDays`, `contractReference`, `introText`,
-// `outroText`. Pass `expectedVersion` (the `document.version` the editor
+// `outroText`, and `replacesDocumentId: null` (a replacement draft of the
+// Correct flow becomes an ordinary invoice: issuing it then cancels nothing).
+// Pass `expectedVersion` (the `document.version` the editor
 // shows); a stale one answers 409 `concurrent_edit` and changes nothing.
 // The customer is set through PUT .../customer (it re-derives the tax).
 
@@ -42,6 +44,7 @@ const patchBody = z
     contractReference: z.string().nullable().optional(),
     introText: z.string().nullable().optional(),
     outroText: z.string().nullable().optional(),
+    replacesDocumentId: z.null().optional(),
   })
   .strict();
 

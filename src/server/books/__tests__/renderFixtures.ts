@@ -93,6 +93,7 @@ export function smallBusinessInvoice(): { document: SalesDocumentWithSnapshots; 
     customerId: 'cust-1',
     templateId: null,
     correctsDocumentId: null,
+    replacesDocumentId: null,
     sourceOrderId: null,
     documentNumber: '62',
     numberValue: 62,

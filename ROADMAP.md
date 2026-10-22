@@ -102,7 +102,8 @@ connections to the suite. The four lines below are in that order.
   check, logos in the tenant schema, and a Correct flow (credit note plus a prefilled replacement
   draft), plus an EPC QR payment block. Approved by the owner on 2026-10-22, phases 1 to 5
   to be built: 1 Korrigieren (migration 011), 2 model and engine (012), 3 the shared editor
-  package, 4 the composer, 5 logos and fonts; English and e-invoicing later. See
+  package, 4 the composer, 5 logos and fonts; English and e-invoicing later. Phase 1 built
+  2026-10-22 on `feat/books-correct-flow` (open: deploy, which rolls 011 out). See
   [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-22)
 - [ ] 9. E-invoicing for Books documents (XRechnung and ZUGFeRD profile EN 16931, built from the
   frozen document data, ZUGFeRD as a PDF/A-3 with the XML embedded): write its own plan in the

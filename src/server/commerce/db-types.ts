@@ -82,6 +82,9 @@ export type JsonbWrite = { readonly __brand: 'JsonbWrite' };
 /** A `JSONB` column: read as the parsed shape T, written through toJsonb. */
 export type JsonColumn<T> = ColumnType<T, JsonbWrite, JsonbWrite>;
 
+/** The status of a staging row (a CHECK, not an enum type). */
+export type HistoricalImportStatus = 'uploaded' | 'extracting' | 'ready' | 'needs_attention' | 'imported' | 'discarded';
+
 // --- enum types (string unions, in the order of pg_enum.enumsortorder) -------
 
 export type StockMovementType =
@@ -455,10 +458,11 @@ export interface DocumentTemplateTable {
 }
 
 /**
- * 007_books: offer, invoice and credit note. DATE columns are written and read
- * as `YYYY-MM-DD` text (select them through the Books column lists, never
- * selectAll); `number_value` is BIGINT (read as a string). Frozen after issue
- * by the sales_document_guard trigger.
+ * 007_books (+ 008 template_snapshot, 011 replaces_document_id): offer,
+ * invoice and credit note. DATE columns are written and read as `YYYY-MM-DD`
+ * text (select them through the Books column lists, never selectAll);
+ * `number_value` is BIGINT (read as a string). Frozen after issue by the
+ * sales_document_guard trigger.
  */
 export interface SalesDocumentTable {
   id: string;
@@ -504,6 +508,7 @@ export interface SalesDocumentTable {
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
   template_snapshot: JsonColumn<TemplateSnapshotV1> | null;
+  replaces_document_id: string | null;
 }
 
 /**
@@ -585,20 +590,19 @@ export interface HistoricalImportItemTable {
   corrected: JsonColumn<Record<string, unknown>> | null;
   corrected_extraction_id: string | null;
   number_confirmed: string | null;
-  claim_id: string | null;
   problems: Generated<JsonColumn<Array<Record<string, unknown>>>>;
   model: string | null;
   claimed_at: Timestamp | null;
+  claim_id: string | null;
   document_id: string | null;
   discarded_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
 }
 
-/** The status of a staging row (a CHECK, not an enum type). */
-export type HistoricalImportStatus = 'uploaded' | 'extracting' | 'ready' | 'needs_attention' | 'imported' | 'discarded';
-
-/** 010_books_upload_import: one model call of the upload import (the daily ceiling counts these). */
+/**
+ * 010_books_upload_import: one model call of the upload import (the daily ceiling counts these).
+ */
 export interface HistoricalImportExtractionTable {
   id: string;
   tenant_id: string;

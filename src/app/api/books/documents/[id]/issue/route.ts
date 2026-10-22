@@ -23,6 +23,14 @@
 // If that fails, nothing is issued: 422 `undrawable_text` or
 // `render_incomplete` names the fields, the document stays a draft and no
 // number is taken.
+//
+// A replacement draft (the Correct flow, POST .../correct) cancels the invoice
+// it replaces in the same transaction: the credit note is issued, its PDF
+// stored, the old invoice set to cancelled, then the replacement issued. The
+// answer then carries `replaced: { invoiceId, creditNoteId }`. If the old
+// invoice was cancelled by another path meanwhile, 409
+// `replaced_invoice_cancelled` issues nothing (PATCH the draft with
+// `replacesDocumentId: null` to issue it as an ordinary invoice).
 
 import { z } from 'zod';
 
@@ -65,6 +73,7 @@ export const POST = booksRoute<{ id: string }>('write', async (ctx, req, { param
   return Response.json({
     document: detail,
     alreadyIssued: result.alreadyIssued,
+    ...(result.replaced ? { replaced: result.replaced } : {}),
     render: { stored: fileId !== null, fileId },
   });
 });
