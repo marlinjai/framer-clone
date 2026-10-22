@@ -1,9 +1,9 @@
 ---
 type: plan
-status: draft
+status: decided
 date: 2026-10-21
 title: "Books: a visual invoice template composer that previews the real PDF"
-summary: "A block-based A4 composer for Books document templates (blocks panel, the real PDF as canvas with a selection overlay, inspector), a versioned template document model consumed by a new deterministic pdf-lib layout engine, legally required blocks that can be moved and styled but never removed, a save gate that runs the completeness check against probe documents, logos stored in the tenant schema, and a Correct flow for issued invoices (credit note plus a prefilled replacement draft). Sliced into seven phases; three questions decided 2026-10-22, the presets' look and the plan's approval still with the owner."
+summary: "A block-based A4 composer for Books document templates (blocks panel, the real PDF as canvas with a selection overlay, inspector), a versioned template document model consumed by a new deterministic pdf-lib layout engine, legally required blocks that can be moved and styled but never removed, a save gate that runs the completeness check against probe documents, logos stored in the tenant schema, and a Correct flow for issued invoices (credit note plus a prefilled replacement draft). Adds an EPC QR payment block (GiroCode). Sliced into seven phases; approved by the owner on 2026-10-22, all phases to be built."
 tags: [framer-clone, books, invoices, templates, pdf, editor, composer, gobd, ustg, e-invoicing]
 projects: [framer-clone, email-editor, receipt-ocr-app]
 ---
@@ -151,6 +151,7 @@ interface TemplateDocumentV2 {
 | `totals` | totals and the tax summary per rate | **yes** | |
 | `taxNote` | the section 19 exemption or reverse-charge note | **yes** | printed only when the document has one |
 | `paymentDetails` | due date or terms, payment reference, bank | no (invoice only) | |
+| `paymentQr` | issuer IBAN, BIC and name, the total, the reference | no (invoice only) | EPC QR code ("GiroCode") with a caption, decision 17 |
 | `senderColumns` | sender identity, contact, tax and register, bank | yes* | footer columns; the sender's tax ids live here |
 | `freeText` | template text | no | plain text with bold, up to 2000 characters |
 | `spacer` | none | no | height from the spacing scale |
@@ -454,6 +455,40 @@ Editing templates needs `editBooks` (workspace admin), the same as every Books w
 against a real document needs `viewBooks` on that document's company, which the guard already
 enforces (another company's id is 404).
 
+### 17. The EPC QR payment block ("GiroCode")
+
+The owner's existing invoices carry a payment QR code with the line "Scannen Sie den QR-Code in
+Ihrem Online-Banking, um schneller zu bezahlen". The composer offers it as the block `paymentQr`
+(added on 2026-10-22, part of the owner's approval).
+
+- **Format**: the European Payments Council's QR code for SEPA credit transfers (EPC069-12,
+  version 002, the format German banking apps read as "GiroCode"). The payload is twelve lines
+  separated by line feeds: `BCD`, `002`, `1` (UTF-8), `SCT`, the BIC (may be empty in version
+  002), the beneficiary name (the sender's legal name, at most 70 characters), the IBAN, the
+  amount as `EUR` plus the total with a dot and two decimals (for example `EUR1234.50`), an empty
+  purpose code, an empty structured reference, the unstructured remittance text (at most 140
+  characters), and an empty note. Error correction level M; the payload is at most 331 bytes.
+- **Reference**: the document's payment reference when it has one, otherwise
+  `Rechnung <number>`. So the bank transfer carries what the receipts app's payment matching looks
+  for.
+- **Printed only when it can be right**: on an issued invoice (never on a credit note, there is
+  nothing to pay), when the sender snapshot has an IBAN, the currency is EUR and the total is
+  between 0.01 and 999,999,999.99 EUR. Otherwise the block draws nothing and takes no space, so a
+  template with the block stays valid for every document. A name longer than 70 characters is cut
+  to 70 in the code only (the printed name is unchanged). The caption is editable; the size is
+  fixed between 25 and 40 mm (below that, phone cameras struggle).
+- **Drafts and previews**: a draft has no number yet, and a code someone scans and pays from a
+  draft would carry the wrong reference. The draft preview therefore draws a grey placeholder of
+  the same size with "QR-Code erscheint bei Ausstellung". The template preview against the sample
+  document draws a real code from the fictional sample data (a test IBAN), so the layout is seen
+  as it will print.
+- **Deterministic**: the code is generated from the frozen snapshot data (sender snapshot, total,
+  number), never from live settings, by a pure JavaScript QR encoder with the mask chosen by the
+  standard's own scoring (deterministic), and drawn as vector squares with pdf-lib, not as an
+  embedded image. Same document, same bytes.
+- **Not legal content**: the completeness check does not require it, and the payment details
+  printed as text stay where they are (the QR code is a convenience, the text is the record).
+
 ## Test strategy
 
 The four paths of the stateful-flow standard (`knowledge-base/standards/stateful-flow-testing.md`),
@@ -490,7 +525,13 @@ for the two flows this plan adds.
    is cancelled through the plain path while a replacement draft is open; issuing the draft is
    refused with `REPLACED_INVOICE_CANCELLED`.
 
-**Renderer and gate** (unit, `pnpm test`): every block type in every allowed region; pagination
+**The EPC QR block** (unit): the exact payload for fixed inputs against the EPC069-12 field order
+and the examples in the standard; amount formatting (0.01, 1234.5, the maximum); the reference
+fallback from payment reference to `Rechnung <number>`; the 70- and 140-character limits; nothing
+drawn for a credit note, without an IBAN, for a non-EUR currency (an imported CHF invoice's
+re-render) and for a zero total; the draft placeholder; a round trip that rasterises the drawn
+module matrix and decodes it with a QR decoder back to the exact payload; byte determinism with
+the block present. **Renderer and gate** (unit, `pnpm test`): every block type in every allowed region; pagination
 rules (keep-together, totals with tax note, table header repeat, a row taller than a page, the
 following-page header); minimum widths against the largest amount in every font and size; contrast
 and size rules; determinism (twice, fresh process, all three fonts); the probe set against every
@@ -511,9 +552,9 @@ Rough sizes are in focused agent days, including tests and review.
 | Phase | What | Size |
 |---|---|---|
 | 1 | **Correct flow**: `replaces_document_id` (migration `011_books_replacement`), the replacement draft, issue-with-cancel in one transaction, links in the document view, mirror payload field, receipts roadmap line. Independent of the composer and the most useful thing right now. | 2 days |
-| 2 | **Model and engine**: `TemplateDocumentV2` with zod schemas, the version table, migration of existing templates into the Klassisch preset, the label dictionary, the three-step layout engine with layout map, `legacyV1.ts`, `RENDERER_ID` 3, the structural rules and the probe-render save gate, three presets. The existing templates form keeps working on top (edits only theme and texts) until phase 4. Preview route with latency measurement. | 6 days |
+| 2 | **Model and engine**: `TemplateDocumentV2` with zod schemas, the version table, migration of existing templates into the Klassisch preset, the label dictionary, the three-step layout engine with layout map, `legacyV1.ts`, `RENDERER_ID` 3, the structural rules and the probe-render save gate, three presets, the `paymentQr` block in the model and the renderer (decision 17). The existing templates form keeps working on top (edits only theme and texts) until phase 4. Preview route with latency measurement. | 6 days |
 | 3 | **`@marlinjai/block-editor-react`**: history, inspector fields, sortable outline with keyboard, extracted from the email editor, the email editor switched to it, published. | 2 days |
-| 4 | **Composer interface**: three panels, pdf.js canvas with overlay, drag and keyboard reordering, column handles, undo and redo, working copy, save with gate messages, version list ("Version 3 vom 21.10.2026, verwendet von 4 Dokumenten"), WCAG pass. | 6 days |
+| 4 | **Composer interface**: three panels, pdf.js canvas with overlay, drag and keyboard reordering, column handles, undo and redo, working copy, save with gate messages, version list ("Version 3 vom 21.10.2026, verwendet von 4 Dokumenten"), the `paymentQr` block in the palette and inspector (caption, size), WCAG pass. | 6 days |
 | 5 | **Logos and fonts**: `books_asset`, upload with checks, the logo block, Noto Sans and Noto Serif, font-aware drawable check. | 2 days |
 | 6 | **English documents** (not now, decided 2026-10-22; built when a client needs it): `en-GB` dictionary, date and number formats, locale on the template, the check per locale. | 3 days |
 | 7 | **E-invoicing**: a separate plan in the first half of 2027 (ZUGFeRD EN 16931 and XRechnung output from the frozen data, PDF/A-3), its own ROADMAP.md line. | own plan |
@@ -532,11 +573,14 @@ Phases 1, 2 and 3 can run in parallel (different files, phase 3 in another repo)
    using the Books can issue XRechnung or ZUGFeRD before the obligation of 1 January 2028. It is
    tracked as its own dated line on the root ROADMAP.md; phase 7 here is only the pointer.
 
-## Questions for the owner
+## Approval (2026-10-22)
 
-Still open, and asked on a decision page together with the approval of this plan.
+The owner approved this plan on 2026-10-22: **build all phases** (phases 1 to 5; English, phase 6, and e-invoicing,
+phase 7, stay as decided above). Two further decisions came with the approval:
 
-1. **The presets' look.** The three presets (Klassisch as today, Modern, Kompakt) will be built
-   from the current layout and the Lumitra style. Is there a letterhead or brand guide for
-   Whiz-Art Media that Klassisch should match? (Recommended: send the logo file and any existing
-   letterhead PDF; otherwise the presets stay neutral and you style yours in the composer.)
+4. **The presets stay neutral.** The owner uploads his own logo once phase 5 (logos) exists; his
+   logo is available, so nothing in this plan waits for it.
+5. **An EPC QR payment block** (decision 17), as his existing invoices carry one: model and
+   renderer in phase 2, the composer's palette and inspector in phase 4.
+
+No questions remain open.

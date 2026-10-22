@@ -100,8 +100,9 @@ connections to the suite. The four lines below are in that order.
   block-based A4 composer like the email editor whose canvas is the real PDF, versioned templates,
   legally required blocks that move but cannot be removed, a save gate running the completeness
   check, logos in the tenant schema, and a Correct flow (credit note plus a prefilled replacement
-  draft). Draft; three questions decided 2026-10-22, the plan's approval and the presets' look
-  wait on the owner. See
+  draft), plus an EPC QR payment block. Approved by the owner on 2026-10-22, phases 1 to 5
+  to be built: 1 Korrigieren (migration 011), 2 model and engine (012), 3 the shared editor
+  package, 4 the composer, 5 logos and fonts; English and e-invoicing later. See
   [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-22)
 - [ ] 9. E-invoicing for Books documents (XRechnung and ZUGFeRD profile EN 16931, built from the
   frozen document data, ZUGFeRD as a PDF/A-3 with the XML embedded): write its own plan in the
