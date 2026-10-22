@@ -638,6 +638,9 @@ Built on branch `feat/books-correct-flow`. Decided while building, say so if you
 4. **A cancelled invoice cannot be corrected**, even when it was cancelled by its own
    replacement: correcting the corrected invoice means correcting the replacement (a chain works,
    tested).
+5. **The optional printed line "Ersetzt Rechnung 62 vom 14.10.2026" moves to phase 2.** It is a
+   label on the PDF, and phase 2 owns the label dictionary (`template/labels.ts`); phase 1 prints
+   nothing new, so no second dictionary exists. Phase 2 adds the label and a per-document switch.
 
 **Tests.** `src/server/books/__tests__/books-correct.itest.ts` (the four paths on real Postgres
 with the real PDF pipeline, the rollback when the last render fails, the race with a plain
