@@ -69,7 +69,16 @@ const COLUMN_OVERRIDES: Record<string, string> = {
   'public.tenant_groups.status': "Generated<'provisioning' | 'active' | 'suspended'>",
   // Maintained EXCLUSIVELY by the 003_catalog triggers: never inserted or updated.
   'product_variant.option_signature': 'Generated<string | null>',
+  // 010_books_upload_import: TEXT columns with a CHECK vocabulary (no enum type).
+  'historical_import_item.status': 'Generated<HistoricalImportStatus>',
+  'historical_import_extraction.outcome':
+    "'ok' | 'refused' | 'invalid_output' | 'max_tokens' | 'unreadable' | 'error' | 'aborted' | null",
 };
+
+/** Named types the overrides above refer to, emitted with the scalar aliases. */
+const EXTRA_TYPES =
+  '/** The status of a staging row (a CHECK, not an enum type). */\n' +
+  "export type HistoricalImportStatus = 'uploaded' | 'extracting' | 'ready' | 'needs_attention' | 'imported' | 'discarded';\n";
 
 /** The TypeScript shape of every JSONB column (read parsed, written through toJsonb). */
 const JSON_COLUMNS: Record<string, string> = {
@@ -80,6 +89,10 @@ const JSON_COLUMNS: Record<string, string> = {
   'sales_document.sender_snapshot': 'SenderSnapshotV1',
   'sales_document.template_snapshot': 'TemplateSnapshotV1',
   'sales_document_event.payload': 'EventPayload',
+  // 010_books_upload_import: parsed with zod on read (src/server/books/upload/staging.ts).
+  'historical_import_item.extracted': 'Record<string, unknown>',
+  'historical_import_item.corrected': 'Record<string, unknown>',
+  'historical_import_item.problems': 'Array<Record<string, unknown>>',
 };
 
 /** The type-only imports the JSON shapes need. */
@@ -121,12 +134,16 @@ const TABLE_DOCS: Record<string, string> = {
     '007_books: the tax fields of a recipient; name and address live in the shared\ncontacts database (`contact_id`).',
   document_template: '007_books: document layout (rendered from in phase 3).',
   sales_document:
-    '007_books: offer, invoice and credit note. DATE columns are written and read\nas `YYYY-MM-DD` text (select them through the Books column lists, never\nselectAll); `number_value` is BIGINT (read as a string). Frozen after issue\nby the sales_document_guard trigger.',
+    '007_books (+ 008 template_snapshot, 011 replaces_document_id): offer,\ninvoice and credit note. DATE columns are written and read as `YYYY-MM-DD`\ntext (select them through the Books column lists, never selectAll);\n`number_value` is BIGINT (read as a string). Frozen after issue by the\nsales_document_guard trigger.',
   sales_document_line:
     '007_books: a document line. `tax_class` / `tax_rate_override` are inputs;\n`tax_rate`, `tax_amount`, `tax_treatment` are derived.',
   sales_document_event: '007_books: the append-only audit trail (no updated_at).',
   sales_document_file:
     '008_books_files: the stored document of record (the rendered PDF of an issued\ndocument), one per document, append-only (no updated_at).',
+  historical_import_item:
+    "010_books_upload_import: the staging row of one uploaded past-invoice PDF.\nMutable until `imported` (then frozen by trigger, BK010). The JSONB columns\nare parsed with zod on read (src/server/books/upload/staging.ts); they hold\nthe extracted printed invoice, the user's corrected record (keyed to the\nextraction it corrects) and the named problems.",
+  historical_import_extraction:
+    '010_books_upload_import: one model call of the upload import (the daily ceiling counts these).',
 };
 
 /** Inline notes printed above a column. */
@@ -359,6 +376,7 @@ function emitFile(enums: EnumType[], globals: Table[], tenants: Table[]): string
       '\n',
   );
   parts.push(SCALAR_ALIASES);
+  parts.push(EXTRA_TYPES);
   parts.push(
     '// --- enum types (string unions, in the order of pg_enum.enumsortorder) -------\n\n' +
       enums.map(emitEnum).join('\n') +

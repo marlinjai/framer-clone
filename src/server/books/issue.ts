@@ -35,6 +35,20 @@
 //      reference, snapshots and tax fields. The guard trigger checks the totals
 //      against the lines (BK005); the CHECKs check completeness.
 //   9. Insert the `issued` event. Commit.
+//
+// A REPLACEMENT draft (the Correct flow, correct.ts; `replaces_document_id`
+// set) additionally cancels the invoice it replaces, inside the same
+// transaction, between steps 5 and 7: the cancellation's steps run through
+// cancelInvoiceIn (cancel.ts), so the credit note takes the next credit note
+// number, the old invoice turns cancelled, and only then does the replacement
+// take the next invoice number. Lock order: this draft, the old invoice, the
+// credit note counter, the invoice counter. An old invoice cancelled by
+// another path in the meantime is REPLACED_INVOICE_CANCELLED (checked before
+// the transaction for a fast answer, and again under its lock); the user can
+// then issue the draft as an ordinary invoice (updateDraft with
+// `replacesDocumentId: null`). Any failure rolls all of it back: nothing is
+// cancelled, no number is taken. The database refuses a replacement issued
+// without the cancellation (011, BK011).
 
 import type { Transaction } from 'kysely';
 import { z } from 'zod';
@@ -49,6 +63,7 @@ import { readRecipient } from './recipients';
 import { readPersistedView, selectDocumentRow, selectLineRows, type DocumentView } from './repository/read';
 import { profileFor, selectCustomerRow, syncDraftTaxState } from './repository/taxState';
 import { insertEvent } from './repository/events';
+import { cancelInvoiceIn } from './cancel';
 import { templateSnapshotFor } from './repository/templates';
 import type { BooksScope } from './scope';
 import { requireSettings } from './settings';
@@ -73,7 +88,16 @@ export type IssueInput = z.input<typeof issueInput>;
 export interface IssueResult {
   document: DocumentView;
   alreadyIssued: boolean;
+  /**
+   * For a replacement issued now: the invoice it replaced (now cancelled) and
+   * the credit note that cancelled it. Absent otherwise (also on an
+   * `alreadyIssued` return).
+   */
+  replaced?: { invoiceId: string; creditNoteId: string };
 }
+
+/** The cancellation reason written for a replaced invoice (a business reason, no personal data). */
+export const REPLACEMENT_CANCEL_REASON = 'Ersetzt durch eine korrigierte Rechnung';
 
 /**
  * Test-only hooks, passed explicitly (never an environment flag): a fault
@@ -87,7 +111,8 @@ export interface IssueOptions {
   now?: Date;
   /**
    * Runs inside the issue transaction after the document is frozen and its
-   * event written, before the commit, with the issued view. A throw rolls the
+   * event written, before the commit, with the issued view (for a replacement
+   * also once with the credit note that cancels the replaced invoice). A throw rolls the
    * whole issue back: the document stays a draft and no number is taken. The
    * routes render, check and store the PDF of record here (render/store.ts), so
    * an invoice is never issued without a complete document of record.
@@ -127,6 +152,16 @@ export async function issue(
     });
   }
   if (!before.customer_id) throw new BooksError('CUSTOMER_REQUIRED', 'CUSTOMER_REQUIRED', { documentId: id });
+  if (before.replaces_document_id) {
+    const replaced = await selectDocumentRow(scope.db, scope, before.replaces_document_id);
+    if (replaced?.status === 'cancelled') {
+      throw new BooksError(
+        'REPLACED_INVOICE_CANCELLED',
+        'REPLACED_INVOICE_CANCELLED: the invoice this draft replaces is already cancelled',
+        { documentId: before.replaces_document_id, replacementId: id },
+      );
+    }
+  }
   const lines = await selectLineRows(scope.db, scope, id);
   if (!lines.some((l) => l.kind !== 'text')) {
     throw new BooksError('NO_BILLABLE_LINES', 'NO_BILLABLE_LINES', { documentId: id });
@@ -220,6 +255,22 @@ export async function issue(
           throw invalid('INVALID_LINE', [{ path: ['total'], message: 'the document total exceeds the largest amount (21,474,836.47 EUR)' }]);
         }
 
+        // The Correct flow: cancel the replaced invoice first (its credit note
+        // takes its number before this invoice takes its own).
+        let replaced: IssueResult['replaced'];
+        if (row.replaces_document_id) {
+          const cancellation = await cancelInvoiceIn(trx, scope, row.replaces_document_id, {
+            actorUserId: args.actorUserId,
+            reason: REPLACEMENT_CANCEL_REASON,
+            issueDate,
+            now,
+            completedRecipient: null,
+            beforeCommit: options.beforeCommit,
+            replacementId: id,
+          });
+          replaced = { invoiceId: row.replaces_document_id, creditNoteId: cancellation.creditNote.document.id };
+        }
+
         // (7) The counter (the issue date was resolved in step 6, up front).
         const number = await allocateNumber(trx, scope, 'invoice', issueDate);
         if (options.afterCounterUpdate) await options.afterCounterUpdate();
@@ -271,11 +322,12 @@ export async function issue(
             issueDate,
             total: fields.total,
             taxProfileKey: fields.tax_profile_key,
+            ...(replaced ? { replacesDocumentId: replaced.invoiceId, creditNoteId: replaced.creditNoteId } : {}),
           },
         });
         const issued = await readPersistedView(trx, scope, id);
         if (options.beforeCommit) await options.beforeCommit(trx, issued);
-        return { document: issued, alreadyIssued: false };
+        return replaced ? { document: issued, alreadyIssued: false, replaced } : { document: issued, alreadyIssued: false };
       }),
   );
 }

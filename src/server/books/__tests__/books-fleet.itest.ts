@@ -114,7 +114,7 @@ function expectedPrivileges() {
 async function fleetMigrate(schema: string) {
   const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
   const mine = result.schemas.find((s) => s.schema === schema);
-  expect(mine?.applied).toEqual(['007_books', '008_books_files', '009_books_import', '010_books_upload_import']);
+  expect(mine?.applied).toEqual(['007_books', '008_books_files', '009_books_import', '010_books_upload_import', '011_books_replacement']);
 }
 
 describe('007_books through the fleet runner', () => {
@@ -169,7 +169,7 @@ describe('007_books through the fleet runner', () => {
     const { tgId, schema } = await provisionAt006WithId();
     const first = await ensureCommerceTenant({ tenantGroupId: tgId, slug: `fleet-${tgId.slice(0, 8)}`, connectionString: ownerUrl });
     expect(first.provisioned).toBe(true);
-    expect(first.applied).toEqual(['007_books', '008_books_files', '009_books_import', '010_books_upload_import']);
+    expect(first.applied).toEqual(['007_books', '008_books_files', '009_books_import', '010_books_upload_import', '011_books_replacement']);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     expect(await readCommerceTenantState(owner, tgId, schema)).toBe('ready');
     const second = await ensureCommerceTenant({ tenantGroupId: tgId, slug: `fleet-${tgId.slice(0, 8)}`, connectionString: ownerUrl });
@@ -200,14 +200,18 @@ describe('009_books_import over a schema already holding issued documents (as pr
                        customer_snapshot = '{"v":1}'::jsonb, sender_snapshot = '{"v":1}'::jsonb, template_snapshot = '{"v":1}'::jsonb
                  WHERE id = ${docId}`;
     const snapshot = async () =>
-      owner`SELECT to_jsonb(d) AS doc, (SELECT jsonb_agg(to_jsonb(l)) FROM ${s}.sales_document_line l WHERE l.document_id = d.id) AS lines
+      // 011 adds the nullable column replaces_document_id: compared without it
+      // (it did not exist before), and asserted NULL below.
+      owner`SELECT to_jsonb(d) - 'replaces_document_id' AS doc, (SELECT jsonb_agg(to_jsonb(l)) FROM ${s}.sales_document_line l WHERE l.document_id = d.id) AS lines
               FROM ${s}.sales_document d WHERE d.id = ${docId}`;
     const before = await snapshot();
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['009_books_import', '010_books_upload_import']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['009_books_import', '010_books_upload_import', '011_books_replacement']);
 
     expect(await snapshot()).toEqual(before);
+    const [link] = await owner<{ replaces_document_id: string | null }[]>`SELECT replaces_document_id FROM ${s}.sales_document WHERE id = ${docId}`;
+    expect(link.replaces_document_id).toBeNull();
     const [fk] = await owner<{ condeferrable: boolean; condeferred: boolean }[]>`
       SELECT c.condeferrable, c.condeferred FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
        WHERE n.nspname = ${schema} AND c.conname = 'sales_document_line_document_fkey'`;

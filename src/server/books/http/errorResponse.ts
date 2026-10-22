@@ -42,6 +42,8 @@ const STATUS: Record<BooksErrorCode, number> = {
   TEMPLATE_IN_USE: 409,
   INVALID_TRANSITION: 409,
   NOT_CANCELLABLE: 409,
+  NOT_CORRECTABLE: 409,
+  REPLACED_INVOICE_CANCELLED: 409,
   COUNTER_EXISTS: 409,
   SETTINGS_MISSING: 409,
   COUNTER_MISSING: 409,
@@ -92,6 +94,10 @@ const MESSAGES: Partial<Record<BooksErrorCode, string>> = {
   SERVICE_DATE_REQUIRED: 'enter a service date or a service period before issuing',
   UNDRAWABLE_TEXT:
     'some characters cannot be printed in the document font; change the named fields (nothing was issued)',
+  NOT_CORRECTABLE:
+    'only an issued invoice made in the editor that is not cancelled can be corrected; cancel an imported invoice and create a new one',
+  REPLACED_INVOICE_CANCELLED:
+    'the invoice this draft replaces was cancelled in the meantime; issue the draft as an ordinary invoice instead',
   RENDER_INCOMPLETE: 'the PDF would lack a legally required field; nothing was issued or stored',
 };
 

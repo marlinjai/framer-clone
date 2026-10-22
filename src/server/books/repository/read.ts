@@ -58,6 +58,8 @@ export interface SalesDocument {
   customerId: string | null;
   templateId: string | null;
   correctsDocumentId: string | null;
+  /** The issued invoice this invoice replaces (the Correct flow, 011_books_replacement). */
+  replacesDocumentId: string | null;
   sourceOrderId: string | null;
   documentNumber: string | null;
   numberValue: number | null;
@@ -134,10 +136,37 @@ export interface SalesDocumentEvent {
 }
 
 /** A document with its lines (by position) and events (by time). */
+/** A short reference to a linked document (no recipient data). */
+export interface DocumentRef {
+  id: string;
+  docType: SalesDocType;
+  status: SalesDocStatus;
+  documentNumber: string | null;
+  issueDate: string | null;
+}
+
+/**
+ * The documents a document is linked with: the credit note chain
+ * (`corrects_document_id`) and the Correct flow (`replaces_document_id`,
+ * 011_books_replacement). "Rechnung 62 (cancelled by credit note 5, replaced
+ * by invoice 63)" is read from here.
+ */
+export interface RelatedDocuments {
+  /** For a credit note: the invoice it cancels. */
+  corrects: DocumentRef | null;
+  /** For an invoice: the credit note that cancelled it. */
+  correctedBy: DocumentRef | null;
+  /** For a replacement: the invoice it replaces. */
+  replaces: DocumentRef | null;
+  /** For an invoice: its replacement (a draft until issued). */
+  replacedBy: DocumentRef | null;
+}
+
 export interface DocumentView {
   document: SalesDocumentWithSnapshots;
   lines: SalesDocumentLine[];
   events: SalesDocumentEvent[];
+  related: RelatedDocuments;
   /**
    * True when the stored figures of a draft were computed under a tax profile
    * key that no longer matches the customer and company setting (or were never
@@ -160,6 +189,7 @@ export type DocumentRow = {
   customer_id: string | null;
   template_id: string | null;
   corrects_document_id: string | null;
+  replaces_document_id: string | null;
   source_order_id: string | null;
   document_number: string | null;
   number_value: string | null;
@@ -210,6 +240,7 @@ export function mapDocument(row: DocumentRow): SalesDocument {
     customerId: row.customer_id,
     templateId: row.template_id,
     correctsDocumentId: row.corrects_document_id,
+    replacesDocumentId: row.replaces_document_id,
     sourceOrderId: row.source_order_id,
     documentNumber: row.document_number,
     numberValue: row.number_value === null ? null : Number(row.number_value),
@@ -383,6 +414,48 @@ export function inReadSnapshot<T>(db: Db, fn: (db: Db) => Promise<T>): Promise<T
   return db.transaction().setIsolationLevel('repeatable read').execute((trx) => fn(trx));
 }
 
+/** The linked documents of one document, in one query. */
+export async function selectRelated(db: Db, scope: BooksScope, row: DocumentRow): Promise<RelatedDocuments> {
+  const rows = await db
+    .selectFrom('sales_document')
+    .select((eb) => [
+      'id',
+      'doc_type',
+      'status',
+      'document_number',
+      'corrects_document_id',
+      'replaces_document_id',
+      eb.cast<string | null>('issue_date', 'text').as('issue_date'),
+    ])
+    .where('tenant_id', '=', scope.tenantId)
+    .where((eb) =>
+      eb.or([
+        eb('corrects_document_id', '=', row.id),
+        eb('replaces_document_id', '=', row.id),
+        ...(row.corrects_document_id ? [eb('id', '=', row.corrects_document_id)] : []),
+        ...(row.replaces_document_id ? [eb('id', '=', row.replaces_document_id)] : []),
+      ]),
+    )
+    .execute();
+  const ref = (r: (typeof rows)[number]): DocumentRef => ({
+    id: r.id,
+    docType: r.doc_type,
+    status: r.status,
+    documentNumber: r.document_number,
+    issueDate: r.issue_date,
+  });
+  const find = (pred: (r: (typeof rows)[number]) => boolean) => {
+    const hit = rows.find(pred);
+    return hit ? ref(hit) : null;
+  };
+  return {
+    corrects: row.corrects_document_id ? find((r) => r.id === row.corrects_document_id) : null,
+    correctedBy: find((r) => r.corrects_document_id === row.id),
+    replaces: row.replaces_document_id ? find((r) => r.id === row.replaces_document_id) : null,
+    replacedBy: find((r) => r.replaces_document_id === row.id),
+  };
+}
+
 /** Read the full view as persisted (no stale check), from one snapshot. */
 export function readPersistedView(db: Db, scope: BooksScope, id: string): Promise<DocumentView> {
   return inReadSnapshot(db, (snap) => readPersistedViewIn(snap, scope, id));
@@ -397,6 +470,7 @@ async function readPersistedViewIn(db: Db, scope: BooksScope, id: string): Promi
     document: mapDocumentWithSnapshots(row),
     lines: lines.map(mapLine),
     events: events.map(mapEvent),
+    related: await selectRelated(db, scope, row),
     stale: false,
   };
 }
@@ -424,6 +498,7 @@ async function getDocumentIn(db: Db, scope: BooksScope, id: string): Promise<Doc
     document: mapDocumentWithSnapshots(row),
     lines: lineRows.map(mapLine),
     events: eventRows.map(mapEvent),
+    related: await selectRelated(db, scope, row),
     stale: false,
   };
   if (row.status !== 'draft') return view;
@@ -462,6 +537,7 @@ async function getDocumentIn(db: Db, scope: BooksScope, id: string): Promise<Doc
       taxTreatment: l.derived.taxTreatment,
     })),
     events: view.events,
+    related: view.related,
     stale: true,
   };
 }

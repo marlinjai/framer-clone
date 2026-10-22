@@ -10,6 +10,7 @@ import { books } from './007_books';
 import { booksFiles } from './008_books_files';
 import { booksImport } from './009_books_import';
 import { booksUploadImport } from './010_books_upload_import';
+import { booksReplacement } from './011_books_replacement';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -57,6 +58,10 @@ import { booksUploadImport } from './010_books_upload_import';
  *                            the staging and ledger tables of the upload
  *                            (historical_import_item, historical_import_extraction,
  *                            BK010)
+ *   011_books_replacement  : the Correct flow: sales_document.replaces_document_id
+ *                            (an invoice replacing an issued editor invoice), one
+ *                            replacement per invoice, and a replacement issued only
+ *                            together with the cancellation of its invoice (BK011)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -70,4 +75,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   booksFiles,
   booksImport,
   booksUploadImport,
+  booksReplacement,
 ];
