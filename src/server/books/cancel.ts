@@ -32,6 +32,12 @@
 //      never earlier than the invoice's), issue the credit note; write its
 //      `draft_created` and `issued` events.
 //   5. Set the invoice to cancelled; write its `cancelled` event. Commit.
+//
+// Steps 1 to 5 live in `cancelInvoiceIn`, which runs in the caller's
+// transaction: `cancelInvoice` opens its own, and issuing a replacement (the
+// Correct flow, correct.ts and issue.ts) runs them inside the replacement's
+// issue, so the credit note, the cancellation and the replacement commit
+// together or not at all.
 
 import { randomUUID } from 'node:crypto';
 import type { Transaction } from 'kysely';
@@ -114,183 +120,240 @@ export async function cancelInvoice(
     scope.db
       .transaction()
       .setIsolationLevel('read committed')
-      .execute(async (trx): Promise<CancelResult> => {
-        // (1) Lock the invoice.
-        const invoice = await selectDocumentRow(trx, scope, invoiceId, { forUpdate: true });
-        if (!invoice) throw new BooksError('NOT_FOUND', 'NOT_FOUND: document', { documentId: invoiceId });
-        if (invoice.doc_type !== 'invoice' || invoice.status === 'draft') {
-          throw new BooksError('NOT_CANCELLABLE', `NOT_CANCELLABLE: a ${invoice.status} ${invoice.doc_type}`, {
-            documentId: invoiceId,
-            docType: invoice.doc_type,
-            status: invoice.status,
-          });
-        }
-        if (invoice.status === 'cancelled') {
-          const existing = await trx
-            .selectFrom('sales_document')
-            .select('id')
-            .where('tenant_id', '=', scope.tenantId)
-            .where('corrects_document_id', '=', invoiceId)
-            .executeTakeFirstOrThrow();
-          return {
-            invoice: await readPersistedView(trx, scope, invoiceId),
-            creditNote: await readPersistedView(trx, scope, existing.id),
-            alreadyCancelled: true,
-          };
-        }
-
-        // (2) A fresh sender; the invoice's recipient.
-        const settings = await requireSettings(trx, scope);
-        const missingSender = senderMissingFields(settings.senderBlock, {
-          taxStatus: settings.taxStatus,
-          reverseCharge: invoice.reverse_charge,
-        });
-        if (missingSender.length > 0) {
-          throw new BooksError('SENDER_INCOMPLETE', `SENDER_INCOMPLETE: ${missingSender.join(', ')}`, {
-            missing: missingSender,
-          });
-        }
-        const senderSnapshot = buildSenderSnapshot(settings.senderBlock);
-
-        // (3) The credit note as a draft, with copies of the lines.
-        // A credit note is never dated before the invoice it cancels.
-        if (invoice.issue_date && issueDate < invoice.issue_date) {
-          throw new BooksError(
-            'ISSUE_DATE_OUT_OF_ORDER',
-            `ISSUE_DATE_OUT_OF_ORDER: ${issueDate} is earlier than the invoice (${invoice.issue_date})`,
-            { issueDate, invoiceIssueDate: invoice.issue_date },
-          );
-        }
-        const now = options.now ?? new Date();
-        const creditNoteId = randomUUID();
-        await trx
-          .insertInto('sales_document')
-          .values({
-            id: creditNoteId,
-            tenant_id: scope.tenantId,
-            doc_type: 'credit_note',
-            status: 'draft',
-            source: 'editor',
-            customer_id: invoice.customer_id,
-            template_id: invoice.template_id,
-            corrects_document_id: invoiceId,
-            service_date: invoice.service_date,
-            service_period_start: invoice.service_period_start,
-            service_period_end: invoice.service_period_end,
-            payment_terms_days: invoice.payment_terms_days,
-            contract_reference: invoice.contract_reference,
-            currency_code: invoice.currency_code,
-            tax_region: invoice.tax_region,
-            customer_type: invoice.customer_type,
-            vat_id: invoice.vat_id,
-            reverse_charge: invoice.reverse_charge,
-            net_or_gross: invoice.net_or_gross,
-            kleinunternehmer: invoice.kleinunternehmer,
-            tax_note: invoice.tax_note,
-            tax_profile_key: invoice.tax_profile_key,
-            subtotal: invoice.subtotal,
-            tax_amount: invoice.tax_amount,
-            total: invoice.total,
-            tax_summary: toJsonb(invoice.tax_summary),
-            updated_at: now,
-          })
-          .execute();
-        for (const line of await selectLineRows(trx, scope, invoiceId)) {
-          await trx
-            .insertInto('sales_document_line')
-            .values({
-              id: randomUUID(),
-              tenant_id: scope.tenantId,
-              document_id: creditNoteId,
-              position: line.position,
-              kind: line.kind,
-              title: line.title,
-              description: line.description,
-              quantity: line.quantity,
-              unit_label: line.unit_label,
-              unit_price: line.unit_price,
-              discount_bp: line.discount_bp,
-              subtotal: line.subtotal,
-              tax_class: line.tax_class,
-              tax_rate_override: line.tax_rate_override,
-              tax_rate: line.tax_rate,
-              tax_amount: line.tax_amount,
-              tax_treatment: line.tax_treatment,
-              variant_ref: line.variant_ref,
-              variant_ref_source: line.variant_ref_source,
-              updated_at: now,
-            })
-            .execute();
-        }
-        await insertEvent(trx, scope, {
-          documentId: creditNoteId,
-          eventType: 'draft_created',
-          fromStatus: null,
-          toStatus: 'draft',
+      .execute((trx) =>
+        cancelInvoiceIn(trx, scope, invoiceId, {
           actorUserId: args.actorUserId,
-          payload: { docType: 'credit_note' },
-        });
-
-        // (4) Number and issue the credit note.
-        const number = await allocateNumber(trx, scope, 'credit_note', issueDate);
-        await trx
-          .updateTable('sales_document')
-          .set({
-            status: 'issued',
-            document_number: number.documentNumber,
-            number_value: number.numberValue,
-            issue_date: issueDate,
-            customer_snapshot: toJsonb(completedRecipient ?? invoice.customer_snapshot),
-            // The credit note keeps the invoice's frozen layout (or the plain one
-            // for an invoice issued before 008).
-            template_snapshot: toJsonb(
-              invoice.template_snapshot ?? { v: 1, templateId: null, name: null, accentColor: null, footerBlocks: [] },
-            ),
-            sender_snapshot: toJsonb(senderSnapshot),
-            issued_at: now,
-            updated_at: now,
-          })
-          .where('tenant_id', '=', scope.tenantId)
-          .where('id', '=', creditNoteId)
-          .execute();
-        await insertEvent(trx, scope, {
-          documentId: creditNoteId,
-          eventType: 'issued',
-          fromStatus: 'draft',
-          toStatus: 'issued',
-          actorUserId: args.actorUserId,
-          payload: {
-            documentNumber: number.documentNumber,
-            numberValue: number.numberValue,
-            issueDate,
-            total: invoice.total,
-            correctsDocumentId: invoiceId,
-          },
-        });
-
-        // (5) Cancel the invoice (the trigger finds the issued credit note).
-        await trx
-          .updateTable('sales_document')
-          .set({ status: 'cancelled', updated_at: now })
-          .where('tenant_id', '=', scope.tenantId)
-          .where('id', '=', invoiceId)
-          .execute();
-        await insertEvent(trx, scope, {
-          documentId: invoiceId,
-          eventType: 'cancelled',
-          fromStatus: invoice.status,
-          toStatus: 'cancelled',
-          actorUserId: args.actorUserId,
-          payload: { creditNoteId, creditNoteNumber: number.documentNumber, reason: args.reason },
-        });
-
-        const creditNote = await readPersistedView(trx, scope, creditNoteId);
-        if (options.beforeCommit) await options.beforeCommit(trx, creditNote);
-        return {
-          invoice: await readPersistedView(trx, scope, invoiceId),
-          creditNote,
-          alreadyCancelled: false,
-        };
-      }),
+          reason: args.reason,
+          issueDate,
+          now: options.now ?? new Date(),
+          completedRecipient,
+          beforeCommit: options.beforeCommit,
+        }),
+      ),
   );
+}
+
+/** What {@link cancelInvoiceIn} needs, resolved by its caller before the transaction. */
+export interface CancelInTransaction {
+  actorUserId: string;
+  /** Written into the invoice's `cancelled` event (no personal data). */
+  reason: string;
+  /** The credit note's issue date (validated by the caller). */
+  issueDate: string;
+  now: Date;
+  /** See completeImportedRecipient (null for an editor invoice). */
+  completedRecipient: CustomerSnapshotV1 | null;
+  /** Runs with the issued credit note before the caller's commit (the routes store its PDF). */
+  beforeCommit?: (trx: Transaction<CommerceDB>, creditNote: DocumentView) => Promise<void>;
+  /**
+   * Set when the cancellation is part of issuing a replacement (issue.ts, the
+   * Correct flow): an invoice already cancelled is then REPLACED_INVOICE_CANCELLED
+   * instead of an idempotent return, and the `cancelled` event names the
+   * replacement.
+   */
+  replacementId?: string;
+}
+
+/**
+ * Steps 1 to 5 of the cancellation inside the caller's transaction. Used by
+ * cancelInvoice (its own transaction) and by issue (the replacement path, where
+ * the cancellation and the replacement's issue commit together).
+ */
+export async function cancelInvoiceIn(
+  trx: Transaction<CommerceDB>,
+  scope: BooksScope,
+  invoiceId: string,
+  core: CancelInTransaction,
+): Promise<CancelResult> {
+  const { issueDate } = core;
+  // (1) Lock the invoice.
+  const invoice = await selectDocumentRow(trx, scope, invoiceId, { forUpdate: true });
+  if (!invoice) throw new BooksError('NOT_FOUND', 'NOT_FOUND: document', { documentId: invoiceId });
+  if (invoice.doc_type !== 'invoice' || invoice.status === 'draft') {
+    throw new BooksError('NOT_CANCELLABLE', `NOT_CANCELLABLE: a ${invoice.status} ${invoice.doc_type}`, {
+      documentId: invoiceId,
+      docType: invoice.doc_type,
+      status: invoice.status,
+    });
+  }
+  if (invoice.status === 'cancelled') {
+    if (core.replacementId) {
+      // The replacement path: the invoice was cancelled by another path in
+      // the meantime, so the replacement would stand beside nothing.
+      throw new BooksError(
+        'REPLACED_INVOICE_CANCELLED',
+        'REPLACED_INVOICE_CANCELLED: the invoice this draft replaces is already cancelled',
+        { documentId: invoiceId, replacementId: core.replacementId },
+      );
+    }
+    const existing = await trx
+      .selectFrom('sales_document')
+      .select('id')
+      .where('tenant_id', '=', scope.tenantId)
+      .where('corrects_document_id', '=', invoiceId)
+      .executeTakeFirstOrThrow();
+    return {
+      invoice: await readPersistedView(trx, scope, invoiceId),
+      creditNote: await readPersistedView(trx, scope, existing.id),
+      alreadyCancelled: true,
+    };
+  }
+
+  // (2) A fresh sender; the invoice's recipient.
+  const settings = await requireSettings(trx, scope);
+  const missingSender = senderMissingFields(settings.senderBlock, {
+    taxStatus: settings.taxStatus,
+    reverseCharge: invoice.reverse_charge,
+  });
+  if (missingSender.length > 0) {
+    throw new BooksError('SENDER_INCOMPLETE', `SENDER_INCOMPLETE: ${missingSender.join(', ')}`, {
+      missing: missingSender,
+    });
+  }
+  const senderSnapshot = buildSenderSnapshot(settings.senderBlock);
+
+  // (3) The credit note as a draft, with copies of the lines.
+  // A credit note is never dated before the invoice it cancels.
+  if (invoice.issue_date && issueDate < invoice.issue_date) {
+    throw new BooksError(
+      'ISSUE_DATE_OUT_OF_ORDER',
+      `ISSUE_DATE_OUT_OF_ORDER: ${issueDate} is earlier than the invoice (${invoice.issue_date})`,
+      { issueDate, invoiceIssueDate: invoice.issue_date },
+    );
+  }
+  const now = core.now;
+  const creditNoteId = randomUUID();
+  await trx
+    .insertInto('sales_document')
+    .values({
+      id: creditNoteId,
+      tenant_id: scope.tenantId,
+      doc_type: 'credit_note',
+      status: 'draft',
+      source: 'editor',
+      customer_id: invoice.customer_id,
+      template_id: invoice.template_id,
+      corrects_document_id: invoiceId,
+      service_date: invoice.service_date,
+      service_period_start: invoice.service_period_start,
+      service_period_end: invoice.service_period_end,
+      payment_terms_days: invoice.payment_terms_days,
+      contract_reference: invoice.contract_reference,
+      currency_code: invoice.currency_code,
+      tax_region: invoice.tax_region,
+      customer_type: invoice.customer_type,
+      vat_id: invoice.vat_id,
+      reverse_charge: invoice.reverse_charge,
+      net_or_gross: invoice.net_or_gross,
+      kleinunternehmer: invoice.kleinunternehmer,
+      tax_note: invoice.tax_note,
+      tax_profile_key: invoice.tax_profile_key,
+      subtotal: invoice.subtotal,
+      tax_amount: invoice.tax_amount,
+      total: invoice.total,
+      tax_summary: toJsonb(invoice.tax_summary),
+      updated_at: now,
+    })
+    .execute();
+  for (const line of await selectLineRows(trx, scope, invoiceId)) {
+    await trx
+      .insertInto('sales_document_line')
+      .values({
+        id: randomUUID(),
+        tenant_id: scope.tenantId,
+        document_id: creditNoteId,
+        position: line.position,
+        kind: line.kind,
+        title: line.title,
+        description: line.description,
+        quantity: line.quantity,
+        unit_label: line.unit_label,
+        unit_price: line.unit_price,
+        discount_bp: line.discount_bp,
+        subtotal: line.subtotal,
+        tax_class: line.tax_class,
+        tax_rate_override: line.tax_rate_override,
+        tax_rate: line.tax_rate,
+        tax_amount: line.tax_amount,
+        tax_treatment: line.tax_treatment,
+        variant_ref: line.variant_ref,
+        variant_ref_source: line.variant_ref_source,
+        updated_at: now,
+      })
+      .execute();
+  }
+  await insertEvent(trx, scope, {
+    documentId: creditNoteId,
+    eventType: 'draft_created',
+    fromStatus: null,
+    toStatus: 'draft',
+    actorUserId: core.actorUserId,
+    payload: { docType: 'credit_note' },
+  });
+
+  // (4) Number and issue the credit note.
+  const number = await allocateNumber(trx, scope, 'credit_note', issueDate);
+  await trx
+    .updateTable('sales_document')
+    .set({
+      status: 'issued',
+      document_number: number.documentNumber,
+      number_value: number.numberValue,
+      issue_date: issueDate,
+      customer_snapshot: toJsonb(core.completedRecipient ?? invoice.customer_snapshot),
+      // The credit note keeps the invoice's frozen layout (or the plain one
+      // for an invoice issued before 008).
+      template_snapshot: toJsonb(
+        invoice.template_snapshot ?? { v: 1, templateId: null, name: null, accentColor: null, footerBlocks: [] },
+      ),
+      sender_snapshot: toJsonb(senderSnapshot),
+      issued_at: now,
+      updated_at: now,
+    })
+    .where('tenant_id', '=', scope.tenantId)
+    .where('id', '=', creditNoteId)
+    .execute();
+  await insertEvent(trx, scope, {
+    documentId: creditNoteId,
+    eventType: 'issued',
+    fromStatus: 'draft',
+    toStatus: 'issued',
+    actorUserId: core.actorUserId,
+    payload: {
+      documentNumber: number.documentNumber,
+      numberValue: number.numberValue,
+      issueDate,
+      total: invoice.total,
+      correctsDocumentId: invoiceId,
+    },
+  });
+
+  // (5) Cancel the invoice (the trigger finds the issued credit note).
+  await trx
+    .updateTable('sales_document')
+    .set({ status: 'cancelled', updated_at: now })
+    .where('tenant_id', '=', scope.tenantId)
+    .where('id', '=', invoiceId)
+    .execute();
+  await insertEvent(trx, scope, {
+    documentId: invoiceId,
+    eventType: 'cancelled',
+    fromStatus: invoice.status,
+    toStatus: 'cancelled',
+    actorUserId: core.actorUserId,
+    payload: {
+      creditNoteId,
+      creditNoteNumber: number.documentNumber,
+      reason: core.reason,
+      ...(core.replacementId ? { replacedByDocumentId: core.replacementId } : {}),
+    },
+  });
+
+  const creditNote = await readPersistedView(trx, scope, creditNoteId);
+  if (core.beforeCommit) await core.beforeCommit(trx, creditNote);
+  return {
+    invoice: await readPersistedView(trx, scope, invoiceId),
+    creditNote,
+    alreadyCancelled: false,
+  };
 }

@@ -4,7 +4,10 @@
 //
 // The document editor (Books plan phase 2): pick a customer, add and edit
 // lines, preview the totals, issue with confirmation, download the PDF, cancel
-// an issued invoice through a credit note.
+// an issued invoice through a credit note, or correct it ("Correct": a
+// replacement draft prefilled with its data; issuing that draft cancels the
+// old invoice with a credit note in the same step, plan
+// docs/plans/2026-10-21-books-visual-template-composer.md, decision 9).
 //
 // The stateful-flow rules it follows (knowledge-base stateful-flow-testing.md):
 //   - The SERVER owns every derived figure. Each change sends one request and
@@ -21,6 +24,7 @@
 //     version: if anything changed since, nothing is issued.
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import React, { useCallback, useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -33,6 +37,7 @@ import {
   pdfUrl,
   type CustomerView,
   type DocumentDetail,
+  type DocumentRef,
   type LineView,
   type SettingsView,
 } from '@/lib/books/api';
@@ -157,6 +162,7 @@ export default function DocumentEditor({ id }: { id: string }) {
   const [confirming, setConfirming] = useState(false);
   const [cancelReason, setCancelReason] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const router = useRouter();
 
   const load = useCallback(async () => {
     try {
@@ -220,6 +226,10 @@ export default function DocumentEditor({ id }: { id: string }) {
   const usable = customers.filter((c) => !c.archivedAt);
   const recipientName = doc.customerSnapshot?.name ?? detail.customer?.contact?.name ?? null;
   const cancellable = doc.docType === 'invoice' && ['issued', 'sent', 'paid'].includes(doc.status);
+  // Correct: an issued, not cancelled invoice made here (imports keep plain cancellation).
+  const correctable = cancellable && !imported;
+  const { replaces, replacedBy } = detail.related;
+  const replacing = draft && replaces !== null;
   const sign = doc.docType === 'credit_note' ? -1 : 1;
 
   async function addLine(e: React.FormEvent) {
@@ -251,15 +261,36 @@ export default function DocumentEditor({ id }: { id: string }) {
       const res = await booksApi.issue(id, version);
       setDetail(res.document);
       setConfirming(false);
+      const issuedAs = `Issued as ${res.document.document.documentNumber}.`;
+      const replacedNote = res.replaced
+        ? ` Invoice ${res.document.related.replaces?.documentNumber ?? ''} is cancelled with a credit note.`
+        : '';
       setNotice(
         res.render.stored
-          ? `Issued as ${res.document.document.documentNumber}. The PDF is stored and ready to download.`
-          : `Issued as ${res.document.document.documentNumber}. The PDF will be created on the first download.`,
+          ? `${issuedAs}${replacedNote} The PDF is stored and ready to download.`
+          : `${issuedAs}${replacedNote} The PDF will be created on the first download.`,
       );
     } catch (err) {
       setConfirming(false);
       setError(errorText(err));
-      if (err instanceof BooksApiError && err.code === 'concurrent_edit') await load();
+      if (err instanceof BooksApiError && (err.code === 'concurrent_edit' || err.code === 'replaced_invoice_cancelled')) {
+        await load();
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function correct() {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await booksApi.correct(id);
+      router.push(`/projects/books/documents/${res.document.document.id}`);
+    } catch (err) {
+      setError(errorText(err));
+      if (err instanceof BooksApiError && err.code === 'not_correctable') await load();
     } finally {
       setBusy(false);
     }
@@ -326,6 +357,33 @@ export default function DocumentEditor({ id }: { id: string }) {
           are saved with your next change or when you issue.
         </div>
       ) : null}
+      {replacing && replaces ? (
+        <section role="region" aria-label="Correction" className="mb-4 rounded-md border px-4 py-3 text-sm">
+          {replaces.status === 'cancelled' ? (
+            <>
+              <p>
+                This draft was started to replace invoice {replaces.documentNumber}, which has been cancelled in the
+                meantime. Issue it as an ordinary invoice, or leave it.
+              </p>
+              <div className="mt-3">
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void change(() => booksApi.updateDraft(id, { replacesDocumentId: null, expectedVersion: version }))}
+                >
+                  Make it an ordinary invoice
+                </Button>
+              </div>
+            </>
+          ) : (
+            <p>
+              This draft replaces invoice {replaces.documentNumber} of {date(replaces.issueDate)}. When you issue it,
+              invoice {replaces.documentNumber} is cancelled with a credit note and this one gets a new number, in one
+              step. Until then invoice {replaces.documentNumber} stays valid.
+            </p>
+          )}
+        </section>
+      ) : null}
 
       {confirming ? (
         <section role="dialog" aria-label="Confirm issue" className="mb-6 rounded-lg border p-4">
@@ -335,6 +393,11 @@ export default function DocumentEditor({ id }: { id: string }) {
             {nextNumber ? `, as number ${nextNumber}` : ''}. An issued invoice can no longer be changed; it can only be
             cancelled with a credit note.
           </p>
+          {replacing && replaces ? (
+            <p className="mt-2 text-sm">
+              Invoice {replaces.documentNumber} is cancelled with a credit note at the same time.
+            </p>
+          ) : null}
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setConfirming(false)} disabled={busy}>
               Back
@@ -521,9 +584,35 @@ export default function DocumentEditor({ id }: { id: string }) {
 
       {cancellable ? (
         cancelReason === null ? (
-          <Button variant="outline" onClick={() => setCancelReason('')}>
-            Cancel with a credit note…
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {correctable ? (
+              replacedBy ? (
+                <Link
+                  href={`/projects/books/documents/${replacedBy.id}`}
+                  className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium hover:bg-accent"
+                >
+                  Open the correction draft
+                </Link>
+              ) : (
+                <Button onClick={() => void correct()} disabled={busy}>
+                  {busy ? 'Opening…' : 'Correct'}
+                </Button>
+              )
+            ) : null}
+            <Button variant="outline" onClick={() => setCancelReason('')} disabled={busy}>
+              Cancel with a credit note…
+            </Button>
+            {correctable ? (
+              <p className="w-full text-xs text-muted-foreground">
+                Correct opens a new draft with this invoice’s data. This invoice stays valid until you issue the
+                corrected one; then it is cancelled with a credit note.
+              </p>
+            ) : imported ? (
+              <p className="w-full text-xs text-muted-foreground">
+                An imported invoice cannot be corrected here: cancel it with a credit note and create a new invoice.
+              </p>
+            ) : null}
+          </div>
         ) : (
           <form onSubmit={cancel} className="rounded-lg border p-4" aria-label="Cancel invoice">
             <Field label="Reason (short, no personal data)" htmlFor="cancel-reason">
@@ -533,6 +622,12 @@ export default function DocumentEditor({ id }: { id: string }) {
               A credit note offsetting the full amount is issued with its own number; the invoice stays as it was and is
               marked cancelled.
             </p>
+            {replacedBy && replacedBy.status === 'draft' ? (
+              <p className="mt-2 text-sm" role="note">
+                A correction draft is open for this invoice. After this cancellation it can no longer replace it; it can
+                still be issued as an ordinary invoice.
+              </p>
+            ) : null}
             <div className="mt-3 flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={() => setCancelReason(null)}>
                 Back
@@ -544,11 +639,38 @@ export default function DocumentEditor({ id }: { id: string }) {
           </form>
         )
       ) : null}
-      {doc.correctsDocumentId ? (
-        <Link href={`/projects/books/documents/${doc.correctsDocumentId}`} className="text-sm underline underline-offset-4">
-          Open the cancelled invoice
-        </Link>
-      ) : null}
+      <RelatedList related={detail.related} />
     </main>
+  );
+}
+
+const RELATION_LABELS: Record<keyof DocumentDetail['related'], string> = {
+  corrects: 'Cancels',
+  correctedBy: 'Cancelled by',
+  replaces: 'Replaces',
+  replacedBy: 'Replaced by',
+};
+
+/** The linked documents: the credit note chain and the Correct flow. */
+function RelatedList({ related }: { related: DocumentDetail['related'] }) {
+  const entries = (Object.keys(RELATION_LABELS) as Array<keyof DocumentDetail['related']>)
+    .map((k) => [k, related[k]] as const)
+    .filter((e): e is readonly [keyof DocumentDetail['related'], DocumentRef] => e[1] !== null);
+  if (entries.length === 0) return null;
+  return (
+    <section aria-label="Linked documents" className="mt-6 text-sm">
+      <h2 className="mb-2 font-medium">Linked documents</h2>
+      <ul className="space-y-1">
+        {entries.map(([k, ref]) => (
+          <li key={k}>
+            {k === 'replacedBy' && ref.status === 'draft' ? 'Correction draft (open):' : RELATION_LABELS[k]}{' '}
+            <Link href={`/projects/books/documents/${ref.id}`} className="underline underline-offset-4">
+              {TYPE_LABELS[ref.docType]} {ref.documentNumber ?? '(draft)'}
+            </Link>{' '}
+            <span className="text-muted-foreground">({STATUS_LABELS[ref.status]})</span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

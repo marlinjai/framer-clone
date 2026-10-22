@@ -78,6 +78,7 @@ import * as lineRoute from '../documents/[id]/lines/[lineId]/route';
 import * as reorderRoute from '../documents/[id]/lines/reorder/route';
 import * as issueRoute from '../documents/[id]/issue/route';
 import * as cancelRoute from '../documents/[id]/cancel/route';
+import * as correctRoute from '../documents/[id]/correct/route';
 import * as pdfRoute from '../documents/[id]/pdf/route';
 import * as templatesRoute from '../templates/route';
 import * as templateRoute from '../templates/[id]/route';
@@ -158,6 +159,8 @@ const api = {
     call(reorderRoute.POST, 'POST', `/api/books/documents/${id}/lines/reorder`, { id }, body),
   issue: (id: string, body: unknown = {}) => call(issueRoute.POST, 'POST', `/api/books/documents/${id}/issue`, { id }, body),
   cancel: (id: string, body: unknown) => call(cancelRoute.POST, 'POST', `/api/books/documents/${id}/cancel`, { id }, body),
+  correct: (id: string, body: unknown = {}) =>
+    call(correctRoute.POST, 'POST', `/api/books/documents/${id}/correct`, { id }, body),
 };
 
 async function pdf(id: string): Promise<Response> {
@@ -859,5 +862,72 @@ describe('Books routes: imported historical invoices', () => {
     expect(await extractPdfText(new Uint8Array(await credit.arrayBuffer()))).toContain('Storno der Rechnung 12');
     // The cancelled original is still served unchanged.
     expect(Buffer.from(await (await pdf(id)).arrayBuffer()).equals(bytes)).toBe(true);
+  });
+});
+
+describe('POST /documents/:id/correct and the replacement issue (the Correct flow)', () => {
+  async function issuedInvoice(): Promise<string> {
+    const customer = await newCustomer({ customerType: 'b2b' });
+    const draft = await api.createDraft({ customerId: customer.id });
+    expect(draft.status).toBe(201);
+    const id = draft.json.document.id as string;
+    expect((await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 9000 })).status).toBe(201);
+    expect((await api.issue(id)).status).toBe(200);
+    return id;
+  }
+
+  it('creates the replacement draft (201), reopens it (200), and its issue cancels the old invoice with stored PDFs', async () => {
+    const invoiceId = await issuedInvoice();
+    const created = await api.correct(invoiceId);
+    expect(created.status).toBe(201);
+    expect(created.json.existing).toBe(false);
+    const draftId = created.json.document.document.id as string;
+    expect(created.json.document.document.replacesDocumentId).toBe(invoiceId);
+    expect(created.json.document.related.replaces).toMatchObject({ id: invoiceId, documentNumber: '62' });
+    expect(created.json.document.customer).not.toBeNull();
+
+    const again = await api.correct(invoiceId);
+    expect(again.status).toBe(200);
+    expect(again.json).toMatchObject({ existing: true, document: { document: { id: draftId } } });
+
+    const issued = await api.issue(draftId, { expectedVersion: created.json.document.document.version });
+    expect(issued.status).toBe(200);
+    expect(issued.json.document.document.documentNumber).toBe('63');
+    expect(issued.json.replaced.invoiceId).toBe(invoiceId);
+    expect(issued.json.render.stored).toBe(true);
+    const creditNoteId = issued.json.replaced.creditNoteId as string;
+    const old = await api.get(invoiceId);
+    expect(old.json.document.status).toBe('cancelled');
+    expect(old.json.related).toMatchObject({ correctedBy: { id: creditNoteId }, replacedBy: { id: draftId, documentNumber: '63' } });
+    for (const id of [draftId, creditNoteId]) {
+      const res = await pdf(id);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('x-books-of-record')).toBe('true');
+    }
+    expect(await counter('invoice')).toBe(64);
+    expect(await counter('credit_note')).toBe(2);
+  });
+
+  it('refuses what cannot be corrected (409 not_correctable), unknown fields (400), and a replaced invoice cancelled meanwhile (409)', async () => {
+    const invoiceId = await issuedInvoice();
+    expect((await api.correct(invoiceId, { reason: 'x' })).status).toBe(400);
+    const draft = await api.createDraft();
+    const refused = await api.correct(draft.json.document.id);
+    expect(refused.status).toBe(409);
+    expect(refused.json.error.code).toBe('not_correctable');
+
+    const created = await api.correct(invoiceId);
+    const draftId = created.json.document.document.id as string;
+    expect((await api.cancel(invoiceId, { reason: 'Wrong recipient' })).status).toBe(200);
+    const late = await api.issue(draftId);
+    expect(late.status).toBe(409);
+    expect(late.json.error.code).toBe('replaced_invoice_cancelled');
+    // The way forward: issue it as an ordinary invoice.
+    const detached = await api.patch(draftId, { replacesDocumentId: null });
+    expect(detached.status).toBe(200);
+    expect(detached.json.document.replacesDocumentId).toBeNull();
+    expect((await api.issue(draftId)).json.document.document.documentNumber).toBe('63');
+    // PATCH never sets a link, it only removes one.
+    expect((await api.patch(draftId, { replacesDocumentId: invoiceId })).status).toBe(400);
   });
 });

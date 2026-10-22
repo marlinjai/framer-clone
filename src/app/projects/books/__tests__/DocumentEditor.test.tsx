@@ -46,7 +46,9 @@ function line(over: Json = {}): Json {
   };
 }
 
-function detail(over: { document?: Json; lines?: Json[]; stale?: boolean; customer?: Json | null } = {}): Json {
+function detail(
+  over: { document?: Json; lines?: Json[]; stale?: boolean; customer?: Json | null; related?: Json } = {},
+): Json {
   return {
     document: {
       id: 'doc-1',
@@ -57,6 +59,7 @@ function detail(over: { document?: Json; lines?: Json[]; stale?: boolean; custom
       customerId: 'cust-de',
       templateId: null,
       correctsDocumentId: null,
+      replacesDocumentId: null,
       documentNumber: null,
       issueDate: null,
       serviceDate: '2026-10-01',
@@ -81,6 +84,7 @@ function detail(over: { document?: Json; lines?: Json[]; stale?: boolean; custom
     },
     lines: over.lines ?? [line()],
     events: [],
+    related: { corrects: null, correctedBy: null, replaces: null, replacedBy: null, ...over.related },
     stale: over.stale ?? false,
     customer: over.customer ?? null,
   };
@@ -282,6 +286,128 @@ describe('DocumentEditor: an imported invoice', () => {
     expect(screen.queryByRole('form', { name: 'Add line' })).toBeNull();
     expect(screen.getAllByText(/CHF/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/€/)).toBeNull();
+  });
+});
+
+describe('DocumentEditor: the Correct flow', () => {
+  const ISSUED = {
+    status: 'issued',
+    documentNumber: '62',
+    issueDate: '2026-10-14',
+    version: 5,
+    customerSnapshot: { name: 'Alex Example', addressLine1: 'Beispielweg 2', postalCode: '20095', city: 'Hamburg', country: 'DE' },
+  };
+  const REF_62 = { id: 'doc-62', docType: 'invoice', status: 'issued', documentNumber: '62', issueDate: '2026-10-14' };
+
+  it('forward: Correct on an issued invoice creates the replacement draft and opens it', async () => {
+    server({
+      ...base(() => detail({ document: ISSUED })),
+      'POST /api/books/documents/doc-1/correct': () => ({
+        status: 201,
+        body: { existing: false, document: detail({ document: { id: 'doc-2', replacesDocumentId: 'doc-1' } }) },
+      }),
+    });
+    render(<DocumentEditor id="doc-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Correct' }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/projects/books/documents/doc-2'));
+    expect(calls.find((c) => c.method === 'POST')).toMatchObject({ url: '/api/books/documents/doc-1/correct', body: {} });
+    // Nothing is cancelled by the click: the plain cancellation stays offered next to it.
+    expect(screen.getByRole('button', { name: 'Cancel with a credit note…' })).toBeTruthy();
+  });
+
+  it('a refused Correct stays on the invoice and says why', async () => {
+    server({
+      ...base(() => detail({ document: ISSUED })),
+      'POST /api/books/documents/doc-1/correct': () => ({
+        status: 422,
+        body: { error: { code: 'customer_archived', message: 'the customer is archived' } },
+      }),
+    });
+    render(<DocumentEditor id="doc-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Correct' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/archived/);
+    expect(push).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Correct' })).toBeTruthy();
+  });
+
+  it('an invoice with an open replacement links to it instead of offering a second one', async () => {
+    server(
+      base(() =>
+        detail({
+          document: ISSUED,
+          related: { replacedBy: { id: 'doc-2', docType: 'invoice', status: 'draft', documentNumber: null, issueDate: null } },
+        }),
+      ),
+    );
+    render(<DocumentEditor id="doc-1" />);
+    const link = await screen.findByRole('link', { name: 'Open the correction draft' });
+    expect(link.getAttribute('href')).toBe('/projects/books/documents/doc-2');
+    expect(screen.queryByRole('button', { name: 'Correct' })).toBeNull();
+    const linked = screen.getByRole('region', { name: 'Linked documents' });
+    expect(within(linked).getByText(/Correction draft \(open\)/)).toBeTruthy();
+    // Cancelling meanwhile warns that the open draft can no longer replace it.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel with a credit note…' }));
+    expect(screen.getByRole('note').textContent).toMatch(/can no longer replace it/);
+  });
+
+  it('the replacement draft says what issuing does, and the issue names the cancelled invoice', async () => {
+    let issued = false;
+    server({
+      ...base(() =>
+        issued
+          ? detail({ document: { status: 'issued', documentNumber: '63', replacesDocumentId: 'doc-62' }, related: { replaces: { ...REF_62, status: 'cancelled' } } })
+          : detail({ document: { replacesDocumentId: 'doc-62' }, related: { replaces: REF_62 } }),
+      ),
+      'POST /api/books/documents/doc-1/issue': () => {
+        issued = true;
+        return {
+          status: 200,
+          body: {
+            document: detail({ document: { status: 'issued', documentNumber: '63', replacesDocumentId: 'doc-62' }, related: { replaces: { ...REF_62, status: 'cancelled' } } }),
+            alreadyIssued: false,
+            replaced: { invoiceId: 'doc-62', creditNoteId: 'doc-cn' },
+            render: { stored: true },
+          },
+        };
+      },
+    });
+    render(<DocumentEditor id="doc-1" />);
+    const banner = await screen.findByRole('region', { name: 'Correction' });
+    expect(banner.textContent).toMatch(/replaces invoice 62/);
+    expect(banner.textContent).toMatch(/stays valid/);
+    fireEvent.click(screen.getByRole('button', { name: 'Issue…' }));
+    expect(screen.getByRole('dialog', { name: 'Confirm issue' }).textContent).toMatch(/Invoice 62 is cancelled with a credit note at the same time/);
+    fireEvent.click(screen.getByRole('button', { name: 'Issue invoice' }));
+    expect((await screen.findByText(/Issued as 63\./)).textContent).toMatch(/Invoice 62 is cancelled with a credit note/);
+  });
+
+  it('re-entry after a race: the replaced invoice was cancelled meanwhile, the draft becomes an ordinary invoice', async () => {
+    let doc = detail({ document: { replacesDocumentId: 'doc-62' }, related: { replaces: REF_62 } });
+    server({
+      ...base(() => doc),
+      'POST /api/books/documents/doc-1/issue': () => {
+        doc = detail({ document: { replacesDocumentId: 'doc-62' }, related: { replaces: { ...REF_62, status: 'cancelled' } } });
+        return { status: 409, body: { error: { code: 'replaced_invoice_cancelled', message: 'x' } } };
+      },
+      'PATCH /api/books/documents/doc-1': (body) => {
+        doc = detail({ document: { version: 4 } });
+        return { status: 200, body: { ...doc, _sent: body } };
+      },
+    });
+    render(<DocumentEditor id="doc-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Issue…' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Issue invoice' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/cancelled in the meantime/);
+    fireEvent.click(await screen.findByRole('button', { name: 'Make it an ordinary invoice' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Correction' })).toBeNull());
+    expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ replacesDocumentId: null, expectedVersion: 3 });
+  });
+
+  it('an imported invoice offers no Correct, and says how to fix one', async () => {
+    server(base(() => detail({ document: { ...ISSUED, source: 'import' } })));
+    render(<DocumentEditor id="doc-1" />);
+    expect(await screen.findByText(/An imported invoice cannot be corrected here/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Correct' })).toBeNull();
   });
 });
 

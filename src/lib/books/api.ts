@@ -66,6 +66,8 @@ export interface DocumentView {
   customerId: string | null;
   templateId: string | null;
   correctsDocumentId: string | null;
+  /** The issued invoice this draft or invoice replaces (the Correct flow). */
+  replacesDocumentId: string | null;
   documentNumber: string | null;
   issueDate: string | null;
   serviceDate: string | null;
@@ -88,10 +90,26 @@ export interface DocumentView {
   customerSnapshot: { name: string; addressLine1: string; postalCode: string; city: string; country: string } | null;
 }
 
+/** A short reference to a linked document. */
+export interface DocumentRef {
+  id: string;
+  docType: DocumentView['docType'];
+  status: DocumentView['status'];
+  documentNumber: string | null;
+  issueDate: string | null;
+}
+
 export interface DocumentDetail {
   document: DocumentView;
   lines: LineView[];
   events: Array<{ id: string; eventType: string; createdAt: string }>;
+  /** The credit note chain and the Correct flow. */
+  related: {
+    corrects: DocumentRef | null;
+    correctedBy: DocumentRef | null;
+    replaces: DocumentRef | null;
+    replacedBy: DocumentRef | null;
+  };
   stale: boolean;
   customer: CustomerView | null;
 }
@@ -159,7 +177,13 @@ const MESSAGES: Record<string, string> = {
   render_incomplete: 'The PDF would be missing a required field; nothing was issued or stored.',
   undrawable_text: 'Some characters cannot be printed in the invoice font. Change these fields; nothing was issued.',
   tax_case_unsupported: 'Invoices to recipients outside the EU are not supported yet under regular taxation.',
-  issue_date_out_of_order: 'The issue date is earlier than the last issued invoice.',
+  issue_date_out_of_order: 'The issue date is earlier than the last issued document of its series (invoice or credit note).',
+  not_correctable:
+    'Only an issued invoice made here that is not cancelled can be corrected. Cancel an imported invoice with a credit note and create a new one.',
+  replacement_incomplete:
+    'The corrected invoice could not be issued together with the cancellation of the old one. Nothing was issued; reload and try again.',
+  replaced_invoice_cancelled:
+    'The invoice this draft replaces was cancelled in the meantime. Issue this draft as an ordinary invoice instead.',
   extract_busy: 'Four invoices are being read for this company right now. The rest follow automatically.',
   import_limit: 'The daily limit of invoices read for this company is reached. Try again tomorrow.',
   extraction_running: 'This invoice is being read already.',
@@ -273,11 +297,19 @@ export const booksApi = {
   reorderLines: (id: string, lineIds: string[], expectedVersion: number) =>
     request<DocumentDetail>('POST', `/api/books/documents/${id}/lines/reorder`, { lineIds, expectedVersion }),
   issue: (id: string, expectedVersion: number) =>
-    request<{ document: DocumentDetail; alreadyIssued: boolean; render: { stored: boolean } }>(
+    request<{
+      document: DocumentDetail;
+      alreadyIssued: boolean;
+      replaced?: { invoiceId: string; creditNoteId: string };
+      render: { stored: boolean };
+    }>(
       'POST',
       `/api/books/documents/${id}/issue`,
       { expectedVersion },
     ),
+  /** Korrigieren: the replacement draft of an issued invoice (created, or the existing one). */
+  correct: (id: string) =>
+    request<{ document: DocumentDetail; existing: boolean }>('POST', `/api/books/documents/${id}/correct`, {}),
   cancel: (id: string, reason: string) =>
     request<{ invoice: DocumentDetail; creditNote: DocumentDetail; alreadyCancelled: boolean }>(
       'POST',

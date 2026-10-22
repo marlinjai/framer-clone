@@ -141,6 +141,7 @@ describe('CM-11 commerce per-tenant provisioning (provisionCommerceTenant → pr
       '008_books_files',
       '009_books_import',
       '010_books_upload_import',
+      '011_books_replacement',
     ]);
 
     // The registry row exists and is ACTIVE (the runner flips status only after
