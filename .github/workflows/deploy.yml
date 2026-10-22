@@ -94,7 +94,9 @@ jobs:
       # actually runs a query, so a DB/engine problem fails the deploy loudly.
       health_url: https://app.lumitra.co/api/health/db
       environment: production
-      max_wait_seconds: 180
+      # The phase 2 deploy of 2026-10-22 took 6.5 minutes on Coolify (usually 2.5) and this
+      # check went red while the deploy succeeded; wait long enough for a slow one.
+      max_wait_seconds: 420
     secrets:
       coolify_webhook: ${{ secrets.COOLIFY_WEBHOOK }}
       coolify_token: ${{ secrets.COOLIFY_TOKEN }}

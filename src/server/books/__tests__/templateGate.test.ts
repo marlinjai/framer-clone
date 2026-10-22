@@ -269,7 +269,8 @@ describe('the save gate', () => {
       ],
     });
     expect(await templateProblems(tall)).toContainEqual(expect.objectContaining({ code: 'LAYOUT_PROBLEM', field: 'BLOCK_TOO_TALL', blockId: 'row' }));
-  });
+    // Three full template renders (one is a multi-page block): well over the 5s default on a loaded CI runner.
+  }, 30_000);
 
   it('names the probe and the field a template would lose', async () => {
     // A broken engine that drops the footer: the sender's tax ids go missing on every probe.
