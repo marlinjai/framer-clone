@@ -107,8 +107,14 @@ connections to the suite. The four lines below are in that order.
   route, #127, migration 012) are live since 2026-10-22: 012 applied to both company schemas,
   checked in the browser on app.lumitra.co (a template saved through the gate and archived
   again, a 3-page preview in 245 ms server time, imported invoices still served byte for byte;
-  a pre-012 database dump is on the database host). Open: issuing a first editor invoice end to
-  end on a test company (none exists; asked), then phases 3 to 5. See
+  a pre-012 database dump is on the database host). Proven end to end the same day on the test
+  company "Books Testfirma" (auth-brain organisation marlinjai, apps `sites` and `books`,
+  fictional sender, regular taxation, number series `TEST-{n}`, `TEST-GS-{n}`, `TEST-ANG-{n}`;
+  for proving Books changes without touching a real number series): a template with the EPC QR
+  block saved through the gate, a draft previewed with the QR placeholder, invoice TEST-1 issued
+  (stored PDF by `books-pdf-lib-3`, every legal field present, the printed QR code decoding to
+  EUR 240.84 and "Rechnung TEST-1"), and a later template edit leaving its PDF byte-identical.
+  Open: phases 3 to 5. See
   [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-22)
 - [ ] 9. E-invoicing for Books documents (XRechnung and ZUGFeRD profile EN 16931, built from the
   frozen document data, ZUGFeRD as a PDF/A-3 with the XML embedded): write its own plan in the
