@@ -102,11 +102,14 @@ connections to the suite. The four lines below are in that order.
   check, logos in the tenant schema, and a Correct flow (credit note plus a prefilled replacement
   draft), plus an EPC QR payment block. Approved by the owner on 2026-10-22, phases 1 to 5
   to be built: 1 Korrigieren (migration 011), 2 model and engine (012), 3 the shared editor
-  package, 4 the composer, 5 logos and fonts; English and e-invoicing later. Phase 1 built
-  2026-10-22 on `feat/books-correct-flow` (open: deploy, which rolls 011 out). Phase 2 (model,
-  engine, versions, the save gate, the preview route) built 2026-10-22 on
-  `feat/books-template-engine` (open: deploy, which rolls 012 out and converts the existing
-  templates). See [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-22)
+  package, 4 the composer, 5 logos and fonts; English and e-invoicing later. Phases 1
+  (Korrigieren, #125, migration 011) and 2 (model, engine, versions, the save gate, the preview
+  route, #127, migration 012) are live since 2026-10-22: 012 applied to both company schemas,
+  checked in the browser on app.lumitra.co (a template saved through the gate and archived
+  again, a 3-page preview in 245 ms server time, imported invoices still served byte for byte;
+  a pre-012 database dump is on the database host). Open: issuing a first editor invoice end to
+  end on a test company (none exists; asked), then phases 3 to 5. See
+  [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-22)
 - [ ] 9. E-invoicing for Books documents (XRechnung and ZUGFeRD profile EN 16931, built from the
   frozen document data, ZUGFeRD as a PDF/A-3 with the XML embedded): write its own plan in the
   first half of 2027, so every regular-taxed company using the Books can issue e-invoices before
