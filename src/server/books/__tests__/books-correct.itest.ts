@@ -342,9 +342,64 @@ describe('the Correct flow', () => {
   });
 });
 
+describe('the Correct flow under concurrency and retries', () => {
+  it('two Correct clicks at once make one draft', async () => {
+    const { scope, invoiceId } = await companyWithInvoice();
+    const [a, b] = await Promise.all([
+      startCorrection(scope, invoiceId, { actorUserId: ACTOR }),
+      startCorrection(scope, invoiceId, { actorUserId: ACTOR }),
+    ]);
+    expect(a.document.document.id).toBe(b.document.document.id);
+    expect([a.existing, b.existing].sort()).toEqual([false, true]);
+  });
+
+  it('the replacement issued twice at once: one issue, one credit note, the second answers alreadyIssued with the same link', async () => {
+    const { tenantId, scope, invoiceId } = await companyWithInvoice();
+    const { document: draft } = await startCorrection(scope, invoiceId, { actorUserId: ACTOR });
+    const [a, b] = await Promise.all([issueWithPdf(scope, draft.document.id), issueWithPdf(scope, draft.document.id)]);
+    expect([a.alreadyIssued, b.alreadyIssued].sort()).toEqual([false, true]);
+    expect(a.document.document.documentNumber).toBe(b.document.document.documentNumber);
+    expect(a.replaced).toEqual(b.replaced);
+    expect(await counter(tenantId, 'invoice')).toBe(64);
+    expect(await counter(tenantId, 'credit_note')).toBe(2);
+    // A retry long after the success says the same.
+    const retry = await issueWithPdf(scope, draft.document.id);
+    expect(retry).toMatchObject({ alreadyIssued: true, replaced: a.replaced });
+    expect(await counter(tenantId, 'credit_note')).toBe(2);
+  });
+
+  it('the replacement issued while the invoice is cancelled directly: exactly one credit note either way', async () => {
+    const { tenantId, scope, invoiceId } = await companyWithInvoice();
+    const { document: draft } = await startCorrection(scope, invoiceId, { actorUserId: ACTOR });
+    const results = await Promise.allSettled([
+      issueWithPdf(scope, draft.document.id),
+      cancelInvoice(scope, invoiceId, { actorUserId: ACTOR, reason: 'Wrong recipient' }, { beforeCommit: storeBeforeCommit(scope) }),
+    ]);
+    const creditNotes = await env.ownerDb
+      .selectFrom('sales_document')
+      .select('id')
+      .where('tenant_id', '=', tenantId)
+      .where('doc_type', '=', 'credit_note')
+      .execute();
+    expect(creditNotes).toHaveLength(1);
+    expect((await getDocument(scope, invoiceId)).document.status).toBe('cancelled');
+    const [issued, cancelled] = results;
+    expect(cancelled.status).toBe('fulfilled');
+    if (issued.status === 'fulfilled') {
+      // The issue won: the cancel found the invoice cancelled and returned its credit note.
+      expect(issued.value.replaced?.creditNoteId).toBe(creditNotes[0].id);
+      expect(cancelled.status === 'fulfilled' && cancelled.value.alreadyCancelled).toBe(true);
+    } else {
+      // The cancel won: the issue was refused and the draft is still a draft.
+      expect((issued.reason as { code?: string }).code).toBe('REPLACED_INVOICE_CANCELLED');
+      expect((await getDocument(scope, draft.document.id)).document.status).toBe('draft');
+    }
+  });
+});
+
 describe('011_books_replacement in the database', () => {
   it('refuses a second replacement, a link to anything but an issued editor invoice, and a replacement issued without the cancellation', async () => {
-    const { tenantId, scope, invoiceId } = await companyWithInvoice();
+    const { tenantId, scope, customer, invoiceId } = await companyWithInvoice();
     const { document: draft } = await startCorrection(scope, invoiceId, { actorUserId: ACTOR });
 
     // A second replacement of the same invoice (written around the code): the unique index.
@@ -358,6 +413,20 @@ describe('011_books_replacement in the database', () => {
     expect(
       await rejectionCode(
         env.appDb.updateTable('sales_document').set({ replaces_document_id: draft.document.id }).where('id', '=', second.document.id).execute(),
+      ),
+    ).toBe('BK011');
+    // A link to an invoice that is already cancelled: BK011.
+    const third = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: customer.id });
+    await addLine(scope, third.document.id, { kind: 'service', title: 'Extra', quantity: 1000, unitPrice: 1000 });
+    const thirdIssued = await issueWithPdf(scope, third.document.id);
+    await cancelInvoice(scope, thirdIssued.document.document.id, { actorUserId: ACTOR, reason: 'Duplicate' }, { beforeCommit: storeBeforeCommit(scope) });
+    expect(
+      await rejectionCode(
+        env.appDb
+          .updateTable('sales_document')
+          .set({ replaces_document_id: thirdIssued.document.document.id })
+          .where('id', '=', second.document.id)
+          .execute(),
       ),
     ).toBe('BK011');
     // On the document itself: refused (the BEFORE trigger fires before the CHECK,
@@ -393,7 +462,7 @@ describe('011_books_replacement in the database', () => {
         .where('id', '=', draft.document.id)
         .execute();
     });
-    expect(await rejectionCode(attempt)).toBe('BK011');
+    expect(await rejectionCode(attempt)).toBe('BK013');
     expect((await getDocument(scope, draft.document.id)).document.status).toBe('draft');
   });
 });

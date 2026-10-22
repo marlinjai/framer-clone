@@ -50,7 +50,7 @@
 // cancelled, no number is taken. The database refuses a replacement issued
 // without the cancellation (011, BK011).
 
-import type { Transaction } from 'kysely';
+import type { Kysely, Transaction } from 'kysely';
 import { z } from 'zod';
 
 import type { CommerceDB } from '../commerce/db-types';
@@ -90,8 +90,8 @@ export interface IssueResult {
   alreadyIssued: boolean;
   /**
    * For a replacement issued now: the invoice it replaced (now cancelled) and
-   * the credit note that cancelled it. Absent otherwise (also on an
-   * `alreadyIssued` return).
+   * the credit note that cancelled it (also on an `alreadyIssued` return, so a
+   * retry answers what the first call would have). Absent otherwise.
    */
   replaced?: { invoiceId: string; creditNoteId: string };
 }
@@ -120,6 +120,30 @@ export interface IssueOptions {
   beforeCommit?: (trx: Transaction<CommerceDB>, view: DocumentView) => Promise<void>;
 }
 
+/**
+ * The answer for a document found already issued (a retry after a lost answer,
+ * or a second click). A replacement also reports the invoice it replaced and
+ * the credit note that cancelled it, so the retry says the same as the first
+ * answer would have.
+ */
+async function alreadyIssued(db: Db, scope: BooksScope, id: string): Promise<IssueResult> {
+  const view = await readPersistedView(db, scope, id);
+  const replacedId = view.document.replacesDocumentId;
+  if (!replacedId) return { document: view, alreadyIssued: true };
+  const creditNote = await db
+    .selectFrom('sales_document')
+    .select('id')
+    .where('tenant_id', '=', scope.tenantId)
+    .where('corrects_document_id', '=', replacedId)
+    .where('status', '<>', 'draft')
+    .executeTakeFirst();
+  // The deferred trigger of 011 guarantees the credit note exists once the replacement is issued.
+  if (!creditNote) return { document: view, alreadyIssued: true };
+  return { document: view, alreadyIssued: true, replaced: { invoiceId: replacedId, creditNoteId: creditNote.id } };
+}
+
+type Db = Kysely<CommerceDB> | Transaction<CommerceDB>;
+
 const ISSUED_OR_LATER = new Set(['issued', 'sent', 'accepted', 'rejected', 'paid', 'cancelled']);
 
 export async function issue(
@@ -139,7 +163,7 @@ export async function issue(
   const before = await selectDocumentRow(scope.db, scope, id);
   if (!before) throw new BooksError('NOT_FOUND', 'NOT_FOUND: document', { documentId: id });
   if (ISSUED_OR_LATER.has(before.status)) {
-    return { document: await readPersistedView(scope.db, scope, id), alreadyIssued: true };
+    return alreadyIssued(scope.db, scope, id);
   }
   if (args.expectedVersion !== undefined && before.version !== args.expectedVersion) {
     throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the draft changed since it was confirmed', {
@@ -191,7 +215,7 @@ export async function issue(
         const row = await selectDocumentRow(trx, scope, id, { forUpdate: true });
         if (!row) throw new BooksError('NOT_FOUND', 'NOT_FOUND: document', { documentId: id });
         if (row.status !== 'draft') {
-          return { document: await readPersistedView(trx, scope, id), alreadyIssued: true };
+          return alreadyIssued(trx, scope, id);
         }
         if (args.expectedVersion !== undefined && row.version !== args.expectedVersion) {
           throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the draft changed since it was confirmed', {

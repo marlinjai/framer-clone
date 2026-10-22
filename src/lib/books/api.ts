@@ -177,9 +177,11 @@ const MESSAGES: Record<string, string> = {
   render_incomplete: 'The PDF would be missing a required field; nothing was issued or stored.',
   undrawable_text: 'Some characters cannot be printed in the invoice font. Change these fields; nothing was issued.',
   tax_case_unsupported: 'Invoices to recipients outside the EU are not supported yet under regular taxation.',
-  issue_date_out_of_order: 'The issue date is earlier than the last issued invoice.',
+  issue_date_out_of_order: 'The issue date is earlier than the last issued document of its series (invoice or credit note).',
   not_correctable:
     'Only an issued invoice made here that is not cancelled can be corrected. Cancel an imported invoice with a credit note and create a new one.',
+  replacement_incomplete:
+    'The corrected invoice could not be issued together with the cancellation of the old one. Nothing was issued; reload and try again.',
   replaced_invoice_cancelled:
     'The invoice this draft replaces was cancelled in the meantime. Issue this draft as an ordinary invoice instead.',
   extract_busy: 'Four invoices are being read for this company right now. The rest follow automatically.',

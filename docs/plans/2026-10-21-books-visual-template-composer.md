@@ -314,8 +314,9 @@ corrected invoice together and leaves nothing dangling.
   import may be in CHF (editor documents are EUR only, `CURRENCY_NOT_SUPPORTED`) or carry an
   incomplete printed address, so a copied replacement draft could dead-end at issue. The button is
   not shown on them; the document view says "Importierte Rechnung: stornieren und neu anlegen".
-- **Guards**: only one open replacement draft per invoice (partial unique index on
-  `replaces_document_id` where status is draft); a replacement draft of an invoice that meanwhile
+- **Guards**: one replacement per invoice, draft or issued (a unique index on
+  `replaces_document_id` wherever it is set; built stricter than first written, which said
+  "where status is draft", with the same effect); a replacement draft of an invoice that meanwhile
   got cancelled by another path refuses to issue (`REPLACED_INVOICE_CANCELLED`, with the option to
   issue it as an ordinary invoice). The plain "Stornieren" (cancel only) stays for invoices that
   should simply go away.
@@ -593,9 +594,10 @@ Built on branch `feat/books-correct-flow`. Decided while building, say so if you
 
 - Migration `011_books_replacement`: `sales_document.replaces_document_id` (composite foreign
   key, invoices only, never the document itself), a partial unique index (one replacement per
-  invoice), a trigger that allows the link only to an issued invoice made in the editor (BK011,
-  mapped to `NOT_CORRECTABLE`), and a deferred constraint trigger that refuses, at commit, a
-  replacement that is issued while the invoice it replaces is not cancelled (BK011). The column is
+  invoice), a trigger that allows the link only to an issued, not cancelled invoice made in the
+  editor (BK011, mapped to `NOT_CORRECTABLE`), and a deferred constraint trigger that refuses, at
+  commit, a replacement that is issued while the invoice it replaces is not cancelled (BK013,
+  mapped to `REPLACEMENT_INCOMPLETE`; BK012 belongs to phase 2's 012). The column is
   frozen after issue by 007's whole-row guard like every other column.
 - `src/server/books/correct.ts` (`startCorrection`): locks the invoice, refuses anything but an
   issued, not cancelled editor invoice, returns an existing replacement (`existing: true`), and
@@ -642,10 +644,29 @@ Built on branch `feat/books-correct-flow`. Decided while building, say so if you
    label on the PDF, and phase 2 owns the label dictionary (`template/labels.ts`); phase 1 prints
    nothing new, so no second dictionary exists. Phase 2 adds the label and a per-document switch.
 
+6. **A retried issue answers what the first one did**: an already issued replacement reports
+   `replaced` (the old invoice and its credit note) on every later call too.
+7. **The credit note counter stays locked through both PDF renders** of a replacement issue (the
+   credit note's and the replacement's). A plain cancellation elsewhere in the same company waits
+   that long (well under a second); no deadlock is possible with the lock order above.
+
+**Review (2026-10-22).** A fresh review of the final diff found no serious defect; its findings
+are fixed on the branch: the link guard also refuses an already cancelled invoice, the
+commit-time check has its own code (BK013), the editor labels an open correction draft as such
+and warns on the cancel form when one exists, a retry keeps `replaced`, "Correct" carries no
+ellipsis (it opens no dialog) and disables the cancel button while it runs, the issue-date
+message names both series, and the concurrency, retry and refused-Correct tests below were added.
+
 **Tests.** `src/server/books/__tests__/books-correct.itest.ts` (the four paths on real Postgres
 with the real PDF pipeline, the rollback when the last render fails, the race with a plain
-cancellation, imports refused, and 011's database guarantees including the deferred trigger),
-two route tests in `books-routes.itest.ts`, five interface tests in `DocumentEditor.test.tsx`.
+cancellation sequential and in parallel, two Correct clicks at once, the replacement issued twice
+at once and retried later, imports refused, and 011's database guarantees including the deferred
+trigger), two route tests in `books-routes.itest.ts`, six interface tests in
+`DocumentEditor.test.tsx`.
+
+**Receipts side**: when this merges, a line goes on receipt-ocr-app's `ROADMAP.md` for moving a
+payment already matched to a replaced invoice onto its replacement (the receipts app owns payment
+matching, D6 there).
 
 **Operator step**: deploy, which rolls `011_books_replacement` across every tenant schema at boot.
 Nothing else is new (no secret, no variable).

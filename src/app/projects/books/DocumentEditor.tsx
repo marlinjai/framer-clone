@@ -284,6 +284,7 @@ export default function DocumentEditor({ id }: { id: string }) {
   async function correct() {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const res = await booksApi.correct(id);
       router.push(`/projects/books/documents/${res.document.document.id}`);
@@ -594,11 +595,11 @@ export default function DocumentEditor({ id }: { id: string }) {
                 </Link>
               ) : (
                 <Button onClick={() => void correct()} disabled={busy}>
-                  Correct…
+                  {busy ? 'Opening…' : 'Correct'}
                 </Button>
               )
             ) : null}
-            <Button variant="outline" onClick={() => setCancelReason('')}>
+            <Button variant="outline" onClick={() => setCancelReason('')} disabled={busy}>
               Cancel with a credit note…
             </Button>
             {correctable ? (
@@ -621,6 +622,12 @@ export default function DocumentEditor({ id }: { id: string }) {
               A credit note offsetting the full amount is issued with its own number; the invoice stays as it was and is
               marked cancelled.
             </p>
+            {replacedBy && replacedBy.status === 'draft' ? (
+              <p className="mt-2 text-sm" role="note">
+                A correction draft is open for this invoice. After this cancellation it can no longer replace it; it can
+                still be issued as an ordinary invoice.
+              </p>
+            ) : null}
             <div className="mt-3 flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={() => setCancelReason(null)}>
                 Back
@@ -656,7 +663,7 @@ function RelatedList({ related }: { related: DocumentDetail['related'] }) {
       <ul className="space-y-1">
         {entries.map(([k, ref]) => (
           <li key={k}>
-            {RELATION_LABELS[k]}{' '}
+            {k === 'replacedBy' && ref.status === 'draft' ? 'Correction draft (open):' : RELATION_LABELS[k]}{' '}
             <Link href={`/projects/books/documents/${ref.id}`} className="underline underline-offset-4">
               {TYPE_LABELS[ref.docType]} {ref.documentNumber ?? '(draft)'}
             </Link>{' '}

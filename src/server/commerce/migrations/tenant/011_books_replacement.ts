@@ -23,13 +23,15 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      (tenant_id, replaces_document_id). A second "Korrigieren" finds and
  *      reopens the existing draft; a race of two clicks loses on the index.
  *   3. What may be replaced (BK011, on INSERT and on UPDATE of the column):
- *      an invoice made in the editor that is issued (any status after draft).
+ *      an invoice made in the editor that is issued and not cancelled. Existing
+ *      links are not re-checked (an invoice cancelled after the link was made
+ *      is the application's REPLACED_INVOICE_CANCELLED at issue).
  *      Imported invoices keep plain cancellation (an import may be in CHF or
  *      carry an incomplete printed address, so a copied draft could not be
  *      issued; plan decision 9).
  *   4. A replacement is issued only together with the cancellation of the
- *      invoice it replaces (BK011): a deferred constraint trigger checks at
- *      commit that a non-draft replacement's invoice is cancelled. So a
+ *      invoice it replaces (BK013; BK012 belongs to 012): a deferred
+ *      constraint trigger checks at commit that a non-draft replacement's invoice is cancelled. So a
  *      replacement can never stand beside a still valid original.
  *
  * House style as 007: BARE names, trigger functions `SET search_path FROM
@@ -100,8 +102,9 @@ export const booksReplacement: Migration = {
             FROM "sales_document"
            WHERE "tenant_id" = NEW."tenant_id" AND "id" = NEW."replaces_document_id";
           -- A missing target is the foreign key's to refuse.
-          IF FOUND AND (target."doc_type" <> 'invoice' OR target."source" <> 'editor' OR target."status" = 'draft') THEN
-              RAISE EXCEPTION 'sales_document %: only an issued invoice made in the editor can be replaced', NEW."id"
+          IF FOUND AND (target."doc_type" <> 'invoice' OR target."source" <> 'editor'
+                        OR target."status" IN ('draft', 'cancelled')) THEN
+              RAISE EXCEPTION 'sales_document %: only an issued, not cancelled invoice made in the editor can be replaced', NEW."id"
                   USING ERRCODE = 'BK011';
           END IF;
           RETURN NEW;
@@ -136,7 +139,7 @@ export const booksReplacement: Migration = {
                  AND o."status" <> 'cancelled'
           ) THEN
               RAISE EXCEPTION 'sales_document %: a replacement is issued only together with the cancellation of the invoice it replaces', NEW."id"
-                  USING ERRCODE = 'BK011';
+                  USING ERRCODE = 'BK013';
           END IF;
           RETURN NULL;
       END;

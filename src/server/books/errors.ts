@@ -8,7 +8,8 @@
 // Trigger errors from 007_books, 009_books_import and 011_books_replacement are mapped by SQLSTATE
 // (BK001 -> NOT_DRAFT, BK004 -> INVALID_TRANSITION, BK005 -> TOTALS_MISMATCH,
 // BK007 -> IMPORT_INCOMPLETE, BK008 -> INVALID_LINE,
-// BK009 -> CURRENCY_NOT_SUPPORTED, BK011 -> NOT_CORRECTABLE); every other database error propagates
+// BK009 -> CURRENCY_NOT_SUPPORTED, BK011 -> NOT_CORRECTABLE,
+// BK013 -> REPLACEMENT_INCOMPLETE); every other database error propagates
 // unchanged. Errors surface, never swallowed.
 
 export type BooksErrorCode =
@@ -66,7 +67,8 @@ export type BooksErrorCode =
   | 'READING_WOULD_BE_REPLACED'
   // The Correct flow (011_books_replacement, correct.ts).
   | 'NOT_CORRECTABLE'
-  | 'REPLACED_INVOICE_CANCELLED';
+  | 'REPLACED_INVOICE_CANCELLED'
+  | 'REPLACEMENT_INCOMPLETE';
 
 export class BooksError extends Error {
   readonly code: BooksErrorCode;
@@ -115,6 +117,7 @@ const TRIGGER_CODES: Record<string, BooksErrorCode> = {
   BK008: 'INVALID_LINE',
   BK009: 'CURRENCY_NOT_SUPPORTED',
   BK011: 'NOT_CORRECTABLE',
+  BK013: 'REPLACEMENT_INCOMPLETE',
 };
 
 /**

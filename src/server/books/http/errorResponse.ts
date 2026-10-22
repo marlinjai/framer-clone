@@ -44,6 +44,7 @@ const STATUS: Record<BooksErrorCode, number> = {
   NOT_CANCELLABLE: 409,
   NOT_CORRECTABLE: 409,
   REPLACED_INVOICE_CANCELLED: 409,
+  REPLACEMENT_INCOMPLETE: 409,
   COUNTER_EXISTS: 409,
   SETTINGS_MISSING: 409,
   COUNTER_MISSING: 409,
@@ -98,6 +99,8 @@ const MESSAGES: Partial<Record<BooksErrorCode, string>> = {
     'only an issued invoice made in the editor that is not cancelled can be corrected; cancel an imported invoice and create a new one',
   REPLACED_INVOICE_CANCELLED:
     'the invoice this draft replaces was cancelled in the meantime; issue the draft as an ordinary invoice instead',
+  REPLACEMENT_INCOMPLETE:
+    'the corrected invoice could not be issued together with the cancellation of the invoice it replaces; nothing was issued',
   RENDER_INCOMPLETE: 'the PDF would lack a legally required field; nothing was issued or stored',
 };
 

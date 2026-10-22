@@ -308,11 +308,26 @@ describe('DocumentEditor: the Correct flow', () => {
       }),
     });
     render(<DocumentEditor id="doc-1" />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Correct…' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Correct' }));
     await waitFor(() => expect(push).toHaveBeenCalledWith('/projects/books/documents/doc-2'));
     expect(calls.find((c) => c.method === 'POST')).toMatchObject({ url: '/api/books/documents/doc-1/correct', body: {} });
     // Nothing is cancelled by the click: the plain cancellation stays offered next to it.
     expect(screen.getByRole('button', { name: 'Cancel with a credit note…' })).toBeTruthy();
+  });
+
+  it('a refused Correct stays on the invoice and says why', async () => {
+    server({
+      ...base(() => detail({ document: ISSUED })),
+      'POST /api/books/documents/doc-1/correct': () => ({
+        status: 422,
+        body: { error: { code: 'customer_archived', message: 'the customer is archived' } },
+      }),
+    });
+    render(<DocumentEditor id="doc-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Correct' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/archived/);
+    expect(push).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Correct' })).toBeTruthy();
   });
 
   it('an invoice with an open replacement links to it instead of offering a second one', async () => {
@@ -327,9 +342,12 @@ describe('DocumentEditor: the Correct flow', () => {
     render(<DocumentEditor id="doc-1" />);
     const link = await screen.findByRole('link', { name: 'Open the correction draft' });
     expect(link.getAttribute('href')).toBe('/projects/books/documents/doc-2');
-    expect(screen.queryByRole('button', { name: 'Correct…' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Correct' })).toBeNull();
     const linked = screen.getByRole('region', { name: 'Linked documents' });
-    expect(within(linked).getByText(/Replaced by/)).toBeTruthy();
+    expect(within(linked).getByText(/Correction draft \(open\)/)).toBeTruthy();
+    // Cancelling meanwhile warns that the open draft can no longer replace it.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel with a credit note…' }));
+    expect(screen.getByRole('note').textContent).toMatch(/can no longer replace it/);
   });
 
   it('the replacement draft says what issuing does, and the issue names the cancelled invoice', async () => {
@@ -389,7 +407,7 @@ describe('DocumentEditor: the Correct flow', () => {
     server(base(() => detail({ document: { ...ISSUED, source: 'import' } })));
     render(<DocumentEditor id="doc-1" />);
     expect(await screen.findByText(/An imported invoice cannot be corrected here/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Correct…' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Correct' })).toBeNull();
   });
 });
 
