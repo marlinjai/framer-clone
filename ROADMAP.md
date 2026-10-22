@@ -100,8 +100,15 @@ connections to the suite. The four lines below are in that order.
   block-based A4 composer like the email editor whose canvas is the real PDF, versioned templates,
   legally required blocks that move but cannot be removed, a save gate running the completeness
   check, logos in the tenant schema, and a Correct flow (credit note plus a prefilled replacement
-  draft). Draft, waiting for the owner's approval and four questions. See
-  [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-21)
+  draft). Draft; three questions decided 2026-10-22, the plan's approval and the presets' look
+  wait on the owner. See
+  [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-22)
+- [ ] 9. E-invoicing for Books documents (XRechnung and ZUGFeRD profile EN 16931, built from the
+  frozen document data, ZUGFeRD as a PDF/A-3 with the XML embedded): write its own plan in the
+  first half of 2027, so every regular-taxed company using the Books can issue e-invoices before
+  the German business-to-business obligation of 1 January 2028 (section 19 small businesses such
+  as Whiz-Art Media are exempt). Decided 2026-10-22; background in
+  [plan](docs/plans/2026-10-21-books-visual-template-composer.md), decision 14. (2026-10-22)
 - [x] The framer-clone Coolify Postgres database with the published port 5439: checked on
   2026-10-15, there is no framer-clone database or app in Coolify any more and port 5439 is closed
   on both servers, so nothing is left to restart. Done 2026-10-15.

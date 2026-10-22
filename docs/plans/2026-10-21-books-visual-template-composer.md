@@ -3,7 +3,7 @@ type: plan
 status: draft
 date: 2026-10-21
 title: "Books: a visual invoice template composer that previews the real PDF"
-summary: "A block-based A4 composer for Books document templates (blocks panel, the real PDF as canvas with a selection overlay, inspector), a versioned template document model consumed by a new deterministic pdf-lib layout engine, legally required blocks that can be moved and styled but never removed, a save gate that runs the completeness check against probe documents, logos stored in the tenant schema, and a Correct flow for issued invoices (credit note plus a prefilled replacement draft). Sliced into seven phases; four questions for the owner."
+summary: "A block-based A4 composer for Books document templates (blocks panel, the real PDF as canvas with a selection overlay, inspector), a versioned template document model consumed by a new deterministic pdf-lib layout engine, legally required blocks that can be moved and styled but never removed, a save gate that runs the completeness check against probe documents, logos stored in the tenant schema, and a Correct flow for issued invoices (credit note plus a prefilled replacement draft). Sliced into seven phases; three questions decided 2026-10-22, the presets' look and the plan's approval still with the owner."
 tags: [framer-clone, books, invoices, templates, pdf, editor, composer, gobd, ustg, e-invoicing]
 projects: [framer-clone, email-editor, receipt-ocr-app]
 ---
@@ -409,7 +409,7 @@ label id and locale, used by both `model.ts` and `completeness.ts` (the check st
 values from the frozen data, only the label strings are shared constants). That makes a second
 language a dictionary plus date and number formats, not a refactor. An English invoice is legal
 in Germany (section 14 UStG names no language; the tax office may ask for a translation under
-section 87 AO, the fiscal code). Adding `en-GB` is phase 6, only if the owner wants it (question 2).
+section 87 AO, the fiscal code). Adding `en-GB` is phase 6, not now (decided 2026-10-22), built when a client needs it.
 
 ### 14. E-invoicing (XRechnung, ZUGFeRD)
 
@@ -515,31 +515,28 @@ Rough sizes are in focused agent days, including tests and review.
 | 3 | **`@marlinjai/block-editor-react`**: history, inspector fields, sortable outline with keyboard, extracted from the email editor, the email editor switched to it, published. | 2 days |
 | 4 | **Composer interface**: three panels, pdf.js canvas with overlay, drag and keyboard reordering, column handles, undo and redo, working copy, save with gate messages, version list ("Version 3 vom 21.10.2026, verwendet von 4 Dokumenten"), WCAG pass. | 6 days |
 | 5 | **Logos and fonts**: `books_asset`, upload with checks, the logo block, Noto Sans and Noto Serif, font-aware drawable check. | 2 days |
-| 6 | **English documents** (only if question 2 is yes): `en-GB` dictionary, date and number formats, locale on the template, the check per locale. | 3 days |
-| 7 | **E-invoicing**: a separate plan (ZUGFeRD EN 16931 and XRechnung output from the frozen data, PDF/A-3), when question 3 says when. | own plan |
+| 6 | **English documents** (not now, decided 2026-10-22; built when a client needs it): `en-GB` dictionary, date and number formats, locale on the template, the check per locale. | 3 days |
+| 7 | **E-invoicing**: a separate plan in the first half of 2027 (ZUGFeRD EN 16931 and XRechnung output from the frozen data, PDF/A-3), its own ROADMAP.md line. | own plan |
 
 Phases 1, 2 and 3 can run in parallel (different files, phase 3 in another repo); 4 needs 2 and 3;
 5 needs 2.
 
+## Decided on 2026-10-22 (the lead, on the owner's behalf)
+
+1. **Korrigieren cancels when the replacement is issued** (option a): the credit note and the
+   corrected invoice are issued together in one transaction, as decision 9 describes. Abandoning
+   the replacement draft cancels nothing. The plain "Stornieren" stays.
+2. **No English invoices now.** The model is language-ready from phase 2 (the label dictionary of
+   decision 13); English (phase 6, about 3 days) is built when a client needs it.
+3. **E-invoicing gets its own plan in the first half of 2027**, so every regular-taxed company
+   using the Books can issue XRechnung or ZUGFeRD before the obligation of 1 January 2028. It is
+   tracked as its own dated line on the root ROADMAP.md; phase 7 here is only the pointer.
+
 ## Questions for the owner
 
-Only what is genuinely his: how customers receive corrections, which languages his clients get,
-and whether e-invoicing becomes a product feature. Everything else above is decided, say so if
-you disagree.
+Still open, and asked on a decision page together with the approval of this plan.
 
-1. **When does "Korrigieren" cancel the old invoice?** (a) At the moment the corrected invoice is
-   issued, credit note and new invoice together (recommended: nothing can be cancelled by
-   accident or left without a valid invoice, and the customer gets both at once); (b) immediately
-   on the click, as first described, with the new draft opened afterwards. The plain "Stornieren"
-   stays in both cases.
-2. **Do you need English invoices?** (a) Not now: the model is language-ready from phase 2 and
-   English is three days whenever a client asks (recommended, every invoice so far is German,
-   including the Swiss one); (b) yes, build phase 6 with the composer.
-3. **E-invoicing: wait for the law, or make it a feature?** Whiz-Art Media is exempt (section 19).
-   (a) Plan it in the first half of 2027 so every regular-taxed company using the Books is ready
-   before 1 January 2028 (recommended); (b) pull it forward if the Books are going to be offered
-   to other companies as a product, where "XRechnung and ZUGFeRD included" is a selling point.
-4. **The presets' look.** The three presets (Klassisch as today, Modern, Kompakt) will be built
+1. **The presets' look.** The three presets (Klassisch as today, Modern, Kompakt) will be built
    from the current layout and the Lumitra style. Is there a letterhead or brand guide for
    Whiz-Art Media that Klassisch should match? (Recommended: send the logo file and any existing
    letterhead PDF; otherwise the presets stay neutral and you style yours in the composer.)
