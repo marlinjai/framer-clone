@@ -203,9 +203,10 @@ describe('009_books_import over a schema already holding issued documents (as pr
                        customer_snapshot = '{"v":1}'::jsonb, sender_snapshot = '{"v":1}'::jsonb, template_snapshot = '{"v":1}'::jsonb
                  WHERE id = ${docId}`;
     const snapshot = async () =>
-      // 011 adds the nullable column replaces_document_id: compared without it
-      // (it did not exist before), and asserted NULL below.
-      owner`SELECT to_jsonb(d) - 'replaces_document_id' AS doc, (SELECT jsonb_agg(to_jsonb(l)) FROM ${s}.sales_document_line l WHERE l.document_id = d.id) AS lines
+      // 011 adds the nullable column replaces_document_id and 012 the column
+      // print_replaces_reference: compared without them (they did not exist
+      // before), and asserted NULL and false below.
+      owner`SELECT to_jsonb(d) - 'replaces_document_id' - 'print_replaces_reference' AS doc, (SELECT jsonb_agg(to_jsonb(l)) FROM ${s}.sales_document_line l WHERE l.document_id = d.id) AS lines
               FROM ${s}.sales_document d WHERE d.id = ${docId}`;
     const before = await snapshot();
 
@@ -213,8 +214,9 @@ describe('009_books_import over a schema already holding issued documents (as pr
     expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['009_books_import', '010_books_upload_import', '011_books_replacement', '012_books_template_v2']);
 
     expect(await snapshot()).toEqual(before);
-    const [link] = await owner<{ replaces_document_id: string | null }[]>`SELECT replaces_document_id FROM ${s}.sales_document WHERE id = ${docId}`;
-    expect(link.replaces_document_id).toBeNull();
+    const [link] = await owner<{ replaces_document_id: string | null; print_replaces_reference: boolean }[]>`
+      SELECT replaces_document_id, print_replaces_reference FROM ${s}.sales_document WHERE id = ${docId}`;
+    expect(link).toEqual({ replaces_document_id: null, print_replaces_reference: false });
     const [fk] = await owner<{ condeferrable: boolean; condeferred: boolean }[]>`
       SELECT c.condeferrable, c.condeferred FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
        WHERE n.nspname = ${schema} AND c.conname = 'sales_document_line_document_fkey'`;
