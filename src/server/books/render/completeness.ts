@@ -34,6 +34,7 @@
 
 import type { SalesDocumentLine, SalesDocumentWithSnapshots } from '../repository/read';
 import { formatDate, formatMoney, formatQuantity, formatRate, postalCity, toPdfText } from './format';
+import { label } from '../template/labels';
 import { amountSign, serviceDateValue } from './model';
 
 export interface Expectation {
@@ -73,9 +74,9 @@ export function expectedFields(
   add('sender.addressLine1', s.addressLine1);
   add('sender.postalCity', postalCity(s.postalCode, s.city));
   const taxIds: Array<[string, string, string | null]> = [
-    ['sender.taxNumber', 'Steuernummer:', s.taxNumber],
-    ['sender.vatId', 'USt-IdNr.:', s.vatId],
-    ['sender.smallBusinessId', 'Kleinunternehmer-ID:', s.smallBusinessId],
+    ['sender.taxNumber', label('sender.taxNumber'), s.taxNumber],
+    ['sender.vatId', label('sender.vatId'), s.vatId],
+    ['sender.smallBusinessId', label('sender.smallBusinessId'), s.smallBusinessId],
   ];
   const accepted = doc.reverseCharge
     ? taxIds.filter(([f]) => f === 'sender.vatId')
@@ -94,13 +95,13 @@ export function expectedFields(
 
   // Document data.
   const isCredit = doc.docType === 'credit_note';
-  add('documentNumber', `${isCredit ? 'Gutschriftsnummer' : 'Rechnungsnummer'} ${doc.documentNumber}`);
-  add('issueDate', `${isCredit ? 'Datum' : 'Rechnungsdatum'} ${formatDate(doc.issueDate)}`);
+  add('documentNumber', `${label(isCredit ? 'meta.creditNoteNumber' : 'meta.invoiceNumber')} ${doc.documentNumber}`);
+  add('issueDate', `${label(isCredit ? 'meta.creditNoteDate' : 'meta.invoiceDate')} ${formatDate(doc.issueDate)}`);
   if (isCredit) {
     const c2 = context.corrects;
     add(
       'correctsReference',
-      c2 ? `Storno der Rechnung ${c2.documentNumber} vom ${formatDate(c2.issueDate)}` : null,
+      c2 ? `${label('reference.cancels')} ${c2.documentNumber} ${label('reference.of')} ${formatDate(c2.issueDate)}` : null,
     );
   }
 
@@ -113,7 +114,7 @@ export function expectedFields(
 
   // The amount.
   const sign = amountSign(doc.docType);
-  add('total', `Gesamtbetrag ${formatMoney(sign * doc.total, doc.currencyCode)}`);
+  add('total', `${label('totals.total')} ${formatMoney(sign * doc.total, doc.currencyCode)}`);
 
   if (doc.kleinunternehmer) {
     add('exemptionNote', doc.taxNote);
@@ -124,12 +125,12 @@ export function expectedFields(
   const service = serviceDateValue(doc);
   add('serviceDate', `${service.label} ${service.value}`);
   for (const g of doc.taxSummary) {
-    const rc = g.taxTreatment === 'reverse_charge' ? ' (Reverse Charge)' : '';
-    add(`taxGroup${g.taxRate}.net`, `Nettobetrag zu ${formatRate(g.taxRate)}${rc} ${formatMoney(sign * g.net, doc.currencyCode)}`);
-    add(`taxGroup${g.taxRate}.tax`, `Umsatzsteuer ${formatRate(g.taxRate)} ${formatMoney(sign * g.tax, doc.currencyCode)}`);
+    const rc = g.taxTreatment === 'reverse_charge' ? label('totals.reverseChargeSuffix') : '';
+    add(`taxGroup${g.taxRate}.net`, `${label('totals.netAt')} ${formatRate(g.taxRate)}${rc} ${formatMoney(sign * g.net, doc.currencyCode)}`);
+    add(`taxGroup${g.taxRate}.tax`, `${label('totals.vatAt')} ${formatRate(g.taxRate)} ${formatMoney(sign * g.tax, doc.currencyCode)}`);
   }
   if (doc.reverseCharge) {
-    add('recipient.vatId', present(c.vatId) ? `USt-IdNr. Leistungsempfänger ${c.vatId}` : null);
+    add('recipient.vatId', present(c.vatId) ? `${label('meta.recipientVatId')} ${c.vatId}` : null);
     add('reverseChargeNote', doc.taxNote);
   }
   return out;

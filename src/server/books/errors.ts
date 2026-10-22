@@ -50,6 +50,8 @@ export type BooksErrorCode =
   | 'NOT_RENDERABLE'
   | 'RENDER_INCOMPLETE'
   | 'UNDRAWABLE_TEXT'
+  // The template composer (template/gate.ts).
+  | 'TEMPLATE_INVALID'
   // The historical import (009_books_import, importInvoices.ts).
   | 'IMPORT_CONFLICT'
   | 'IMPORT_INCOMPLETE'

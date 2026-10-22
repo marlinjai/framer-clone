@@ -66,6 +66,7 @@ const STATUS: Record<BooksErrorCode, number> = {
   TOTALS_MISMATCH: 422,
   RENDER_INCOMPLETE: 422,
   UNDRAWABLE_TEXT: 422,
+  TEMPLATE_INVALID: 422,
   IMPORT_INCOMPLETE: 422,
   CURRENCY_NOT_SUPPORTED: 422,
   RECIPIENT_UNAVAILABLE: 503,
@@ -102,6 +103,7 @@ const MESSAGES: Partial<Record<BooksErrorCode, string>> = {
   REPLACEMENT_INCOMPLETE:
     'the corrected invoice could not be issued together with the cancellation of the invoice it replaces; nothing was issued',
   RENDER_INCOMPLETE: 'the PDF would lack a legally required field; nothing was issued or stored',
+  TEMPLATE_INVALID: 'the template cannot be saved; fix the named problems (nothing was saved)',
 };
 
 /** Lower snake case of a domain code, as the API answers it. */
