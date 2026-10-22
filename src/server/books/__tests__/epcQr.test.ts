@@ -44,10 +44,16 @@ function raster(payload: string, scale = 4): { data: Uint8ClampedArray; size: nu
 }
 
 describe('the EPC069-12 payload', () => {
-  it('has the twelve lines of version 002 in order', () => {
+  it('has the elements of version 002 in order, ending with the last populated one', () => {
     expect(epcPayload(DATA)).toBe(
-      ['BCD', '002', '1', 'SCT', 'BYLADEM1001', 'Musterwerk Beispiel GmbH', 'DE02120300000000202051', 'EUR1234.50', '', '', 'Rechnung 2026-0042', ''].join('\n'),
+      ['BCD', '002', '1', 'SCT', 'BYLADEM1001', 'Musterwerk Beispiel GmbH', 'DE02120300000000202051', 'EUR1234.50', '', '', 'Rechnung 2026-0042'].join('\n'),
     );
+    expect(epcPayload(DATA).endsWith('\n')).toBe(false);
+  });
+
+  it('leaves a malformed BIC out (version 002 allows an empty one)', () => {
+    expect(epcPayload({ ...DATA, bic: 'BYLADEM' }).split('\n')[4]).toBe('');
+    expect(epcPayload({ ...DATA, bic: 'byladem1' }).split('\n')[4]).toBe('BYLADEM1');
   });
 
   it('formats the amount with a dot and two decimals, from 0.01 to the maximum', () => {

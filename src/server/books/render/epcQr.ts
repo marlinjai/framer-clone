@@ -47,11 +47,13 @@ export function epcAmount(cents: number): string {
 }
 
 /**
- * The twelve-line EPC069-12 version 002 payload, lines separated by a line
- * feed: service tag, version, character set (1, UTF-8), identification, BIC
- * (may be empty in version 002), beneficiary name (at most 70 characters),
- * IBAN, amount, purpose (empty), structured reference (empty), unstructured
- * remittance (at most 140 characters), note (empty).
+ * The EPC069-12 version 002 payload, elements separated by a line feed:
+ * service tag, version, character set (1, UTF-8), identification, BIC (may be
+ * empty in version 002), beneficiary name (at most 70 characters), IBAN,
+ * amount, purpose (empty), structured reference (empty), unstructured
+ * remittance (at most 140 characters), note (empty). The last populated
+ * element is not followed by a separator, so the payload ends with the
+ * remittance text.
  *
  * The limits are in characters, the whole payload in bytes (331): a name and
  * a reference full of multi-byte letters are shortened further, the
@@ -59,14 +61,20 @@ export function epcAmount(cents: number): string {
  */
 export function epcPayload(data: PaymentQrData): string {
   const iban = normalIban(data.iban);
-  const bic = (data.bic ?? '').replace(/\s+/g, '').toUpperCase();
+  // Version 002 lets the BIC be empty; a malformed one is left out rather than make the code unusable.
+  const bicRaw = (data.bic ?? '').replace(/\s+/g, '').toUpperCase();
+  const bic = /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(bicRaw) ? bicRaw : '';
   if (data.currency !== 'EUR') throw new Error('epcPayload: only EUR transfers have an EPC code');
   if (!looksLikeIban(iban)) throw new Error('epcPayload: not an IBAN');
   let name = Array.from(cut(data.beneficiaryName.trim(), NAME_MAX));
   if (name.length === 0) throw new Error('epcPayload: the beneficiary name is empty');
   let remittance = Array.from(cut(data.reference.trim(), REMITTANCE_MAX));
-  const build = () =>
-    ['BCD', '002', '1', 'SCT', bic, name.join(''), iban, epcAmount(data.amountCents), '', '', remittance.join(''), ''].join('\n');
+  // The last populated element is not followed by a separator: empty trailing elements are left off.
+  const build = () => {
+    const elements = ['BCD', '002', '1', 'SCT', bic, name.join(''), iban, epcAmount(data.amountCents), '', '', remittance.join(''), ''];
+    while (elements.length > 0 && elements[elements.length - 1] === '') elements.pop();
+    return elements.join('\n');
+  };
   let payload = build();
   while (byteLength(payload) > EPC_MAX_BYTES) {
     if (remittance.length > 0) remittance = remittance.slice(0, -1);

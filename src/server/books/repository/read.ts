@@ -33,13 +33,13 @@ import { documentTaxFields, profileFor, recomputeLines, selectCustomerRow } from
 import type { BooksScope } from '../scope';
 import {
   customerSnapshotV1Schema,
-  templateSnapshotV1Schema,
+  templateSnapshotSchema,
   senderSnapshotV1Schema,
   taxSummarySchema,
   type CustomerSnapshotV1,
   type EventPayload,
   type SenderSnapshotV1,
-  type TemplateSnapshotV1,
+  type TemplateSnapshot,
   type TaxSummary,
 } from '../snapshots';
 
@@ -97,7 +97,7 @@ export interface SalesDocument {
 export interface SalesDocumentWithSnapshots extends SalesDocument {
   customerSnapshot: CustomerSnapshotV1 | null;
   /** The template layout frozen at issue (null on a draft, and on documents issued before 008). */
-  templateSnapshot: TemplateSnapshotV1 | null;
+  templateSnapshot: TemplateSnapshot | null;
   senderSnapshot: SenderSnapshotV1 | null;
 }
 
@@ -226,7 +226,7 @@ export type DocumentRow = {
 export type DocumentRowWithSnapshots = DocumentRow & {
   customer_snapshot: CustomerSnapshotV1 | null;
   sender_snapshot: SenderSnapshotV1 | null;
-  template_snapshot: TemplateSnapshotV1 | null;
+  template_snapshot: TemplateSnapshot | null;
 };
 
 export function mapDocument(row: DocumentRow): SalesDocument {
@@ -281,7 +281,7 @@ export function mapDocumentWithSnapshots(row: DocumentRowWithSnapshots): SalesDo
     customerSnapshot: row.customer_snapshot === null ? null : customerSnapshotV1Schema.parse(row.customer_snapshot),
     senderSnapshot: row.sender_snapshot === null ? null : senderSnapshotV1Schema.parse(row.sender_snapshot),
     templateSnapshot:
-      row.template_snapshot == null ? null : templateSnapshotV1Schema.parse(row.template_snapshot),
+      row.template_snapshot == null ? null : templateSnapshotSchema.parse(row.template_snapshot),
   };
 }
 

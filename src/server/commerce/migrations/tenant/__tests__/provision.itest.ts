@@ -50,6 +50,7 @@ const EXPECTED_MIGRATION_IDS = [
   '009_books_import',
   '010_books_upload_import',
   '011_books_replacement',
+  '012_books_template_v2',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {
@@ -78,6 +79,7 @@ const EXPECTED_TABLES = [
   'customer',
   'document_number_counter',
   'document_template',
+  'document_template_version',
   'fulfillment_location_default',
   'historical_import_extraction',
   'historical_import_item',

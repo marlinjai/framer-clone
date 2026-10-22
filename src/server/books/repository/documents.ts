@@ -142,13 +142,14 @@ export async function finishDraftMutation(
   return profile.key;
 }
 
-/** A template of the company (INVALID_INPUT when it does not exist for it). */
+/** A live (not archived) template of the company (INVALID_INPUT when it does not exist for it). */
 async function assertTemplate(trx: Transaction<CommerceDB>, scope: BooksScope, templateId: string): Promise<void> {
   const t = await trx
     .selectFrom('document_template')
     .select('id')
     .where('tenant_id', '=', scope.tenantId)
     .where('id', '=', templateId)
+    .where('archived_at', 'is', null)
     .executeTakeFirst();
   if (!t) throw invalid('INVALID_INPUT', [{ path: ['templateId'], message: 'no such template for this company' }]);
 }

@@ -28,8 +28,19 @@
 // as a drawn substitute.
 //
 // DRAFTS get a preview rendered from live data (the company's sender block, the
-// customer's current contact), watermarked as a draft on every page, never
-// checked as a document of record and never stored.
+// customer's current contact, the current version of its template),
+// watermarked as a draft on every page, never checked as a document of record
+// and never stored.
+//
+// WHICH RENDERER (visual template composer plan, decision 4): a document whose
+// frozen template is version 2 (every document issued from migration 012 on)
+// is drawn by the layout engine (render/engine, `books-pdf-lib-3`) with that
+// template document; one with a version 1 template, or none (issued before
+// 008), by the frozen version 1 renderer (render/legacyV1.ts,
+// `books-pdf-lib-2`), so it re-renders to the bytes it was first stored with.
+// The stored file records which one drew it. An engine layout that does not
+// fit the page (a block taller than a page, a header pushing into the address
+// field) refuses the document of record like a missing field.
 
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -43,12 +54,15 @@ import { selectCustomerRow } from '../repository/taxState';
 import { templateSnapshotFor } from '../repository/templates';
 import type { BooksScope } from '../scope';
 import { readSettings } from '../settings';
+import type { TemplateDocumentV2 } from '../template/schema';
 import { missingFields } from './completeness';
-import { assertDrawable, previewSafe } from './drawable';
+import { assertDrawable, previewSafe, previewSafeTemplate } from './drawable';
+import { renderTemplate, RENDERER_ID } from './engine';
 import { extractPdfText } from './extractText';
+import { fontFiles } from './fonts';
 import { fileNamePart } from './format';
+import { LEGACY_V1_RENDERER_ID, renderLegacyV1 } from './legacyV1';
 import { buildRenderModel, type RenderInput, type RenderModel, type RenderRecipient } from './model';
-import { RENDERER_ID, renderPdf } from './pdf';
 
 type Db = Kysely<CommerceDB> | Transaction<CommerceDB>;
 
@@ -65,9 +79,34 @@ function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-function frozenTemplate(doc: DocumentView['document']): RenderInput['template'] {
+/** How a document is laid out: by the frozen version 1 renderer, or by the engine with a template document. */
+type Layout = { kind: 'legacyV1'; template: RenderInput['template'] } | { kind: 'engine'; document: TemplateDocumentV2 };
+
+/** The layout an issued document was frozen with (decision 4). */
+function frozenLayout(doc: DocumentView['document']): Layout {
   const t = doc.templateSnapshot;
-  return t ? { accentColor: t.accentColor, footerBlocks: t.footerBlocks } : null;
+  if (t?.v === 2) return { kind: 'engine', document: t.document };
+  return { kind: 'legacyV1', template: t ? { accentColor: t.accentColor, footerBlocks: t.footerBlocks } : null };
+}
+
+/** A rendered document and the renderer that drew it (recorded on the stored file). */
+interface Drawn {
+  bytes: Uint8Array;
+  renderer: string;
+}
+
+/** Draw a model with its layout (the test seam replaces the writer of either renderer). */
+async function draw(layout: Layout, model: RenderModel, options: RenderOptions & { preview?: boolean } = {}): Promise<Drawn> {
+  if (layout.kind === 'legacyV1') {
+    return { bytes: await (options.renderPdf ?? renderLegacyV1)(model), renderer: LEGACY_V1_RENDERER_ID };
+  }
+  if (options.renderPdf) return { bytes: await options.renderPdf(model), renderer: RENDERER_ID };
+  const { bytes, layout: map } = await renderTemplate(model, layout.document, fontFiles(), { preview: options.preview });
+  if (!model.draft && map.issues.length > 0) {
+    const problems = map.issues.map((i) => `layout.${i.code.toLowerCase()}${i.blockId ? `.${i.blockId}` : ''}`);
+    throw new BooksError('RENDER_INCOMPLETE', `RENDER_INCOMPLETE: ${problems.join(', ')}`, { missing: problems });
+  }
+  return { bytes, renderer: RENDERER_ID };
 }
 
 /** The render input of an issued document: frozen data only. */
@@ -103,12 +142,15 @@ async function issuedInput(db: Db, scope: BooksScope, view: DocumentView): Promi
       vatId: c.vatId,
     },
     corrects,
-    template: frozenTemplate(doc),
+    template: (() => {
+      const layout = frozenLayout(doc);
+      return layout.kind === 'legacyV1' ? layout.template : null;
+    })(),
   };
 }
 
 /** The render input of a draft preview: live data (never stored). */
-async function draftInput(scope: BooksScope, view: DocumentView): Promise<RenderInput> {
+async function draftInput(scope: BooksScope, view: DocumentView): Promise<{ input: RenderInput; document: TemplateDocumentV2 }> {
   const doc = view.document;
   const settings = await readSettings(scope.db, scope);
   let recipient: RenderRecipient | null = null;
@@ -132,12 +174,28 @@ async function draftInput(scope: BooksScope, view: DocumentView): Promise<Render
       }
     }
   }
-  let template: RenderInput['template'] = null;
-  if (doc.templateId) {
-    const t = await templateSnapshotFor(scope.db, scope, doc.templateId);
-    template = { accentColor: t.accentColor, footerBlocks: t.footerBlocks };
+  // The current version of the draft's template (the built-in Klassisch layout without one).
+  const { document } = await templateSnapshotFor(scope.db, scope, doc.templateId);
+  return {
+    input: { draft: true, document: doc, lines: view.lines, sender: settings?.senderBlock ?? null, recipient, corrects: null, template: null },
+    document,
+  };
+}
+
+/**
+ * The render input of a real document for the template preview: an issued
+ * document from its frozen data, a draft from live data. Imported documents
+ * are never rendered (NOT_RENDERABLE): their original PDF is the record.
+ */
+export async function documentRenderInput(scope: BooksScope, documentId: string): Promise<RenderInput> {
+  const view = await getDocument(scope, documentId);
+  if (view.document.source === 'import') {
+    throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: an imported document is served from its stored original, never rendered', {
+      documentId,
+    });
   }
-  return { draft: true, document: doc, lines: view.lines, sender: settings?.senderBlock ?? null, recipient, corrects: null, template };
+  if (view.document.status === 'draft') return (await draftInput(scope, view)).input;
+  return issuedInput(scope.db, scope, view);
 }
 
 function fileNameFor(view: DocumentView, draft: boolean): string {
@@ -154,13 +212,18 @@ export interface RenderOptions {
 /**
  * Render an issued document from its frozen data, and check it: every printed
  * field drawable (UNDRAWABLE_TEXT otherwise), every legally required field in
- * the drawn text (RENDER_INCOMPLETE otherwise). Never stores.
+ * the drawn text and a layout that fits the page (RENDER_INCOMPLETE
+ * otherwise). Never stores.
  */
 export async function renderIssuedDocument(
   scope: BooksScope,
   view: DocumentView,
   options: RenderOptions & { db?: Db } = {},
 ): Promise<Uint8Array> {
+  return (await renderIssued(scope, view, options)).bytes;
+}
+
+async function renderIssued(scope: BooksScope, view: DocumentView, options: RenderOptions & { db?: Db }): Promise<Drawn> {
   if (view.document.status === 'draft') {
     throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: a draft is previewed, not rendered', {
       documentId: view.document.id,
@@ -176,13 +239,14 @@ export async function renderIssuedDocument(
     );
   }
   const input = await issuedInput(options.db ?? scope.db, scope, view);
-  assertDrawable(input);
-  const bytes = await (options.renderPdf ?? renderPdf)(buildRenderModel(input));
-  const missing = missingFields(view.document, view.lines, await extractPdfText(bytes), { corrects: input.corrects });
+  const layout = frozenLayout(view.document);
+  assertDrawable(input, layout.kind === 'engine' ? layout.document : null);
+  const drawn = await draw(layout, buildRenderModel(input), options);
+  const missing = missingFields(view.document, view.lines, await extractPdfText(drawn.bytes), { corrects: input.corrects });
   if (missing.length > 0) {
     throw new BooksError('RENDER_INCOMPLETE', `RENDER_INCOMPLETE: ${missing.join(', ')}`, { missing });
   }
-  return bytes;
+  return drawn;
 }
 
 export interface StoredFile {
@@ -215,7 +279,7 @@ export async function storeRenderedIn(
     .executeTakeFirst();
   if (stored) return { fileId: stored.id, bytes: new Uint8Array(stored.content), sha256: stored.sha256, created: false };
 
-  const bytes = await renderIssuedDocument(scope, view, { ...options, db: trx });
+  const { bytes, renderer } = await renderIssued(scope, view, { ...options, db: trx });
   const digest = sha256(bytes);
   const fileId = randomUUID();
   await trx
@@ -227,7 +291,7 @@ export async function storeRenderedIn(
       content_type: 'application/pdf',
       byte_size: bytes.byteLength,
       sha256: digest,
-      renderer: RENDERER_ID,
+      renderer,
       content: Buffer.from(bytes),
     })
     .execute();
@@ -279,7 +343,8 @@ export async function storeRenderedDocument(scope: BooksScope, documentId: strin
 export async function documentPdf(scope: BooksScope, documentId: string): Promise<RenderedPdf> {
   const view = await getDocument(scope, documentId);
   if (view.document.status === 'draft') {
-    const bytes = await renderPdf(previewSafe(buildRenderModel(await draftInput(scope, view))));
+    const { input, document } = await draftInput(scope, view);
+    const { bytes } = await draw({ kind: 'engine', document: previewSafeTemplate(document) }, previewSafe(buildRenderModel(input)));
     return { bytes, fileName: fileNameFor(view, true), ofRecord: false, fileId: null, sha256: sha256(bytes) };
   }
   const stored = await storeRenderedDocument(scope, documentId);

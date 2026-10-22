@@ -31,12 +31,14 @@ const state = vi.hoisted(() => ({
   session: null as unknown,
   directory: null as unknown,
   contactBook: null as unknown,
+  /** The permission check's answer (a viewer without editBooks when false). */
+  can: true,
 }));
 
 vi.mock('@/lib/auth-brain', () => ({
   authBrainClient: {
     verifySession: async () => state.session,
-    can: async () => true,
+    can: async () => state.can,
   },
 }));
 vi.mock('@/server/commerce/db', () => ({
@@ -82,6 +84,8 @@ import * as correctRoute from '../documents/[id]/correct/route';
 import * as pdfRoute from '../documents/[id]/pdf/route';
 import * as templatesRoute from '../templates/route';
 import * as templateRoute from '../templates/[id]/route';
+import * as previewRoute from '../templates/preview/route';
+import { preset } from '@/server/books/template/presets';
 import * as settingsRoute from '../settings/route';
 
 let env: BooksEnv;
@@ -115,6 +119,7 @@ async function company(taxStatus: 'small_business' | 'regular' = 'small_business
 }
 
 beforeEach(async () => {
+  state.can = true;
   await company();
 });
 
@@ -466,7 +471,7 @@ describe('Books routes: cancellation, rendering, templates', () => {
     expect(files).toEqual([]);
   });
 
-  it('templates: the first is the default, new drafts get it, one in use cannot be deleted', async () => {
+  it('templates: the first is the default, new drafts get it, one a draft uses cannot be removed, removing archives', async () => {
     const created = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, {
       name: 'Standard',
       accentColor: '#2b4c7e',
@@ -474,6 +479,8 @@ describe('Books routes: cancellation, rendering, templates', () => {
     });
     expect(created.status).toBe(201);
     expect(created.json.isDefault).toBe(true);
+    expect(created.json).toMatchObject({ version: 1, accentColor: '#2b4c7e', footerBlocks: [{ heading: 'Hinweis', text: 'Synthetic small print.' }] });
+    expect(created.json.document).toMatchObject({ v: 2, theme: { accent: '#2b4c7e' } });
     const second = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Alt' });
     expect(second.json.isDefault).toBe(false);
     const dup = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Standard' });
@@ -491,6 +498,17 @@ describe('Books routes: cancellation, rendering, templates', () => {
     expect(list.json.items.map((t: Json) => [t.name, t.isDefault])).toEqual([['Alt', true], ['Standard', false]]);
     const removed = await call(templateRoute.DELETE, 'DELETE', `/api/books/templates/${second.json.id}`, { id: second.json.id });
     expect(removed.status).toBe(204);
+    // Archived: gone from the list and the picker, no longer the default, its name free again, its versions kept.
+    const after = await call(templatesRoute.GET, 'GET', '/api/books/templates');
+    expect(after.json.items.map((t: Json) => t.name)).toEqual(['Standard']);
+    expect((await call(templateRoute.GET, 'GET', `/api/books/templates/${second.json.id}`, { id: second.json.id })).status).toBe(404);
+    const again = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Alt' });
+    expect(again.status).toBe(201);
+    const versions = await env.ownerDb.selectFrom('document_template_version').select('id').where('template_id', '=', second.json.id).execute();
+    expect(versions).toHaveLength(1);
+    const pick = await api.createDraft({ templateId: second.json.id });
+    expect(pick.status).toBe(404);
+    expect(pick.json.error.code).toBe('template_not_found');
   });
 
   it('settings: the company configuration and the next number', async () => {
@@ -575,7 +593,14 @@ describe('Books routes: review fixes', () => {
     });
     const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
     const view = await getDocument(scope, id);
-    expect(view.document.templateSnapshot).toMatchObject({ templateId: tpl.json.id, accentColor: '#2b4c7e' });
+    expect(view.document.templateSnapshot).toMatchObject({
+      v: 2,
+      templateId: tpl.json.id,
+      templateVersionId: tpl.json.currentVersionId,
+      document: { theme: { accent: '#2b4c7e' } },
+    });
+    const files = await env.ownerDb.selectFrom('sales_document_file').select('renderer').where('document_id', '=', id).execute();
+    expect(files).toEqual([{ renderer: 'books-pdf-lib-3' }]);
     const rerendered = await renderIssuedDocument(scope, view);
     expect(Buffer.from(rerendered).equals(Buffer.from(stored))).toBe(true);
     // And the snapshot is frozen for every role.
@@ -608,6 +633,170 @@ describe('Books routes: review fixes', () => {
   });
 });
 
+
+describe('Books routes: template versions and the preview', () => {
+  const tplPath = (id: string) => `/api/books/templates/${id}`;
+  const patchTemplate = (id: string, body: unknown) => call(templateRoute.PATCH, 'PATCH', tplPath(id), { id }, body);
+  const versionsOf = (id: string) =>
+    env.ownerDb
+      .selectFrom('document_template_version')
+      .select(['version', 'created_by'])
+      .where('template_id', '=', id)
+      .orderBy('version')
+      .execute();
+
+  it('saves a changed layout as the next version, and nothing for an unchanged one', async () => {
+    const created = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Modern', preset: 'modern' });
+    expect(created.status).toBe(201);
+    expect(created.json.document).toEqual(preset('modern'));
+    const id = created.json.id as string;
+
+    const same = await patchTemplate(id, { accentColor: created.json.accentColor });
+    expect(same.json.version).toBe(1);
+    const renamed = await patchTemplate(id, { name: 'Modern blau' });
+    expect(renamed.json).toMatchObject({ name: 'Modern blau', version: 1 });
+
+    const changed = await patchTemplate(id, { accentColor: '#1f4e79', footerBlocks: [{ text: 'Neue Hinweise.' }] });
+    expect(changed.json).toMatchObject({ version: 2, accentColor: '#1f4e79', footerBlocks: [{ heading: null, text: 'Neue Hinweise.' }] });
+    expect(changed.json.currentVersionId).not.toBe(created.json.currentVersionId);
+    expect(await versionsOf(id)).toEqual([
+      { version: 1, created_by: 'user-books' },
+      { version: 2, created_by: 'user-books' },
+    ]);
+
+    // A whole document from the composer, made on the current version.
+    const doc = structuredClone(changed.json.document);
+    doc.page.addressLayout = 'din5008-a';
+    const saved = await patchTemplate(id, { document: doc, baseVersionId: changed.json.currentVersionId });
+    expect(saved.status).toBe(200);
+    expect(saved.json.version).toBe(3);
+  });
+
+  it('refuses an edit made on an older version, and a layout the gate refuses; the working version stays', async () => {
+    const created = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Standard' });
+    const id = created.json.id as string;
+    await patchTemplate(id, { accentColor: '#1f4e79' });
+
+    const stale = await patchTemplate(id, { document: created.json.document, baseVersionId: created.json.currentVersionId });
+    expect(stale.status).toBe(409);
+    expect(stale.json.error.code).toBe('concurrent_edit');
+
+    const broken = structuredClone(created.json.document);
+    broken.regions.body = broken.regions.body.filter((b: Json) => b.type !== 'totals');
+    const refused = await patchTemplate(id, { document: broken });
+    expect(refused.status).toBe(422);
+    expect(refused.json.error.code).toBe('template_invalid');
+    expect(refused.json.error.problems).toContainEqual(expect.objectContaining({ code: 'REQUIRED_BLOCK_MISSING', field: 'totals' }));
+
+    const pale = await patchTemplate(id, { accentColor: '#ffee00' });
+    expect(pale.status).toBe(422);
+    expect(pale.json.error.problems).toContainEqual(expect.objectContaining({ code: 'CONTRAST_TOO_LOW', field: 'theme.accent' }));
+    expect((await versionsOf(id)).map((v) => v.version)).toEqual([1, 2]);
+
+    const malformed = await patchTemplate(id, { document: { v: 2 } });
+    expect(malformed.status).toBe(400);
+    expect(malformed.json.error.code).toBe('invalid_input');
+  });
+
+  it('a draft previews the current version of its template', async () => {
+    const created = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Standard', footerBlocks: [{ text: 'Erste Fassung.' }] });
+    const customer = await newCustomer({ customerType: 'b2b' });
+    const id = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    expect(await extractPdfText(new Uint8Array(await (await pdf(id)).arrayBuffer()))).toContain('Erste Fassung.');
+    await patchTemplate(created.json.id, { footerBlocks: [{ text: 'Zweite Fassung.' }] });
+    const text = await extractPdfText(new Uint8Array(await (await pdf(id)).arrayBuffer()));
+    expect(text).toContain('Zweite Fassung.');
+    expect(text).not.toContain('Erste Fassung.');
+  });
+
+  it('a document frozen with a version 1 template is still drawn by the version 1 renderer', async () => {
+    const customer = await newCustomer({ customerType: 'b2b' });
+    const id = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    await api.issue(id);
+    // Turn it into a document issued before the template model version 2 and before 008 (no stored file yet).
+    const owner = env.fx.owner;
+    const s = owner(env.schema);
+    await owner`ALTER TABLE ${s}.sales_document DISABLE TRIGGER USER`;
+    await owner`ALTER TABLE ${s}.sales_document_file DISABLE TRIGGER USER`;
+    try {
+      await owner`UPDATE ${s}.sales_document SET rendered_pdf_file_id = NULL,
+                    template_snapshot = ${owner.json({ v: 1, templateId: null, name: 'Alt', accentColor: '#2b4c7e', footerBlocks: [{ heading: null, text: 'Kleingedrucktes von früher.' }] })}
+                  WHERE id = ${id}`;
+      await owner`DELETE FROM ${s}.sales_document_file WHERE document_id = ${id}`;
+    } finally {
+      await owner`ALTER TABLE ${s}.sales_document ENABLE TRIGGER USER`;
+      await owner`ALTER TABLE ${s}.sales_document_file ENABLE TRIGGER USER`;
+    }
+    const res = await pdf(id);
+    expect(res.status).toBe(200);
+    expect(await extractPdfText(new Uint8Array(await res.arrayBuffer()))).toContain('Kleingedrucktes von früher.');
+    const files = await env.ownerDb.selectFrom('sales_document_file').select('renderer').where('document_id', '=', id).execute();
+    expect(files).toEqual([{ renderer: 'books-pdf-lib-2' }]);
+  });
+
+  it('previews an unsaved template against a sample and a real document, stamped and never stored', async () => {
+    const doc = preset('kompakt');
+    const sample = await previewCall({ document: doc, subject: { kind: 'sample', variant: 'longInvoice' } });
+    expect(sample.status).toBe(200);
+    expect(sample.headers.get('cache-control')).toBe('no-store');
+    const body = (await sample.json()) as Json;
+    const bytes = new Uint8Array(Buffer.from(body.pdf, 'base64'));
+    expect(Buffer.from(bytes.slice(0, 5)).toString('latin1')).toBe('%PDF-');
+    expect(body.layout.pageCount).toBeGreaterThanOrEqual(2);
+    expect(body.layout.blocks.some((r: Json) => r.blockId === 'lineTable')).toBe(true);
+    expect(typeof body.renderMs).toBe('number');
+    expect(await extractPdfText(bytes)).toContain('VORSCHAU, KEIN BELEG');
+
+    const customer = await newCustomer({ customerType: 'b2b' });
+    const id = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    await api.issue(id);
+    const filesBefore = await env.ownerDb.selectFrom('sales_document_file').select('id').execute();
+    // An incomplete layout previews as it is, with its problems in the map.
+    const incomplete = structuredClone(doc);
+    incomplete.regions.firstPageHeader = Array.from({ length: 5 }, (_, i) => ({ id: `h${i}`, type: 'spacer' as const, style: {}, heightPt: 32 as const }));
+    const real = await previewCall({ document: incomplete, subject: { kind: 'document', documentId: id } });
+    expect(real.status).toBe(200);
+    const realBody = (await real.json()) as Json;
+    expect(realBody.layout.issues).toContainEqual(expect.objectContaining({ code: 'HEADER_TOO_TALL' }));
+    const realText = await extractPdfText(new Uint8Array(Buffer.from(realBody.pdf, 'base64')));
+    expect(realText).toContain('VORSCHAU, KEIN BELEG');
+    expect(realText).toContain('Workshop');
+    expect(await env.ownerDb.selectFrom('sales_document_file').select('id').execute()).toEqual(filesBefore);
+  });
+
+  it('refuses malformed and oversized previews, a document of another company, and anyone without editBooks', async () => {
+    const malformed = await previewCall({ document: { v: 2 }, subject: { kind: 'sample', variant: 'regular' } });
+    expect(malformed.status).toBe(400);
+    expect(((await malformed.json()) as Json).error.code).toBe('invalid_input');
+    const unknown = await previewCall({ document: preset('klassisch'), subject: { kind: 'sample', variant: 'nope' } });
+    expect(unknown.status).toBe(400);
+    const huge = await previewCall({ document: preset('klassisch'), subject: { kind: 'sample', variant: 'regular' }, pad: 'x'.repeat(300 * 1024) });
+    expect(huge.status).toBe(413);
+
+    const customer = await newCustomer({ customerType: 'b2b' });
+    const id = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    const mine = tenantId;
+    await company();
+    const foreign = await previewCall({ document: preset('klassisch'), subject: { kind: 'document', documentId: id } });
+    expect(foreign.status).toBe(404);
+    expect(mine).not.toBe(tenantId);
+
+    state.can = false;
+    const viewer = await previewCall({ document: preset('klassisch'), subject: { kind: 'sample', variant: 'regular' } });
+    expect(viewer.status).toBe(403);
+    state.can = true;
+    state.session = null;
+    const anonymous = await previewCall({ document: preset('klassisch'), subject: { kind: 'sample', variant: 'regular' } });
+    expect(anonymous.status).toBe(401);
+  });
+});
+
+async function previewCall(body: unknown): Promise<Response> {
+  return previewRoute.POST(request('POST', '/api/books/templates/preview', body), { params: Promise.resolve({}) });
+}
 
 describe('Books routes: imported historical invoices', () => {
   /** A synthetic original: PDF header, label, trailer. Never a render of this system. */

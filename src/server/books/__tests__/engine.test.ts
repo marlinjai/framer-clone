@@ -13,7 +13,7 @@ import path from 'node:path';
 import { PDFDocument } from 'pdf-lib';
 import { describe, expect, it } from 'vitest';
 
-import { renderTemplate, RENDERER_ID, type EngineResult } from '../render/engine';
+import { MAX_PAGES, renderTemplate, RENDERER_ID, type EngineResult } from '../render/engine';
 import { extractDrawnText, extractPdfText } from '../render/extractText';
 import { fontFiles } from '../render/fonts';
 import { buildRenderModel } from '../render/model';
@@ -174,6 +174,23 @@ describe('pagination', () => {
       expect(Math.round(mm(sender.y))).toBe(layoutName === 'din5008-b' ? 45 : 27);
       expect(Math.round(mm(sender.x))).toBe(20);
     }
+  });
+});
+
+describe('bounds', () => {
+  it('stops at two pages when the footer leaves no room, and caps every document at MAX_PAGES', async () => {
+    const footer = structuredClone(preset('klassisch'));
+    footer.regions.footer.push(...Array.from({ length: 20 }, (_, i) => ({ id: `f${i}`, type: 'spacer' as const, style: {}, heightPt: 32 as const })));
+    const t0 = performance.now();
+    const { layout } = await render(footer, 'longInvoice');
+    expect(layout.pageCount).toBeLessThanOrEqual(2);
+    expect(layout.issues).toContainEqual(expect.objectContaining({ code: 'FOOTER_TOO_TALL' }));
+    expect(performance.now() - t0).toBeLessThan(5000);
+
+    const p = probe('longDescription');
+    p.lines = Array.from({ length: 60 }, (_, i) => ({ ...p.lines[0], id: `l${i}`, position: i + 1 }));
+    const many = await renderTemplate(buildRenderModel(probeInput(p)), preset('kompakt'), fontFiles());
+    expect(many.layout.pageCount).toBeLessThanOrEqual(MAX_PAGES);
   });
 });
 

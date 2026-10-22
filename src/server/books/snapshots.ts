@@ -14,12 +14,18 @@
 //     recomputed, never returned by listDocuments, never written to a log or an
 //     event payload.
 //   - TaxSummary: one entry per (rate, treatment) group.
+//   - TemplateSnapshotV1 / V2: the template layout frozen at issue. Version 1
+//     (accent colour and small print) is rendered by the frozen legacy
+//     renderer; version 2 carries the whole template document (template model
+//     version 2, template/schema.ts) and is rendered by the layout engine.
 //
 // Pure module (zod and kysely's sql tag, no database), safe in unit tests and in
 // the type module db-types.ts (which imports these types with `import type`).
 
 import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
+
+import { templateDocumentV2Schema, type TemplateDocumentV2 } from './template/schema';
 
 import type { JsonbWrite } from '../commerce/db-types';
 
@@ -103,6 +109,31 @@ export const templateSnapshotV1Schema = z.object({
 });
 export type TemplateSnapshotV1 = z.infer<typeof templateSnapshotV1Schema>;
 
+/**
+ * The template as it stood at issue under the template model version 2
+ * (visual template composer plan, decision 4): the whole document, not only
+ * its version id, so a re-render never depends on another table; the version
+ * id is the human reference ("issued with Klassisch, version 4"). A document
+ * without a template freezes the built-in Klassisch layout with null ids.
+ */
+export const templateSnapshotV2Schema = z
+  .object({
+    v: z.literal(2),
+    templateId: z.string().nullable(),
+    templateVersionId: z.string().nullable(),
+    name: z.string().nullable(),
+    document: templateDocumentV2Schema,
+    /** The logo asset (phase 5); null until then. */
+    logo: z.object({ sha256: z.string().regex(/^[0-9a-f]{64}$/) }).strict().nullable(),
+  })
+  .strict();
+export type TemplateSnapshotV2 = z.infer<typeof templateSnapshotV2Schema>;
+
+/** A frozen template layout of either version. */
+export const templateSnapshotSchema = z.discriminatedUnion('v', [templateSnapshotV1Schema, templateSnapshotV2Schema]);
+export type TemplateSnapshot = TemplateSnapshotV1 | TemplateSnapshotV2;
+export type { TemplateDocumentV2 };
+
 /** One tax group of a document: the lines sharing a rate and a treatment. */
 export const taxSummaryEntrySchema = z.object({
   taxRate: z.number().int(),
@@ -114,9 +145,6 @@ export type TaxSummaryEntry = z.infer<typeof taxSummaryEntrySchema>;
 export const taxSummarySchema = z.array(taxSummaryEntrySchema);
 export type TaxSummary = z.infer<typeof taxSummarySchema>;
 
-/** Template footer blocks: layout data for phase 3's renderer, opaque in phase 1. */
-export const footerBlocksSchema = z.array(z.record(z.string(), z.unknown()));
-export type FooterBlocks = z.infer<typeof footerBlocksSchema>;
 
 /** An event payload. Never a recipient's name or address. */
 export type EventPayload = Record<string, unknown>;

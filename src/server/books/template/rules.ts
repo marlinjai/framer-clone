@@ -30,7 +30,6 @@ import {
 import { label } from './labels';
 import {
   allBlocks,
-  REGIONS,
   regionBlocks,
   type Block,
   type BlockType,
@@ -53,6 +52,8 @@ export type ProblemCode =
   | 'TITLE_COLUMN_TOO_NARROW'
   | 'SENDER_COLUMN_MISSING'
   | 'TOTALS_BEFORE_TABLE'
+  | 'TAX_NOTE_NOT_AFTER_TOTALS'
+  | 'ADDRESS_ORDER'
   | 'SIZE_TOO_SMALL'
   | 'CONTRAST_TOO_LOW'
   | 'CELLS_TOO_WIDE'
@@ -88,7 +89,8 @@ export const ALLOWED_REGIONS: Record<BlockType, readonly RegionName[]> = {
   paymentQr: ['body'],
   senderColumns: ['footer'],
   freeText: ['firstPageHeader', 'addressZone.right', 'body', 'followingPageHeader', 'footer'],
-  spacer: [...REGIONS],
+  // The address field holds only the return line and the address (DIN 5008), so nothing can push the address out of the window.
+  spacer: ['firstPageHeader', 'addressZone.right', 'body', 'followingPageHeader', 'footer'],
   divider: ['firstPageHeader', 'addressZone.right', 'body', 'followingPageHeader', 'footer'],
   columns: ['firstPageHeader', 'body', 'followingPageHeader', 'footer'],
 };
@@ -229,6 +231,18 @@ export function structuralProblems(doc: TemplateDocumentV2, measure: Measure): T
   const totalsAt = body.findIndex((b) => b.type === 'totals');
   if (tableAt >= 0 && totalsAt >= 0 && totalsAt < tableAt) {
     out.push({ code: 'TOTALS_BEFORE_TABLE', message: 'the totals must follow the line table', blockId: body[totalsAt].id, region: 'body' });
+  }
+  // The tax note stands directly after the totals, so the two always share a page (decision 5).
+  const noteAt = body.findIndex((b) => b.type === 'taxNote');
+  if (totalsAt >= 0 && noteAt >= 0 && noteAt !== totalsAt + 1) {
+    out.push({ code: 'TAX_NOTE_NOT_AFTER_TOTALS', message: 'the tax note must come directly after the totals', blockId: body[noteAt].id, region: 'body' });
+  }
+  // The return line sits above the address in the window, never below it.
+  const left = doc.regions.addressZone.left;
+  const senderAt = left.findIndex((b) => b.type === 'senderLine');
+  const recipientAt = left.findIndex((b) => b.type === 'recipient');
+  if (senderAt >= 0 && recipientAt >= 0 && senderAt > recipientAt) {
+    out.push({ code: 'ADDRESS_ORDER', message: 'the return line must stand above the address', blockId: left[senderAt].id, region: 'addressZone.left' });
   }
 
   out.push(...contrastProblems(doc));

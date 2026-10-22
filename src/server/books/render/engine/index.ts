@@ -99,7 +99,20 @@ export interface LayoutRect {
   height: number;
 }
 
-export type LayoutIssueCode = 'HEADER_TOO_TALL' | 'FOOTER_TOO_TALL' | 'BLOCK_TOO_TALL' | 'TABLE_TOO_NARROW';
+export type LayoutIssueCode =
+  | 'HEADER_TOO_TALL'
+  | 'FOOTER_TOO_TALL'
+  | 'BLOCK_TOO_TALL'
+  | 'BLOCK_TOO_WIDE'
+  | 'TABLE_TOO_NARROW'
+  | 'ADDRESS_FIELD_OVERFLOW'
+  | 'ADDRESS_ZONE_TOO_TALL'
+  | 'PAGE_LIMIT';
+
+/** The most pages one document may run to; beyond it nothing more is placed (and the layout has an issue). */
+export const MAX_PAGES = 200;
+/** DIN 5008: the return line and remarks sit in the top band of the address field; the address starts below it at the latest. */
+const REMARK_ZONE = { 'din5008-b': r2(17.7 * MM), 'din5008-a': r2(12.7 * MM) } as const;
 
 export interface LayoutIssue {
   code: LayoutIssueCode;
@@ -283,7 +296,7 @@ class Binder {
         return keep([...head, ...this.lines(block.id, x, width, m.payment, { size, bold, color, align, gapAfter: 2 })]);
       }
       case 'paymentQr':
-        return keep(this.paymentQr(block, x, width, size, color));
+        return keep(this.paymentQr(block, x, width, size, color, region));
       case 'senderColumns':
         return keep(this.senderColumns(block, x, width, size, bold, color));
       case 'freeText': {
@@ -523,7 +536,14 @@ class Binder {
     });
   }
 
-  paymentQr(block: Extract<Block | CellBlock, { type: 'paymentQr' }>, x: number, width: number, size: number, color: RGB): Chunk[] {
+  paymentQr(
+    block: Extract<Block | CellBlock, { type: 'paymentQr' }>,
+    x: number,
+    width: number,
+    size: number,
+    color: RGB,
+    region: RegionName,
+  ): Chunk[] {
     const m = this.model;
     if (!m.paymentQr && !m.paymentQrPending) return [];
     const edge = r2(block.sizeMm * MM);
@@ -531,6 +551,8 @@ class Binder {
     const modules = matrix?.size ?? 33;
     const quiet = r2((edge / modules) * QUIET_ZONE_MODULES);
     const box = r2(edge + 2 * quiet);
+    // The code has a fixed size: a cell narrower than it would let it run past its column (or the page).
+    if (box > width) this.issues.push({ code: 'BLOCK_TOO_WIDE', blockId: block.id, region });
     const besides = width - box - 4 >= 80;
     const capX = besides ? r2(x + box + 4) : x;
     const capW = besides ? r2(width - box - 4) : width;
@@ -542,7 +564,7 @@ class Binder {
       {
         blockId: block.id,
         x,
-        width,
+        width: Math.max(width, box),
         h: r2(h),
         draw: (dc, top) => {
           const ox = x + quiet;
@@ -714,6 +736,17 @@ export async function renderTemplate(
   const right = stack(b, doc.regions.addressZone.right, 'addressZone.right', geo.addressRight.x, geo.addressRight.width, geo.addressTop, 0);
   placed.push(...left.placed, ...right.placed);
   const firstTop = r2(Math.max(geo.addressTop + ADDRESS_FIELD_HEIGHT, left.bottom, right.bottom, header.bottom));
+  // The recipient must start inside the window (below the return line, never further down).
+  const recipientId = doc.regions.addressZone.left.find((blk) => blk.type === 'recipient')?.id;
+  const recipientTop = left.placed.find((p) => p.chunk.blockId === recipientId)?.top;
+  if (recipientTop !== undefined && recipientTop > geo.addressTop + REMARK_ZONE[doc.page.addressLayout]) {
+    b.issues.push({ code: 'ADDRESS_FIELD_OVERFLOW', blockId: recipientId ?? null, region: 'addressZone.left' });
+  }
+  if (Math.max(left.bottom, right.bottom) > contentBottom) {
+    b.issues.push({ code: 'ADDRESS_ZONE_TOO_TALL', blockId: null, region: left.bottom > right.bottom ? 'addressZone.left' : 'addressZone.right' });
+  }
+  // A footer or header that leaves no room would flow the body over hundreds of pages: stop at two.
+  const pageLimit = contentBottom - followingTop < 300 ? 2 : MAX_PAGES;
 
   // The body flows into pages.
   let page = 0;
@@ -733,8 +766,17 @@ export async function renderTemplate(
   const pageRoom = () => contentBottom - followingTop - (repeat?.h ?? 0);
   /** Whether content of height `h` should start on a new page: it does not fit here, and it would fit there (or something is already on this page). */
   const breakBefore = (h: number) => y + h > contentBottom && (!atTop || (page === 0 && h <= pageRoom()));
+  let stopped = false;
   const put = (chunk: Chunk) => {
-    if (breakBefore(chunk.h)) newPage();
+    if (stopped) return;
+    if (breakBefore(chunk.h)) {
+      if (page + 1 >= pageLimit) {
+        stopped = true;
+        if (pageLimit === MAX_PAGES) b.issues.push({ code: 'PAGE_LIMIT', blockId: chunk.blockId, region: 'body' });
+        return;
+      }
+      newPage();
+    }
     if (y + chunk.h > contentBottom && chunk.blockId) b.issues.push({ code: 'BLOCK_TOO_TALL', blockId: chunk.blockId, region: 'body' });
     placed.push({ chunk, page, top: r2(y), region: 'body' });
     y += chunk.h;
@@ -763,7 +805,7 @@ export async function renderTemplate(
     for (const unit of measured.units) {
       // A unit that fits on one page moves there whole; a taller one flows chunk by chunk.
       const h = heightOf(unit.chunks);
-      if (unit.keep && h <= pageRoom() && breakBefore(h)) newPage();
+      if (!stopped && unit.keep && h <= pageRoom() && breakBefore(h) && page + 1 < pageLimit) newPage();
       for (const chunk of unit.chunks) {
         put(chunk);
         // From the first drawn chunk on, a page break inside the block repeats its header.

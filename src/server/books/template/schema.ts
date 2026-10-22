@@ -218,6 +218,8 @@ export type BlockOf<T extends BlockType> = Extract<Block, { type: T }>;
 
 /** The most blocks one region may hold (a bound on the work one preview can ask for). */
 export const MAX_BLOCKS_PER_REGION = 30;
+/** The most characters of text a template may carry itself (free texts, headings, captions). */
+export const MAX_TEMPLATE_TEXT = 20_000;
 const region = z.array(blockSchema).max(MAX_BLOCKS_PER_REGION);
 
 export const templateDocumentV2Schema = z
@@ -260,7 +262,23 @@ export const templateDocumentV2Schema = z
       })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((doc, ctx) => {
+    // A bound on the text one document carries (a preview request cannot ask for megabytes of layout).
+    let chars = 0;
+    for (const region of REGIONS) {
+      for (const block of regionBlocksOf(doc, region)) {
+        for (const b of block.type === 'columns' ? [block, ...block.cells.flatMap((c) => c.blocks)] : [block]) {
+          if (b.type === 'freeText') chars += b.text.length + (b.heading?.length ?? 0);
+          if (b.type === 'paymentDetails') chars += b.heading?.length ?? 0;
+          if (b.type === 'paymentQr') chars += b.caption.length;
+        }
+      }
+    }
+    if (chars > MAX_TEMPLATE_TEXT) {
+      ctx.addIssue({ code: 'custom', path: ['regions'], message: `the template holds ${chars} characters of text, at most ${MAX_TEMPLATE_TEXT}` });
+    }
+  });
 export type TemplateDocumentV2 = z.infer<typeof templateDocumentV2Schema>;
 export type TemplateDocumentV2Input = z.input<typeof templateDocumentV2Schema>;
 
@@ -270,6 +288,10 @@ export type RegionName = (typeof REGIONS)[number];
 
 /** The blocks of one region of a document. */
 export function regionBlocks(doc: TemplateDocumentV2, region: RegionName): Block[] {
+  return regionBlocksOf(doc, region);
+}
+
+function regionBlocksOf(doc: { regions: TemplateDocumentV2['regions'] }, region: RegionName): Block[] {
   switch (region) {
     case 'addressZone.left':
       return doc.regions.addressZone.left;

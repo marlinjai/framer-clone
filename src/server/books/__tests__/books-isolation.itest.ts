@@ -160,6 +160,7 @@ describe('Books isolation: two companies in one tenant group schema', () => {
       'customer',
       'document_number_counter',
       'document_template',
+      'document_template_version',
       'sales_document',
       'sales_document_event',
       'sales_document_line',

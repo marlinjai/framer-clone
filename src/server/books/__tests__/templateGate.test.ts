@@ -54,6 +54,9 @@ describe('template document version 2', () => {
     const doc = structuredClone(preset('klassisch'));
     doc.regions.body = Array.from({ length: 31 }, (_, i) => ({ id: `s${i}`, type: 'spacer' as const, style: {}, heightPt: 2 }));
     expect(() => parseTemplateDocument(doc)).toThrow();
+    const text = structuredClone(preset('klassisch'));
+    text.regions.footer = Array.from({ length: 11 }, (_, i) => ({ id: `t${i}`, type: 'freeText' as const, style: {}, heading: null, text: 'x'.repeat(2000), variant: 'normal' as const }));
+    expect(() => parseTemplateDocument(text)).toThrow(/at most 20000/);
   });
 });
 
@@ -162,6 +165,48 @@ describe('the save gate', () => {
     table.columns.amount.width = 0;
     table.columns.unit.width = 40;
     expect(structuralProblems(doc, await fontMeasure())).toContainEqual(expect.objectContaining({ code: 'TITLE_COLUMN_TOO_NARROW' }));
+  });
+
+  it('keeps the tax note directly after the totals and the return line above the address', async () => {
+    const doc = structuredClone(preset('klassisch'));
+    const at = doc.regions.body.findIndex((b) => b.type === 'taxNote');
+    const [note] = doc.regions.body.splice(at, 1);
+    doc.regions.body.push(note);
+    expect(await codes(doc)).toContain('TAX_NOTE_NOT_AFTER_TOTALS');
+
+    const order = structuredClone(preset('klassisch'));
+    order.regions.addressZone.left.reverse();
+    expect(await codes(order)).toContain('ADDRESS_ORDER');
+
+    const pushed = structuredClone(preset('klassisch'));
+    pushed.regions.addressZone.left.unshift({ id: 'gap', type: 'spacer', style: {}, heightPt: 32 });
+    expect(structuralProblems(pushed, await fontMeasure())).toContainEqual(
+      expect.objectContaining({ code: 'BLOCK_NOT_ALLOWED_HERE', blockId: 'gap', region: 'addressZone.left' }),
+    );
+  });
+
+  it('refuses a return line so large it pushes the address out of the window, and an overlong right column', async () => {
+    const big = structuredClone(preset('klassisch'));
+    big.regions.addressZone.left[0].style = { sizePt: 20, spaceBelowPt: 32 };
+    expect(await templateProblems(big)).toContainEqual(expect.objectContaining({ code: 'LAYOUT_PROBLEM', field: 'ADDRESS_FIELD_OVERFLOW' }));
+
+    const tall = structuredClone(preset('klassisch'));
+    tall.regions.addressZone.right.push({ id: 'long', type: 'freeText', style: {}, heading: null, text: 'Lange Erläuterung. '.repeat(105).trim(), variant: 'normal' });
+    expect(await templateProblems(tall)).toContainEqual(expect.objectContaining({ code: 'LAYOUT_PROBLEM', field: 'ADDRESS_ZONE_TOO_TALL' }));
+  });
+
+  it('refuses a payment code wider than its cell', async () => {
+    const doc = structuredClone(preset('klassisch'));
+    doc.regions.body.push({
+      id: 'row',
+      type: 'columns',
+      style: {},
+      cells: [
+        { width: 11, blocks: [{ id: 'note', type: 'freeText', style: {}, heading: null, text: 'Links', variant: 'normal' }] },
+        { width: 1, blocks: [{ id: 'qr', type: 'paymentQr', style: {}, caption: 'Bitte scannen.', sizeMm: 40 }] },
+      ],
+    });
+    expect(await templateProblems(doc)).toContainEqual(expect.objectContaining({ code: 'LAYOUT_PROBLEM', field: 'BLOCK_TOO_WIDE', blockId: 'qr' }));
   });
 
   it('refuses totals before the line table and a columns row wider than 12', async () => {

@@ -263,6 +263,18 @@ export function serviceDateValue(doc: SalesDocumentWithSnapshots): { label: stri
   return { label: label('meta.serviceDate'), value: label('meta.serviceDateIsIssueDate') };
 }
 
+/**
+ * Whether a document can carry a correct payment code once it has a number:
+ * an invoice in EUR, a sender with a name and an IBAN, a total the code can
+ * hold. The draft placeholder uses the same test, so it never promises a code
+ * the issued invoice would not print.
+ */
+function qrEligible(doc: SalesDocumentWithSnapshots, sender: SenderBlockV1 | null): sender is SenderBlockV1 & { iban: string } {
+  if (doc.docType !== 'invoice' || doc.currencyCode !== 'EUR' || !sender) return false;
+  if (!present(sender.iban) || !looksLikeIban(sender.iban) || !present(sender.legalName)) return false;
+  return doc.total >= 1 && doc.total <= QR_MAX_CENTS;
+}
+
 /** The most an EPC QR code may carry as the amount (EPC069-12: EUR 999999999.99). */
 const QR_MAX_CENTS = 99_999_999_999;
 
@@ -273,9 +285,7 @@ const QR_MAX_CENTS = 99_999_999_999;
  * IBAN, and a total from 0.01 to 999,999,999.99 EUR.
  */
 export function paymentQrData(doc: SalesDocumentWithSnapshots, sender: SenderBlockV1 | null, draft: boolean): PaymentQrData | null {
-  if (draft || doc.docType !== 'invoice' || doc.currencyCode !== 'EUR' || !sender || !present(sender.iban)) return null;
-  if (!looksLikeIban(sender.iban) || !present(sender.legalName)) return null;
-  if (doc.total < 1 || doc.total > QR_MAX_CENTS || !doc.documentNumber) return null;
+  if (draft || !doc.documentNumber || !qrEligible(doc, sender)) return null;
   return {
     beneficiaryName: toPdfText(sender.legalName ?? ''),
     iban: sender.iban,
@@ -385,6 +395,6 @@ export function buildRenderModel(input: RenderInput): RenderModel {
       ? senderColumnsOf(sender)
       : { identity: [], contact: [], legal: [], bank: [] },
     paymentQr: paymentQrData(doc, sender, draft),
-    paymentQrPending: draft && doc.docType === 'invoice' && doc.currencyCode === 'EUR' && present(sender?.iban) && looksLikeIban(sender!.iban!),
+    paymentQrPending: draft && qrEligible(doc, sender),
   };
 }

@@ -23,6 +23,8 @@ import postgres from 'postgres';
 import { assertTenantGroupId, migratePublic, provisionTenant, tenantSchema } from '@marlinjai/tenant-db';
 
 import { COMMERCE_TENANT_MIGRATIONS } from '../../commerce/migrations/tenant';
+import { templateProblems } from '../template/gate';
+import { parseTemplateDocument } from '../template/schema';
 import {
   commerceProvisionOptions,
   ensureCommerceTenant,
@@ -40,6 +42,7 @@ const BOOKS_TABLES = [
   'customer',
   'document_number_counter',
   'document_template',
+  'document_template_version',
   'sales_document',
   'sales_document_event',
   'sales_document_file',
@@ -102,7 +105,7 @@ function expectedPrivileges() {
   return Object.fromEntries(
     BOOKS_TABLES.map((t) => [
       t,
-      t === 'sales_document_event' || t === 'sales_document_file'
+      t === 'sales_document_event' || t === 'sales_document_file' || t === 'document_template_version'
         ? { sel: true, ins: true, upd: false, del: false }
         : t === 'document_number_counter'
           ? { sel: true, ins: true, upd: true, del: false }
@@ -114,7 +117,7 @@ function expectedPrivileges() {
 async function fleetMigrate(schema: string) {
   const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
   const mine = result.schemas.find((s) => s.schema === schema);
-  expect(mine?.applied).toEqual(['007_books', '008_books_files', '009_books_import', '010_books_upload_import', '011_books_replacement']);
+  expect(mine?.applied).toEqual(['007_books', '008_books_files', '009_books_import', '010_books_upload_import', '011_books_replacement', '012_books_template_v2']);
 }
 
 describe('007_books through the fleet runner', () => {
@@ -169,7 +172,7 @@ describe('007_books through the fleet runner', () => {
     const { tgId, schema } = await provisionAt006WithId();
     const first = await ensureCommerceTenant({ tenantGroupId: tgId, slug: `fleet-${tgId.slice(0, 8)}`, connectionString: ownerUrl });
     expect(first.provisioned).toBe(true);
-    expect(first.applied).toEqual(['007_books', '008_books_files', '009_books_import', '010_books_upload_import', '011_books_replacement']);
+    expect(first.applied).toEqual(['007_books', '008_books_files', '009_books_import', '010_books_upload_import', '011_books_replacement', '012_books_template_v2']);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     expect(await readCommerceTenantState(owner, tgId, schema)).toBe('ready');
     const second = await ensureCommerceTenant({ tenantGroupId: tgId, slug: `fleet-${tgId.slice(0, 8)}`, connectionString: ownerUrl });
@@ -207,7 +210,7 @@ describe('009_books_import over a schema already holding issued documents (as pr
     const before = await snapshot();
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['009_books_import', '010_books_upload_import', '011_books_replacement']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['009_books_import', '010_books_upload_import', '011_books_replacement', '012_books_template_v2']);
 
     expect(await snapshot()).toEqual(before);
     const [link] = await owner<{ replaces_document_id: string | null }[]>`SELECT replaces_document_id FROM ${s}.sales_document WHERE id = ${docId}`;
@@ -239,5 +242,78 @@ describe('009_books_import over a schema already holding issued documents (as pr
     expect(await code(owner`UPDATE ${s}.sales_document SET currency_code = 'CHF' WHERE id = ${draftId}`)).toBe('BK009');
     // The issued document itself: still frozen.
     expect(await code(owner`UPDATE ${s}.sales_document SET total = 1, subtotal = 1 WHERE id = ${docId}`)).toBe('BK001');
+  });
+});
+
+describe('012_books_template_v2 through the fleet runner', () => {
+  it('converts every existing template into its version 1, drops the old columns, and keeps versions append-only', async () => {
+    const tgId = assertTenantGroupId(randomUUID());
+    await provisionTenant(owner, {
+      ...commerceProvisionOptions(tgId, `tpl-${tgId.slice(0, 8)}`),
+      tenantMigrations: COMMERCE_TENANT_MIGRATIONS.filter((m) => m.id < '012'),
+    });
+    const schema = tenantSchema(tgId);
+    const s = owner(schema);
+    const tenantId = randomUUID();
+    const withAccent = randomUUID();
+    const plain = randomUUID();
+    await owner`INSERT INTO ${s}.document_template (id, tenant_id, name, is_default, accent_color, footer_blocks, updated_at)
+                VALUES (${withAccent}, ${tenantId}, 'Standard', true, '#2b4c7e',
+                        ${owner.json([{ heading: 'Hinweis', text: 'Synthetic small print A.' }, { text: 'Synthetic small print B.' }])}, now())`;
+    await owner`INSERT INTO ${s}.document_template (id, tenant_id, name, accent_color, footer_blocks, updated_at)
+                VALUES (${plain}, ${tenantId}, 'Plain', NULL, ${owner.json([{ unexpected: 1 }])}, now())`;
+
+    const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2']);
+
+    const columns = await owner<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns WHERE table_schema = ${schema} AND table_name = 'document_template' ORDER BY column_name`;
+    for (const gone of ['accent_color', 'footer_blocks', 'logo_file_id']) expect(columns.map((c) => c.column_name)).not.toContain(gone);
+
+    const rows = await owner<{ id: string; version: number; document: unknown; current: string; vid: string }[]>`
+      SELECT t.id, v.version, v.document, t.current_version_id AS current, v.id AS vid
+        FROM ${s}.document_template t JOIN ${s}.document_template_version v ON v.template_id = t.id
+       WHERE t.tenant_id = ${tenantId} ORDER BY t.name`;
+    expect(rows.map((r) => [r.version, r.current === r.vid])).toEqual([
+      [1, true],
+      [1, true],
+    ]);
+    const byId = new Map(rows.map((r) => [r.id, parseTemplateDocument(r.document)]));
+    const standard = byId.get(withAccent)!;
+    const plainDoc = byId.get(plain)!;
+    expect(standard.theme.accent).toBe('#2b4c7e');
+    expect(plainDoc.theme.accent).toBe('#333340');
+    expect(standard.regions.body.filter((b) => b.type === 'freeText').map((b) => b.type === 'freeText' && [b.heading, b.text, b.variant])).toEqual([
+      ['Hinweis', 'Synthetic small print A.', 'smallPrint'],
+      [null, 'Synthetic small print B.', 'smallPrint'],
+    ]);
+    expect(plainDoc.regions.body.some((b) => b.type === 'freeText')).toBe(false);
+    // The converted layouts are valid templates: the whole save gate passes on them.
+    expect(await templateProblems(standard)).toEqual([]);
+    expect(await templateProblems(plainDoc)).toEqual([]);
+
+    // Versions are append-only for every role.
+    const code = async (p: Promise<unknown>) => p.then(() => 'ok', (e: { code?: string }) => e.code);
+    expect(await code(owner`UPDATE ${s}.document_template_version SET version = 7 WHERE template_id = ${withAccent}`)).toBe('BK012');
+    expect(await code(owner`DELETE FROM ${s}.document_template_version WHERE template_id = ${withAccent}`)).toBe('BK012');
+    // A plain TRUNCATE is refused by the template table's key (0A000); with CASCADE it reaches the guard.
+    expect(await code(owner`TRUNCATE ${s}.document_template_version`)).toBe('0A000');
+    expect(await code(owner`TRUNCATE ${s}.document_template_version CASCADE`)).toBe('BK012');
+    const app = postgres(ownerUrl.replace('postgres@', 'commerce_app@'), { max: 1, prepare: false, onnotice: () => {} });
+    try {
+      expect(await code(app`UPDATE ${app(schema)}.document_template_version SET version = 7 WHERE template_id = ${withAccent}`)).toBe('42501');
+      expect(await code(app`DELETE FROM ${app(schema)}.document_template_version WHERE template_id = ${withAccent}`)).toBe('42501');
+      // The current version must be one of the template's own (checked at commit, the key is deferred).
+      const other = rows.find((r) => r.id === plain)!.vid;
+      expect(await code(app.begin((tx) => tx`UPDATE ${tx(schema)}.document_template SET current_version_id = ${other} WHERE id = ${withAccent}`))).toBe('23503');
+      // A version document must be a version 2 object.
+      expect(
+        await code(app`INSERT INTO ${app(schema)}.document_template_version (id, tenant_id, template_id, version, document)
+                       VALUES (${randomUUID()}, ${tenantId}, ${withAccent}, 2, ${app.json({ v: 1 })})`),
+      ).toBe('23514');
+    } finally {
+      await app.end();
+    }
+    expect(await privileges(schema)).toEqual(expectedPrivileges());
   });
 });

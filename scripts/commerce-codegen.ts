@@ -83,11 +83,11 @@ const EXTRA_TYPES =
 /** The TypeScript shape of every JSONB column (read parsed, written through toJsonb). */
 const JSON_COLUMNS: Record<string, string> = {
   'books_company_settings.sender_block': 'SenderBlockV1',
-  'document_template.footer_blocks': 'FooterBlocks',
+  'document_template_version.document': 'TemplateDocumentV2',
   'sales_document.tax_summary': 'TaxSummary',
   'sales_document.customer_snapshot': 'CustomerSnapshotV1',
   'sales_document.sender_snapshot': 'SenderSnapshotV1',
-  'sales_document.template_snapshot': 'TemplateSnapshotV1',
+  'sales_document.template_snapshot': 'TemplateSnapshot',
   'sales_document_event.payload': 'EventPayload',
   // 010_books_upload_import: parsed with zod on read (src/server/books/upload/staging.ts).
   'historical_import_item.extracted': 'Record<string, unknown>',
@@ -96,7 +96,7 @@ const JSON_COLUMNS: Record<string, string> = {
 };
 
 /** The type-only imports the JSON shapes need. */
-const JSON_IMPORTS = "import type {\n  CustomerSnapshotV1,\n  EventPayload,\n  FooterBlocks,\n  SenderBlockV1,\n  SenderSnapshotV1,\n  TaxSummary,\n  TemplateSnapshotV1,\n} from '../books/snapshots';";
+const JSON_IMPORTS = "import type {\n  CustomerSnapshotV1,\n  EventPayload,\n  SenderBlockV1,\n  SenderSnapshotV1,\n  TaxSummary,\n  TemplateDocumentV2,\n  TemplateSnapshot,\n} from '../books/snapshots';";
 
 /** One doc comment per table (a table without one fails the run). */
 const TABLE_DOCS: Record<string, string> = {
@@ -132,7 +132,10 @@ const TABLE_DOCS: Record<string, string> = {
     '007_books: one row per company and document type, the only source of\ndocument numbers. `next_value` is BIGINT (read as a string).',
   customer:
     '007_books: the tax fields of a recipient; name and address live in the shared\ncontacts database (`contact_id`).',
-  document_template: '007_books: document layout (rendered from in phase 3).',
+  document_template:
+    '007_books (+ 012 versions): a document template: name, default flag, locale,\nthe default texts of a new draft, and its current version. Archived, never\ndeleted, once it has a version.',
+  document_template_version:
+    '012_books_template_v2: one saved version of a template (the template model\nversion 2 document), append-only (no updated_at).',
   sales_document:
     '007_books (+ 008 template_snapshot, 011 replaces_document_id): offer,\ninvoice and credit note. DATE columns are written and read as `YYYY-MM-DD`\ntext (select them through the Books column lists, never selectAll);\n`number_value` is BIGINT (read as a string). Frozen after issue by the\nsales_document_guard trigger.',
   sales_document_line:
