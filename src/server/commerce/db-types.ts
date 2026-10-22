@@ -42,11 +42,11 @@ import type { GlobalKey, TenantKey } from '@marlinjai/tenant-db';
 import type {
   CustomerSnapshotV1,
   EventPayload,
-  FooterBlocks,
   SenderBlockV1,
   SenderSnapshotV1,
   TaxSummary,
-  TemplateSnapshotV1,
+  TemplateDocumentV2,
+  TemplateSnapshot,
 } from '../books/snapshots';
 
 // --- scalar aliases ------------------------------------------------------------
@@ -441,20 +441,23 @@ export interface CustomerTable {
   updated_at: Timestamp;
 }
 
-/** 007_books: document layout (rendered from in phase 3). */
+/**
+ * 007_books (+ 012 versions): a document template: name, default flag, locale,
+ * the default texts of a new draft, and its current version. Archived, never
+ * deleted, once it has a version.
+ */
 export interface DocumentTemplateTable {
   id: string;
   tenant_id: string;
   name: string;
   is_default: Generated<boolean>;
   locale: Generated<string>;
-  logo_file_id: string | null;
-  accent_color: string | null;
-  footer_blocks: Generated<JsonColumn<FooterBlocks>>;
   default_intro_text: string | null;
   default_outro_text: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
+  archived_at: Timestamp | null;
+  current_version_id: string;
 }
 
 /**
@@ -507,8 +510,9 @@ export interface SalesDocumentTable {
   issued_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
-  template_snapshot: JsonColumn<TemplateSnapshotV1> | null;
+  template_snapshot: JsonColumn<TemplateSnapshot> | null;
   replaces_document_id: string | null;
+  print_replaces_reference: Generated<boolean>;
 }
 
 /**
@@ -615,6 +619,20 @@ export interface HistoricalImportExtractionTable {
   output_tokens: Generated<number>;
 }
 
+/**
+ * 012_books_template_v2: one saved version of a template (the template model
+ * version 2 document), append-only (no updated_at).
+ */
+export interface DocumentTemplateVersionTable {
+  id: string;
+  tenant_id: string;
+  template_id: string;
+  version: number;
+  document: JsonColumn<TemplateDocumentV2>;
+  created_by: string | null;
+  created_at: Generated<Timestamp>;
+}
+
 // =============================================================================
 // The Database interface. GLOBAL keys are `public.`-qualified; tenant tables
 // are BARE. The two namespaces are disjoint by construction.
@@ -654,6 +672,7 @@ export interface CommerceDB {
   sales_document_file: SalesDocumentFileTable;
   historical_import_item: HistoricalImportItemTable;
   historical_import_extraction: HistoricalImportExtractionTable;
+  document_template_version: DocumentTemplateVersionTable;
 }
 
 // --- compile-time discipline guards (the package's brand types) --------------

@@ -50,3 +50,4 @@ docs-dist/
 
 # esbuild output of scripts/commerce-migrate.ts (pnpm build:boot), built in the image
 dist-boot/
+dist-bench/

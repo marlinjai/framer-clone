@@ -7,6 +7,8 @@
 // replaces such characters with "?" (`previewSafe`), and says so by being a draft.
 
 import { BooksError } from '../errors';
+import { templateTexts } from '../template/rules';
+import type { Block, CellBlock, TemplateDocumentV2 } from '../template/schema';
 import { undrawable } from './fonts';
 import type { RenderInput, RenderModel } from './model';
 
@@ -48,16 +50,17 @@ function printedFields(input: RenderInput): Array<[string, string | null | undef
   return fields;
 }
 
-/** The fields with undrawable characters (names only, never the values). */
-export function undrawableFields(input: RenderInput): string[] {
-  return printedFields(input)
+/** The fields with undrawable characters (names only, never the values), the template's own texts included. */
+export function undrawableFields(input: RenderInput, template?: TemplateDocumentV2 | null): string[] {
+  const own: Array<[string, string]> = template ? templateTexts(template).map((t) => [`template.${t.blockId}.${t.field}`, t.text]) : [];
+  return [...printedFields(input), ...own]
     .filter(([, v]) => typeof v === 'string' && undrawable(v).length > 0)
     .map(([f]) => f);
 }
 
 /** Refuse a document of record that would not print as written. */
-export function assertDrawable(input: RenderInput): void {
-  const fields = undrawableFields(input);
+export function assertDrawable(input: RenderInput, template?: TemplateDocumentV2 | null): void {
+  const fields = undrawableFields(input, template);
   if (fields.length > 0) {
     throw new BooksError(
       'UNDRAWABLE_TEXT',
@@ -89,5 +92,38 @@ export function previewSafe(model: RenderModel): RenderModel {
     outro: model.outro && t(model.outro),
     smallPrint: model.smallPrint.map((b) => ({ heading: b.heading && t(b.heading), text: t(b.text) })),
     footer: model.footer.map((col) => col.map(t)),
+    shortTitle: t(model.shortTitle),
+    metaItems: Object.fromEntries(
+      Object.entries(model.metaItems).map(([k, v]) => [k, v ? { label: v.label, value: t(v.value) } : null]),
+    ) as RenderModel['metaItems'],
+    senderColumns: {
+      identity: model.senderColumns.identity.map(t),
+      contact: model.senderColumns.contact.map(t),
+      legal: model.senderColumns.legal.map(t),
+      bank: model.senderColumns.bank.map(t),
+    },
+  };
+}
+
+/** A preview's template with undrawable characters in its own texts shown as "?" (never for a document of record). */
+export function previewSafeTemplate(doc: TemplateDocumentV2): TemplateDocumentV2 {
+  const t = replaceUndrawable;
+  const fix = <B extends Block | CellBlock>(b: B): B => {
+    if (b.type === 'freeText') return { ...b, heading: b.heading && t(b.heading), text: t(b.text) };
+    if (b.type === 'paymentDetails') return { ...b, heading: b.heading && t(b.heading) };
+    if (b.type === 'paymentQr') return { ...b, caption: t(b.caption) };
+    if (b.type === 'columns') return { ...b, cells: b.cells.map((c) => ({ ...c, blocks: c.blocks.map(fix) })) };
+    return b;
+  };
+  const r = doc.regions;
+  return {
+    ...doc,
+    regions: {
+      firstPageHeader: r.firstPageHeader.map(fix),
+      addressZone: { left: r.addressZone.left.map(fix), right: r.addressZone.right.map(fix) },
+      body: r.body.map(fix),
+      followingPageHeader: r.followingPageHeader.map(fix),
+      footer: r.footer.map(fix),
+    },
   };
 }

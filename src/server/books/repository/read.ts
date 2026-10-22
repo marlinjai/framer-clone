@@ -33,13 +33,13 @@ import { documentTaxFields, profileFor, recomputeLines, selectCustomerRow } from
 import type { BooksScope } from '../scope';
 import {
   customerSnapshotV1Schema,
-  templateSnapshotV1Schema,
+  templateSnapshotSchema,
   senderSnapshotV1Schema,
   taxSummarySchema,
   type CustomerSnapshotV1,
   type EventPayload,
   type SenderSnapshotV1,
-  type TemplateSnapshotV1,
+  type TemplateSnapshot,
   type TaxSummary,
 } from '../snapshots';
 
@@ -60,6 +60,8 @@ export interface SalesDocument {
   correctsDocumentId: string | null;
   /** The issued invoice this invoice replaces (the Correct flow, 011_books_replacement). */
   replacesDocumentId: string | null;
+  /** A replacement prints "Ersetzt Rechnung 62 vom 14.10.2026" under its title. */
+  printReplacesReference: boolean;
   sourceOrderId: string | null;
   documentNumber: string | null;
   numberValue: number | null;
@@ -97,7 +99,7 @@ export interface SalesDocument {
 export interface SalesDocumentWithSnapshots extends SalesDocument {
   customerSnapshot: CustomerSnapshotV1 | null;
   /** The template layout frozen at issue (null on a draft, and on documents issued before 008). */
-  templateSnapshot: TemplateSnapshotV1 | null;
+  templateSnapshot: TemplateSnapshot | null;
   senderSnapshot: SenderSnapshotV1 | null;
 }
 
@@ -190,6 +192,7 @@ export type DocumentRow = {
   template_id: string | null;
   corrects_document_id: string | null;
   replaces_document_id: string | null;
+  print_replaces_reference: boolean;
   source_order_id: string | null;
   document_number: string | null;
   number_value: string | null;
@@ -226,7 +229,7 @@ export type DocumentRow = {
 export type DocumentRowWithSnapshots = DocumentRow & {
   customer_snapshot: CustomerSnapshotV1 | null;
   sender_snapshot: SenderSnapshotV1 | null;
-  template_snapshot: TemplateSnapshotV1 | null;
+  template_snapshot: TemplateSnapshot | null;
 };
 
 export function mapDocument(row: DocumentRow): SalesDocument {
@@ -241,6 +244,7 @@ export function mapDocument(row: DocumentRow): SalesDocument {
     templateId: row.template_id,
     correctsDocumentId: row.corrects_document_id,
     replacesDocumentId: row.replaces_document_id,
+    printReplacesReference: row.print_replaces_reference,
     sourceOrderId: row.source_order_id,
     documentNumber: row.document_number,
     numberValue: row.number_value === null ? null : Number(row.number_value),
@@ -281,7 +285,7 @@ export function mapDocumentWithSnapshots(row: DocumentRowWithSnapshots): SalesDo
     customerSnapshot: row.customer_snapshot === null ? null : customerSnapshotV1Schema.parse(row.customer_snapshot),
     senderSnapshot: row.sender_snapshot === null ? null : senderSnapshotV1Schema.parse(row.sender_snapshot),
     templateSnapshot:
-      row.template_snapshot == null ? null : templateSnapshotV1Schema.parse(row.template_snapshot),
+      row.template_snapshot == null ? null : templateSnapshotSchema.parse(row.template_snapshot),
   };
 }
 

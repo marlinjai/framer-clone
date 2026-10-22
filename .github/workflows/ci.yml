@@ -88,6 +88,12 @@ jobs:
       - name: Integration tests
         run: pnpm test:integration
 
+      # db-types.ts is generated from the live tenant DDL (scripts/commerce-codegen.ts).
+      # A hand edit, or a migration without a regenerated file, fails here: it drifted
+      # once (010) before this check existed.
+      - name: Database types match the migrations
+        run: pnpm db:codegen-commerce && git diff --exit-code src/server/commerce/db-types.ts
+
   docker-build:
     name: docker-build
     runs-on: ubuntu-latest

@@ -68,6 +68,7 @@ export interface DocumentView {
   correctsDocumentId: string | null;
   /** The issued invoice this draft or invoice replaces (the Correct flow). */
   replacesDocumentId: string | null;
+  printReplacesReference: boolean;
   documentNumber: string | null;
   issueDate: string | null;
   serviceDate: string | null;
@@ -134,7 +135,12 @@ export interface TemplateView {
   id: string;
   name: string;
   isDefault: boolean;
-  accentColor: string | null;
+  /** The current version (the composer of phase 4 edits its document). */
+  currentVersionId: string;
+  version: number;
+  document: unknown;
+  /** The current version's accent colour and small print, as the templates form edits them. */
+  accentColor: string;
   footerBlocks: Array<{ heading?: string | null; text: string }>;
   defaultIntroText: string | null;
   defaultOutroText: string | null;
@@ -173,7 +179,8 @@ const MESSAGES: Record<string, string> = {
   sender_incomplete: 'The company’s sender details are incomplete (name, address and a tax number are required).',
   duplicate_customer: 'This contact is already a customer.',
   duplicate_contact: 'A contact with this name already exists. Search for it instead.',
-  template_in_use: 'Documents use this template, so it cannot be deleted.',
+  template_in_use: 'Drafts use this template, so it cannot be removed. Issue or delete those drafts, or give them another template, first.',
+  template_invalid: 'The template cannot be saved:',
   render_incomplete: 'The PDF would be missing a required field; nothing was issued or stored.',
   undrawable_text: 'Some characters cannot be printed in the invoice font. Change these fields; nothing was issued.',
   tax_case_unsupported: 'Invoices to recipients outside the EU are not supported yet under regular taxation.',
@@ -232,7 +239,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     const err = (json as { error?: { code?: string; message?: string; [k: string]: unknown } } | null)?.error;
     const code = err?.code ?? `http_${res.status}`;
     const named = Array.isArray(err?.missing) ? err!.missing : Array.isArray(err?.fields) ? err!.fields : null;
-    const missing = named ? ` (${(named as string[]).join(', ')})` : '';
+    const problems = Array.isArray(err?.problems)
+      ? (err!.problems as Array<{ message?: unknown }>).map((p) => (typeof p.message === 'string' ? p.message : '')).filter(Boolean)
+      : null;
+    const missing = problems ? ` ${problems.join('; ')}.` : named ? ` (${(named as string[]).join(', ')})` : '';
     throw new BooksApiError(
       res.status,
       code,

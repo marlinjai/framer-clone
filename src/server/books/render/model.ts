@@ -19,9 +19,17 @@
 // never stored and never a document of record.
 
 import type { SalesDocumentLine, SalesDocumentWithSnapshots } from '../repository/read';
-import type { FooterBlock } from '../repository/templates';
 import type { SenderBlockV1 } from '../snapshots';
+import { label } from '../template/labels';
+import type { MetaItem, SenderColumn } from '../template/schema';
+import { looksLikeIban } from './epcQr';
 import { formatDate, formatMoney, formatQuantity, formatRate, postalCity, toPdfText } from './format';
+
+/** A small-print block of a version 1 template (heading and text). */
+export interface FooterBlockV1 {
+  heading?: string | null;
+  text: string;
+}
 
 export interface RenderRecipient {
   name: string;
@@ -44,7 +52,20 @@ export interface RenderInput {
   recipient: RenderRecipient | null;
   /** For a credit note: the invoice it cancels. */
   corrects: { documentNumber: string; issueDate: string } | null;
-  template: { accentColor: string | null; footerBlocks: FooterBlock[] } | null;
+  /** For a replacement that prints its reference line: the invoice it replaces. */
+  replaces?: { documentNumber: string; issueDate: string } | null;
+  /** The version 1 template's layout (accent colour, small print); the layout engine takes its template separately. */
+  template: { accentColor: string | null; footerBlocks: FooterBlockV1[] } | null;
+}
+
+/** What an EPC QR payment code needs, frozen from the document (null when the document carries none). */
+export interface PaymentQrData {
+  beneficiaryName: string;
+  iban: string;
+  bic: string | null;
+  amountCents: number;
+  currency: string;
+  reference: string;
 }
 
 export interface ModelLine {
@@ -79,6 +100,19 @@ export interface RenderModel {
   footer: string[][];
   pdfTitle: string;
   pdfDate: Date;
+  // The layout engine's view (render/engine): the same strings, keyed by what they are.
+  /** The document type (the engine prints no payment code on a credit note). */
+  docType: string;
+  /** The title without the draft suffix and the number ("Rechnung 62"), for a following page's header. */
+  shortTitle: string;
+  /** The document data by item; null when the document has none (no customer number, no contract). */
+  metaItems: Record<MetaItem, { label: string; value: string } | null>;
+  /** The sender footer by column (empty lists when the column has nothing to print). */
+  senderColumns: Record<SenderColumn, string[]>;
+  /** The data of an EPC QR payment code, or null when no correct code can be printed (decision 17). */
+  paymentQr: PaymentQrData | null;
+  /** A draft invoice that will carry a payment code once issued: the engine draws a placeholder. */
+  paymentQrPending: boolean;
 }
 
 /** German names of the countries a recipient is most likely in; anything else prints its code. */
@@ -119,18 +153,18 @@ export function recipientLines(r: RenderRecipient, senderCountry: string | null 
 /** The sender's tax identification lines (section 14 (4) no. 2 UStG, section 34a UStDV). */
 export function senderTaxLines(s: SenderBlockV1): string[] {
   const out: string[] = [];
-  if (present(s.taxNumber)) out.push(`Steuernummer: ${s.taxNumber}`);
-  if (present(s.vatId)) out.push(`USt-IdNr.: ${s.vatId}`);
-  if (present(s.smallBusinessId)) out.push(`Kleinunternehmer-ID: ${s.smallBusinessId}`);
+  if (present(s.taxNumber)) out.push(`${label('sender.taxNumber')} ${s.taxNumber}`);
+  if (present(s.vatId)) out.push(`${label('sender.vatId')} ${s.vatId}`);
+  if (present(s.smallBusinessId)) out.push(`${label('sender.smallBusinessId')} ${s.smallBusinessId}`);
   return out.map(toPdfText);
 }
 
-/** The footer columns: identity, contact, tax and register, bank. Empty columns are left out. */
-export function footerColumns(s: SenderBlockV1): string[][] {
+/** The sender footer by column: identity, contact, tax and register, bank (each possibly empty). */
+export function senderColumnsOf(s: SenderBlockV1): Record<SenderColumn, string[]> {
   const identity = [s.legalName, s.addressLine1, s.addressLine2, postalCity(s.postalCode, s.city)];
   const contact = [
-    present(s.phone) ? `Telefon: ${s.phone}` : null,
-    present(s.email) ? `E-Mail: ${s.email}` : null,
+    present(s.phone) ? `${label('sender.phone')} ${s.phone}` : null,
+    present(s.email) ? `${label('sender.email')} ${s.email}` : null,
     present(s.website) ? s.website : null,
   ];
   const legal = [
@@ -138,16 +172,21 @@ export function footerColumns(s: SenderBlockV1): string[][] {
     present(s.registerCourt) || present(s.registerNumber)
       ? `${s.registerCourt ?? ''} ${s.registerNumber ?? ''}`.trim()
       : null,
-    present(s.managingDirector) ? `Geschäftsführung: ${s.managingDirector}` : null,
+    present(s.managingDirector) ? `${label('sender.managingDirector')} ${s.managingDirector}` : null,
   ];
   const bank = [
     s.bankName,
     present(s.iban) ? `IBAN: ${s.iban}` : null,
     present(s.bic) ? `BIC: ${s.bic}` : null,
   ];
-  return [identity, contact, legal, bank]
-    .map((col) => col.filter(present).map(toPdfText))
-    .filter((col) => col.length > 0);
+  const clean = (col: Array<string | null | undefined>) => col.filter(present).map(toPdfText);
+  return { identity: clean(identity), contact: clean(contact), legal: clean(legal), bank: clean(bank) };
+}
+
+/** The footer columns: identity, contact, tax and register, bank. Empty columns are left out. */
+export function footerColumns(s: SenderBlockV1): string[][] {
+  const c = senderColumnsOf(s);
+  return [c.identity, c.contact, c.legal, c.bank].filter((col) => col.length > 0);
 }
 
 /** The sign a document's amounts are printed with: a credit note offsets, so its amounts print negative. */
@@ -172,7 +211,7 @@ function modelLines(doc: SalesDocumentWithSnapshots, lines: SalesDocumentLine[])
         return { pos: '', title: toPdfText(l.title), details, quantity: '', unit: '', unitPrice: '', rate: '', amount: '', text: true };
       }
       n += 1;
-      if (l.discountBp > 0) details.push(`abzüglich ${formatRate(l.discountBp)} Rabatt`);
+      if (l.discountBp > 0) details.push(`${label('table.discountPrefix')} ${formatRate(l.discountBp)} ${label('table.discount')}`);
       return {
         pos: String(n),
         title: toPdfText(l.title),
@@ -190,37 +229,79 @@ function modelLines(doc: SalesDocumentWithSnapshots, lines: SalesDocumentLine[])
 function modelTotals(doc: SalesDocumentWithSnapshots): RenderModel['totals'] {
   const sign = amountSign(doc.docType);
   const money = (c: number) => formatMoney(sign * c, doc.currencyCode);
-  if (doc.kleinunternehmer) return [{ label: 'Gesamtbetrag', value: money(doc.total), strong: true }];
+  if (doc.kleinunternehmer) return [{ label: label('totals.total'), value: money(doc.total), strong: true }];
   const out: RenderModel['totals'] = [];
   for (const g of doc.taxSummary) {
-    const rc = g.taxTreatment === 'reverse_charge' ? ' (Reverse Charge)' : '';
-    out.push({ label: `Nettobetrag zu ${formatRate(g.taxRate)}${rc}`, value: money(g.net), strong: false });
-    out.push({ label: `Umsatzsteuer ${formatRate(g.taxRate)}`, value: money(g.tax), strong: false });
+    const rc = g.taxTreatment === 'reverse_charge' ? label('totals.reverseChargeSuffix') : '';
+    out.push({ label: `${label('totals.netAt')} ${formatRate(g.taxRate)}${rc}`, value: money(g.net), strong: false });
+    out.push({ label: `${label('totals.vatAt')} ${formatRate(g.taxRate)}`, value: money(g.tax), strong: false });
   }
-  out.push({ label: 'Summe netto', value: money(doc.subtotal), strong: false });
-  out.push({ label: 'Summe Umsatzsteuer', value: money(doc.taxAmount), strong: false });
-  out.push({ label: 'Gesamtbetrag', value: money(doc.total), strong: true });
+  out.push({ label: label('totals.sumNet'), value: money(doc.subtotal), strong: false });
+  out.push({ label: label('totals.sumVat'), value: money(doc.taxAmount), strong: false });
+  out.push({ label: label('totals.total'), value: money(doc.total), strong: true });
   return out;
 }
 
-const TITLES: Record<string, string> = { invoice: 'Rechnung', credit_note: 'Gutschrift (Stornorechnung)', offer: 'Angebot' };
+/** The title of a document type. */
+export function titleOf(docType: string): string {
+  return docType === 'invoice'
+    ? label('title.invoice')
+    : docType === 'credit_note'
+      ? label('title.creditNote')
+      : docType === 'offer'
+        ? label('title.offer')
+        : label('title.other');
+}
 
 /** The service date line (section 14 (4) no. 6 UStG); a missing date means the issue date. */
 export function serviceDateValue(doc: SalesDocumentWithSnapshots): { label: string; value: string } {
   if (doc.servicePeriodStart && doc.servicePeriodEnd) {
     return {
-      label: 'Leistungszeitraum',
-      value: `${formatDate(doc.servicePeriodStart)} bis ${formatDate(doc.servicePeriodEnd)}`,
+      label: label('meta.servicePeriod'),
+      value: `${formatDate(doc.servicePeriodStart)}${label('meta.servicePeriodJoin')}${formatDate(doc.servicePeriodEnd)}`,
     };
   }
-  if (doc.serviceDate) return { label: 'Leistungsdatum', value: formatDate(doc.serviceDate) };
-  return { label: 'Leistungsdatum', value: 'entspricht dem Rechnungsdatum' };
+  if (doc.serviceDate) return { label: label('meta.serviceDate'), value: formatDate(doc.serviceDate) };
+  return { label: label('meta.serviceDate'), value: label('meta.serviceDateIsIssueDate') };
+}
+
+/**
+ * Whether a document can carry a correct payment code once it has a number:
+ * an invoice in EUR, a sender with a name and an IBAN, a total the code can
+ * hold. The draft placeholder uses the same test, so it never promises a code
+ * the issued invoice would not print.
+ */
+function qrEligible(doc: SalesDocumentWithSnapshots, sender: SenderBlockV1 | null): sender is SenderBlockV1 & { iban: string } {
+  if (doc.docType !== 'invoice' || doc.currencyCode !== 'EUR' || !sender) return false;
+  if (!present(sender.iban) || !looksLikeIban(sender.iban) || !present(sender.legalName)) return false;
+  return doc.total >= 1 && doc.total <= QR_MAX_CENTS;
+}
+
+/** The most an EPC QR code may carry as the amount (EPC069-12: EUR 999999999.99). */
+const QR_MAX_CENTS = 99_999_999_999;
+
+/**
+ * The data of an EPC QR payment code (decision 17), or null when no correct
+ * code can be printed: only an issued invoice (never a credit note, never a
+ * draft: a draft has no number for the reference) in EUR, with the sender's
+ * IBAN, and a total from 0.01 to 999,999,999.99 EUR.
+ */
+export function paymentQrData(doc: SalesDocumentWithSnapshots, sender: SenderBlockV1 | null, draft: boolean): PaymentQrData | null {
+  if (draft || !doc.documentNumber || !qrEligible(doc, sender)) return null;
+  return {
+    beneficiaryName: toPdfText(sender.legalName ?? ''),
+    iban: sender.iban,
+    bic: present(sender.bic) ? sender.bic : null,
+    amountCents: doc.total,
+    currency: 'EUR',
+    reference: present(doc.paymentReference) ? toPdfText(doc.paymentReference) : `${label('title.invoice')} ${doc.documentNumber}`,
+  };
 }
 
 /** Build the render model (pure; see the file header for what an issued document may read). */
 export function buildRenderModel(input: RenderInput): RenderModel {
   const { document: doc, sender, recipient, draft } = input;
-  const title = TITLES[doc.docType] ?? 'Dokument';
+  const title = titleOf(doc.docType);
 
   const senderLine = sender
     ? [sender.legalName, sender.addressLine1, postalCity(sender.postalCode, sender.city)]
@@ -229,23 +310,38 @@ export function buildRenderModel(input: RenderInput): RenderModel {
         .join(' · ')
     : '';
 
-  const meta: RenderModel['meta'] = [];
-  const numberLabel = doc.docType === 'credit_note' ? 'Gutschriftsnummer' : 'Rechnungsnummer';
-  meta.push({ label: numberLabel, value: doc.documentNumber ?? 'wird bei Ausstellung vergeben' });
-  meta.push({
-    label: doc.docType === 'credit_note' ? 'Datum' : 'Rechnungsdatum',
-    value: doc.issueDate ? formatDate(doc.issueDate) : 'wird bei Ausstellung gesetzt',
-  });
-  meta.push(serviceDateValue(doc));
-  if (recipient?.customerNumber != null) meta.push({ label: 'Kundennummer', value: String(recipient.customerNumber) });
-  if (present(doc.contractReference)) meta.push({ label: 'Vertrag', value: toPdfText(doc.contractReference) });
-  if (doc.reverseCharge && present(recipient?.vatId)) {
-    meta.push({ label: 'USt-IdNr. Leistungsempfänger', value: toPdfText(recipient!.vatId!) });
-  }
+  const isCredit = doc.docType === 'credit_note';
+  const metaItems: RenderModel['metaItems'] = {
+    number: {
+      label: label(isCredit ? 'meta.creditNoteNumber' : 'meta.invoiceNumber'),
+      value: doc.documentNumber ?? label('meta.numberPending'),
+    },
+    issueDate: {
+      label: label(isCredit ? 'meta.creditNoteDate' : 'meta.invoiceDate'),
+      value: doc.issueDate ? formatDate(doc.issueDate) : label('meta.datePending'),
+    },
+    serviceDate: serviceDateValue(doc),
+    customerNumber: recipient?.customerNumber != null ? { label: label('meta.customerNumber'), value: String(recipient.customerNumber) } : null,
+    contract: present(doc.contractReference) ? { label: label('meta.contract'), value: toPdfText(doc.contractReference) } : null,
+    recipientVatId:
+      doc.reverseCharge && present(recipient?.vatId) ? { label: label('meta.recipientVatId'), value: toPdfText(recipient!.vatId!) } : null,
+    dueDate: doc.docType === 'invoice' && doc.dueDate ? { label: label('meta.dueDate'), value: formatDate(doc.dueDate) } : null,
+  };
+  // The version 1 order (the frozen renderer prints exactly these, never the due date).
+  const meta: RenderModel['meta'] = [
+    metaItems.number!,
+    metaItems.issueDate!,
+    metaItems.serviceDate!,
+    ...(metaItems.customerNumber ? [metaItems.customerNumber] : []),
+    ...(metaItems.contract ? [metaItems.contract] : []),
+    ...(metaItems.recipientVatId ? [metaItems.recipientVatId] : []),
+  ];
 
   const reference = input.corrects
-    ? `Storno der Rechnung ${toPdfText(input.corrects.documentNumber)} vom ${formatDate(input.corrects.issueDate)}`
-    : null;
+    ? `${label('reference.cancels')} ${toPdfText(input.corrects.documentNumber)} ${label('reference.of')} ${formatDate(input.corrects.issueDate)}`
+    : input.replaces
+      ? `${label('reference.replaces')} ${toPdfText(input.replaces.documentNumber)} ${label('reference.of')} ${formatDate(input.replaces.issueDate)}`
+      : null;
 
   const notes: string[] = [];
   if (present(doc.taxNote)) notes.push(toPdfText(doc.taxNote));
@@ -253,11 +349,11 @@ export function buildRenderModel(input: RenderInput): RenderModel {
   const payment: string[] = [];
   if (doc.docType === 'invoice') {
     if (doc.dueDate) {
-      payment.push(`Bitte überweisen Sie den Gesamtbetrag bis zum ${formatDate(doc.dueDate)}.`);
+      payment.push(`${label('payment.dueBy')} ${formatDate(doc.dueDate)}.`);
     } else {
-      payment.push(`Zahlbar innerhalb von ${doc.paymentTermsDays} Tagen nach Rechnungsdatum.`);
+      payment.push(`${label('payment.termsPrefix')} ${doc.paymentTermsDays} ${label('payment.termsSuffix')}`);
     }
-    if (present(doc.paymentReference)) payment.push(`Verwendungszweck: ${toPdfText(doc.paymentReference)}`);
+    if (present(doc.paymentReference)) payment.push(`${label('payment.reference')} ${toPdfText(doc.paymentReference)}`);
     if (sender && present(sender.iban)) {
       payment.push(
         [present(sender.bankName) ? sender.bankName : null, `IBAN ${sender.iban}`, present(sender.bic) ? `BIC ${sender.bic}` : null]
@@ -268,11 +364,11 @@ export function buildRenderModel(input: RenderInput): RenderModel {
     }
   }
 
-  const amountHeader = doc.netOrGross === 'gross' && !doc.kleinunternehmer ? 'Betrag (brutto)' : 'Betrag';
+  const amountHeader = doc.netOrGross === 'gross' && !doc.kleinunternehmer ? label('table.amountGross') : label('table.amount');
 
   return {
     draft,
-    title: draft ? `${title} (Entwurf)` : title,
+    title: draft ? `${title}${label('title.draftSuffix')}` : title,
     accentColor: input.template?.accentColor ?? null,
     senderLine,
     recipientBlock: recipient ? recipientLines(recipient, sender?.countryCode) : [],
@@ -291,8 +387,18 @@ export function buildRenderModel(input: RenderInput): RenderModel {
       text: toPdfText(b.text),
     })),
     footer: sender ? footerColumns(sender) : [],
-    pdfTitle: toPdfText(`${title} ${doc.documentNumber ?? 'Entwurf'}`),
+    pdfTitle: toPdfText(`${title} ${doc.documentNumber ?? label('title.draftNumber')}`),
     // Fixed per document, so a re-render writes the same metadata bytes.
     pdfDate: doc.issuedAt ?? new Date(Date.UTC(2000, 0, 1)),
+    docType: doc.docType,
+    shortTitle: toPdfText(doc.documentNumber ? `${title} ${doc.documentNumber}` : `${title}${label('title.draftSuffix')}`),
+    metaItems: Object.fromEntries(
+      Object.entries(metaItems).map(([k, v]) => [k, v ? { label: v.label, value: toPdfText(v.value) } : null]),
+    ) as RenderModel['metaItems'],
+    senderColumns: sender
+      ? senderColumnsOf(sender)
+      : { identity: [], contact: [], legal: [], bank: [] },
+    paymentQr: paymentQrData(doc, sender, draft),
+    paymentQrPending: draft && qrEligible(doc, sender),
   };
 }

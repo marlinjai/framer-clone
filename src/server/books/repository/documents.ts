@@ -91,6 +91,7 @@ export interface DraftPatch {
   outro_text?: string | null;
   /** Only ever set to null: a replacement draft becomes an ordinary invoice (the Correct flow). */
   replaces_document_id?: null;
+  print_replaces_reference?: boolean;
 }
 
 /**
@@ -142,13 +143,17 @@ export async function finishDraftMutation(
   return profile.key;
 }
 
-/** A template of the company (INVALID_INPUT when it does not exist for it). */
+/** A live (not archived) template of the company (INVALID_INPUT when it does not exist for it). */
 async function assertTemplate(trx: Transaction<CommerceDB>, scope: BooksScope, templateId: string): Promise<void> {
   const t = await trx
     .selectFrom('document_template')
     .select('id')
     .where('tenant_id', '=', scope.tenantId)
     .where('id', '=', templateId)
+    .where('archived_at', 'is', null)
+    // Shared lock: an archive running at the same moment waits for this draft or is seen by it
+    // (read committed re-checks archived_at after the wait), so no draft lands on an archived template.
+    .forShare()
     .executeTakeFirst();
   if (!t) throw invalid('INVALID_INPUT', [{ path: ['templateId'], message: 'no such template for this company' }]);
 }
@@ -257,6 +262,8 @@ const updateInput = z
     // invoice (the link is never set through this route, only by
     // startCorrection).
     replacesDocumentId: z.null().optional(),
+    // A replacement's optional line "Ersetzt Rechnung 62 vom 14.10.2026" under its title.
+    printReplacesReference: z.boolean().optional(),
   })
   .strict();
 export type UpdateDraftInput = z.input<typeof updateInput>;
@@ -282,7 +289,17 @@ export async function updateDraft(scope: BooksScope, id: string, input: UpdateDr
     if (args.contractReference !== undefined) patch.contract_reference = args.contractReference;
     if (args.introText !== undefined) patch.intro_text = args.introText;
     if (args.outroText !== undefined) patch.outro_text = args.outroText;
-    if (args.replacesDocumentId === null) patch.replaces_document_id = null;
+    if (args.printReplacesReference !== undefined) {
+      if (args.printReplacesReference && (args.replacesDocumentId === null || !row.replaces_document_id)) {
+        throw invalid('INVALID_INPUT', [{ path: ['printReplacesReference'], message: 'only a replacement draft prints the replaced invoice' }]);
+      }
+      patch.print_replaces_reference = args.printReplacesReference;
+    }
+    if (args.replacesDocumentId === null) {
+      // An ordinary invoice has nothing to refer to.
+      patch.replaces_document_id = null;
+      patch.print_replaces_reference = false;
+    }
 
     await finishDraftMutation(trx, scope, row, patch, {
       forceAll: args.netOrGross !== undefined && args.netOrGross !== row.net_or_gross,

@@ -11,6 +11,7 @@ import { booksFiles } from './008_books_files';
 import { booksImport } from './009_books_import';
 import { booksUploadImport } from './010_books_upload_import';
 import { booksReplacement } from './011_books_replacement';
+import { booksTemplateV2 } from './012_books_template_v2';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -62,6 +63,12 @@ import { booksReplacement } from './011_books_replacement';
  *                            (an invoice replacing an issued editor invoice), one
  *                            replacement per invoice, and a replacement issued only
  *                            together with the cancellation of its invoice (BK011)
+ *   012_books_template_v2  : templates become versioned documents of typed blocks:
+ *                            document_template_version (append-only, BK012), each
+ *                            template's current version, archiving instead of
+ *                            deleting, existing templates converted to the
+ *                            Klassisch layout as version 1, the version 1 layout
+ *                            columns dropped
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -76,4 +83,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   booksImport,
   booksUploadImport,
   booksReplacement,
+  booksTemplateV2,
 ];

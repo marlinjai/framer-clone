@@ -94,6 +94,7 @@ export function smallBusinessInvoice(): { document: SalesDocumentWithSnapshots; 
     templateId: null,
     correctsDocumentId: null,
     replacesDocumentId: null,
+    printReplacesReference: false,
     sourceOrderId: null,
     documentNumber: '62',
     numberValue: 62,
@@ -211,8 +212,9 @@ export function issuedInput(f: { document: SalesDocumentWithSnapshots; lines: Sa
       vatId: c.vatId,
     },
     corrects: null,
-    template: f.document.templateSnapshot
-      ? { accentColor: f.document.templateSnapshot.accentColor, footerBlocks: f.document.templateSnapshot.footerBlocks }
-      : null,
+    template:
+      f.document.templateSnapshot?.v === 1
+        ? { accentColor: f.document.templateSnapshot.accentColor, footerBlocks: f.document.templateSnapshot.footerBlocks }
+        : null,
   };
 }

@@ -24,6 +24,7 @@ export function documentColumns(eb: DocEb) {
     'sales_document.template_id',
     'sales_document.corrects_document_id',
     'sales_document.replaces_document_id',
+    'sales_document.print_replaces_reference',
     'sales_document.source_order_id',
     'sales_document.document_number',
     'sales_document.number_value',
