@@ -23,7 +23,6 @@ import postgres from 'postgres';
 import { assertTenantGroupId, migratePublic, provisionTenant, tenantSchema } from '@marlinjai/tenant-db';
 
 import { COMMERCE_TENANT_MIGRATIONS } from '../../commerce/migrations/tenant';
-import { booksTemplateV2 } from '../../commerce/migrations/tenant/012_books_template_v2';
 import { templateProblems } from '../template/gate';
 import { parseTemplateDocument } from '../template/schema';
 import {
@@ -319,12 +318,12 @@ describe('012_books_template_v2 through the fleet runner', () => {
     }
     expect(await privileges(schema)).toEqual(expectedPrivileges());
 
-    // Running 012 a second time changes nothing and does not fail (every step is guarded).
+    // Running 012 a second time (the runner forgets it applied it) changes nothing and does not fail.
     const versionsBefore = await owner`SELECT id FROM ${s}.document_template_version ORDER BY id`;
-    await owner.begin(async (tx) => {
-      await tx.unsafe(`SET LOCAL search_path = ${schema}, ext`);
-      await booksTemplateV2.up(tx as never);
-    });
+    await owner`DELETE FROM ${s}.__tenant_db_migrations WHERE id = '012_books_template_v2'`;
+    await owner`DELETE FROM public.tenant_migration_progress WHERE schema_name = ${schema} AND migration_id = '012_books_template_v2'`;
+    const again = await migrateAllCommerceTenants({ connectionString: ownerUrl });
+    expect(again.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2']);
     expect(await owner`SELECT id FROM ${s}.document_template_version ORDER BY id`).toEqual(versionsBefore);
   });
 });
