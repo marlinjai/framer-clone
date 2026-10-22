@@ -31,9 +31,18 @@ export function normalIban(iban: string): string {
   return iban.replace(/\s+/g, '').toUpperCase();
 }
 
-/** Whether a string is shaped like an IBAN (country, check digits, 11 to 30 letters or digits). */
+/**
+ * Whether a string is an IBAN: country, check digits, 11 to 30 letters or
+ * digits, and the ISO 7064 mod-97 checksum, so a mistyped IBAN prints no code
+ * (a banking app would refuse it, or the customer would pay a wrong account).
+ */
 export function looksLikeIban(iban: string): boolean {
-  return /^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$/.test(normalIban(iban));
+  const s = normalIban(iban);
+  if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$/.test(s)) return false;
+  const digits = (s.slice(4) + s.slice(0, 4)).replace(/[A-Z]/g, (ch) => String(ch.charCodeAt(0) - 55));
+  let rest = 0;
+  for (const d of digits) rest = (rest * 10 + Number(d)) % 97;
+  return rest === 1;
 }
 
 const byteLength = (s: string) => new TextEncoder().encode(s).length;

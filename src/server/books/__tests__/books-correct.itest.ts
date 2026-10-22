@@ -34,6 +34,7 @@ import { addLine, updateLine } from '../repository/lines';
 import { getDocument } from '../repository/read';
 import { extractPdfText } from '../render/extractText';
 import { storeBeforeCommit } from '../render/store';
+import { createTemplate, deleteTemplate } from '../repository/templates';
 import type { BooksScope } from '../scope';
 import { toJsonb } from '../snapshots';
 import {
@@ -504,5 +505,20 @@ describe('the replacement reference line (phase 2 of the composer plan)', () => 
     const on = await updateDraft(scope, id, { printReplacesReference: true });
     const off = await updateDraft(scope, id, { replacesDocumentId: null, expectedVersion: on.document.version });
     expect(off.document).toMatchObject({ replacesDocumentId: null, printReplacesReference: false });
+  });
+});
+
+describe('a correction whose invoice template was archived meanwhile', () => {
+  it('starts the replacement on the company default instead of the hidden template', async () => {
+    const { scope, invoiceId } = await companyWithInvoice();
+    const archived = await createTemplate(scope, { name: 'Alt', isDefault: false });
+    const current = await createTemplate(scope, { name: 'Neu', isDefault: true });
+    // An invoice issued on a template that is archived afterwards.
+    const draft = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR, customerId: (await getDocument(scope, invoiceId)).document.customerId!, templateId: archived.id, serviceDate: '2026-10-01' });
+    await addLine(scope, draft.document.id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    const issued = await issueWithPdf(scope, draft.document.id);
+    await deleteTemplate(scope, archived.id);
+    const started = await startCorrection(scope, issued.document.document.id, { actorUserId: ACTOR });
+    expect(started.document.document.templateId).toBe(current.id);
   });
 });

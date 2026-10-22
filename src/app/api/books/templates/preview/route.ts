@@ -43,11 +43,29 @@ const bodySchema = z
   })
   .strict();
 
+/** The body as text, or null once it passes the limit (read as a stream, so a body without Content-Length is bounded too). */
+async function boundedText(req: Request, limit: number): Promise<string | null> {
+  if (Number(req.headers.get('content-length') ?? '0') > limit) return null;
+  if (!req.body) return '';
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 export const POST = booksRoute('write', async (ctx, req) => {
-  const declared = Number(req.headers.get('content-length') ?? '0');
-  if (declared > MAX_BODY_BYTES) return jsonError('body_too_large', 'the preview request is larger than 256 KB', 413);
-  const text = await req.text();
-  if (Buffer.byteLength(text) > MAX_BODY_BYTES) return jsonError('body_too_large', 'the preview request is larger than 256 KB', 413);
+  const text = await boundedText(req, MAX_BODY_BYTES);
+  if (text === null) return jsonError('body_too_large', 'the preview request is larger than 256 KB', 413);
   let raw: unknown;
   try {
     raw = JSON.parse(text);

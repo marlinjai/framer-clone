@@ -8,7 +8,7 @@
 import jsQR from 'jsqr';
 import { describe, expect, it } from 'vitest';
 
-import { darkRuns, epcAmount, epcPayload, EPC_MAX_BYTES, qrMatrix, QUIET_ZONE_MODULES } from '../render/epcQr';
+import { darkRuns, epcAmount, epcPayload, EPC_MAX_BYTES, looksLikeIban, qrMatrix, QUIET_ZONE_MODULES } from '../render/epcQr';
 import { buildRenderModel, paymentQrData, type PaymentQrData } from '../render/model';
 import { probe, probeInput } from '../template/probes';
 
@@ -105,6 +105,9 @@ describe('when a code is printed', () => {
     expect(paymentQrData({ ...p.document, currencyCode: 'CHF' }, s, false)).toBeNull();
     expect(paymentQrData({ ...p.document, total: 0 }, s, false)).toBeNull();
     expect(paymentQrData(p.document, s ? { ...s, iban: null } : s, false)).toBeNull();
+    // A mistyped IBAN (right shape, wrong checksum) prints no code either.
+    expect(paymentQrData(p.document, s ? { ...s, iban: 'DE02 1203 0000 0000 2020 52' } : s, false)).toBeNull();
+    expect(looksLikeIban('DE02 1203 0000 0000 2020 51')).toBe(true);
     // A malformed IBAN in the snapshot prints no code rather than failing the issue.
     expect(paymentQrData(p.document, s ? { ...s, iban: 'DE12 3' } : s, false)).toBeNull();
     // A draft invoice that will carry a code shows the placeholder instead.

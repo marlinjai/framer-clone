@@ -290,6 +290,20 @@ export const booksTemplateV2: Migration = {
     // Guarantee 5: the columns version 2 replaces.
     await tx`ALTER TABLE "document_template" DROP COLUMN IF EXISTS "accent_color"`;
     await tx`ALTER TABLE "document_template" DROP COLUMN IF EXISTS "footer_blocks"`;
+    // Never written by any code path (logos arrive in phase 5); refuse rather than drop a value set by hand.
+    await tx`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema = current_schema() AND table_name = 'document_template' AND column_name = 'logo_file_id'
+        ) AND EXISTS (SELECT 1 FROM "document_template" WHERE "logo_file_id" IS NOT NULL) THEN
+          RAISE EXCEPTION 'document_template.logo_file_id holds values; move them before 012 drops the column'
+              USING ERRCODE = 'BK012';
+        END IF;
+      END
+      $$
+    `;
     await tx`ALTER TABLE "document_template" DROP COLUMN IF EXISTS "logo_file_id"`;
   },
 };

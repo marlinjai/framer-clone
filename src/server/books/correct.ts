@@ -96,6 +96,27 @@ export async function startCorrection(
     const customer = await requireUsableCustomer(trx, scope, invoice.customer_id);
     const now = new Date();
     const id = randomUUID();
+    // The invoice's template, unless it was archived since: then the company's default (or none).
+    const template = invoice.template_id
+      ? await trx
+          .selectFrom('document_template')
+          .select('id')
+          .where('tenant_id', '=', scope.tenantId)
+          .where('id', '=', invoice.template_id)
+          .where('archived_at', 'is', null)
+          .forShare()
+          .executeTakeFirst()
+      : undefined;
+    const fallback = template
+      ? undefined
+      : await trx
+          .selectFrom('document_template')
+          .select('id')
+          .where('tenant_id', '=', scope.tenantId)
+          .where('is_default', '=', true)
+          .where('archived_at', 'is', null)
+          .forShare()
+          .executeTakeFirst();
     await trx
       .insertInto('sales_document')
       .values({
@@ -105,7 +126,7 @@ export async function startCorrection(
         status: 'draft',
         source: 'editor',
         customer_id: customer.id,
-        template_id: invoice.template_id,
+        template_id: template?.id ?? fallback?.id ?? null,
         replaces_document_id: invoiceId,
         net_or_gross: invoice.net_or_gross,
         service_date: invoice.service_date,

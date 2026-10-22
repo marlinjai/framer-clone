@@ -767,6 +767,26 @@ Built on branch `feat/books-template-engine`. Decided while building, say so if 
     the migration does not change a company's layout. The gate asks for a readable colour at the
     next save.
 
+15. **Stored documents are read with a shape check only.** A version row or a frozen snapshot passed
+    the strict schema when it was written; reading it with today's bounds would make an issued
+    invoice unreadable the day a later phase tightens one (GoBD). Writes stay strict.
+16. **The IBAN behind the payment code is checked with its mod-97 checksum**, so a mistyped IBAN
+    prints no code (and the draft promises none).
+
+**Review (2026-10-22).** Two fresh reviews: one of the engine before the wiring (three defects
+and four risks, all fixed: decisions 7, 9 and 10 came from it), one of the final diff (no
+defect; three risks and three nits, all fixed). The fixes from the final review:
+- stored documents read leniently (decision 15);
+- a draft can no longer land on an archived template: the template check takes a shared lock,
+  and a correction whose invoice template was archived starts on the company default;
+- the preview body is bounded as a stream, also without `Content-Length`;
+- 012 refuses to drop `logo_file_id` while a row holds a value;
+- the IBAN checksum (decision 16);
+- two first templates created at once wait for each other on a per-company transaction lock, so
+  exactly one becomes the default;
+- CI now regenerates `db-types.ts` and fails on a difference, so the generated types cannot drift
+  from the migrations again.
+
 **Latency** (decision 12; `pnpm bench:preview`, the route's work from the render model to the
 base64 answer, 10 warm-up and 200 measured runs per case, node 22.23 bookworm-slim, the
 production image's runtime, `NODE_ENV=production`):

@@ -25,7 +25,7 @@
 import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
 
-import { templateDocumentV2Schema, type TemplateDocumentV2 } from './template/schema';
+import type { TemplateDocumentV2 } from './template/schema';
 
 import type { JsonbWrite } from '../commerce/db-types';
 
@@ -116,17 +116,32 @@ export type TemplateSnapshotV1 = z.infer<typeof templateSnapshotV1Schema>;
  * id is the human reference ("issued with Klassisch, version 4"). A document
  * without a template freezes the built-in Klassisch layout with null ids.
  */
-export const templateSnapshotV2Schema = z
-  .object({
-    v: z.literal(2),
-    templateId: z.string().nullable(),
-    templateVersionId: z.string().nullable(),
-    name: z.string().nullable(),
-    document: templateDocumentV2Schema,
-    /** The logo asset (phase 5); null until then. */
-    logo: z.object({ sha256: z.string().regex(/^[0-9a-f]{64}$/) }).strict().nullable(),
-  })
-  .strict();
+/**
+ * A template document AS STORED (a version row or a frozen snapshot): read
+ * with the shape check only, never with the live bounds of
+ * `templateDocumentV2Schema`. Every stored document passed the strict schema
+ * when it was written; reading it with today's schema would make an issued
+ * invoice unreadable the day a bound tightens (GoBD: a document of record must
+ * stay readable). Writes always go through the strict schema.
+ */
+export const storedTemplateDocumentSchema = z.custom<TemplateDocumentV2>(
+  (value) => {
+    if (typeof value !== 'object' || value === null) return false;
+    const d = value as { v?: unknown; theme?: unknown; page?: unknown; regions?: unknown };
+    return d.v === 2 && typeof d.theme === 'object' && typeof d.page === 'object' && typeof d.regions === 'object' && d.regions !== null;
+  },
+  { message: 'expected a stored template document version 2' },
+);
+
+export const templateSnapshotV2Schema = z.object({
+  v: z.literal(2),
+  templateId: z.string().nullable(),
+  templateVersionId: z.string().nullable(),
+  name: z.string().nullable(),
+  document: storedTemplateDocumentSchema,
+  /** The logo asset (phase 5); null until then. */
+  logo: z.object({ sha256: z.string().regex(/^[0-9a-f]{64}$/) }).nullable(),
+});
 export type TemplateSnapshotV2 = z.infer<typeof templateSnapshotV2Schema>;
 
 /** A frozen template layout of either version. */

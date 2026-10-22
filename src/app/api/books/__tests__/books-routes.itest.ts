@@ -672,6 +672,15 @@ describe('Books routes: template versions and the preview', () => {
     expect(saved.json.version).toBe(3);
   });
 
+  it('two first templates created at once: both saved, exactly one default', async () => {
+    const [a, b] = await Promise.all([
+      call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Eins' }),
+      call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Zwei' }),
+    ]);
+    expect([a.status, b.status]).toEqual([201, 201]);
+    expect([a.json.isDefault, b.json.isDefault].filter(Boolean)).toHaveLength(1);
+  });
+
   it('refuses an edit made on an older version, and a layout the gate refuses; the working version stays', async () => {
     const created = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Standard' });
     const id = created.json.id as string;
@@ -775,6 +784,27 @@ describe('Books routes: template versions and the preview', () => {
     expect(unknown.status).toBe(400);
     const huge = await previewCall({ document: preset('klassisch'), subject: { kind: 'sample', variant: 'regular' }, pad: 'x'.repeat(300 * 1024) });
     expect(huge.status).toBe(413);
+    // A streamed body without Content-Length is bounded too.
+    const chunk = new TextEncoder().encode('x'.repeat(64 * 1024));
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (sent >= 10) return c.close();
+        sent += 1;
+        c.enqueue(chunk);
+      },
+    });
+    const streamed = await previewRoute.POST(
+      new Request('http://localhost:3000/api/books/templates/preview', {
+        method: 'POST',
+        headers: { host: 'localhost:3000', cookie: 'lumitra_session=s', 'content-type': 'application/json' },
+        body: stream,
+        duplex: 'half',
+      } as RequestInit),
+      { params: Promise.resolve({}) },
+    );
+    expect(streamed.status).toBe(413);
+    expect(sent).toBeLessThan(10);
 
     const customer = await newCustomer({ customerType: 'b2b' });
     const id = (await api.createDraft({ customerId: customer.id })).json.document.id;

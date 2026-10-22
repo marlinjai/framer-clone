@@ -151,6 +151,9 @@ async function assertTemplate(trx: Transaction<CommerceDB>, scope: BooksScope, t
     .where('tenant_id', '=', scope.tenantId)
     .where('id', '=', templateId)
     .where('archived_at', 'is', null)
+    // Shared lock: an archive running at the same moment waits for this draft or is seen by it
+    // (read committed re-checks archived_at after the wait), so no draft lands on an archived template.
+    .forShare()
     .executeTakeFirst();
   if (!t) throw invalid('INVALID_INPUT', [{ path: ['templateId'], message: 'no such template for this company' }]);
 }

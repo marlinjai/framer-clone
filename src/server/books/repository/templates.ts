@@ -32,12 +32,12 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
-import type { Kysely, Transaction } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 
 import type { CommerceDB } from '../../commerce/db-types';
 import { BooksError, constraintName, invalid, sqlState, withDbErrors } from '../errors';
 import type { BooksScope } from '../scope';
-import { toJsonb, type TemplateSnapshotV2 } from '../snapshots';
+import { storedTemplateDocumentSchema, toJsonb, type TemplateSnapshotV2 } from '../snapshots';
 import { assertTemplateSavable } from '../template/gate';
 import { klassisch, PRESETS, preset } from '../template/presets';
 import { templateDocumentV2Schema, type Block, type TemplateDocumentV2 } from '../template/schema';
@@ -121,7 +121,8 @@ function smallPrintOf(doc: TemplateDocumentV2): Array<{ heading: string | null; 
 }
 
 function mapTemplate(row: TemplateRow): DocumentTemplate {
-  const document = templateDocumentV2Schema.parse(row.document);
+  // A stored version is read with the shape check only (snapshots.ts): a later, stricter schema never hides it.
+  const document = storedTemplateDocumentSchema.parse(row.document);
   return {
     id: row.id,
     name: row.name,
@@ -270,6 +271,16 @@ export async function defaultTemplateId(scope: BooksScope): Promise<string | nul
   return row?.id ?? null;
 }
 
+/**
+ * Serialize the company's template writes that move the default: two first
+ * templates created at once would both claim it and one would fail on the
+ * one-default index. A transaction lock per company makes the second wait and
+ * see the first.
+ */
+async function lockTemplates(trx: Transaction<CommerceDB>, scope: BooksScope): Promise<void> {
+  await sql`SELECT pg_advisory_xact_lock(hashtext(${`books-templates:${scope.tenantId}`}))`.execute(trx);
+}
+
 async function clearDefault(trx: Transaction<CommerceDB>, scope: BooksScope, except: string | null): Promise<void> {
   let q = trx
     .updateTable('document_template')
@@ -296,6 +307,7 @@ export async function createTemplate(scope: BooksScope, input: CreateTemplateInp
         .transaction()
         .setIsolationLevel('read committed')
         .execute(async (trx) => {
+          await lockTemplates(trx, scope);
           // The first template of a company is its default, unless told otherwise.
           const existing = await trx
             .selectFrom('document_template')
@@ -378,6 +390,7 @@ export async function updateTemplate(
         .transaction()
         .setIsolationLevel('read committed')
         .execute(async (trx) => {
+          if (args.isDefault === true) await lockTemplates(trx, scope);
           const row = await trx
             .selectFrom('document_template')
             .select(['id', 'current_version_id'])
@@ -491,7 +504,7 @@ export async function templateSnapshotFor(db: Db, scope: BooksScope, templateId:
     templateId: row.id,
     templateVersionId: row.current_version_id,
     name: row.name,
-    document: templateDocumentV2Schema.parse(row.document),
+    document: storedTemplateDocumentSchema.parse(row.document),
     logo: null,
   };
 }

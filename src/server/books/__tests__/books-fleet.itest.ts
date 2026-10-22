@@ -319,3 +319,24 @@ describe('012_books_template_v2 through the fleet runner', () => {
     expect(await privileges(schema)).toEqual(expectedPrivileges());
   });
 });
+
+describe('012_books_template_v2 and a hand-set logo', () => {
+  it('refuses to drop logo_file_id while a row holds a value (nothing is changed)', async () => {
+    const tgId = assertTenantGroupId(randomUUID());
+    await provisionTenant(owner, {
+      ...commerceProvisionOptions(tgId, `logo-${tgId.slice(0, 8)}`),
+      tenantMigrations: COMMERCE_TENANT_MIGRATIONS.filter((m) => m.id < '012'),
+    });
+    const schema = tenantSchema(tgId);
+    const s = owner(schema);
+    await owner`INSERT INTO ${s}.document_template (id, tenant_id, name, logo_file_id, updated_at)
+                VALUES (${randomUUID()}, ${randomUUID()}, 'Mit Logo', 'file-1', now())`;
+    const result = await migrateAllCommerceTenants({ connectionString: ownerUrl }).catch((e: unknown) => e);
+    const mine = (result as { schemas?: Array<{ schema: string; applied: string[]; error?: unknown }> }).schemas?.find((x) => x.schema === schema);
+    expect(mine?.applied ?? []).not.toContain('012_books_template_v2');
+    const [col] = await owner<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM information_schema.columns
+       WHERE table_schema = ${schema} AND table_name = 'document_template' AND column_name = 'logo_file_id'`;
+    expect(col.n).toBe(1);
+  });
+});

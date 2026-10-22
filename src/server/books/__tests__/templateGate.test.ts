@@ -14,6 +14,7 @@ import { PROBE_NAMES } from '../template/probes';
 import { structuralProblems, type ProblemCode } from '../template/rules';
 import { parseTemplateDocument, templateDocumentV2Schema, type Block, type TemplateDocumentV2 } from '../template/schema';
 import { isBooksError } from '../errors';
+import { templateSnapshotSchema } from '../snapshots';
 
 const codes = async (doc: TemplateDocumentV2): Promise<ProblemCode[]> => structuralProblems(doc, await fontMeasure()).map((p) => p.code);
 const without = (doc: TemplateDocumentV2, type: Block['type']): TemplateDocumentV2 => {
@@ -57,6 +58,19 @@ describe('template document version 2', () => {
     const text = structuredClone(preset('klassisch'));
     text.regions.footer = Array.from({ length: 11 }, (_, i) => ({ id: `t${i}`, type: 'freeText' as const, style: {}, heading: null, text: 'x'.repeat(2000), variant: 'normal' as const }));
     expect(() => parseTemplateDocument(text)).toThrow(/at most 20000/);
+  });
+});
+
+describe('stored template documents', () => {
+  it('are read with the shape check only, so a later, stricter schema never makes an issued invoice unreadable', () => {
+    const stored = structuredClone(preset('klassisch')) as unknown as { regions: { body: unknown[] }; theme: { fontFamily: string } };
+    // Beyond today's bounds: 31 blocks in the body and a font the live schema does not know.
+    stored.regions.body.push(...Array.from({ length: 31 }, (_, i) => ({ id: `s${i}`, type: 'spacer', style: {}, heightPt: 2 })));
+    stored.theme.fontFamily = 'some-retired-font';
+    expect(() => parseTemplateDocument(stored)).toThrow();
+    const snapshot = { v: 2, templateId: 't', templateVersionId: 'v', name: 'Alt', document: stored, logo: null };
+    expect(templateSnapshotSchema.parse(snapshot).v).toBe(2);
+    expect(() => templateSnapshotSchema.parse({ ...snapshot, document: { v: 1 } })).toThrow();
   });
 });
 
