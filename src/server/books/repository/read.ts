@@ -60,6 +60,8 @@ export interface SalesDocument {
   correctsDocumentId: string | null;
   /** The issued invoice this invoice replaces (the Correct flow, 011_books_replacement). */
   replacesDocumentId: string | null;
+  /** A replacement prints "Ersetzt Rechnung 62 vom 14.10.2026" under its title. */
+  printReplacesReference: boolean;
   sourceOrderId: string | null;
   documentNumber: string | null;
   numberValue: number | null;
@@ -190,6 +192,7 @@ export type DocumentRow = {
   template_id: string | null;
   corrects_document_id: string | null;
   replaces_document_id: string | null;
+  print_replaces_reference: boolean;
   source_order_id: string | null;
   document_number: string | null;
   number_value: string | null;
@@ -241,6 +244,7 @@ export function mapDocument(row: DocumentRow): SalesDocument {
     templateId: row.template_id,
     correctsDocumentId: row.corrects_document_id,
     replacesDocumentId: row.replaces_document_id,
+    printReplacesReference: row.print_replaces_reference,
     sourceOrderId: row.source_order_id,
     documentNumber: row.document_number,
     numberValue: row.number_value === null ? null : Number(row.number_value),

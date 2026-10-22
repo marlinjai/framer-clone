@@ -38,6 +38,7 @@ const DE = {
   'meta.datePending': 'wird bei Ausstellung gesetzt',
   // A credit note's reference to the invoice it cancels: "Storno der Rechnung 62 vom 19.10.2026".
   'reference.cancels': 'Storno der Rechnung',
+  'reference.replaces': 'Ersetzt Rechnung',
   'reference.of': 'vom',
   // Line table.
   'table.pos': 'Pos.',

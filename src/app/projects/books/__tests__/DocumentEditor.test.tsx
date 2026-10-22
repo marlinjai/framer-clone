@@ -60,6 +60,7 @@ function detail(
       templateId: null,
       correctsDocumentId: null,
       replacesDocumentId: null,
+      printReplacesReference: false,
       documentNumber: null,
       issueDate: null,
       serviceDate: '2026-10-01',
@@ -379,6 +380,23 @@ describe('DocumentEditor: the Correct flow', () => {
     expect(screen.getByRole('dialog', { name: 'Confirm issue' }).textContent).toMatch(/Invoice 62 is cancelled with a credit note at the same time/);
     fireEvent.click(screen.getByRole('button', { name: 'Issue invoice' }));
     expect((await screen.findByText(/Issued as 63\./)).textContent).toMatch(/Invoice 62 is cancelled with a credit note/);
+  });
+
+  it('a replacement can print the replaced invoice under its title', async () => {
+    let doc = detail({ document: { replacesDocumentId: 'doc-62' }, related: { replaces: REF_62 } });
+    server({
+      ...base(() => doc),
+      'PATCH /api/books/documents/doc-1': (body) => {
+        doc = detail({ document: { replacesDocumentId: 'doc-62', printReplacesReference: true, version: 4 }, related: { replaces: REF_62 } });
+        return { status: 200, body: { ...doc, _sent: body } };
+      },
+    });
+    render(<DocumentEditor id="doc-1" />);
+    const box = (await screen.findByRole('checkbox', { name: /Ersetzt Rechnung 62 vom/ })) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    fireEvent.click(box);
+    await waitFor(() => expect((screen.getByRole('checkbox', { name: /Ersetzt Rechnung 62 vom/ }) as HTMLInputElement).checked).toBe(true));
+    expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ printReplacesReference: true, expectedVersion: 3 });
   });
 
   it('re-entry after a race: the replaced invoice was cancelled meanwhile, the draft becomes an ordinary invoice', async () => {

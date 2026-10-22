@@ -376,11 +376,26 @@ export default function DocumentEditor({ id }: { id: string }) {
               </div>
             </>
           ) : (
-            <p>
-              This draft replaces invoice {replaces.documentNumber} of {date(replaces.issueDate)}. When you issue it,
-              invoice {replaces.documentNumber} is cancelled with a credit note and this one gets a new number, in one
-              step. Until then invoice {replaces.documentNumber} stays valid.
-            </p>
+            <>
+              <p>
+                This draft replaces invoice {replaces.documentNumber} of {date(replaces.issueDate)}. When you issue it,
+                invoice {replaces.documentNumber} is cancelled with a credit note and this one gets a new number, in one
+                step. Until then invoice {replaces.documentNumber} stays valid.
+              </p>
+              <label className="mt-3 flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={doc.printReplacesReference}
+                  disabled={busy}
+                  onChange={(e) =>
+                    void change(() =>
+                      booksApi.updateDraft(id, { printReplacesReference: e.target.checked, expectedVersion: version }),
+                    )
+                  }
+                />
+                Print “Ersetzt Rechnung {replaces.documentNumber} vom {date(replaces.issueDate)}” under the title
+              </label>
+            </>
           )}
         </section>
       ) : null}

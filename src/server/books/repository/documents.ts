@@ -91,6 +91,7 @@ export interface DraftPatch {
   outro_text?: string | null;
   /** Only ever set to null: a replacement draft becomes an ordinary invoice (the Correct flow). */
   replaces_document_id?: null;
+  print_replaces_reference?: boolean;
 }
 
 /**
@@ -258,6 +259,8 @@ const updateInput = z
     // invoice (the link is never set through this route, only by
     // startCorrection).
     replacesDocumentId: z.null().optional(),
+    // A replacement's optional line "Ersetzt Rechnung 62 vom 14.10.2026" under its title.
+    printReplacesReference: z.boolean().optional(),
   })
   .strict();
 export type UpdateDraftInput = z.input<typeof updateInput>;
@@ -283,7 +286,17 @@ export async function updateDraft(scope: BooksScope, id: string, input: UpdateDr
     if (args.contractReference !== undefined) patch.contract_reference = args.contractReference;
     if (args.introText !== undefined) patch.intro_text = args.introText;
     if (args.outroText !== undefined) patch.outro_text = args.outroText;
-    if (args.replacesDocumentId === null) patch.replaces_document_id = null;
+    if (args.printReplacesReference !== undefined) {
+      if (args.printReplacesReference && (args.replacesDocumentId === null || !row.replaces_document_id)) {
+        throw invalid('INVALID_INPUT', [{ path: ['printReplacesReference'], message: 'only a replacement draft prints the replaced invoice' }]);
+      }
+      patch.print_replaces_reference = args.printReplacesReference;
+    }
+    if (args.replacesDocumentId === null) {
+      // An ordinary invoice has nothing to refer to.
+      patch.replaces_document_id = null;
+      patch.print_replaces_reference = false;
+    }
 
     await finishDraftMutation(trx, scope, row, patch, {
       forceAll: args.netOrGross !== undefined && args.netOrGross !== row.net_or_gross,

@@ -94,6 +94,7 @@ export function smallBusinessInvoice(): { document: SalesDocumentWithSnapshots; 
     templateId: null,
     correctsDocumentId: null,
     replacesDocumentId: null,
+    printReplacesReference: false,
     sourceOrderId: null,
     documentNumber: '62',
     numberValue: 62,

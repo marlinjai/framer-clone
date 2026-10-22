@@ -670,3 +670,151 @@ matching, D6 there).
 
 **Operator step**: deploy, which rolls `011_books_replacement` across every tenant schema at boot.
 Nothing else is new (no secret, no variable).
+
+## Phase 2 build notes (2026-10-22): the model, the engine and the preview
+
+Built on branch `feat/books-template-engine`. Decided while building, say so if you disagree.
+
+**What exists now.**
+
+- `src/server/books/template/`: `schema.ts` (the template document version 2 in zod, strict
+  objects, 17 block types, bounded), `labels.ts` (the de-DE dictionary; the render model and the
+  completeness check both read it), `presets.ts` (Klassisch, Modern, Kompakt), `probes.ts` (the
+  seven probe documents, fictional data, a production module because the gate runs on every
+  save), `rules.ts` (the structural check) and `gate.ts` (structural check, drawable template
+  text, then the probe render with the unchanged `missingFields`).
+- `src/server/books/render/engine/`: the layout engine (bind, paginate, draw) returning the PDF
+  and the layout map (every block's page and rectangle in points from the top left, the line
+  table's column positions, the layout issues). `RENDERER_ID` is `books-pdf-lib-3`.
+  `render/epcQr.ts` builds the EPC payload and the module matrix (`qrcode` 1.5.4, pinned exactly,
+  byte mode, level M); the engine draws merged dark runs as vector rectangles.
+- `render/legacyV1.ts`: the version 1 renderer, unchanged and frozen, with golden hashes in
+  `legacyV1.test.ts`. A document whose template snapshot is version 1, or which has none, keeps
+  it; the stored file records which renderer drew it.
+- Migration `012_books_template_v2`: `document_template_version` (append-only, BK012),
+  `document_template.current_version_id` (a deferred composite key to a version of the same
+  template), `archived_at`, every existing template converted into its version 1 (a frozen copy
+  of Klassisch with the row's accent colour and footer blocks as small print), the columns
+  `accent_color`, `footer_blocks` and `logo_file_id` dropped, and
+  `sales_document.print_replaces_reference` (below).
+- Issue freezes `TemplateSnapshotV2` (the whole document, the version id, the name, `logo: null`);
+  a document without a template freezes Klassisch with null ids. Draft previews render the
+  current version with the engine.
+- `POST /api/books/templates/preview`, and the templates routes on versions: POST from a
+  `preset` or a whole `document`, PATCH with a `document` (and `baseVersionId`) or the phase 3
+  form's `accentColor` and `footerBlocks`, DELETE archives. The phase 3 form keeps working; a
+  refused save shows the gate's problems.
+- `pnpm bench:preview`: the latency measurement below, reproducible.
+
+**Decisions.**
+
+1. **One font in phase 2.** The theme's font enum holds only `dejavu-sans`; Noto Sans and Noto
+   Serif widen it in phase 5. A saved template naming a font that is not embedded would be a dead
+   end.
+2. **The logo block draws nothing and takes no space** until phase 5 brings `books_asset`, so a
+   template with it stays valid.
+3. **Removing a template archives it.** Versions are append-only and reference their template,
+   so a template with versions (every template, from 012 on) cannot be deleted; archiving hides
+   it from the list and the picker and frees its name (the unique name is a partial index over
+   live templates). Only a template a draft uses is refused (`template_in_use`); issued
+   documents carry their layout frozen.
+4. **Saving the same layout again writes no version**, and an edit made on an older version is
+   refused (`concurrent_edit`, 409) when the composer sends `baseVersionId`.
+5. **Gate answers are codes with English messages** and the block id, region, field and probe
+   they concern (`template_invalid`, 422). The composer of phase 4 words them for the user;
+   the German example sentence in decision 8 is the composer's wording, not the API's.
+6. **Column widths.** A width of 0 in the 100-unit grid means the column's computed minimum. The
+   minimums: amount `-21.474.836,47 €`, unit price `21.474.836,47 €` (a unit price is never
+   negative, `repository/lines.ts`), quantity `999.999,999` (the editor's bound), rate
+   `99,99 %`, position `999`, each at least as wide as its header, plus a 6 pt gap. The
+   description column keeps at least 100 pt. At 9.5 pt with every column shown that leaves the
+   description about 110 pt on A4 with 20 mm margins; Kompakt (8.5 pt) leaves more.
+7. **The address field holds only the return line and the address** (decision 5's "pinned"
+   made structural): the left address zone allows `senderLine` and `recipient` only, the return
+   line above the address, and the engine flags an address that would start below the field's
+   remarks band (`ADDRESS_FIELD_OVERFLOW`). The body starts no higher than the address field's
+   bottom edge (45 mm below its top, DIN 5008), so Klassisch's title sits about where DIN puts
+   the subject line, slightly lower than the version 1 layout.
+8. **The tax note stands directly after the totals** (a rule, `TAX_NOTE_NOT_AFTER_TOTALS`), so
+   the two always share a page.
+9. **The EPC payload ends with its last populated element.** The plan's "twelve lines" would end
+   in a line feed; as far as we recall EPC069-12, a separator may not follow the last populated
+   element, so trailing empty elements are left off. Not checked against the document itself.
+   A malformed BIC is left out (version 002 allows an empty one); a name or reference full of
+   multi-byte letters is shortened further until the payload fits 331 bytes (the remittance
+   first); a malformed IBAN in the snapshot prints no code instead of failing the issue. The
+   draft placeholder uses exactly the code's conditions.
+10. **Bounds.**
+    - **Templates:** at most 30 blocks per region and 20,000 characters of template text.
+    - **Documents:** at most 200 pages.
+    - **Starved layouts:** a footer or following-page header that leaves less than 300 pt of body
+      stops the flow at two pages.
+    - **Preview requests:** at most 256 KB.
+    - **Why:** a client-sent document can neither burn CPU nor fill memory. The engine's review
+      found a 2-minute preview before these existed.
+11. **Layout issues refuse a document of record.** At issue, an engine layout with an issue (a
+    block taller than a page, an address zone running under the footer, a payment code wider than
+    its cell) is `render_incomplete` with `layout.<issue>.<block>` named, like a missing field.
+    A gated template cannot produce one; this is the backstop for data the gate did not foresee.
+12. **The preview answers JSON with the PDF in base64**: one answer carries the PDF and the layout
+    map, and the measured answer is 33 KB for one page and 62 to 65 KB for five. The preview
+    does not run the gate: an incomplete layout renders as it is, with its issues in the map.
+13. **Phase 1's decision 5 is delivered here**: the label "Ersetzt Rechnung" is in the dictionary,
+    `sales_document.print_replaces_reference` (only a replacement may set it, a CHECK; frozen at
+    issue by the 007 guard) prints "Ersetzt Rechnung 62 vom 14.10.2026" under the title, and the
+    editor's correction banner has the switch. Detaching a replacement clears it.
+14. **A converted template keeps its accent colour as it was**, even one under 4.5:1 on white:
+    the migration does not change a company's layout. The gate asks for a readable colour at the
+    next save.
+
+**Latency** (decision 12; `pnpm bench:preview`, the route's work from the render model to the
+base64 answer, 10 warm-up and 200 measured runs per case, node 22.23 bookworm-slim, the
+production image's runtime, `NODE_ENV=production`):
+
+| Case | p50 / p95 (ms), hermes x86 EPYC 9354P, 2 CPUs | p50 / p95 (ms), Apple M4 Pro, Docker arm64, 4 CPUs |
+|---|---|---|
+| Klassisch, 1 page | 56 / 70 | 50 / 74 |
+| Klassisch, 5 pages | 146 / 203 | 107 / 138 |
+| Modern, 1 page | 58 / 74 | 49 / 68 |
+| Modern, 5 pages | 136 / 188 | 108 / 137 |
+| Kompakt, 1 page | 66 / 83 | 56 / 81 |
+| Kompakt, 5 pages | 168 / 202 | 134 / 234 |
+
+The server targets (p95 under 150 ms for one page, under 400 ms for five) hold with a margin of
+about two on both machines; the first render in a fresh process takes about 170 ms (font
+parsing). Not measured on the production ARM host itself (a benchmark does not belong on a
+production box); its cores are slower than both, so the margin there is smaller. The route logs
+each preview's render time and page count, so production shows the real numbers. The browser
+end to end target (800 ms) is measured with the composer in phase 4. No Web Worker fallback is
+needed.
+
+**Tests.**
+
+- **Template and gate (`templateGate.test.ts`):** every preset parses and passes the whole gate,
+  which is the probe set against every preset. Every required block, legal item, legal column,
+  size, contrast, width, order and layout problem is named.
+- **Engine (`engine.test.ts`):**
+  - every block type in every region it may stand in;
+  - pagination: the header repeats, totals stay with the tax note wherever the page breaks, a row
+    taller than a page breaks line by line, nothing is drawn under the footer;
+  - the DIN positions, the widest values inside their columns, the stamps, the payment code and
+    its placeholder;
+  - the bounds and a latency guard (four times the targets);
+  - determinism twice in one process and in a fresh process in another time zone.
+- **Payment code (`epcQr.test.ts`):** the payload, the amount format and the limits, a decode
+  round trip with `jsqr`, and when no code is printed.
+- **Legacy (`legacyV1.test.ts`):** the version 1 renderer reproduces its golden bytes.
+- **Fleet migration (`books-fleet.itest.ts`):** 012 converts existing templates (they then pass
+  the gate), versions are append-only for every role, and the current version must be the
+  template's own.
+- **Routes (`books-routes.itest.ts`):**
+  - versions, the gate's refusal, a stale edit, archiving;
+  - a draft previewing the current version, a version 1 document still drawn by the version 1
+    renderer, the frozen re-render;
+  - the preview: sample, real document, stamp, nothing stored, bounds, another company's document,
+    the guard.
+- **Correction (`books-correct.itest.ts`):** the reference line.
+- **Editor (`DocumentEditor.test.tsx`):** its switch.
+
+**Operator step**: deploy, which rolls `012_books_template_v2` across every tenant schema at boot
+and converts the existing templates. Nothing else is new (no secret, no variable).

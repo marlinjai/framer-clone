@@ -36,6 +36,10 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      written; logos arrive with their own asset table in phase 5).
  *      `default_intro_text` and `default_outro_text` stay on the template row:
  *      they seed a new draft and are not layout.
+ *   6. `sales_document.print_replaces_reference` (the Correct flow's optional
+ *      line "Ersetzt Rechnung 62 vom 14.10.2026" on a replacement invoice, plan
+ *      phase 1 decision 5): only a replacement may switch it on (CHECK); the 007
+ *      guard freezes it after issue with every other column.
  *
  * House style as 007 and 008: BARE names, ids TEXT minted by the application,
  * trigger functions `SET search_path FROM CURRENT`, custom SQLSTATE BK012.
@@ -260,6 +264,24 @@ export const booksTemplateV2: Migration = {
             REFERENCES "document_template_version" ("tenant_id", "template_id", "id")
             ON DELETE RESTRICT ON UPDATE RESTRICT
             DEFERRABLE INITIALLY DEFERRED;
+        END IF;
+      END
+      $$
+    `;
+
+    // Guarantee 6: the replacement's optional reference line.
+    await tx`ALTER TABLE "sales_document" ADD COLUMN IF NOT EXISTS "print_replaces_reference" BOOLEAN NOT NULL DEFAULT false`;
+    await tx`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+           WHERE conname = 'sales_document_print_replaces_check'
+             AND conrelid = 'sales_document'::regclass
+        ) THEN
+          ALTER TABLE "sales_document"
+            ADD CONSTRAINT "sales_document_print_replaces_check"
+            CHECK (NOT "print_replaces_reference" OR "replaces_document_id" IS NOT NULL);
         END IF;
       END
       $$

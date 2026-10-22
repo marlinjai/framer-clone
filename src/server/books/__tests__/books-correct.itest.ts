@@ -32,6 +32,7 @@ import { issue, REPLACEMENT_CANCEL_REASON } from '../issue';
 import { createDraft, setCustomer, updateDraft } from '../repository/documents';
 import { addLine, updateLine } from '../repository/lines';
 import { getDocument } from '../repository/read';
+import { extractPdfText } from '../render/extractText';
 import { storeBeforeCommit } from '../render/store';
 import type { BooksScope } from '../scope';
 import { toJsonb } from '../snapshots';
@@ -464,5 +465,44 @@ describe('011_books_replacement in the database', () => {
     });
     expect(await rejectionCode(attempt)).toBe('BK013');
     expect((await getDocument(scope, draft.document.id)).document.status).toBe('draft');
+  });
+});
+
+describe('the replacement reference line (phase 2 of the composer plan)', () => {
+  it('a replacement prints "Ersetzt Rechnung 62 vom ..." when switched on; an ordinary invoice cannot, and detaching clears it', async () => {
+    const { scope, invoiceId } = await companyWithInvoice();
+    const original = await getDocument(scope, invoiceId);
+    const started = await startCorrection(scope, invoiceId, { actorUserId: ACTOR });
+    const draftId = started.document.document.id;
+    expect(started.document.document.printReplacesReference).toBe(false);
+
+    const on = await updateDraft(scope, draftId, { printReplacesReference: true, expectedVersion: started.document.document.version });
+    expect(on.document.printReplacesReference).toBe(true);
+    const [day, month, year] = [original.document.issueDate!.slice(8, 10), original.document.issueDate!.slice(5, 7), original.document.issueDate!.slice(0, 4)];
+    const line = `Ersetzt Rechnung 62 vom ${day}.${month}.${year}`;
+    const issued = await issueWithPdf(scope, draftId);
+    const file = await env.ownerDb
+      .selectFrom('sales_document_file')
+      .select('content')
+      .where('document_id', '=', issued.document.document.id)
+      .executeTakeFirstOrThrow();
+    expect(await extractPdfText(new Uint8Array(file.content))).toContain(line);
+
+    // An ordinary draft cannot switch it on.
+    const plain = await createDraft(scope, { docType: 'invoice', actorUserId: ACTOR });
+    await expect(updateDraft(scope, plain.document.id, { printReplacesReference: true })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    // And the database refuses it too.
+    expect(
+      await rejectionCode(env.ownerDb.updateTable('sales_document').set({ print_replaces_reference: true }).where('id', '=', plain.document.id).execute()),
+    ).toBe('23514');
+  });
+
+  it('turning a replacement into an ordinary invoice clears the line', async () => {
+    const { scope, invoiceId } = await companyWithInvoice();
+    const started = await startCorrection(scope, invoiceId, { actorUserId: ACTOR });
+    const id = started.document.document.id;
+    const on = await updateDraft(scope, id, { printReplacesReference: true });
+    const off = await updateDraft(scope, id, { replacesDocumentId: null, expectedVersion: on.document.version });
+    expect(off.document).toMatchObject({ replacesDocumentId: null, printReplacesReference: false });
   });
 });

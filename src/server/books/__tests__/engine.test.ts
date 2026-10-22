@@ -187,11 +187,42 @@ describe('bounds', () => {
     expect(layout.issues).toContainEqual(expect.objectContaining({ code: 'FOOTER_TOO_TALL' }));
     expect(performance.now() - t0).toBeLessThan(5000);
 
-    const p = probe('longDescription');
-    p.lines = Array.from({ length: 60 }, (_, i) => ({ ...p.lines[0], id: `l${i}`, position: i + 1 }));
-    const many = await renderTemplate(buildRenderModel(probeInput(p)), preset('kompakt'), fontFiles());
-    expect(many.layout.pageCount).toBeLessThanOrEqual(MAX_PAGES);
+    expect(MAX_PAGES).toBe(200);
+    const capped = await renderTemplate(buildRenderModel(probeInput(probe('longInvoice'))), preset('klassisch'), fontFiles(), { maxPages: 2 });
+    expect(capped.layout.pageCount).toBe(2);
+    expect(capped.layout.issues).toContainEqual(expect.objectContaining({ code: 'PAGE_LIMIT', region: 'body' }));
   });
+});
+
+describe('latency (decision 12)', () => {
+  // The plan's targets are p95 under 150 ms (one page) and 400 ms (five pages)
+  // of server time, measured by `pnpm bench:preview` on the production image
+  // (Build notes). This suite runs beside the others on shared cores, so it
+  // only guards against a gross regression, with four times the target.
+  it('renders one page and five pages well within four times the targets', async () => {
+    const run = async (name: ProbeName, lines?: number) => {
+      const p = probe(name);
+      if (lines) p.lines = Array.from({ length: lines }, (_, i) => ({ ...p.lines[i % p.lines.length], id: `l${i}`, position: i + 1 }));
+      const model = buildRenderModel(probeInput(p));
+      const doc = preset('klassisch');
+      for (let i = 0; i < 3; i += 1) await renderTemplate(model, doc, fontFiles(), { preview: true });
+      const times: number[] = [];
+      let pages = 0;
+      for (let i = 0; i < 20; i += 1) {
+        const t0 = performance.now();
+        pages = (await renderTemplate(model, doc, fontFiles(), { preview: true })).layout.pageCount;
+        times.push(performance.now() - t0);
+      }
+      times.sort((a, b) => a - b);
+      return { p95: times[18], pages };
+    };
+    const one = await run('regular');
+    expect(one.pages).toBe(1);
+    expect(one.p95).toBeLessThan(600);
+    const five = await run('longInvoice', 90);
+    expect(five.pages).toBeGreaterThanOrEqual(5);
+    expect(five.p95).toBeLessThan(1600);
+  }, 60_000);
 });
 
 describe('widths', () => {

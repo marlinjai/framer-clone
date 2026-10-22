@@ -131,6 +131,7 @@ function baseDocument(overrides: Partial<SalesDocumentWithSnapshots> = {}): Sale
     templateId: null,
     correctsDocumentId: null,
     replacesDocumentId: null,
+    printReplacesReference: false,
     sourceOrderId: null,
     documentNumber: '2026-0042',
     numberValue: 42,

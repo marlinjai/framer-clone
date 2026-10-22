@@ -52,6 +52,8 @@ export interface RenderInput {
   recipient: RenderRecipient | null;
   /** For a credit note: the invoice it cancels. */
   corrects: { documentNumber: string; issueDate: string } | null;
+  /** For a replacement that prints its reference line: the invoice it replaces. */
+  replaces?: { documentNumber: string; issueDate: string } | null;
   /** The version 1 template's layout (accent colour, small print); the layout engine takes its template separately. */
   template: { accentColor: string | null; footerBlocks: FooterBlockV1[] } | null;
 }
@@ -337,7 +339,9 @@ export function buildRenderModel(input: RenderInput): RenderModel {
 
   const reference = input.corrects
     ? `${label('reference.cancels')} ${toPdfText(input.corrects.documentNumber)} ${label('reference.of')} ${formatDate(input.corrects.issueDate)}`
-    : null;
+    : input.replaces
+      ? `${label('reference.replaces')} ${toPdfText(input.replaces.documentNumber)} ${label('reference.of')} ${formatDate(input.replaces.issueDate)}`
+      : null;
 
   const notes: string[] = [];
   if (present(doc.taxNote)) notes.push(toPdfText(doc.taxNote));

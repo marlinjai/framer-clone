@@ -68,6 +68,7 @@ export interface DocumentView {
   correctsDocumentId: string | null;
   /** The issued invoice this draft or invoice replaces (the Correct flow). */
   replacesDocumentId: string | null;
+  printReplacesReference: boolean;
   documentNumber: string | null;
   issueDate: string | null;
   serviceDate: string | null;

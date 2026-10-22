@@ -124,6 +124,7 @@ async function issuedInput(db: Db, scope: BooksScope, view: DocumentView): Promi
     }
   }
   const c = doc.customerSnapshot;
+  const replaces = await replacedInvoice(db, scope, doc);
   return {
     draft: false,
     document: doc,
@@ -142,11 +143,21 @@ async function issuedInput(db: Db, scope: BooksScope, view: DocumentView): Promi
       vatId: c.vatId,
     },
     corrects,
+    replaces,
     template: (() => {
       const layout = frozenLayout(doc);
       return layout.kind === 'legacyV1' ? layout.template : null;
     })(),
   };
+}
+
+/** The invoice a replacement refers to on its PDF, when it prints that line (the Correct flow). */
+async function replacedInvoice(db: Db, scope: BooksScope, doc: DocumentView['document']): Promise<RenderInput['replaces']> {
+  if (!doc.replacesDocumentId || !doc.printReplacesReference) return null;
+  const original = await selectDocumentRow(db, scope, doc.replacesDocumentId);
+  return original?.document_number && original.issue_date
+    ? { documentNumber: original.document_number, issueDate: original.issue_date }
+    : null;
 }
 
 /** The render input of a draft preview: live data (never stored). */
@@ -177,7 +188,16 @@ async function draftInput(scope: BooksScope, view: DocumentView): Promise<{ inpu
   // The current version of the draft's template (the built-in Klassisch layout without one).
   const { document } = await templateSnapshotFor(scope.db, scope, doc.templateId);
   return {
-    input: { draft: true, document: doc, lines: view.lines, sender: settings?.senderBlock ?? null, recipient, corrects: null, template: null },
+    input: {
+      draft: true,
+      document: doc,
+      lines: view.lines,
+      sender: settings?.senderBlock ?? null,
+      recipient,
+      corrects: null,
+      replaces: await replacedInvoice(scope.db, scope, doc),
+      template: null,
+    },
     document,
   };
 }

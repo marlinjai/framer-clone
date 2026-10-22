@@ -85,6 +85,8 @@ export interface EngineFonts {
 export interface EngineOptions {
   /** Stamp every page "VORSCHAU, KEIN BELEG" (the template preview route). */
   preview?: boolean;
+  /** The page cap (MAX_PAGES unless a test lowers it). */
+  maxPages?: number;
 }
 
 export interface LayoutRect {
@@ -746,7 +748,8 @@ export async function renderTemplate(
     b.issues.push({ code: 'ADDRESS_ZONE_TOO_TALL', blockId: null, region: left.bottom > right.bottom ? 'addressZone.left' : 'addressZone.right' });
   }
   // A footer or header that leaves no room would flow the body over hundreds of pages: stop at two.
-  const pageLimit = contentBottom - followingTop < 300 ? 2 : MAX_PAGES;
+  const cap = options.maxPages ?? MAX_PAGES;
+  const pageLimit = contentBottom - followingTop < 300 ? Math.min(2, cap) : cap;
 
   // The body flows into pages.
   let page = 0;
@@ -772,7 +775,7 @@ export async function renderTemplate(
     if (breakBefore(chunk.h)) {
       if (page + 1 >= pageLimit) {
         stopped = true;
-        if (pageLimit === MAX_PAGES) b.issues.push({ code: 'PAGE_LIMIT', blockId: chunk.blockId, region: 'body' });
+        if (pageLimit === cap) b.issues.push({ code: 'PAGE_LIMIT', blockId: chunk.blockId, region: 'body' });
         return;
       }
       newPage();
