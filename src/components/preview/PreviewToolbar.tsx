@@ -22,6 +22,11 @@ export interface PreviewToolbarProps {
   onPresetChange: (viewport: ComponentInstance) => void;
   onReload: () => void;
   onToggleMode: () => void;
+  /** Where "Editor" goes: this project's editor on the page being previewed. */
+  editorHref: string;
+  pages: ReadonlyArray<{ id: string; title: string }>;
+  currentPageId: string;
+  onPageChange: (pageId: string) => void;
 }
 
 const PreviewToolbar = observer(({
@@ -35,6 +40,10 @@ const PreviewToolbar = observer(({
   onPresetChange,
   onReload,
   onToggleMode,
+  editorHref,
+  pages,
+  currentPageId,
+  onPageChange,
 }: PreviewToolbarProps) => {
   const router = useRouter();
   const isFullscreen = mode === 'fullscreen';
@@ -44,9 +53,9 @@ const PreviewToolbar = observer(({
       {/* Back to editor */}
       <button
         type="button"
-        onClick={() => router.push('/')}
+        onClick={() => router.push(editorHref)}
         className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800"
-        title="Back to editor"
+        title="Back to the editor, on this page"
       >
         <ArrowLeft size={14} />
         <span className="text-xs">Editor</span>
@@ -74,6 +83,23 @@ const PreviewToolbar = observer(({
         {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
         <span className="text-xs">{isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}</span>
       </button>
+
+      <div className="w-px h-6 bg-gray-700 mx-1" />
+
+      {/* Which page to preview (also in fullscreen). */}
+      <select
+        aria-label="Page"
+        value={currentPageId}
+        onChange={(e) => onPageChange(e.target.value)}
+        className="max-w-[220px] bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100"
+        title="Page to preview"
+      >
+        {pages.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.title}
+          </option>
+        ))}
+      </select>
 
       <div className="flex-1" />
 

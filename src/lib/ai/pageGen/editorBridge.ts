@@ -13,8 +13,9 @@ import type { PageModelType } from '@/models/PageModel';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { serializeSubtree } from '@/lib/ai/serializers/subtree';
 import { isVoidTag } from '@/lib/drag/voidTags';
+import { DEFAULT_VIEWPORTS } from '@/lib/canvas/defaultViewports';
+import { getHistoryStore } from '@/stores/RootStore';
 import {
-  DEFAULT_BREAKPOINTS,
   breakpointKeyMap,
   toEditorSnapshot,
   type ApplyOutcome,
@@ -46,16 +47,6 @@ export interface CapturedTarget {
   viewports: ViewportSpec[];
 }
 
-/** Layout used for a new page when the source page has no viewports (mirrors createPage). */
-const DEFAULT_VIEWPORT_GEOMETRY = [
-  { x: 100, y: 100, width: 1280, height: 800 },
-  { x: 1430, y: 100, width: 768, height: 1024 },
-  { x: 2248, y: 100, width: 375, height: 667 },
-];
-
-function newId(): string {
-  return globalThis.crypto.randomUUID();
-}
 
 /** What the dialog shows as "where this goes", or why it cannot go there. */
 export function describeTargetAvailability(
@@ -91,6 +82,19 @@ export function captureTarget(
   page: PageModelType,
   selected: ComponentInstance | undefined,
 ): CapturedTarget {
+  // Generating INTO a page without frames: the page first gets the default
+  // three, so the breakpoint ids the model's styles are keyed to are ids real
+  // frames carry. (They used to be invented here, so every Desktop/Tablet/
+  // Mobile style of such a generation was keyed to ids no frame had and only
+  // base styles rendered.) Not an undo step: it is a repair, like the one on
+  // load, and undoing the generation must not take the frames away again.
+  // A NEW page never touches the page that is open: its frames are created
+  // with the page (addGeneratedPage).
+  if (kind !== 'newPage') {
+    const history = getHistoryStore();
+    if (history) history.runUntracked(() => page.ensureDefaultViewports());
+    else page.ensureDefaultViewports();
+  }
   const viewportNodes = page.viewportNodes as ComponentInstance[];
   let viewports: ViewportSpec[] = viewportNodes
     .filter(v => v.breakpointId)
@@ -104,11 +108,15 @@ export function captureTarget(
       height: v.viewportHeight ?? 600,
     }));
   if (viewports.length === 0) {
-    viewports = DEFAULT_BREAKPOINTS.map((bp, i) => ({
-      breakpointId: newId(),
-      label: bp.label,
-      minWidth: bp.minWidth,
-      ...DEFAULT_VIEWPORT_GEOMETRY[i],
+    // A new page generated while a frameless page is open: the defaults.
+    viewports = DEFAULT_VIEWPORTS.map((v) => ({
+      breakpointId: globalThis.crypto.randomUUID(),
+      label: v.label,
+      minWidth: v.minWidth,
+      x: v.x,
+      y: v.y,
+      width: v.width,
+      height: v.height,
     }));
   }
   return {

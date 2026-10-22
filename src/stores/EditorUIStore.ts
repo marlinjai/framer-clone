@@ -47,10 +47,15 @@ const EditorUIStore = types.model('EditorUI', {
   // Transient interaction state (won't be persisted).
   // Drag state lives in DragManager (src/lib/drag/DragManager.ts).
   hoverComponent: undefined as ComponentInstance | undefined,
-  // True for the standalone demo editor at `/`, whose project is built in the
-  // browser and belongs to no company: there is nothing to save or publish to
-  // (projects are created from the dashboard, POST /api/projects).
-  isUnsavedDemo: false,
+  // The id of the standalone demo editor's project (`/`), built in the browser
+  // and held by no company: it has no project on the server to save or
+  // publish to, until "Save as a new project" creates one.
+  demoProjectId: undefined as string | undefined,
+  // A demo project already saved as a real project ("Save as a new project"):
+  // the demo editor drops it and starts fresh instead of offering it again.
+  consumedDemoProjectId: undefined as string | undefined,
+  // A message for the person above the canvas (see EditorNotice), dismissable.
+  editorNotice: undefined as { kind: 'changedElsewhere' | 'missingPage'; message: string } | undefined,
   isResizing: false,
   resizeData: undefined as {
     component: ComponentInstance;
@@ -62,13 +67,40 @@ const EditorUIStore = types.model('EditorUI', {
     breakpointId?: string;                       // set for 'tree' so we write responsive
   } | undefined,
 }))
+.views(self => ({
+  /** True while the editor shows the browser-only demo project. */
+  get isUnsavedDemo(): boolean {
+    return self.demoProjectId !== undefined && self.currentProject?.id === self.demoProjectId;
+  },
+}))
 .actions(self => ({
-  markUnsavedDemo() {
-    self.isUnsavedDemo = true;
+  markUnsavedDemo(projectId: string) {
+    self.demoProjectId = projectId;
+    self.consumedDemoProjectId = undefined;
+  },
+
+  /** The demo was saved as a real project: never offer it again. */
+  consumeDemo() {
+    self.consumedDemoProjectId = self.demoProjectId;
+    self.demoProjectId = undefined;
+  },
+
+  setEditorNotice(notice: { kind: 'changedElsewhere' | 'missingPage'; message: string } | undefined) {
+    self.editorNotice = notice;
   },
 
   // Project selection
   setCurrentProject(project?: ProjectModelType) {
+    // Switching to another project (for example the demo at `/`, then a
+    // dashboard project in the same tab) must not carry over what was being
+    // edited or pointed at in the previous one. The current page and the
+    // selection are set by setCurrentPage right after.
+    if (self.currentProject?.id !== project?.id) {
+      self.editorNotice = undefined;
+      self.editingComponent = undefined;
+      self.selectedViewportNode = undefined;
+      self.hoverComponent = undefined;
+    }
     self.currentProject = project;
   },
   

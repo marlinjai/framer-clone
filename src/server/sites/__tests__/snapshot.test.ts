@@ -97,6 +97,35 @@ describe('persistedToProjectSnapshot -> ProjectModel round-trip', () => {
     expect(getSnapshot(rebuilt)).toEqual(getSnapshot(original));
   });
 
+  it('gives a stored page without breakpoint frames the three default ones on load', () => {
+    const rowData: SiteRowData = {
+      id: 'site_empty',
+      name: 'Untitled Project',
+      description: '',
+      analyticsProjectId: null,
+      ingestionEndpoint: null,
+      apiKeyRef: null,
+      lumitraEnabled: false,
+      projectCreatedAt: new Date(0),
+      projectUpdatedAt: new Date(0),
+      // What the dashboard's "New project" stored before this fix.
+      pages: [
+        {
+          pageId: 'home',
+          snapshot: {
+            id: 'home',
+            slug: '',
+            metadata: { title: 'test page', description: '' },
+            appComponentTree: { id: 'root', type: 'div', componentType: 'host', props: {} },
+            canvasNodes: {},
+          },
+        },
+      ],
+    };
+    const page = ProjectModel.create(persistedToProjectSnapshot(rowData)).getPage('home')!;
+    expect(page.sortedViewportNodes.map((v) => v.label)).toEqual(['Desktop', 'Tablet', 'Mobile']);
+  });
+
   it('loads a site with no analytics binding with the default empty block', () => {
     const original = makeProjectWithPages(); // no lumitra calls
     const persisted = projectToPersisted(original);

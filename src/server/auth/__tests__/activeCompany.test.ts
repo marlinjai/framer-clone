@@ -135,6 +135,11 @@ describe('safeEditorReturnPath', () => {
     ['/projects/site_1', '/projects/site_1'],
     ['/projects/0b6f-uuid/preview', '/projects/0b6f-uuid/preview'],
     ['/projects/migrate-company', '/projects'],
+    // The demo editor, exactly (its "Save as a new project" goes through the chooser).
+    ['/', '/'],
+    ['/?page=x', '/projects'],
+    ['//', '/projects'],
+    ['/preview', '/projects'],
     ['https://evil.example/projects', '/projects'],
     ['//evil.example', '/projects'],
     ['/projects/../admin', '/projects'],

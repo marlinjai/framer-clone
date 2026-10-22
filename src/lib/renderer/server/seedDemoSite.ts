@@ -37,6 +37,7 @@
 // location, so an order placed on the demo host through the storefront orders
 // route can reserve it.
 
+import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
 import { randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import type { Kysely } from 'kysely';
@@ -375,7 +376,8 @@ function buildHomeSnapshot(args: {
     createdAt: 0,
     updatedAt: 0,
     appComponentTree,
-    canvasNodes: {},
+    // The default frames, so the seeded site also opens in the editor.
+    canvasNodes: defaultViewportSnapshots(),
   };
 }
 

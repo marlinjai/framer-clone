@@ -20,6 +20,8 @@
 // resolveActiveScope and the typed error mapping are kept REAL (only
 // getSiteRepository is mocked) so the actual scope/error wiring is exercised.
 
+import ProjectModel from '@/models/ProjectModel';
+import { getSnapshot } from 'mobx-state-tree';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const mockVerifySession = vi.fn();
@@ -379,6 +381,82 @@ describe('POST /api/projects (authorized)', () => {
 
     // No explicit status: saveProject's create-path defaults the DB row to draft.
     expect(snapshotArg.status).toBeUndefined();
+
+    // The home page ships with the three default breakpoint frames (it used to
+    // have none: nothing on the editor canvas, "no viewports" in Preview).
+    const home = Object.values(snapshotArg.pages)[0] as { canvasNodes: Record<string, { label: string; canvasNodeType: string }> };
+    const frames = Object.values(home.canvasNodes).filter((n) => n.canvasNodeType === 'viewport');
+    expect(frames.map((f) => f.label)).toEqual(['Desktop', 'Tablet', 'Mobile']);
+  });
+
+  describe('"Save as a new project" (pages from the browser-only demo editor)', () => {
+    function demoPages() {
+      const demo = ProjectModel.create({ id: 'demo-in-browser', metadata: { title: 'Framer Clone Demo', description: '' }, pages: {} });
+      const home = demo.createPage('Home');
+      home.setSlug('');
+      demo.createPage('Crumb & Hearth Bakery');
+      demo.setLumitraApiKeyRef('client-chosen-ref');
+      // As the browser sends it: plain JSON (MobX-State-Tree snapshots are frozen).
+      return JSON.parse(JSON.stringify(getSnapshot(demo))) as { pages: Record<string, unknown>; lumitra: unknown };
+    }
+
+    it('creates the project from those pages, with a server id and no client analytics binding', async () => {
+      const save = vi.fn().mockResolvedValue(undefined);
+      installRepo({ saveProject: save });
+      const snap = demoPages();
+
+      const res = await POST(createReq({ name: 'Crumb & Hearth', project: { id: 'demo-in-browser', pages: snap.pages, lumitra: snap.lumitra } }));
+
+      expect(res.status).toBe(200);
+      const { siteId } = await res.json();
+      const [scopeArg, snapshotArg] = save.mock.calls[0];
+      expect(scopeArg).toEqual(SCOPE);
+      expect(snapshotArg.id).toBe(siteId);
+      expect(snapshotArg.id).not.toBe('demo-in-browser');
+      expect(snapshotArg.metadata.title).toBe('Crumb & Hearth');
+      expect(Object.keys(snapshotArg.pages).sort()).toEqual(Object.keys(snap.pages).sort());
+      // The client's analytics binding is dropped: the model's empty default.
+      expect(snapshotArg.lumitra).toBeDefined();
+      expect(snapshotArg.lumitra.apiKeyRef ?? null).toBeNull();
+      expect(snapshotArg.lumitra.enabled).toBe(false);
+    });
+
+    it('repairs a page without breakpoint frames on the way in', async () => {
+      const save = vi.fn().mockResolvedValue(undefined);
+      installRepo({ saveProject: save });
+      const snap = demoPages();
+      const [firstId] = Object.keys(snap.pages);
+      (snap.pages[firstId] as { canvasNodes: unknown }).canvasNodes = {};
+
+      await POST(createReq({ name: 'X', project: { pages: snap.pages } }));
+
+      const page = save.mock.calls[0][1].pages[firstId] as { canvasNodes: Record<string, { canvasNodeType: string }> };
+      expect(Object.values(page.canvasNodes).filter((n) => n.canvasNodeType === 'viewport')).toHaveLength(3);
+    });
+
+    it('413s for a body over the size limit, before parsing it', async () => {
+      const save = vi.fn();
+      installRepo({ saveProject: save });
+      const huge = 'x'.repeat(10 * 1024 * 1024 + 1);
+      const res = await POST(createReq({ name: 'X', project: { pages: { p: { slug: '', pad: huge } } } }));
+      expect(res.status).toBe(413);
+      expect((await res.json()).error.code).toBe('body_too_large');
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['no pages', { pages: {} }],
+      ['no home page', { pages: { a: { slug: 'about' }, b: { slug: 'contact' } } }],
+      ['two home pages', { pages: { a: { slug: '' }, b: { slug: '' } } }],
+      ['a page that is not a page', { pages: { p1: { slug: '', metadata: 'nope' } } }],
+    ])('400s for %s, and nothing is created or provisioned', async (_label, project) => {
+      const save = vi.fn();
+      installRepo({ saveProject: save });
+      const res = await POST(createReq({ name: 'X', project }));
+      expect(res.status).toBe(400);
+      expect(save).not.toHaveBeenCalled();
+      expect(mockProvision).not.toHaveBeenCalled();
+    });
   });
 
   it('defaults the name to "Untitled Project" when the body is empty', async () => {

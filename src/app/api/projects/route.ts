@@ -49,8 +49,10 @@ import {
 } from '@/server/sites';
 import ProjectModel, { type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { createIntrinsicComponent } from '@/models/ComponentModel';
-import { jsonError } from '@/lib/api/respond';
+import { jsonError, readBodyText, PROJECT_BODY_MAX_BYTES } from '@/lib/api/respond';
 import { projectNameSchema } from '@/lib/projectName';
+import { pageSnapshotSchema } from './_schema';
+import { defaultViewportSnapshots, withDefaultViewports } from '@/lib/canvas/defaultViewports';
 import {
   commerceSlugFor,
   CommerceTenantSuspendedError,
@@ -174,11 +176,41 @@ async function ensureCommerceProvisioned(
   }
 }
 
-// The only thing the client may influence: a display name. Everything else
-// (id, workspace scope, status, page structure) is server-derived. The body is
-// OPTIONAL — a bare POST with no body creates "Untitled Project".
+// What the client may influence: a display name and, optionally, the PAGES to
+// start with (the editor's "Save as a new project" for the browser-only demo
+// project). Everything else (id, workspace scope, status, analytics binding)
+// is server-derived. The body is OPTIONAL: a bare POST with no body creates
+// "Untitled Project" with one empty home page.
 // The name follows the same rule as a rename (src/lib/projectName.ts).
-const createBodySchema = z.object({ name: projectNameSchema.optional() });
+const createBodySchema = z.object({
+  name: projectNameSchema.optional(),
+  project: z.object({ pages: z.record(z.string(), pageSnapshotSchema) }).passthrough().optional(),
+});
+
+/**
+ * A new project from pages made in the browser (the demo editor). Only the
+ * pages are taken: the id is minted here, the metadata is fresh, and any
+ * `lumitra` analytics binding in the input is dropped (a client never chooses
+ * a key reference). Round-tripped through ProjectModel so a malformed page is
+ * refused (thrown) rather than stored; pages without frames get the defaults.
+ */
+function buildSnapshotFromPages(
+  siteId: string,
+  name: string,
+  pages: Record<string, unknown>,
+  now: number,
+): ProjectSnapshotOut {
+  const repaired: Record<string, unknown> = {};
+  for (const [pageId, page] of Object.entries(pages)) {
+    repaired[pageId] = withDefaultViewports({ ...(page as object), id: pageId } as { canvasNodes?: unknown });
+  }
+  const project = ProjectModel.create({
+    id: siteId,
+    metadata: { title: name, description: '', createdAt: now, updatedAt: now },
+    pages: repaired as never,
+  });
+  return getSnapshot(project) as ProjectSnapshotOut;
+}
 
 /**
  * Build a MINIMAL valid draft ProjectModel snapshot: one home page (`slug: ''`)
@@ -207,7 +239,10 @@ function buildEmptyDraftSnapshot(
         appComponentTree: getSnapshot(
           createIntrinsicComponent(rootId, 'div', {}),
         ),
-        canvasNodes: {},
+        // The three default breakpoint frames, as a page made in the editor
+        // gets them. (An empty map left the home page of every new project
+        // without frames: nothing on the canvas, no Preview.)
+        canvasNodes: defaultViewportSnapshots(),
       },
     },
   });
@@ -250,7 +285,10 @@ async function handlePOST(req: Request): Promise<Response> {
   //    a present-but-malformed body is a 400. We read the raw text so a bare
   //    POST with no body doesn't trip JSON.parse on an empty string.
   let name = 'Untitled Project';
-  const raw = await req.text();
+  let pages: Record<string, unknown> | undefined;
+  const body = await readBodyText(req, PROJECT_BODY_MAX_BYTES);
+  if (!body.ok) return body.response;
+  const raw = body.text;
   if (raw.trim().length > 0) {
     let parsed: unknown;
     try {
@@ -265,6 +303,30 @@ async function handlePOST(req: Request): Promise<Response> {
       });
     }
     if (result.data.name !== undefined) name = result.data.name;
+    if (result.data.project) {
+      pages = result.data.project.pages;
+      // Exactly one home page (empty slug): a project's root address must
+      // show something. (The slug rules alone accept a project with none.)
+      const homes = Object.values(pages).filter((p) => (p as { slug?: unknown }).slug === '').length;
+      if (homes !== 1) {
+        return jsonError(
+          'bad_body',
+          homes === 0 ? 'a project needs a home page (a page with an empty slug)' : 'a project has exactly one home page',
+          400,
+        );
+      }
+    }
+  }
+
+  // The pages, if any, are checked BEFORE anything is provisioned or written.
+  const siteId = crypto.randomUUID();
+  const now = Date.now();
+  let snapshot: ProjectSnapshotOut;
+  try {
+    snapshot = pages ? buildSnapshotFromPages(siteId, name, pages, now) : buildEmptyDraftSnapshot(siteId, name, now);
+  } catch (err) {
+    console.error('[projects] refused pages for a new project:', err);
+    return jsonError('bad_body', 'the pages of this project could not be read; nothing was created', 400);
   }
 
   // 5. CM-11 onboard hook: ensure this tenant-group's `tg_<id>` commerce schema
@@ -277,11 +339,10 @@ async function handlePOST(req: Request): Promise<Response> {
   const commerceFailure = await ensureCommerceProvisioned(scope.tenantGroupId, tenantSlug);
   if (commerceFailure) return commerceFailure;
 
-  // 6. Mint the id SERVER-SIDE and persist a minimal draft snapshot under the
-  //    session scope. No publishProject call: the row stays `draft` (DB default).
-  const siteId = crypto.randomUUID();
-  const now = Date.now();
-  const snapshot = buildEmptyDraftSnapshot(siteId, name, now);
+  // 6. Persist the snapshot built above (id minted SERVER-SIDE) under the
+  //    session scope. No publishProject call: the row stays `draft` (DB
+  //    default). The page slug rules apply (saveProject): a broken slug is a
+  //    400 and nothing is written.
 
   try {
     const repo = getSiteRepository();

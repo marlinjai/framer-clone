@@ -17,6 +17,7 @@ import { getSnapshot } from 'mobx-state-tree';
 import { UploadCloud } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
+import { markServerVersion } from '@/stores/openProject';
 import { useSiteAddress } from '@/contexts/SiteAddressContext';
 
 type PublishState =
@@ -51,7 +52,7 @@ const PublishButton = observer(() => {
     if (isUnsavedDemo) {
       setState({
         kind: 'error',
-        message: 'This demo project exists only in this browser. Create a project on the projects dashboard to save and publish.',
+        message: 'This demo project exists only in this browser. Save it as a project first (Save), then publish it from there.',
       });
       return;
     }
@@ -71,6 +72,8 @@ const PublishButton = observer(() => {
         setState({ kind: 'error', message });
         return;
       }
+      // The server now holds exactly these pages (see openProject).
+      markServerVersion(project.id, (snapshot as { pages?: unknown }).pages);
       const ok = payload as
         | { publishedPages?: unknown; liveUrl?: unknown; subdomain?: unknown }
         | null;

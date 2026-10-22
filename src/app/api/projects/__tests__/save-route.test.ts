@@ -306,3 +306,16 @@ describe('save of a deleted project', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 });
+
+describe('save body size', () => {
+  it('413s for a body over the size limit, and nothing is saved', async () => {
+    mockVerifySession.mockResolvedValue(makeSession());
+    mockCan.mockResolvedValue(true);
+    const save = vi.fn();
+    installRepo({ saveProject: save, publishProject: vi.fn() });
+    const huge = { project: { ...PROJECT, pad: 'x'.repeat(10 * 1024 * 1024 + 1) } };
+    const res = await POST(saveReq(huge));
+    expect(res.status).toBe(413);
+    expect(save).not.toHaveBeenCalled();
+  });
+});
