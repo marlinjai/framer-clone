@@ -1,5 +1,6 @@
 'use client';
 
+import { reaction } from 'mobx';
 import React from 'react';
 import Canvas from "@/components/Canvas";
 import LeftSidebar from "@/components/sidebars/LeftSidebar";
@@ -12,6 +13,8 @@ import { DropIndicatorLayer, DragGhostLayer } from '@/lib/drag';
 import makeInspectable from 'mobx-devtools-mst';
 import { EditorTool } from '@/stores/EditorUIStore';
 import { getUndoManager, getHistoryStore, getDragManager } from '@/stores/RootStore';
+import { openProject, pageIdFromLocation, pickPage, restoreStashedDemo } from '@/stores/openProject';
+import EditorNotice from './EditorNotice';
 import { resolveAction } from '@/lib/keyBindings';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
@@ -41,6 +44,15 @@ const DragManagerBinding: React.FC = () => {
   return null;
 };
 
+/** Write `?page=<id>` into the current address without navigating. */
+function syncPageParam(pageId: string | undefined) {
+  if (!pageId || typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  if (url.searchParams.get('page') === pageId) return;
+  url.searchParams.set('page', pageId);
+  window.history.replaceState(window.history.state, '', url.toString());
+}
+
 export default function EditorApp({ projectSnapshot }: { projectSnapshot?: ProjectSnapshotOut } = {}) {
   const rootStore = useStore();
   const initRef = React.useRef(false);
@@ -50,36 +62,76 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
   }
 
   if (!initRef.current) {
+    const { editorUI, projectStore } = rootStore;
+    // Which page to open: `?page=<id>` (Preview's "Editor" link carries it),
+    // else the home page.
+    const requestedPageId = pageIdFromLocation();
+    const previousProjectId = editorUI.currentProject?.id;
+    let missingPageId: string | undefined;
     if (projectSnapshot) {
-      // Hydration path (MT-08 / MT-10): apply a server-loaded snapshot instead
-      // of fabricating the demo project. The snapshot's own id keys the store.
-      const projectId = rootStore.projectStore.ingestProjectSnapshot(projectSnapshot);
-      const project = rootStore.projectStore.getProject(projectId);
-      rootStore.editorUI.setCurrentProject(project);
-      // Home page by slug; fall back to the first page if no '' slug exists.
-      rootStore.editorUI.setCurrentPage(
-        project?.findPageBySlug('') ?? project?.pagesArray[0]
-      );
+      // Hydration path (MT-08 / MT-10), see src/stores/openProject.ts: the
+      // server snapshot, or this tab's working copy when the server has
+      // nothing newer (unsaved work, such as a page just generated, survives
+      // a trip to Preview). openProject also owns the undo-history rules.
+      const opened = openProject(rootStore, projectSnapshot, requestedPageId);
+      missingPageId = opened.missingPageId;
+      if (opened.changedElsewhere) {
+        editorUI.setEditorNotice({
+          kind: 'changedElsewhere',
+          message:
+            'This project was saved somewhere else since this tab loaded it, and this tab has unsaved changes too. Saving here overwrites the other changes; loading the newer version discards the unsaved changes in this tab.',
+        });
+      }
     } else {
-      // Standalone dev mount (e.g. `/`): seed the demo project so local dev is
-      // unchanged.
-      rootStore.projectStore.createProject(
-        'Framer Clone Demo',
-        'Sample project with component tree'
-      );
-      // Set this project as current in the editor
-      rootStore.editorUI.setCurrentProject(rootStore.projectStore.findProjectByTitle('Framer Clone Demo'));
-      // It exists only in this browser: Save and Publish say so instead of
-      // calling routes that only update projects created on the dashboard.
-      rootStore.editorUI.markUnsavedDemo();
-      rootStore.editorUI.setCurrentPage(rootStore.editorUI.currentProject?.findPageBySlug(''));
+      // The standalone demo editor (`/`).
+      const consumed = editorUI.consumedDemoProjectId;
+      if (consumed) {
+        // Already saved as a real project: start over with a fresh demo.
+        projectStore.removeProject(consumed);
+      }
+      const demoId = editorUI.demoProjectId;
+      if (demoId && projectStore.getProject(demoId)) {
+        // Back from its preview, or from elsewhere in this tab: keep the demo
+        // project and everything done in it, never seed a second one.
+        const project = projectStore.getProject(demoId);
+        editorUI.setCurrentProject(project);
+        const picked = pickPage(project, requestedPageId);
+        missingPageId = picked.missingPageId;
+        editorUI.setCurrentPage(picked.page);
+      } else if (!restoreStashedDemo(rootStore, requestedPageId)) {
+        // Nothing to come back to (the stash covers a trip through sign-in or
+        // the company chooser): seed the demo project.
+        projectStore.createProject('Framer Clone Demo', 'Sample project with component tree');
+        const demo = projectStore.findProjectByTitle('Framer Clone Demo');
+        editorUI.setCurrentProject(demo);
+        editorUI.setCurrentPage(demo?.findPageBySlug(''));
+        // It exists only in this browser: Save offers "Save as a new project".
+        if (demo) editorUI.markUnsavedDemo(demo.id);
+      }
+      // Undo history belongs to one project: a different one (or a seeded
+      // demo, whose creation is not something to undo) starts it afresh.
+      if (previousProjectId !== editorUI.currentProject?.id || !demoId) getHistoryStore()?.clear();
+    }
+    if (missingPageId) {
+      editorUI.setEditorNotice({
+        kind: 'missingPage',
+        message: 'The page in the address is not in this project (it may not have been saved), so the home page is open.',
+      });
     }
     initRef.current = true;
-    // Drop the seed/hydration actions from history so "Initial state" = the
-    // loaded project, not literally-empty. Undoing past project creation would
-    // destroy the page that selection / UI references point at.
-    getHistoryStore()?.clear();
   }
+
+  // Keep `?page=` in the address in step with the page shown, so a reload
+  // or a shared link opens the same page (without a server round trip).
+  React.useEffect(
+    () =>
+      reaction(
+        () => rootStore.editorUI.currentPage?.id,
+        (pageId) => syncPageParam(pageId),
+        { fireImmediately: true },
+      ),
+    [rootStore],
+  );
 
   // Single keydown listener dispatching through the keybindings registry. The
   // registry (src/lib/keyBindings.ts) owns the key → action mapping so a future
@@ -146,6 +198,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
       <DragGhostLayer />
 
       <TopBar />
+      <EditorNotice />
       <div data-editor-ui="true" className="fixed top-16 left-0 bottom-0 z-90">
         <LeftSidebar />
       </div>

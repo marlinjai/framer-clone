@@ -22,12 +22,17 @@ export const dynamic = 'force-dynamic';
 
 interface ProjectPreviewPageProps {
   params: Promise<{ projectId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
 export default async function ProjectPreviewPage({
   params,
+  searchParams,
 }: ProjectPreviewPageProps) {
   const { projectId } = await params;
+  // `?page=<pageId>`: the page the person was on in the editor.
+  const pageParam = (await searchParams).page;
+  const pageId = (Array.isArray(pageParam) ? pageParam[0] : pageParam) ?? null;
   const result = await loadProjectSnapshot(projectId, '/preview');
 
   // Fail-closed: no valid session -> bounce to login.
@@ -38,7 +43,8 @@ export default async function ProjectPreviewPage({
   // auth-brain could not answer: a retry notice on this same address, never
   // the login.
   if (result.status === 'auth_unavailable') {
-    return <AuthUnavailable retryHref={`/projects/${encodeURIComponent(projectId)}/preview`} />;
+    const retry = `/projects/${encodeURIComponent(projectId)}/preview`;
+    return <AuthUnavailable retryHref={pageId ? `${retry}?page=${encodeURIComponent(pageId)}` : retry} />;
   }
 
   // Valid session, no company picked yet (or none with Lumitra Sites) -> the dashboard's chooser, which
@@ -52,5 +58,5 @@ export default async function ProjectPreviewPage({
     notFound();
   }
 
-  return <PreviewMount projectSnapshot={result.snapshot} />;
+  return <PreviewMount projectSnapshot={result.snapshot} pageId={pageId} />;
 }

@@ -17,6 +17,7 @@ import dynamic from 'next/dynamic';
 import React from 'react';
 import { useStore } from '@/hooks/useStore';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
+import { openProject } from '@/stores/openProject';
 
 const PreviewShell = dynamic(
   () => import('@/components/preview/PreviewShell'),
@@ -25,24 +26,22 @@ const PreviewShell = dynamic(
 
 export default function PreviewMount({
   projectSnapshot,
+  pageId = null,
 }: {
   projectSnapshot: ProjectSnapshotOut;
+  /** `?page=<pageId>` from the address: the page to show. */
+  pageId?: string | null;
 }) {
   const rootStore = useStore();
-  const initRef = React.useRef(false);
+  const opened = React.useRef<{ missingPageId?: string } | null>(null);
 
-  if (!initRef.current) {
-    // Hydrate the server-loaded project and select it + its home page, so the
-    // shared store the PreviewShell reads reflects THIS project. The snapshot's
-    // own id keys the store (ingest replaces any existing project with that id).
-    const projectId = rootStore.projectStore.ingestProjectSnapshot(projectSnapshot);
-    const project = rootStore.projectStore.getProject(projectId);
-    rootStore.editorUI.setCurrentProject(project);
-    rootStore.editorUI.setCurrentPage(
-      project?.findPageBySlug('') ?? project?.pagesArray[0],
-    );
-    initRef.current = true;
+  if (!opened.current) {
+    // The server-loaded project, unless this browser already holds it (came
+    // from the editor): then its working copy, unsaved work included, is what
+    // gets previewed. The page from `?page=`, else home. See openProject.
+    const { missingPageId } = openProject(rootStore, projectSnapshot, pageId);
+    opened.current = { missingPageId };
   }
 
-  return <PreviewShell />;
+  return <PreviewShell missingPageId={opened.current.missingPageId} />;
 }

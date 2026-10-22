@@ -20,6 +20,8 @@ import { getSnapshot } from 'mobx-state-tree';
 import { Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
+import { markServerVersion } from '@/stores/openProject';
+import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
 
 type SaveState =
   | { kind: 'idle' }
@@ -32,6 +34,7 @@ const SaveButton = observer(() => {
   const project = rootStore.editorUI.currentProject;
   const isUnsavedDemo = rootStore.editorUI.isUnsavedDemo === true;
   const [state, setState] = React.useState<SaveState>({ kind: 'idle' });
+  const [saveAsOpen, setSaveAsOpen] = React.useState(false);
 
   const save = React.useCallback(async () => {
     if (!project) {
@@ -39,12 +42,10 @@ const SaveButton = observer(() => {
       return;
     }
     // The demo editor at `/` builds its project in the browser; no company
-    // holds it, so there is nothing on the server to save to.
+    // holds it yet: Save offers to make it a project of its own.
     if (isUnsavedDemo) {
-      setState({
-        kind: 'error',
-        message: 'This demo project exists only in this browser. Create a project on the projects dashboard to save and publish.',
-      });
+      setState({ kind: 'idle' });
+      setSaveAsOpen(true);
       return;
     }
     setState({ kind: 'saving' });
@@ -65,6 +66,8 @@ const SaveButton = observer(() => {
         setState({ kind: 'error', message });
         return;
       }
+      // The server now holds exactly these pages (see openProject).
+      markServerVersion(project.id, (snapshot as { pages?: unknown }).pages);
       const saved = (payload as { savedPages?: unknown } | null)?.savedPages;
       const count = Array.isArray(saved) ? saved.length : 0;
       setState({
@@ -114,6 +117,16 @@ const SaveButton = observer(() => {
         <Save size={16} />
         {saving ? 'Saving...' : 'Save'}
       </Button>
+      {isUnsavedDemo && project ? (
+        <SaveAsNewProjectDialog
+          open={saveAsOpen}
+          onOpenChange={setSaveAsOpen}
+          defaultName={project.metadata.title || 'Untitled Project'}
+          getSnapshot={() => getSnapshot(project) as unknown as { pages: Record<string, unknown> }}
+          currentPageId={rootStore.editorUI.currentPage?.id}
+          onSaved={() => rootStore.editorUI.consumeDemo()}
+        />
+      ) : null}
     </div>
   );
 });

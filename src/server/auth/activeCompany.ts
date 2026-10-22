@@ -80,5 +80,8 @@ export function safeEditorReturnPath(raw: unknown): string {
   if (typeof raw !== 'string') return '/projects';
   // The one-time cookie migration handler is never a destination.
   if (raw.startsWith('/projects/migrate-company')) return '/projects';
+  // `/` is the browser-only demo editor: "Save as a new project" sends a
+  // person without a chosen company through the chooser and back to it.
+  if (raw === '/') return '/';
   return /^\/projects(\/[A-Za-z0-9_-]+(\/preview)?)?$/.test(raw) ? raw : '/projects';
 }

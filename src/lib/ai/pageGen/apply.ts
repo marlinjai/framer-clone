@@ -18,13 +18,6 @@ export interface PageBreakpoint extends BreakpointInput {
   id: string;
 }
 
-/** The breakpoints the editor ships with when a page has no viewports (mirrors ProjectModel.createPage). */
-export const DEFAULT_BREAKPOINTS: BreakpointInput[] = [
-  { label: 'Desktop', minWidth: 1280 },
-  { label: 'Tablet', minWidth: 768 },
-  { label: 'Mobile', minWidth: 320 },
-];
-
 /**
  * Map each breakpoint key the route derived back to the real breakpoint id.
  * Uses the same pure derivation (deriveBreakpointKeys) on the same input, so

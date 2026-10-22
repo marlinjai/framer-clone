@@ -36,7 +36,7 @@ import {
   SiteRepositoryError,
 } from '@/server/sites';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
-import { jsonError, parseBody } from '@/lib/api/respond';
+import { jsonError, parseBody, PROJECT_BODY_MAX_BYTES } from '@/lib/api/respond';
 import { projectBodySchema as saveBodySchema } from '../_schema';
 
 export const runtime = 'nodejs';
@@ -74,7 +74,7 @@ async function handlePOST(req: Request): Promise<Response> {
   }
 
   // 4. Validate the snapshot body. Malformed -> 400.
-  const body = await parseBody(req, saveBodySchema);
+  const body = await parseBody(req, saveBodySchema, { maxBytes: PROJECT_BODY_MAX_BYTES });
   if (!body.ok) return body.response;
 
   // 5. Persist the snapshot — and ONLY that. saveProject preserves the site's

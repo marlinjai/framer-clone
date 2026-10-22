@@ -157,11 +157,13 @@ const TopBar = observer(() => {
   const history = getHistoryStore();
   const router = useRouter();
 
-  // Point Preview at the id-aware route when a project is loaded (MT-11). The
-  // legacy /preview redirect still works, so fall back to it pre-hydration.
-  const previewHref = project
-    ? `/projects/${project.id}/preview`
-    : '/preview';
+  // Preview the page being edited (`?page=`). A dashboard project previews
+  // at its own route; the browser-only demo project (`/`) has no server copy,
+  // so it previews at /preview, from this tab's store.
+  const pageQuery = currentPage ? `?page=${encodeURIComponent(currentPage.id)}` : '';
+  const previewHref = project && !editorUI.isUnsavedDemo
+    ? `/projects/${project.id}/preview${pageQuery}`
+    : `/preview${pageQuery}`;
 
   return (
     <header

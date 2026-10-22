@@ -1,5 +1,6 @@
 // src/models/ProjectModel.ts
 // Domain model for projects - contains multiple pages and project-level settings
+import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
 import { types, Instance, SnapshotIn, SnapshotOut } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 import PageModel, { PageModelType } from './PageModel';
@@ -146,25 +147,8 @@ export const ProjectModel = types
       const effectiveTitle = (title && title.trim()) || `Page ${self.pages.size + 1}`;
       const slug = suggestSlug(effectiveTitle, Array.from(self.pages.values(), p => p.slug));
 
-      const desktopBreakpointId = uuidv4();
-      const tabletBreakpointId = uuidv4();
-      const mobileBreakpointId = uuidv4();
-
-      const desktop = createViewportNode(
-        `viewport-${desktopBreakpointId}`,
-        desktopBreakpointId,
-        'Desktop', 1280, 100, 100, 1280, 800,
-      );
-      const tablet = createViewportNode(
-        `viewport-${tabletBreakpointId}`,
-        tabletBreakpointId,
-        'Tablet', 768, 1430, 100, 768, 1024,
-      );
-      const mobile = createViewportNode(
-        `viewport-${mobileBreakpointId}`,
-        mobileBreakpointId,
-        'Mobile', 320, 2248, 100, 375, 667,
-      );
+      // The three default frames (src/lib/canvas/defaultViewports.ts).
+      const viewports = defaultViewportSnapshots();
 
       // Minimal app tree root. Using `div` (not `header`) keeps the semantic
       // tree flexible — users compose the hierarchy from here.
@@ -181,11 +165,7 @@ export const ProjectModel = types
         slug,
         metadata: { title: effectiveTitle, description: '' },
         appComponentTree: appTree,
-        canvasNodes: {
-          [desktop.id]: desktop,
-          [tablet.id]: tablet,
-          [mobile.id]: mobile,
-        },
+        canvasNodes: viewports,
       }));
       self.metadata.updatedAt = new Date();
       return self.pages.get(pageId) as PageModelType;

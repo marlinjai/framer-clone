@@ -15,6 +15,7 @@
 // tree round-trips byte-for-byte and the persistence layer never needs to know
 // the component schema (which evolves independently in ComponentModel).
 
+import { withDefaultViewports } from '@/lib/canvas/defaultViewports';
 import { getSnapshot, isStateTreeNode } from 'mobx-state-tree';
 import type {
   ProjectModelType,
@@ -148,7 +149,11 @@ export function persistedToProjectSnapshot(row: SiteRowData): ProjectSnapshotIn 
     // The stored snapshot IS a PageModel SnapshotOut, which is structurally a
     // valid SnapshotIn. Cast at this single boundary; the round-trip test
     // proves the shape.
-    pages[page.pageId] = page.snapshot as PageSnapshotIn;
+    // A page stored without breakpoint frames (projects created on the
+    // dashboard before the create route gave the home page any) gets the
+    // three default frames on load, so the editor canvas and Preview can show
+    // it; the next Save stores them.
+    pages[page.pageId] = withDefaultViewports(page.snapshot as PageSnapshotIn);
   }
 
   const hasBinding =

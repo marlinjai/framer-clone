@@ -66,6 +66,53 @@ beforeEach(() => {
   getHistoryStore()!.clear();
 });
 
+describe('a page without breakpoint frames (dashboard "New project" before the fix)', () => {
+  it('gets the default frames before capture, so generated styles key to real frame ids', () => {
+    for (const v of [...page.viewportNodes]) page.removeCanvasNode(v.id);
+    expect(page.viewportNodes).toHaveLength(0);
+    const root = tree();
+
+    const target = captureTarget('replace', page, root.children[0] as ComponentInstance);
+
+    const frameIds = page.sortedViewportNodes.map((v) => v.breakpointId);
+    expect(frameIds).toHaveLength(3);
+    expect(target.breakpoints.map((b) => b.id).sort()).toEqual([...frameIds].sort());
+    const applied = applyResult(project, target, result(HERO, target));
+    expect(applied.ok).toBe(true);
+    // The hero's Mobile padding is keyed to the Mobile frame, so it renders.
+    const hero = tree().children.find((c: ComponentInstance) => c.label === 'Hero') as ComponentInstance;
+    const padding = hero.props.style.padding as Record<string, string>;
+    const mobileId = page.sortedViewportNodes.find((v) => v.label === 'Mobile')!.breakpointId!;
+    expect(padding.base).toBe('64px');
+    expect(padding[mobileId]).toBe('24px');
+    // Every responsive key is base or a frame that exists on the page.
+    for (const key of Object.keys(padding)) expect(['base', ...frameIds]).toContain(key);
+  });
+});
+
+describe('frame repair at capture is not an undo step, and only for the target page', () => {
+  it('undoing a generation into a frameless page keeps its frames', () => {
+    for (const v of [...page.viewportNodes]) page.removeCanvasNode(v.id);
+    getHistoryStore()!.clear();
+    const target = captureTarget('replace', page, tree().children[0] as ComponentInstance);
+    expect(getHistoryStore()!.canUndo).toBe(false); // the repair itself is not undoable
+    expect(applyResult(project, target, result(HERO, target)).ok).toBe(true);
+    getHistoryStore()!.undo(); // undo the generation
+    expect(page.viewportNodes).toHaveLength(3);
+    expect(getHistoryStore()!.canUndo).toBe(false);
+  });
+
+  it('a NEW page generated while a frameless page is open leaves that page alone', () => {
+    for (const v of [...page.viewportNodes]) page.removeCanvasNode(v.id);
+    const target = captureTarget('newPage', page, undefined);
+    expect(page.viewportNodes).toHaveLength(0);
+    expect(target.viewports.map((v) => v.label)).toEqual(['Desktop', 'Tablet', 'Mobile']);
+    const applied = applyResult(project, target, result(HERO, target));
+    expect(applied.ok).toBe(true);
+    if (applied.ok) expect(project.getPage(applied.value.pageId)!.viewportNodes).toHaveLength(3);
+  });
+});
+
 describe('captureTarget / buildRequest', () => {
   it('captures the page breakpoints with their real ids, largest first in the request keys', () => {
     const target = captureTarget('newPage', page, undefined);

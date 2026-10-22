@@ -1,4 +1,5 @@
 // src/models/PageModel.ts
+import { defaultViewportSnapshots, hasViewport, repairBreakpointIds } from '@/lib/canvas/defaultViewports';
 import {
   types,
   Instance,
@@ -134,6 +135,20 @@ const PageModel = PageWithComponents
   },
   
   // Unified canvas node management (Framer-style)
+  /**
+   * Give a page without breakpoint frames the three default ones
+   * (src/lib/canvas/defaultViewports.ts). No-op when it has any frame.
+   * Returns true when frames were added.
+   */
+  ensureDefaultViewports(): boolean {
+    if (hasViewport(self.canvasNodes.values() as Iterable<{ canvasNodeType?: unknown }>)) return false;
+    for (const [id, node] of Object.entries(defaultViewportSnapshots(repairBreakpointIds(self.id)))) {
+      self.canvasNodes.set(id, node);
+    }
+    self.updatedAt = new Date();
+    return true;
+  },
+
   addCanvasNode(node: ComponentInstance | ComponentSnapshotIn) {
     self.canvasNodes.set(node.id, node);
     self.updatedAt = new Date();
