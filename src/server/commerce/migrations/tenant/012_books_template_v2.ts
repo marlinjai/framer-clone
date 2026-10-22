@@ -294,12 +294,15 @@ export const booksTemplateV2: Migration = {
     await tx`
       DO $$
       BEGIN
+        -- Nested: the inner query is planned only when the column still exists (012 may run twice).
         IF EXISTS (
           SELECT 1 FROM information_schema.columns
            WHERE table_schema = current_schema() AND table_name = 'document_template' AND column_name = 'logo_file_id'
-        ) AND EXISTS (SELECT 1 FROM "document_template" WHERE "logo_file_id" IS NOT NULL) THEN
-          RAISE EXCEPTION 'document_template.logo_file_id holds values; move them before 012 drops the column'
-              USING ERRCODE = 'BK012';
+        ) THEN
+          IF EXISTS (SELECT 1 FROM "document_template" WHERE "logo_file_id" IS NOT NULL) THEN
+            RAISE EXCEPTION 'document_template.logo_file_id holds values; move them before 012 drops the column'
+                USING ERRCODE = 'BK012';
+          END IF;
         END IF;
       END
       $$

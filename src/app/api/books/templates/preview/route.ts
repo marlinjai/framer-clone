@@ -60,7 +60,8 @@ async function boundedText(req: Request, limit: number): Promise<string | null> 
     }
     chunks.push(value);
   }
-  return Buffer.concat(chunks).toString('utf8');
+  // As req.text() did: a leading byte order mark is not part of the JSON.
+  return Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/, '');
 }
 
 export const POST = booksRoute('write', async (ctx, req) => {

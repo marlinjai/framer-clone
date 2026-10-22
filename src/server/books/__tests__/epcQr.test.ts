@@ -108,6 +108,10 @@ describe('when a code is printed', () => {
     // A mistyped IBAN (right shape, wrong checksum) prints no code either.
     expect(paymentQrData(p.document, s ? { ...s, iban: 'DE02 1203 0000 0000 2020 52' } : s, false)).toBeNull();
     expect(looksLikeIban('DE02 1203 0000 0000 2020 51')).toBe(true);
+    expect(looksLikeIban('GB82 WEST 1234 5698 7654 32')).toBe(true);
+    // A valid IBAN of a country outside SEPA, and a German one of the wrong length, carry no EPC code.
+    expect(looksLikeIban('BR15 0000 0000 0000 1093 2840 814P 2')).toBe(false);
+    expect(looksLikeIban('DE02 1203 0000 0000 2020 511')).toBe(false);
     // A malformed IBAN in the snapshot prints no code rather than failing the issue.
     expect(paymentQrData(p.document, s ? { ...s, iban: 'DE12 3' } : s, false)).toBeNull();
     // A draft invoice that will carry a code shows the placeholder instead.

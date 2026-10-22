@@ -23,6 +23,7 @@ import postgres from 'postgres';
 import { assertTenantGroupId, migratePublic, provisionTenant, tenantSchema } from '@marlinjai/tenant-db';
 
 import { COMMERCE_TENANT_MIGRATIONS } from '../../commerce/migrations/tenant';
+import { booksTemplateV2 } from '../../commerce/migrations/tenant/012_books_template_v2';
 import { templateProblems } from '../template/gate';
 import { parseTemplateDocument } from '../template/schema';
 import {
@@ -317,6 +318,14 @@ describe('012_books_template_v2 through the fleet runner', () => {
       await app.end();
     }
     expect(await privileges(schema)).toEqual(expectedPrivileges());
+
+    // Running 012 a second time changes nothing and does not fail (every step is guarded).
+    const versionsBefore = await owner`SELECT id FROM ${s}.document_template_version ORDER BY id`;
+    await owner.begin(async (tx) => {
+      await tx.unsafe(`SET LOCAL search_path = ${schema}, ext`);
+      await booksTemplateV2.up(tx as never);
+    });
+    expect(await owner`SELECT id FROM ${s}.document_template_version ORDER BY id`).toEqual(versionsBefore);
   });
 });
 

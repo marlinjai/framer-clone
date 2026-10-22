@@ -773,9 +773,20 @@ Built on branch `feat/books-template-engine`. Decided while building, say so if 
 16. **The IBAN behind the payment code is checked with its mod-97 checksum**, so a mistyped IBAN
     prints no code (and the draft promises none).
 
-**Review (2026-10-22).** Two fresh reviews: one of the engine before the wiring (three defects
+17. **A correction whose invoice template was archived starts on the company's default template**
+    (or the built-in Klassisch layout without one), not on the hidden template. No separate
+    notice: the draft's PDF preview shows the layout before anything is issued.
+18. **The engine checks a document's structure before drawing** (known block types, theme
+    colours, layouts, finite margins and sizes) and fails naming the path, so a malformed stored
+    document can never draw a wrong page; every written version passes the strict schema, form
+    edits included.
+
+**Review (2026-10-22).** Three fresh reviews: one of the engine before the wiring (three defects
 and four risks, all fixed: decisions 7, 9 and 10 came from it), one of the final diff (no
-defect; three risks and three nits, all fixed). The fixes from the final review:
+defect; three risks and three nits, all fixed), and one of those fixes (two defects, one risk,
+four nits; all fixed or decided: a re-runnable logo guard in 012, form edits through the strict
+schema, decision 18, a 64-bit lock key, the byte order mark stripped from the preview body, the
+IBAN length per SEPA country, and decision 17). The fixes from the final review:
 - stored documents read leniently (decision 15);
 - a draft can no longer land on an archived template: the template check takes a shared lock,
   and a correction whose invoice template was archived starts on the company default;

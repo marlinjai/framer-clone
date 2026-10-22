@@ -115,6 +115,7 @@ export type LayoutIssueCode =
 export const MAX_PAGES = 200;
 /** DIN 5008: the return line and remarks sit in the top band of the address field; the address starts below it at the latest. */
 const REMARK_ZONE = { 'din5008-b': r2(17.7 * MM), 'din5008-a': r2(12.7 * MM) } as const;
+const ADDRESS_TOP_KEYS = { 'din5008-b': true, 'din5008-a': true } as const;
 
 export interface LayoutIssue {
   code: LayoutIssueCode;
@@ -329,6 +330,9 @@ class Binder {
       }
       case 'columns':
         return keep(this.columns(block, x, width, region));
+      default:
+        // Unreachable for a checked document (assertRenderableTemplate); never skip a block silently.
+        throw new Error(`renderTemplate: unknown block type ${(block as { type?: unknown }).type as string}`);
     }
   }
 
@@ -703,6 +707,79 @@ function stack(b: Binder, blocks: Block[], region: RegionName, x: number, width:
   return { placed, bottom: r2(y) };
 }
 
+const BLOCK_TYPES = new Set([
+  'logo', 'senderLine', 'recipient', 'documentMeta', 'title', 'introText', 'outroText', 'lineTable', 'totals', 'taxNote',
+  'paymentDetails', 'paymentQr', 'senderColumns', 'freeText', 'spacer', 'divider', 'columns',
+]);
+const THEME_COLORS = new Set(['ink', 'accent', 'muted']);
+const META = new Set(['number', 'issueDate', 'serviceDate', 'customerNumber', 'contract', 'recipientVatId', 'dueDate']);
+const SENDER = new Set(['identity', 'contact', 'legal', 'bank']);
+const COLUMNS = ['pos', 'title', 'quantity', 'unit', 'unitPrice', 'rate', 'amount'];
+
+/**
+ * The structure the engine relies on, checked before anything is drawn. A
+ * document written through the strict schema always passes; a stored one is
+ * read with a shape check only (snapshots.ts), so a malformed one fails here,
+ * loudly and naming the path, instead of drawing a wrong page.
+ */
+export function assertRenderableTemplate(doc: TemplateDocumentV2): void {
+  const fail = (path: string): never => {
+    throw new Error(`renderTemplate: the template document is malformed at ${path}`);
+  };
+  const num = (v: unknown, path: string) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fail(path));
+  const hex = (v: unknown, path: string) => (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v) ? v : fail(path));
+  const d = doc as unknown as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  if (!(d.page?.addressLayout in ADDRESS_TOP_KEYS)) fail('page.addressLayout');
+  if (d.page.pageNumber !== 'right' && d.page.pageNumber !== 'center') fail('page.pageNumber');
+  for (const m of ['left', 'right', 'bottom']) num(d.page.marginsMm?.[m], `page.marginsMm.${m}`);
+  for (const c of ['ink', 'accent', 'muted']) hex(d.theme?.[c], `theme.${c}`);
+  if (num(d.theme.baseSizePt, 'theme.baseSizePt') === 0) fail('theme.baseSizePt');
+  const block = (b: any, path: string, inCell: boolean): void => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    if (typeof b !== 'object' || b === null || typeof b.id !== 'string' || !BLOCK_TYPES.has(b.type)) fail(`${path}.type`);
+    if (typeof b.style !== 'object' || b.style === null) fail(`${path}.style`);
+    if (b.style.color !== undefined && !THEME_COLORS.has(b.style.color)) fail(`${path}.style.color`);
+    for (const k of ['sizePt', 'spaceAbovePt', 'spaceBelowPt']) if (b.style[k] !== undefined) num(b.style[k], `${path}.style.${k}`);
+    if (b.type === 'divider') {
+      num(b.thicknessPt, `${path}.thicknessPt`);
+      if (!THEME_COLORS.has(b.lineColor)) fail(`${path}.lineColor`);
+    }
+    if (b.type === 'spacer') num(b.heightPt, `${path}.heightPt`);
+    if (b.type === 'paymentQr') {
+      num(b.sizeMm, `${path}.sizeMm`);
+      if (typeof b.caption !== 'string') fail(`${path}.caption`);
+    }
+    if (b.type === 'freeText' && typeof b.text !== 'string') fail(`${path}.text`);
+    if (b.type === 'documentMeta' && !(Array.isArray(b.items) && b.items.every((i: unknown) => META.has(i as string)))) fail(`${path}.items`);
+    if (b.type === 'senderColumns' && !(Array.isArray(b.columns) && b.columns.every((c: unknown) => SENDER.has(c as string)))) fail(`${path}.columns`);
+    if (b.type === 'lineTable') {
+      for (const c of COLUMNS) {
+        if (typeof b.columns?.[c]?.visible !== 'boolean') fail(`${path}.columns.${c}`);
+        num(b.columns[c].width, `${path}.columns.${c}.width`);
+      }
+    }
+    if (b.type === 'columns') {
+      if (inCell || !Array.isArray(b.cells)) fail(`${path}.cells`);
+      b.cells.forEach((cell: any, i: number) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        if (num(cell?.width, `${path}.cells.${i}.width`) === 0 || !Array.isArray(cell.blocks)) fail(`${path}.cells.${i}`);
+        cell.blocks.forEach((cb: unknown, j: number) => block(cb, `${path}.cells.${i}.blocks.${j}`, true));
+      });
+    }
+  };
+  const r = d.regions;
+  const regions: Array<[string, unknown]> = [
+    ['firstPageHeader', r?.firstPageHeader],
+    ['addressZone.left', r?.addressZone?.left],
+    ['addressZone.right', r?.addressZone?.right],
+    ['body', r?.body],
+    ['followingPageHeader', r?.followingPageHeader],
+    ['footer', r?.footer],
+  ];
+  for (const [name, blocks] of regions) {
+    if (!Array.isArray(blocks)) fail(`regions.${name}`);
+    (blocks as unknown[]).forEach((b, i) => block(b, `regions.${name}.${i}`, false));
+  }
+}
+
 /** Render a model with a template document version 2: the PDF bytes and the layout map. */
 export async function renderTemplate(
   model: RenderModel,
@@ -710,6 +787,7 @@ export async function renderTemplate(
   fontBytes: EngineFonts,
   options: EngineOptions = {},
 ): Promise<EngineResult> {
+  assertRenderableTemplate(doc);
   const pdf = await PDFDocument.create({ updateMetadata: false });
   pdf.registerFontkit(fontkit);
   const fonts: Fonts = {

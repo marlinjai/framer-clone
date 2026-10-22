@@ -222,6 +222,18 @@ const updateInput = z
   });
 export type UpdateTemplateInput = z.input<typeof updateInput>;
 
+/** JSON with sorted keys: a stored document comes back from JSONB in Postgres' key order, not the schema's. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 /** A template document from the request (INVALID_INPUT with the paths when it does not parse). */
 function parseDocument(value: unknown): TemplateDocumentV2 {
   const parsed = templateDocumentV2Schema.safeParse(value);
@@ -278,7 +290,7 @@ export async function defaultTemplateId(scope: BooksScope): Promise<string | nul
  * see the first.
  */
 async function lockTemplates(trx: Transaction<CommerceDB>, scope: BooksScope): Promise<void> {
-  await sql`SELECT pg_advisory_xact_lock(hashtext(${`books-templates:${scope.tenantId}`}))`.execute(trx);
+  await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`books-templates:${scope.tenantId}`}, 0))`.execute(trx);
 }
 
 async function clearDefault(trx: Transaction<CommerceDB>, scope: BooksScope, except: string | null): Promise<void> {
@@ -296,7 +308,8 @@ export async function createTemplate(scope: BooksScope, input: CreateTemplateInp
   if (!parsed.success) throw invalid('INVALID_INPUT', parsed.error.issues);
   const args = parsed.data;
   const base = args.document !== undefined ? parseDocument(args.document) : preset(args.preset ?? 'klassisch');
-  const document = withFormEdits(base, { accentColor: args.accentColor, footerBlocks: args.footerBlocks });
+  // Every written version passes the strict schema.
+  const document = parseDocument(withFormEdits(base, { accentColor: args.accentColor, footerBlocks: args.footerBlocks }));
   // The save gate runs before anything is written (it renders the probe documents).
   await assertTemplateSavable(document);
   const id = randomUUID();
@@ -376,9 +389,11 @@ export async function updateTemplate(
         currentVersionId: current.currentVersionId,
       });
     }
-    const document = newDocument ?? withFormEdits(current.document, { accentColor: args.accentColor, footerBlocks: args.footerBlocks });
+    // A form edit starts from the stored version (read leniently); what is written passes the strict schema.
+    const document =
+      newDocument ?? parseDocument(withFormEdits(current.document, { accentColor: args.accentColor, footerBlocks: args.footerBlocks }));
     // Saving the same layout again is not a new version.
-    if (JSON.stringify(document) !== JSON.stringify(current.document)) {
+    if (canonical(document) !== canonical(current.document)) {
       await assertTemplateSavable(document);
       candidate = { base: current.currentVersionId, document };
     }

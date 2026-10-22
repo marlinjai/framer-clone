@@ -177,6 +177,23 @@ describe('pagination', () => {
   });
 });
 
+describe('a malformed stored document', () => {
+  it('fails loudly, naming the path, instead of drawing a wrong page', async () => {
+    const cases: Array<[string, (d: Record<string, any>) => void]> = [ // eslint-disable-line @typescript-eslint/no-explicit-any
+      ['regions.body.0.type', (d) => (d.regions.body[0].type = 'image')],
+      ['page.addressLayout', (d) => (d.page.addressLayout = 'din5008-c')],
+      ['page.marginsMm.left', (d) => delete d.page.marginsMm.left],
+      ['regions.footer.0.lineColor', (d) => (d.regions.footer[0].lineColor = 'red')],
+      ['theme.accent', (d) => (d.theme.accent = 'blue')],
+    ];
+    for (const [path, mutate] of cases) {
+      const doc = structuredClone(preset('klassisch')) as unknown as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+      mutate(doc);
+      await expect(render(doc as unknown as TemplateDocumentV2)).rejects.toThrow(path);
+    }
+  });
+});
+
 describe('bounds', () => {
   it('stops at two pages when the footer leaves no room, and caps every document at MAX_PAGES', async () => {
     const footer = structuredClone(preset('klassisch'));

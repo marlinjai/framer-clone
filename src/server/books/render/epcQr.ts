@@ -26,6 +26,13 @@ function cut(value: string, max: number): string {
   return Array.from(value).slice(0, max).join('');
 }
 
+/** The IBAN length of every SEPA country (ISO 13616 registry). */
+const SEPA_IBAN_LENGTH: Record<string, number> = {
+  AD: 24, AT: 20, BE: 16, BG: 22, CH: 21, CY: 28, CZ: 24, DE: 22, DK: 18, EE: 20, ES: 24, FI: 18, FR: 27, GB: 22,
+  GI: 23, GR: 27, HR: 21, HU: 28, IE: 22, IS: 26, IT: 27, LI: 21, LT: 20, LU: 20, LV: 21, MC: 27, MT: 31, NL: 18,
+  NO: 15, PL: 28, PT: 25, RO: 24, SE: 24, SI: 19, SK: 24, SM: 27, VA: 22,
+};
+
 /** An IBAN as the code carries it: no spaces, upper case. */
 export function normalIban(iban: string): string {
   return iban.replace(/\s+/g, '').toUpperCase();
@@ -39,6 +46,8 @@ export function normalIban(iban: string): string {
 export function looksLikeIban(iban: string): boolean {
   const s = normalIban(iban);
   if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$/.test(s)) return false;
+  // An EPC code is a SEPA transfer: the IBAN must be of a SEPA country, at its length.
+  if (SEPA_IBAN_LENGTH[s.slice(0, 2)] !== s.length) return false;
   const digits = (s.slice(4) + s.slice(0, 4)).replace(/[A-Z]/g, (ch) => String(ch.charCodeAt(0) - 55));
   let rest = 0;
   for (const d of digits) rest = (rest * 10 + Number(d)) % 97;
