@@ -18,6 +18,7 @@ const eslintConfig = [
   {
     ignores: [
       ".next/**",
+      ".next-harness/**",
       "out/**",
       "build/**",
       "coverage/**",

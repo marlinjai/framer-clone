@@ -1,6 +1,6 @@
 ---
 type: plan
-status: decided
+status: in-progress
 date: 2026-10-23
 title: "Books: write the invoice on the invoice (a WYSIWYG document editor)"
 summary: "Replace the form-based invoice editor with editing directly on the real A4 page: every field (recipient, dates, subject, texts, each line) is edited in place over the PDF the invoice will be printed as, laid out by the company's template, redrawn within a fraction of a second by the layout engine running in the browser. Adds sevdesk's breadth where it is missing: subject line, reference number, payment terms on the page, formatted intro and closing texts, a product and service list with search, and a total discount."
@@ -196,6 +196,110 @@ nothing; a second test reloads after the commit); re-entry (open an issued invoi
 read-only page with "Correct..."; a new draft starts empty). Engine parity: browser and server
 renders byte-identical for the presets and the probe documents. Field map: every field's rectangle
 contains its drawn text, across page breaks and in every template preset.
+
+## Phase 1 build notes (2026-10-23): the engine in the browser
+
+**What was built.** The layout engine now draws a DRAFT in a Web Worker in the browser, byte for
+byte as the server's draft PDF route draws it. The server stays the only renderer of record: issue,
+the completeness check and the stored PDF are unchanged.
+
+- `src/lib/books/engine/`: the client API phase 3 calls (`index.ts`):
+  `fetchRenderInput(documentId, { signal? }): Promise<RenderInputPayload>` and
+  `renderDraftInBrowser(payload, { signal? }): Promise<{ bytes: Uint8Array; layout: LayoutMap; renderMs: number }>`,
+  plus `browserRenderSupported()`, `disposeBrowserRenderer()`, `BrowserRenderError` (a `code` per
+  failure: `render_input_failed`, `invalid_input`, `font_fetch_failed`, `font_hash_mismatch`,
+  `logo_fetch_failed`, `logo_hash_mismatch`, `render_failed`, `worker_unsupported`, `worker_failed`,
+  `aborted`). One worker per page (`render.worker.ts`), renders in order, `signal` cancels (a render
+  not yet started is skipped, a late answer dropped). The payload may be edited locally before a
+  render (phase 3 types into it); dates may be `Date`s or ISO strings.
+- `render/draftRender.ts`: the ONE draft path both sides call (render model, "?" for characters
+  the family cannot draw, engine, "ENTWURF" stamp); `store.ts documentPdf` now calls it too, so
+  server and browser cannot drift in what they do, only in the resources they pass.
+- `render/previewSafe.ts`: the "?" replacement with the coverage passed in (`canDraw`); the
+  server's `drawable.ts previewSafe` and `fonts.ts undrawable` delegate to it unchanged.
+- `render/fontPins.ts`: the pin table (`FONT_FILES`), Node-free; `fonts.ts` re-exports it and stays
+  the server's loader.
+- `GET /api/books/documents/<id>/render-input`: `{ format: 1, documentId, documentVersion,
+  fontFamily, input, template, logos: [{ sha256, contentType }] }`, exactly what the draft PDF route
+  renders with (live sender, the customer's current contact, the lines and the server's figures,
+  the current version of the draft's template, the logos it names that the company has). Same read
+  guard and company scoping as the PDF route: another company's, an unknown or a malformed id 404,
+  `private, no-store`.
+- `GET /api/books/fonts/<sha256>`: the pinned files by digest, through the server's loader (which
+  checks the pin), `public, max-age=31536000, immutable`, behind the read guard; any other digest 404.
+
+**Decided while building, say so if you disagree.**
+
+1. *Issued documents are refused by the render-input route* (409 `not_renderable`), imported ones
+   too. Phase 3 shows an issued invoice from its stored PDF of record; drawing it in the browser
+   would need the issue-time paths (`withOnlyLogo`, the drawable check) for no caller, and invite a
+   view that could pass for the record.
+2. *Fonts by digest through a route, not copied into `public/`.* One source of the files
+   (assets/fonts, already traced into the standalone build for every Books route, so
+   `next.config.ts` needed no tracing change), a URL that names exactly one file (so `immutable` is
+   true, and phase 4's italic faces get their own URLs), and the server's pin check on the way out.
+   `public` caching although guarded: the fonts are open-licensed and the same for everyone, so a
+   shared cache serving them gives nothing away.
+3. *Logos are listed, not embedded,* in the render input: the browser fetches each once through the
+   existing asset route, checks it against its hash and keeps up to 8. A logo the template names
+   and the company does not have is drawn empty with `LOGO_ASSET_MISSING` in the layout issues,
+   exactly as on the server; a listed logo that cannot be fetched is an error, never a page without it.
+4. *Coverage in the browser* is built with fontkit from the fetched, verified bytes with the
+   server's rule (both faces must draw the code point), through the shared `previewSafe.ts` body.
+5. *The page bundle carries no engine:* `index.ts` reaches only the client and the payload reader;
+   pdf-lib, fontkit and qrcode load in the worker's own chunk (asserted by the import-graph test).
+6. *The browser parity harness* (`src/app/dev/books-engine`, `pnpm harness:books-engine`) is
+   built only with `BOOKS_ENGINE_HARNESS=1` (`pageExtensions` `*.harness.tsx`, its own `distDir`
+   `.next-harness`, the font and asset routes rewritten to stand-ins because they need a session);
+   a normal build contains none of it. A local Books session was not available, so layer (b) runs
+   the real worker chunk webpack emits, in headless Chrome, against server-computed digests rather
+   than through the session-guarded routes; the route chain itself is proven in Node by
+   `books-render-input.itest.ts`.
+
+**Tests.**
+
+- `src/lib/books/engine/__tests__/parity.test.ts` (layer a): through the browser entry (fonts
+  fetched and checked, coverage from the fetched bytes, payload through JSON with dates revived):
+  every preset (Klassisch, Modern, Kompakt) x every probe document x every family, draft (same
+  bytes as the draft PDF route's path) and not draft (the fetched fonts draw the issued bytes);
+  undrawable characters; a logo; a missing logo; the layout map; every unhappy path by its code.
+- `importGraph.test.ts`: walks the worker's and the page's value imports with the TypeScript
+  parser; fails on a `node:` import or Node built-in, on `fonts.ts` or `logoImage.ts`, on a package
+  outside pdf-lib, @pdf-lib/fontkit, qrcode and zod, on a value use of `Buffer`, `process` or
+  `require`; and on the page entry reaching the engine.
+- `client.test.ts`, `worker.test.ts`: ordering, cancel before and after start, abort during the
+  body read, a dead worker, no Worker support, an answer for another document, the error envelope.
+- `books-render-input.itest.ts`: real routes and a real tenant schema: the render-input answer drawn
+  by the browser entry, fonts and logo through the real route handlers, equals the PDF route's
+  bytes and `x-books-sha256` in all three families with a logo and undrawable characters, with the
+  built-in layout, after a change and on a second read; the guard (other company, unknown and
+  malformed id 404, no viewBooks 403, issued 409); the font route (every pin, headers, 404s, 403).
+- Layer (b), real browser: the production webpack build of the worker in headless Chrome 152 (the
+  automation browser), 78 cases (3 presets x 3 families x 7 probes, PNG and JPEG logos, undrawable
+  characters, the latency drafts): 78 of 78 SHA-256 equal to the server's, no errors.
+- Unchanged: `dejavuGolden.json`, `legacyV1.test.ts`, the engine determinism tests.
+
+**Measured latency** (headless Chrome 152 on the MacBook, 50 runs after 5 warm-up runs,
+`renderDraftInBrowser` wall clock in the page; the worker's own time is within 0.5 ms of it):
+
+| Draft | DejaVu Sans p50 / p95 | Noto Sans p50 / p95 | Noto Serif p50 / p95 |
+|---|---|---|---|
+| 1 page | 18.7 / 20.2 ms | 93.2 / 95.7 ms | 92.2 / 94.8 ms |
+| 3 pages | 30.3 / 31.9 ms | 118.0 / 121.1 ms | 118.4 / 120.8 ms |
+
+All inside the 150 ms budget. Noto costs about 75 ms more per render because both faces are
+embedded whole on every render (`EMBED_SUBSET`, the Phase 5 fix); caching the embedded font
+streams per family (as `images.ts` does for logos) would remove most of it, but it is engine work
+that must be proven byte-identical, so it is left for whoever next touches the engine (not needed
+for the budget).
+
+**Review.** A fresh reviewer read the full diff with only the plan and the goal. Fixed: a worker
+kept cancels of renders already started forever; an abort while the render input's body was read
+surfaced as `invalid_input`; the render-input route loaded every logo's bytes to return hashes
+(now `templateAssetRefs`, hashes only); the worker's logo cache was unbounded (now 8, least
+recently used out); an answer for another document id is refused; wrong file names in comments;
+the harness asset stand-in answered any kind; `.next-harness` in `.dockerignore` and tsconfig.
+Kept on purpose: `public` caching of the font route (decision 2). The fixes were reviewed again.
 
 ## Products build notes (2026-10-23)
 

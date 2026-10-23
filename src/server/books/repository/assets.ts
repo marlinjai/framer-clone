@@ -202,6 +202,25 @@ export async function templateAssets(db: Db, scope: BooksScope, doc: TemplateDoc
   return out;
 }
 
+/**
+ * The company's logos a template names, by hash and type, without their bytes,
+ * sorted by hash: what the browser's draft render fetches (GET .../render-input,
+ * WYSIWYG invoice editor plan phase 1). The same selection as `templateAssets`.
+ */
+export async function templateAssetRefs(db: Db, scope: BooksScope, doc: TemplateDocumentV2): Promise<Array<{ sha256: string; contentType: LogoContentType }>> {
+  assertRenderableTemplate(doc);
+  const wanted = [...new Set(logoBlocks(doc).map((l) => l.block.assetSha256).filter((s): s is string => s !== null && SHA256.test(s)))];
+  if (wanted.length === 0) return [];
+  const rows = await db
+    .selectFrom('books_asset')
+    .select(['sha256', 'content_type'])
+    .where('tenant_id', '=', scope.tenantId)
+    .where('sha256', 'in', wanted)
+    .orderBy('sha256')
+    .execute();
+  return rows.map((r) => ({ sha256: r.sha256, contentType: r.content_type as LogoContentType }));
+}
+
 /** The schema-qualified `books_asset_in_use` (014): the scoped handle qualifies tables, never a function call. */
 function inUseFn(scope: BooksScope) {
   return sql.id(tenantSchema(scope.tgId), 'books_asset_in_use');
