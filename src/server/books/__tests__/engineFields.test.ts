@@ -16,12 +16,13 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { PDFDocument, type PDFFont } from 'pdf-lib';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, expectTypeOf, it } from 'vitest';
 
 import { lineFieldsBody } from '../http/bodies';
-import { renderTemplate, type LayoutField, type LayoutMap } from '../render/engine';
+import { renderTemplate, type DocumentFieldKey, type LayoutField, type LayoutMap, type LineFieldKey } from '../render/engine';
 import { extractDrawnText, type DrawnText } from '../render/extractText';
 import { fontFiles, fontkit } from '../render/fonts';
 import { buildRenderModel, type RenderInput, type RenderModel } from '../render/model';
@@ -375,12 +376,19 @@ describe('a document data value too wide for its line', () => {
 describe('what the fields edit', () => {
   // The keys of a route's request schema, read from its source (a route module may only export handlers).
   const schemaKeys = (file: string, schema: string): Set<string> => {
-    const src = readFileSync(path.join(process.cwd(), 'src/app/api/books/documents/[id]', file), 'utf8');
+    const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../app/api/books/documents/[id]');
+    const src = readFileSync(path.join(dir, file), 'utf8');
     const body = new RegExp(`const ${schema} = z\\s*\\.object\\(\\{([\\s\\S]*?)\\}\\)\\s*\\.strict\\(\\)`).exec(src)?.[1] ?? '';
     return new Set([...body.matchAll(/^\s*(\w+):/gm)].map((m) => m[1]));
   };
   const DOCUMENT_KEYS = new Set([...schemaKeys('route.ts', 'patchBody'), ...schemaKeys('customer/route.ts', 'putBody')]);
   const LINE_KEYS = new Set(Object.keys(lineFieldsBody));
+
+  it('names only keys the schemas have (checked by the compiler for the lines)', () => {
+    expectTypeOf<Exclude<LineFieldKey, keyof typeof lineFieldsBody>>().toEqualTypeOf<never>();
+    const documentKeys: DocumentFieldKey[] = ['serviceDate', 'servicePeriod', 'paymentTermsDays', 'contractReference', 'introText', 'outroText', 'customerId'];
+    for (const k of documentKeys) expect(DOCUMENT_KEYS.has(k), k).toBe(true);
+  });
 
   it('reads the route schemas', () => {
     expect(DOCUMENT_KEYS.has('introText')).toBe(true);

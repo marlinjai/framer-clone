@@ -1434,8 +1434,9 @@ function fieldMap(all: Placed[], slots: Slot[], contentBottom: number): { fields
   /**
    * The free points below `rect`'s top, up to the first drawn chunk that
    * overlaps it sideways and reaches below that top (0 when one already covers
-   * it). The chunk carrying the slot is left out when it starts above the slot
-   * (its gap below is no ink), and always for the add-line slot (the table's
+   * it; a chunk's box counts, its trailing gap included, so the room errs on
+   * the small side). The chunk carrying the slot is left out when it starts
+   * above the slot (its gap below is empty), and always for the add-line slot (the table's
    * closing rule moves down with a new row).
    */
   const room = (rect: FieldRect, carrier: Placed | null, skipCarrier: boolean): number => {

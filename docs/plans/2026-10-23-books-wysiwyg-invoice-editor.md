@@ -289,7 +289,10 @@ counts content reaching into the slot, not only content starting in it); the pay
 the service period were recognised by their labels, now by the model; the rate claimed
 `taxClass` where an override or the treatment sets it; number fields had no scale
 (`valueUnit`); the tie-break of the field order used a locale comparison (the browser worker and
-the server could differ); comments and a blank line.
+the server could differ); comments and a blank line. The re-review confirmed every fix and left
+three notes, also fixed: the `room` comment says it measures boxes (trailing gaps count, so it
+errs small), the line keys are checked against `lineFieldsBody` by the compiler, and the route
+sources are found from the test file's own path.
 
 **Tests.** `src/server/books/__tests__/engineFields.test.ts`: for the three presets in all three
 font families, the seven probes, issued and draft (126 renders), the PDF's hash equals the pinned
