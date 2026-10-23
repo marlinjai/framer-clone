@@ -23,6 +23,7 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { PageSnapshotOut } from '@/models/PageModel';
 import type { ComponentSnapshotOut } from '@/models/ComponentModel';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
+import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
 
 /**
  * SEO metadata lifted off the page snapshot. A plain, serializable subset of
@@ -72,6 +73,22 @@ function hasEntries(value: unknown): boolean {
   return !!value && typeof value === 'object' && Object.keys(value as object).length > 0;
 }
 
+/** Move top-level CSS keys into `style`; an existing `style` entry wins. Unchanged when there are none. */
+export function foldCssProps(props: Record<string, unknown>): Record<string, unknown> {
+  const cssKeys = Object.keys(props).filter(k => CSS_PROP_SET.has(k));
+  if (cssKeys.length === 0) return props;
+  const rest: Record<string, unknown> = {};
+  const lifted: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(props)) {
+    if (CSS_PROP_SET.has(key)) lifted[key] = value;
+    else rest[key] = value;
+  }
+  const style = props.style && typeof props.style === 'object' && !Array.isArray(props.style)
+    ? (props.style as Record<string, unknown>)
+    : {};
+  return { ...rest, style: { ...lifted, ...style } };
+}
+
 /**
  * Map a single ComponentModel SnapshotOut node to a ComponentNode. Faithful on
  * the five shared fields; the editor-only canvas fields are dropped. Empty
@@ -84,10 +101,12 @@ export function componentSnapshotToNode(snapshot: ComponentSnapshotLike): Compon
     node.id = snapshot.id;
   }
   if (hasEntries(snapshot.props)) {
-    // Props are passed through verbatim: binding resolution and responsive-map
-    // flattening happen downstream (hydrateBindings / renderComponentNode), not
-    // in this faithful structural map.
-    node.props = snapshot.props as ComponentNode['props'];
+    // Props are passed through, except that a CSS key stored at the top level
+    // moves into `style`, exactly as the editor's getResolvedProps routes it
+    // (top-level first, `style` wins on a clash). Otherwise the live site would
+    // render it as an HTML attribute. Binding resolution and responsive styles
+    // happen downstream (hydrateBindings / applyResponsiveStyles).
+    node.props = foldCssProps(snapshot.props as Record<string, unknown>) as ComponentNode['props'];
   }
   if (hasEntries(snapshot.bindings)) {
     node.bindings = snapshot.bindings as ComponentNode['bindings'];
