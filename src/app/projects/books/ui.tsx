@@ -45,15 +45,23 @@ export function StatusBadge({ status }: { status: DocumentView['status'] }) {
   );
 }
 
+/**
+ * A labelled field. With `error`, the message is shown under it with the id
+ * {@link fieldErrorId}; the control names it in `aria-describedby` and sets
+ * `aria-invalid` (see {@link fieldA11y}), so a screen reader reads the problem
+ * with the field.
+ */
 export function Field({
   label,
   htmlFor,
   hint,
+  error,
   children,
 }: {
   label: string;
   htmlFor: string;
   hint?: string;
+  error?: string | null;
   children: React.ReactNode;
 }) {
   return (
@@ -62,9 +70,31 @@ export function Field({
         {label}
       </label>
       {children}
-      {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
+      {hint ? (
+        <span id={fieldHintId(htmlFor)} className="text-xs text-muted-foreground">
+          {hint}
+        </span>
+      ) : null}
+      {error ? (
+        <span id={fieldErrorId(htmlFor)} className="text-xs text-destructive">
+          {error}
+        </span>
+      ) : null}
     </div>
   );
+}
+
+export const fieldHintId = (id: string) => `${id}-hint`;
+export const fieldErrorId = (id: string) => `${id}-error`;
+
+/** The accessibility attributes of a {@link Field}'s control. */
+export function fieldA11y(id: string, opts: { error?: string | null; hint?: boolean }) {
+  const described = [opts.hint ? fieldHintId(id) : null, opts.error ? fieldErrorId(id) : null].filter(Boolean);
+  return {
+    id,
+    'aria-invalid': opts.error ? true : undefined,
+    'aria-describedby': described.length > 0 ? described.join(' ') : undefined,
+  };
 }
 
 /** A timestamp's calendar day where the user is (a save after midnight in Germany is on the German date); '' when unreadable. */
