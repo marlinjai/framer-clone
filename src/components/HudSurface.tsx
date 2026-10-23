@@ -105,12 +105,17 @@ const HudSurface = observer(() => {
   // Secondary overlays container ref (for cross-viewport highlights)
   const secondaryOverlaysRef = useRef<HTMLDivElement>(null);
 
+  // Resize handles wrapper: hidden while several nodes are selected (a resize
+  // acts on one node, and the handles would suggest it resizes them all).
+  const resizeHandlesRef = useRef<HTMLDivElement>(null);
+
+  // One box per selected node beyond the primary (Shift+click, marquee).
+  const extraOverlaysRef = useRef<HTMLDivElement>(null);
+
   // Setup canvas container tracking
   useEffect(() => {
     // Find and cache canvas container
-    const container = document.querySelector(
-      '.w-full.h-full.bg-gray-100.overflow-hidden.relative'
-    ) as HTMLElement;
+    const container = document.querySelector('[data-ground]') as HTMLElement | null;
     if (container) {
       setCanvasContainerRect(container.getBoundingClientRect());
 
@@ -363,20 +368,73 @@ const HudSurface = observer(() => {
     dragActive,
   ]);
 
+  // Read here so the observer re-renders when the extra selection changes.
+  const extraSelectionKey = editorUI.selectedComponentList.slice(1).map(c => c.id).join(',');
+  const selectedViewportBreakpointId = editorUI.selectedViewportNode?.breakpointId;
+
+  /**
+   * Paint one box per selected node beyond the primary. Same coordinate
+   * rules as the primary: tree nodes are looked up in the selection's frame
+   * and clipped to it, floating elements use their ground wrapper.
+   */
+  const updateExtraOverlays = useCallback(() => {
+    const container = extraOverlaysRef.current;
+    if (!container) return;
+    const extras = extraSelectionKey ? editorUI.selectedComponentList.slice(1) : [];
+    const multi = extras.length > 0;
+    if (resizeHandlesRef.current) resizeHandlesRef.current.style.display = multi ? 'none' : 'block';
+    if (multi && radiusHandlesRef.current) radiusHandlesRef.current.style.display = 'none';
+
+    container.innerHTML = '';
+    if (!multi || editorUI.selectedTool !== EditorTool.SELECT || dragActive) {
+      container.style.display = 'none';
+      return;
+    }
+    container.style.display = 'block';
+
+    for (const node of extras) {
+      let rect: { left: number; top: number; width: number; height: number } | null = null;
+      if (node.isFloatingElement) {
+        rect = document.getElementById(`ground-wrapper-${node.id}`)?.getBoundingClientRect() ?? null;
+      } else {
+        // In the selection's frame; without one (a floating primary), the
+        // first frame that renders the node.
+        const el = selectedViewportBreakpointId
+          ? document.querySelector(`[data-component-id="${selectedViewportBreakpointId}-${node.id}"]`)
+          : document.querySelector(`[data-viewport-content-id] [data-inner-component-id="${node.id}"]`);
+        rect = el ? visibleRectInFrame(el) : null;
+      }
+      if (!rect) continue; // not rendered, or clipped away by its frame
+
+      const box = document.createElement('div');
+      box.className = `absolute pointer-events-none ${HIGHLIGHT_STYLES.primary.border} ${HIGHLIGHT_STYLES.primary.zIndex}`;
+      box.setAttribute('data-testid', 'extra-selection-overlay');
+      box.style.transform = `translate(${rect.left - 2}px, ${rect.top - 2}px)`;
+      box.style.width = `${rect.width + 4}px`;
+      box.style.height = `${rect.height + 4}px`;
+      container.appendChild(box);
+    }
+  }, [editorUI, extraSelectionKey, selectedViewportBreakpointId, dragActive]);
+
+  const updateAllOverlays = useCallback(() => {
+    updateOverlayPosition();
+    updateExtraOverlays();
+  }, [updateOverlayPosition, updateExtraOverlays]);
+
   // Subscribe to transform updates (high-performance, no React re-renders)
   useEffect(() => {
     // console.log('🔗 HudSurface: Subscribing to transform updates');
     
     const unsubscribe = subscribe(() => {
       // console.log('📡 HudSurface: Transform update received via subscription');
-      updateOverlayPosition(); // Direct DOM update on transform change
+      updateAllOverlays(); // Direct DOM update on transform change
     });
 
     return () => {
       // console.log('🔌 HudSurface: Unsubscribing from transform updates');
       unsubscribe();
     };
-  }, [subscribe, updateOverlayPosition]);
+  }, [subscribe, updateAllOverlays]);
 
   // Update cross-viewport selection when component selection changes
   useEffect(() => {
@@ -403,8 +461,8 @@ const HudSurface = observer(() => {
 
   // React-based updates (only when selection changes)
   useEffect(() => {
-    updateOverlayPosition();
-  }, [updateOverlayPosition]);
+    updateAllOverlays();
+  }, [updateAllOverlays]);
 
   // Re-position overlay when selected component's props change (layout might shift)
   // Read props here so MobX observer tracks the dependency
@@ -417,9 +475,9 @@ const HudSurface = observer(() => {
   const frameLayoutKey = frameHeightsKey(editorUI.currentPage?.viewportNodes);
   useEffect(() => {
     // Wait one frame for ComponentRenderer to apply new styles to the DOM
-    const rafId = requestAnimationFrame(() => updateOverlayPosition());
+    const rafId = requestAnimationFrame(() => updateAllOverlays());
     return () => cancelAnimationFrame(rafId);
-  }, [selectedProps, selectedVPProps, frameLayoutKey, updateOverlayPosition]);
+  }, [selectedProps, selectedVPProps, frameLayoutKey, updateAllOverlays]);
 
   // ===== Resize interaction =====
   //
@@ -596,6 +654,9 @@ const HudSurface = observer(() => {
     const handleUp = () => cleanup(true);
     const handleKey = (ev: KeyboardEvent) => {
       if (ev.key === 'Escape') {
+        // This Escape cancels the gesture; it must not also clear the
+        // selection (the editor's window-level Escape shortcut).
+        ev.stopPropagation();
         restoreOriginal();
         cleanup(false);
       }
@@ -753,6 +814,9 @@ const HudSurface = observer(() => {
     const handleUp = () => cleanup(true);
     const handleKey = (ev: KeyboardEvent) => {
       if (ev.key === 'Escape') {
+        // This Escape cancels the gesture; it must not also clear the
+        // selection (the editor's window-level Escape shortcut).
+        ev.stopPropagation();
         restoreOriginal();
         cleanup(false);
       }
@@ -774,16 +838,18 @@ const HudSurface = observer(() => {
       >
         {/* Selection / resize handles. pointer-events: auto so they receive the
             mousedown even though the parent overlay is pointer-events-none. */}
-        {HANDLE_DIRECTIONS.map(({ dir, className, cursor }) => (
-          <div
-            key={dir}
-            data-resize-direction={dir}
-            data-testid={`resize-handle-${dir}`}
-            onMouseDown={onHandleMouseDown}
-            className={`absolute w-2 h-2 bg-brand rounded-full ${className}`}
-            style={{ cursor, pointerEvents: 'auto' }}
-          />
-        ))}
+        <div ref={resizeHandlesRef} className="absolute inset-0 pointer-events-none" data-testid="resize-handles">
+          {HANDLE_DIRECTIONS.map(({ dir, className, cursor }) => (
+            <div
+              key={dir}
+              data-resize-direction={dir}
+              data-testid={`resize-handle-${dir}`}
+              onMouseDown={onHandleMouseDown}
+              className={`absolute w-2 h-2 bg-brand rounded-full ${className}`}
+              style={{ cursor, pointerEvents: 'auto' }}
+            />
+          ))}
+        </div>
 
         {/* Border-radius corner dots. Hidden by default; updateOverlayPosition
             toggles the wrapper's display based on selection kind and overlay size. */}
@@ -813,6 +879,14 @@ const HudSurface = observer(() => {
         className="absolute pointer-events-none"
         style={{ display: 'none' }}
         data-testid="secondary-overlays-container"
+      />
+
+      {/* Extra selection boxes (multi-selection beyond the primary) */}
+      <div
+        ref={extraOverlaysRef}
+        className="absolute inset-0 pointer-events-none"
+        style={{ display: 'none' }}
+        data-testid="extra-selection-overlays"
       />
     </div>
   );

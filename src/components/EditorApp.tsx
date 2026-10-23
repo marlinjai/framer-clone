@@ -15,7 +15,8 @@ import { EditorTool } from '@/stores/EditorUIStore';
 import { getUndoManager, getHistoryStore, getDragManager } from '@/stores/RootStore';
 import { openProject, pageIdFromLocation, pickPage, restoreStashedDemo } from '@/stores/openProject';
 import EditorNotice from './EditorNotice';
-import { resolveAction } from '@/lib/keyBindings';
+import { isEditableTarget, resolveAction } from '@/lib/keyBindings';
+import { deleteSelection } from '@/lib/canvas/deleteSelection';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
 import EditorCommerceProvider from '@/components/EditorCommerceProvider';
@@ -149,11 +150,27 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
 
       if (match.action === 'delete') {
         if (rootStore.editorUI.selectedTool === EditorTool.GRAB) return;
-        const selected = rootStore.editorUI.selectedComponent;
         const page = rootStore.editorUI.currentPage;
-        if (!selected || !page) return;
+        if (!page || rootStore.editorUI.selectedComponentList.length === 0) return;
         e.preventDefault();
-        page.deleteComponent(selected.id);
+        // Every selected node, as one undo step.
+        deleteSelection(page, rootStore.editorUI, getHistoryStore());
+        return;
+      }
+
+      if (match.action === 'clearSelection') {
+        const ui = rootStore.editorUI;
+        // A dialog, menu or gesture that handled Escape itself has the last
+        // word; so does an active resize (its own Escape restores the size).
+        if (e.defaultPrevented || ui.isResizing) return;
+        if (!ui.selectedComponent && !ui.selectedViewportNode && ui.selectedComponentList.length === 0) return;
+        ui.clearSelection();
+        return;
+      }
+
+      if (match.action === 'selectTool' || match.action === 'grabTool') {
+        e.preventDefault();
+        rootStore.editorUI.setSelectedTool(match.action === 'selectTool' ? EditorTool.SELECT : EditorTool.GRAB);
         return;
       }
 
@@ -178,6 +195,38 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
+  }, [rootStore.editorUI]);
+
+  // Hold Space to pan with the left button, whatever the active tool; the
+  // tool comes back on release. Typing a space in an input or in inline text
+  // editing is left alone. Losing focus (Cmd+Tab with Space down) never
+  // delivers the keyup, so blur releases it too.
+  React.useEffect(() => {
+    const ui = rootStore.editorUI;
+    const isSpace = (e: KeyboardEvent) => e.code === 'Space' || e.key === ' ';
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!isSpace(e) || isEditableTarget(e.target)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Stops the page from scrolling and a focused button from activating.
+      e.preventDefault();
+      if (e.repeat || getDragManager()?.isActive) return;
+      ui.beginTemporaryGrab();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (!isSpace(e) || ui.toolBeforeTemporaryGrab === undefined) return;
+      e.preventDefault();
+      ui.endTemporaryGrab();
+    };
+    const release = () => ui.endTemporaryGrab();
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', release);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', release);
+      release();
+    };
   }, [rootStore.editorUI]);
 
   return (

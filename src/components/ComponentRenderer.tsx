@@ -87,7 +87,9 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
     onClick: (e: React.MouseEvent) => {
       e.stopPropagation();
       if (editorUI.selectedTool === EditorTool.SELECT) {
-        editorUI.selectComponent(component, breakpointId || undefined);
+        // Shift+click adds the node to the selection or takes it out.
+        if (e.shiftKey) editorUI.toggleInSelection(component, breakpointId || undefined);
+        else editorUI.selectComponent(component, breakpointId || undefined);
       }
       (resolvedAttributes as any)?.onClick?.(e);
     },

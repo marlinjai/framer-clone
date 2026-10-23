@@ -154,3 +154,14 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Canvas pan (Grab tool, held Space, middle mouse): the hand cursor wins over
+   whatever the page content under the pointer sets (links, text, frames). */
+[data-ground][data-pan-cursor="grab"],
+[data-ground][data-pan-cursor="grab"] * {
+  cursor: grab !important;
+}
+[data-ground][data-pan-cursor="grabbing"],
+[data-ground][data-pan-cursor="grabbing"] * {
+  cursor: grabbing !important;
+}
