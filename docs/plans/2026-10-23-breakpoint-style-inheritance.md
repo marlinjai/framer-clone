@@ -43,9 +43,40 @@ different, wrong resolutions today:
    breakpoint values are the base, so no dot.
 5. **Published page uses real CSS.** Responsive style values move out of the inline `style`
    into a per-page stylesheet: base rules, then for each smaller breakpoint (descending)
-   `@media (max-width: <next larger min width - 1>px) { ... }` with its overrides, keyed by a
+   `@media (max-width: <next larger min width - 0.02>px) { ... }` with its overrides, keyed by a
    stable class per node. Media queries cascade naturally in the same direction as the editor
    rule. Non-responsive values stay inline.
+6. **Published stylesheet details** (decided while building decision 5; generator in
+   `src/lib/responsive/responsiveCss.ts`, tree pass in
+   `src/lib/renderer/server/applyResponsiveStyles.ts`):
+   - **Breakpoints come from the page snapshot's viewport canvas nodes** (`breakpointId`,
+     `breakpointMinWidth`), lifted by `snapshotToComponentNode` and passed to
+     `renderPublishedPage`. A page without viewports applies each map's `base` everywhere.
+   - **Query width is the next larger min width minus 0.02px**, not 1px, so a fractional
+     viewport (809.5px with Desktop at 810) lands on the same breakpoint `pickBreakpoint`
+     chooses. Printed rounded to two decimals. The largest breakpoint's values are the
+     unconditioned rule; the smallest breakpoint's overrides also apply below its own min width.
+     Equal min widths are ordered by id (a degenerate setup).
+   - **A node with any responsive style moves all its styles into its class**, in stored order.
+     Moving only the responsive ones would let a plain inline `padding` beat a responsive
+     `paddingTop` at every width (inline always wins), which the editor's single inline style
+     never does. Nodes with only plain values keep their inline style unchanged.
+   - **The selector repeats the class** (`.fc-x.fc-x`) so it outranks any single utility class on
+     the node whatever the stylesheet order. The class is `fc-` plus the node id reduced to
+     `[A-Za-z0-9_-]`; cloned collection rows with identical styles share it, a differing clone
+     gets `fc-<id>--2`, and a node without an id gets `fc-anon-<n>`, all in walk order.
+   - **Values are serialized as React serializes inline styles** (kebab-case, `px` on non-zero
+     numbers except React's unitless set, which is copied). A value or property name that could
+     leave its declaration (`; { } < > \`, control characters, comments, `javascript:`,
+     `expression(`, `@import`) is dropped and logged once per page; the page still serves.
+   - **The stylesheet is one `<style>` at the start of the body**, rendered in place before the
+     content (no hoisting, so streamed HTML never paints unstyled). It runs on the hydrated tree,
+     so the commerce client islands receive the class through `nodeDomProps` too.
+   - **A style map with only unknown keys (a deleted breakpoint) and no `base` publishes
+     nothing**, matching what the editor cascade shows; it used to publish the first value.
+   - **Limitation: responsive attributes** (a responsive map on a prop other than `style`)
+     resolve to the largest breakpoint's value on the published page; an attribute cannot change
+     with the viewport width without client code.
 
 ## Tests (all four paths of the stateful flow standard where they apply)
 

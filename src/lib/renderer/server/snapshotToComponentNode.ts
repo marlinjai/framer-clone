@@ -6,8 +6,11 @@
 // field is the renderable root (a ComponentModel SnapshotOut); `canvasNodes`
 // holds the editor's viewport / floating canvas nodes and is INTENTIONALLY NOT
 // rendered on the published page (those live on the editor canvas, never in the
-// deployed app, exactly as HeadlessPageRenderer ignores them). The page's
-// `metadata` (title / description / og*) feeds SEO.
+// deployed app, exactly as HeadlessPageRenderer ignores them). The viewport
+// nodes do carry the page's breakpoints (`breakpointId` / `breakpointMinWidth`),
+// which the published stylesheet needs to turn responsive styles into media
+// queries, so those two fields are lifted out. The page's `metadata`
+// (title / description / og*) feeds SEO.
 //
 // This module is PURE: no React, no MST, no Prisma, no `server-only`. It maps a
 // ComponentModel SnapshotOut onto `ComponentNode` field-for-field
@@ -19,6 +22,7 @@
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { PageSnapshotOut } from '@/models/PageModel';
 import type { ComponentSnapshotOut } from '@/models/ComponentModel';
+import type { BreakpointRef } from '@/lib/responsive/cascade';
 
 /**
  * SEO metadata lifted off the page snapshot. A plain, serializable subset of
@@ -45,6 +49,8 @@ export interface AdaptedPage {
   root: ComponentNode | null;
   slug: string;
   metadata: PageSeoMetadata;
+  /** The page's breakpoints (one per viewport node), largest first; empty when none. */
+  breakpoints: BreakpointRef[];
 }
 
 /**
@@ -119,10 +125,37 @@ function extractMetadata(snapshot: PageSnapshotOut): PageSeoMetadata {
   };
 }
 
+/** The shape of a viewport canvas node we read (MST-free, loosely typed). */
+interface ViewportSnapshotLike {
+  canvasNodeType?: unknown;
+  breakpointId?: unknown;
+  breakpointMinWidth?: unknown;
+}
+
+/**
+ * The page's breakpoints from its viewport canvas nodes: every viewport with a
+ * string id and a finite min width, deduplicated by id (first wins), sorted
+ * largest first with ties by id so the order never depends on map order.
+ */
+export function extractBreakpoints(canvasNodes: unknown): BreakpointRef[] {
+  if (!canvasNodes || typeof canvasNodes !== 'object') return [];
+  const seen = new Set<string>();
+  const out: BreakpointRef[] = [];
+  for (const node of Object.values(canvasNodes as Record<string, ViewportSnapshotLike>)) {
+    if (!node || node.canvasNodeType !== 'viewport') continue;
+    const { breakpointId: id, breakpointMinWidth: minWidth } = node;
+    if (typeof id !== 'string' || id.length === 0 || seen.has(id)) continue;
+    if (typeof minWidth !== 'number' || !Number.isFinite(minWidth)) continue;
+    seen.add(id);
+    out.push({ id, minWidth });
+  }
+  return out.sort((a, b) => b.minWidth - a.minWidth || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
 /**
  * Adapt a persisted PageModel SnapshotOut into the renderer's input: the
- * `appComponentTree` mapped to a ComponentNode, the slug, and the SEO metadata.
- * `canvasNodes` are intentionally ignored (editor-only). A snapshot with no
+ * `appComponentTree` mapped to a ComponentNode, the slug, the SEO metadata and
+ * the breakpoints. `canvasNodes` are otherwise ignored (editor-only). A snapshot with no
  * `appComponentTree` yields `root: null` so the caller can 404.
  */
 export function snapshotToComponentNode(snapshot: PageSnapshotOut): AdaptedPage {
@@ -131,5 +164,6 @@ export function snapshotToComponentNode(snapshot: PageSnapshotOut): AdaptedPage 
     root: tree ? componentSnapshotToNode(tree) : null,
     slug: typeof snapshot.slug === 'string' ? snapshot.slug : '',
     metadata: extractMetadata(snapshot),
+    breakpoints: extractBreakpoints(snapshot.canvasNodes),
   };
 }
