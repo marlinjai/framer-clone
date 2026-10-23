@@ -82,7 +82,12 @@ export interface ModelLine {
   text: boolean;
   /** What each entry of `details` shows: the line's description or its discount (the in-place editor's fields). */
   detailFields: Array<'description' | 'discount'>;
+  /** Whether the printed rate follows from the line's tax class (no override, a regular treatment), so choosing the class changes it. */
+  rateByClass: boolean;
 }
+
+/** What a payment line shows (the in-place editor's fields). */
+export type PaymentLineField = 'terms' | 'dueBy' | 'reference' | 'bank';
 
 /**
  * The recipient property a printed address line shows (the in-place editor's
@@ -98,6 +103,10 @@ export interface RenderModel {
   recipientBlock: string[];
   /** What each line of `recipientBlock` shows, in the same order. */
   recipientFields: RecipientLineField[];
+  /** What each line of `payment` shows, in the same order. */
+  paymentFields: PaymentLineField[];
+  /** The service date item shows a period (edited as `servicePeriod`), not a single date. */
+  servicePeriod: boolean;
   meta: Array<{ label: string; value: string }>;
   reference: string | null;
   intro: string | null;
@@ -161,7 +170,6 @@ export function recipientEntries(r: RenderRecipient, senderCountry: string | nul
   return all.filter((e): e is [RecipientLineField, string] => present(e[1])).map(([field, text]) => ({ field, text: toPdfText(text) }));
 }
 
-
 /** The sender's tax identification lines (section 14 (4) no. 2 UStG, section 34a UStDV). */
 export function senderTaxLines(s: SenderBlockV1): string[] {
   const out: string[] = [];
@@ -224,7 +232,20 @@ function modelLines(doc: SalesDocumentWithSnapshots, lines: SalesDocumentLine[])
         detailFields.push('description');
       }
       if (l.kind === 'text') {
-        return { id: l.id, pos: '', title: toPdfText(l.title), details, quantity: '', unit: '', unitPrice: '', rate: '', amount: '', text: true, detailFields };
+        return {
+          id: l.id,
+          pos: '',
+          title: toPdfText(l.title),
+          details,
+          quantity: '',
+          unit: '',
+          unitPrice: '',
+          rate: '',
+          amount: '',
+          text: true,
+          detailFields,
+          rateByClass: false,
+        };
       }
       n += 1;
       if (l.discountBp > 0) {
@@ -243,6 +264,8 @@ function modelLines(doc: SalesDocumentWithSnapshots, lines: SalesDocumentLine[])
         amount: formatMoney(sign * lineAmount(doc, l), doc.currencyCode),
         text: false,
         detailFields,
+        rateByClass:
+          l.taxRateOverride === null && (l.taxTreatment === 'standard' || l.taxTreatment === 'reduced' || l.taxTreatment === 'zero'),
       };
     });
 }
@@ -369,14 +392,21 @@ export function buildRenderModel(input: RenderInput): RenderModel {
   if (present(doc.taxNote)) notes.push(toPdfText(doc.taxNote));
 
   const payment: string[] = [];
+  const paymentFields: PaymentLineField[] = [];
   if (doc.docType === 'invoice') {
     if (doc.dueDate) {
       payment.push(`${label('payment.dueBy')} ${formatDate(doc.dueDate)}.`);
+      paymentFields.push('dueBy');
     } else {
       payment.push(`${label('payment.termsPrefix')} ${doc.paymentTermsDays} ${label('payment.termsSuffix')}`);
+      paymentFields.push('terms');
     }
-    if (present(doc.paymentReference)) payment.push(`${label('payment.reference')} ${toPdfText(doc.paymentReference)}`);
+    if (present(doc.paymentReference)) {
+      payment.push(`${label('payment.reference')} ${toPdfText(doc.paymentReference)}`);
+      paymentFields.push('reference');
+    }
     if (sender && present(sender.iban)) {
+      paymentFields.push('bank');
       payment.push(
         [present(sender.bankName) ? sender.bankName : null, `IBAN ${sender.iban}`, present(sender.bic) ? `BIC ${sender.bic}` : null]
           .filter(present)
@@ -395,6 +425,8 @@ export function buildRenderModel(input: RenderInput): RenderModel {
     senderLine,
     recipientBlock: recipientRows.map((e) => e.text),
     recipientFields: recipientRows.map((e) => e.field),
+    paymentFields,
+    servicePeriod: Boolean(doc.servicePeriodStart && doc.servicePeriodEnd),
     meta: meta.map((m) => ({ label: m.label, value: toPdfText(m.value) })),
     reference,
     intro: present(doc.introText) ? toPdfText(doc.introText) : null,

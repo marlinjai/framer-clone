@@ -138,7 +138,8 @@ connections to the suite. The four lines below are in that order.
   line actions placed on the page, redrawn by the layout engine running in the browser; plus a
   subject line, a reference number, payment terms on the page, formatted intro and closing texts
   and a product and service list. Decided 2026-10-23 (the owner took every recommendation), in
-  progress. See [plan](docs/plans/2026-10-23-books-wysiwyg-invoice-editor.md). (2026-10-23)
+  progress: phase 2 (every editable field's rectangle and style, the add-line and row anchors in
+  the layout map) built 2026-10-23. See [plan](docs/plans/2026-10-23-books-wysiwyg-invoice-editor.md). (2026-10-23)
 - [ ] 8c. A discount on the whole invoice ("Gesamtrabatt", as sevdesk), split across the tax rates
   in proportion and printed so the tax per rate stays right (section 14 UStG): needs its own small
   plan touching the tax engine, the totals block and the completeness check. Decided 2026-10-23 as

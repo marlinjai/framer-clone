@@ -6,13 +6,15 @@
 // field lies inside them (read back from the PDF, measured with the same
 // faces), a field that breaks across pages has one rectangle per page, the
 // add-line slot sits under the table's last row on the table's last page, and
-// read-only fields are marked read-only. Then the empty-field slots, a field
-// inside a `columns` cell, the API keys the fields name, and that the map
-// leaves the PDF's bytes alone. With FIELD_OVERLAY_DIR set, the last test
-// writes the pages with the rectangles outlined (fieldOverlay.ts) to look at.
+// read-only fields are marked read-only, and every PDF has the bytes it had
+// before the map existed (engineBytesGolden.json, rendered on the commit
+// before it). Then the empty-field slots, a field inside a `columns` cell, the
+// API keys the fields name, read from the route sources. With
+// FIELD_OVERLAY_DIR set, the last test writes the pages with the rectangles
+// outlined (fieldOverlay.ts) to look at.
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { PDFDocument, type PDFFont } from 'pdf-lib';
@@ -27,6 +29,7 @@ import { label } from '../template/labels';
 import { PRESETS, preset } from '../template/presets';
 import { PROBE_NAMES, probe, probeInput } from '../template/probes';
 import { FONT_FAMILIES, type FontFamily, type TemplateDocumentV2 } from '../template/schema';
+import golden from './engineBytesGolden.json';
 import { overlayPages } from './fieldOverlay';
 
 const EPS = 0.05;
@@ -109,24 +112,28 @@ function checkMap(model: RenderModel, layout: LayoutMap, drawn: DrawnText[], whe
     if (f.kind === 'readonly') {
       expect(f.source, at).toBeNull();
       expect(f.documentField, at).toBeNull();
+      expect(f.valueUnit, at).toBeNull();
     } else {
       expect(f.source, at).not.toBeNull();
       expect(f.documentField, at).not.toBeNull();
     }
+    if (f.kind === 'number' || f.kind === 'money') expect(f.valueUnit, at).not.toBeNull();
+    if (f.id.startsWith('recipient.line.')) expect(f.recipientField, at).toBe(model.recipientFields[Number(f.id.slice(15)) - 1]);
+    else expect(f.recipientField, at).toBeNull();
     if (f.id.startsWith('line.')) expect(f.lineId, at).not.toBeNull();
     expect(f.style.color, at).toMatch(/^#[0-9a-f]{6}$/);
     expect(f.style.lineHeightPt, at).toBeGreaterThan(f.style.sizePt);
     if (f.empty) {
-      // A slot says how much of it is free, and nothing is drawn where it says it is free.
+      // A slot says how much of it is free, and no drawn text reaches into what it says is free.
       expect(f.room, at).not.toBeNull();
       expect(f.room!, at).toBeGreaterThanOrEqual(0);
       const r = f.rects[0];
       const free = Math.min(f.room!, r.height);
       const covered = drawn.filter((d) => {
         const top = ph - d.y - d.size;
-        return d.page === r.page && top >= r.y + EPS && top < r.y + free - EPS && d.x >= r.x - EPS && d.x < r.x + r.width;
+        return d.page === r.page && top < r.y + free - EPS && top + d.size > r.y + EPS && d.x >= r.x - EPS && d.x < r.x + r.width;
       });
-      expect(covered.map((d) => d.text), at).toEqual([]);
+      if (free > EPS) expect(covered.map((d) => d.text), at).toEqual([]);
       continue;
     }
     expect(f.room, at).toBeNull();
@@ -154,7 +161,7 @@ function checkMap(model: RenderModel, layout: LayoutMap, drawn: DrawnText[], whe
 
   // Read-only by nature, whatever the document.
   for (const f of layout.fields) {
-    if (/^(meta\.(number|issueDate|customerNumber|recipientVatId|dueDate)|taxNote|totals\.\d+|payment\.reference|line\..+\.amount)$/.test(f.id)) {
+    if (/^(recipient\.line\.\d+|meta\.(number|issueDate|customerNumber|recipientVatId|dueDate)|taxNote|totals\.\d+|payment\.reference|line\..+\.amount)$/.test(f.id)) {
       expect(f.kind, `${where} ${f.id}`).toBe('readonly');
     }
   }
@@ -200,12 +207,18 @@ function checkMap(model: RenderModel, layout: LayoutMap, drawn: DrawnText[], whe
 
 describe('every preset, every probe, every font family', () => {
   const cases = PRESETS.flatMap((p) => FONT_FAMILIES.map((f) => [p, f] as const));
+  it('has a pinned hash for every rendering', () => {
+    expect(Object.keys(golden)).toHaveLength(PRESETS.length * FONT_FAMILIES.length * PROBE_NAMES.length * 2);
+  });
+
   it.each(cases)('%s in %s', async (presetName, family) => {
     for (const name of PROBE_NAMES) {
       for (const draft of [false, true]) {
         const doc = withFamily(preset(presetName), family);
         const { model, bytes, layout } = await render(doc, probeInput(probe(name), draft));
-        checkMap(model, layout, await extractDrawnText(bytes), `${presetName}/${family}/${name}${draft ? '/draft' : ''}`);
+        const key = `${presetName}|${family}|${name}|${draft ? 'draft' : 'issued'}`;
+        expect(sha(bytes), `${key}: the PDF changed`).toBe((golden as Record<string, string>)[key]);
+        checkMap(model, layout, await extractDrawnText(bytes), key);
       }
     }
   }, 120_000);
@@ -243,7 +256,7 @@ describe('empty fields', () => {
     const { bytes, layout } = await render(preset('klassisch'), input);
     const byId = (id: string) => layout.fields.find((f) => f.id === id);
 
-    for (const id of ['introText', 'outroText', 'meta.contract', 'recipient.addressLine2']) {
+    for (const id of ['introText', 'outroText', 'meta.contract']) {
       const f = byId(id);
       expect(f, id).toBeDefined();
       expect(f!.empty, id).toBe(true);
@@ -251,7 +264,8 @@ describe('empty fields', () => {
     }
     expect(byId('introText')!.documentField).toBe('introText');
     expect(byId('meta.contract')!.documentField).toBe('contractReference');
-    expect(byId('recipient.addressLine2')!).toMatchObject({ source: 'customer', documentField: 'addressLine2' });
+    // The address is the contact's: no slot for a line no draft request can add.
+    expect(layout.fields.filter((f) => f.id.startsWith('recipient.') && f.empty)).toEqual([]);
     // The intro's slot is between the title and the table.
     const title = layout.blocks.find((b) => b.blockId === 'title')!;
     const table = layout.blocks.find((b) => b.blockId === 'lineTable')!;
@@ -292,8 +306,26 @@ describe('empty fields', () => {
     expect(layout.fields.some((f) => f.id.startsWith('recipient.line.'))).toBe(false);
   });
 
-  it('changes no byte of the PDF: the map is the only difference a field makes', async () => {
-    // The same rendering twice gives the same bytes and the same map.
+  it('gives a slot that lands on printed content no room', async () => {
+    // An empty closing text after ten lines and a longer and longer intro: its slot is pushed against the page's end, over the payment lines.
+    let clamped = 0;
+    for (let n = 1; n <= 13; n += 1) {
+      const p = probe('longInvoice');
+      p.lines = p.lines.slice(0, 10);
+      p.document = { ...p.document, outroText: null, introText: Array.from({ length: n }, () => 'Absatz.').join('\n') };
+      const { layout } = await render(preset('klassisch'), probeInput(p));
+      const slot = layout.fields.find((f) => f.id === 'outroText')!.rects[0];
+      const room = layout.fields.find((f) => f.id === 'outroText')!.room!;
+      const under = layout.blocks.filter((b) => b.page === slot.page && b.region === 'body' && b.y < slot.y - EPS && b.y + b.height > slot.y + EPS);
+      if (under.length > 0) {
+        clamped += 1;
+        expect(room, `${n} intro paragraphs`).toBe(0);
+      }
+    }
+    expect(clamped).toBeGreaterThan(0);
+  });
+
+  it('maps the same twice', async () => {
     const input = probeInput(probe('longInvoice'), true);
     const a = await render(preset('modern'), input);
     const b = await render(preset('modern'), input);
@@ -341,10 +373,20 @@ describe('a document data value too wide for its line', () => {
 });
 
 describe('what the fields edit', () => {
-  // The draft's PATCH keys (src/app/api/books/documents/[id]/route.ts) and the customer's (PUT .../customer).
-  const DOCUMENT_KEYS = new Set(['serviceDate', 'servicePeriod', 'paymentTermsDays', 'contractReference', 'introText', 'outroText', 'customerId']);
+  // The keys of a route's request schema, read from its source (a route module may only export handlers).
+  const schemaKeys = (file: string, schema: string): Set<string> => {
+    const src = readFileSync(path.join(process.cwd(), 'src/app/api/books/documents/[id]', file), 'utf8');
+    const body = new RegExp(`const ${schema} = z\\s*\\.object\\(\\{([\\s\\S]*?)\\}\\)\\s*\\.strict\\(\\)`).exec(src)?.[1] ?? '';
+    return new Set([...body.matchAll(/^\s*(\w+):/gm)].map((m) => m[1]));
+  };
+  const DOCUMENT_KEYS = new Set([...schemaKeys('route.ts', 'patchBody'), ...schemaKeys('customer/route.ts', 'putBody')]);
   const LINE_KEYS = new Set(Object.keys(lineFieldsBody));
-  const RECIPIENT_KEYS = new Set(['name', 'companyOrRole', 'addressLine1', 'addressLine2', 'postalCity', 'country']);
+
+  it('reads the route schemas', () => {
+    expect(DOCUMENT_KEYS.has('introText')).toBe(true);
+    expect(DOCUMENT_KEYS.has('customerId')).toBe(true);
+    expect(LINE_KEYS.has('taxClass')).toBe(true);
+  });
 
   it('names a real request key for every editable field', async () => {
     const seen = new Set<string>();
@@ -357,7 +399,7 @@ describe('what the fields edit', () => {
         for (const f of layout.fields) {
           if (f.source === null) continue;
           seen.add(`${f.source}.${f.documentField}`);
-          const keys = f.source === 'document' ? DOCUMENT_KEYS : f.source === 'line' ? LINE_KEYS : RECIPIENT_KEYS;
+          const keys = f.source === 'document' ? DOCUMENT_KEYS : LINE_KEYS;
           expect(keys.has(f.documentField!), `${name} ${f.id} -> ${f.documentField}`).toBe(true);
         }
       }
@@ -365,6 +407,21 @@ describe('what the fields edit', () => {
     for (const key of ['document.paymentTermsDays', 'document.servicePeriod', 'document.serviceDate', 'line.taxClass', 'line.discountBp', 'line.unitPrice']) {
       expect(seen.has(key), key).toBe(true);
     }
+  });
+
+  it('makes the rate read-only where the tax class does not set it, and names each number scale', async () => {
+    const rc = await render(preset('klassisch'), probeInput(probe('reverseCharge'), true));
+    const rate = rc.layout.fields.find((f) => /^line\..+\.rate$/.test(f.id));
+    expect(rate?.kind).toBe('readonly');
+    const p = probe('regular');
+    p.lines = p.lines.map((l, i) => (i === 0 ? { ...l, taxRateOverride: 1900 } : l));
+    const { layout } = await render(preset('klassisch'), probeInput(p, true));
+    const rates = layout.fields.filter((f) => /^line\..+\.rate$/.test(f.id));
+    expect(rates.map((f) => f.kind)).toEqual(['readonly', 'select']);
+    const unit = (re: RegExp) => layout.fields.find((f) => re.test(f.id))!.valueUnit;
+    expect(unit(/\.quantity$/)).toBe('thousandths');
+    expect(unit(/\.discount$/)).toBe('basisPoints');
+    expect(unit(/\.unitPrice$/)).toBe('cents');
   });
 
   it('lists the fields in reading order: the address before the document data, then the body top to bottom', async () => {

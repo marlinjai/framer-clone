@@ -1,6 +1,6 @@
 ---
 type: plan
-status: decided
+status: in-progress
 date: 2026-10-23
 title: "Books: write the invoice on the invoice (a WYSIWYG document editor)"
 summary: "Replace the form-based invoice editor with editing directly on the real A4 page: every field (recipient, dates, subject, texts, each line) is edited in place over the PDF the invoice will be printed as, laid out by the company's template, redrawn within a fraction of a second by the layout engine running in the browser. Adds sevdesk's breadth where it is missing: subject line, reference number, payment terms on the page, formatted intro and closing texts, a product and service list with search, and a total discount."
@@ -196,3 +196,124 @@ nothing; a second test reloads after the commit); re-entry (open an issued invoi
 read-only page with "Correct..."; a new draft starts empty). Engine parity: browser and server
 renders byte-identical for the presets and the probe documents. Field map: every field's rectangle
 contains its drawn text, across page breaks and in every template preset.
+
+## Phase 2 build notes (2026-10-23): the field map
+
+Built on branch `feat/books-field-layout-map`. Decided while building, say so if you disagree.
+
+**What exists now.** `renderTemplate` (`src/server/books/render/engine/index.ts`) returns, next to
+the unchanged `blocks`, `tables` and `issues`, two new parts of the layout map:
+
+- `fields: LayoutField[]`, the document's fields printed on the page (decision 5: not the
+  template's labels, title, sender or bank line), in reading order (page, then region with the
+  address before the document data, then top and left): `id`, `kind` (`text`, `multiline`,
+  `date`, `number`, `money`, `select`, `readonly`), `source` (`document` or `line`, null when
+  read-only), `documentField` (the request key it edits, typed as the union of the draft's and the
+  line's keys, null when read-only), `valueUnit` (`thousandths`, `basisPoints`, `days`, `cents`
+  for a `number` or `money` field), `recipientField` (which customer property an address line
+  shows), `lineId`, `blockId`, `region`, `empty`, `room`, `rects` (one per page, points from the
+  page's top left) and `style` (font family, bold, size, resolved `#rrggbb` colour, alignment,
+  line height).
+- `anchors.rows` (each line's row, one rectangle per page, the gap after it left out) and
+  `anchors.addLine` (one row high, directly under the table's last row on the table's last page,
+  with `room`, the free points before the totals or the page's end).
+
+The ids: `recipient.line.<n>` (1-based, printed order), `meta.<item>` (the template's item names:
+`number`, `issueDate`, `serviceDate`, `customerNumber`, `contract`, `recipientVatId`,
+`dueDate`), `introText`, `outroText`, `line.<lineId>.<part>` (`title`, `description`,
+`quantity`, `unit`, `unitPrice`, `discount`, `rate`, `amount`), `payment.terms`,
+`payment.reference`, `taxNote`, `totals.<n>` (1-based, printed order). Empty slots:
+`recipient.customer` (no customer yet), `meta.contract`, `introText`, `outroText`,
+`line.<lineId>.description`.
+
+How: the binder marks the chunks it builds with what they show (a mark is a rectangle inside a
+chunk: field, row or add-line slot); marks never draw and never take space, and the map collects
+them from every placed chunk after drawing (the footer and following-page header once per page,
+the cells of a `columns` row lifted out with their offset). Blocks that print nothing (no
+customer, no intro or closing text) leave a slot where their first line would print, recorded
+beside the flow without moving it.
+
+**Decided while building.**
+
+1. *The model carries what the engine cannot know.* `ModelLine` gained `id`, `detailFields`
+   (which of `details` is the description and which the discount line) and `rateByClass`;
+   `RenderModel` gained `recipientFields` (which property each address line shows;
+   `recipientEntries` replaces `recipientLines`), `paymentFields` (terms, due date, reference or
+   bank for each payment line) and `servicePeriod`. Additive only; nothing that draws reads them,
+   and the engine never recognises a field by its printed label.
+2. *A `select` kind beside the five in the brief.* The tax rate is chosen through `taxClass` and
+   the customer through PUT `.../customer`; neither is typed in.
+3. *The recipient lines are read-only.* They are the customer's contact, and no request changes a
+   contact's address (the customer routes take the customer type, VAT id, country and tax
+   number; the draft takes only `customerId`). Each line says which property it shows
+   (`recipientField`; `postalCity` is the postal code and city line, `name` includes the legal
+   form when it prints with it), so phase 3 can offer "edit the contact" there. No slot for a
+   second address line is offered for the same reason; decision 1a's "second address line"
+   placeholder waits for an address endpoint (phase 3's call).
+4. *Read-only where the API has no key:* the number and issue date (assigned at issue), the
+   customer number and the recipient's VAT id (the customer's), the due date (follows from the
+   payment terms; the editable surface is `payment.terms`, a `number` in days on
+   `paymentTermsDays` while the line says "Zahlbar innerhalb von n Tagen", read-only once it shows
+   the due date), `payment.reference` (not patchable today), the amounts, the totals, the tax note,
+   and a line's rate when the tax class does not set it (a rate override, reverse charge, small
+   business).
+5. *A right-aligned field's rectangle is its alignment box,* not the glyphs: the whole column for
+   quantity, price, rate and amount, from the label's end to the block's edge for a document data
+   value, the value column for a total. An inline input with `align: right` in that box keeps the
+   text where it prints while longer numbers are typed.
+6. *Empty slots overlap what follows, and say so.* A typed value pushes what follows down, so the
+   slot where it would print can cover the next thing on the page (an empty description slot
+   covers the 6 pt gap and the top of the next row; an empty intro starts where the table
+   starts; an empty closing text at the page's end is kept on the page, over the content above
+   it). `room` gives the free points under the slot's top (0 when ink is already there), so
+   phase 3 can draw a compact "+ Add ..." in the free space and open the full editor on click.
+   Not offered: a subject (phase 4 adds the block), a discount (decision 1a puts it in the line's
+   menu).
+7. *Field ids are unique per template the save gate accepts* (`rules.ts` allows every block bound
+   to document data once); the map keys a field by id and block, so an unchecked template with
+   two such blocks gives two entries with the same id rather than one rectangle spanning both.
+8. *`kind`, `source` and `documentField` stay three plain properties*, not a discriminated union:
+   `readonly` exactly when the other two are null (documented on the type, asserted by the
+   tests); a union would make every consumer narrow before reading a rectangle.
+9. *The map is built on every render,* the issue path included, where it is discarded: it costs a
+   pass over the placed chunks (grouped by page for the `room` lookups), small against embedding
+   the fonts; an option to skip it would be a second code path for no measurable gain.
+
+**Review.** A fresh agent reviewed the diff (only the diff, this plan and the goal). Fixed: the
+byte test only compared two renders of the new code, now every preset, family, probe, issued and
+draft must match `engineBytesGolden.json` (126 hashes rendered on the commit before the map);
+the request keys were hand copies, now read from the route sources and `lineFieldsBody`; the
+recipient lines claimed a `customer` source with keys no endpoint has, now read-only (decision
+3); a slot pushed against the page's end reported room over printed content, now 0 (and `room`
+counts content reaching into the slot, not only content starting in it); the payment lines and
+the service period were recognised by their labels, now by the model; the rate claimed
+`taxClass` where an override or the treatment sets it; number fields had no scale
+(`valueUnit`); the tie-break of the field order used a locale comparison (the browser worker and
+the server could differ); comments and a blank line.
+
+**Tests.** `src/server/books/__tests__/engineFields.test.ts`: for the three presets in all three
+font families, the seven probes, issued and draft (126 renders), the PDF's hash equals the pinned
+one; every field's rectangles lie on the page and above the footer, one per page in page order;
+the text read back from the PDF whose origin lies in a field's rectangles is exactly the field's
+text from the model and lies wholly inside them (measured with the same faces); every editable
+field names a request key and a scale where it needs one, every read-only one none; each line's
+fields lie inside its row; the add-line slot is on the table's last page under the last row, as
+wide as the table, and nothing printed starts inside its `room`; no drawn text reaches into an
+empty slot's free room. Plus: a long description and a long intro each get one rectangle per
+page, the empty slots of a draft with their `room`, a slot pushed over content has no room, the
+customer slot when there is no customer, payment lines inside a `columns` cell, a document data
+value too wide for its line, the request keys against the route schemas, the rate's read-only
+cases and the scales, reading order, the styles. A mutation check (the meta value's rectangle
+widened over its label) fails the suite.
+
+**No PDF byte changed.** Before and after the change, every preset in every font family with
+every probe, issued and draft, with and without the preview stamp (252 renders) gave the same
+SHA-256 of the PDF and of the block part of the map; `dejavuGolden.json`, `legacyV1.test.ts` and
+the engine's determinism tests pass unchanged, and the 126 pinned hashes keep it that way.
+
+**Looked at.** The rectangles drawn as outlines over the PDF (`__tests__/fieldOverlay.ts`, a
+test-only helper; `FIELD_OVERLAY_DIR=<dir> pnpm vitest run engineFields`), rasterized with
+`sips`, for Klassisch (issued, and a draft with the empty slots) and a three-page Modern sample
+in Noto Serif whose last line's description runs over all three pages: every rectangle sits on
+its text, the description and its row have one rectangle on each page, the add-line slot sits
+under the last row on page 3 above the totals.
