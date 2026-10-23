@@ -69,6 +69,8 @@ export interface PaymentQrData {
 }
 
 export interface ModelLine {
+  /** The line's id (the in-place editor's field ids, never printed). */
+  id: string;
   pos: string;
   title: string;
   details: string[];
@@ -78,7 +80,15 @@ export interface ModelLine {
   rate: string;
   amount: string;
   text: boolean;
+  /** What each entry of `details` shows: the line's description or its discount (the in-place editor's fields). */
+  detailFields: Array<'description' | 'discount'>;
 }
+
+/**
+ * The recipient property a printed address line shows (the in-place editor's
+ * fields): `postalCity` is the postal code and the city on one line.
+ */
+export type RecipientLineField = 'name' | 'companyOrRole' | 'addressLine1' | 'addressLine2' | 'postalCity' | 'country';
 
 export interface RenderModel {
   draft: boolean;
@@ -86,6 +96,8 @@ export interface RenderModel {
   accentColor: string | null;
   senderLine: string;
   recipientBlock: string[];
+  /** What each line of `recipientBlock` shows, in the same order. */
+  recipientFields: RecipientLineField[];
   meta: Array<{ label: string; value: string }>;
   reference: string | null;
   intro: string | null;
@@ -135,20 +147,20 @@ function present(v: string | null | undefined): v is string {
   return typeof v === 'string' && v.trim() !== '';
 }
 
-/** The recipient address block, line by line. */
-export function recipientLines(r: RenderRecipient, senderCountry: string | null | undefined): string[] {
+/** The recipient address block, line by line, with the property each line shows. */
+export function recipientEntries(r: RenderRecipient, senderCountry: string | null | undefined): Array<{ field: RecipientLineField; text: string }> {
   const name = present(r.legalForm) && !r.name.includes(r.legalForm) ? `${r.name} ${r.legalForm}` : r.name;
-  return [
-    name,
-    r.companyOrRole,
-    r.addressLine1,
-    r.addressLine2,
-    postalCity(r.postalCode, r.city),
-    countryLine(r.country, senderCountry),
-  ]
-    .filter(present)
-    .map(toPdfText);
+  const all: Array<[RecipientLineField, string | null | undefined]> = [
+    ['name', name],
+    ['companyOrRole', r.companyOrRole],
+    ['addressLine1', r.addressLine1],
+    ['addressLine2', r.addressLine2],
+    ['postalCity', postalCity(r.postalCode, r.city)],
+    ['country', countryLine(r.country, senderCountry)],
+  ];
+  return all.filter((e): e is [RecipientLineField, string] => present(e[1])).map(([field, text]) => ({ field, text: toPdfText(text) }));
 }
+
 
 /** The sender's tax identification lines (section 14 (4) no. 2 UStG, section 34a UStDV). */
 export function senderTaxLines(s: SenderBlockV1): string[] {
@@ -206,13 +218,21 @@ function modelLines(doc: SalesDocumentWithSnapshots, lines: SalesDocumentLine[])
     .sort((a, b) => a.position - b.position)
     .map((l) => {
       const details: string[] = [];
-      if (present(l.description)) details.push(toPdfText(l.description));
+      const detailFields: ModelLine['detailFields'] = [];
+      if (present(l.description)) {
+        details.push(toPdfText(l.description));
+        detailFields.push('description');
+      }
       if (l.kind === 'text') {
-        return { pos: '', title: toPdfText(l.title), details, quantity: '', unit: '', unitPrice: '', rate: '', amount: '', text: true };
+        return { id: l.id, pos: '', title: toPdfText(l.title), details, quantity: '', unit: '', unitPrice: '', rate: '', amount: '', text: true, detailFields };
       }
       n += 1;
-      if (l.discountBp > 0) details.push(`${label('table.discountPrefix')} ${formatRate(l.discountBp)} ${label('table.discount')}`);
+      if (l.discountBp > 0) {
+        details.push(`${label('table.discountPrefix')} ${formatRate(l.discountBp)} ${label('table.discount')}`);
+        detailFields.push('discount');
+      }
       return {
+        id: l.id,
         pos: String(n),
         title: toPdfText(l.title),
         details,
@@ -222,6 +242,7 @@ function modelLines(doc: SalesDocumentWithSnapshots, lines: SalesDocumentLine[])
         rate: formatRate(l.taxRate),
         amount: formatMoney(sign * lineAmount(doc, l), doc.currencyCode),
         text: false,
+        detailFields,
       };
     });
 }
@@ -302,6 +323,7 @@ export function paymentQrData(doc: SalesDocumentWithSnapshots, sender: SenderBlo
 export function buildRenderModel(input: RenderInput): RenderModel {
   const { document: doc, sender, recipient, draft } = input;
   const title = titleOf(doc.docType);
+  const recipientRows = recipient ? recipientEntries(recipient, sender?.countryCode) : [];
 
   const senderLine = sender
     ? [sender.legalName, sender.addressLine1, postalCity(sender.postalCode, sender.city)]
@@ -371,7 +393,8 @@ export function buildRenderModel(input: RenderInput): RenderModel {
     title: draft ? `${title}${label('title.draftSuffix')}` : title,
     accentColor: input.template?.accentColor ?? null,
     senderLine,
-    recipientBlock: recipient ? recipientLines(recipient, sender?.countryCode) : [],
+    recipientBlock: recipientRows.map((e) => e.text),
+    recipientFields: recipientRows.map((e) => e.field),
     meta: meta.map((m) => ({ label: m.label, value: toPdfText(m.value) })),
     reference,
     intro: present(doc.introText) ? toPdfText(doc.introText) : null,

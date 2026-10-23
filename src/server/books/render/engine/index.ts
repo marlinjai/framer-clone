@@ -32,6 +32,19 @@
 // stored; the composer draws its selection outlines from it, and the save gate
 // refuses a template whose layout has issues.
 //
+// The field map (invoice editor plan, decisions 1 and 1a): next to the block
+// rectangles, the map lists every editable FIELD of the document (each
+// recipient line, each document data value, the intro and closing text, each
+// line's title, description, quantity, unit, price, discount, rate and amount,
+// the payment terms, the tax note and the totals) with the API field it edits,
+// one rectangle per page it is printed on, and the text style an inline editor
+// must match; and the anchors of the page's actions (each line's row, and the
+// slot under the line table's last row where "+ Add line" goes). The binder
+// marks chunks with what they show; the marks never draw and never take space,
+// so the map cannot change one byte of the PDF. Where an optional field is
+// empty, the map marks the slot it would print in (`empty: true`), measured
+// from what is drawn, never by drawing anything.
+//
 // Logos (decision 15): the caller passes the bytes of the company's assets the
 // template names (`options.assets`, by SHA-256), checked at upload
 // (render/logoImage.ts) and loaded by repository/assets.ts. Each one is
@@ -50,13 +63,15 @@ import {
   logoBlocks,
   type Block,
   type CellBlock,
+  type FontFamily,
+  type MetaItem,
   type RegionName,
   type TableColumn,
   type TemplateDocumentV2,
   type ThemeColor,
 } from '../../template/schema';
 import { darkRuns, epcPayload, qrMatrix, QUIET_ZONE_MODULES } from '../epcQr';
-import type { ModelLine, RenderModel } from '../model';
+import type { ModelLine, RecipientLineField, RenderModel } from '../model';
 import {
   ADDRESS_FIELD_HEIGHT,
   accentTint,
@@ -141,6 +156,94 @@ export interface LayoutIssue {
   region: RegionName;
 }
 
+/**
+ * How a field is edited in place: `text` one line (it may wrap when printed),
+ * `multiline` paragraphs, `date` a date or a period, `number` a count (days,
+ * a quantity, a discount), `money` an amount in cents, `select` a choice from
+ * a list (the tax class, the customer), `readonly` never edited on the page
+ * (assigned at issue, computed by the server, or the customer's data).
+ */
+export type FieldKind = 'text' | 'multiline' | 'date' | 'number' | 'money' | 'select' | 'readonly';
+
+/**
+ * Which request a field's edit becomes: `document` a PATCH of the draft
+ * (PUT .../customer for `customerId`), `line` a PATCH of the line `lineId`,
+ * `customer` the customer's contact (the recipient lines are the contact's,
+ * not the document's); null for a read-only field.
+ */
+export type FieldSource = 'document' | 'line' | 'customer';
+
+/** A rectangle on one page: points from the page's left and TOP edge, page 1-based. */
+export interface FieldRect {
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** The text style an inline editor must match to sit exactly on the printed text. */
+export interface FieldTextStyle {
+  fontFamily: FontFamily;
+  bold: boolean;
+  sizePt: number;
+  /** The resolved theme colour, #rrggbb. */
+  color: string;
+  /** Within the field's rectangle (a right-aligned field's rectangle is its whole column or value box). */
+  align: 'left' | 'center' | 'right';
+  lineHeightPt: number;
+}
+
+export interface LayoutField {
+  /**
+   * Stable within a document: `recipient.line.<n>` (1-based, printed order),
+   * `recipient.addressLine2` and `recipient.customer` (placeholders),
+   * `meta.<item>`, `introText`, `outroText`, `line.<lineId>.<part>` (title,
+   * description, quantity, unit, unitPrice, discount, rate, amount),
+   * `payment.terms`, `payment.reference`, `taxNote`, `totals.<n>` (1-based).
+   */
+  id: string;
+  kind: FieldKind;
+  source: FieldSource | null;
+  /** The request body key the field edits (for `customer`: the recipient property), or null when read-only. */
+  documentField: string | null;
+  /** The line a `line.*` field belongs to, else null. */
+  lineId: string | null;
+  /** The template block that prints the field, and its region. */
+  blockId: string;
+  region: RegionName;
+  /**
+   * Nothing is printed: the rectangle is the slot the value would print in (a
+   * "+ Add ..." placeholder). A typed value pushes what follows down, so the
+   * slot may overlap it; `room` says how much of it is free.
+   */
+  empty: boolean;
+  /** For an empty field: the points free below the slot's top before the next printed content (0 when it starts right there), else null. */
+  room: number | null;
+  /** One rectangle per page the field is printed on, in page order. */
+  rects: FieldRect[];
+  style: FieldTextStyle;
+}
+
+/** A line's row in the line table (the anchor of its toolbar): one rectangle per page it is printed on. */
+export interface LayoutRow {
+  lineId: string;
+  blockId: string;
+  rects: FieldRect[];
+}
+
+export interface LayoutAnchors {
+  rows: LayoutRow[];
+  /** Directly under the line table's last row, on the last page the table occupies: where the next line would print. */
+  addLine: Array<{
+    blockId: string;
+    /** One row high (a single-line row and the gap after it). */
+    rect: FieldRect;
+    /** The points free below the rectangle's top before the next printed content (the totals, the page's end). */
+    room: number;
+  }>;
+}
+
 export interface LayoutMap {
   page: { width: number; height: number };
   pageCount: number;
@@ -148,6 +251,9 @@ export interface LayoutMap {
   /** The line table's columns (points from the left edge), the same on every page. */
   tables: Array<{ blockId: string; columns: Partial<Record<TableColumn, { x: number; width: number }>> }>;
   issues: LayoutIssue[];
+  /** Every editable (and every printed read-only) document field, in reading order (page, top, left). */
+  fields: LayoutField[];
+  anchors: LayoutAnchors;
 }
 
 export interface EngineResult {
@@ -177,6 +283,29 @@ interface InnerBox {
   height: number;
 }
 
+/** The style a field is printed in, before the theme resolves it. */
+interface FieldStyleIn {
+  size: number;
+  bold: boolean;
+  color: ThemeColor;
+  align?: 'left' | 'center' | 'right';
+}
+
+/** A field as the binder sees it (the map adds where it was placed). */
+type FieldSpec = Omit<LayoutField, 'rects' | 'region' | 'room'>;
+
+/** What a mark stands for. */
+type MarkOf = { type: 'field'; spec: FieldSpec } | { type: 'row'; lineId: string; blockId: string } | { type: 'addLine'; blockId: string };
+
+/** A rectangle inside a chunk (x absolute, `dy` from the chunk's top) for the field map; never drawn, takes no space. */
+interface Mark {
+  of: MarkOf;
+  x: number;
+  dy: number;
+  width: number;
+  height: number;
+}
+
 /** The smallest unit placed on a page: a height and what to draw at a top position. */
 interface Chunk {
   blockId: string | null;
@@ -186,7 +315,13 @@ interface Chunk {
   draw?: (dc: DrawContext, top: number) => void;
   /** Blocks inside this chunk (the cells of a `columns` row), relative to the chunk. */
   inner?: InnerBox[];
+  /** What the chunk shows, for the field map. */
+  marks?: Mark[];
 }
+
+const mark = (chunk: Chunk, m: Mark): void => {
+  (chunk.marks ??= []).push(m);
+};
 
 /** Chunks that stay on one page when they fit on one (`keep`), or may break between chunks. */
 interface Unit {
@@ -253,26 +388,75 @@ class Binder {
     dc.page.drawText(s, { x: r2(drawX), y: r2(PAGE_HEIGHT - top - opts.size), size: opts.size, font, color: opts.color });
   }
 
-  /** One chunk per line of wrapped text. */
+  /** A field of a block, styled as the block prints it. */
+  field(
+    blockId: string,
+    id: string,
+    kind: FieldKind,
+    edit: { source: FieldSource; documentField: string } | null,
+    style: FieldStyleIn,
+    empty = false,
+    lineId: string | null = null,
+  ): FieldSpec {
+    return {
+      id,
+      kind: edit ? kind : 'readonly',
+      source: edit?.source ?? null,
+      documentField: edit?.documentField ?? null,
+      lineId,
+      blockId,
+      empty,
+      style: {
+        fontFamily: this.doc.theme.fontFamily,
+        bold: style.bold,
+        sizePt: style.size,
+        color: this.doc.theme[style.color].toLowerCase(),
+        align: style.align ?? 'left',
+        lineHeightPt: lead(style.size),
+      },
+    };
+  }
+
+  /**
+   * One chunk per line of wrapped text. `field(i)` names the field text `i`
+   * shows (each of its lines is marked, the paragraph gap left out); `after(i)`
+   * an empty field whose slot is directly under text `i`.
+   */
   lines(
     blockId: string,
     x: number,
     width: number,
     texts: string[],
-    opts: { size: number; bold: boolean; color: RGB; align?: 'left' | 'center' | 'right'; gapAfter?: number },
+    opts: {
+      size: number;
+      bold: boolean;
+      color: RGB;
+      align?: 'left' | 'center' | 'right';
+      gapAfter?: number;
+      field?: (i: number) => FieldSpec | null;
+      after?: (i: number) => FieldSpec | null;
+    },
   ): Chunk[] {
     const out: Chunk[] = [];
+    const { field, after, ...drawOpts } = opts;
     texts.forEach((t, ti) => {
       const wrapped = this.wrap(t, opts.size, opts.bold, width);
+      const spec = field?.(ti) ?? null;
       wrapped.forEach((line, li) => {
         const last = li === wrapped.length - 1 && ti < texts.length - 1;
-        out.push({
+        const chunk: Chunk = {
           blockId,
           x,
           width,
           h: r2(lead(opts.size) + (last ? (opts.gapAfter ?? 0) : 0)),
-          draw: (dc, top) => this.text(dc, line, x, top, { ...opts, width }),
-        });
+          draw: (dc, top) => this.text(dc, line, x, top, { ...drawOpts, width }),
+        };
+        if (spec) mark(chunk, { of: { type: 'field', spec }, x, dy: 0, width, height: lead(opts.size) });
+        if (li === wrapped.length - 1) {
+          const slot = after?.(ti) ?? null;
+          if (slot) mark(chunk, { of: { type: 'field', spec: slot }, x, dy: lead(opts.size), width, height: lead(opts.size) });
+        }
+        out.push(chunk);
       });
     });
     return out;
@@ -284,8 +468,10 @@ class Binder {
     const m = this.model;
     const size = blockSize(block, this.doc);
     const bold = blockBold(block);
-    const color = this.colors[blockColor(block)];
+    const colorName = blockColor(block);
+    const color = this.colors[colorName];
     const align = block.style.align ?? 'left';
+    const style = { size, bold, color: colorName, align };
     const keep = (chunks: Chunk[]): Measured | null => (chunks.length === 0 ? null : { units: [{ chunks, keep: true }] });
     const flow = (chunks: Chunk[]): Measured | null =>
       chunks.length === 0 ? null : { units: chunks.map((c) => ({ chunks: [c], keep: false })) };
@@ -295,26 +481,48 @@ class Binder {
         return keep(this.logo(block, x, width, region));
       case 'senderLine':
         return keep(m.senderLine ? this.lines(block.id, x, width, [m.senderLine], { size, bold, color, align }) : []);
-      case 'recipient':
-        return keep(this.lines(block.id, x, width, m.recipientBlock, { size, bold, color, align }));
+      case 'recipient': {
+        const sources = m.recipientFields ?? [];
+        const missingSecondLine = sources.includes('addressLine1') && !sources.includes('addressLine2');
+        return keep(
+          this.lines(block.id, x, width, m.recipientBlock, {
+            size,
+            bold,
+            color,
+            align,
+            field: (i) => this.recipientField(block.id, i, sources[i], style),
+            after: (i) =>
+              missingSecondLine && sources[i] === 'addressLine1'
+                ? this.field(block.id, 'recipient.addressLine2', 'text', { source: 'customer', documentField: 'addressLine2' }, style, true)
+                : null,
+          }),
+        );
+      }
       case 'documentMeta':
         return keep(this.meta(block, x, width, size, color));
       case 'title':
         return keep(region === 'followingPageHeader' ? this.continuationTitle(block.id, x, width, size, bold, color, align) : this.title(block.id, x, width, size, bold, color, align));
       case 'introText':
-        return flow(m.intro ? this.lines(block.id, x, width, paragraphs(m.intro), { size, bold, color, align, gapAfter: 4 }) : []);
-      case 'outroText':
-        return flow(m.outro ? this.lines(block.id, x, width, paragraphs(m.outro), { size, bold, color, align, gapAfter: 4 }) : []);
+      case 'outroText': {
+        const text = block.type === 'introText' ? m.intro : m.outro;
+        const spec = this.field(block.id, block.type, 'multiline', { source: 'document', documentField: block.type }, style);
+        return flow(text ? this.lines(block.id, x, width, paragraphs(text), { size, bold, color, align, gapAfter: 4, field: () => spec }) : []);
+      }
       case 'lineTable':
         return this.lineTable(block, x, width, size);
       case 'totals':
-        return keep(this.totals(block.id, x, width, size, color));
-      case 'taxNote':
-        return keep(this.lines(block.id, x, width, m.notes, { size, bold, color, align, gapAfter: 4 }));
+        return keep(this.totals(block.id, x, width, size, color, colorName));
+      case 'taxNote': {
+        const spec = this.field(block.id, 'taxNote', 'readonly', null, style);
+        return keep(this.lines(block.id, x, width, m.notes, { size, bold, color, align, gapAfter: 4, field: () => spec }));
+      }
       case 'paymentDetails': {
         if (m.payment.length === 0) return null;
         const head = block.heading ? this.lines(block.id, x, width, [block.heading], { size, bold: true, color: this.colors.ink, align }) : [];
-        return keep([...head, ...this.lines(block.id, x, width, m.payment, { size, bold, color, align, gapAfter: 2 })]);
+        return keep([
+          ...head,
+          ...this.lines(block.id, x, width, m.payment, { size, bold, color, align, gapAfter: 2, field: (i) => this.paymentField(block.id, m.payment[i], style) }),
+        ]);
       }
       case 'paymentQr':
         return keep(this.paymentQr(block, x, width, size, color, region));
@@ -354,6 +562,54 @@ class Binder {
     }
   }
 
+  /**
+   * The slot of a document block that prints nothing (no customer yet, no
+   * intro or closing text): an empty field one line high where its first line
+   * would print, or null for every other block.
+   */
+  emptySlot(block: Block, x: number, width: number): { spec: FieldSpec; x: number; width: number; height: number } | null {
+    const style: FieldStyleIn = { size: blockSize(block, this.doc), bold: blockBold(block), color: blockColor(block), align: block.style.align ?? 'left' };
+    const at = (spec: FieldSpec) => ({ spec, x, width, height: lead(style.size) });
+    switch (block.type) {
+      case 'recipient':
+        return at(this.field(block.id, 'recipient.customer', 'select', { source: 'document', documentField: 'customerId' }, style, true));
+      case 'introText':
+      case 'outroText':
+        return at(this.field(block.id, block.type, 'multiline', { source: 'document', documentField: block.type }, style, true));
+      default:
+        return null;
+    }
+  }
+
+  /** The field of the recipient's line `i` (read-only when the model does not say which property it shows). */
+  recipientField(blockId: string, i: number, source: RecipientLineField | undefined, style: FieldStyleIn): FieldSpec {
+    const id = `recipient.line.${i + 1}`;
+    return source
+      ? this.field(blockId, id, 'text', { source: 'customer', documentField: source }, style)
+      : this.field(blockId, id, 'readonly', null, style);
+  }
+
+  /** The field a payment line shows: the terms (editable until a due date is set at issue), the reference, or none (the bank line is the sender's). */
+  paymentField(blockId: string, text: string, style: FieldStyleIn): FieldSpec | null {
+    if (text.startsWith(label('payment.termsPrefix'))) {
+      return this.field(blockId, 'payment.terms', 'number', { source: 'document', documentField: 'paymentTermsDays' }, style);
+    }
+    if (text.startsWith(label('payment.dueBy'))) return this.field(blockId, 'payment.terms', 'readonly', null, style);
+    if (text.startsWith(label('payment.reference'))) return this.field(blockId, 'payment.reference', 'readonly', null, style);
+    return null;
+  }
+
+  /** The field of a document data item (only the service date and the contract reference are edited on a draft). */
+  metaField(blockId: string, item: MetaItem, value: { label: string } | null, style: FieldStyleIn, empty = false): FieldSpec {
+    const id = `meta.${item}`;
+    if (item === 'serviceDate') {
+      const documentField = value?.label === label('meta.servicePeriod') ? 'servicePeriod' : 'serviceDate';
+      return this.field(blockId, id, 'date', { source: 'document', documentField }, style, empty);
+    }
+    if (item === 'contract') return this.field(blockId, id, 'text', { source: 'document', documentField: 'contractReference' }, style, empty);
+    return this.field(blockId, id, 'readonly', null, style, empty);
+  }
+
   /** The logo at its width with the image's aspect ratio, aligned in its box; nothing without an asset. */
   logo(block: Extract<Block | CellBlock, { type: 'logo' }>, x: number, width: number, region: RegionName): Chunk[] {
     if (block.assetSha256 === null) return [];
@@ -383,13 +639,26 @@ class Binder {
   meta(block: Extract<Block, { type: 'documentMeta' }>, x: number, width: number, size: number, color: RGB): Chunk[] {
     const out: Chunk[] = [];
     const muted = this.colors.muted;
+    const style: FieldStyleIn = { size, bold: false, color: blockColor(block), align: 'right' };
+    // An empty contract reference: its slot is where it would print (under the item before it, or over the one after it).
+    let pendingSlot: FieldSpec | null = null;
     for (const item of block.items) {
       const entry = this.model.metaItems[item];
-      if (!entry) continue;
+      if (!entry) {
+        if (item === 'contract') {
+          const slot = this.metaField(block.id, item, null, style, true);
+          const prev = out[out.length - 1];
+          if (prev) mark(prev, { of: { type: 'field', spec: slot }, x, dy: prev.h, width, height: lead(size) });
+          else pendingSlot = slot;
+        }
+        continue;
+      }
+      const spec = this.metaField(block.id, item, entry, style);
+      const first = out.length;
       const lw = this.measure(entry.label, size, false);
       const vw = this.measure(entry.value, size, false);
       if (lw + 8 + vw <= width) {
-        out.push({
+        const chunk: Chunk = {
           blockId: block.id,
           x,
           width,
@@ -398,12 +667,19 @@ class Binder {
             this.text(dc, entry.label, x, top, { size, bold: false, color: muted });
             this.text(dc, entry.value, x, top, { size, bold: false, color, align: 'right', width });
           },
-        });
-        continue;
+        };
+        // The value's box: from just after the label to the right edge (the value is right-aligned in it).
+        mark(chunk, { of: { type: 'field', spec }, x: r2(x + lw + 8), dy: 0, width: r2(width - lw - 8), height: lead(size) });
+        out.push(chunk);
+      } else {
+        // Too wide for one line: the label, then the value right-aligned under it (still label before value).
+        out.push(...this.lines(block.id, x, width, [entry.label], { size, bold: false, color: muted }));
+        out.push(...this.lines(block.id, x, width, [entry.value], { size, bold: false, color, align: 'right', field: () => spec }));
       }
-      // Too wide for one line: the label, then the value right-aligned under it (still label before value).
-      out.push(...this.lines(block.id, x, width, [entry.label], { size, bold: false, color: muted }));
-      out.push(...this.lines(block.id, x, width, [entry.value], { size, bold: false, color, align: 'right' }));
+      if (pendingSlot) {
+        mark(out[first], { of: { type: 'field', spec: pendingSlot }, x, dy: 0, width, height: lead(size) });
+        pendingSlot = null;
+      }
     }
     return out;
   }
@@ -518,7 +794,43 @@ class Binder {
       const titleLines = this.wrap(l.title, size, !l.text, textWidth(l));
       const unitLines = l.text ? [] : this.wrap(l.unit, size, false, cols.unit!.width - COLUMN_GAP);
       const headRows = Math.max(titleLines.length, unitLines.length, 1);
+      const lineField = (part: string, kind: FieldKind, documentField: string | null, st: FieldStyleIn, empty = false) =>
+        this.field(block.id, `line.${l.id}.${part}`, kind, documentField ? { source: 'line', documentField } : null, st, empty, l.id);
+      const lineMarks: Mark[] = [];
+      const markCell = (col: TableColumn, spec: FieldSpec, rows = 1) => {
+        const cell = cols[col];
+        if (!cell) return;
+        const w = right.has(col) ? cell.width - COLUMN_GAP / 2 : cell.width - COLUMN_GAP;
+        lineMarks.push({ of: { type: 'field', spec }, x: cell.x, dy: 0, width: r2(w), height: r2(rows * lead(size)) });
+      };
+      const cellStyle = (align: 'left' | 'right'): FieldStyleIn => ({ size, bold: false, color: 'ink', align });
+      lineMarks.push({
+        of: { type: 'field', spec: lineField('title', 'text', 'title', { size, bold: !l.text, color: 'ink' }) },
+        x: cols.title!.x,
+        dy: 0,
+        width: textWidth(l),
+        height: r2(titleLines.length * lead(size)),
+      });
+      if (!l.text) {
+        markCell('quantity', lineField('quantity', 'number', 'quantity', cellStyle('right')));
+        markCell('unit', lineField('unit', 'text', 'unitLabel', cellStyle('left')), Math.max(unitLines.length, 1));
+        markCell('unitPrice', lineField('unitPrice', 'money', 'unitPrice', cellStyle('right')));
+        markCell('rate', lineField('rate', 'select', 'taxClass', cellStyle('right')));
+        markCell('amount', lineField('amount', 'readonly', null, cellStyle('right')));
+      }
+      const detailStyle: FieldStyleIn = { size: ds, bold: false, color: 'muted' };
+      if (!l.detailFields.includes('description')) {
+        // The description would print directly under the title (and push the discount line down).
+        lineMarks.push({
+          of: { type: 'field', spec: lineField('description', 'multiline', 'description', detailStyle, true) },
+          x: cols.title!.x,
+          dy: r2(headRows * lead(size)),
+          width: textWidth(l),
+          height: lead(ds),
+        });
+      }
       const head: Chunk = {
+        marks: lineMarks,
         blockId: block.id,
         x,
         width,
@@ -537,15 +849,27 @@ class Binder {
           titleLines.forEach((t, ti) => this.text(dc, t, cols.title!.x, top + ti * lead(size), { size, bold: !l.text, color: ink }));
         },
       };
-      const details = l.details.flatMap((d) => this.wrap(d, ds, false, textWidth(l)));
+      const details = l.details.flatMap((d, di) => {
+        const kind = l.detailFields[di];
+        const spec =
+          kind === 'description'
+            ? lineField('description', 'multiline', 'description', detailStyle)
+            : kind === 'discount'
+              ? lineField('discount', 'number', 'discountBp', detailStyle)
+              : null;
+        return this.wrap(d, ds, false, textWidth(l)).map((text) => ({ text, spec }));
+      });
       const detailChunks: Chunk[] = details.map((d) => ({
         blockId: block.id,
         x,
         width,
         h: lead(ds),
-        draw: (dc, top) => this.text(dc, d, cols.title!.x, top, { size: ds, bold: false, color: this.colors.muted }),
+        draw: (dc, top) => this.text(dc, d.text, cols.title!.x, top, { size: ds, bold: false, color: this.colors.muted }),
+        marks: d.spec ? [{ of: { type: 'field', spec: d.spec }, x: cols.title!.x, dy: 0, width: textWidth(l), height: lead(ds) }] : [],
       }));
       const chunks = [head, ...detailChunks];
+      // The row's rectangle (the toolbar's anchor), without the gap after it.
+      for (const c of chunks) (c.marks ??= []).push({ of: { type: 'row', lineId: l.id, blockId: block.id }, x, dy: 0, width, height: c.h });
       // The gap after a row belongs to its last chunk.
       chunks[chunks.length - 1] = { ...chunks[chunks.length - 1], h: r2(chunks[chunks.length - 1].h + 6) };
       return { chunks: i === 0 ? [header, ...chunks] : chunks, keep: true };
@@ -555,6 +879,8 @@ class Binder {
       x,
       width,
       h: 8,
+      // The rule follows the last row: its top is where the next line would print.
+      marks: [{ of: { type: 'addLine', blockId: block.id }, x, dy: 0, width, height: r2(lead(size) + 6) }],
       draw: (dc, top) =>
         dc.page.drawLine({
           start: { x: r2(x), y: r2(PAGE_HEIGHT - top - 2) },
@@ -568,11 +894,11 @@ class Binder {
     return { units, repeat: header };
   }
 
-  totals(id: string, x: number, width: number, size: number, color: RGB): Chunk[] {
+  totals(id: string, x: number, width: number, size: number, color: RGB, colorName: ThemeColor): Chunk[] {
     const valueWidth = this.measure(WIDEST.amount!, size + 1, true) + COLUMN_GAP;
-    return this.model.totals.map((t) => {
+    return this.model.totals.map((t, i) => {
       const s = t.strong ? size + 1 : size;
-      return {
+      const chunk: Chunk = {
         blockId: id,
         x,
         width,
@@ -583,6 +909,10 @@ class Binder {
           this.text(dc, t.value, x, top2, { size: s, bold: t.strong, color, align: 'right', width });
         },
       };
+      // The value's box (right-aligned in it), the row's label stays the template's.
+      const spec = this.field(id, `totals.${i + 1}`, 'readonly', null, { size: s, bold: t.strong, color: colorName, align: 'right' });
+      mark(chunk, { of: { type: 'field', spec }, x: r2(x + width - valueWidth), dy: t.strong ? 2 : 0, width: r2(valueWidth), height: lead(s) });
+      return chunk;
     });
   }
 
@@ -699,7 +1029,13 @@ class Binder {
     const h = Math.max(0, ...cells.map((c) => c.h));
     if (h === 0) return [];
     const inner: InnerBox[] = [];
-    for (const cell of cells) for (const p of cell.placed) if (p.chunk.blockId) inner.push({ blockId: p.chunk.blockId, dx: p.chunk.x - x, dy: p.dy, width: p.chunk.width, height: p.chunk.h });
+    const marks: Mark[] = [];
+    for (const cell of cells) {
+      for (const p of cell.placed) {
+        if (p.chunk.blockId) inner.push({ blockId: p.chunk.blockId, dx: p.chunk.x - x, dy: p.dy, width: p.chunk.width, height: p.chunk.h });
+        for (const mk of p.chunk.marks ?? []) marks.push({ ...mk, dy: r2(p.dy + mk.dy) });
+      }
+    }
     return [
       {
         blockId: block.id,
@@ -707,6 +1043,7 @@ class Binder {
         width,
         h: r2(h),
         inner,
+        marks,
         draw: (dc, top) => {
           for (const cell of cells) for (const p of cell.placed) p.chunk.draw?.(dc, top + p.dy);
         },
@@ -732,14 +1069,38 @@ interface Placed {
   region: RegionName;
 }
 
+/** The slot of an empty document block (0-based page, top in points); never drawn. */
+interface Slot {
+  spec: FieldSpec;
+  region: RegionName;
+  page: number;
+  x: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 /** Stack a region's blocks from `top` (no page breaks: headers, the address zone, the footer). */
-function stack(b: Binder, blocks: Block[], region: RegionName, x: number, width: number, top: number, page: number): { placed: Placed[]; bottom: number } {
+function stack(
+  b: Binder,
+  blocks: Block[],
+  region: RegionName,
+  x: number,
+  width: number,
+  top: number,
+  page: number,
+): { placed: Placed[]; bottom: number; slots: Slot[] } {
   const placed: Placed[] = [];
+  const slots: Slot[] = [];
   let y = top;
   let first = true;
   for (const block of blocks) {
     const m = b.bind(block, x, width, region);
-    if (!m) continue;
+    if (!m) {
+      const slot = b.emptySlot(block, x, width);
+      if (slot) slots.push({ ...slot, region, page, top: r2(y + (first ? 0 : (block.style.spaceAbovePt ?? 0))) });
+      continue;
+    }
     if (!first) y += block.style.spaceAbovePt ?? 0;
     first = false;
     for (const chunk of allChunks(m)) {
@@ -748,7 +1109,7 @@ function stack(b: Binder, blocks: Block[], region: RegionName, x: number, width:
     }
     y += block.style.spaceBelowPt ?? 0;
   }
-  return { placed, bottom: r2(y) };
+  return { placed, bottom: r2(y), slots };
 }
 
 const BLOCK_TYPES = new Set([
@@ -872,6 +1233,7 @@ export async function renderTemplate(
   const left = stack(b, doc.regions.addressZone.left, 'addressZone.left', geo.addressLeft.x, geo.addressLeft.width, geo.addressTop, 0);
   const right = stack(b, doc.regions.addressZone.right, 'addressZone.right', geo.addressRight.x, geo.addressRight.width, geo.addressTop, 0);
   placed.push(...left.placed, ...right.placed);
+  const slots: Slot[] = [...header.slots, ...left.slots, ...right.slots];
   const firstTop = r2(Math.max(geo.addressTop + ADDRESS_FIELD_HEIGHT, left.bottom, right.bottom, header.bottom));
   // The recipient must start inside the window (below the return line, never further down).
   const recipientId = doc.regions.addressZone.left.find((blk) => blk.type === 'recipient')?.id;
@@ -925,7 +1287,15 @@ export async function renderTemplate(
   for (let i = 0; i < body.length; i += 1) {
     const block = body[i];
     let measured = b.bind(block, full.x, full.width, 'body');
-    if (!measured) continue;
+    if (!measured) {
+      // An empty intro or closing text: its slot where it would start, inside the body's room, taking no space.
+      const slot = stopped ? null : b.emptySlot(block, full.x, full.width);
+      if (slot) {
+        const top = y + (!atTop || page === 0 ? (block.style.spaceAbovePt ?? 0) : 0);
+        slots.push({ ...slot, region: 'body', page, top: r2(Math.max(atTop ? y : 0, Math.min(top, contentBottom - slot.height))) });
+      }
+      continue;
+    }
     let spaceBelow = block.style.spaceBelowPt ?? 0;
     // Totals and the tax note directly after them stay together (decision 5).
     if (block.type === 'totals' && body[i + 1]?.type === 'taxNote') {
@@ -1015,6 +1385,103 @@ export async function renderTemplate(
       blocks,
       tables: b.tables,
       issues: dedupeIssues(b.issues),
+      ...fieldMap(all, slots, contentBottom),
+    },
+  };
+}
+
+/** The regions in reading order. */
+const REGION_ORDER: readonly RegionName[] = ['firstPageHeader', 'followingPageHeader', 'addressZone.left', 'addressZone.right', 'body', 'footer'];
+
+/** Union rectangles per key and page: a field or row printed in several pieces on one page has one rectangle there. */
+class RectsByPage {
+  private readonly byPage = new Map<number, FieldRect>();
+
+  add(page: number, x: number, y: number, width: number, height: number): void {
+    const prev = this.byPage.get(page);
+    if (!prev) {
+      this.byPage.set(page, { page, x, y, width, height });
+      return;
+    }
+    const x0 = Math.min(prev.x, x);
+    const y0 = Math.min(prev.y, y);
+    this.byPage.set(page, { page, x: x0, y: y0, width: Math.max(prev.x + prev.width, x + width) - x0, height: Math.max(prev.y + prev.height, y + height) - y0 });
+  }
+
+  rects(): FieldRect[] {
+    return [...this.byPage.values()]
+      .sort((a, c) => a.page - c.page)
+      .map((r) => ({ page: r.page, x: r2(r.x), y: r2(r.y), width: r2(r.width), height: r2(r.height) }));
+  }
+}
+
+/**
+ * The fields and anchors of the map, from the marks of every placed chunk
+ * (the header and footer once per page) and the slots of empty blocks. A field
+ * is keyed by its id and block: the save gate allows every block bound to
+ * document data once (rules.ts), so an id names one field in a checked
+ * template.
+ */
+function fieldMap(all: Placed[], slots: Slot[], contentBottom: number): { fields: LayoutField[]; anchors: LayoutAnchors } {
+  const fields = new Map<string, { spec: FieldSpec; region: RegionName; rects: RectsByPage }>();
+  const rows = new Map<string, { lineId: string; blockId: string; rects: RectsByPage }>();
+  const addLine = new Map<string, { rect: FieldRect; carrier: Placed }>();
+  /** The free points below `rect`'s top: up to the first drawn chunk that starts there or lower and overlaps it sideways. */
+  const room = (rect: FieldRect, carrier: Placed | null): number => {
+    let next = Math.max(contentBottom, rect.y);
+    for (const item of all) {
+      const c = item.chunk;
+      if (item === carrier || !c.draw || c.h <= 0 || item.page + 1 !== rect.page || item.top < rect.y - 0.005) continue;
+      if (c.x >= rect.x + rect.width || c.x + c.width <= rect.x) continue;
+      next = Math.min(next, item.top);
+    }
+    return r2(Math.max(0, next - rect.y));
+  };
+  const addField = (spec: FieldSpec, region: RegionName, page: number, x: number, y: number, width: number, height: number) => {
+    const key = `${spec.id}@${spec.blockId}`;
+    const entry = fields.get(key) ?? { spec, region, rects: new RectsByPage() };
+    fields.set(key, entry);
+    entry.rects.add(page, x, y, width, height);
+  };
+  for (const item of all) {
+    for (const mk of item.chunk.marks ?? []) {
+      const page = item.page + 1;
+      const y = item.top + mk.dy;
+      const of = mk.of;
+      if (of.type === 'field') addField(of.spec, item.region, page, mk.x, y, mk.width, mk.height);
+      else if (of.type === 'row') {
+        const key = `${of.lineId}@${of.blockId}`;
+        const entry = rows.get(key) ?? { lineId: of.lineId, blockId: of.blockId, rects: new RectsByPage() };
+        rows.set(key, entry);
+        entry.rects.add(page, mk.x, y, mk.width, mk.height);
+      } else {
+        const prev = addLine.get(of.blockId)?.rect;
+        if (!prev || page > prev.page || (page === prev.page && y > prev.y)) {
+          addLine.set(of.blockId, { rect: { page, x: r2(mk.x), y: r2(y), width: r2(mk.width), height: r2(mk.height) }, carrier: item });
+        }
+      }
+    }
+  }
+  for (const s of slots) addField(s.spec, s.region, s.page + 1, s.x, s.top, s.width, s.height);
+  const reading = (a: FieldRect, c: FieldRect) => a.page - c.page || a.y - c.y || a.x - c.x;
+  // Reading order: page, then region (the address before the document data beside it), then top and left.
+  const out: LayoutField[] = [...fields.values()]
+    .map(({ spec, region, rects }) => {
+      const r = rects.rects();
+      return { ...spec, region, rects: r, room: spec.empty ? room(r[0], null) : null };
+    })
+    .sort(
+      (a, c) =>
+        a.rects[0].page - c.rects[0].page ||
+        REGION_ORDER.indexOf(a.region) - REGION_ORDER.indexOf(c.region) ||
+        reading(a.rects[0], c.rects[0]) ||
+        a.id.localeCompare(c.id),
+    );
+  return {
+    fields: out,
+    anchors: {
+      rows: [...rows.values()].map((r) => ({ lineId: r.lineId, blockId: r.blockId, rects: r.rects.rects() })).sort((a, c) => reading(a.rects[0], c.rects[0])),
+      addLine: [...addLine.entries()].map(([blockId, a]) => ({ blockId, rect: a.rect, room: room(a.rect, a.carrier) })),
     },
   };
 }
