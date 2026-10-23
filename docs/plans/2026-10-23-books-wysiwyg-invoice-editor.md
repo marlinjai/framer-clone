@@ -300,7 +300,7 @@ surfaced as `invalid_input`; the render-input route loaded every logo's bytes to
 recently used out); an answer for another document id is refused; wrong file names in comments;
 the harness asset stand-in answered any kind; `.next-harness` in `.dockerignore` and tsconfig.
 Kept on purpose: `public` caching of the font route (decision 2). The fixes were reviewed again.
-=======
+
 ## Products build notes (2026-10-23)
 
 What was built (phase 4, the product and service list; branch `feat/books-products`):
@@ -370,4 +370,3 @@ business and under reverse charge.
 
 Operator step: none by hand. The next deploy rolls migration `015_books_products` at boot (purely
 additive: one new table and two indexes).
->>>>>>> origin/main
