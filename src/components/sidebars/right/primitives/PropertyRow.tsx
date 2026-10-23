@@ -28,25 +28,29 @@ export function PropertyRow({ label, children, hint, group = false, className }:
   const id = useId();
   const labelId = `${id}-label`;
 
-  return (
-    <div className={cn('grid min-h-7 grid-cols-[64px_minmax(0,1fr)] items-center gap-2', className)}>
-      {group ? (
+  // A group (W / H, X / Y, four sides) gets the full panel width under a
+  // caption: squeezed into the field column, two fields with a prefix and a
+  // unit each left the number itself only a few pixels.
+  if (group) {
+    return (
+      <div className={cn('flex flex-col gap-1.5', className)}>
         <span id={labelId} className={cn(FIELD_LABEL, 'truncate')} title={hint ?? label}>
           {label}
         </span>
-      ) : (
-        <label htmlFor={id} className={cn(FIELD_LABEL, 'truncate')} title={hint ?? label}>
-          {label}
-        </label>
-      )}
-      <div
-        className="min-w-0"
-        role={group ? 'group' : undefined}
-        aria-labelledby={group ? labelId : undefined}
-      >
-        <FieldContext.Provider value={group ? null : { id, label }}>
-          {children}
-        </FieldContext.Provider>
+        <div className="min-w-0" role="group" aria-labelledby={labelId}>
+          <FieldContext.Provider value={null}>{children}</FieldContext.Provider>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn('grid min-h-7 grid-cols-[64px_minmax(0,1fr)] items-center gap-2', className)}>
+      <label htmlFor={id} className={cn(FIELD_LABEL, 'truncate')} title={hint ?? label}>
+        {label}
+      </label>
+      <div className="min-w-0">
+        <FieldContext.Provider value={{ id, label }}>{children}</FieldContext.Provider>
       </div>
     </div>
   );

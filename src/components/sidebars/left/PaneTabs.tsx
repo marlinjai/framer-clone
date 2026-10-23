@@ -78,7 +78,8 @@ export function PaneTabs<T extends string>({ tabs, active, onChange, label, idPr
             onClick={() => onChange(tab.id)}
             onKeyDown={(e) => onKeyDown(e, index)}
             className={cn(
-              'min-w-0 flex-1 truncate rounded-[5px] px-1.5 text-[11.5px] font-medium transition-colors',
+              // Sized to its own label, then stretched: equal thirds clipped "Components".
+              'flex-auto whitespace-nowrap rounded-[5px] px-2 text-[11.5px] font-medium transition-colors',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
               isActive
                 ? 'bg-background text-foreground shadow-sm'
