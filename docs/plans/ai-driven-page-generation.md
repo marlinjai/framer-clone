@@ -166,6 +166,8 @@ The user loads AI-generated JSON into the editor. Implementation options (simple
 - Add design system presets (spacing scales, type scales, color palettes) as context
 - Support style references ("make it look like Stripe's landing page", "use a dark theme")
 - Visual feedback loop: screenshot the canvas and feed it back to the AI for iteration
+- Built 2026-10-23: the design brief in the prompt, photo backgrounds with text over them and
+  subject-aware crops, see [the design quality plan](2026-10-23-ai-design-quality-and-image-focus.md).
 
 ## Competitive Advantage Over Sleek Design and Similar Tools
 

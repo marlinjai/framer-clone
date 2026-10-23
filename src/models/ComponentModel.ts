@@ -35,7 +35,7 @@ function isObject(x: any): x is Record<string, any> {
 }
 
 export const CSS_PROP_SET = new Set<string>([
-  'width','height','minWidth','minHeight','maxWidth','maxHeight',
+  'width','height','minWidth','minHeight','maxWidth','maxHeight','aspectRatio',
   'display','position','top','right','bottom','left','inset',
   'padding','paddingTop','paddingRight','paddingBottom','paddingLeft',
   'margin','marginTop','marginRight','marginBottom','marginLeft',
@@ -287,6 +287,13 @@ const ComponentModel: any = ComponentBase
       console.log(`🎨 Updated ${property} to:`, self.props.style[property]);
     },
     
+    // Remove a stock photo's credit (data-credit-* and the hover title), when
+    // the photo it describes was replaced by another picture. An action, so it
+    // works on the protected tree and is one undoable step.
+    clearStockCredit() {
+      if (hasStockCredit(self.props)) self.props = withoutStockCredit(self.props);
+    },
+
     // Replace the string text content of this component. Used for inline
     // editing of text / button / heading nodes. Leaves other props untouched.
     setTextContent(value: string) {

@@ -13,6 +13,11 @@
 //   data-credit-url         the photographer's Unsplash profile (with referral utm)
 //   data-credit-source-url  unsplash.com (with referral utm)
 //
+// A photo BACKGROUND (a container whose backgroundImage carries the photo as
+// a url() layer) carries the three data-credit-* attributes but no title: a
+// title on a section would show the credit as a tooltip over every heading
+// and button inside it (stockCreditAttrs).
+//
 // The Generate dialog also lists every placed photo's credit with real links.
 // When the user points the image at a different picture (a new src, or a CMS
 // binding on src), the credit no longer describes it and is removed with the
@@ -23,13 +28,20 @@ import type { StockPhotoCredit } from './protocol';
 
 export const STOCK_CREDIT_ATTRS = ['data-credit-name', 'data-credit-url', 'data-credit-source-url'] as const;
 
-/** The img props that carry one photo's credit. */
-export function stockCreditProps(credit: StockPhotoCredit): Record<string, string> {
+/** The data-credit-* attributes of one photo's credit (what a photo background carries). */
+export function stockCreditAttrs(credit: StockPhotoCredit): Record<string, string> {
   return {
-    title: `Photo by ${credit.photographerName} on Unsplash`,
     'data-credit-name': credit.photographerName,
     'data-credit-url': credit.photographerUrl,
     'data-credit-source-url': credit.unsplashUrl,
+  };
+}
+
+/** The img props that carry one photo's credit: the attributes plus the hover title. */
+export function stockCreditProps(credit: StockPhotoCredit): Record<string, string> {
+  return {
+    title: `Photo by ${credit.photographerName} on Unsplash`,
+    ...stockCreditAttrs(credit),
   };
 }
 

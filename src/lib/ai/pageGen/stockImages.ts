@@ -28,14 +28,22 @@
 // module never throws into the generation: a stock-photo problem is a note,
 // never a failed generation.
 //
+// Where a photo goes: an img gets it as src (plus the credit and the hover
+// title); a container (a photo background) gets it as the url() layer under
+// the overlay layers the model wrote into backgroundImage (the scrim), with
+// backgroundSize cover, no repeat and the data-credit-* attributes. Either way
+// the crop's focal point (./focalPoints.ts) is written as objectPosition or
+// backgroundPosition; without one the crop is centred explicitly.
+//
 // The key (UNSPLASH_ACCESS_KEY) is read here, server-side, and never sent to
 // the browser or written to a log. Unset means the feature is off.
 
 import 'server-only';
 import { GENERATION_LIMITS } from './schema';
-import type { GeneratedNodeSnapshot, ImageOrientation, ImageRequest } from './validate';
+import type { GeneratedNodeSnapshot, ImageOrientation, ImageRequest, ImageRequestKind } from './validate';
 import type { StockImageFallbackReason, StockImageSummary, StockPhotoCredit } from './protocol';
-import { stockCreditProps } from './stockCredit';
+import { stockCreditAttrs, stockCreditProps } from './stockCredit';
+import { CENTER_FOCAL_POINT, formatFocalPosition, withPhotoUrl, type FocalPoint } from '@/lib/images/imageStyle';
 
 const SEARCH_URL = 'https://api.unsplash.com/search/photos';
 /** Results asked for per search: enough for repeated queries on one page to stay distinct. */
@@ -49,6 +57,8 @@ export const CACHE_TTL_MS = 30 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 500;
 /** The hotlinked photo is at most this wide (2x the box, for sharp high-density screens). */
 const MAX_PHOTO_WIDTH = 2400;
+/** Width of the small copy the focal-point pass looks at. */
+const THUMB_WIDTH = 512;
 const DEFAULT_APP_NAME = 'lumitra';
 /** Pause after a rate limit: Unsplash limits per hour, so retrying sooner mostly fails. */
 export const RATE_LIMIT_PAUSE_MS = 10 * 60 * 1000;
@@ -65,10 +75,15 @@ interface UnsplashPhoto {
   downloadLocation: string;
 }
 
-/** A photo chosen for one img node. */
+/** A photo chosen for one img node or one container's background. */
 export interface PlacedPhoto {
   nodeId: string;
+  kind: ImageRequestKind;
   src: string;
+  /** A small copy of the same photo, for the focal-point pass (never placed in a page). */
+  thumbSrc: string;
+  /** Where the crop keeps the subject; set by the focal-point pass, centred when absent. */
+  focal?: FocalPoint;
   credit: StockPhotoCredit;
   /** Unsplash's download-tracking endpoint for this photo (api.unsplash.com). */
   downloadLocation: string;
@@ -172,6 +187,23 @@ export function photoSrc(photo: Pick<UnsplashPhoto, 'rawUrl' | 'regularUrl'>, wi
   u.searchParams.set('q', '80');
   u.searchParams.set('fit', 'max');
   u.searchParams.set('auto', 'format');
+  return u.toString();
+}
+
+/**
+ * A small copy for looking at the photo (the focal-point pass): `raw` at
+ * THUMB_WIDTH as a JPEG, else `regular`. Pinned to JPEG (fm=jpg, no
+ * auto=format) because format negotiation could serve AVIF, which the
+ * Anthropic image input does not accept.
+ */
+export function photoThumbSrc(photo: Pick<UnsplashPhoto, 'rawUrl' | 'regularUrl'>): string {
+  if (!photo.rawUrl) return photo.regularUrl;
+  const u = new URL(photo.rawUrl);
+  u.searchParams.set('w', String(THUMB_WIDTH));
+  u.searchParams.set('q', '60');
+  u.searchParams.set('fit', 'max');
+  u.searchParams.delete('auto');
+  u.searchParams.set('fm', 'jpg');
   return u.toString();
 }
 
@@ -356,14 +388,68 @@ export async function resolveStockImages(
       photographerUrl: withReferral(photo.photographerProfile, appName),
       unsplashUrl,
     };
-    placed.push({ nodeId: r.nodeId, src: photoSrc(photo, r.widthPx), credit, downloadLocation: photo.downloadLocation });
+    placed.push({
+      nodeId: r.nodeId,
+      kind: r.kind,
+      src: photoSrc(photo, r.widthPx),
+      thumbSrc: photoThumbSrc(photo),
+      credit,
+      downloadLocation: photo.downloadLocation,
+    });
     summary.credits.push(credit);
     summary.resolved += 1;
   }
   return { placed, summary };
 }
 
-/** Write each placed photo (src plus credit) into its img node. Pure: returns new nodes. */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+/**
+ * The backgroundImage with the photo as its bottom layer, under every overlay
+ * layer the model wrote (on a responsive map: under each breakpoint's own
+ * overlay, so a scrim that differs per breakpoint keeps differing).
+ */
+function backgroundWithPhoto(current: unknown, src: string): unknown {
+  if (isPlainObject(current)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(current)) out[k] = withPhotoUrl(typeof v === 'string' ? v : undefined, src);
+    return out;
+  }
+  return withPhotoUrl(typeof current === 'string' ? current : undefined, src);
+}
+
+/** The props of one node with its placed photo written in. */
+function withPlacedPhoto(props: Record<string, unknown>, photo: PlacedPhoto): Record<string, unknown> {
+  const style = isPlainObject(props.style) ? props.style : {};
+  const position = formatFocalPosition(photo.focal ?? CENTER_FOCAL_POINT);
+  if (photo.kind === 'background') {
+    return {
+      ...props,
+      ...stockCreditAttrs(photo.credit),
+      style: {
+        ...style,
+        backgroundImage: backgroundWithPhoto(style.backgroundImage, photo.src),
+        backgroundSize: 'cover',
+        backgroundRepeat: 'no-repeat',
+        backgroundPosition: position,
+      },
+    };
+  }
+  return {
+    ...props,
+    src: photo.src,
+    ...stockCreditProps(photo.credit),
+    style: { ...style, objectPosition: position },
+  };
+}
+
+/**
+ * Write each placed photo into its node: an img's src plus credit, or a
+ * container's background photo layer plus credit, and the crop's focal point
+ * either way. Pure: returns new nodes.
+ */
 export function applyStockPhotos(nodes: GeneratedNodeSnapshot[], placed: PlacedPhoto[]): GeneratedNodeSnapshot[] {
   if (placed.length === 0) return nodes;
   const byNode = new Map(placed.map((p) => [p.nodeId, p]));
@@ -371,7 +457,7 @@ export function applyStockPhotos(nodes: GeneratedNodeSnapshot[], placed: PlacedP
     const photo = byNode.get(node.id);
     const children = node.children.map(walk);
     if (!photo) return { ...node, children };
-    return { ...node, props: { ...node.props, src: photo.src, ...stockCreditProps(photo.credit) }, children };
+    return { ...node, props: withPlacedPhoto(node.props, photo), children };
   };
   return nodes.map(walk);
 }

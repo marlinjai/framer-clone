@@ -1,7 +1,7 @@
 import { ComponentInstance } from '@/models/ComponentModel';
 
 export type ComponentCategory = 'viewport' | 'container' | 'text' | 'image' | 'generic';
-export type SectionId = 'size' | 'position' | 'layout' | 'typography' | 'styles';
+export type SectionId = 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles';
 
 // Exported so the AI page generator's schema docs (src/lib/ai/pageGen/schema.ts)
 // offer exactly the tags this properties panel knows how to edit.
@@ -18,8 +18,8 @@ export function getComponentCategory(component: ComponentInstance): ComponentCat
 
 export const SECTION_MAP: Record<ComponentCategory, SectionId[]> = {
   viewport:  ['size', 'layout', 'styles'],
-  container: ['size', 'position', 'layout', 'styles'],
+  container: ['size', 'position', 'layout', 'image', 'styles'],
   text:      ['size', 'position', 'typography', 'styles'],
-  image:     ['size', 'position', 'styles'],
+  image:     ['size', 'position', 'image', 'styles'],
   generic:   ['size', 'position', 'styles'],
 };
