@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: decided
 date: 2026-10-23
 title: "Books: write the invoice on the invoice (a WYSIWYG document editor)"
 summary: "Replace the form-based invoice editor with editing directly on the real A4 page: every field (recipient, dates, subject, texts, each line) is edited in place over the PDF the invoice will be printed as, laid out by the company's template, redrawn within a fraction of a second by the layout engine running in the browser. Adds sevdesk's breadth where it is missing: subject line, reference number, payment terms on the page, formatted intro and closing texts, a product and service list with search, and a total discount."
@@ -128,17 +128,22 @@ available as a structured outline beside the page (as the composer's), so a scre
 edits the invoice without the canvas. WCAG 2.2 AA, checked with the `wcag` skill before the slice
 merges.
 
-## Questions for the owner (the decision page)
+## Decided by the owner (2026-10-23)
 
-1. Formatted intro and closing texts (bold, italic, bullet lists, as sevdesk): yes now, or plain
-   text with line breaks first.
-2. A product and service list ("Produkt suchen"): a company list of items (name, description,
-   unit, price, VAT class) that a line picks from and fills: now, or after the editor.
-3. A total discount on the invoice ("Gesamtrabatt"): now, or later.
-4. Text snippets and placeholders for intro and closing texts (sevdesk's "Textvorlage" and
-   "Platzhalter", e.g. the customer's name): now, or later.
+The owner took every recommendation of the decision page
+(`decision-pages/2026-10-23-wysiwyg-invoice-editor.html`):
 
-The recommendation is on the decision page with each question.
+1. **Edit on the real PDF page** (decision 1), not on an HTML imitation of the invoice.
+2. **Formatted intro and closing texts now:** bold, italic, bullet lists and line breaks, drawn by
+   the engine (italic needs the regular-italic and bold-italic file of each family, pinned by hash
+   as the others; a family id gains files, so it gets a new id or the italic faces are added before
+   any document uses italic: decided while building, written in the build notes).
+3. **A product and service list now**, in this plan: a company list (name, description, unit,
+   price, VAT class), a small page to manage it, and the search in a line that fills it.
+4. **A discount on the whole invoice later**, as its own plan: it changes the tax arithmetic per
+   rate and the completeness check (its own ROADMAP line).
+5. **Text snippets and placeholders later**, after the editor is in daily use (its own ROADMAP
+   line).
 
 ## Phases
 
@@ -147,7 +152,7 @@ The recommendation is on the decision page with each question.
 | 1 | The engine in the browser: a Web Worker build of `render/engine`, the fonts and logos as static or authenticated assets, a byte-identity test against the server render. | 2 days |
 | 2 | Field-level layout map: the engine reports every editable field's rectangle, font, size, colour and alignment; tests per block type and across page breaks. | 2 days |
 | 3 | The editor on the page: pdf.js pages with the field overlay, inline editors per field kind (text, multi-line text, date, number, select), Tab order, commits as today, undo and redo, figures from the server, the toolbar (customer, template, net or gross, Correct banner, Issue), the narrow-window form. | 6 days |
-| 4 | sevdesk breadth: subject line and reference number on the draft (migration), payment terms on the page, then the owner's choices among questions 1 to 4. | 2 to 6 days |
+| 4 | sevdesk breadth: subject line and reference number on the draft (migration), payment terms on the page, formatted intro and closing texts (engine runs, the italic faces, an inline toolbar), the product and service list (table, management page, search in a line). | 5 days |
 | 5 | Accessibility pass, a fresh review, browser proof on "Books Testfirma" (write, edit in place, issue, compare the stored PDF with the last edited page). | 1 day |
 
 Phases 1 and 2 can run in parallel; 3 needs both; 4 can start after 3's commit path exists.
