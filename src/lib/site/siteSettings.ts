@@ -86,6 +86,12 @@ export interface SiteSettings {
   /** The page served (with status 404) for unknown paths. Blank: the default 404. */
   notFoundPageId: string;
   business: BusinessInfo;
+  /**
+   * Lenis smooth scrolling on the preview and the published pages (never the
+   * editor canvas). Off by default and always off for visitors who ask for
+   * reduced motion. See docs/plans/2026-10-23-motion-effects.md.
+   */
+  smoothScroll: boolean;
 }
 
 /** The input to persistence and to ProjectModel: any subset, normalized on read. */
@@ -126,6 +132,7 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
   titleTemplate: '',
   notFoundPageId: '',
   business: EMPTY_BUSINESS,
+  smoothScroll: false,
 };
 
 /** What a project created from now on starts with. */
@@ -204,6 +211,7 @@ export function normalizeSiteSettings(raw: unknown): SiteSettings {
     titleTemplate: str(s.titleTemplate),
     notFoundPageId: str(s.notFoundPageId),
     business: normalizeBusiness(s.business),
+    smoothScroll: s.smoothScroll === true,
   };
 }
 

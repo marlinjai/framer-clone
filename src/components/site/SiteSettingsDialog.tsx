@@ -10,6 +10,7 @@
 //   title template, and the 404 page.
 // - Sharing: favicon and default Open Graph image (https URLs, previewed), and
 //   the twitter card type.
+// - Motion: site-wide smooth scrolling (Lenis), off by default.
 // - Business and contact: legal name, address, phone, email, opening hours as
 //   rows, VAT ID, register entry, managing directors. Shown in search engine
 //   data (JSON-LD) and handed to the AI generator so it never invents contact
@@ -33,6 +34,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { useStore } from '@/hooks/useStore';
 import type { ProjectModelType } from '@/models/ProjectModel';
 import {
@@ -347,6 +349,28 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
               <option value="summary_large_image">Large image</option>
               <option value="summary">Small square image</option>
             </select>
+          </div>
+        </section>
+
+        {/* Motion (docs/plans/2026-10-23-motion-effects.md): site-wide
+            smooth scrolling with Lenis, in the preview and on published pages,
+            never on the editor canvas, always off under reduced motion. */}
+        <section className="flex flex-col gap-4" aria-labelledby="site-settings-motion">
+          <h3 id="site-settings-motion" className={sectionTitle}>Motion</h3>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex min-w-0 flex-col gap-1">
+              <label htmlFor={fieldId('smoothScroll')} className={fieldLabel}>Smooth scrolling</label>
+              <p id={`${fieldId('smoothScroll')}-hint`} className={hint}>
+                Eases the page as visitors scroll, in the preview and on the published site. Visitors who ask their
+                device for reduced motion always get normal scrolling. Links to a section on the page keep working.
+              </p>
+            </div>
+            <Switch
+              id={fieldId('smoothScroll')}
+              aria-describedby={`${fieldId('smoothScroll')}-hint`}
+              checked={draft.smoothScroll}
+              onCheckedChange={(on) => update({ smoothScroll: on })}
+            />
           </div>
         </section>
 
