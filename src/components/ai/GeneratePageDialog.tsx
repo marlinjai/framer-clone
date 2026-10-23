@@ -174,6 +174,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
             record: outcome.value.record,
             nodeCount: result.stats.nodeCount,
             warnings: result.warnings,
+            tells: result.tells,
             images: result.images,
           });
         },
@@ -229,6 +230,19 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                   <ul className="mt-1 max-h-32 list-disc overflow-y-auto pl-4">
                     {state.warnings.slice(0, 50).map((w, i) => (
                       <li key={i}>{w}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              {state.tells && state.tells.length > 0 && !state.undone && (
+                <details className="text-xs text-muted-foreground">
+                  <summary>
+                    {state.tells.length} {state.tells.length === 1 ? 'design tell' : 'design tells'} of generated pages
+                    remain, worth a manual pass
+                  </summary>
+                  <ul className="mt-1 max-h-32 list-disc overflow-y-auto pl-4">
+                    {state.tells.slice(0, 50).map((t, i) => (
+                      <li key={i}>{t}</li>
                     ))}
                   </ul>
                 </details>
