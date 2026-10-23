@@ -1091,3 +1091,34 @@ export function treeStats(nodes: TellNode[]): { nodeCount: number; maxDepth: num
 export function describeFinding(f: TellFinding): string {
   return `${f.path}: ${f.detail}`;
 }
+
+// ---------------------------------------------------------------- single values
+//
+// The same rules, for one value a patch would write (the visual review's
+// update_style / update_text). A patch cannot see the tree-shaped tells
+// (three equal cards, bento grids), so only the value-level ones apply.
+
+const LONG_DASH = new RegExp(DASH_GLYPH);
+
+/** Why one style value would add a tell, or null. */
+export function styleValueTell(property: string, value: string): string | null {
+  if (LONG_DASH.test(value)) return 'long dashes are a tell';
+  if (property === 'fontFamily' && hasBannedFont(value)) return 'Inter, Geist and Space Grotesk are banned typefaces';
+  if (property === 'font' && bannedInShorthand(value)) return 'Inter, Geist and Space Grotesk are banned typefaces';
+  if ((property === 'backdropFilter' || property === 'WebkitBackdropFilter') && /blur\(/i.test(value)) return 'backdrop-filter glass is a tell';
+  const gradients = parseGradients(value);
+  if (gradients.some((g) => g.kind === 'radial' && parseColors(g.body).some((c) => isChromatic(c)))) return 'a coloured radial-gradient orb is a tell';
+  for (const g of gradients) {
+    const clusters = hueClusters(parseColors(g.body).filter((c) => isChromatic(c, 0.35)).map((c) => c.h));
+    if (clusters.length >= 3 && hueSpread(clusters) >= 90) return 'a multi-colour (rainbow) gradient is a tell';
+  }
+  return null;
+}
+
+/** Why one piece of copy would add a tell, or null. */
+export function textTell(text: string): string | null {
+  if (LONG_DASH.test(text)) return 'long dashes are a tell';
+  if (stripEmoji(text) !== text) return 'emoji in copy are a tell';
+  if (matchesNotXItsY(text)) return '"it\'s not X, it\'s Y" copy is a tell';
+  return null;
+}

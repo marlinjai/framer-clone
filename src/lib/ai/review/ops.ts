@@ -25,14 +25,16 @@
 //   - remove_node: at most REVIEW_LIMITS.maxRemovals per review; later
 //     operations on a removed node or inside it are refused.
 //   - The plan's tells (docs/plans/2026-10-23-ai-design-quality-round-2.md)
-//     the review must never introduce, where a single value shows them: long
-//     dashes and emoji in copy, Inter / Geist / Space Grotesk, backdrop-filter
-//     glass, radial-gradient orbs. The full tells screen is a separate checker
-//     built in parallel; this is the guard for what a patch can add.
+//     the review must never introduce, where a single value shows them,
+//     checked by the tells screen's own single-value rules (styleValueTell,
+//     textTell in src/lib/ai/pageGen/tells.ts): long dashes, emoji and
+//     "it's not X, it's Y" copy, Inter / Geist / Space Grotesk, backdrop
+//     glass, coloured radial orbs, rainbow gradients.
 
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
 import { GENERATION_LIMITS, isSafeSrc } from '@/lib/ai/pageGen/schema';
 import { STYLE_BREAKOUT_CHARS, UNSAFE_STYLE_VALUE } from '@/lib/ai/pageGen/validate';
+import { styleValueTell, textTell } from '@/lib/ai/pageGen/tells';
 import { REVIEW_LIMITS, type RejectedOp, type ReviewOp, type ReviewTreeNode } from './protocol';
 
 interface IndexedNode {
@@ -83,9 +85,6 @@ export function indexReviewTree(tree: ReviewTreeNode): Map<string, IndexedNode> 
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const kebabToCamel = (key: string) => key.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
-const LONG_DASH = /[–—]/;
-const EMOJI = /\p{Extended_Pictographic}/u;
-const BANNED_FONTS = /\b(inter|geist|space\s+grotesk)\b/i;
 
 /** Why a style value is refused, or null when it is fine. */
 function styleValueProblem(property: string, value: string, node: IndexedNode): string | null {
@@ -97,11 +96,7 @@ function styleValueProblem(property: string, value: string, node: IndexedNode): 
     if (!isSafeSrc(url)) return 'url() to a disallowed location';
     if (!node.backgroundUrls.has(url)) return 'url() that is not already on this node (the review never adds pictures)';
   }
-  if (property === 'fontFamily' && BANNED_FONTS.test(value)) return 'Inter, Geist and Space Grotesk are banned typefaces';
-  if (property === 'backdropFilter' && value !== 'none') return 'backdrop-filter glass is a banned tell';
-  if (/radial-gradient\(/i.test(value)) return 'radial-gradient orbs are a banned tell';
-  if (LONG_DASH.test(value)) return 'long dashes are banned';
-  return null;
+  return styleValueTell(property, value);
 }
 
 /** The descendants-or-self test, through parent links. */
@@ -174,8 +169,8 @@ export function validateReviewOps(raw: unknown, ctx: OpValidationContext): { ops
         const text = typeof item.text === 'string' ? item.text.replace(/\s+/g, ' ').trim() : '';
         if (!text) return reject('empty text');
         if (text.length > GENERATION_LIMITS.maxTextChars) return reject(`text longer than ${GENERATION_LIMITS.maxTextChars} characters`);
-        if (LONG_DASH.test(text)) return reject('long dashes are banned in copy');
-        if (EMOJI.test(text)) return reject('emoji are banned in copy');
+        const tell = textTell(text);
+        if (tell) return reject(tell);
         if (/[<>]/.test(text)) return reject('markup is not allowed in text');
         ops.push({ op: 'update_text', nodeId, text, reason });
         return;

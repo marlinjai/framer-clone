@@ -10,6 +10,8 @@ import {
   stripBannedFonts,
   stripEmoji,
   stripTrailingArrow,
+  styleValueTell,
+  textTell,
   treeStats,
   type TellId,
   type TellNode,
@@ -322,5 +324,30 @@ describe('detectTells: content', () => {
     expect(tells(page(grid), { breakpointKeys: ['desktop', 'mobile'] })).toContain('feature-cards');
     const mobileOnly = n('div', { style: { display: 'grid', gridTemplateColumns: { base: '1fr', mobile: 'repeat(3, 1fr)' } } }, [featureCard(1), featureCard(2), featureCard(3)]);
     expect(tells(page(mobileOnly), { breakpointKeys: ['desktop', 'mobile'] })).not.toContain('feature-cards');
+  });
+});
+
+describe('single-value rules (what a review patch may write)', () => {
+  it('flags banned fonts, glass, coloured orbs, rainbow gradients and long dashes in style values', () => {
+    expect(styleValueTell('fontFamily', 'Geist, sans-serif')).toMatch(/banned typefaces/);
+    expect(styleValueTell('backdropFilter', 'blur(12px)')).toMatch(/glass/);
+    expect(styleValueTell('backgroundImage', 'radial-gradient(circle, #7c3aed 0%, transparent 70%)')).toMatch(/orb/);
+    expect(styleValueTell('backgroundImage', 'linear-gradient(90deg, #ff0000, #00ff00, #0000ff)')).toMatch(/rainbow/);
+    expect(styleValueTell('content', 'a — b')).toMatch(/long dashes/);
+  });
+
+  it('lets ordinary values through, a dark scrim over a photo included', () => {
+    expect(styleValueTell('fontFamily', '"Fraunces", Georgia, serif')).toBeNull();
+    expect(styleValueTell('backgroundImage', 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.6) 100%)')).toBeNull();
+    expect(styleValueTell('backdropFilter', 'none')).toBeNull();
+    expect(styleValueTell('padding', '24px 16px')).toBeNull();
+  });
+
+  it('flags tells in copy and lets plain copy through', () => {
+    expect(textTell('Fast — and honest')).toMatch(/long dashes/);
+    expect(textTell('Ready to ride \u{1F6B2}')).toMatch(/emoji/);
+    expect(textTell("It's not a repair shop, it's a community.")).toMatch(/not X/);
+    expect(textTell('Most repairs are ready within three working days.')).toBeNull();
+    expect(textTell('Open 8:00-18:30')).toBeNull();
   });
 });
