@@ -5,6 +5,7 @@ import type { PageSnapshotOut } from '@/models/PageModel';
 import {
   snapshotToComponentNode,
   componentSnapshotToNode,
+  foldCssProps,
 } from '../snapshotToComponentNode';
 
 /** Build a minimal ComponentModel-SnapshotOut-like node (only fields we map). */
@@ -111,5 +112,25 @@ describe('snapshotToComponentNode', () => {
       page({ appComponentTree: undefined }),
     );
     expect(adapted.root).toBeNull();
+  });
+});
+
+describe('top-level CSS props', () => {
+  it('move into style like the editor renders them, and style wins on a clash', () => {
+    expect(foldCssProps({ id: 'x', color: 'red', padding: '8px', href: '/a', style: { color: 'blue' } })).toEqual({
+      id: 'x',
+      href: '/a',
+      style: { color: 'blue', padding: '8px' },
+    });
+  });
+
+  it('leave props without CSS keys untouched', () => {
+    const props = { href: '/a', style: { color: 'blue' } };
+    expect(foldCssProps(props)).toBe(props);
+  });
+
+  it('apply when a snapshot node is adapted, responsive maps included', () => {
+    const node = componentSnapshotToNode(comp({ id: 'n', type: 'div', props: { width: { base: '100px', tablet: '50px' } } }));
+    expect(node.props).toEqual({ style: { width: { base: '100px', tablet: '50px' } } });
   });
 });

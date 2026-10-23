@@ -58,10 +58,13 @@ function resolveHtmlTag(type: unknown): string | null {
 }
 
 /**
- * Collapse a responsive style map to a single concrete value. CSS values are
- * strings / numbers, so any plain-object style value is a responsive map
- * (`{ base, <breakpointId>: ... }`). The published page renders at one effective
- * breakpoint, so we take `base` when present, else the first declared value.
+ * Defensive fallback only. The published page moves every responsive style map
+ * into its stylesheet first (applyResponsiveStyles, called by
+ * renderPublishedPage), so a map reaches this point only when the walk is used
+ * on a tree that skipped that pass. CSS values are strings / numbers, so any
+ * plain-object style value is a responsive map (`{ base, <breakpointId>: ... }`);
+ * take `base` when present, else the first declared value, so React never
+ * receives an object as a style value.
  */
 function flattenStyleValue(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;

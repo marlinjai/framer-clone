@@ -54,7 +54,6 @@ function renderTree() {
       component={root}
       breakpointId={breakpoints[0].id}
       allBreakpoints={breakpoints}
-      primaryId={breakpoints[0].id}
     />,
   );
 }

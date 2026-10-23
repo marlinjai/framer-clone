@@ -19,6 +19,8 @@ import type { CmsReadRepository } from '@/server/cms';
 import { createScope, pushPageFrame } from '@/lib/bindings/resolver/scope';
 import { buildTrackerSnippet } from '@/lib/renderer/publish/trackerSnippet';
 import { renderComponentNode } from './renderComponentNode';
+import { applyResponsiveStyles } from './applyResponsiveStyles';
+import type { BreakpointRef } from '@/lib/responsive/cascade';
 import CommercePageProviders from './CommercePageProviders';
 import type { PageSeoMetadata } from './snapshotToComponentNode';
 
@@ -55,10 +57,19 @@ export interface RenderPublishedPageInput {
   commerceRepo?: CommerceServerRepository;
   /** Resolved analytics binding; injection is gated on `enabled` + a public key. */
   analytics?: ResolvedAnalytics;
+  /**
+   * The page's breakpoints (from its viewport canvas nodes). Responsive styles
+   * become max-width media queries between them; without any, a responsive
+   * style's base value applies at every width.
+   */
+  breakpoints?: readonly BreakpointRef[];
 }
 
 export interface RenderedPage {
-  /** The hydrated, server-rendered body wrapped in the commerce providers. */
+  /**
+   * The hydrated, server-rendered body wrapped in the commerce providers,
+   * preceded by the page's responsive stylesheet when it has one.
+   */
   body: React.ReactNode;
   /** The analytics `<head>` snippet HTML, or null when disabled / unresolved. */
   headSnippet: string | null;
@@ -101,16 +112,33 @@ function buildHeadSnippet(analytics: ResolvedAnalytics | undefined): string | nu
 export async function renderPublishedPage(
   input: RenderPublishedPageInput,
 ): Promise<RenderedPage> {
-  const { root, pageParams, cmsRepo, commerceRepo, analytics } = input;
+  const { root, pageParams, cmsRepo, commerceRepo, analytics, breakpoints = [] } = input;
 
   const hydrated = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo });
 
+  // Responsive styles leave the inline style for a per-page stylesheet of
+  // max-width media queries (desktop-first, the editor's cascade). Done on the
+  // hydrated tree so cloned collection rows and the commerce islands (which
+  // receive these props across the client boundary) carry the classes too.
+  const responsive = applyResponsiveStyles(hydrated, breakpoints);
+
   // The page frame drives any island re-resolution of {{page.params.*}}.
   const scope = pushPageFrame(createScope(), pageParams);
-  const tree = renderComponentNode(hydrated, scope);
+  const tree = renderComponentNode(responsive.root, scope);
 
   return {
-    body: <CommercePageProviders>{tree}</CommercePageProviders>,
+    body: (
+      <>
+        {responsive.css ? (
+          // Rendered in place (no href / precedence, so React does not hoist
+          // it) ahead of the content it styles, so streamed HTML never paints
+          // unstyled. The text cannot close the element: the generator drops
+          // any value containing `<`.
+          <style data-fc-responsive="" dangerouslySetInnerHTML={{ __html: responsive.css }} />
+        ) : null}
+        <CommercePageProviders>{tree}</CommercePageProviders>
+      </>
+    ),
     headSnippet: buildHeadSnippet(analytics),
   };
 }

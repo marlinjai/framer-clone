@@ -80,7 +80,6 @@ describe('editor / headless parity for bound data tree', () => {
           component={makeBoundCollection()}
           breakpointId={BP}
           allBreakpoints={ALL_BP}
-          primaryId={BP}
           scope={createScope()}
         />
       </DataSourceProviderContext.Provider>,
@@ -92,7 +91,6 @@ describe('editor / headless parity for bound data tree', () => {
           component={makeBoundCollection()}
           breakpointId={BP}
           allBreakpoints={ALL_BP}
-          primaryId={BP}
           scope={createScope()}
         />
       </DataSourceProviderContext.Provider>,

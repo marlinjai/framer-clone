@@ -33,6 +33,8 @@ import {
   type FocalPoint,
 } from '@/lib/images/imageStyle';
 import { hasStockCredit, isSameUnsplashPhoto } from '@/lib/ai/pageGen/stockCredit';
+import { breakpointLabel, styleSource, type BreakpointSourceInfo } from '../breakpointSource';
+import { BreakpointSourceDot } from '../primitives/BreakpointSourceDot';
 
 const FIT_OPTIONS = [
   { value: 'cover', label: 'Cover (crop to fill)' },
@@ -60,12 +62,25 @@ const FIELD =
   'h-[28px] w-full min-w-0 bg-background border border-border rounded-[6px] px-2 text-foreground outline-none focus:border-brand focus:ring-3 focus:ring-brand/12';
 const FIELD_STYLE = { fontSize: '12px' } as const;
 
-function Row({ label, htmlFor, top, children }: { label: string; htmlFor?: string; top?: boolean; children: React.ReactNode }) {
+function Row({ label, htmlFor, top, source, children }: {
+  label: string;
+  htmlFor?: string;
+  top?: boolean;
+  /** Where the value comes from on this breakpoint (the dot before the label). */
+  source?: BreakpointSourceInfo;
+  children: React.ReactNode;
+}) {
   return (
     <div className={top ? ROW_TOP : ROW}>
-      <label className={`${LABEL}${top ? ' pt-[7px]' : ''}`} style={LABEL_STYLE} htmlFor={htmlFor}>
-        {label}
-      </label>
+      <div className={`relative min-w-0${top ? ' pt-[7px]' : ''}`}>
+        {/* A top-aligned row centres the dot on the label line, not the whole cell. */}
+        <div className={top ? 'absolute inset-x-0 top-[7px] h-[14px]' : 'contents'}>
+          <BreakpointSourceDot source={source} />
+        </div>
+        <label className={`${LABEL} block`} style={LABEL_STYLE} htmlFor={htmlFor}>
+          {label}
+        </label>
+      </div>
       <div className="min-w-0">{children}</div>
     </div>
   );
@@ -178,10 +193,12 @@ interface FocalControlsProps {
   src: string | undefined;
   value: unknown;
   onChange: (position: string) => void;
+  /** Where the position comes from on this breakpoint. */
+  source?: BreakpointSourceInfo;
 }
 
 /** The picker plus numeric X / Y, reading and writing one position value. */
-function FocalControls({ src, value, onChange }: FocalControlsProps) {
+function FocalControls({ src, value, onChange, source }: FocalControlsProps) {
   const point = parseFocalPosition(value);
   const set = (next: FocalPoint) => onChange(formatFocalPosition(next));
   const axis = (key: 'x' | 'y') => (raw: string) => {
@@ -190,10 +207,10 @@ function FocalControls({ src, value, onChange }: FocalControlsProps) {
   };
   return (
     <>
-      <Row label="Focus" top>
+      <Row label="Focus" top source={source}>
         <FocalPointPicker src={src} point={point} onChange={set} />
       </Row>
-      <PropertyRow label="Focus position" group>
+      <PropertyRow label="Focus position" group source={source}>
         <FieldPair>
           <DimensionInput label="" prefix="X" aria-label="Focus X" value={`${Math.round(point.x)}%`} onChange={axis('x')} units={['%']} min={0} max={100} placeholder="50" />
           <DimensionInput label="" prefix="Y" aria-label="Focus Y" value={`${Math.round(point.y)}%`} onChange={axis('y')} units={['%']} min={0} max={100} placeholder="50" />
@@ -206,12 +223,15 @@ function FocalControls({ src, value, onChange }: FocalControlsProps) {
 export const ImageSection = observer(({ component, breakpointId }: ImageSectionProps) => {
   const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
   const setStyleValue = (prop: string, value: string | number) => component.updateResponsiveStyle(prop, value, breakpointId);
+  // Where each row's value comes from on this breakpoint (the dot before the label).
+  const src = (...props: string[]) => styleSource(component, breakpointId, props);
+  const badge = breakpointLabel(component, breakpointId);
 
   if (component.type === 'img') {
-    const src = typeof component.props?.src === 'string' ? (component.props.src as string) : undefined;
+    const imageSrc = typeof component.props?.src === 'string' ? (component.props.src as string) : undefined;
     return (
-      <CollapsibleSection title="Image" icon={<Crop size={14} />} badge={breakpointId ? 'Responsive' : undefined}>
-        <Row label="Fit">
+      <CollapsibleSection title="Image" icon={<Crop size={14} />} badge={badge}>
+        <Row label="Fit" source={src('objectFit')}>
           <PropertySelect
             label=""
             value={getStyleValue('objectFit') || 'fill'}
@@ -219,7 +239,12 @@ export const ImageSection = observer(({ component, breakpointId }: ImageSectionP
             options={FIT_OPTIONS}
           />
         </Row>
-        <FocalControls src={src} value={getStyleValue('objectPosition')} onChange={(v) => setStyleValue('objectPosition', v)} />
+        <FocalControls
+          src={imageSrc}
+          value={getStyleValue('objectPosition')}
+          onChange={(v) => setStyleValue('objectPosition', v)}
+          source={src('objectPosition')}
+        />
       </CollapsibleSection>
     );
   }
@@ -246,8 +271,8 @@ export const ImageSection = observer(({ component, breakpointId }: ImageSectionP
   };
 
   return (
-    <CollapsibleSection title="Background image" icon={<Crop size={14} />} badge={breakpointId ? 'Responsive' : undefined}>
-      <Row label="Image" htmlFor={`bg-url-${component.id}`}>
+    <CollapsibleSection title="Background image" icon={<Crop size={14} />} badge={badge}>
+      <Row label="Image" htmlFor={`bg-url-${component.id}`} source={src('backgroundImage')}>
         <input
           id={`bg-url-${component.id}`}
           type="text"
@@ -260,7 +285,7 @@ export const ImageSection = observer(({ component, breakpointId }: ImageSectionP
       </Row>
       {photoUrl && (
         <>
-          <Row label="Size">
+          <Row label="Size" source={src('backgroundSize')}>
             <PropertySelect
               label=""
               value={getStyleValue('backgroundSize') || 'auto'}
@@ -272,8 +297,9 @@ export const ImageSection = observer(({ component, breakpointId }: ImageSectionP
             src={photoUrl}
             value={getStyleValue('backgroundPosition')}
             onChange={(v) => setStyleValue('backgroundPosition', v)}
+            source={src('backgroundPosition')}
           />
-          <Row label="Overlay">
+          <Row label="Overlay" source={src('backgroundImage')}>
             <PropertySlider
               label=""
               value={scrim ?? 0}

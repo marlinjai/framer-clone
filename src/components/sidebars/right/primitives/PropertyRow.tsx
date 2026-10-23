@@ -2,6 +2,8 @@
 import React, { useId } from 'react';
 import { cn } from '@/lib/utils';
 import { FIELD_LABEL, FieldContext } from './field';
+import { BreakpointSourceDot } from './BreakpointSourceDot';
+import type { BreakpointSourceInfo } from '../breakpointSource';
 
 interface PropertyRowProps {
   label: string;
@@ -13,6 +15,12 @@ interface PropertyRowProps {
    * label then names the group and each field carries its own aria-label.
    */
   group?: boolean;
+  /**
+   * Where the row's responsive value comes from on the breakpoint being
+   * edited (styleSource in ../breakpointSource.ts): a dot before the label.
+   * Undefined on the largest breakpoint and for non-responsive rows.
+   */
+  source?: BreakpointSourceInfo;
   className?: string;
 }
 
@@ -24,7 +32,7 @@ interface PropertyRowProps {
  * the edge of the panel. Every section lays its rows out with this component
  * so the label column lines up across the whole panel.
  */
-export function PropertyRow({ label, children, hint, group = false, className }: PropertyRowProps) {
+export function PropertyRow({ label, children, hint, group = false, source, className }: PropertyRowProps) {
   const id = useId();
   const labelId = `${id}-label`;
 
@@ -34,9 +42,12 @@ export function PropertyRow({ label, children, hint, group = false, className }:
   if (group) {
     return (
       <div className={cn('flex flex-col gap-1.5', className)}>
-        <span id={labelId} className={cn(FIELD_LABEL, 'truncate')} title={hint ?? label}>
-          {label}
-        </span>
+        <div className="relative min-w-0">
+          <BreakpointSourceDot source={source} />
+          <span id={labelId} className={cn(FIELD_LABEL, 'block truncate')} title={hint ?? label}>
+            {label}
+          </span>
+        </div>
         <div className="min-w-0" role="group" aria-labelledby={labelId}>
           <FieldContext.Provider value={null}>{children}</FieldContext.Provider>
         </div>
@@ -46,9 +57,12 @@ export function PropertyRow({ label, children, hint, group = false, className }:
 
   return (
     <div className={cn('grid min-h-7 grid-cols-[64px_minmax(0,1fr)] items-center gap-2', className)}>
-      <label htmlFor={id} className={cn(FIELD_LABEL, 'truncate')} title={hint ?? label}>
-        {label}
-      </label>
+      <div className="relative min-w-0">
+        <BreakpointSourceDot source={source} />
+        <label htmlFor={id} className={cn(FIELD_LABEL, 'block truncate')} title={hint ?? label}>
+          {label}
+        </label>
+      </div>
       <div className="min-w-0">
         <FieldContext.Provider value={{ id, label }}>{children}</FieldContext.Provider>
       </div>

@@ -15,6 +15,7 @@ import {
   PropertySwitch,
   TextInput,
 } from '../primitives';
+import { breakpointLabel, styleSource } from '../breakpointSource';
 
 const RADIUS_UNITS = ['px', '%'];
 
@@ -37,6 +38,8 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
 
   const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
   const setStyleValue = (prop: string, value: string | number) => component.updateResponsiveStyle(prop, value, breakpointId);
+  // Where each row's value comes from on this breakpoint (the dot before the label).
+  const src = (...props: string[]) => styleSource(component, breakpointId, props);
 
   const currentDisplay = getStyleValue('display');
   // `|| 1` would read a real opacity of 0 as 1, so only an unparseable value falls back.
@@ -48,9 +51,9 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
     <CollapsibleSection
       title="Styles"
       icon={<Paintbrush size={14} />}
-      badge={breakpointId ? 'Responsive' : undefined}
+      badge={breakpointLabel(component, breakpointId)}
     >
-      <PropertyRow label="Opacity">
+      <PropertyRow label="Opacity" source={src('opacity')}>
         <PropertySlider
           label=""
           value={opacity}
@@ -63,7 +66,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
         />
       </PropertyRow>
 
-      <PropertyRow label="Visible">
+      <PropertyRow label="Visible" source={src('display')}>
         <PropertySwitch
           checked={isVisible}
           onCheckedChange={(checked) => {
@@ -80,7 +83,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
         />
       </PropertyRow>
 
-      <PropertyRow label="Fill">
+      <PropertyRow label="Fill" source={src('backgroundColor')}>
         <ColorInput
           label=""
           value={getStyleValue('backgroundColor') || '#ffffff'}
@@ -90,7 +93,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
 
       {/* Text color (hidden for img) */}
       {component.type !== 'img' && (
-        <PropertyRow label="Text">
+        <PropertyRow label="Text" source={src('color')}>
           <ColorInput
             label=""
             value={getStyleValue('color') || '#000000'}
@@ -99,7 +102,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
         </PropertyRow>
       )}
 
-      <PropertyRow label="Overflow">
+      <PropertyRow label="Overflow" source={src('overflow')}>
         <PropertySelect
           label=""
           value={getStyleValue('overflow') || 'visible'}
@@ -108,7 +111,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
         />
       </PropertyRow>
 
-      <PropertyRow label="Radius">
+      <PropertyRow label="Radius" source={src('borderRadius', 'borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius')}>
         <DimensionInput
           label=""
           value={getStyleValue('borderRadius')}
@@ -125,13 +128,13 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
       </DisclosureButton>
       {showCorners && (
         <>
-          <PropertyRow label="Top" hint="Top-left and top-right corners" group>
+          <PropertyRow label="Top" source={src('borderTopLeftRadius', 'borderTopRightRadius')} hint="Top-left and top-right corners" group>
             <FieldPair>
               <DimensionInput label="" aria-label="Top-left radius" prefix="L" value={getStyleValue('borderTopLeftRadius')} onChange={(v) => setStyleValue('borderTopLeftRadius', v)} units={RADIUS_UNITS} min={0} placeholder="0" />
               <DimensionInput label="" aria-label="Top-right radius" prefix="R" value={getStyleValue('borderTopRightRadius')} onChange={(v) => setStyleValue('borderTopRightRadius', v)} units={RADIUS_UNITS} min={0} placeholder="0" />
             </FieldPair>
           </PropertyRow>
-          <PropertyRow label="Bottom" hint="Bottom-left and bottom-right corners" group>
+          <PropertyRow label="Bottom" source={src('borderBottomLeftRadius', 'borderBottomRightRadius')} hint="Bottom-left and bottom-right corners" group>
             <FieldPair>
               <DimensionInput label="" aria-label="Bottom-left radius" prefix="L" value={getStyleValue('borderBottomLeftRadius')} onChange={(v) => setStyleValue('borderBottomLeftRadius', v)} units={RADIUS_UNITS} min={0} placeholder="0" />
               <DimensionInput label="" aria-label="Bottom-right radius" prefix="R" value={getStyleValue('borderBottomRightRadius')} onChange={(v) => setStyleValue('borderBottomRightRadius', v)} units={RADIUS_UNITS} min={0} placeholder="0" />
@@ -146,7 +149,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
       </DisclosureButton>
       {showBorder && (
         <>
-          <PropertyRow label="Width" hint="Border width">
+          <PropertyRow label="Width" source={src('borderWidth')} hint="Border width">
             <DimensionInput
               label=""
               value={getStyleValue('borderWidth')}
@@ -156,7 +159,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
               placeholder="0"
             />
           </PropertyRow>
-          <PropertyRow label="Style" hint="Border style">
+          <PropertyRow label="Style" source={src('borderStyle')} hint="Border style">
             <PropertySelect
               label=""
               value={getStyleValue('borderStyle') || 'none'}
@@ -169,7 +172,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
               ]}
             />
           </PropertyRow>
-          <PropertyRow label="Color" hint="Border color">
+          <PropertyRow label="Color" source={src('borderColor')} hint="Border color">
             <ColorInput
               label=""
               value={getStyleValue('borderColor') || '#000000'}
@@ -179,7 +182,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
         </>
       )}
 
-      <PropertyRow label="Shadow">
+      <PropertyRow label="Shadow" source={src('boxShadow')}>
         <TextInput
           mono
           value={getStyleValue('boxShadow') || ''}

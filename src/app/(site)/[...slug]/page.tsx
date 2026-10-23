@@ -181,6 +181,7 @@ export default async function SitePage({ params, searchParams }: SitePageProps) 
     cmsRepo: getPublishedCmsRepository(site.workspaceId),
     commerceRepo: await commerceRepoForSite(site, adapted.root),
     analytics,
+    breakpoints: adapted.breakpoints,
   });
 
   return (

@@ -68,7 +68,6 @@ function renderHeadless(node: any, provider: InMemoryDataSourceProvider) {
         component={node}
         breakpointId={BP}
         allBreakpoints={ALL_BP}
-        primaryId={BP}
         scope={createScope()}
       />
     </DataSourceProviderContext.Provider>,

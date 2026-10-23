@@ -74,12 +74,12 @@ describe('validateGeneration: accepts and normalises', () => {
     expect(result.warnings.some((w) => w.includes('is a preset, not a tag'))).toBe(true);
   });
 
-  it('maps responsive keys to breakpoint keys and pins the primary breakpoint to base', () => {
+  it('maps responsive keys to breakpoint keys and keeps base as the value for every breakpoint without its own', () => {
     const result = ok({
       nodes: [{ type: 'div', props: { style: { padding: { base: '64px', Mobile: '24px', huge: '1px' } } } }],
     });
     expect(result.nodes[0].props.style).toEqual({
-      padding: { base: '64px', mobile: '24px', desktop: '64px' },
+      padding: { base: '64px', mobile: '24px' },
     });
     expect(result.warnings.some((w) => w.includes('unknown breakpoint key "huge"'))).toBe(true);
   });
@@ -130,7 +130,7 @@ describe('validateGeneration: repairs', () => {
     // Only the clean value survives; the responsive map keeps its clean entries.
     expect(result.nodes[0].props.style).toEqual({
       margin: '0 auto',
-      padding: { base: '8px', desktop: '8px' },
+      padding: { base: '8px' },
     });
     expect(result.warnings.filter((w) => w.includes('control character'))).toHaveLength(6);
   });

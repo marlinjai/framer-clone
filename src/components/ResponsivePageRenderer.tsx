@@ -69,8 +69,6 @@ const ResponsivePageRenderer = observer(() => {
     label: viewport.label!,
   }));
 
-  // Use first viewport as primary (largest minWidth).
-  const primaryViewport = viewportNodes[0];
 
   // Root binding scope: a page frame carrying route params. The editor canvas
   // has no concrete route params yet, so this is an empty params bag; a bound
@@ -87,7 +85,6 @@ const ResponsivePageRenderer = observer(() => {
           viewport={viewport}
           appComponentTree={appComponentTree}
           breakpoints={breakpoints}
-          primaryBreakpointId={primaryViewport?.breakpointId || viewport.breakpointId!}
           scope={rootScope}
         />
       ))}
@@ -98,7 +95,6 @@ const ResponsivePageRenderer = observer(() => {
           key={element.id}
           element={element}
           breakpoints={breakpoints}
-          primaryBreakpointId={primaryViewport?.breakpointId || 'default'}
           scope={rootScope}
         />
       ))}
@@ -112,7 +108,6 @@ interface ViewportFrameProps {
   viewport: ComponentInstance;
   appComponentTree: ComponentInstance;
   breakpoints: { id: string; minWidth: number; label?: string }[];
-  primaryBreakpointId: string;
   scope: BindingScope;
 }
 
@@ -120,7 +115,6 @@ export const ViewportFrame = observer(({
   viewport,
   appComponentTree,
   breakpoints,
-  primaryBreakpointId,
   scope,
 }: ViewportFrameProps) => {
   const { editorUI } = useStore();
@@ -203,7 +197,6 @@ export const ViewportFrame = observer(({
               component={appComponentTree}
               breakpointId={viewport.breakpointId!}
               allBreakpoints={breakpoints}
-              primaryId={primaryBreakpointId}
               scope={scope}
             />
           )}
@@ -252,14 +245,12 @@ function useRenderedFrameHeight(viewport: ComponentInstance) {
 interface FloatingElementProps {
   element: ComponentInstance;
   breakpoints: { id: string; minWidth: number; label?: string }[];
-  primaryBreakpointId: string;
   scope: BindingScope;
 }
 
 const FloatingElement = observer(({
   element,
   breakpoints,
-  primaryBreakpointId,
   scope,
 }: FloatingElementProps) => {
   const { editorUI } = useStore();
@@ -304,7 +295,6 @@ const FloatingElement = observer(({
           component={element}
           breakpointId=""
           allBreakpoints={breakpoints}
-          primaryId={primaryBreakpointId}
           scope={scope}
         />
       </div>
