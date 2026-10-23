@@ -134,8 +134,8 @@ connections to the suite. The four lines below are in that order.
   first half of 2027, so every regular-taxed company using the Books can issue e-invoices before
   the German business-to-business obligation of 1 January 2028 (section 19 small businesses such
   as Whiz-Art Media are exempt). Decided 2026-10-22 as phase 7 of the completed visual template
-  composer plan (`docs/plans/2026-10-21-books-visual-template-composer.md`, decision 14 has the
-  background). (2026-10-23)
+  composer plan of 2026-10-21 (in docs/plans, decision 14 has the background; the roadmap check
+  refuses an open line naming a completed plan's path). (2026-10-23)
 - [ ] 10. English documents in the Books (phase 6 of the completed visual template composer plan,
   "not now", decided 2026-10-22): an `en-GB` label dictionary, date and number formats, the locale
   on the template and the completeness check per locale. Built when a client needs an English

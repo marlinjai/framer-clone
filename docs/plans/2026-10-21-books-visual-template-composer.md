@@ -1377,7 +1377,8 @@ the guard's own lock wait bounded to 5 seconds for a session that set no lock ti
 a maintenance script); a test for decision 5; the delete's bound limited to its lock wait (reset
 afterwards); the focus during a confirmed delete on the status line instead of a disabled
 button; an older list answer never overwriting a newer one; comment wrapping, the plan's summary,
-the ROADMAP.md wording and the path of this plan on the e-invoicing line.
+the ROADMAP.md wording, and on the e-invoicing line this plan named by its date and folder (the
+roadmap check refuses an open line that names a completed plan's path, even in backticks).
 
 **Operator step**: deploy. It rolls `014_books_asset_delete` across every tenant schema at boot:
 the function, the guard, the index and the app role's DELETE. No secret, no variable.
