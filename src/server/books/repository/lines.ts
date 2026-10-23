@@ -187,7 +187,8 @@ export async function addLine(scope: BooksScope, id: string, input: AddLineInput
       taxRateOverride: args.taxRateOverride ?? null,
     };
     assertLineRules(line);
-    if (args.priceBasis !== undefined && line.kind !== 'text' && args.priceBasis !== row.net_or_gross) {
+    // convertUnitPrice decides when a price changes (the bases differ, or a gross quote under reverse charge).
+    if (args.priceBasis !== undefined && line.kind !== 'text') {
       const profile = await draftProfile(trx, scope, row);
       line.unitPrice = convertUnitPrice(line.unitPrice, args.priceBasis, row.net_or_gross, {
         taxClass: line.taxClass,

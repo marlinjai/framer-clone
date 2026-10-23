@@ -49,6 +49,10 @@ describe('convertUnitPrice (a product list price in the draft basis)', () => {
   it('under reverse charge takes the VAT out of a gross quote and adds none to a net one', () => {
     expect(convertUnitPrice(11900, 'gross', 'net', { ...regular, reverseCharge: true })).toBe(10000);
     expect(convertUnitPrice(10000, 'net', 'gross', { ...regular, reverseCharge: true })).toBe(10000);
+    // The same in a gross draft: the customer never pays the VAT amount as price.
+    expect(convertUnitPrice(11900, 'gross', 'gross', { ...regular, reverseCharge: true })).toBe(10000);
+    expect(convertUnitPrice(10000, 'net', 'net', { ...regular, reverseCharge: true })).toBe(10000);
+    expect(convertUnitPrice(10700, 'gross', 'gross', { ...regular, taxClass: 'reduced', reverseCharge: true })).toBe(10000);
   });
 });
 
