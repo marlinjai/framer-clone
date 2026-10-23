@@ -104,7 +104,12 @@ to 200 ms).
 A field commits on blur or after a pause, as a PATCH with the draft's version, exactly the current
 contract; undo and redo work over those commits (the shared `SnapshotHistory`). Concurrency,
 stale drafts, the Correct flow banner and Issue stay as they are, moved into a toolbar above the
-page.
+page, with one addition: when `DocumentEditor.change()` reloads the server's details after a
+`concurrent_edit`, the editor keeps the active field's identity and its unsaved local value, and
+restores that value into the field after the reload, then commits it as a new PATCH against the
+refreshed version (a rebase of the user's text onto the new draft, never a silent discard).
+If the same field also changed on the server, the user's value is committed and the server's
+earlier value stays in the undo history.
 
 ### 5. What is a field, and what is the template's
 
@@ -130,8 +135,9 @@ merges.
 
 ## Decided by the owner (2026-10-23)
 
-The owner took every recommendation of the decision page
-(`decision-pages/2026-10-23-wysiwyg-invoice-editor.html`):
+The owner took every recommendation of the decision page (a local working file on the owner's
+machine, `~/software-dev/decision-pages/2026-10-23-wysiwyg-invoice-editor.html`, not part of this
+repository; the five decisions are recorded below):
 
 1. **Edit on the real PDF page** (decision 1), not on an HTML imitation of the invoice.
 2. **Formatted intro and closing texts now:** bold, italic, bullet lists and line breaks, drawn by
@@ -173,17 +179,20 @@ The owner took every recommendation of the decision page
 | 2 | Field-level layout map: the engine reports every editable field's rectangle, font, size, colour and alignment; tests per block type and across page breaks. | 2 days |
 | 3 | The editor on the page: pdf.js pages with the field overlay, inline editors per field kind (text, multi-line text, date, number, select), Tab order, commits as today, undo and redo, figures from the server, the toolbar (customer, template, net or gross, Correct banner, Issue), the narrow-window form. | 6 days |
 | 4 | sevdesk breadth: subject line and reference number on the draft (migration), payment terms on the page, formatted intro and closing texts (engine runs, the italic faces, an inline toolbar), the product and service list (table, management page, search in a line). | 5 days |
-| 5 | Accessibility pass, a fresh review, browser proof on "Books Testfirma" (write, edit in place, issue, compare the stored PDF with the last edited page). | 1 day |
+| 5 | Accessibility pass, a fresh review, browser proof on "Books Testfirma" (write, edit in place, issue, compare every page of the stored PDF with the final browser render). | 1 day |
 
 Phases 1 and 2 can run in parallel; 3 needs both; 4 can start after 3's commit path exists.
 
 ## Test strategy
 
 The four paths of the stateful-flow standard for the editor: forward (write an invoice on the page
-from an empty draft and issue it; the stored PDF equals the last edited page apart from the
-draft stamp and the number); backtrack and revise (edit, undo, redo; a change refused as stale
-reloads and keeps the field the user was in); resume (reload mid-edit: the draft is the server's,
-a field being typed in is not lost, it is committed on pause); re-entry (open an issued invoice:
+from an empty draft and issue it; every page of the stored PDF equals the
+final browser render apart from the draft stamp and the invoice number, the only allowed
+differences); backtrack and revise (edit, undo, redo; a change refused as stale
+reloads and keeps the field the user was in); resume (reload mid-edit: the draft is the server's;
+the active field's unsaved value is kept in `sessionStorage` on every keystroke, flushed on
+`pagehide`, and restored and committed after the reload, so a reload before the pause loses
+nothing; a second test reloads after the commit); re-entry (open an issued invoice:
 read-only page with "Correct..."; a new draft starts empty). Engine parity: browser and server
 renders byte-identical for the presets and the probe documents. Field map: every field's rectangle
 contains its drawn text, across page breaks and in every template preset.
