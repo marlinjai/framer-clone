@@ -131,33 +131,49 @@ export default function Outline(props: OutlineProps) {
             ))}
           </select>
         </label>
-        <ul className="grid grid-cols-2 gap-1">
-          {PALETTE_ORDER.map((type) => {
-            const check = canAdd(doc, type, targetRegion);
-            const reasonId = `palette-${type}-reason`;
-            return (
-              <li key={type}>
-                <button
-                  type="button"
-                  className="flex w-full flex-col items-start rounded-md border px-2 py-1 text-left text-sm hover:bg-accent focus-visible:outline-2 focus-visible:outline-blue-600 aria-disabled:cursor-not-allowed aria-disabled:bg-gray-50 aria-disabled:text-gray-600"
-                  aria-disabled={!check.ok || undefined}
-                  aria-describedby={check.ok ? undefined : reasonId}
-                  onClick={() => (check.ok ? onAdd(type, targetRegion) : onRefused(`${BLOCK_INFO[type].label}: ${check.reason}`))}
-                >
-                  <span className="flex items-center gap-1 font-medium">
-                    {BLOCK_INFO[type].label}
-                    {isRequired(type) ? <Lock aria-hidden className="size-3" /> : null}
-                  </span>
-                  {check.ok ? null : (
-                    <span id={reasonId} className="text-xs text-muted-foreground">
-                      {check.reason}
-                    </span>
-                  )}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        {(() => {
+          const checks = PALETTE_ORDER.map((type) => ({ type, check: canAdd(doc, type, targetRegion) }));
+          const open = checks.filter((c) => c.check.ok);
+          const closed = checks.filter((c) => !c.check.ok);
+          return (
+            <>
+              {open.length === 0 ? <p className="text-xs text-muted-foreground">Nothing more can be added here.</p> : null}
+              <ul className="grid grid-cols-2 gap-1">
+                {open.map(({ type }) => (
+                  <li key={type}>
+                    <button
+                      type="button"
+                      title={BLOCK_INFO[type].description}
+                      className="flex min-h-8 w-full items-center gap-1 rounded-md border border-gray-500 px-2 py-1 text-left text-sm font-medium hover:bg-accent focus-visible:outline-2 focus-visible:outline-blue-600"
+                      onClick={() => onAdd(type, targetRegion)}
+                    >
+                      {BLOCK_INFO[type].label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {closed.length > 0 ? (
+                <details className="text-xs">
+                  <summary className="cursor-pointer text-muted-foreground">Not available here ({closed.length})</summary>
+                  <ul className="flex flex-col gap-1 pt-1">
+                    {closed.map(({ type, check }) => (
+                      <li key={type} className="flex items-baseline gap-1">
+                        <span className="font-medium text-gray-700">{BLOCK_INFO[type].label}</span>
+                        {isRequired(type) ? (
+                          <>
+                            <Lock aria-hidden className="size-3 self-center text-gray-600" />
+                            <span className="sr-only">(required)</span>
+                          </>
+                        ) : null}
+                        <span className="text-muted-foreground">{check.ok ? '' : check.reason}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+            </>
+          );
+        })()}
       </section>
 
       <section aria-labelledby="outline-title" className="flex flex-col gap-2" ref={list}>
