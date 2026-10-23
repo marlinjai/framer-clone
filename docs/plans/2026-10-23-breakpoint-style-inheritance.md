@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: completed
 date: 2026-10-23
 title: Desktop-first breakpoint style inheritance, in the editor, the panel and the published site
 summary: One cascade rule for responsive styles (own value, then each larger breakpoint, then base), used by the canvas, the properties panel and the published page; the largest breakpoint writes the base; the panel shows where each value comes from and can reset an override; the published page emits real max-width media queries instead of dropping every breakpoint edit.
