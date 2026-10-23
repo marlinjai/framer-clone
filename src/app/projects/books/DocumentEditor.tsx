@@ -51,6 +51,7 @@ import { browserRenderSupported } from '@/lib/books/engine';
 import { date, money, moneyInput, parseMoney, parseQuantity, quantity, rate } from '@/lib/books/units';
 
 import InvoicePage from './invoice/InvoicePage';
+import StoredPdf from './invoice/StoredPdf';
 import { ErrorAlert, Field, ImportedBadge, StatusBadge, errorText } from './ui';
 
 /** The invoice page needs room for an A4 page and its margin controls. */
@@ -479,6 +480,7 @@ export default function DocumentEditor({ id }: { id: string }) {
       ) : null}
 
       {onPage ? <InvoicePage id={id} detail={detail} customers={usable} busy={busy} change={change} /> : null}
+      {!draft && wide ? <StoredPdf id={id} version={doc.version} imported={imported} /> : null}
 
       {onPage ? null : (
       <>

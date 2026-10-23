@@ -70,6 +70,23 @@ interface UndoStep {
   redo: (version: number) => Promise<DocumentDetail>;
 }
 
+/** What an empty field's placeholder says ("Add details", "Add an intro text"). */
+function placeholderText(f: LayoutField): string {
+  if (f.id === 'recipient.customer') return 'Choose a customer';
+  switch (f.documentField) {
+    case 'description':
+      return 'Add details';
+    case 'introText':
+      return 'Add an intro text';
+    case 'outroText':
+      return 'Add a closing text';
+    case 'contractReference':
+      return 'Add a reference';
+    default:
+      return 'Add';
+  }
+}
+
 /** The request a field change becomes, as a call. */
 function call(id: string, req: FieldRequest, version: number): Promise<DocumentDetail> {
   if (req.kind === 'customer') return booksApi.setCustomer(id, req.customerId, version);
@@ -134,14 +151,23 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
   );
 
   // Focus returns to the field (or control) that was edited once the new page is drawn.
+  // The canvas swaps in the new page a moment after this render (it draws first), so the field's button is looked
+  // for over the next frames, up to about a second.
   useEffect(() => {
-    const target = focusAfter.current;
-    if (!target || !page.drawn) return;
-    const el = window.document.querySelector<HTMLElement>(`[data-focus-key="${target}"]`);
-    if (el) {
-      focusAfter.current = null;
-      el.focus();
-    }
+    if (!focusAfter.current || !page.drawn) return;
+    let frames = 0;
+    let handle = 0;
+    const tryFocus = () => {
+      const target = focusAfter.current;
+      if (!target) return;
+      const el = Array.from(window.document.querySelectorAll<HTMLElement>('[data-focus-key]')).find((x) => x.dataset.focusKey === target);
+      if (el) {
+        focusAfter.current = null;
+        el.focus();
+      } else if (frames++ < 60) handle = requestAnimationFrame(tryFocus);
+    };
+    tryFocus();
+    return () => cancelAnimationFrame(handle);
   }, [page.drawn]);
 
   // --- Fields. ---
@@ -348,6 +374,28 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
         const value = f.kind === 'readonly' ? '' : editValue(f, detail);
         const placeholder = f.empty && f.kind !== 'readonly';
         const room = f.room ?? 999;
+        // Where the slot has hardly any free room (an empty line description sits right on the next row), the
+        // placeholder is a small "+" in the left margin, faint until hovered or focused, never over printed text.
+        if (placeholder && room < 9) {
+          nodes.push(
+            <button
+              key={key}
+              type="button"
+              data-field-id={f.id}
+              data-focus-key={ri === 0 ? f.id : undefined}
+              tabIndex={ri === 0 ? 0 : -1}
+              aria-label={`${placeholderText(f)} (${label})`}
+              title={placeholderText(f)}
+              disabled={busy}
+              className="absolute flex size-5 items-center justify-center rounded-full border border-blue-500 bg-white text-blue-700 opacity-30 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-blue-600"
+              style={{ left: r.x * scale - 34, top: Math.max(0, r.y * scale - 10) }}
+              onClick={() => open(f, r)}
+            >
+              <Plus aria-hidden className="size-3" />
+            </button>,
+          );
+          return;
+        }
         nodes.push(
           <button
             key={key}
@@ -372,7 +420,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
             {placeholder ? (
               <span className="pointer-events-none flex items-center gap-1 px-1 text-[11px] leading-none text-blue-700">
                 <Plus aria-hidden className="size-3" />
-                {f.id === 'recipient.customer' ? 'Choose a customer' : `Add ${label.toLowerCase()}`}
+                {placeholderText(f)}
               </span>
             ) : null}
           </button>,

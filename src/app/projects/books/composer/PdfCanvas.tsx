@@ -52,6 +52,7 @@ export interface PdfCanvasProps {
   pdf: string | Uint8Array | null;
   /** Identifies the answer the PDF belongs to (the preview's change counter). */
   counter: number | null;
+  /** The engine's layout map; null for a PDF shown as it is (a stored invoice): pages and size come from the PDF. */
   layout: LayoutMapView | null;
   zoom: number;
   dimmed: boolean;
@@ -141,7 +142,7 @@ export default function PdfCanvas(props: PdfCanvasProps) {
 
   // A new answer (or a new zoom): open it, draw the pages near the viewport, then swap and close the old one.
   useEffect(() => {
-    if (!pdf || counter === null || !layout) return;
+    if (!pdf || counter === null) return;
     let cancelled = false;
     (async () => {
       const previous = drawnRef.current;
@@ -162,7 +163,16 @@ export default function PdfCanvas(props: PdfCanvasProps) {
           if (!sameDoc) void doc.destroy();
           return;
         }
-        const next = { doc, counter, layout, scale, canvases };
+        // Without the engine's map (a stored PDF), the page count and size are the PDF's own.
+        const first = layout ? null : (await doc.getPage(1)).getViewport({ scale: 1 });
+        const pageLayout: LayoutMapView = layout ?? {
+          page: { width: first!.width, height: first!.height },
+          pageCount: doc.numPages,
+          blocks: [],
+          tables: [],
+          issues: [],
+        };
+        const next = { doc, counter, layout: pageLayout, scale, canvases };
         // Known at once, so an unmount before the next render still closes this document.
         drawnRef.current = next;
         setDrawn(next);
