@@ -9,7 +9,7 @@
 //     (200, also when two uploads race); too large, the wrong type, too many
 //     pixels, undecodable refused with their codes; the bounded stream;
 //     the guard (sign-in, editBooks, viewBooks);
-//   - the download: the bytes with their type, cached immutable; another
+//   - the download: the bytes with their type, revalidated on every use; another
 //     company's, an unknown and a malformed hash all 404;
 //   - templates: a logo of the company saves, one it does not have (or another
 //     company's) is refused by the gate with the block named;
@@ -377,13 +377,13 @@ describe('POST /api/books/assets', () => {
 });
 
 describe('GET /api/books/assets/<sha256>', () => {
-  it('answers the bytes with their type, cached privately and immutably', async () => {
+  it('answers the bytes with their type, cached privately and revalidated on every use', async () => {
     const jpeg = makeJpeg(40, 20);
     await upload(jpeg, 'image/jpeg');
     const res = await download(sha(jpeg));
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('image/jpeg');
-    expect(res.headers.get('cache-control')).toBe('private, max-age=31536000, immutable');
+    expect(res.headers.get('cache-control')).toBe('private, no-cache');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('content-security-policy')).toBe("default-src 'none'");
     expect(res.headers.get('etag')).toBe(`"${sha(jpeg)}"`);
@@ -684,6 +684,8 @@ describe('GET /api/books/assets and DELETE /api/books/assets/<sha256> (composer 
     expect(res.status).toBe(204);
     expect(await res.text()).toBe('');
     expect((await download(sha(spare))).status).toBe(404);
+    // A browser that kept it asks again with its ETag: the deleted logo is not found, never "not modified".
+    expect((await download(sha(spare), { 'if-none-match': `"${sha(spare)}"` })).status).toBe(404);
     expect((await list()).json.items.map((a: Json) => a.sha256)).toEqual([sha(used)]);
     // Deleted twice: the second finds nothing.
     expect((await remove(sha(spare))).json.error.code).toBe('asset_not_found');
