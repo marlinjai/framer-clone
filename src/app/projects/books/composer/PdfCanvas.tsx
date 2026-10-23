@@ -48,10 +48,11 @@ export interface ColumnResize {
 }
 
 export interface PdfCanvasProps {
-  /** The PDF, base64 (the preview route's answer). */
-  pdf: string | null;
+  /** The PDF: base64 (the preview route's answer) or its bytes (the browser's own render). */
+  pdf: string | Uint8Array | null;
   /** Identifies the answer the PDF belongs to (the preview's change counter). */
   counter: number | null;
+  /** The engine's layout map; null for a PDF shown as it is (a stored invoice): pages and size come from the PDF. */
   layout: LayoutMapView | null;
   zoom: number;
   dimmed: boolean;
@@ -70,6 +71,11 @@ export interface PdfCanvasProps {
   onPageInView?: (page: number) => void;
   /** Drawing failed (a broken PDF or pdf.js could not load). */
   onError: (message: string) => void;
+  /**
+   * Draws a page's overlay instead of the composer's block overlay (the invoice
+   * editor puts its fields there). Points times `scale` are CSS pixels on the page.
+   */
+  overlay?: (page: number, scale: number) => React.ReactNode;
 }
 
 type PdfJs = typeof import('pdfjs-dist');
@@ -123,7 +129,7 @@ async function drawPage(doc: PdfDoc, n: number, scale: number): Promise<HTMLCanv
 }
 
 export default function PdfCanvas(props: PdfCanvasProps) {
-  const { pdf, counter, layout, zoom, dimmed, selectedId, labelOf, isMovable, onSelect, onDrop, onColumnResize, onDrawn, onError, onPageInView } = props;
+  const { pdf, counter, layout, zoom, dimmed, selectedId, labelOf, isMovable, onSelect, onDrop, onColumnResize, onDrawn, onError, onPageInView, overlay } = props;
   const [drawn, setDrawn] = useState<Drawn | null>(null);
   const scale = zoom * PX_PER_PT;
   const callbacks = useRef({ onDrawn, onError, onPageInView });
@@ -136,13 +142,15 @@ export default function PdfCanvas(props: PdfCanvasProps) {
 
   // A new answer (or a new zoom): open it, draw the pages near the viewport, then swap and close the old one.
   useEffect(() => {
-    if (!pdf || counter === null || !layout) return;
+    if (!pdf || counter === null) return;
     let cancelled = false;
     (async () => {
       const previous = drawnRef.current;
       const sameDoc = previous && previous.counter === counter ? previous.doc : null;
       const pdfjs = await loadPdfJs();
-      const doc = sameDoc ?? (await pdfjs.getDocument({ data: base64ToBytes(pdf), isEvalSupported: false }).promise);
+      // pdf.js takes over the bytes it is given, so it gets its own copy (the caller keeps the PDF).
+      const data = typeof pdf === 'string' ? base64ToBytes(pdf) : pdf.slice();
+      const doc = sameDoc ?? (await pdfjs.getDocument({ data, isEvalSupported: false }).promise);
       try {
         const wanted = [...near.current].filter((n) => n >= 1 && n <= doc.numPages);
         const canvases = new Map<number, HTMLCanvasElement>();
@@ -155,7 +163,16 @@ export default function PdfCanvas(props: PdfCanvasProps) {
           if (!sameDoc) void doc.destroy();
           return;
         }
-        const next = { doc, counter, layout, scale, canvases };
+        // Without the engine's map (a stored PDF), the page count and size are the PDF's own.
+        const first = layout ? null : (await doc.getPage(1)).getViewport({ scale: 1 });
+        const pageLayout: LayoutMapView = layout ?? {
+          page: { width: first!.width, height: first!.height },
+          pageCount: doc.numPages,
+          blocks: [],
+          tables: [],
+          issues: [],
+        };
+        const next = { doc, counter, layout: pageLayout, scale, canvases };
         // Known at once, so an unmount before the next render still closes this document.
         drawnRef.current = next;
         setDrawn(next);
@@ -227,6 +244,7 @@ export default function PdfCanvas(props: PdfCanvasProps) {
           onColumnResize={onColumnResize}
           onNear={onNear}
           onSeen={onSeen}
+          overlay={overlay}
         />
       ))}
     </div>
@@ -248,6 +266,7 @@ interface PageViewProps {
   onColumnResize: (resize: ColumnResize) => void;
   onNear: (page: number, isNear: boolean) => void;
   onSeen: (page: number, ratio: number) => void;
+  overlay?: (page: number, scale: number) => React.ReactNode;
 }
 
 interface DragState {
@@ -260,7 +279,7 @@ interface DragState {
   target: { id: string; after: boolean } | null;
 }
 
-function PageView({ canvas, page, pageCount, layout, scale, selectedId, labelOf, isMovable, onSelect, onDrop, onColumnResize, onNear, onSeen }: PageViewProps) {
+function PageView({ canvas, page, pageCount, layout, scale, selectedId, labelOf, isMovable, onSelect, onDrop, onColumnResize, onNear, onSeen, overlay }: PageViewProps) {
   const host = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLDivElement>(null);
 
@@ -366,6 +385,17 @@ function PageView({ canvas, page, pageCount, layout, scale, selectedId, labelOf,
     const widthPt = h.resizesLeft ? resize.widthPt + dx : resize.widthPt - dx;
     setResize(null);
     if (Math.abs(dx) >= 1) onColumnResize({ blockId: h.blockId, column: h.column, widthPt: Math.max(1, widthPt) });
+  }
+
+  if (overlay) {
+    return (
+      <div ref={frame} className="relative bg-white shadow-md ring-1 ring-black/10" style={{ width, height }}>
+        <div ref={host} className="absolute inset-0" />
+        <div data-page-overlay role="group" aria-label={`Page ${page} of ${pageCount}`} className="absolute inset-0">
+          {overlay(page, scale)}
+        </div>
+      </div>
+    );
   }
 
   return (

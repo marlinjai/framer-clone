@@ -50,6 +50,11 @@ export function quantity(thousandths: number): string {
   return `${thousandths < 0 ? '-' : ''}${group(String(Math.floor(abs / 1000)))}${frac ? `,${frac}` : ''}`;
 }
 
+/** 1500 -> "1,5", 1000000 -> "1000" (an input value: no thousands dots, which would read back as decimals). */
+export function quantityInput(thousandths: number): string {
+  return quantity(thousandths).replace(/\./g, '');
+}
+
 /** 8000 -> "80,00" (an input value, no currency sign). */
 export function moneyInput(cents: number): string {
   return money(cents).replace(' €', '').replace(/\./g, '');

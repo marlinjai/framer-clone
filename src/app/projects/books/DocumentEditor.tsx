@@ -9,6 +9,12 @@
 // old invoice with a credit note in the same step, plan
 // docs/plans/2026-10-21-books-visual-template-composer.md, decision 9).
 //
+// A draft is written ON the invoice page on a wide screen (InvoicePage, the
+// WYSIWYG invoice editor plan): the real A4 page in the company's template,
+// every field edited in place. Narrow windows, browsers without Web Workers,
+// and anyone who prefers it get the form below ("Use the form"); both send the
+// same requests through the same change path.
+//
 // The stateful-flow rules it follows (knowledge-base stateful-flow-testing.md):
 //   - The SERVER owns every derived figure. Each change sends one request and
 //     renders the whole document the server answers (lines, tax, totals), so a
@@ -41,9 +47,31 @@ import {
   type LineView,
   type SettingsView,
 } from '@/lib/books/api';
-import { date, money, moneyInput, parseMoney, parseQuantity, quantity, rate } from '@/lib/books/units';
+import { browserRenderSupported } from '@/lib/books/engine';
+import { date, money, moneyInput, parseMoney, parseQuantity, quantity, quantityInput, rate } from '@/lib/books/units';
 
+import InvoicePage from './invoice/InvoicePage';
+import StoredPdf from './invoice/StoredPdf';
 import { ErrorAlert, Field, ImportedBadge, StatusBadge, errorText } from './ui';
+
+/** The invoice page needs room for an A4 page and its margin controls. */
+const PAGE_MIN_WIDTH = '(min-width: 1024px)';
+
+/** Whether the window is wide enough for the invoice page (follows resizing). */
+function useWideWindow(): boolean {
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const query = window.matchMedia(PAGE_MIN_WIDTH);
+    setWide(query.matches);
+    const on = () => setWide(query.matches);
+    query.addEventListener('change', on);
+    return () => query.removeEventListener('change', on);
+  }, []);
+  return wide;
+}
+
+const FORM_PREFERENCE = 'books-editor-form';
 
 interface LineDraft {
   kind: 'service' | 'product' | 'text';
@@ -81,7 +109,7 @@ function draftOf(l: LineView): LineDraft {
   return {
     kind: l.kind,
     title: l.title,
-    quantity: l.kind === 'text' ? '' : quantity(l.quantity),
+    quantity: l.kind === 'text' ? '' : quantityInput(l.quantity),
     unitLabel: l.unitLabel,
     unitPrice: l.kind === 'text' ? '' : moneyInput(l.unitPrice),
     taxClass: l.taxClass ?? 'standard',
@@ -163,6 +191,25 @@ export default function DocumentEditor({ id }: { id: string }) {
   const [cancelReason, setCancelReason] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const router = useRouter();
+  const wide = useWideWindow();
+  const [preferForm, setPreferForm] = useState(false);
+  const [canRender, setCanRender] = useState(false);
+  useEffect(() => {
+    setCanRender(browserRenderSupported());
+    try {
+      setPreferForm(window.localStorage.getItem(FORM_PREFERENCE) === '1');
+    } catch {
+      // Blocked storage: the page is the default.
+    }
+  }, []);
+  const chooseForm = (form: boolean) => {
+    setPreferForm(form);
+    try {
+      window.localStorage.setItem(FORM_PREFERENCE, form ? '1' : '0');
+    } catch {
+      // Remembering the choice is a nicety.
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -231,6 +278,9 @@ export default function DocumentEditor({ id }: { id: string }) {
   const { replaces, replacedBy } = detail.related;
   const replacing = draft && replaces !== null;
   const sign = doc.docType === 'credit_note' ? -1 : 1;
+  // The invoice page: a draft made here, on a wide screen, in a browser that can draw it, unless the form is preferred.
+  const pageCapable = draft && !imported && wide && canRender;
+  const onPage = pageCapable && !preferForm;
 
   async function addLine(e: React.FormEvent) {
     e.preventDefault();
@@ -334,6 +384,11 @@ export default function DocumentEditor({ id }: { id: string }) {
           </p>
         </div>
         <div className="flex gap-2">
+          {pageCapable ? (
+            <Button variant="ghost" onClick={() => chooseForm(!preferForm)}>
+              {preferForm ? 'Edit on the page' : 'Use the form'}
+            </Button>
+          ) : null}
           <a href={pdfUrl(id)} className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium hover:bg-accent">
             {draft ? 'Preview PDF' : imported ? 'Download original PDF' : 'Download PDF'}
           </a>
@@ -424,6 +479,11 @@ export default function DocumentEditor({ id }: { id: string }) {
         </section>
       ) : null}
 
+      {onPage ? <InvoicePage id={id} detail={detail} customers={usable} busy={busy} change={change} /> : null}
+      {!draft && wide ? <StoredPdf id={id} version={doc.version} imported={imported} /> : null}
+
+      {onPage ? null : (
+      <>
       <section className="mb-6 grid grid-cols-1 gap-4 rounded-lg border p-4 sm:grid-cols-2" aria-label="Recipient and dates">
         {draft ? (
           <Field label="Customer" htmlFor="doc-customer">
@@ -596,6 +656,8 @@ export default function DocumentEditor({ id }: { id: string }) {
         </div>
         {doc.taxNote ? <p className="mt-2 text-xs text-muted-foreground">{doc.taxNote}</p> : null}
       </section>
+      </>
+      )}
 
       {cancellable ? (
         cancelReason === null ? (
