@@ -139,7 +139,7 @@ export const templateSnapshotV2Schema = z.object({
   templateVersionId: z.string().nullable(),
   name: z.string().nullable(),
   document: storedTemplateDocumentSchema,
-  /** The logo asset (phase 5); null until then. */
+  /** The template's logo (`books_asset.sha256`, decision 15), or null when the template prints none. */
   logo: z.object({ sha256: z.string().regex(/^[0-9a-f]{64}$/) }).nullable(),
 });
 export type TemplateSnapshotV2 = z.infer<typeof templateSnapshotV2Schema>;

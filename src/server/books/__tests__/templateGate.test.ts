@@ -3,7 +3,9 @@
 // The template document version 2 and its save gate (visual template
 // composer plan, decisions 3, 5, 7, 8): the presets parse and pass the whole
 // gate (the probe set against every preset), and every hand-made invalid
-// document is refused with the block, item or column named.
+// document is refused with the block, item or column named. Logos (phase 5):
+// the company's asset is drawn in the probe render, a missing one and two
+// different ones are refused by name.
 
 import { describe, expect, it } from 'vitest';
 
@@ -12,11 +14,12 @@ import { fontMeasure, templateProblems, assertTemplateSavable } from '../templat
 import { PRESETS, preset } from '../template/presets';
 import { PROBE_NAMES } from '../template/probes';
 import { structuralProblems, type ProblemCode } from '../template/rules';
-import { parseTemplateDocument, templateDocumentV2Schema, type Block, type TemplateDocumentV2 } from '../template/schema';
+import { parseTemplateDocument, templateDocumentV2Schema, templateLogo, type Block, type TemplateDocumentV2 } from '../template/schema';
 import { isBooksError } from '../errors';
 import { templateSnapshotSchema } from '../snapshots';
+import { assetSha, logoCase, makeJpeg } from './testImages';
 
-const codes = async (doc: TemplateDocumentV2): Promise<ProblemCode[]> => structuralProblems(doc, await fontMeasure()).map((p) => p.code);
+const codes = async (doc: TemplateDocumentV2): Promise<ProblemCode[]> => structuralProblems(doc, await fontMeasure('dejavu-sans')).map((p) => p.code);
 const without = (doc: TemplateDocumentV2, type: Block['type']): TemplateDocumentV2 => {
   const strip = (blocks: Block[]) => blocks.filter((b) => b.type !== type);
   return {
@@ -47,7 +50,7 @@ describe('template document version 2', () => {
     (size.regions.body[0].style as { sizePt: number }).sizePt = 13;
     expect(() => parseTemplateDocument(size)).toThrow();
     const font = structuredClone(preset('klassisch')) as unknown as { theme: { fontFamily: string } };
-    font.theme.fontFamily = 'noto-sans';
+    font.theme.fontFamily = 'comic-sans';
     expect(() => parseTemplateDocument(font)).toThrow();
   });
 
@@ -83,7 +86,7 @@ describe('the save gate', () => {
   it.each(['recipient', 'documentMeta', 'title', 'lineTable', 'totals', 'taxNote', 'senderColumns'] as const)(
     'names a missing %s block',
     async (type) => {
-      const problems = structuralProblems(without(preset('klassisch'), type), await fontMeasure());
+      const problems = structuralProblems(without(preset('klassisch'), type), await fontMeasure('dejavu-sans'));
       expect(problems).toContainEqual(expect.objectContaining({ code: 'REQUIRED_BLOCK_MISSING', field: type }));
     },
   );
@@ -92,7 +95,7 @@ describe('the save gate', () => {
     const doc = structuredClone(preset('klassisch'));
     const meta = doc.regions.addressZone.right[0] as Extract<Block, { type: 'documentMeta' }>;
     meta.items = meta.items.filter((i) => i !== item);
-    expect(structuralProblems(doc, await fontMeasure())).toContainEqual(
+    expect(structuralProblems(doc, await fontMeasure('dejavu-sans'))).toContainEqual(
       expect.objectContaining({ code: 'LEGAL_ITEM_MISSING', field: item, blockId: 'documentMeta' }),
     );
   });
@@ -101,7 +104,7 @@ describe('the save gate', () => {
     const doc = structuredClone(preset('klassisch'));
     const table = doc.regions.body.find((b) => b.type === 'lineTable') as Extract<Block, { type: 'lineTable' }>;
     table.columns[col].visible = false;
-    expect(structuralProblems(doc, await fontMeasure())).toContainEqual(expect.objectContaining({ code: 'LEGAL_COLUMN_HIDDEN', field: col }));
+    expect(structuralProblems(doc, await fontMeasure('dejavu-sans'))).toContainEqual(expect.objectContaining({ code: 'LEGAL_COLUMN_HIDDEN', field: col }));
   });
 
   it('lets the position and unit price columns be hidden', async () => {
@@ -116,14 +119,14 @@ describe('the save gate', () => {
     const doc = structuredClone(preset('klassisch'));
     const footer = doc.regions.footer.find((b) => b.type === 'senderColumns') as Extract<Block, { type: 'senderColumns' }>;
     footer.columns = footer.columns.filter((c) => c !== col);
-    expect(structuralProblems(doc, await fontMeasure())).toContainEqual(expect.objectContaining({ code: 'SENDER_COLUMN_MISSING', field: col }));
+    expect(structuralProblems(doc, await fontMeasure('dejavu-sans'))).toContainEqual(expect.objectContaining({ code: 'SENDER_COLUMN_MISSING', field: col }));
   });
 
   it('keeps the recipient in the address field and the legal blocks in their regions', async () => {
     const doc = structuredClone(preset('klassisch'));
     const recipient = doc.regions.addressZone.left.pop()!;
     doc.regions.body.unshift(recipient);
-    const problems = structuralProblems(doc, await fontMeasure());
+    const problems = structuralProblems(doc, await fontMeasure('dejavu-sans'));
     expect(problems).toContainEqual(expect.objectContaining({ code: 'BLOCK_NOT_ALLOWED_HERE', blockId: 'recipient', region: 'body' }));
     expect(problems).toContainEqual(expect.objectContaining({ code: 'REQUIRED_BLOCK_MISSING', field: 'recipient' }));
 
@@ -153,7 +156,7 @@ describe('the save gate', () => {
     const doc = structuredClone(preset('klassisch'));
     const totals = doc.regions.body.find((b) => b.type === 'totals')!;
     totals.style.sizePt = 6.5;
-    const problems = structuralProblems(doc, await fontMeasure());
+    const problems = structuralProblems(doc, await fontMeasure('dejavu-sans'));
     expect(problems).toContainEqual(expect.objectContaining({ code: 'SIZE_TOO_SMALL', blockId: 'totals' }));
     expect(problems.filter((p) => p.code === 'SIZE_TOO_SMALL')).toHaveLength(1);
   });
@@ -161,12 +164,12 @@ describe('the save gate', () => {
   it('refuses colours below 4.5:1 on white, and a header band that drowns its text', async () => {
     const doc = structuredClone(preset('klassisch'));
     doc.theme.muted = '#aaaaaa';
-    expect(structuralProblems(doc, await fontMeasure())).toContainEqual(expect.objectContaining({ code: 'CONTRAST_TOO_LOW', field: 'theme.muted' }));
+    expect(structuralProblems(doc, await fontMeasure('dejavu-sans'))).toContainEqual(expect.objectContaining({ code: 'CONTRAST_TOO_LOW', field: 'theme.muted' }));
 
     // #767676 is 4.54:1 on white, but under 4.5:1 on the accent tint behind Modern's table header.
     const band = structuredClone(preset('modern'));
     band.theme.ink = '#767676';
-    const problems = structuralProblems(band, await fontMeasure());
+    const problems = structuralProblems(band, await fontMeasure('dejavu-sans'));
     expect(problems.filter((p) => p.field === 'theme.ink')).toEqual([]);
     expect(problems).toContainEqual(expect.objectContaining({ code: 'CONTRAST_TOO_LOW', field: 'headerBand', blockId: 'lineTable' }));
   });
@@ -175,10 +178,10 @@ describe('the save gate', () => {
     const doc = structuredClone(preset('klassisch'));
     const table = doc.regions.body.find((b) => b.type === 'lineTable') as Extract<Block, { type: 'lineTable' }>;
     table.columns.amount.width = 10;
-    expect(structuralProblems(doc, await fontMeasure())).toContainEqual(expect.objectContaining({ code: 'COLUMN_TOO_NARROW', field: 'amount' }));
+    expect(structuralProblems(doc, await fontMeasure('dejavu-sans'))).toContainEqual(expect.objectContaining({ code: 'COLUMN_TOO_NARROW', field: 'amount' }));
     table.columns.amount.width = 0;
     table.columns.unit.width = 40;
-    expect(structuralProblems(doc, await fontMeasure())).toContainEqual(expect.objectContaining({ code: 'TITLE_COLUMN_TOO_NARROW' }));
+    expect(structuralProblems(doc, await fontMeasure('dejavu-sans'))).toContainEqual(expect.objectContaining({ code: 'TITLE_COLUMN_TOO_NARROW' }));
   });
 
   it('keeps the tax note directly after the totals and the return line above the address', async () => {
@@ -194,7 +197,7 @@ describe('the save gate', () => {
 
     const pushed = structuredClone(preset('klassisch'));
     pushed.regions.addressZone.left.unshift({ id: 'gap', type: 'spacer', style: {}, heightPt: 32 });
-    expect(structuralProblems(pushed, await fontMeasure())).toContainEqual(
+    expect(structuralProblems(pushed, await fontMeasure('dejavu-sans'))).toContainEqual(
       expect.objectContaining({ code: 'BLOCK_NOT_ALLOWED_HERE', blockId: 'gap', region: 'addressZone.left' }),
     );
   });
@@ -282,8 +285,52 @@ describe('the save gate', () => {
   });
 
   it('refuses with TEMPLATE_INVALID carrying the problems', async () => {
-    const err = await assertTemplateSavable(without(preset('klassisch'), 'totals')).catch((e: unknown) => e);
+    const err = await assertTemplateSavable(without(preset('klassisch'), 'totals'), new Map()).catch((e: unknown) => e);
     expect(isBooksError(err, 'TEMPLATE_INVALID')).toBe(true);
     expect((err as { details: { problems: unknown[] } }).details.problems).toContainEqual(expect.objectContaining({ field: 'totals' }));
+  });
+});
+
+describe('the save gate and logos', () => {
+  const { doc: withLogo, assets, sha } = logoCase('dejavu-sans', 'png');
+
+  it('saves a template whose logo is an asset of the company (the probe render draws it)', async () => {
+    expect(await templateProblems(withLogo, { assets })).toEqual([]);
+    await expect(assertTemplateSavable(withLogo, assets)).resolves.toBeUndefined();
+  }, 60_000);
+
+  it('refuses a logo the company does not have, naming every block (LOGO_ASSET_MISSING)', async () => {
+    const problems = await templateProblems(withLogo, { assets: new Map() });
+    expect(problems).toEqual([
+      expect.objectContaining({ code: 'LOGO_ASSET_MISSING', blockId: 'logo', region: 'firstPageHeader', field: 'assetSha256' }),
+      expect.objectContaining({ code: 'LOGO_ASSET_MISSING', blockId: 'logoSmall', region: 'followingPageHeader', field: 'assetSha256' }),
+    ]);
+    const err = await assertTemplateSavable(withLogo, new Map()).catch((e: unknown) => e);
+    expect(isBooksError(err, 'TEMPLATE_INVALID')).toBe(true);
+  });
+
+  it('refuses two logo blocks naming different images (one template, one logo)', async () => {
+    const doc = structuredClone(withLogo);
+    doc.regions.footer.push({ id: 'otherLogo', type: 'logo', style: {}, widthMm: 20, assetSha256: 'a'.repeat(64) });
+    expect(await codes(doc)).toEqual(['LOGO_ASSETS_DIFFER']);
+    expect(structuralProblems(doc, await fontMeasure('dejavu-sans'))[0]).toMatchObject({ blockId: 'otherLogo', region: 'footer' });
+    // A logo block without an image beside one with an image is fine (it draws nothing).
+    doc.regions.footer[doc.regions.footer.length - 1] = { id: 'otherLogo', type: 'logo', style: {}, widthMm: 20, assetSha256: null };
+    expect(await codes(doc)).toEqual([]);
+  });
+
+  it('refuses a logo that pushes the letterhead into the address field (the probe render measures the real image)', async () => {
+    const tall = makeJpeg(100, 400);
+    const doc = structuredClone(withLogo);
+    doc.regions.firstPageHeader = [{ id: 'logo', type: 'logo', style: {}, widthMm: 30, assetSha256: assetSha(tall) }];
+    doc.regions.followingPageHeader = doc.regions.followingPageHeader.filter((b) => b.type !== 'logo');
+    const problems = await templateProblems(doc, { assets: new Map([[assetSha(tall), { contentType: 'image/jpeg', bytes: tall }]]) });
+    expect(problems).toContainEqual(expect.objectContaining({ code: 'LAYOUT_PROBLEM', field: 'HEADER_TOO_TALL', region: 'firstPageHeader' }));
+  }, 60_000);
+
+  it('freezes the one logo of a template for the issue snapshot', () => {
+    expect(templateLogo(withLogo)).toEqual({ sha256: sha });
+    expect(templateLogo(preset('modern'))).toBeNull();
+    expect(templateLogo(preset('klassisch'))).toBeNull();
   });
 });

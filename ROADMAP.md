@@ -120,8 +120,13 @@ connections to the suite. The four lines below are in that order.
   Phase 3 (the shared editor package) is done since 2026-10-23: `@marlinjai/block-editor-react`
   (snapshot undo history, inspector fields, the sortable outline with keyboard) is extracted in
   email-editor #166, the email editor runs on it, 0.1.0 is on npm and email-editor's
-  `publish.yml` is its trusted publisher. Open: phases 4 (the composer interface, which builds on
-  2 and 3) and 5 (logos and Noto fonts). See
+  `publish.yml` is its trusted publisher. Phase 5 (logos and Noto fonts: the `books_asset` table,
+  migration 013, the logo upload and download routes, the logo block drawn by the engine and
+  frozen at issue, Noto Sans and Noto Serif with a per-family drawable check) is built in #134
+  (branch `feat/books-logos-fonts`), pending merge and deploy (the deploy rolls
+  013). Open: phase 4 (the composer interface, which builds on 2 and 3), and the owner's call
+  whether a logo no template and no issued document uses may be deleted (today none is ever
+  deleted; see the phase 5 build notes). See
   [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-23)
 - [ ] 9. E-invoicing for Books documents (XRechnung and ZUGFeRD profile EN 16931, built from the
   frozen document data, ZUGFeRD as a PDF/A-3 with the XML embedded): write its own plan in the

@@ -40,7 +40,8 @@ import type { BooksScope } from '../scope';
 import { storedTemplateDocumentSchema, toJsonb, type TemplateSnapshotV2 } from '../snapshots';
 import { assertTemplateSavable } from '../template/gate';
 import { klassisch, PRESETS, preset } from '../template/presets';
-import { templateDocumentV2Schema, type Block, type TemplateDocumentV2 } from '../template/schema';
+import { templateDocumentV2Schema, templateLogo, type Block, type TemplateDocumentV2 } from '../template/schema';
+import { templateAssets } from './assets';
 
 type Db = Kysely<CommerceDB> | Transaction<CommerceDB>;
 
@@ -310,8 +311,8 @@ export async function createTemplate(scope: BooksScope, input: CreateTemplateInp
   const base = args.document !== undefined ? parseDocument(args.document) : preset(args.preset ?? 'klassisch');
   // Every written version passes the strict schema.
   const document = parseDocument(withFormEdits(base, { accentColor: args.accentColor, footerBlocks: args.footerBlocks }));
-  // The save gate runs before anything is written (it renders the probe documents).
-  await assertTemplateSavable(document);
+  // The save gate runs before anything is written (it renders the probe documents with the company's logo).
+  await assertTemplateSavable(document, await templateAssets(scope.db, scope, document));
   const id = randomUUID();
   const versionId = randomUUID();
   try {
@@ -394,7 +395,8 @@ export async function updateTemplate(
       newDocument ?? parseDocument(withFormEdits(current.document, { accentColor: args.accentColor, footerBlocks: args.footerBlocks }));
     // Saving the same layout again is not a new version.
     if (canonical(document) !== canonical(current.document)) {
-      await assertTemplateSavable(document);
+      // Assets are append-only, so a logo found here is still there when the version is written.
+      await assertTemplateSavable(document, await templateAssets(scope.db, scope, document));
       candidate = { base: current.currentVersionId, document };
     }
   }
@@ -514,12 +516,14 @@ export async function deleteTemplate(scope: BooksScope, id: string): Promise<voi
 export async function templateSnapshotFor(db: Db, scope: BooksScope, templateId: string | null): Promise<TemplateSnapshotV2> {
   const row = templateId ? await selectTemplates(db, scope).where('t.id', '=', templateId).executeTakeFirst() : undefined;
   if (!row) return { v: 2, templateId: null, templateVersionId: null, name: null, document: klassisch(), logo: null };
+  const document = storedTemplateDocumentSchema.parse(row.document);
   return {
     v: 2,
     templateId: row.id,
     templateVersionId: row.current_version_id,
     name: row.name,
-    document: storedTemplateDocumentSchema.parse(row.document),
-    logo: null,
+    document,
+    // The template's one logo (rules.ts), by hash: the re-render reads exactly these bytes (books_asset is append-only).
+    logo: templateLogo(document),
   };
 }

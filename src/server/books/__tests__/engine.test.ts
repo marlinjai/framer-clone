@@ -25,7 +25,7 @@ import { REGIONS, type Block, type BlockType, type RegionName, type TemplateDocu
 const sha = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
 
 async function render(doc: TemplateDocumentV2, name: ProbeName = 'regular', opts: { draft?: boolean; preview?: boolean } = {}): Promise<EngineResult> {
-  return renderTemplate(buildRenderModel(probeInput(probe(name), opts.draft ?? false)), doc, fontFiles(), { preview: opts.preview });
+  return renderTemplate(buildRenderModel(probeInput(probe(name), opts.draft ?? false)), doc, fontFiles('dejavu-sans'), { preview: opts.preview });
 }
 
 /** A sample block of each type. */
@@ -89,7 +89,7 @@ describe('every block type in every region it may stand in', () => {
     const { layout } = await render(withBlock(type, region), type === 'taxNote' ? 'smallBusiness' : 'longInvoice');
     const rects = layout.blocks.filter((r) => r.blockId === 'probe-block');
     if (type === 'logo') {
-      // No logo assets before phase 5: nothing drawn, no space taken.
+      // A logo without an asset draws nothing and takes no space (with one: engineLogo.test.ts).
       expect(rects).toEqual([]);
       return;
     }
@@ -205,7 +205,7 @@ describe('bounds', () => {
     expect(performance.now() - t0).toBeLessThan(5000);
 
     expect(MAX_PAGES).toBe(200);
-    const capped = await renderTemplate(buildRenderModel(probeInput(probe('longInvoice'))), preset('klassisch'), fontFiles(), { maxPages: 2 });
+    const capped = await renderTemplate(buildRenderModel(probeInput(probe('longInvoice'))), preset('klassisch'), fontFiles('dejavu-sans'), { maxPages: 2 });
     expect(capped.layout.pageCount).toBe(2);
     expect(capped.layout.issues).toContainEqual(expect.objectContaining({ code: 'PAGE_LIMIT', region: 'body' }));
   });
@@ -222,12 +222,12 @@ describe('latency (decision 12)', () => {
       if (lines) p.lines = Array.from({ length: lines }, (_, i) => ({ ...p.lines[i % p.lines.length], id: `l${i}`, position: i + 1 }));
       const model = buildRenderModel(probeInput(p));
       const doc = preset('klassisch');
-      for (let i = 0; i < 3; i += 1) await renderTemplate(model, doc, fontFiles(), { preview: true });
+      for (let i = 0; i < 3; i += 1) await renderTemplate(model, doc, fontFiles('dejavu-sans'), { preview: true });
       const times: number[] = [];
       let pages = 0;
       for (let i = 0; i < 20; i += 1) {
         const t0 = performance.now();
-        pages = (await renderTemplate(model, doc, fontFiles(), { preview: true })).layout.pageCount;
+        pages = (await renderTemplate(model, doc, fontFiles('dejavu-sans'), { preview: true })).layout.pageCount;
         times.push(performance.now() - t0);
       }
       times.sort((a, b) => a - b);
@@ -249,7 +249,7 @@ describe('widths', () => {
       p.lines = [{ ...p.lines[0], quantity: 999_999_999, unitPrice: 2_147_483_647, subtotal: 2_147_483_647, taxAmount: 0, discountBp: 0, description: null }];
       p.document = { ...p.document, subtotal: 2_147_483_647, taxAmount: 0, total: 2_147_483_647 };
       const doc = preset(name);
-      const { bytes, layout } = await renderTemplate(buildRenderModel(probeInput(p)), doc, fontFiles());
+      const { bytes, layout } = await renderTemplate(buildRenderModel(probeInput(p)), doc, fontFiles('dejavu-sans'));
       const cols = layout.tables[0].columns;
       const drawn = await extractDrawnText(bytes);
       const amount = drawn.find((d) => d.text === '21.474.836,47 €' && d.x >= cols.amount!.x - 1)!;

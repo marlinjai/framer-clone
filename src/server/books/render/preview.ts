@@ -7,7 +7,10 @@
 // with "VORSCHAU, KEIN BELEG" on every page so a preview of an issued invoice
 // in a new layout can never pass for the original. Never stored, never
 // checked as a document of record: the save gate runs on save, the
-// completeness check at issue. Characters the font cannot draw show as "?".
+// completeness check at issue. Characters the template's font family cannot
+// draw show as "?". The logo is the company's asset the document names (read
+// by hash, repository/assets.ts); a hash the company does not have draws
+// nothing and shows as LOGO_ASSET_MISSING in the layout issues.
 //
 // The answer carries the PDF and the layout map (every block's page and
 // rectangle, the table columns, the layout issues), from which the composer
@@ -15,6 +18,7 @@
 // logged by the route (milliseconds and page count only, never content).
 
 import { BooksError } from '../errors';
+import { templateAssets } from '../repository/assets';
 import type { BooksScope } from '../scope';
 import { PROBE_NAMES, probe, probeInput } from '../template/probes';
 import type { TemplateDocumentV2 } from '../template/schema';
@@ -43,9 +47,12 @@ export async function renderPreview(scope: BooksScope, document: TemplateDocumen
   } else {
     input = await documentRenderInput(scope, subject.documentId);
   }
+  const assets = await templateAssets(scope.db, scope, document);
   const started = performance.now();
-  const { bytes, layout } = await renderTemplate(previewSafe(buildRenderModel(input)), previewSafeTemplate(document), fontFiles(), {
+  const family = document.theme.fontFamily;
+  const { bytes, layout } = await renderTemplate(previewSafe(buildRenderModel(input), family), previewSafeTemplate(document), fontFiles(family), {
     preview: true,
+    assets,
   });
   return { pdf: bytes, layout, renderMs: Math.round((performance.now() - started) * 10) / 10 };
 }

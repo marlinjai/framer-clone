@@ -20,9 +20,10 @@
 // The document of record (the PDF) is rendered from the frozen data, checked
 // (every field drawable in the document font, every legally required field
 // present) and stored INSIDE the issue transaction (src/server/books/render).
-// If that fails, nothing is issued: 422 `undrawable_text` or
-// `render_incomplete` names the fields, the document stays a draft and no
-// number is taken.
+// If that fails, nothing is issued: 422 `undrawable_text` (in the template's
+// font family), `render_incomplete` or `logo_asset_missing` (the template's
+// logo is not an asset of the company) names the fields or blocks, the
+// document stays a draft and no number is taken.
 //
 // A replacement draft (the Correct flow, POST .../correct) cancels the invoice
 // it replaces in the same transaction: the credit note is issued, its PDF

@@ -65,6 +65,7 @@ import { profileFor, selectCustomerRow, syncDraftTaxState } from './repository/t
 import { insertEvent } from './repository/events';
 import { cancelInvoiceIn } from './cancel';
 import { templateSnapshotFor } from './repository/templates';
+import { logoBlocks } from './template/schema';
 import type { BooksScope } from './scope';
 import { requireSettings } from './settings';
 import {
@@ -312,6 +313,15 @@ export async function issue(
           });
         }
         const templateSnapshot = await templateSnapshotFor(trx, scope, row.template_id);
+        // One template, one logo (the snapshot freezes one): a layout saved before that rule named
+        // two images would lose one silently, so it is refused like any layout that does not fit.
+        const differing = logoBlocks(templateSnapshot.document).filter(
+          (l) => l.block.assetSha256 !== null && l.block.assetSha256 !== templateSnapshot.logo?.sha256,
+        );
+        if (differing.length > 0) {
+          const missing = differing.map((l) => `layout.logo_assets_differ.${l.block.id}`);
+          throw new BooksError('RENDER_INCOMPLETE', `RENDER_INCOMPLETE: ${missing.join(', ')}`, { missing });
+        }
         await trx
           .updateTable('sales_document')
           .set({

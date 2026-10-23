@@ -867,3 +867,218 @@ and converts the existing templates. Nothing else is new (no secret, no variable
   on a package that exists); email-editor's `publish.yml` is registered as its trusted publisher
   the same day, and 0.1.1 (same code, email-editor #171) is the first version published through
   it, which validates the registration. Phase 4 adds the package as a dependency here.
+
+## Phase 5 build notes (2026-10-23): logos and fonts
+
+Built on branch `feat/books-logos-fonts`. Decided while building, say so if you disagree.
+
+**What exists now.**
+
+- Migration `013_books_assets`: `books_asset` in the tenant schema (`id`, `tenant_id`,
+  `kind = 'logo'`, `content_type` PNG or JPEG, `byte_size`, `sha256`, `width_px`, `height_px`,
+  `content` BYTEA, `created_by`, `created_at`), unique on `(tenant_id, sha256)`, append-only for
+  every role (BK014 on UPDATE, DELETE and TRUNCATE, plus the house REVOKE re-applied through
+  `APPEND_ONLY_TABLES`), with CHECKs mirroring the upload bounds (1 MB, 1 to 2000 px a side, a
+  lowercase hex digest). Purely additive; it rolls across every tenant schema at boot like 011
+  and 012.
+- `render/logoImage.ts`, the upload checks, in order: the type (PNG or JPEG, named by the request
+  and confirmed by the magic bytes); the size (1 MB); the pixel size read from the PNG header or
+  the JPEG frame header BEFORE anything decodes the pixels (at most 2000 px on the longer side);
+  what a PDF would draw differently from a browser (a rotation flag in the Exif metadata, a
+  colour profile, gamma or primaries other than sRGB's, a CMYK JPEG without the Adobe marker);
+  the full decode (every PNG chunk's checksum, the image data
+  inflated to exactly the size its header promises, interlaced or not; the JPEG decoded by
+  `jpeg-js` without tolerance for missing data, at most 64 scans, in a coding every PDF reader
+  draws); then pdf-lib embeds it into a throwaway PDF and writes that PDF, which must stay
+  under 2 MB.
+- `repository/assets.ts`: `storeLogo` (uploads of one company run one at a time under a
+  transaction lock: the same bytes again answer the stored row, a company holds at most 100
+  logos), `readAsset`, and `templateAssets`, which every render path calls with the template it
+  draws: the save gate's probe render, the template preview, the draft preview, the document of
+  record at issue and its lazy re-render (inside the issue or cancel transaction, through its
+  handle).
+- `POST /api/books/assets` and `GET /api/books/assets/<sha256>` as the contract the composer
+  (phase 4) builds against: raw body, `booksRoute('write')`, a bounded stream read
+  (`http/boundedBody.ts`, now shared with the preview route), `201` new or `200` already stored
+  with `{ sha256, contentType, byteSize, widthPx, heightPx }`; `413 asset_too_large`,
+  `415 unsupported_asset_type`, `422 asset_invalid` (the message and `problem` say which:
+  `undecodable`, `not_embeddable`, `too_many_pixels`). The download is `booksRoute('read')`,
+  `private, max-age=31536000, immutable`, the hash as entity tag (ETag; a revalidation answers
+  304 without reading the bytes), nosniff,
+  same-origin only, `content-security-policy: default-src 'none'`; another company's, an unknown
+  or a malformed hash answer `404 asset_not_found`. `src/lib/books/api.ts` has `uploadAsset`,
+  `assetUrl`, `AssetView` and the messages, appended at the end.
+- The engine draws the logo block: at `widthMm` with the image's own aspect ratio, aligned left,
+  centre or right in its box, kept together, in every region a logo may stand in and inside
+  `columns` cells. A logo wider than its box is `BLOCK_TOO_WIDE`; a logo naming an asset the
+  caller did not pass draws nothing and is the layout issue `LOGO_ASSET_MISSING`.
+  `render/engine/images.ts` prepares each image once per process (pdf-lib's own embedders into
+  a scratch PDF, the compressed streams kept, bounded by count and by 64 MB, least recently used
+  out, the key checked against the bytes' hash because the cache serves every company of the
+  process) and copies the streams into every PDF: pdf-lib re-decoded and re-compressed a PNG on every render, 0.7 to
+  1.6 s for a 2000 px logo; prepared, the page renders in about 50 ms, with the same bytes.
+- Issue freezes `TemplateSnapshotV2.logo = { sha256 }` (or null), and the snapshot is the
+  authority on re-render: a frozen layout is drawn with exactly that asset, read by hash from the
+  append-only table, and logo blocks naming any other hash are drawn empty.
+- Fonts: Noto Sans and Noto Serif 2.015, the static unhinted Regular and Bold faces, committed
+  in `assets/fonts/` with the SIL Open Font License; `assets/fonts/README.md` records the release
+  archives they came from and the SHA-256 of every file. `fonts.ts` pins each family's two files
+  by their digest and refuses to load a file that differs. The family is a parameter everywhere:
+  `fontFiles(family)`, `canDraw(cp, family)`, `undrawable(text, family)`, `fontMeasure(family)`
+  in the gate (the column minimums depend on the glyph widths), `undrawableFields` and
+  `previewSafe` in the template's family (DejaVu Sans for a version 1 layout, a required
+  argument). The schema enum is exactly `['dejavu-sans', 'noto-sans', 'noto-serif']`.
+- `next.config.ts` needed no change: `outputFileTracingIncludes` already names the folder as a
+  glob (`./assets/fonts/**/*` for every Books route); the production build traces all six font
+  files into every Books route.
+
+**Decisions.**
+
+1. **One template, one logo.** The snapshot has one `logo` field (decision 4's shape) and the
+   block table calls it "the template's logo asset", so every logo block of a template names the
+   same image (a structural rule, `LOGO_ASSETS_DIFFER`, with the block named); several blocks may
+   show it at different widths (Modern top right, small in the following-page header). A logo
+   block without an image beside one with an image is allowed and draws nothing.
+2. **A missing logo is refused by name at both ends.** The gate checks the company's assets
+   before the probe render (`LOGO_ASSET_MISSING` with the block and region, the contract's code).
+   At issue, inside the issue transaction, the same check refuses with the error
+   `LOGO_ASSET_MISSING` (422 `logo_asset_missing`, the block ids in `blockIds`), so nothing is
+   issued and no number is taken. This adds a code to the contract at issue instead of the
+   generic `render_incomplete`, because "a required field is missing" would send the user to the
+   wrong place; the engine's layout issue stays as the backstop. A template preview of a hash the
+   company does not have draws the page without it and shows the issue in the layout map; a
+   draft preview leaves it out.
+3. **The snapshot's `logo` decides what a re-render draws** (found in review). Before this
+   change the schema already accepted a hash in a logo block while the engine drew nothing, so a
+   template saved through the API with a hash froze `logo: null` and a layout naming the hash.
+   Drawing from the layout would change such a document's bytes, or refuse its cancellation
+   (the credit note copies the invoice's snapshot). So the frozen layout is drawn with only the
+   snapshot's logo; a test proves such a document re-renders unchanged and can be cancelled.
+4. **The magic bytes must match the declared type** (`415`), so a PNG sent as `image/jpeg` is
+   refused rather than silently re-typed; `image/jpg` and `image/pjpeg`, which some systems
+   send, are read as `image/jpeg`. An empty body is `422 asset_invalid` ("the file is empty").
+5. **JPEGs are decoded by `jpeg-js` 0.4.4** (pinned exactly, BSD-3-Clause, no dependencies),
+   added as a runtime dependency. pdf-lib only copies a JPEG into the PDF without decoding it, so
+   without a decoder a damaged JPEG would pass the upload and print as garbage on an invoice.
+   Only baseline, extended sequential and progressive Huffman JPEGs at 8 bits are accepted (what
+   every PDF reader draws); lossless, hierarchical and arithmetic codings are refused as
+   `not_embeddable` with the advice to save a baseline JPEG or a PNG. More than 64 scans are
+   refused before decoding (a progressive JPEG has about ten; thousands would burn central
+   processing unit (CPU) time). The
+   tests encode their JPEGs with the same package at run time.
+6. **Refused because the PDF would differ from the composer** (found in review): a JPEG or PNG
+   whose Exif metadata says "rotate" (a browser turns it, pdf-lib does not); a colour profile
+   that is not sRGB (Display P3 screenshots, Adobe RGB), or a PNG gamma or primaries that are
+   not sRGB's without an sRGB chunk (a browser applies them, pdf-lib draws the plain numbers);
+   and a CMYK JPEG without Adobe's colour marker (pdf-lib inverts every CMYK JPEG, which is
+   right only for Adobe's). All are `not_embeddable` with the advice to save the image again.
+   A profile counts as sRGB when its description names sRGB or IEC 61966 (the standard that
+   defines it), in ASCII or UTF-16.
+7. **At most 100 logos per company** (`409 asset_limit`, found in review): stored logos are
+   append-only and never deleted, so the cap keeps one user with `editBooks` from filling the
+   schema. A company uses one or two. This adds a code to the contract. An upload already stored
+   or over the cap is answered before the decode, and both are asked again under the lock.
+8. **A logo adds at most 2 MB to a PDF** (found in the second review): pdf-lib stores a PNG's
+   pixels without PNG's row filters, so a 23 KB PNG of smooth gradients became a 12 MB image
+   stream in every invoice. The trial PDF of the upload must stay under 2 MB
+   (`not_embeddable`, with its size and the advice to save it smaller or as a JPEG).
+9. **Issue refuses a layout naming two different logos** (found in the second review): a
+   template saved before the one-logo rule could; the snapshot freezes one, so the other would
+   vanish silently. It is refused like a layout that does not fit (`render_incomplete`,
+   `layout.logo_assets_differ.<block>`); documents already issued keep drawing only their
+   frozen logo (decision 3).
+10. **The unhinted Noto builds**: hinting only steers screen rasterisation, which PDF readers do
+   themselves; the unhinted files are half the size with the same outlines. Both families use
+   the release's standard character set (the larger `full` build exists only for Noto Sans), so
+   the two Noto families cover the same characters. The four files add 1.8 MB to the image (the
+   plan estimated 1.2 MB).
+11. **The families do not cover the same symbols**, and the drawable check is per family: DejaVu
+   draws arrows and the infinity sign, Noto does not; Noto draws the bitcoin sign, DejaVu does
+   not; no family draws Chinese, Japanese or Korean. A document set in Noto with an arrow in a
+   line title is refused at issue (`undrawable_text`, the field named), exactly as DejaVu refuses
+   Chinese today, and the save gate refuses template text its family cannot draw.
+12. **A font file that is not its pin stops the process loudly** (every Books render and the
+    gate fail with the file named) instead of drawing an issued document with other glyphs.
+    Decision 6 made enforceable: a new font version is a new family id.
+
+**Open, the owner's call:** whether a logo no template and no issued document uses may be
+deleted. Today nothing is ever deleted (an issued document must re-render with its logo); an
+image uploaded by mistake that shows a person stays stored, which the General Data Protection
+Regulation (GDPR) right to erasure may require to change. Tracked on the ROADMAP.md line of
+this plan.
+
+**Review (2026-10-23).** A fresh review of the whole diff (given only the diff and this plan)
+found one defect, four risks and twelve nits; all are fixed:
+- the defect: a re-render read the logo from the frozen layout instead of the snapshot (decision
+  3), with a test of such a document's re-render and cancellation;
+- the risks: rotated images and CMYK JPEGs without the Adobe marker (decision 6); no bound on
+  stored logos (decision 7; deletability is the open question above); the logo's decode cost on
+  every render, now prepared once per process (`images.ts`, a latency test with a 2000 px RGBA
+  logo) and progressive scans bounded;
+- the nits: the byte order mark escape in `boundedBody.ts`, interlaced PNG tests, tests for the
+  lazy re-render with a logo, a credit note's logo, an empty body and a palette PNG without its
+  palette, `image/jpg`, an unreadable success answer in `uploadAsset`, the family argument made
+  required in `undrawableFields`, messages for `asset_not_found`, the ETag and content security
+  policy on the download, comment wrapping and acronyms.
+A second fresh review of those fixes found no defect, five risks and fourteen nits; all are
+fixed: the 2 MB budget inside the PDF and a byte bound on the prepared images (decision 8); the
+prepared image's key checked against its bytes; a layout naming two logos refused at issue
+(decision 9); colour profiles, gamma and primaries (decision 6); a failed preparation no longer
+evicting a newer entry; the version 1 template read straight from the snapshot (no assertion
+on a version 2 snapshot the preview never draws); a test that emptied logo blocks draw exactly
+what the engine drew before assets existed; Exif orientation read only as a single SHORT value,
+with little-endian, out-of-range and cut-off tests; the post-end-marker message; the cheap
+checks before the decode and a test of the lock at 99 logos; messages built from the cap;
+`If-None-Match: *` and revalidation without reading the bytes; the latency test named for its
+90th percentile and run cold; comment wrapping and acronyms.
+
+**Tests.**
+
+- **Upload checks (`logoImage.test.ts`):** PNG (RGBA, RGB, interlaced at awkward sizes) and JPEG
+  accepted with their size, exactly 2000 px accepted; the magic bytes against the declared type;
+  more than 1 MB; more than 2000 px on either side, also a small file whose header claims
+  30000 x 30000 (refused without inflating); truncated, damaged (checksum), not-deflate and
+  size-mismatched PNGs; a palette PNG without its palette; truncated and garbled JPEGs; lossless
+  and arithmetic JPEGs; rotation flags in JPEG and PNG; CMYK without the Adobe marker; scan
+  markers in metadata accepted, more than 64 scans refused; an empty file; Exif in both byte
+  orders and malformed; colour profiles, gamma and primaries in PNG and JPEG; a 23 KB PNG
+  refused for the 12 MB it would add to every PDF.
+- **Engine (`engineLogo.test.ts`):** every allowed region with each alignment (width, aspect,
+  position, and the image drawn exactly where the layout map says), a tall JPEG, `columns` cells
+  in four regions, a logo wider than its cell, one embedded image for several blocks on several
+  pages, no asset, a missing asset, unrelated assets ignored, malformed stored blocks; a page
+  with a 2000 px RGBA (red, green, blue, alpha) logo within four times the one-page target, run
+  cold, the same bytes whether the image was prepared or found prepared; an asset whose bytes
+  are not its hash refused; logo blocks emptied by the snapshot drawing exactly the bytes of
+  blocks without an asset; determinism with a PNG and a JPEG logo in each family
+  twice in one process and in a fresh process in another time zone (`engineChild.ts`).
+- **Fonts (`fonts.test.ts`):** each family's pinned static faces, an unknown family, the
+  drawable check and the preview's "?" per family, the gate in each family on every preset, the
+  embedded font names, and the proof for documents issued under DejaVu Sans: the three presets
+  as they stood on main before this change are frozen in `dejavuGolden.json` with the SHA-256 of
+  their render against every probe document, recorded from the unchanged engine; the new code
+  reproduces all 21 (the reviewer re-derived them from main independently).
+- **Gate (`templateGate.test.ts`):** a company logo saves and is drawn in the probe render; a
+  missing one names both blocks; two different images; a logo too tall for the letterhead.
+- **Migration on real Postgres (`books-fleet.itest.ts`):** 013 onto a schema at 012 holding a
+  template leaves it unchanged; commerce_app has the append-only rights; every CHECK; unique per
+  company, the same hash for another company; UPDATE, DELETE and TRUNCATE refused for the app
+  role (42501) and for the owner (BK014); a second run changes nothing. The provisioning tests
+  list 013 and the table.
+- **Routes on real Postgres (`books-assets.itest.ts`):** upload, dedup and a race of two
+  uploads, every refusal, the bounded stream, `image/jpg`, an empty body, the cap and two
+  uploads racing at 99 logos, the guard; the download, its headers, the 304 (also for `*`, and a
+  404 for another company's), another company's, unknown and malformed hashes;
+  templates with the company's, an unknown and another company's logo; the preview with and
+  without the asset; the four stateful-flow paths of a document with a logo (forward: draft
+  preview, issue freezing `logo: { sha256 }`, the image in the stored PDF; backtrack: logo and
+  font of the template changed afterwards, the re-render byte-identical, a new draft taking the
+  new logo; resume: the stored file served again; re-entry: an issue refused for a missing logo
+  takes no number, the retry after the upload gets number 62); the lazy re-render reproducing
+  the logo; a credit note carrying it; a document whose snapshot froze no logo drawn without one
+  and cancelled; a layout naming two logos refused at issue; each family issued and re-rendered byte-identically; a DejaVu document
+  re-rendering identically after its template moved to Noto Serif; an arrow refused at issue
+  under Noto.
+
+**Operator step**: deploy, which rolls `013_books_assets` across every tenant schema at boot.
+Nothing else is new (no secret, no variable).

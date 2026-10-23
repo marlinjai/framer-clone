@@ -41,6 +41,17 @@
 // The stored file records which one drew it. An engine layout that does not
 // fit the page (a block taller than a page, a header pushing into the address
 // field) refuses the document of record like a missing field.
+//
+// FONTS AND LOGOS (decisions 6 and 15): the engine draws in the template's
+// font family (its files pinned in fonts.ts) and with the company's logo,
+// read from `books_asset` by the hash the template names, through the same
+// handle as the rest (inside the issue transaction). An issued document's
+// snapshot names its logo (`logo: { sha256 }`, decision 4) and is the
+// authority: logo blocks naming any other hash are drawn empty, as the engine
+// of the time drew them. The asset table is append-only, so a re-render reads
+// exactly the image it was issued with. A logo the company does not have
+// refuses the document of record by name (LOGO_ASSET_MISSING), never prints
+// it without; a draft preview leaves it out.
 
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -49,15 +60,17 @@ import type { Kysely, Transaction } from 'kysely';
 import type { CommerceDB } from '../../commerce/db-types';
 import { BooksError, withDbErrors } from '../errors';
 import { readRecipient } from '../recipients';
+import { templateAssets } from '../repository/assets';
 import { getDocument, selectDocumentRow, type DocumentView } from '../repository/read';
 import { selectCustomerRow } from '../repository/taxState';
 import { templateSnapshotFor } from '../repository/templates';
 import type { BooksScope } from '../scope';
 import { readSettings } from '../settings';
-import type { TemplateDocumentV2 } from '../template/schema';
+import type { TemplateSnapshotV1 } from '../snapshots';
+import { logoBlocks, withOnlyLogo, type TemplateDocumentV2 } from '../template/schema';
 import { missingFields } from './completeness';
 import { assertDrawable, previewSafe, previewSafeTemplate } from './drawable';
-import { renderTemplate, RENDERER_ID } from './engine';
+import { assertRenderableTemplate, renderTemplate, RENDERER_ID, type EngineImage } from './engine';
 import { extractPdfText } from './extractText';
 import { fontFiles } from './fonts';
 import { fileNamePart } from './format';
@@ -82,11 +95,23 @@ function sha256(bytes: Uint8Array): string {
 /** How a document is laid out: by the frozen version 1 renderer, or by the engine with a template document. */
 type Layout = { kind: 'legacyV1'; template: RenderInput['template'] } | { kind: 'engine'; document: TemplateDocumentV2 };
 
-/** The layout an issued document was frozen with (decision 4). */
+/** The engine's inputs beyond the document: the company's assets the template names. */
+type EngineAssets = ReadonlyMap<string, EngineImage>;
+
+/** The version 1 layout of a snapshot (none for a document issued before 008). */
+function legacyTemplate(t: TemplateSnapshotV1 | null): RenderInput['template'] {
+  return t ? { accentColor: t.accentColor, footerBlocks: t.footerBlocks } : null;
+}
+
+/** The layout an issued document was frozen with (decision 4), drawn with the logo its snapshot froze and no other. */
 function frozenLayout(doc: DocumentView['document']): Layout {
   const t = doc.templateSnapshot;
-  if (t?.v === 2) return { kind: 'engine', document: t.document };
-  return { kind: 'legacyV1', template: t ? { accentColor: t.accentColor, footerBlocks: t.footerBlocks } : null };
+  if (t?.v === 2) {
+    // A stored document is read with a shape check only: a malformed one fails here, naming the path.
+    assertRenderableTemplate(t.document);
+    return { kind: 'engine', document: withOnlyLogo(t.document, t.logo) };
+  }
+  return { kind: 'legacyV1', template: legacyTemplate(t) };
 }
 
 /** A rendered document and the renderer that drew it (recorded on the stored file). */
@@ -96,12 +121,19 @@ interface Drawn {
 }
 
 /** Draw a model with its layout (the test seam replaces the writer of either renderer). */
-async function draw(layout: Layout, model: RenderModel, options: RenderOptions & { preview?: boolean } = {}): Promise<Drawn> {
+async function draw(
+  layout: Layout,
+  model: RenderModel,
+  options: RenderOptions & { preview?: boolean; assets?: EngineAssets } = {},
+): Promise<Drawn> {
   if (layout.kind === 'legacyV1') {
     return { bytes: await (options.renderPdf ?? renderLegacyV1)(model), renderer: LEGACY_V1_RENDERER_ID };
   }
   if (options.renderPdf) return { bytes: await options.renderPdf(model), renderer: RENDERER_ID };
-  const { bytes, layout: map } = await renderTemplate(model, layout.document, fontFiles(), { preview: options.preview });
+  const { bytes, layout: map } = await renderTemplate(model, layout.document, fontFiles(layout.document.theme.fontFamily), {
+    preview: options.preview,
+    assets: options.assets,
+  });
   if (!model.draft && map.issues.length > 0) {
     const problems = map.issues.map((i) => `layout.${i.code.toLowerCase()}${i.blockId ? `.${i.blockId}` : ''}`);
     throw new BooksError('RENDER_INCOMPLETE', `RENDER_INCOMPLETE: ${problems.join(', ')}`, { missing: problems });
@@ -144,10 +176,8 @@ async function issuedInput(db: Db, scope: BooksScope, view: DocumentView): Promi
     },
     corrects,
     replaces,
-    template: (() => {
-      const layout = frozenLayout(doc);
-      return layout.kind === 'legacyV1' ? layout.template : null;
-    })(),
+    // The version 1 renderer's layout; a version 2 snapshot is drawn by the engine (frozenLayout).
+    template: doc.templateSnapshot?.v === 2 ? null : legacyTemplate(doc.templateSnapshot),
   };
 }
 
@@ -161,7 +191,10 @@ async function replacedInvoice(db: Db, scope: BooksScope, doc: DocumentView['doc
 }
 
 /** The render input of a draft preview: live data (never stored). */
-async function draftInput(scope: BooksScope, view: DocumentView): Promise<{ input: RenderInput; document: TemplateDocumentV2 }> {
+async function draftInput(
+  scope: BooksScope,
+  view: DocumentView,
+): Promise<{ input: RenderInput; document: TemplateDocumentV2; assets: EngineAssets }> {
   const doc = view.document;
   const settings = await readSettings(scope.db, scope);
   let recipient: RenderRecipient | null = null;
@@ -188,6 +221,7 @@ async function draftInput(scope: BooksScope, view: DocumentView): Promise<{ inpu
   // The current version of the draft's template (the built-in Klassisch layout without one).
   const { document } = await templateSnapshotFor(scope.db, scope, doc.templateId);
   return {
+    assets: await templateAssets(scope.db, scope, document),
     input: {
       draft: true,
       document: doc,
@@ -258,10 +292,21 @@ async function renderIssued(scope: BooksScope, view: DocumentView, options: Rend
       { documentId: view.document.id },
     );
   }
-  const input = await issuedInput(options.db ?? scope.db, scope, view);
+  const db = options.db ?? scope.db;
+  const input = await issuedInput(db, scope, view);
   const layout = frozenLayout(view.document);
   assertDrawable(input, layout.kind === 'engine' ? layout.document : null);
-  const drawn = await draw(layout, buildRenderModel(input), options);
+  let assets: EngineAssets | undefined;
+  if (layout.kind === 'engine') {
+    assets = await templateAssets(db, scope, layout.document);
+    const missing = logoBlocks(layout.document).filter((l) => l.block.assetSha256 !== null && !assets!.has(l.block.assetSha256));
+    if (missing.length > 0) {
+      throw new BooksError('LOGO_ASSET_MISSING', `LOGO_ASSET_MISSING: ${missing.map((l) => l.block.id).join(', ')}`, {
+        blockIds: missing.map((l) => l.block.id),
+      });
+    }
+  }
+  const drawn = await draw(layout, buildRenderModel(input), { ...options, assets });
   const missing = missingFields(view.document, view.lines, await extractPdfText(drawn.bytes), { corrects: input.corrects });
   if (missing.length > 0) {
     throw new BooksError('RENDER_INCOMPLETE', `RENDER_INCOMPLETE: ${missing.join(', ')}`, { missing });
@@ -363,8 +408,12 @@ export async function storeRenderedDocument(scope: BooksScope, documentId: strin
 export async function documentPdf(scope: BooksScope, documentId: string): Promise<RenderedPdf> {
   const view = await getDocument(scope, documentId);
   if (view.document.status === 'draft') {
-    const { input, document } = await draftInput(scope, view);
-    const { bytes } = await draw({ kind: 'engine', document: previewSafeTemplate(document) }, previewSafe(buildRenderModel(input)));
+    const { input, document, assets } = await draftInput(scope, view);
+    const { bytes } = await draw(
+      { kind: 'engine', document: previewSafeTemplate(document) },
+      previewSafe(buildRenderModel(input), document.theme.fontFamily),
+      { assets },
+    );
     return { bytes, fileName: fileNameFor(view, true), ofRecord: false, fileId: null, sha256: sha256(bytes) };
   }
   const stored = await storeRenderedDocument(scope, documentId);

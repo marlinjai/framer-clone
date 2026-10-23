@@ -57,7 +57,9 @@ export type ProblemCode =
   | 'SIZE_TOO_SMALL'
   | 'CONTRAST_TOO_LOW'
   | 'CELLS_TOO_WIDE'
-  // The gate (gate.ts) adds these from the probe render.
+  | 'LOGO_ASSETS_DIFFER'
+  // The gate (gate.ts) adds these: the company's assets, the font coverage and the probe render.
+  | 'LOGO_ASSET_MISSING'
   | 'UNDRAWABLE_TEXT'
   | 'LAYOUT_PROBLEM'
   | 'PROBE_INCOMPLETE';
@@ -237,6 +239,22 @@ export function structuralProblems(doc: TemplateDocumentV2, measure: Measure): T
   if (totalsAt >= 0 && noteAt >= 0 && noteAt !== totalsAt + 1) {
     out.push({ code: 'TAX_NOTE_NOT_AFTER_TOTALS', message: 'the tax note must come directly after the totals', blockId: body[noteAt].id, region: 'body' });
   }
+  // One template, one logo (decision 15): every logo block names the same asset, which the issue snapshot freezes.
+  const firstLogo = entries.find((e) => e.block.type === 'logo' && e.block.assetSha256 !== null);
+  if (firstLogo && firstLogo.block.type === 'logo') {
+    for (const { block, region } of entries) {
+      if (block.type === 'logo' && block.assetSha256 !== null && block.assetSha256 !== firstLogo.block.assetSha256) {
+        out.push({
+          code: 'LOGO_ASSETS_DIFFER',
+          message: `the logo blocks name different images; a template has one logo (the one of block "${firstLogo.block.id}")`,
+          blockId: block.id,
+          region,
+          field: 'assetSha256',
+        });
+      }
+    }
+  }
+
   // The return line sits above the address in the window, never below it.
   const left = doc.regions.addressZone.left;
   const senderAt = left.findIndex((b) => b.type === 'senderLine');

@@ -202,6 +202,12 @@ const MESSAGES: Record<string, string> = {
   upload_truncated: 'The file did not arrive whole. Upload it again.',
   missing_anthropic_key: 'Reading invoices is not set up on this server (no AI key). Ask an administrator.',
   extract_model_unknown: 'Reading invoices is not set up on this server (unknown model). Ask an administrator.',
+  asset_too_large: 'The logo is larger than 1 MB. Save it smaller and upload it again.',
+  unsupported_asset_type: 'A logo must be a PNG or a JPEG file. Convert it and upload it again.',
+  asset_invalid: 'The logo cannot be used:',
+  logo_asset_missing: 'The template’s logo is not stored for this company. Choose the logo in the template again; nothing was issued.',
+  asset_limit: 'This company already stores the most logos allowed. Choose one of them.',
+  asset_not_found: 'This logo is not stored for this company.',
 };
 
 export class BooksApiError extends Error {
@@ -330,7 +336,57 @@ export const booksApi = {
   createTemplate: (body: unknown) => request<TemplateView>('POST', '/api/books/templates', body),
   updateTemplate: (id: string, body: unknown) => request<TemplateView>('PATCH', `/api/books/templates/${id}`, body),
   deleteTemplate: (id: string) => request<void>('DELETE', `/api/books/templates/${id}`),
+  /** Upload a logo (PNG or JPEG, at most 1 MB and 2000 px on the longer side); the same file again answers the stored one. */
+  uploadAsset: (file: Blob) => uploadAsset(file),
+  /** The URL of a stored logo by its hash (an <img> source). */
+  assetUrl: (sha256: string) => `/api/books/assets/${sha256}`,
 };
+
+/** A stored logo, as the upload answers it. */
+export interface AssetView {
+  sha256: string;
+  contentType: 'image/png' | 'image/jpeg';
+  byteSize: number;
+  widthPx: number;
+  heightPx: number;
+}
+
+/** Send a logo as the raw request body with its own type; the server checks the bytes. */
+async function uploadAsset(file: Blob): Promise<AssetView> {
+  let res: Response;
+  try {
+    res = await fetch('/api/books/assets', {
+      method: 'POST',
+      // The server checks the bytes; `image/jpg` (sent by some systems) is the same as image/jpeg.
+      headers: { 'content-type': file.type === 'image/jpg' ? 'image/jpeg' : file.type || 'application/octet-stream' },
+      body: file,
+      cache: 'no-store',
+    });
+  } catch {
+    throw new BooksApiError(0, 'network', 'The logo could not be sent. Check your connection and try again.');
+  }
+  let json: unknown = null;
+  try {
+    json = await res.json();
+  } catch {
+    // reported by status below
+  }
+  if (!res.ok) {
+    const err = (json as { error?: { code?: string; message?: string } } | null)?.error;
+    const code = err?.code ?? `http_${res.status}`;
+    // asset_invalid names the reason (undecodable, not embeddable, too many pixels): show it after the sentence.
+    const limit = (err as { maxAssets?: unknown } | undefined)?.maxAssets;
+    const message =
+      code === 'asset_invalid' && err?.message
+        ? `${MESSAGES[code]} ${err.message}.`
+        : code === 'asset_limit' && typeof limit === 'number'
+          ? `This company already stores ${limit} logos, the most allowed. Choose one of them.`
+          : (MESSAGES[code] ?? err?.message ?? `The upload failed (${res.status}).`);
+    throw new BooksApiError(res.status, code, message, err ?? {});
+  }
+  if (json === null) throw new BooksApiError(res.status, 'bad_response', 'The server’s answer could not be read. Upload the logo again.');
+  return json as AssetView;
+}
 
 // --- the upload import of past invoices (/api/books/imports) -------------------------
 

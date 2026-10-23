@@ -633,6 +633,24 @@ export interface DocumentTemplateVersionTable {
   created_at: Generated<Timestamp>;
 }
 
+/**
+ * 013_books_assets: an uploaded logo (PNG or JPEG bytes), one per company and
+ * SHA-256, append-only (no updated_at).
+ */
+export interface BooksAssetTable {
+  id: string;
+  tenant_id: string;
+  kind: string;
+  content_type: string;
+  byte_size: number;
+  sha256: string;
+  width_px: number;
+  height_px: number;
+  content: Buffer;
+  created_by: string | null;
+  created_at: Generated<Timestamp>;
+}
+
 // =============================================================================
 // The Database interface. GLOBAL keys are `public.`-qualified; tenant tables
 // are BARE. The two namespaces are disjoint by construction.
@@ -673,6 +691,7 @@ export interface CommerceDB {
   historical_import_item: HistoricalImportItemTable;
   historical_import_extraction: HistoricalImportExtractionTable;
   document_template_version: DocumentTemplateVersionTable;
+  books_asset: BooksAssetTable;
 }
 
 // --- compile-time discipline guards (the package's brand types) --------------
