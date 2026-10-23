@@ -119,8 +119,8 @@ connections to the suite. The four lines below are in that order.
   email-editor #166, the email editor runs on it, 0.1.0 is on npm and email-editor's
   `publish.yml` is its trusted publisher. Phase 5 (logos and Noto fonts: the `books_asset` table,
   migration 013, the logo upload and download routes, the logo block drawn by the engine and
-  frozen at issue, Noto Sans and Noto Serif with a per-family drawable check) is built in the
-  pull request of branch `feat/books-logos-fonts`, pending merge and deploy (the deploy rolls
+  frozen at issue, Noto Sans and Noto Serif with a per-family drawable check) is built in #134
+  (branch `feat/books-logos-fonts`), pending merge and deploy (the deploy rolls
   013). Open: phase 4 (the composer interface, which builds on 2 and 3), and the owner's call
   whether a logo no template and no issued document uses may be deleted (today none is ever
   deleted; see the phase 5 build notes). See
