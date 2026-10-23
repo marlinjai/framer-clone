@@ -11,14 +11,14 @@ import { useTransformContext, useTransformNotifier } from '@/contexts/TransformC
 // Tool configuration with React Icons
 const TOOLS = {
   [EditorTool.GRAB]: {
-    name: 'Grab',
+    name: 'Grab (H)',
     icon: PiHandGrabbingBold,
-    description: 'Pan and navigate the canvas'
+    description: 'Pan the canvas. Hold Space or drag with the middle mouse button to pan from any tool'
   },
   [EditorTool.SELECT]: {
-    name: 'Select', 
+    name: 'Select (V)',
     icon: PiCursorLight,
-    description: 'Select and move components'
+    description: 'Select and move components. Drag on empty canvas to select several, Shift+click to add'
   }
 };
 
@@ -71,8 +71,9 @@ const Toolbar = observer(({ editorUI }: ToolbarProps) => {
    * Uses viewport center as zoom point (similar to cursor-centered zoom)
    */
   const handleZoom = useCallback((direction: 'in' | 'out') => {
-    // Find ground element (canvas container) to get viewport dimensions
-    const groundElement = document.querySelector('.w-full.h-full.bg-muted.overflow-hidden.relative') as HTMLElement;
+    // The canvas ground (Canvas.tsx marks it data-ground) gives the visible
+    // canvas size; without it (no page open) there is nothing to zoom.
+    const groundElement = document.querySelector<HTMLElement>('[data-ground]');
     if (!groundElement) return;
 
     const rect = groundElement.getBoundingClientRect();

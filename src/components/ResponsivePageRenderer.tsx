@@ -282,7 +282,8 @@ const FloatingElement = observer(({
       className="floating-element cursor-grab hover:cursor-grab"
       onClick={(e) => {
         e.stopPropagation();
-        editorUI.selectComponent(element);
+        if (e.shiftKey) editorUI.toggleInSelection(element);
+        else editorUI.selectComponent(element);
       }}
       onPointerDown={onPointerDown}
     >

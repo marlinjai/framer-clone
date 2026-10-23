@@ -23,6 +23,13 @@ const EditorUIStore = types.model('EditorUI', {
   // Currently selected component (domain reference)
   selectedComponent: types.maybe(types.safeReference(ComponentModel)),
   
+  // Every selected component, the primary (`selectedComponent`) first.
+  // Single selection keeps exactly one entry; Shift+click and the canvas
+  // marquee add more. Consumers that only understand one node (the properties
+  // panel, resize handles) keep reading `selectedComponent`. safeReference
+  // drops an entry by itself when its node is destroyed.
+  selectedComponents: types.array(types.safeReference(ComponentModel)),
+
   // Currently selected viewport node (Framer-style)
   selectedViewportNode: types.maybe(types.safeReference(ComponentModel)),
 
@@ -57,6 +64,9 @@ const EditorUIStore = types.model('EditorUI', {
   // A message for the person above the canvas (see EditorNotice), dismissable.
   editorNotice: undefined as { kind: 'changedElsewhere' | 'missingPage'; message: string } | undefined,
   isResizing: false,
+  // The tool to return to when the held Space key (temporary pan) is
+  // released. Undefined while Space is not held.
+  toolBeforeTemporaryGrab: undefined as EditorTool | undefined,
   resizeData: undefined as {
     component: ComponentInstance;
     direction: 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -99,6 +109,7 @@ const EditorUIStore = types.model('EditorUI', {
       self.editorNotice = undefined;
       self.editingComponent = undefined;
       self.selectedViewportNode = undefined;
+      self.selectedComponents.clear();
       self.hoverComponent = undefined;
     }
     self.currentProject = project;
@@ -126,6 +137,7 @@ const EditorUIStore = types.model('EditorUI', {
     });
     
     self.selectedComponent = component;
+    self.selectedComponents.replace(component ? [component] : []);
     
     if (breakpointId && self.currentPage) {
       // Component within a viewport - find the viewport node
@@ -144,12 +156,88 @@ const EditorUIStore = types.model('EditorUI', {
     self.selectedViewportNode = viewportNode;
     // Clear component selection when selecting a viewport
     self.selectedComponent = undefined;
+    self.selectedComponents.clear();
+  },
+
+  /**
+   * Replace the selection with several components (the canvas marquee). The
+   * first becomes the primary selection. `breakpointId` is the frame the
+   * tree nodes were picked in; it becomes the viewport context, as for a
+   * click. Ancestors and descendants of an earlier entry are dropped, so a
+   * parent is never selected together with its own children.
+   */
+  setSelection(components: ComponentInstance[], breakpointId?: string) {
+    const unique = pruneNested(components);
+    if (unique.length === 0) {
+      this.clearSelection();
+      return;
+    }
+    // A tree node needs its frame as viewport context (the HUD looks the
+    // primary up inside that frame), so a tree node leads when there is one.
+    const primary = (breakpointId && unique.find(c => !c.isFloatingElement)) || unique[0];
+    const ordered = [primary, ...unique.filter(c => c !== primary)];
+    self.selectedComponent = primary;
+    self.selectedComponents.replace(ordered);
+    self.selectedViewportNode = !primary.isFloatingElement && breakpointId && self.currentPage
+      ? self.currentPage.viewportNodes.find(v => v.breakpointId === breakpointId)
+      : undefined;
+  },
+
+  /**
+   * Shift+click: add a component to the selection, or take it out when it is
+   * already selected. Adding a node drops any selected ancestor or
+   * descendant of it. Removing the primary promotes the next selected node.
+   */
+  toggleInSelection(component: ComponentInstance, breakpointId?: string) {
+    const current = self.selectedComponents.filter((c): c is ComponentInstance => !!c);
+    if (current.length === 0) {
+      this.selectComponent(component, breakpointId);
+      return;
+    }
+    if (current.some(c => c.id === component.id)) {
+      const rest = current.filter(c => c.id !== component.id);
+      if (rest.length === 0) {
+        this.clearSelection();
+        return;
+      }
+      const keepBreakpoint = self.selectedViewportNode?.breakpointId ?? breakpointId;
+      this.setSelection(rest, keepBreakpoint);
+      return;
+    }
+    const kept = current.filter(c => !isAncestorOf(c, component) && !isAncestorOf(component, c));
+    // The primary keeps its place (the properties panel keeps showing it),
+    // unless it was just dropped as an ancestor or descendant of the new node.
+    this.setSelection([...kept, component], self.selectedViewportNode?.breakpointId ?? breakpointId);
+  },
+
+  /** Nothing selected: no component, no extra selection, no frame. */
+  clearSelection() {
+    self.selectedComponent = undefined;
+    self.selectedComponents.clear();
+    self.selectedViewportNode = undefined;
+  },
+
+  // Space held: pan with the left button whatever the tool, as in Framer and
+  // Figma. Releasing Space returns to the tool that was active before.
+  beginTemporaryGrab() {
+    if (self.toolBeforeTemporaryGrab !== undefined) return; // key repeat
+    self.toolBeforeTemporaryGrab = self.selectedTool as EditorTool;
+    self.selectedTool = EditorTool.GRAB;
+  },
+
+  endTemporaryGrab() {
+    const previous = self.toolBeforeTemporaryGrab;
+    if (previous === undefined) return;
+    self.toolBeforeTemporaryGrab = undefined;
+    self.selectedTool = previous;
   },
   
   
   // Tool selection
   setSelectedTool(tool: EditorTool) {
     self.selectedTool = tool;
+    // Picking a tool while Space is held makes that tool stick on release.
+    self.toolBeforeTemporaryGrab = undefined;
   },
   
   // Panel visibility
@@ -214,6 +302,20 @@ const EditorUIStore = types.model('EditorUI', {
     return !!self.selectedComponent;
   },
 
+  /** Every selected component, the primary first. Never holds dead nodes. */
+  get selectedComponentList(): ComponentInstance[] {
+    const list = self.selectedComponents.filter((c): c is ComponentInstance => !!c);
+    const primary = self.selectedComponent;
+    if (primary && !list.some(c => c.id === primary.id)) return [primary, ...list];
+    return list;
+  },
+
+  /** True when the component is part of the selection (primary or extra). */
+  isSelected(componentId: string): boolean {
+    if (self.selectedComponent?.id === componentId) return true;
+    return self.selectedComponents.some(c => c?.id === componentId);
+  },
+
   // Current viewport node (Framer-style)
   get currentViewportNode() {
     return self.selectedViewportNode;
@@ -248,6 +350,7 @@ const EditorUIStore = types.model('EditorUI', {
       currentProjectId: self.currentProject?.id,
       currentPageId: self.currentPage?.id,
       selectedComponentId: self.selectedComponent?.id,
+      selectedComponentIds: self.selectedComponents.filter(c => !!c).map(c => c!.id),
       selectedViewportNode: self.selectedViewportNode,
       selectedTool: self.selectedTool,
       panels: {
@@ -258,6 +361,27 @@ const EditorUIStore = types.model('EditorUI', {
     };
   }
 }));
+
+/** True when `ancestor` is a strict ancestor of `node` in the component tree. */
+function isAncestorOf(ancestor: ComponentInstance, node: ComponentInstance): boolean {
+  if (ancestor.id === node.id) return false;
+  const stack = [...ancestor.children] as ComponentInstance[];
+  while (stack.length) {
+    const next = stack.pop()!;
+    if (next.id === node.id) return true;
+    stack.push(...(next.children as ComponentInstance[]));
+  }
+  return false;
+}
+
+/** Drop duplicates and any node whose ancestor is also in the list. */
+function pruneNested(components: ComponentInstance[]): ComponentInstance[] {
+  const unique: ComponentInstance[] = [];
+  for (const c of components) {
+    if (c && !unique.some(u => u.id === c.id)) unique.push(c);
+  }
+  return unique.filter(c => !unique.some(other => isAncestorOf(other, c)));
+}
 
 // TypeScript types
 export type EditorUIType = Instance<typeof EditorUIStore>;
