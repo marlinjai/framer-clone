@@ -112,6 +112,24 @@ const PageWithComponents = PageBase.props({
   canvasNodes: types.optional(types.map(ComponentModel), {}),
 });
 
+
+/**
+ * The registry entry's default children (a Form arrives with its fields and
+ * submit button), created fresh with their own ids, one level deep per entry
+ * and recursively for entries that declare their own.
+ */
+function addRegistryDefaultChildren(parent: ComponentInstance, ids: readonly string[] | undefined, depth = 0): void {
+  if (!ids || depth > 4) return;
+  for (const childId of ids) {
+    const childEntry = getComponentEntry(childId);
+    if (!childEntry) continue;
+    const child = createIntrinsicComponent(`${childEntry.id}-${uuidv4()}`, childEntry.htmlType, childEntry.defaultProps);
+    child.setLabel(childEntry.label);
+    addRegistryDefaultChildren(child, childEntry.defaultChildren, depth + 1);
+    parent.addChild(child);
+  }
+}
+
 const PageModel = PageWithComponents
   .actions(self => ({
   // Update page metadata
@@ -186,6 +204,7 @@ const PageModel = PageWithComponents
         Math.round(target.y),
       );
       floating.setLabel(entry.label);
+      addRegistryDefaultChildren(floating, entry.defaultChildren);
       self.canvasNodes.set(floating.id, floating);
       self.updatedAt = new Date();
       return self.canvasNodes.get(floating.id);
@@ -197,6 +216,7 @@ const PageModel = PageWithComponents
       entry.defaultProps,
     );
     child.setLabel(entry.label);
+    addRegistryDefaultChildren(child, entry.defaultChildren);
 
     let parent: ComponentInstance | undefined;
     let insertIndex: number | undefined;

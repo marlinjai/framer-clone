@@ -322,6 +322,19 @@ const ComponentModel: any = ComponentBase
       self.props = { ...self.props, children: value };
     },
 
+    // Merge non-style props (a form field's label, name, required flag...).
+    // An `undefined` value removes the key. `style` is never touched here:
+    // styles go through updateResponsiveStyle.
+    setProps(patch: Record<string, unknown>) {
+      const next: Record<string, unknown> = { ...(self.props as Record<string, unknown>) };
+      for (const [key, value] of Object.entries(patch)) {
+        if (key === 'style') continue;
+        if (value === undefined) delete next[key];
+        else next[key] = value;
+      }
+      self.props = next;
+    },
+
     // Canvas-level actions
     toggleCanvasVisibility() {
       self.canvasVisible = !self.canvasVisible;

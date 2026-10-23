@@ -94,7 +94,39 @@ export const FORM_CONFIG_PROPS: ReadonlySet<string> = new Set([
   'maxLength',
   'options',
   'loadingLabel',
+  'inputBackground',
+  'inputBorderColor',
+  'inputTextColor',
+  'inputRadius',
 ]);
+
+/** Props without the form configuration (what a renderer may put on a DOM element). */
+export function stripFormConfigProps<T extends Record<string, unknown>>(props: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(props)) if (!FORM_CONFIG_PROPS.has(k)) out[k] = v;
+  return out as T;
+}
+
+/** The look of a field's control, from the field's props (each optional). */
+export interface FieldAppearance {
+  background?: string;
+  borderColor?: string;
+  textColor?: string;
+  radius?: string;
+}
+
+const CSS_VALUE = /^[#(),.%\w\s-]{1,64}$/;
+
+export function readFieldAppearance(props: Record<string, unknown> | null | undefined): FieldAppearance {
+  const p = props ?? {};
+  const pick = (v: unknown) => (typeof v === 'string' && CSS_VALUE.test(v.trim()) ? v.trim() : undefined);
+  return {
+    background: pick(p.inputBackground),
+    borderColor: pick(p.inputBorderColor),
+    textColor: pick(p.inputTextColor),
+    radius: pick(p.inputRadius),
+  };
+}
 
 /** A node as every tree in the app looks: MST instances, snapshots and published ComponentNodes. */
 export interface FormTreeNode {
@@ -142,7 +174,7 @@ export function formKindOf(props: Record<string, unknown> | null | undefined): F
 function text(value: unknown, max: number): string {
   if (typeof value !== 'string') return '';
   // Control characters never belong in a label, a name or a message.
-  // eslint-disable-next-line no-control-regex
+   
   return value.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, max);
 }
 

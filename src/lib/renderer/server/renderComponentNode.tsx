@@ -29,6 +29,8 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { createScope } from '@/lib/bindings/resolver/scope';
 import CommerceIsland, { type CommerceIslandProps } from './CommerceIsland';
+import FormIsland, { FormFieldIsland, FormSubmitIsland } from '../forms/FormIsland';
+import { formKindOf } from '@/lib/forms/definition';
 
 /** The four interactive commerce kinds emitted as client islands (never baked
  *  server-side). Mirrors INTERACTIVE_COMMERCE_KINDS in hydrateBindings. */
@@ -132,6 +134,17 @@ export function renderComponentNode(
   scope: BindingScope = createScope(),
   key: React.Key = node.id ?? 0,
 ): React.ReactNode {
+  // Forms (published site essentials, decision 4): the form container is a
+  // client island that owns its fields' state; fields and the submit button
+  // read it from context (src/lib/renderer/forms/FormIsland.tsx). The render
+  // time feeds the no-JavaScript fill-time check of the submit endpoint.
+  const formKind = formKindOf(node.props as Record<string, unknown> | undefined);
+  if (formKind === 'form') {
+    return <FormIsland key={key} node={node} scope={scope} renderedAt={Date.now()} />;
+  }
+  if (formKind === 'form-field') return <FormFieldIsland key={key} node={node} />;
+  if (formKind === 'form-submit') return <FormSubmitIsland key={key} node={node} />;
+
   const dataKind = (node.props as any)?.['data-component-kind'];
 
   // Interactive commerce kinds -> a client island boundary. The whole node

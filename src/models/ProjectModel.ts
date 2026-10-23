@@ -4,7 +4,7 @@ import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
 import { types, Instance, SnapshotIn, SnapshotOut } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 import PageModel, { PageModelType } from './PageModel';
-import { createIntrinsicComponent, createViewportNode, type ComponentSnapshotIn } from './ComponentModel';
+import { createIntrinsicComponent, createViewportNode, type ComponentInstance, type ComponentSnapshotIn } from './ComponentModel';
 import { suggestSlug, validateSlug, type SlugValidation } from '@/lib/pages/slug';
 
 // ---- Lumitra Studio binding ---------------------------------------------
@@ -169,6 +169,40 @@ export const ProjectModel = types
       }));
       self.metadata.updatedAt = new Date();
       return self.pages.get(pageId) as PageModelType;
+    },
+
+    // A simple thank-you page for a form's "redirect to a page" success target
+    // (published site essentials, decision 4): a heading, a sentence and a link
+    // back to the home page, in one action (one history entry). The owner
+    // edits it like any page. The slug follows createPage's rules.
+    createThankYouPage(copy: { title?: string; heading?: string; text?: string; backLabel?: string } = {}): PageModelType {
+      const page = (self as unknown as { createPage(title?: string): PageModelType }).createPage(copy.title?.trim() || 'Thank you');
+      const root = page.appComponentTree as unknown as ComponentInstance;
+      root.updateResponsiveStyle('padding', '96px 24px');
+      root.updateResponsiveStyle('display', 'flex');
+      root.updateResponsiveStyle('flexDirection', 'column');
+      root.updateResponsiveStyle('alignItems', 'center');
+      root.updateResponsiveStyle('gap', '16px');
+      root.updateResponsiveStyle('textAlign', 'center');
+      const heading = createIntrinsicComponent('heading-' + uuidv4(), 'h1', {
+        children: copy.heading?.trim() || 'Thank you!',
+        style: { fontSize: '40px', fontWeight: 700, margin: 0, color: '#111827' },
+      });
+      heading.setLabel('Heading');
+      const text = createIntrinsicComponent('text-' + uuidv4(), 'p', {
+        children: copy.text?.trim() || 'We received your message and will get back to you soon.',
+        style: { fontSize: '18px', margin: 0, color: '#374151', maxWidth: '560px' },
+      });
+      text.setLabel('Text');
+      const back = createIntrinsicComponent('link-' + uuidv4(), 'a', {
+        children: copy.backLabel?.trim() || 'Back to the home page',
+        href: '/',
+        style: { fontSize: '16px', fontWeight: 600, color: '#111827', textDecoration: 'underline' },
+      });
+      back.setLabel('Back link');
+      root.addChildren([heading, text, back]);
+      self.metadata.updatedAt = new Date();
+      return page;
     },
 
     // AI page generation: create a page whose app tree root holds the

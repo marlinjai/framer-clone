@@ -63,7 +63,8 @@ export type FormAction =
   | { type: 'submit' }
   | { type: 'success'; message: string | null }
   | { type: 'failure'; formError: string; fieldErrors?: Record<string, FieldError> }
-  | { type: 'reset' };
+  | { type: 'reset' }
+  | { type: 'restore'; values: Record<string, string> };
 
 export interface FormContextDeps {
   fields: readonly FieldSpec[];
@@ -142,6 +143,21 @@ export function formReducer(state: FormState, action: FormAction, deps: FormCont
       };
     case 'reset':
       return initialFormState(fields, newId);
+    case 'restore': {
+      // A draft fills only fields the visitor has not typed into yet, and
+      // only before anything was sent.
+      if (state.status !== 'idle') return state;
+      const values = { ...state.values };
+      let changed = false;
+      for (const field of fields) {
+        const v = action.values[field.key];
+        if (typeof v === 'string' && !isCheckboxType(field.type) && values[field.key] === '') {
+          values[field.key] = v;
+          changed = true;
+        }
+      }
+      return changed ? { ...state, values } : state;
+    }
   }
 }
 

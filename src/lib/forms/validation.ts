@@ -55,7 +55,7 @@ export function charCount(value: string): number {
 /** Trim and strip control characters; a textarea keeps \n and \t (\r\n becomes \n). */
 export function cleanText(value: string, multiline: boolean): string {
   const unified = value.replace(/\r\n?/g, '\n');
-  // eslint-disable-next-line no-control-regex
+   
   const stripped = multiline ? unified.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '') : unified.replace(/[\u0000-\u001f\u007f]+/g, ' ');
   return stripped.trim();
 }
