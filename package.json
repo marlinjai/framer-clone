@@ -91,6 +91,7 @@
     "mobx-devtools-mst": "^0.9.46",
     "mobx-react-lite": "^4.1.0",
     "mobx-state-tree": "^7.0.2",
+    "modern-screenshot": "4.7.0",
     "mst-middlewares": "^6.1.0",
     "nanoid": "^5.1.16",
     "next": "15.4.11",

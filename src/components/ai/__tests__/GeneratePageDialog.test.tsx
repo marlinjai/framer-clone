@@ -61,6 +61,10 @@ function typeBrief(text: string) {
 
 beforeEach(() => {
   window.localStorage.clear();
+  // The automatic visual review after a generation is covered in
+  // GeneratePageDialog.review.test.tsx; here it stays off so these flows
+  // assert on the generation alone.
+  window.localStorage.setItem('framer-clone:visual-review', JSON.stringify({ auto: false, model: 'SONNET' }));
   store = createRootStore();
   store.projectStore.createProject('Crumb');
   const project = store.projectStore.findProjectByTitle('Crumb')!;
