@@ -6,8 +6,12 @@
 // A logo of the active company, by its hash (visual template composer plan,
 // decision 15): the composer shows it in the inspector, the block outline and
 // the logo list. An asset is named by the hash of its bytes and never changed,
-// so the answer never changes and may be cached for a year (`immutable`),
-// privately (behind the session). Another company's asset, an unknown hash or
+// but it can be DELETED (decision 9, possibly for a person's right to
+// erasure), so a browser keeps it privately and asks again each time
+// (`no-cache`): the ETag makes that a 304 without the bytes while it exists,
+// and a deleted logo answers 404 at once instead of showing from a cache for a
+// year (which `immutable` did, found in the production proof on 2026-10-23).
+// Another company's asset, an unknown hash or
 // a malformed one all answer 404 `asset_not_found` (existence never leaks).
 // Only bytes the upload checked are ever served, with nosniff, same-origin
 // only and a content security policy that lets nothing load or run. The hash
@@ -30,7 +34,7 @@ export const GET = booksRoute<{ sha256: string }>('read', async (ctx, req, { par
   const { sha256 } = await params;
   const headersOf = (asset: AssetView) => ({
     'content-type': asset.contentType,
-    'cache-control': 'private, max-age=31536000, immutable',
+    'cache-control': 'private, no-cache',
     etag: `"${asset.sha256}"`,
     'x-content-type-options': 'nosniff',
     'cross-origin-resource-policy': 'same-origin',

@@ -125,10 +125,13 @@ connections to the suite. The four lines below are in that order.
   014, BK015, the logo list and delete routes, "Your logos" in the composer's logo picker), and
   the plan was completed with it. See
   [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-23)
-- [ ] 8a. Prove the logo deletion on app.lumitra.co after the deploy that rolls migration
-  `014_books_asset_delete`: on "Books Testfirma", upload a spare logo and delete it from "Your
-  logos" in the composer, and check that the logo printed on TEST-2 shows "In use" and offers no
-  delete. (2026-10-23)
+- [x] 8a. Prove the logo deletion on app.lumitra.co after the deploy that rolls migration
+  `014_books_asset_delete`: proven on 2026-10-23 on "Books Testfirma". A spare logo deleted with
+  "Delete" in the composer's "Your logos" (the confirmation says it cannot be undone) is gone from
+  the list and the server; the logo printed on TEST-2 shows "In use" with no delete, its DELETE
+  answers 409 `asset_in_use`, and TEST-2's stored PDF is unchanged (sha256 698c6ba9...). The proof
+  found a deleted logo still showing from the browser cache (served `immutable` for a year): now
+  `private, no-cache`, revalidated by its ETag. (2026-10-23)
 - [ ] 9. E-invoicing for Books documents (XRechnung and ZUGFeRD profile EN 16931, built from the
   frozen document data, ZUGFeRD as a PDF/A-3 with the XML embedded): write its own plan in the
   first half of 2027, so every regular-taxed company using the Books can issue e-invoices before
