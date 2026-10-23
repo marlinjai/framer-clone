@@ -195,6 +195,31 @@ export function hasType(doc: TemplateDocumentV2, type: BlockType): boolean {
   );
 }
 
+/** Every logo block of the document, cells included. */
+export function logoBlockIds(doc: TemplateDocumentV2): string[] {
+  return [...blockIds(doc)].filter((id) => {
+    const at = locate(doc, id);
+    return (at?.cell?.block ?? at?.block)?.type === 'logo';
+  });
+}
+
+/** The image the template's logo blocks print (one per template), or null. */
+export function templateLogo(doc: TemplateDocumentV2): string | null {
+  for (const id of logoBlockIds(doc)) {
+    const at = locate(doc, id);
+    const b = at?.cell?.block ?? at?.block;
+    if (b?.type === 'logo' && b.assetSha256) return b.assetSha256;
+  }
+  return null;
+}
+
+/** A new block, a logo taking the template's image so all logo blocks print the same one. */
+function newBlockFor(doc: TemplateDocumentV2, type: BlockType, id: string): Block {
+  const block = newBlock(type, id);
+  if (block.type === 'logo') block.assetSha256 = templateLogo(doc);
+  return block;
+}
+
 /** A new id for a block of this type that no block in the document has. */
 export function uniqueId(doc: TemplateDocumentV2, type: BlockType): string {
   const taken = blockIds(doc);
@@ -296,7 +321,7 @@ export function addBlock(draft: TemplateDocumentV2, type: BlockType, region: Reg
   if (!canAdd(draft, type, region).ok) return null;
   const id = uniqueId(draft, type);
   const list = regionList(draft, region);
-  list.splice(index === undefined ? list.length : Math.max(0, Math.min(index, list.length)), 0, newBlock(type, id));
+  list.splice(index === undefined ? list.length : Math.max(0, Math.min(index, list.length)), 0, newBlockFor(draft, type, id));
   return id;
 }
 
@@ -310,7 +335,7 @@ export function addCellBlock(draft: TemplateDocumentV2, rowId: string, cellIndex
   if (!allowedIn(type, at.region)) return null;
   if (SINGLETONS.has(type) && hasType(draft, type)) return null;
   const id = uniqueId(draft, type);
-  cell.blocks.push(newBlock(type, id) as CellBlock);
+  cell.blocks.push(newBlockFor(draft, type, id) as CellBlock);
   return id;
 }
 
