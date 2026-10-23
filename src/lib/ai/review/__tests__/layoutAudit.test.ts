@@ -216,6 +216,16 @@ describe('contrast', () => {
     expect(kinds(frame([root, panel, { ...mid, text: { ...mid.text!, fontSizePx: 28 } }]))).not.toContain('low-contrast:t');
   });
 
+  it('does not judge text that only inherits the editor colour around the canvas', () => {
+    const t = node('t', { parentId: 'root', color: 'rgb(255, 255, 255)', text: { content: 'Inherits', fontSizePx: 16, fontWeight: 400 } });
+    const plainRoot = { ...root, color: 'rgb(255, 255, 255)' };
+    expect(kinds(frame([plainRoot, t], { inheritedColor: 'rgb(255, 255, 255)' }))).not.toContain('low-contrast:t');
+    // A root that sets its own colour makes every inherited colour the page's: judged.
+    const styledRoot = { ...root, color: 'rgb(250, 250, 250)' };
+    const t2 = { ...t, color: 'rgb(250, 250, 250)' };
+    expect(kinds(frame([styledRoot, t2], { inheritedColor: 'rgb(255, 255, 255)' }))).toContain('low-contrast:t');
+  });
+
   it('composites a translucent background over what is below', () => {
     const dark = node('dark', { parentId: 'root', backgroundColor: 'rgb(10, 10, 10)' });
     const veil = node('veil', { parentId: 'dark', backgroundColor: 'rgba(255, 255, 255, 0.9)' });

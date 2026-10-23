@@ -162,6 +162,7 @@ export function measureFrame(
     width,
     isSmallest: frame.isSmallest,
     contentScrollWidth: content.scrollWidth,
+    inheritedColor: env.getComputedStyle(content).color,
     nodes,
   };
 }

@@ -100,6 +100,14 @@ export interface FrameMeasurement {
   isSmallest: boolean;
   /** The content box's scroll width (wider than `width` means something reaches out). */
   contentScrollWidth: number;
+  /**
+   * The text colour the frame's content box itself inherits (from the editor
+   * around the canvas, not from the page). Text whose colour is this one on a
+   * page whose root sets no colour of its own has no colour the page chose,
+   * so its contrast is not judged: the published page inherits the browser
+   * default there instead.
+   */
+  inheritedColor?: string;
   nodes: MeasuredNode[];
 }
 
@@ -506,6 +514,10 @@ function contrastRule(
   out: LayoutFinding[],
 ): void {
   if (!n.text || !n.text.content.trim()) return;
+  if (frame.inheritedColor && n.color === frame.inheritedColor) {
+    const root = frame.nodes.find((x) => !x.parentId);
+    if (!root || root.color === frame.inheritedColor) return; // the editor's colour, not the page's
+  }
   const text = parseColor(n.color);
   if (!text || text.a === 0) return;
   const bg = estimateBackground(n, byId, text);

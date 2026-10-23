@@ -197,6 +197,13 @@ export function ReviewReport({ state, onUndo }: { state: ReviewState; onUndo?: (
             The editor measured {result.findings.length} layout {result.findings.length === 1 ? 'problem' : 'problems'}; open Polish with AI to see them.
           </p>
         )}
+        {result.notes.length > 0 && (
+          <ul className="list-disc pl-4 text-muted-foreground">
+            {result.notes.map((n) => (
+              <li key={n}>{n}</li>
+            ))}
+          </ul>
+        )}
         {cost && <p className="text-muted-foreground">{cost}</p>}
       </div>
     );
