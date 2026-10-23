@@ -82,11 +82,12 @@ const LayersPanel = observer(() => {
   const currentPage = editorUI.currentPage;
   const panelRef = useRef<HTMLDivElement>(null);
   const selectedId = editorUI.selectedComponent?.id;
+  const selectedFrameId = editorUI.selectedViewportNode?.id;
 
   // A selection made on the canvas reveals its row: every folded ancestor
   // (and the breakpoint group it was picked in) opens, then the row scrolls
-  // into view. Keyed on the selected id only, so folding an ancestor of the
-  // current selection afterwards is not undone.
+  // into view. Keyed on the selected id and its frame only, so folding an
+  // ancestor of the current selection afterwards is not undone.
   useEffect(() => {
     const ui = editorUI;
     const page = ui.currentPage;
@@ -107,7 +108,7 @@ const LayersPanel = observer(() => {
       row?.scrollIntoView?.({ block: 'nearest' });
     });
     return () => cancelAnimationFrame(frame);
-  }, [editorUI, selectedId]);
+  }, [editorUI, selectedId, selectedFrameId]);
 
   if (!currentPage) {
     return (

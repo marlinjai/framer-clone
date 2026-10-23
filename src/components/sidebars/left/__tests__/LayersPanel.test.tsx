@@ -174,4 +174,20 @@ describe('folding', () => {
     });
     expect(rowOf(nested)).not.toBeNull();
   });
+
+  it('selecting the same node in another breakpoint frame opens that frame group', async () => {
+    render(<LayersPanel />);
+    const tablet = page.sortedViewportNodes[1];
+    expect(store.editorUI.collapsedLayerIds.has(tablet.id)).toBe(true);
+    await act(async () => {
+      store.editorUI.selectComponent(nested, breakpointId);
+    });
+    await act(async () => {
+      store.editorUI.selectComponent(nested, tablet.breakpointId);
+    });
+    expect(store.editorUI.collapsedLayerIds.has(tablet.id)).toBe(false);
+    expect(
+      document.querySelector(`[data-layer-row="${nested.id}"][data-layer-breakpoint="${tablet.breakpointId}"]`),
+    ).not.toBeNull();
+  });
 });

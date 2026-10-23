@@ -56,11 +56,15 @@ const LeftSidebar = observer(() => {
   // While the width handle is dragged the collapse transition is off, so the
   // edge follows the pointer instead of easing behind it.
   const [isResizingWidth, setIsResizingWidth] = useState(false);
+  // Off until the remembered width is applied, so a stored width does not
+  // animate in from the default on every editor load.
+  const [widthLoaded, setWidthLoaded] = useState(false);
 
   // The remembered width is read after mount (storage is browser-only, and
   // reading it during render would differ from the server render).
   useEffect(() => {
     editorUI.setLeftSidebarWidth(loadLeftSidebarWidth());
+    setWidthLoaded(true);
   }, [editorUI]);
 
   const commitWidth = useCallback((next: number) => {
@@ -149,7 +153,7 @@ const LeftSidebar = observer(() => {
     <div
       className={`
         relative bg-background border-r border-border flex flex-col h-[calc(100vh-4rem)]
-        ${isResizingWidth ? '' : 'transition-[width] duration-300 ease-in-out'}
+        ${widthLoaded && !isResizingWidth ? 'transition-[width] duration-300 ease-in-out' : ''}
         ${isCollapsed ? 'w-12' : ''}
       `}
       style={isCollapsed ? undefined : { width }}

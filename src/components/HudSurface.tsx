@@ -9,6 +9,7 @@ import { useTransformContext } from '@/contexts/TransformContext';
 import { EditorTool } from '../stores/EditorUIStore';
 import { getHistoryStore, getDragManager } from '../stores/RootStore';
 import type { ComponentInstance } from '../models/ComponentModel';
+import { isLockedOnCanvas } from '@/lib/layers/layerActions';
 import {
   createCrossViewportSelection,
   hasMultipleViewportAppearances,
@@ -326,7 +327,8 @@ const HudSurface = observer(() => {
       const groundWrapperId = `ground-wrapper-${editorUI.selectedComponent.id}`;
       const floatingElement = document.getElementById(groundWrapperId) as HTMLElement;
 
-      if (floatingElement) {
+      // A hidden floating element keeps its (display: none) wrapper: no overlay.
+      if (floatingElement && editorUI.selectedComponent.canvasVisible) {
         // Use getBoundingClientRect() to get real screen coordinates (like viewport components)
         const rect = floatingElement.getBoundingClientRect();
         const x = rect.left - 2;
@@ -346,7 +348,7 @@ const HudSurface = observer(() => {
 
         console.log('🎯 HudSurface: Floating element highlighted via GroundWrapper:', editorUI.selectedComponent.id);
         return;
-      } else {
+      } else if (!floatingElement) {
         console.warn('🚨 HudSurface: Could not find GroundWrapper for floating component:', editorUI.selectedComponent.id, 'with id:', groundWrapperId);
       }
     }
@@ -468,6 +470,9 @@ const HudSurface = observer(() => {
   // Read props here so MobX observer tracks the dependency
   const selectedProps = editorUI.selectedComponent?.props;
   const selectedVPProps = editorUI.selectedViewportNode?.props;
+  // Hiding the selection in the Layers panel removes its element: re-place
+  // (hide) the overlay.
+  const selectedCanvasVisible = editorUI.selectedComponent?.canvasVisible;
   // Breakpoint frames grow and shrink with their content (each measured by
   // ViewportFrame). Reading every frame's rendered height here makes this
   // observer re-run the overlay placement whenever a frame changes height,
@@ -477,7 +482,7 @@ const HudSurface = observer(() => {
     // Wait one frame for ComponentRenderer to apply new styles to the DOM
     const rafId = requestAnimationFrame(() => updateAllOverlays());
     return () => cancelAnimationFrame(rafId);
-  }, [selectedProps, selectedVPProps, frameLayoutKey, updateAllOverlays]);
+  }, [selectedProps, selectedVPProps, selectedCanvasVisible, frameLayoutKey, updateAllOverlays]);
 
   // ===== Resize interaction =====
   //
@@ -512,7 +517,8 @@ const HudSurface = observer(() => {
     }
 
     if (!target || !kind) return;
-    if (target.canvasLocked) return;
+    // Locked itself or inside a locked layer: the handles do nothing.
+    if (isLockedOnCanvas(target, id => editorUI.currentPage?.findComponent(id))) return;
 
     event.preventDefault();
     event.stopPropagation();
@@ -700,7 +706,8 @@ const HudSurface = observer(() => {
     }
 
     if (!target || !kind) return;
-    if (target.canvasLocked) return;
+    // Locked itself or inside a locked layer: the handles do nothing.
+    if (isLockedOnCanvas(target, id => editorUI.currentPage?.findComponent(id))) return;
 
     event.preventDefault();
     event.stopPropagation();
