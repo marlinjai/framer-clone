@@ -10,6 +10,7 @@ import { useStore } from '@/hooks/useStore';
 import { getDragManager } from '@/stores/RootStore';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { visibleRectInFrame } from '@/lib/canvas/viewportFrame';
+import { isLockedOnCanvas } from '@/lib/layers/layerActions';
 import {
   boxFromPoints,
   marqueeHitTest,
@@ -283,7 +284,9 @@ const CanvasInner = observer(() => {
 
     const hits = ids
       .map(id => page.findComponent(id))
-      .filter((c): c is ComponentInstance => !!c && c.id !== rootId && !c.isViewportNode);
+      .filter((c): c is ComponentInstance => !!c && c.id !== rootId && !c.isViewportNode)
+      // Locked layers (or layers inside a locked one) are never picked.
+      .filter(c => !isLockedOnCanvas(c, id => page.findComponent(id)));
 
     if (additive) {
       // Shift+drag adds to what is selected; an empty rectangle changes nothing.

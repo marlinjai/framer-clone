@@ -5,12 +5,26 @@
 //   - a drop target (same DragManager resolves drops when the cursor is over
 //     a row, via the data-inner-component-id attribute the resolver walks up
 //     to find)
+//   - foldable when it has children (chevron button; Alt+click folds or
+//     unfolds the whole subtree)
+//   - the home of the row actions: Hide / Show, Lock / Unlock, Delete, and a
+//     More menu with the same actions (also on right-click)
+//
+// Every control inside a row stops its pointerdown from reaching the row.
+// The row's drag source captures the pointer on pointerdown, and pointer
+// capture retargets the click that follows to the row, so without this a
+// button's onClick never fires (and pressing it could start a drag).
+//
+// Hide and lock semantics, and Delete's selection rules, live in
+// src/lib/layers/layerActions.ts; fold state rules in foldState.ts.
 'use client';
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import {
   ChevronRight,
   ChevronDown,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Eye,
   EyeOff,
   Lock,
@@ -27,19 +41,16 @@ import {
 import { useStore } from '@/hooks/useStore';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { useDragSource } from '@/lib/drag';
-
-/**
- * LayersPanel - Collapsible viewport trees (restored original functionality)
- *
- * Features:
- * - Each viewport (Desktop, Tablet, Mobile) as collapsible tree
- * - Shows app component tree within each viewport context
- * - Floating elements section
- * - Visibility and lock controls
- * - Selection integration with viewport context
- *
- * Uses EditorUIStore directly - no prop drilling
- */
+import { getHistoryStore } from '@/stores/RootStore';
+import {
+  collapseAll,
+  expandAll,
+  expandAncestors,
+  toggleFold,
+  toggleFoldSubtree,
+} from '@/lib/layers/foldState';
+import { ancestorIdsOf, canDeleteLayer, deleteLayer } from '@/lib/layers/layerActions';
+import { ContextMenu, type MenuItem, type MenuCloseReason } from './ContextMenu';
 
 // Map viewport label to device icon
 function ViewportIcon({ label }: { label: string }) {
@@ -53,12 +64,50 @@ function ViewportIcon({ label }: { label: string }) {
   return <Monitor size={15} className="text-muted-foreground flex-none" />;
 }
 
+// Get component icon based on type
+function getComponentIcon(component: ComponentInstance) {
+  switch (component.type) {
+    case 'img': return Image;
+    case 'button': return Square;
+    case 'div': return component.isViewportNode ? Square : Type;
+    default: return Type;
+  }
+}
+
+/** Keeps a press on a row control from reaching the row's drag source. */
+const stopPointer = (e: React.PointerEvent) => e.stopPropagation();
+
 const LayersPanel = observer(() => {
   const { editorUI } = useStore();
   const currentPage = editorUI.currentPage;
+  const panelRef = useRef<HTMLDivElement>(null);
+  const selectedId = editorUI.selectedComponent?.id;
 
-  // Track collapsed state for each viewport
-  const [collapsedViewports, setCollapsedViewports] = useState<Set<string>>(new Set());
+  // A selection made on the canvas reveals its row: every folded ancestor
+  // (and the breakpoint group it was picked in) opens, then the row scrolls
+  // into view. Keyed on the selected id only, so folding an ancestor of the
+  // current selection afterwards is not undone.
+  useEffect(() => {
+    const ui = editorUI;
+    const page = ui.currentPage;
+    const selected = ui.selectedComponent;
+    if (!page || !selected) return;
+    const ancestors = ancestorIdsOf(selected, id => page.findComponent(id));
+    const viewportId = ui.selectedViewportNode?.id;
+    ui.setCollapsedLayerIds(
+      expandAncestors(ui.collapsedLayerIds, viewportId ? [...ancestors, viewportId] : ancestors),
+    );
+    const breakpointId = ui.selectedViewportNode?.breakpointId;
+    const frame = requestAnimationFrame(() => {
+      const root = panelRef.current;
+      if (!root) return;
+      const rows = Array.from(root.querySelectorAll<HTMLElement>('[data-layer-row]'))
+        .filter(el => el.dataset.layerRow === selected.id);
+      const row = rows.find(el => !breakpointId || el.dataset.layerBreakpoint === breakpointId) ?? rows[0];
+      row?.scrollIntoView?.({ block: 'nearest' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [editorUI, selectedId]);
 
   if (!currentPage) {
     return (
@@ -68,32 +117,53 @@ const LayersPanel = observer(() => {
     );
   }
 
-  // Toggle viewport collapse state
+  const collapsed = editorUI.collapsedLayerIds;
+  const roots: ComponentInstance[] = [
+    ...(currentPage.appComponentTree ? [currentPage.appComponentTree as ComponentInstance] : []),
+    ...currentPage.floatingElements,
+  ];
+  const viewportIds = currentPage.viewportNodes.map(v => v.id);
+
   const toggleViewportCollapse = (viewportId: string) => {
-    const newCollapsed = new Set(collapsedViewports);
-    if (newCollapsed.has(viewportId)) {
-      newCollapsed.delete(viewportId);
-    } else {
-      newCollapsed.add(viewportId);
-    }
-    setCollapsedViewports(newCollapsed);
+    editorUI.setCollapsedLayerIds(toggleFold(collapsed, viewportId));
   };
 
-  // Get component icon based on type
-  const getComponentIcon = (component: ComponentInstance) => {
-    switch (component.type) {
-      case 'img': return Image;
-      case 'button': return Square;
-      case 'div': return component.isViewportNode ? Square : Type;
-      default: return Type;
-    }
+  // Collapse all folds every container row but keeps the breakpoint groups
+  // open, so each shows its top row. Expand all opens everything.
+  const onCollapseAll = () => editorUI.setCollapsedLayerIds(collapseAll(collapsed, roots));
+  const onExpandAll = () => {
+    const next = expandAll(collapsed, roots);
+    for (const id of viewportIds) next.delete(id);
+    editorUI.setCollapsedLayerIds(next);
   };
 
   return (
-    <div className="flex-1 overflow-auto py-0.5 px-2 pb-2">
+    <div ref={panelRef} className="flex-1 overflow-auto py-0.5 px-2 pb-2">
+      {/* Fold controls for the whole tree */}
+      <div className="flex items-center justify-end gap-0.5 pb-1">
+        <button
+          type="button"
+          title="Expand all layers"
+          aria-label="Expand all layers"
+          onClick={onExpandAll}
+          className="w-[22px] h-[22px] rounded-[5px] flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <ChevronsUpDown size={13} />
+        </button>
+        <button
+          type="button"
+          title="Collapse all layers"
+          aria-label="Collapse all layers"
+          onClick={onCollapseAll}
+          className="w-[22px] h-[22px] rounded-[5px] flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <ChevronsDownUp size={13} />
+        </button>
+      </div>
+
       {/* Viewport Trees - Each viewport as collapsible section */}
       {currentPage.viewportNodes.map(viewport => {
-        const isCollapsed = collapsedViewports.has(viewport.id);
+        const isCollapsed = collapsed.has(viewport.id);
         const breakpointWidth = viewport.breakpointMinWidth ?? 1280;
 
         return (
@@ -104,6 +174,9 @@ const LayersPanel = observer(() => {
               onClick={() => editorUI.setSelectedViewportNode(viewport)}
             >
               <button
+                type="button"
+                aria-expanded={!isCollapsed}
+                aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${viewport.label}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   toggleViewportCollapse(viewport.id);
@@ -141,7 +214,6 @@ const LayersPanel = observer(() => {
                   component={currentPage.appComponentTree}
                   depth={0}
                   breakpointId={viewport.breakpointId!}
-                  getIcon={getComponentIcon}
                 />
               </div>
             )}
@@ -173,7 +245,6 @@ const LayersPanel = observer(() => {
                 key={element.id}
                 component={element}
                 depth={0}
-                getIcon={getComponentIcon}
               />
             )}
           </div>
@@ -189,18 +260,28 @@ interface LayerNodeProps {
   component: ComponentInstance;
   depth: number;
   breakpointId?: string;
-  getIcon: (c: ComponentInstance) => React.ComponentType<{ size?: number; className?: string }>;
+  /** An ancestor is hidden on the canvas: the row is dimmed like its parent. */
+  hiddenByAncestor?: boolean;
 }
 
-const LayerNode = observer(({ component, depth, breakpointId, getIcon }: LayerNodeProps) => {
+const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor = false }: LayerNodeProps) => {
   const { editorUI } = useStore();
-  const IconComponent = getIcon(component);
+  const IconComponent = getComponentIcon(component);
   // Primary and extra (marquee / Shift+click) selections both highlight.
   const isSelected = editorUI.isSelected(component.id) &&
                     (!breakpointId || editorUI.selectedViewportNode?.breakpointId === breakpointId);
   const hasChildren = component.children.length > 0;
+  const isFolded = hasChildren && editorUI.collapsedLayerIds.has(component.id);
   const isDraggable = !component.isViewportNode && component.hasParent;
-  const isContainer = hasChildren;
+  const isHidden = !component.canvasVisible;
+  const isLocked = !!component.canvasLocked;
+  const isDimmed = isHidden || hiddenByAncestor;
+  const deletable = canDeleteLayer(component);
+  const name = component.displayName as string;
+
+  // Open row menu, at the cursor (right-click) or under the More button.
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
 
   // The row is both a drag source and (via data-inner-component-id) a drop
   // target: the resolver walks up from the pointer and hits this attribute
@@ -211,11 +292,61 @@ const LayerNode = observer(({ component, depth, breakpointId, getIcon }: LayerNo
     component,
   );
 
+  const onToggleFold = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    editorUI.setCollapsedLayerIds(
+      e.altKey
+        ? toggleFoldSubtree(editorUI.collapsedLayerIds, component)
+        : toggleFold(editorUI.collapsedLayerIds, component.id),
+    );
+  };
+
+  const onDelete = () => {
+    const page = editorUI.currentPage;
+    if (!page) return;
+    deleteLayer(page, editorUI, getHistoryStore(), component);
+  };
+
+  const menuItems: MenuItem[] = [
+    {
+      label: isHidden ? 'Show layer' : 'Hide layer',
+      icon: isHidden ? <Eye size={14} /> : <EyeOff size={14} />,
+      onClick: () => component.toggleCanvasVisibility(),
+    },
+    {
+      label: isLocked ? 'Unlock layer' : 'Lock layer',
+      icon: isLocked ? <Unlock size={14} /> : <Lock size={14} />,
+      onClick: () => component.toggleCanvasLock(),
+    },
+    ...(hasChildren
+      ? [{
+          label: isFolded ? 'Expand' : 'Collapse',
+          icon: isFolded ? <ChevronDown size={14} /> : <ChevronRight size={14} />,
+          onClick: () => editorUI.setCollapsedLayerIds(toggleFold(editorUI.collapsedLayerIds, component.id)),
+        }]
+      : []),
+    ...(deletable
+      ? [{ label: 'Delete layer', icon: <Trash2 size={14} />, onClick: onDelete, destructive: true }]
+      : []),
+  ];
+
+  // Stable, so the open menu's listeners (and its first-item focus) are not
+  // re-run when the row re-renders after an action.
+  const closeMenu = useCallback((reason: MenuCloseReason) => {
+    setMenu(null);
+    if (reason !== 'outside') moreButtonRef.current?.focus();
+  }, []);
+
+  const actionButtonClass =
+    'w-[22px] h-[22px] rounded-[5px] flex items-center justify-center text-muted-foreground hover:bg-background hover:text-foreground';
+
   return (
     <div>
       {/* Component Row: 28px, group for hover-reveal */}
       <div
         data-inner-component-id={component.id}
+        data-layer-row={component.id}
+        data-layer-breakpoint={breakpointId}
         onPointerDown={onPointerDown}
         className={`group flex items-center gap-1.5 h-[28px] px-1.5 rounded-[6px] cursor-pointer hover:bg-accent relative ${
           isSelected ? 'bg-brand/10' : ''
@@ -229,6 +360,11 @@ const LayerNode = observer(({ component, depth, breakpointId, getIcon }: LayerNo
           } else {
             editorUI.selectComponent(component, breakpointId);
           }
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setMenu({ x: e.clientX, y: e.clientY });
         }}
       >
         {/* Selection: 2px left rail */}
@@ -246,9 +382,20 @@ const LayerNode = observer(({ component, depth, breakpointId, getIcon }: LayerNo
           </span>
         )}
 
-        {/* Expand/Collapse chevron (only when row has children) */}
+        {/* Fold chevron (only when row has children). Alt+click folds or
+            unfolds every container below as well. */}
         {hasChildren ? (
-          <ChevronDown size={13} className="text-muted-foreground flex-none" />
+          <button
+            type="button"
+            aria-expanded={!isFolded}
+            aria-label={`${isFolded ? 'Expand' : 'Collapse'} ${name}`}
+            title={isFolded ? 'Expand (Alt+click: with all children)' : 'Collapse (Alt+click: with all children)'}
+            onPointerDown={stopPointer}
+            onClick={onToggleFold}
+            className="w-[13px] h-[13px] flex items-center justify-center flex-none text-muted-foreground hover:text-foreground"
+          >
+            {isFolded ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+          </button>
         ) : (
           <span style={{ width: '13px' }} className="flex-none" />
         )}
@@ -256,92 +403,109 @@ const LayerNode = observer(({ component, depth, breakpointId, getIcon }: LayerNo
         {/* Type icon: 14px, text-muted-foreground; selected gets text-brand */}
         <IconComponent
           size={14}
-          className={`flex-none ${isSelected ? 'text-brand' : 'text-muted-foreground'}`}
+          className={`flex-none ${isSelected ? 'text-brand' : 'text-muted-foreground'} ${isDimmed ? 'opacity-50' : ''}`}
         />
 
-        {/* Component name: 13px, truncate; selected gets text-brand + weight 500 */}
+        {/* Component name: 13px, truncate; selected gets text-brand + weight 500;
+            hidden rows (and rows inside a hidden one) are dimmed */}
         <span
-          className={`flex-1 truncate ${isSelected ? 'text-brand' : 'text-foreground'}`}
+          className={`flex-1 truncate ${isSelected ? 'text-brand' : 'text-foreground'} ${isDimmed ? 'opacity-50' : ''}`}
           style={{ fontSize: '13px', fontWeight: isSelected ? 500 : 400 }}
         >
-          {component.displayName}
+          {name}
         </span>
 
-        {/* Hover-revealed action cluster */}
-        <span className="hidden group-hover:flex items-center gap-0.5">
-          {/* Visibility: if hidden, show a dimmed EyeOff persistently */}
+        {/* Persistent state indicators, covered by the action cluster on hover */}
+        {(isHidden || isLocked) && (
+          <span className="flex items-center gap-1 flex-none text-muted-foreground" aria-hidden="true">
+            {isLocked && <Lock size={12} />}
+            {isHidden && <EyeOff size={12} />}
+          </span>
+        )}
+
+        {/* Action cluster: revealed on hover, and while a control inside has
+            keyboard focus (opacity, not display, so the buttons stay tabbable). */}
+        <span
+          className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 rounded-[5px] bg-accent opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto"
+        >
           <button
-            className="w-[22px] h-[22px] rounded-[5px] flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground"
+            type="button"
+            className={actionButtonClass}
+            title={isHidden ? 'Show layer' : 'Hide layer'}
+            aria-label={isHidden ? 'Show layer' : 'Hide layer'}
+            aria-pressed={isHidden}
+            onPointerDown={stopPointer}
             onClick={(e) => {
               e.stopPropagation();
               component.toggleCanvasVisibility();
             }}
           >
-            {component.canvasVisible ? (
-              <Eye size={13} />
-            ) : (
-              <EyeOff size={13} className="text-border" />
-            )}
+            {isHidden ? <EyeOff size={13} /> : <Eye size={13} />}
           </button>
 
-          {/* Lock */}
           <button
-            className="w-[22px] h-[22px] rounded-[5px] flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground"
+            type="button"
+            className={actionButtonClass}
+            title={isLocked ? 'Unlock layer' : 'Lock layer'}
+            aria-label={isLocked ? 'Unlock layer' : 'Lock layer'}
+            aria-pressed={isLocked}
+            onPointerDown={stopPointer}
             onClick={(e) => {
               e.stopPropagation();
               component.toggleCanvasLock();
             }}
           >
-            {component.canvasLocked ? (
-              <Lock size={13} />
-            ) : (
-              <Unlock size={13} />
-            )}
+            {isLocked ? <Lock size={13} /> : <Unlock size={13} />}
           </button>
 
-          {/* Container: overflow menu; leaf: delete */}
-          {isContainer ? (
+          {deletable && (
             <button
-              className="w-[22px] h-[22px] rounded-[5px] flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground"
-              title="More"
-              onClick={(e) => e.stopPropagation()}
+              type="button"
+              className={actionButtonClass}
+              title="Delete layer"
+              aria-label="Delete layer"
+              onPointerDown={stopPointer}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
             >
-              <MoreHorizontal size={13} />
+              <Trash2 size={13} />
             </button>
-          ) : (
-            !component.isViewportNode && component.hasParent && (
-              <button
-                className="w-[22px] h-[22px] rounded-[5px] flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground"
-                title="Delete"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const page = editorUI.currentPage;
-                  if (!page) return;
-                  page.deleteComponent(component.id);
-                }}
-              >
-                <Trash2 size={13} />
-              </button>
-            )
           )}
-        </span>
 
-        {/* Always-visible dimmed EyeOff for hidden elements (outside hover cluster) */}
-        {!component.canvasVisible && (
-          <span className="flex group-hover:hidden">
-            <EyeOff size={13} className="text-border" />
-          </span>
-        )}
+          <button
+            ref={moreButtonRef}
+            type="button"
+            className={actionButtonClass}
+            title="More layer actions"
+            aria-label="More layer actions"
+            aria-haspopup="menu"
+            aria-expanded={menu !== null}
+            onPointerDown={stopPointer}
+            onClick={(e) => {
+              e.stopPropagation();
+              const rect = e.currentTarget.getBoundingClientRect();
+              setMenu({ x: rect.left, y: rect.bottom + 4 });
+            }}
+          >
+            <MoreHorizontal size={13} />
+          </button>
+        </span>
       </div>
 
-      {/* Children - pass down breakpoint context */}
-      {hasChildren && component.children.map((child: ComponentInstance) =>
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} />
+      )}
+
+      {/* Children - pass down breakpoint context; folded rows hide them */}
+      {hasChildren && !isFolded && component.children.map((child: ComponentInstance) =>
         <LayerNode
           key={child.id}
           component={child}
           depth={depth + 1}
           breakpointId={breakpointId}
-          getIcon={getIcon}
+          hiddenByAncestor={isDimmed}
         />
       )}
     </div>

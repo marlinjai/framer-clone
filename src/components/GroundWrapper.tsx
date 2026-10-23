@@ -41,6 +41,10 @@ interface GroundWrapperProps {
 
   // Visibility
   visible?: boolean;
+
+  // Locked in the Layers panel: the pointer passes through to the canvas, so
+  // the element cannot be selected or dragged there.
+  locked?: boolean;
 }
 
 /**
@@ -70,6 +74,7 @@ const GroundWrapper = observer(forwardRef<HTMLDivElement, GroundWrapperProps>(fu
   onClick,
   onPointerDown,
   visible = true,
+  locked = false,
 }, ref) {
   // Build CSS transform string
   const transform = `translate(${x}px, ${y}px) scale(${scale}) rotate(${rotation}deg)`;
@@ -86,6 +91,7 @@ const GroundWrapper = observer(forwardRef<HTMLDivElement, GroundWrapperProps>(fu
     contain: 'layout style', // Performance optimization
     zIndex,
     display: visible ? 'block' : 'none',
+    ...(locked ? { pointerEvents: 'none' as const } : {}),
     // Explicit dimensions - critical for proper sizing (like Framer)
     width: typeof width === 'number' && width ? `${width}px` : 'auto',
     height: typeof height === 'number' && height ? `${height}px` : 'auto',

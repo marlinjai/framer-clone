@@ -263,8 +263,10 @@ const FloatingElement = observer(({
   scope,
 }: FloatingElementProps) => {
   const { editorUI } = useStore();
+  // Locked floating elements are not dragged from the canvas (the Layers
+  // panel still moves them).
   const { onPointerDown } = useDragSource(
-    { kind: 'moveNode', nodeId: element.id },
+    element.canvasLocked ? null : { kind: 'moveNode', nodeId: element.id },
     element,
   );
 
@@ -279,6 +281,7 @@ const FloatingElement = observer(({
       width={parsePxDim(element.props?.style?.width) ?? FLOATING_FALLBACK_WIDTH}
       height={parsePxDim(element.props?.style?.height) ?? FLOATING_FALLBACK_HEIGHT}
       visible={element.canvasVisible}
+      locked={element.canvasLocked}
       className="floating-element cursor-grab hover:cursor-grab"
       onClick={(e) => {
         e.stopPropagation();
