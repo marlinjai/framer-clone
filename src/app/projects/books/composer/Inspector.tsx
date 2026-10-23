@@ -7,8 +7,9 @@
 // when nothing is selected. Every control writes through `update` (one Immer
 // recipe per change, so each is one undo step; typing in one field is
 // coalesced by its key into one step). The values offered are exactly the
-// schema's bounded scales (template/schema.ts), so the inspector cannot
-// produce a document the schema refuses; the gate's rules (legal items and
+// schema's bounded scales (template/schema.ts); the one way to leave the
+// schema is a text emptied while retyping it, which the composer marks and
+// keeps out of the preview and the save until it is filled. The gate's rules (legal items and
 // columns that cannot be hidden, required sender columns) are shown as locked
 // controls with the reason, and its remaining problems are listed for the
 // selected block.
@@ -24,7 +25,7 @@ import React from 'react';
 
 import { Button } from '@/components/ui/button';
 import type { TemplateProblemView } from '@/lib/books/api';
-import { LEGAL_COLUMNS, LEGAL_META_ITEMS } from '@/server/books/template/rules';
+import { LEGAL_COLUMNS, LEGAL_META_ITEMS, SINGLETONS } from '@/server/books/template/rules';
 import { META_ITEMS, SENDER_COLUMNS, SIZE_SCALE, SPACING_SCALE, TABLE_COLUMNS, templateDocumentV2Schema } from '@/server/books/template/schema';
 
 import {
@@ -35,12 +36,15 @@ import {
   REGION_LABELS,
   SENDER_COLUMN_LABELS,
   addCellBlock,
+  allowedIn,
+  hasType,
   isRequired,
   locate,
   requiredReason,
   type Block,
   type BlockType,
   type CellBlock,
+  type RegionName,
   type TemplateDocumentV2,
 } from './doc';
 import { problemText } from './problems';
@@ -567,6 +571,7 @@ function ColumnsFields({ block, doc, update, onSelect }: { block: Extract<Block,
           </ul>
           {cell.blocks.length < 6 ? (
             <AddToCell
+              doc={doc}
               region={at?.region ?? 'body'}
               onAdd={(type) => {
                 let added: string | null = null;
@@ -576,7 +581,9 @@ function ColumnsFields({ block, doc, update, onSelect }: { block: Extract<Block,
                 if (added) onSelect(added);
               }}
             />
-          ) : null}
+          ) : (
+            <p className="text-xs text-muted-foreground">A cell holds at most six blocks.</p>
+          )}
           {block.cells.length > 2 ? (
             <Button size="sm" variant="ghost" onClick={() => update((d) => void blockOf(d, id, 'columns')!.cells.splice(ci, 1))}>
               Remove cell {ci + 1}
@@ -585,27 +592,39 @@ function ColumnsFields({ block, doc, update, onSelect }: { block: Extract<Block,
         </fieldset>
       ))}
       {block.cells.length < 4 ? (
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => update((d) => void blockOf(d, id, 'columns')!.cells.push({ width: Math.max(1, 12 - total) || 1, blocks: [] }))}
-        >
-          Add a cell
-        </Button>
+        total < 12 ? (
+          <Button size="sm" variant="outline" onClick={() => update((d) => void blockOf(d, id, 'columns')!.cells.push({ width: 12 - total, blocks: [] }))}>
+            Add a cell
+          </Button>
+        ) : (
+          <p className="text-xs text-muted-foreground">To add a cell, make one of the cells narrower first: the row is full.</p>
+        )
       ) : null}
     </div>
   );
 }
 
-function AddToCell({ region, onAdd }: { region: string; onAdd: (type: CellBlock['type']) => void }) {
-  const [type, setType] = React.useState<CellBlock['type']>('freeText');
-  const options = CELL_TYPES.map((t) => ({ value: t, label: BLOCK_INFO[t].label }));
+/** The block types this row's cells may still take: allowed in the row's region, and a single block only once. */
+function cellOptions(doc: TemplateDocumentV2, region: RegionName): CellBlock['type'][] {
+  return CELL_TYPES.filter((t) => allowedIn(t, region) && !(SINGLETONS.has(t) && hasType(doc, t)));
+}
+
+function AddToCell({ doc, region, onAdd }: { doc: TemplateDocumentV2; region: RegionName; onAdd: (type: CellBlock['type']) => void }) {
+  const options = cellOptions(doc, region);
+  const [chosen, setChosen] = React.useState<CellBlock['type']>('freeText');
+  const type = options.includes(chosen) ? chosen : options[0];
+  if (!type) return <p className="text-xs text-muted-foreground">Nothing more can go into a cell here.</p>;
   return (
     <div className="flex items-end gap-2">
       <div className="flex-1">
-        <SelectField label="Add to this cell" value={type} options={options} onChange={(v) => setType(v as CellBlock['type'])} />
+        <SelectField
+          label="Add to this cell"
+          value={type}
+          options={options.map((t) => ({ value: t, label: BLOCK_INFO[t].label }))}
+          onChange={(v) => setChosen(v as CellBlock['type'])}
+        />
       </div>
-      <Button size="sm" variant="outline" onClick={() => onAdd(type)} aria-label={`Add ${BLOCK_INFO[type].label} to this cell (${region})`}>
+      <Button size="sm" variant="outline" onClick={() => onAdd(type)} aria-label={`Add ${BLOCK_INFO[type].label} to this cell`}>
         Add
       </Button>
     </div>

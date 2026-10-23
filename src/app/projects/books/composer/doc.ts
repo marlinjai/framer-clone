@@ -8,9 +8,15 @@
 // (`useUndoableState`).
 //
 // Where a block may stand, which blocks are required and which may occur only
-// once come from the save gate's own rules (template/rules.ts), so the
-// composer never offers a move the gate would refuse. Required blocks move and
-// restyle but are never removed here; the gate is still the authority on save.
+// once (per document, or the title once per region) come from the save gate's
+// own rules (template/rules.ts), so the composer never adds or moves a block
+// where the gate would refuse it, never moves the required instance out of its
+// required region, and never removes a required block. The gate's ORDER rules
+// (totals after the line table, the tax note right after the totals, the
+// return line above the address) are deliberately not enforced on a move:
+// reordering often passes through such a state (move the table, then the
+// totals), so a broken order shows live in the problems list next to the
+// block, and the gate refuses it on save.
 
 import { ALLOWED_REGIONS, REQUIRED, SINGLETONS } from '@/server/books/template/rules';
 import {
@@ -132,6 +138,7 @@ export function isRequired(type: BlockType, region?: RegionName): boolean {
 export function requiredReason(type: BlockType): string {
   if (type === 'senderColumns') return 'Required: the sender’s tax number is printed here, so the sender columns stay in the footer.';
   if (type === 'recipient') return 'Required: the recipient stays in the address field so a window envelope shows it.';
+  if (type === 'taxNote') return 'Required: printed whenever the document has a small-business or reverse-charge note. It can move and change style, not be removed.';
   return `Required by law on every invoice: the ${BLOCK_INFO[type].label.toLowerCase()} can move and change style, not be removed.`;
 }
 
@@ -206,10 +213,16 @@ export function blockAllowedIn(block: Block, region: RegionName): boolean {
   return block.type !== 'columns' || block.cells.every((c) => c.blocks.every((b) => allowedIn(b.type, region)));
 }
 
+/** The gate allows one title per region: the body's and the page 2 header's. */
+function regionHasTitle(doc: TemplateDocumentV2, region: RegionName, except?: string): boolean {
+  return regionList(doc, region).some((b) => b.type === 'title' && b.id !== except);
+}
+
 /** Whether a block of this type can be added to the region, and if not, why. */
 export function canAdd(doc: TemplateDocumentV2, type: BlockType, region: RegionName): { ok: true } | { ok: false; reason: string } {
   if (!allowedIn(type, region)) return { ok: false, reason: `Not allowed in the ${REGION_LABELS[region].toLowerCase()}.` };
   if (SINGLETONS.has(type) && hasType(doc, type)) return { ok: false, reason: 'Already in the template.' };
+  if (type === 'title' && regionHasTitle(doc, region)) return { ok: false, reason: 'This region has its title already.' };
   if (regionList(doc, region).length >= 30) return { ok: false, reason: 'This region holds the most blocks it can (30).' };
   return { ok: true };
 }
@@ -316,19 +329,34 @@ export function removeBlock(draft: TemplateDocumentV2, blockId: string): boolean
   return true;
 }
 
-/** Move a top-level block to `region` at `index` (counted after it is taken out). Returns whether it moved. */
-export function moveBlock(draft: TemplateDocumentV2, blockId: string, region: RegionName, index: number): boolean {
-  const at = locate(draft, blockId);
-  if (!at || at.cell) return false;
-  if (!blockAllowedIn(at.block, region)) return false;
-  const from = regionList(draft, at.region);
-  const [block] = from.splice(at.index, 1);
-  const to = regionList(draft, region);
-  if (region !== at.region && to.length >= 30) {
-    from.splice(at.index, 0, block);
-    return false;
+/** Why a top-level block may not move to `region`, or null when it may. */
+export function moveRefusal(doc: TemplateDocumentV2, blockId: string, region: RegionName): string | null {
+  const at = locate(doc, blockId);
+  if (!at || at.cell) return 'Only blocks outside a columns row move between regions.';
+  const label = BLOCK_INFO[at.block.type].label;
+  if (!blockAllowedIn(at.block, region)) return `${label} cannot stand in the ${REGION_LABELS[region].toLowerCase()}.`;
+  if (region === at.region) return null;
+  if (isRequired(at.block.type, at.region) && !isRequired(at.block.type, region)) {
+    return `${label} is required in the ${REGION_LABELS[at.region].toLowerCase()} and stays there.`;
   }
-  to.splice(Math.max(0, Math.min(index, to.length)), 0, block);
+  if (at.block.type === 'title' && regionHasTitle(doc, region)) return `The ${REGION_LABELS[region].toLowerCase()} has its title already.`;
+  if (regionList(doc, region).length >= 30) return `The ${REGION_LABELS[region].toLowerCase()} holds the most blocks it can (30).`;
+  return null;
+}
+
+/**
+ * Move a top-level block to `region` at `index` (counted after it is taken
+ * out). Returns whether it moved; a refused move or one that changes nothing
+ * leaves the draft untouched (so it adds no undo step and starts no preview).
+ */
+export function moveBlock(draft: TemplateDocumentV2, blockId: string, region: RegionName, index: number): boolean {
+  if (moveRefusal(draft, blockId, region) !== null) return false;
+  const at = locate(draft, blockId)!;
+  const to = regionList(draft, region);
+  const target = Math.max(0, Math.min(index, region === at.region ? to.length - 1 : to.length));
+  if (region === at.region && target === at.index) return false;
+  const [block] = regionList(draft, at.region).splice(at.index, 1);
+  to.splice(target, 0, block);
   return true;
 }
 
@@ -357,12 +385,7 @@ export function moveByStep(draft: TemplateDocumentV2, blockId: string, delta: -1
   const order = REGIONS.indexOf(at.region);
   for (let r = order + delta; r >= 0 && r < REGIONS.length; r += delta) {
     const region = REGIONS[r];
-    if (blockAllowedIn(at.block, region)) return moveBlock(draft, blockId, region, delta === 1 ? 0 : regionList(draft, region).length);
+    if (moveRefusal(draft, blockId, region) === null) return moveBlock(draft, blockId, region, delta === 1 ? 0 : regionList(draft, region).length);
   }
   return false;
-}
-
-/** Every top-level block in reading order (region by region), for keyboard navigation. */
-export function readingOrder(doc: TemplateDocumentV2): Array<{ region: RegionName; block: Block }> {
-  return REGIONS.flatMap((region) => regionList(doc, region).map((block) => ({ region, block })));
 }

@@ -43,7 +43,6 @@ import {
   type TemplateVersionView,
   type TemplateView,
 } from '@/lib/books/api';
-import { date } from '@/lib/books/units';
 import { templateDocumentV2Schema } from '@/server/books/template/schema';
 
 import { ErrorAlert, errorText } from '../ui';
@@ -56,6 +55,7 @@ import {
   locate,
   moveBlock,
   moveByStep,
+  moveRefusal,
   regionList,
   removeBlock,
   requiredReason,
@@ -68,7 +68,7 @@ import Outline from './Outline';
 import PdfCanvas, { type ColumnResize } from './PdfCanvas';
 import { problemText } from './problems';
 import { usePreview } from './usePreview';
-import { clearWorkingCopy, readWorkingCopy, resumeDecision, writeWorkingCopy, type WorkingCopy } from './workingCopy';
+import { clearWorkingCopy, hasDocumentShape, readWorkingCopy, resumeDecision, writeWorkingCopy, type WorkingCopy } from './workingCopy';
 
 /** The fictional sample documents of the preview (the save gate's probes). */
 export const SAMPLES: Array<{ variant: string; label: string }> = [
@@ -132,6 +132,7 @@ export default function TemplateComposer({ id }: { id: string }) {
     <Composer
       key={`${template.id}:${generation}`}
       template={template}
+      focusOnMount={generation > 0}
       onReload={async () => {
         await load();
         setGeneration((g) => g + 1);
@@ -140,7 +141,7 @@ export default function TemplateComposer({ id }: { id: string }) {
   );
 }
 
-function Composer({ template, onReload }: { template: TemplateView; onReload: () => Promise<void> }) {
+function Composer({ template, onReload, focusOnMount }: { template: TemplateView; onReload: () => Promise<void>; focusOnMount: boolean }) {
   const initial = template.document as TemplateDocumentV2;
   const { state: doc, update: rawUpdate, undo, redo, canUndo, canRedo } = useUndoableState<TemplateDocumentV2>(initial, {
     limit: 100,
@@ -149,6 +150,8 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
   const [base, setBase] = useState({ id: template.currentVersionId, version: template.version });
   const [saved, setSaved] = useState<string>(() => normalized(initial));
   const [name, setName] = useState(template.name);
+  const [savedName, setSavedName] = useState(template.name);
+  const skipRename = useRef(false);
   const [isDefault, setIsDefault] = useState(template.isDefault);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [targetRegion, setTargetRegion] = useState<RegionName>('body');
@@ -162,15 +165,21 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
   const [versions, setVersions] = useState<TemplateVersionView[] | null>(null);
   const [documents, setDocuments] = useState<DocumentListItem[] | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
+  const [pageInView, setPageInView] = useState(1);
   const [resume, setResume] = useState<{ kind: 'restored' | 'stale'; copy: WorkingCopy } | null>(null);
+  const [docsError, setDocsError] = useState(false);
   const resumeSettled = useRef(false);
   const inspectorRef = useRef<HTMLElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const announceTimer = useRef<number | undefined>(undefined);
 
   const announce = useCallback((text: string) => {
     // Re-announce the same sentence: clear first, then set.
     setAnnouncement('');
-    window.setTimeout(() => setAnnouncement(text), 30);
+    window.clearTimeout(announceTimer.current);
+    announceTimer.current = window.setTimeout(() => setAnnouncement(text), 30);
   }, []);
+  useEffect(() => () => window.clearTimeout(announceTimer.current), []);
 
   const update: Update = useCallback(
     (recipe, coalesceKey) => rawUpdate((d) => recipe(d as TemplateDocumentV2), coalesceKey ? { coalesceKey } : undefined),
@@ -190,15 +199,16 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
       resumeSettled.current = true;
       return;
     }
-    const valid = templateDocumentV2Schema.safeParse(decision.copy.document);
-    if (!valid.success) {
+    // A copy may end mid-edit with a field the schema refuses (an emptied text): it is restored as it is and the
+    // preview waits for the field. Only a copy the composer cannot even show (not a template document) is dropped.
+    if (!hasDocumentShape(decision.copy.document)) {
       clearWorkingCopy(template.id);
       resumeSettled.current = true;
       return;
     }
     if (decision.kind === 'restore') {
       // As one step, so Undo returns to the saved version.
-      rawUpdate(valid.data);
+      rawUpdate(decision.copy.document as TemplateDocumentV2);
       setResume({ kind: 'restored', copy: decision.copy });
       resumeSettled.current = true;
     } else {
@@ -206,6 +216,15 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
       setResume({ kind: 'stale', copy: decision.copy });
     }
     // Once per opened template.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // After "Load the newest version" the composer is new: focus goes to the offer of the earlier edits, or the name.
+  useEffect(() => {
+    if (!focusOnMount) return;
+    const offer = window.document.querySelector<HTMLButtonElement>('[data-resume-offer] button');
+    (offer ?? nameRef.current)?.focus();
+    // Once, after the first render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -248,11 +267,13 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
   }, [loadVersions]);
 
   async function loadDocuments() {
-    if (documents) return;
+    if (documents && !docsError) return;
     try {
+      setDocsError(false);
       setDocuments((await booksApi.documents()).items);
-    } catch (err) {
-      setError(errorText(err));
+    } catch {
+      // The samples still work; the list says the documents could not be read, and opening it again retries.
+      setDocsError(true);
     }
   }
 
@@ -297,7 +318,7 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
     }
   }
 
-  function remove(blockId: string) {
+  function remove(blockId: string, fromKeyboard = false) {
     const at = locate(doc, blockId);
     if (!at) return;
     const type = at.cell ? at.cell.block.type : at.block.type;
@@ -310,19 +331,28 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
     const neighbour = at.cell ? at.cell.rowId : (list[at.index + 1] ?? list[at.index - 1])?.id ?? null;
     update((d) => void removeBlock(d, blockId));
     setSelectedId(neighbour);
+    // The removed block's row is gone: keyboard focus moves to the block that took the selection.
+    if (fromKeyboard && neighbour) refocus.current = { announce: false };
     announce(`${BLOCK_INFO[type].label} removed. Undo with Ctrl+Z or Cmd+Z.`);
   }
 
   function move(blockId: string, region: RegionName, index: number) {
     const at = locate(doc, blockId);
+    if (!at) return;
+    const refusal = moveRefusal(doc, blockId, region);
+    if (refusal) {
+      announce(refusal);
+      return;
+    }
     let moved = false;
     update((d) => {
       moved = moveBlock(d, blockId, region, index);
     });
-    if (moved && at) announce(`${BLOCK_INFO[at.block.type].label} moved${region !== at.region ? ` to the ${REGION_LABELS[region].toLowerCase()}` : ''}.`);
+    if (moved) announce(`${BLOCK_INFO[at.block.type].label} moved${region !== at.region ? ` to the ${REGION_LABELS[region].toLowerCase()}` : ''}.`);
   }
 
-  function step(delta: -1 | 1) {
+  /** One step up or down (Alt+Up and Alt+Down, or the inspector's buttons); from the keyboard, focus follows the block. */
+  function step(delta: -1 | 1, fromKeyboard = false) {
     if (!selectedId) return;
     const before = locate(doc, selectedId);
     if (!before) return;
@@ -332,17 +362,41 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
     });
     const label = BLOCK_INFO[(before.cell?.block ?? before.block).type].label;
     if (!moved) announce(`${label} cannot move further ${delta < 0 ? 'up' : 'down'}.`);
+    else if (fromKeyboard) refocus.current = { announce: true };
+    else announcePosition(selectedId);
   }
 
-  // After a keyboard move the row is drawn anew: keep focus on the moved block's name.
-  const refocus = useRef(false);
+  function announcePosition(blockId: string) {
+    // Read on the next render, when the document holds the move.
+    window.setTimeout(() => {
+      const at = locate(docRef.current, blockId);
+      if (at) announce(`${BLOCK_INFO[(at.cell?.block ?? at.block).type].label}, ${REGION_LABELS[at.region].toLowerCase()}, position ${(at.cell?.index ?? at.index) + 1}.`);
+    }, 0);
+  }
+
+  // After a keyboard move or delete the row is drawn anew: focus goes to the selected block's name. Set only when
+  // something actually changed, so a refused move never pulls focus away later.
+  const refocus = useRef<{ announce: boolean } | null>(null);
+  const docRef = useRef(doc);
+  docRef.current = doc;
   useEffect(() => {
-    if (!refocus.current || !selectedId) return;
-    refocus.current = false;
-    window.document.querySelector<HTMLButtonElement>(`[data-outline-select="${CSS.escape(selectedId)}"]`)?.focus();
-    const at = locate(doc, selectedId);
-    if (at) announce(`${BLOCK_INFO[(at.cell?.block ?? at.block).type].label}, ${REGION_LABELS[at.region].toLowerCase()}, position ${(at.cell?.index ?? at.index) + 1}.`);
-  }, [doc, selectedId, announce]);
+    const pending = refocus.current;
+    if (!pending || !selectedId) return;
+    refocus.current = null;
+    Array.from(window.document.querySelectorAll<HTMLButtonElement>('[data-outline-select]'))
+      .find((b) => b.dataset.outlineSelect === selectedId)
+      ?.focus();
+    if (pending.announce) announcePosition(selectedId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc, selectedId]);
+
+  // Enter on a block in the outline: select it, then (once the inspector shows it) focus its first control.
+  const focusInspector = useRef(false);
+  useEffect(() => {
+    if (!focusInspector.current) return;
+    focusInspector.current = false;
+    inspectorRef.current?.querySelector<HTMLElement>('input, select, textarea, button')?.focus();
+  }, [selectedId]);
 
   function dropOn(blockId: string, targetId: string, after: boolean) {
     const from = locate(doc, blockId);
@@ -402,16 +456,17 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
 
   async function rename(next: string) {
     const trimmed = next.trim();
-    if (!trimmed || trimmed === template.name) {
-      setName(template.name);
+    if (!trimmed || trimmed === savedName) {
+      setName(savedName);
       return;
     }
     try {
       const result = await booksApi.updateTemplate(template.id, { name: trimmed });
       setName(result.name);
+      setSavedName(result.name);
       announce(`Renamed to ${result.name}.`);
     } catch (err) {
-      setName(template.name);
+      setName(savedName);
       setError(errorText(err));
     }
   }
@@ -445,11 +500,15 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key.toLowerCase() === 's') {
       e.preventDefault();
-      void save();
+      if (resume?.kind !== 'stale') void save();
       return;
     }
     // In a text field the browser's own undo applies to the text being typed.
     if (editable) return;
+    // On an outline drag handle the keys belong to the drag (Space, arrows, Escape while a block is picked up).
+    if (t.closest('[data-drag-handle]')) return;
+    // While earlier edits are offered, nothing changes the document until the user has chosen.
+    if (resume?.kind === 'stale') return;
     if (mod && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       if (e.shiftKey) {
@@ -464,13 +523,12 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
     }
     if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && selectedId) {
       e.preventDefault();
-      refocus.current = true;
-      step(e.key === 'ArrowUp' ? -1 : 1);
+      step(e.key === 'ArrowUp' ? -1 : 1, true);
       return;
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
       e.preventDefault();
-      remove(selectedId);
+      remove(selectedId, true);
       return;
     }
     if (e.key === 'Escape' && selectedId) {
@@ -517,12 +575,21 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
           value={name}
           maxLength={80}
           className="rounded-md border border-transparent px-2 py-1 text-lg font-semibold hover:border-gray-300 focus:border-gray-400"
+          ref={nameRef}
           onChange={(e) => setName(e.target.value)}
-          onBlur={(e) => void rename(e.target.value)}
+          onBlur={(e) => {
+            // Escape cancels: the blur it causes must not save what was typed.
+            if (skipRename.current) {
+              skipRename.current = false;
+              return;
+            }
+            void rename(e.target.value);
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
             if (e.key === 'Escape') {
-              setName(template.name);
+              skipRename.current = true;
+              setName(savedName);
               (e.target as HTMLInputElement).blur();
             }
           }}
@@ -545,7 +612,7 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
           <Button size="sm" variant="outline" onClick={redo} disabled={!canRedo} aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y">
             Redo
           </Button>
-          <Button size="sm" onClick={() => void save()} disabled={saving || !dirty} aria-keyshortcuts="Control+S Meta+S">
+          <Button size="sm" onClick={() => void save()} disabled={saving || !dirty || resume?.kind === 'stale'} aria-keyshortcuts="Control+S Meta+S">
             {saving ? 'Saving…' : 'Save'}
           </Button>
         </span>
@@ -566,17 +633,17 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
           </div>
         ) : null}
         {resume?.kind === 'stale' ? (
-          <div role="alert" className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
+          <div role="alert" data-resume-offer className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
             <span>
               Unsaved changes from {formatTime(resume.copy.savedAt)} are kept in this browser. They were made on version {resume.copy.baseVersion}; version{' '}
-              {base.version} was saved since. Applying them replaces what the newer version changed when you save.
+              {base.version} was saved since. Applying them replaces what the newer version changed when you save. Choose first: editing waits until
+              then.
             </span>
             <Button
               size="sm"
               variant="outline"
               onClick={() => {
-                const valid = templateDocumentV2Schema.safeParse(resume.copy.document);
-                if (valid.success) rawUpdate(valid.data);
+                rawUpdate(resume.copy.document as TemplateDocumentV2);
                 setResume(null);
                 resumeSettled.current = true;
                 announce('The earlier changes are applied. Save to keep them.');
@@ -612,7 +679,7 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
             <p className="font-medium">Some fields need a value before the preview can update:</p>
             <ul className="list-disc pl-5">
               {parsed.error.issues.slice(0, 5).map((issue, i) => (
-                <li key={i}>{issueText(doc, issue.path, issue.message)}</li>
+                <li key={i}>{issueText(doc, issue.path, issue.code, issue.message)}</li>
               ))}
             </ul>
           </div>
@@ -638,7 +705,11 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
         ) : null}
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-auto lg:grid-cols-[16rem_1fr_20rem] lg:overflow-hidden">
+      {/* While earlier edits are offered (stale working copy) the panels wait for the choice, so nothing is lost between the two. */}
+      <div
+        inert={resume?.kind === 'stale'}
+        className="grid min-h-0 flex-1 grid-cols-1 overflow-auto lg:grid-cols-[16rem_1fr_20rem] lg:overflow-hidden"
+      >
         <nav aria-label="Blocks" className="overflow-y-auto border-r p-3">
           <Outline
             doc={doc}
@@ -650,7 +721,15 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
             onAdd={add}
             onMove={move}
             onRefused={announce}
-            onOpenInspector={() => inspectorRef.current?.querySelector<HTMLElement>('input, select, textarea, button')?.focus()}
+            onOpenInspector={(blockId) => {
+              focusInspector.current = true;
+              select(blockId);
+              // Already selected: no render follows, so focus now.
+              if (blockId === selectedId) {
+                focusInspector.current = false;
+                inspectorRef.current?.querySelector<HTMLElement>('input, select, textarea, button')?.focus();
+              }
+            }}
           />
         </nav>
 
@@ -676,8 +755,9 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
                     </option>
                   ))}
                 </optgroup>
-                <optgroup label="Your documents">
-                  {documents === null ? <option disabled>Loading…</option> : null}
+                <optgroup label="Your newest documents">
+                  {docsError ? <option disabled>Your documents could not be loaded. Open this list again to retry.</option> : null}
+                  {documents === null && !docsError ? <option disabled>Loading…</option> : null}
                   {documents?.length === 0 ? <option disabled>No documents yet</option> : null}
                   {documents?.map((d) => (
                     <option key={d.id} value={`document:${d.id}`}>
@@ -698,7 +778,11 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
                 ))}
               </select>
             </label>
-            {pageCount > 0 ? <span className="text-muted-foreground">{pageCount === 1 ? '1 page' : `${pageCount} pages`}</span> : null}
+            {pageCount > 0 ? (
+              <span className="text-muted-foreground">
+                Page {Math.min(pageInView, pageCount)} of {pageCount}
+              </span>
+            ) : null}
             {/* Visual only: every edit refreshes the preview, and the live region says what matters. */}
             <span className="ml-auto text-muted-foreground">
               {status}
@@ -734,12 +818,13 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
                 preview.markDrawn(n);
               }}
               onError={setDrawError}
+              onPageInView={setPageInView}
             />
           </div>
         </section>
 
         <aside aria-labelledby="inspector-title" ref={inspectorRef} className="overflow-y-auto border-l p-3">
-          <Inspector doc={doc} selectedId={selectedId} update={update} problems={problems} onSelect={select} onRemove={remove} onStep={step} />
+          <Inspector doc={doc} selectedId={selectedId} update={update} problems={problems} onSelect={select} onRemove={(id) => remove(id)} onStep={(d) => step(d)} />
           <Versions versions={versions} />
         </aside>
       </div>
@@ -757,7 +842,7 @@ function Versions({ versions }: { versions: TemplateVersionView[] | null }) {
         <ul className="flex flex-col gap-1 pt-2">
           {versions.map((v) => (
             <li key={v.id}>
-              Version {v.version} of {date(v.createdAt)}
+              Version {v.version} of {localDate(v.createdAt)}
               {v.current ? ' (current)' : ''}, {v.documentCount === 0 ? 'no issued documents' : `used by ${v.documentCount} ${v.documentCount === 1 ? 'document' : 'documents'}`}
             </li>
           ))}
@@ -789,6 +874,14 @@ function openPdf(b64: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+/** A timestamp's calendar day where the user is (a save after midnight in Germany is on the German date). */
+function localDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+}
+
 function formatTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return 'earlier';
@@ -797,7 +890,7 @@ function formatTime(iso: string): string {
 }
 
 /** A schema issue named by the block it concerns ("Text: enter a text"). */
-function issueText(doc: TemplateDocumentV2, path: ReadonlyArray<PropertyKey>, message: string): string {
+function issueText(doc: TemplateDocumentV2, path: ReadonlyArray<PropertyKey>, code: string, message: string): string {
   const keys = path.map(String);
   let label = 'The template';
   if (keys[0] === 'regions') {
@@ -811,6 +904,6 @@ function issueText(doc: TemplateDocumentV2, path: ReadonlyArray<PropertyKey>, me
     label = 'Page and theme';
   }
   const field = keys[keys.length - 1];
-  if (field === 'text' && /least|empty|1/.test(message)) return `${label}: enter a text, or remove the block.`;
+  if (field === 'text' && code === 'too_small') return `${label}: enter a text, or remove the block.`;
   return `${label} (${field}): ${message}.`;
 }

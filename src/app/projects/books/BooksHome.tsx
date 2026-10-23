@@ -47,14 +47,14 @@ const BLOCKING = new Set([
   'books_not_provisioned',
 ]);
 
-export default function BooksHome() {
+/** The tab a link asks for (the template composer's way back: ?tab=templates), else the documents. */
+export function tabFrom(value: string | string[] | undefined): Tab {
+  return value === 'customers' || value === 'templates' ? value : 'documents';
+}
+
+export default function BooksHome({ initialTab = 'documents' }: { initialTab?: Tab } = {}) {
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>('documents');
-  // A link may open a tab directly (the template composer's way back: ?tab=templates).
-  useEffect(() => {
-    const wanted = new URLSearchParams(window.location.search).get('tab');
-    if (wanted === 'customers' || wanted === 'templates') setTab(wanted);
-  }, []);
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [blocked, setBlocked] = useState<BooksApiError | null>(null);
   // The documents' filters: the typed number (applied after a short pause) and the issue year.

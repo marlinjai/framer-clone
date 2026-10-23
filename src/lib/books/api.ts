@@ -139,9 +139,8 @@ export interface TemplateView {
   currentVersionId: string;
   version: number;
   document: unknown;
-  /** The current version's accent colour and small print, as the templates form edits them. */
+  /** The current version's accent colour (the templates list's swatch). */
   accentColor: string;
-  footerBlocks: Array<{ heading?: string | null; text: string }>;
   defaultIntroText: string | null;
   defaultOutroText: string | null;
 }

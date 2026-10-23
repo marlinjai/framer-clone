@@ -28,10 +28,10 @@ import {
   PALETTE_ORDER,
   REGION_LABELS,
   REGIONS,
-  blockAllowedIn,
   canAdd,
   isRequired,
   locate,
+  moveRefusal,
   regionList,
   requiredReason,
   type BlockType,
@@ -58,8 +58,8 @@ export interface OutlineProps {
   onMove: (blockId: string, region: RegionName, index: number) => void;
   /** A refused move, said through the composer's live region. */
   onRefused: (message: string) => void;
-  /** Enter on a block: move focus to the inspector. */
-  onOpenInspector: () => void;
+  /** Enter on a block: select it and move focus to the inspector. */
+  onOpenInspector: (blockId: string) => void;
 }
 
 export default function Outline(props: OutlineProps) {
@@ -84,8 +84,9 @@ export default function Outline(props: OutlineProps) {
       onRefused(`${BLOCK_INFO[at.block.type].label} stays in a region. Drop it inside one.`);
       return;
     }
-    if (!blockAllowedIn(at.block, region)) {
-      onRefused(`${BLOCK_INFO[at.block.type].label} cannot stand in the ${REGION_LABELS[region].toLowerCase()}.`);
+    const refusal = moveRefusal(doc, move.leafId, region);
+    if (refusal) {
+      onRefused(refusal);
       return;
     }
     onMove(move.leafId, region, move.index);
@@ -97,7 +98,8 @@ export default function Outline(props: OutlineProps) {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End' && e.key !== 'Enter') return;
     if (e.key === 'Enter') {
       e.preventDefault();
-      onOpenInspector();
+      const id = e.currentTarget.dataset.outlineSelect;
+      if (id) onOpenInspector(id);
       return;
     }
     const buttons = Array.from(list.current?.querySelectorAll<HTMLButtonElement>('[data-outline-select]') ?? []);
@@ -159,7 +161,7 @@ export default function Outline(props: OutlineProps) {
                     {closed.map(({ type, check }) => (
                       <li key={type} className="flex items-baseline gap-1">
                         <span className="font-medium text-gray-700">{BLOCK_INFO[type].label}</span>
-                        {isRequired(type) ? (
+                        {isRequired(type, targetRegion) ? (
                           <>
                             <Lock aria-hidden className="size-3 self-center text-gray-600" />
                             <span className="sr-only">(required)</span>
@@ -221,6 +223,7 @@ export default function Outline(props: OutlineProps) {
                 <button
                   type="button"
                   {...dragHandleProps}
+                  data-drag-handle
                   aria-label={`Move ${label}`}
                   className="flex size-6 shrink-0 cursor-grab items-center justify-center rounded text-gray-500 hover:text-gray-800 focus-visible:outline-2 focus-visible:outline-blue-600"
                 >

@@ -5,8 +5,7 @@
 // DELETE /api/books/templates/<id> -> 204
 //
 // PATCH changes the template row (name, default, locale, default texts) and its
-// layout: a whole `document`, or the phase 3 form's `accentColor` and
-// `footerBlocks`. A changed layout is saved as the next version only when the
+// layout: a whole `document` (the composer's). A changed layout is saved as the next version only when the
 // save gate passes (422 `template_invalid` with the named problems); with
 // `baseVersionId` a newer saved version refuses the edit (409
 // `concurrent_edit`). `isDefault: true` makes this the company's default and

@@ -308,8 +308,23 @@ describe('the template composer: resume', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('a stored copy the schema refuses is dropped, never applied', async () => {
-    storeCopy(1, (d) => (d.theme.fontFamily = 'comic-sans'));
+  it('a copy that ended mid-edit (an emptied text) is restored with the preview paused; one that is not a template is dropped', async () => {
+    storeCopy(1, (d) => {
+      d.regions.body.splice(1, 0, { id: 'freeText', type: 'freeText', style: {}, heading: null, text: '', variant: 'normal' });
+      d.regions.body[0].style.sizePt = 20;
+    });
+    server(baseRoutes());
+    render(<TemplateComposer id="tpl1" />);
+    await screen.findByDisplayValue('Hausvorlage');
+    expect(await screen.findByText(/Your unsaved changes from .* are back/)).toBeTruthy();
+    expect(screen.getByText('Text: enter a text, or remove the block.')).toBeTruthy();
+    expect(calls.some((c) => c.url.endsWith('/preview'))).toBe(false);
+    cleanup();
+
+    window.localStorage.setItem(
+      'books-composer:tpl1',
+      JSON.stringify({ format: 1, baseVersionId: 'v1', baseVersion: 1, document: { v: 2, regions: { body: [{ id: 'x', type: 'hologram', style: {} }] } }, savedAt: '2026-10-23T08:15:00.000Z' }),
+    );
     server(baseRoutes());
     render(<TemplateComposer id="tpl1" />);
     await opened();
@@ -349,3 +364,174 @@ describe('the template composer: re-entry', () => {
     expect(screen.getByRole('link', { name: 'Back to the templates' }).getAttribute('href')).toBe('/projects/books?tab=templates');
   });
 });
+
+describe('the template composer: keyboard', () => {
+  const order = () => Array.from(document.querySelectorAll('[data-outline-select]')).map((b) => b.getAttribute('data-outline-select'));
+
+  it('Alt+Up and Alt+Down move the selected block, keep focus on it and say where it is', async () => {
+    server(baseRoutes());
+    render(<TemplateComposer id="tpl1" />);
+    await opened();
+    const row = selectInOutline('introText');
+    row.focus();
+    fireEvent.keyDown(row, { key: 'ArrowUp', altKey: true });
+    expect(order().indexOf('introText')).toBeLessThan(order().indexOf('title'));
+    await waitFor(() => expect(document.activeElement?.getAttribute('data-outline-select')).toBe('introText'));
+    await waitFor(() => expect(live()).toBe('Intro text, body, position 1.'));
+  });
+
+  it('a refused Alt+Up says so and never pulls focus away later', async () => {
+    server(baseRoutes());
+    render(<TemplateComposer id="tpl1" />);
+    await opened();
+    // The recipient may stand only in the address field, below the return line it may not pass.
+    const row = selectInOutline('recipient');
+    row.focus();
+    fireEvent.keyDown(row, { key: 'ArrowDown', altKey: true });
+    await waitFor(() => expect(live()).toBe('Recipient cannot move further down.'));
+    // Typing in an inspector field afterwards keeps the focus there.
+    selectInOutline('title');
+    const size = screen.getByLabelText('Text size');
+    size.focus();
+    fireEvent.change(size, { target: { value: '20' } });
+    expect(document.activeElement).toBe(size);
+  });
+
+  it('Delete on a block moves focus to the block that takes the selection', async () => {
+    server(baseRoutes());
+    render(<TemplateComposer id="tpl1" />);
+    await opened();
+    const row = selectInOutline('paymentDetails');
+    row.focus();
+    fireEvent.keyDown(row, { key: 'Delete' });
+    await waitFor(() => expect(document.activeElement?.getAttribute('data-outline-select')).toBe('outroText'));
+  });
+
+  it('Enter on a block selects it and opens its inspector; Escape returns to page and theme', async () => {
+    server(baseRoutes());
+    render(<TemplateComposer id="tpl1" />);
+    await opened();
+    const row = document.querySelector<HTMLButtonElement>('[data-outline-select="totals"]')!;
+    row.focus();
+    fireEvent.keyDown(row, { key: 'Enter' });
+    expect(screen.getByRole('heading', { name: 'Totals' })).toBeTruthy();
+    await waitFor(() => expect(document.querySelector('aside')!.contains(document.activeElement)).toBe(true));
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.getByRole('heading', { name: 'Page and theme' })).toBeTruthy();
+  });
+
+  it('Cmd+S saves from anywhere, a text field included', async () => {
+    server({ ...baseRoutes(), 'PATCH /api/books/templates/tpl1': (body) => ({ status: 200, body: template(2, body!.document) }) });
+    render(<TemplateComposer id="tpl1" />);
+    await opened();
+    selectInOutline('title');
+    const size = screen.getByLabelText('Text size');
+    fireEvent.change(size, { target: { value: '20' } });
+    fireEvent.keyDown(size, { key: 's', metaKey: true });
+    await waitFor(() => expect(header()).toContain('Version 2'));
+  });
+
+  it('a drag handle keeps its keys: Delete there removes nothing', async () => {
+    server(baseRoutes());
+    render(<TemplateComposer id="tpl1" />);
+    await opened();
+    selectInOutline('paymentDetails');
+    const handle = screen.getByRole('button', { name: 'Move Payment details' });
+    handle.focus();
+    fireEvent.keyDown(handle, { key: 'Delete' });
+    expect(document.querySelector('[data-outline-select="paymentDetails"]')).not.toBeNull();
+  });
+});
+
+describe('the template composer: name, cells and the offer of earlier edits', () => {
+  it('Escape cancels a rename; renaming back to the first name is saved', async () => {
+    let name = 'Hausvorlage';
+    server({
+      ...baseRoutes(),
+      'GET /api/books/templates/tpl1': () => ({ status: 200, body: { ...template(1), name } }),
+      'PATCH /api/books/templates/tpl1': (body) => {
+        name = body!.name;
+        return { status: 200, body: { ...template(1), name } };
+      },
+    });
+    render(<TemplateComposer id="tpl1" />);
+    await opened();
+    const input = screen.getByLabelText('Template name') as HTMLInputElement;
+    input.focus();
+    fireEvent.change(input, { target: { value: 'Typo' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+    fireEvent.blur(input);
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+    await waitFor(() => expect(input.value).toBe('Hausvorlage'));
+
+    fireEvent.change(input, { target: { value: 'Blau' } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(name).toBe('Blau'));
+    fireEvent.change(input, { target: { value: 'Hausvorlage' } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(name).toBe('Hausvorlage'));
+  });
+
+  it('a columns row offers only blocks its region allows, and a full row cannot take another cell', async () => {
+    server(baseRoutes());
+    render(<TemplateComposer id="tpl1" />);
+    await opened();
+    selectInOutline('title');
+    fireEvent.click(screen.getByRole('button', { name: 'Columns' }));
+    expect(screen.getByRole('heading', { name: 'Columns' })).toBeTruthy();
+    const options = Array.from((screen.getAllByLabelText('Add to this cell')[0] as HTMLSelectElement).options).map((o) => o.textContent);
+    // A body row: no logo (it may not stand in the body), no second payment details.
+    expect(options).toEqual(['Text', 'Payment QR code', 'Space', 'Line']);
+    expect(screen.getByText('To add a cell, make one of the cells narrower first: the row is full.')).toBeTruthy();
+  });
+
+  it('while earlier edits are offered, the panels and saving wait for the choice', async () => {
+    const doc = preset('klassisch') as unknown as Json;
+    doc.regions.body[0].style.sizePt = 20;
+    window.localStorage.setItem(
+      'books-composer:tpl1',
+      JSON.stringify({ format: 1, baseVersionId: 'v1', baseVersion: 1, document: doc, savedAt: '2026-10-23T08:15:00.000Z' }),
+    );
+    server(baseRoutes(2));
+    render(<TemplateComposer id="tpl1" />);
+    await screen.findByDisplayValue('Hausvorlage');
+    await screen.findByText(/They were made on version 1/);
+    expect(document.querySelector('[inert]')).not.toBeNull();
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Discard them' }));
+    expect(document.querySelector('[inert]')).toBeNull();
+  });
+});
+
+describe('the template composer: re-entry after a save', () => {
+  it('opening the template again after a save starts clean: the saved version, no notice, nothing to undo', async () => {
+    let stored: unknown = preset('klassisch');
+    let version = 1;
+    server({
+      ...baseRoutes(),
+      'GET /api/books/templates/tpl1': () => ({ status: 200, body: template(version, stored) }),
+      'PATCH /api/books/templates/tpl1': (body) => {
+        version += 1;
+        stored = body!.document;
+        return { status: 200, body: template(version, stored) };
+      },
+    });
+    const first = render(<TemplateComposer id="tpl1" />);
+    await opened();
+    selectInOutline('title');
+    fireEvent.change(screen.getByLabelText('Text size'), { target: { value: '20' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(header()).toContain('Version 2'));
+    first.unmount();
+
+    render(<TemplateComposer id="tpl1" />);
+    await opened();
+    expect(header()).toContain('Version 2');
+    expect(header()).not.toContain('unsaved');
+    expect(screen.queryByText(/are back/)).toBeNull();
+    expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true);
+    selectInOutline('title');
+    expect((screen.getByLabelText('Text size') as HTMLSelectElement).value).toBe('20');
+  });
+});
+

@@ -5,8 +5,8 @@
 //
 // The company's document templates (Books plan phase 3, versioned by the
 // visual template composer plan): layout only. Each answer carries the current
-// version's template document (model version 2) and, for the phase 3 form,
-// its accent colour and small-print footer blocks. POST starts from a preset
+// version's template document (model version 2) and its accent colour (the
+// list's swatch). POST starts from a preset
 // (`preset`: klassisch, modern or kompakt; Klassisch by default) or a whole
 // `document`, and saves version 1 only when the save gate passes (422
 // `template_invalid` with the named problems). Sender, tax status and number

@@ -15,11 +15,16 @@
 // (committed on release, so one drag is one undo step; the inspector has the
 // same widths as numbers).
 //
-// New pages are drawn into fresh canvases and swapped in only when all of them
-// are ready, so a refresh never flashes an empty page; while a newer preview is
-// on its way the current pages are dimmed.
+// Pages are drawn into fresh canvases and swapped in only once the pages in
+// view are ready, so a refresh never flashes an empty page; while a newer
+// preview is on its way the current pages are dimmed. Only the pages near the
+// viewport are drawn (a page below scrolls into view and is drawn then), and
+// the pixel ratio is capped, so a long document cannot exhaust the browser's
+// canvas memory. One PDF is kept open at a time and closed when replaced.
+// A drag in the overlay reorders within one page; across pages the outline
+// (or Alt+Up and Alt+Down) moves a block.
 
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type { LayoutMapView, LayoutRectView } from '@/lib/books/api';
 
@@ -27,6 +32,10 @@ import { COLUMN_LABELS } from './doc';
 
 /** CSS pixels per PDF point at 100 % (96 dpi screen, 72 points per inch). */
 const PX_PER_PT = 96 / 72;
+/** Sharp enough on a retina screen; a higher ratio only costs memory. */
+const MAX_PIXEL_RATIO = 2;
+/** How far outside the viewport a page is drawn ahead of scrolling to it. */
+const AHEAD = '800px 0px';
 /** The order of the line table's columns, left to right (schema.ts TABLE_COLUMNS). */
 const TABLE_ORDER = ['pos', 'title', 'quantity', 'unit', 'unitPrice', 'rate', 'amount'] as const;
 type TableColumn = (typeof TABLE_ORDER)[number];
@@ -55,8 +64,10 @@ export interface PdfCanvasProps {
   /** A block dropped onto another block of its region: before or after it. */
   onDrop: (blockId: string, targetId: string, after: boolean) => void;
   onColumnResize: (resize: ColumnResize) => void;
-  /** All pages of the answer `counter` are on screen. */
+  /** The pages in view of the answer `counter` are on screen. */
   onDrawn: (counter: number) => void;
+  /** The page mostly in view (for "Page n of m"). */
+  onPageInView?: (page: number) => void;
   /** Drawing failed (a broken PDF or pdf.js could not load). */
   onError: (message: string) => void;
 }
@@ -66,6 +77,10 @@ let pdfjsPromise: Promise<PdfJs> | null = null;
 
 /** pdf.js, loaded once and only in the browser, with its worker from the same bundle. */
 function loadPdfJs(): Promise<PdfJs> {
+  // pdf.js 4 needs Promise.withResolvers (Safari 17.4, Chrome 119, Firefox 121 and newer); say so instead of failing obscurely.
+  if (typeof (Promise as { withResolvers?: unknown }).withResolvers !== 'function') {
+    return Promise.reject(new Error('this browser is too old to draw the preview. Update it, or use "Open the preview as PDF".'));
+  }
   pdfjsPromise ??= import('pdfjs-dist').then((pdfjs) => {
     pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
     return pdfjs;
@@ -80,45 +95,72 @@ function base64ToBytes(b64: string): Uint8Array {
   return out;
 }
 
-export default function PdfCanvas(props: PdfCanvasProps) {
-  const { pdf, counter, layout, zoom, dimmed, selectedId, labelOf, isMovable, onSelect, onDrop, onColumnResize, onDrawn, onError } = props;
-  const [pages, setPages] = useState<HTMLCanvasElement[]>([]);
-  const [drawnLayout, setDrawnLayout] = useState<LayoutMapView | null>(null);
-  const scale = zoom * PX_PER_PT;
-  const callbacks = useRef({ onDrawn, onError });
-  callbacks.current = { onDrawn, onError };
+type PdfDoc = Awaited<ReturnType<PdfJs['getDocument']>['promise']>;
 
-  // Draw a new answer (or the same one at a new zoom) into fresh canvases, then swap.
+interface Drawn {
+  doc: PdfDoc;
+  counter: number;
+  layout: LayoutMapView;
+  scale: number;
+  canvases: Map<number, HTMLCanvasElement>;
+}
+
+/** Draw one page at a scale into a new canvas. */
+async function drawPage(doc: PdfDoc, n: number, scale: number): Promise<HTMLCanvasElement> {
+  const ratio = Math.min(MAX_PIXEL_RATIO, typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1);
+  const page = await doc.getPage(n);
+  const viewport = page.getViewport({ scale: scale * ratio });
+  const canvas = window.document.createElement('canvas');
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  canvas.style.width = `${Math.floor(viewport.width / ratio)}px`;
+  canvas.style.height = `${Math.floor(viewport.height / ratio)}px`;
+  canvas.setAttribute('aria-hidden', 'true');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('This browser cannot draw the preview (no canvas).');
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  return canvas;
+}
+
+export default function PdfCanvas(props: PdfCanvasProps) {
+  const { pdf, counter, layout, zoom, dimmed, selectedId, labelOf, isMovable, onSelect, onDrop, onColumnResize, onDrawn, onError, onPageInView } = props;
+  const [drawn, setDrawn] = useState<Drawn | null>(null);
+  const scale = zoom * PX_PER_PT;
+  const callbacks = useRef({ onDrawn, onError, onPageInView });
+  callbacks.current = { onDrawn, onError, onPageInView };
+  const drawnRef = useRef<Drawn | null>(null);
+  drawnRef.current = drawn;
+  /** Pages near the viewport, kept by the pages' observers. */
+  const near = useRef(new Set<number>([1]));
+  const inView = useRef(new Map<number, number>());
+
+  // A new answer (or a new zoom): open it, draw the pages near the viewport, then swap and close the old one.
   useEffect(() => {
     if (!pdf || counter === null || !layout) return;
     let cancelled = false;
-    const ratio = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
     (async () => {
+      const previous = drawnRef.current;
+      const sameDoc = previous && previous.counter === counter ? previous.doc : null;
       const pdfjs = await loadPdfJs();
-      const doc = await pdfjs.getDocument({ data: base64ToBytes(pdf), isEvalSupported: false }).promise;
+      const doc = sameDoc ?? (await pdfjs.getDocument({ data: base64ToBytes(pdf), isEvalSupported: false }).promise);
       try {
-        const fresh: HTMLCanvasElement[] = [];
-        for (let n = 1; n <= doc.numPages; n++) {
-          const page = await doc.getPage(n);
-          const viewport = page.getViewport({ scale: scale * ratio });
-          const canvas = window.document.createElement('canvas');
-          canvas.width = Math.floor(viewport.width);
-          canvas.height = Math.floor(viewport.height);
-          canvas.style.width = `${Math.floor(viewport.width / ratio)}px`;
-          canvas.style.height = `${Math.floor(viewport.height / ratio)}px`;
-          canvas.setAttribute('aria-hidden', 'true');
-          const ctx = canvas.getContext('2d');
-          if (!ctx) throw new Error('This browser cannot draw the preview (no canvas).');
-          await page.render({ canvasContext: ctx, viewport }).promise;
-          if (cancelled) return;
-          fresh.push(canvas);
+        const wanted = [...near.current].filter((n) => n >= 1 && n <= doc.numPages);
+        const canvases = new Map<number, HTMLCanvasElement>();
+        for (const n of wanted.length > 0 ? wanted : [1]) {
+          const canvas = await drawPage(doc, n, scale);
+          if (cancelled) break;
+          canvases.set(n, canvas);
         }
-        if (cancelled) return;
-        setPages(fresh);
-        setDrawnLayout(layout);
+        if (cancelled) {
+          if (!sameDoc) void doc.destroy();
+          return;
+        }
+        setDrawn({ doc, counter, layout, scale, canvases });
+        if (previous && previous.doc !== doc) void previous.doc.destroy();
         callbacks.current.onDrawn(counter);
-      } finally {
-        void doc.destroy();
+      } catch (err) {
+        if (!sameDoc) void doc.destroy();
+        throw err;
       }
     })().catch((err: unknown) => {
       if (!cancelled) callbacks.current.onError(err instanceof Error ? err.message : 'The preview could not be drawn.');
@@ -128,8 +170,34 @@ export default function PdfCanvas(props: PdfCanvasProps) {
     };
   }, [pdf, counter, layout, scale]);
 
-  const shown = drawnLayout;
-  if (!shown || pages.length === 0) {
+  // Close the open PDF when the composer goes.
+  useEffect(() => () => void drawnRef.current?.doc.destroy(), []);
+
+  /** How much of a page is in view: the page mostly in view is the one "Page n of m" names. */
+  const onSeen = useCallback((page: number, ratio: number) => {
+    if (ratio > 0) inView.current.set(page, ratio);
+    else inView.current.delete(page);
+    const top = [...inView.current.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+    if (top) callbacks.current.onPageInView?.(top[0]);
+  }, []);
+
+  /** A page came near the viewport (or left it): draw it if it is not drawn yet. */
+  const onNear = useCallback((page: number, isNear: boolean) => {
+    if (isNear) near.current.add(page);
+    else near.current.delete(page);
+    const current = drawnRef.current;
+    if (!isNear || !current || current.canvases.has(page) || page > current.doc.numPages) return;
+    void drawPage(current.doc, page, current.scale)
+      .then((canvas) => {
+        // Still the same answer and zoom: add the page.
+        setDrawn((d) => (d && d.doc === current.doc && d.scale === current.scale ? { ...d, canvases: new Map(d.canvases).set(page, canvas) } : d));
+      })
+      .catch(() => {
+        // A page that fails to draw stays blank; the next refresh draws it again.
+      });
+  }, []);
+
+  if (!drawn) {
     return (
       <div className="flex h-64 items-center justify-center text-sm text-muted-foreground" role="status">
         {pdf ? 'Drawing the preview…' : 'Loading the preview…'}
@@ -137,22 +205,25 @@ export default function PdfCanvas(props: PdfCanvasProps) {
     );
   }
 
+  const pageCount = drawn.layout.pageCount;
   return (
     <div className={`flex flex-col items-center gap-6 transition-opacity ${dimmed ? 'opacity-60' : 'opacity-100'}`}>
-      {pages.map((canvas, i) => (
+      {Array.from({ length: pageCount }, (_, i) => (
         <PageView
           key={i}
-          canvas={canvas}
+          canvas={drawn.canvases.get(i + 1) ?? null}
           page={i + 1}
-          pageCount={pages.length}
-          layout={shown}
-          scale={scale}
+          pageCount={pageCount}
+          layout={drawn.layout}
+          scale={drawn.scale}
           selectedId={selectedId}
           labelOf={labelOf}
           isMovable={isMovable}
           onSelect={onSelect}
           onDrop={onDrop}
           onColumnResize={onColumnResize}
+          onNear={onNear}
+          onSeen={onSeen}
         />
       ))}
     </div>
@@ -160,7 +231,8 @@ export default function PdfCanvas(props: PdfCanvasProps) {
 }
 
 interface PageViewProps {
-  canvas: HTMLCanvasElement;
+  /** Null until the page has been drawn (it is not near the viewport yet). */
+  canvas: HTMLCanvasElement | null;
   page: number;
   pageCount: number;
   layout: LayoutMapView;
@@ -171,6 +243,8 @@ interface PageViewProps {
   onSelect: (blockId: string | null) => void;
   onDrop: (blockId: string, targetId: string, after: boolean) => void;
   onColumnResize: (resize: ColumnResize) => void;
+  onNear: (page: number, isNear: boolean) => void;
+  onSeen: (page: number, ratio: number) => void;
 }
 
 interface DragState {
@@ -183,15 +257,31 @@ interface DragState {
   target: { id: string; after: boolean } | null;
 }
 
-function PageView({ canvas, page, pageCount, layout, scale, selectedId, labelOf, isMovable, onSelect, onDrop, onColumnResize }: PageViewProps) {
+function PageView({ canvas, page, pageCount, layout, scale, selectedId, labelOf, isMovable, onSelect, onDrop, onColumnResize, onNear, onSeen }: PageViewProps) {
   const host = useRef<HTMLDivElement>(null);
+  const frame = useRef<HTMLDivElement>(null);
+
+  // Tell the canvas when this page comes near the viewport (to draw it) and how much of it is in view.
+  useEffect(() => {
+    const el = frame.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const near = new IntersectionObserver(([e]) => onNear(page, e.isIntersecting), { rootMargin: AHEAD });
+    const seen = new IntersectionObserver(([e]) => onSeen(page, e.isIntersecting ? e.intersectionRatio : 0), { threshold: [0, 0.25, 0.5, 0.75, 1] });
+    near.observe(el);
+    seen.observe(el);
+    return () => {
+      near.disconnect();
+      seen.disconnect();
+    };
+  }, [page, onNear, onSeen]);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [resize, setResize] = useState<{ blockId: string; column: TableColumn; x: number; fromX: number; pointerStart: number; widthPt: number } | null>(null);
 
   useLayoutEffect(() => {
     const el = host.current;
     if (!el) return;
-    el.replaceChildren(canvas);
+    if (canvas) el.replaceChildren(canvas);
+    else el.replaceChildren();
   }, [canvas]);
 
   const rects = layout.blocks.filter((r) => r.page === page);
@@ -273,7 +363,7 @@ function PageView({ canvas, page, pageCount, layout, scale, selectedId, labelOf,
   }
 
   return (
-    <div className="relative shadow-md ring-1 ring-black/10" style={{ width, height }}>
+    <div ref={frame} className="relative bg-white shadow-md ring-1 ring-black/10" style={{ width, height }}>
       <div ref={host} className="absolute inset-0" />
       <div
         data-page-overlay

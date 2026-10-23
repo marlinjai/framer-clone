@@ -16,10 +16,10 @@
 // current one, in one transaction, only after the save gate passes
 // (template/gate.ts: the structural rules and the probe render).
 //
-// The templates form of phase 3 keeps working on top until the composer
-// (phase 4): it edits the accent colour and up to four footer blocks of small
-// print, which are read from and written into the current version's document
-// (the theme's accent; the small-print text blocks at the end of the body).
+// The layout is edited only as a whole document, by the visual composer
+// (phase 4, /projects/books/templates/<id>); the phase 3 form's partial edits
+// (accent colour, small print) are gone with it. A template is created from a
+// preset or a whole document.
 //
 // Rules: names are unique among a company's live templates
 // (DUPLICATE_TEMPLATE); at most one default per company (making one the
@@ -40,18 +40,10 @@ import type { BooksScope } from '../scope';
 import { storedTemplateDocumentSchema, toJsonb, type TemplateSnapshotV2 } from '../snapshots';
 import { assertTemplateSavable } from '../template/gate';
 import { klassisch, PRESETS, preset } from '../template/presets';
-import { templateDocumentV2Schema, templateLogo, type Block, type TemplateDocumentV2 } from '../template/schema';
+import { templateDocumentV2Schema, templateLogo, type TemplateDocumentV2 } from '../template/schema';
 import { templateAssets } from './assets';
 
 type Db = Kysely<CommerceDB> | Transaction<CommerceDB>;
-
-/** One footer block of the phase 3 form: a short heading and a few lines of small print. */
-export const footerBlockSchema = z.object({
-  heading: z.string().trim().max(60).nullable().optional(),
-  text: z.string().trim().min(1).max(400),
-});
-export type FooterBlock = z.infer<typeof footerBlockSchema>;
-const footerBlocksInput = z.array(footerBlockSchema).max(4);
 
 export interface DocumentTemplate {
   id: string;
@@ -62,10 +54,8 @@ export interface DocumentTemplate {
   currentVersionId: string;
   version: number;
   document: TemplateDocumentV2;
-  /** The phase 3 form's view of the document: the theme's accent colour. */
+  /** The current version's accent colour (the templates list shows it as a swatch). */
   accentColor: string;
-  /** The phase 3 form's view of the document: the small-print text blocks. */
-  footerBlocks: Array<{ heading: string | null; text: string }>;
   defaultIntroText: string | null;
   defaultOutroText: string | null;
   createdAt: Date;
@@ -114,13 +104,6 @@ function selectTemplates(db: Db, scope: BooksScope) {
     .where('t.tenant_id', '=', scope.tenantId);
 }
 
-/** The small-print blocks of a document (the phase 3 form's footer blocks). */
-function smallPrintOf(doc: TemplateDocumentV2): Array<{ heading: string | null; text: string }> {
-  return doc.regions.body
-    .filter((b): b is Extract<Block, { type: 'freeText' }> => b.type === 'freeText' && b.variant === 'smallPrint')
-    .map((b) => ({ heading: b.heading, text: b.text }));
-}
-
 function mapTemplate(row: TemplateRow): DocumentTemplate {
   // A stored version is read with the shape check only (snapshots.ts): a later, stricter schema never hides it.
   const document = storedTemplateDocumentSchema.parse(row.document);
@@ -133,7 +116,6 @@ function mapTemplate(row: TemplateRow): DocumentTemplate {
     version: row.version,
     document,
     accentColor: document.theme.accent,
-    footerBlocks: smallPrintOf(document),
     defaultIntroText: row.default_intro_text,
     defaultOutroText: row.default_outro_text,
     createdAt: row.created_at,
@@ -141,46 +123,11 @@ function mapTemplate(row: TemplateRow): DocumentTemplate {
   };
 }
 
-/**
- * The document with the phase 3 form's edits applied: the accent colour (null
- * is the preset's own) and the small print, which replaces the existing
- * small-print blocks at the end of the body.
- */
-function withFormEdits(
-  doc: TemplateDocumentV2,
-  edits: { accentColor?: string | null; footerBlocks?: FooterBlock[] },
-): TemplateDocumentV2 {
-  const next = structuredClone(doc);
-  if (edits.accentColor !== undefined) next.theme.accent = edits.accentColor ?? klassisch().theme.accent;
-  if (edits.footerBlocks !== undefined) {
-    const kept = next.regions.body.filter((b) => !(b.type === 'freeText' && b.variant === 'smallPrint'));
-    const used = new Set(kept.map((b) => b.id));
-    let n = 0;
-    const nextId = () => {
-      do n += 1;
-      while (used.has(`smallPrint${n}`));
-      return `smallPrint${n}`;
-    };
-    next.regions.body = [
-      ...kept,
-      ...edits.footerBlocks.map(
-        (b): Block => ({ id: nextId(), type: 'freeText', style: {}, heading: b.heading ?? null, text: b.text, variant: 'smallPrint' }),
-      ),
-    ];
-  }
-  return next;
-}
-
 const optionalText = z.string().trim().max(4000).nullable().optional();
 const fields = {
   name: z.string().trim().min(1).max(100),
   isDefault: z.boolean(),
   locale: z.enum(['de-DE']),
-  accentColor: z
-    .string()
-    .regex(/^#[0-9a-fA-F]{6}$/, 'expected a colour such as #1a2b3c')
-    .nullable(),
-  footerBlocks: footerBlocksInput,
   defaultIntroText: optionalText,
   defaultOutroText: optionalText,
 };
@@ -193,8 +140,6 @@ const createInput = z
     /** The starting layout: a preset (Klassisch when neither is given), or a whole document. */
     preset: z.enum(PRESETS).optional(),
     document: z.unknown().optional(),
-    accentColor: fields.accentColor.optional(),
-    footerBlocks: fields.footerBlocks.optional(),
     defaultIntroText: fields.defaultIntroText,
     defaultOutroText: fields.defaultOutroText,
   })
@@ -211,16 +156,10 @@ const updateInput = z
     document: z.unknown().optional(),
     /** The version the edit was made on: a newer saved version refuses it (CONCURRENT_EDIT). */
     baseVersionId: z.string().min(1).optional(),
-    accentColor: fields.accentColor.optional(),
-    footerBlocks: fields.footerBlocks.optional(),
     defaultIntroText: fields.defaultIntroText,
     defaultOutroText: fields.defaultOutroText,
   })
-  .strict()
-  .refine((v) => v.document === undefined || (v.accentColor === undefined && v.footerBlocks === undefined), {
-    message: 'give a document or the accent colour and footer blocks, not both',
-    path: ['document'],
-  });
+  .strict();
 export type UpdateTemplateInput = z.input<typeof updateInput>;
 
 /** JSON with sorted keys: a stored document comes back from JSONB in Postgres' key order, not the schema's. */
@@ -300,28 +239,27 @@ export async function listTemplateVersions(scope: BooksScope, templateId: string
     .executeTakeFirst();
   if (!template) throw new BooksError('TEMPLATE_NOT_FOUND', 'TEMPLATE_NOT_FOUND', { templateId });
   const rows = await scope.db
-    .selectFrom('document_template_version as v')
-    .select((eb) => [
-      'v.id',
-      'v.version',
-      'v.created_at',
-      eb
-        .selectFrom('sales_document as d')
-        .select((c) => c.fn.countAll<string>().as('n'))
-        .where('d.tenant_id', '=', scope.tenantId)
-        .where(sql<string>`d.template_snapshot->>'templateVersionId'`, '=', eb.ref('v.id'))
-        .as('document_count'),
-    ])
-    .where('v.tenant_id', '=', scope.tenantId)
-    .where('v.template_id', '=', templateId)
-    .orderBy('v.version', 'desc')
+    .selectFrom('document_template_version')
+    .select(['id', 'version', 'created_at'])
+    .where('tenant_id', '=', scope.tenantId)
+    .where('template_id', '=', templateId)
+    .orderBy('version', 'desc')
     .execute();
+  // One pass over the company's documents of this template, counted per frozen version.
+  const counts = await scope.db
+    .selectFrom('sales_document')
+    .select((eb) => [sql<string>`template_snapshot->>'templateVersionId'`.as('version_id'), eb.fn.countAll<string>().as('n')])
+    .where('tenant_id', '=', scope.tenantId)
+    .where(sql<string>`template_snapshot->>'templateId'`, '=', templateId)
+    .groupBy(sql`template_snapshot->>'templateVersionId'`)
+    .execute();
+  const used = new Map(counts.map((c) => [c.version_id, Number(c.n)]));
   return rows.map((r) => ({
     id: r.id,
     version: r.version,
     createdAt: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
     current: r.id === template.current_version_id,
-    documentCount: Number(r.document_count ?? 0),
+    documentCount: used.get(r.id) ?? 0,
   }));
 }
 
@@ -361,9 +299,8 @@ export async function createTemplate(scope: BooksScope, input: CreateTemplateInp
   const parsed = createInput.safeParse(input);
   if (!parsed.success) throw invalid('INVALID_INPUT', parsed.error.issues);
   const args = parsed.data;
-  const base = args.document !== undefined ? parseDocument(args.document) : preset(args.preset ?? 'klassisch');
-  // Every written version passes the strict schema.
-  const document = parseDocument(withFormEdits(base, { accentColor: args.accentColor, footerBlocks: args.footerBlocks }));
+  // Every written version passes the strict schema (a preset does by construction; the gate proves it below).
+  const document = args.document !== undefined ? parseDocument(args.document) : preset(args.preset ?? 'klassisch');
   // The save gate runs before anything is written (it renders the probe documents with the company's logo).
   await assertTemplateSavable(document, await templateAssets(scope.db, scope, document));
   const id = randomUUID();
@@ -429,13 +366,12 @@ export async function updateTemplate(
   if (!parsed.success) throw invalid('INVALID_INPUT', parsed.error.issues);
   const args = parsed.data;
   const newDocument = args.document !== undefined ? parseDocument(args.document) : undefined;
-  const formEdit = args.accentColor !== undefined || args.footerBlocks !== undefined;
 
   // The gate renders seven probe documents: run it before the transaction, on
   // the layout the edit produces from the version it was made on, and check
   // under the lock that this version is still the current one.
   let candidate: { base: string; document: TemplateDocumentV2 } | null = null;
-  if (newDocument || formEdit) {
+  if (newDocument) {
     const current = await getTemplate(scope, id);
     if (args.baseVersionId && args.baseVersionId !== current.currentVersionId) {
       throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the template has a newer version', {
@@ -443,14 +379,11 @@ export async function updateTemplate(
         currentVersionId: current.currentVersionId,
       });
     }
-    // A form edit starts from the stored version (read leniently); what is written passes the strict schema.
-    const document =
-      newDocument ?? parseDocument(withFormEdits(current.document, { accentColor: args.accentColor, footerBlocks: args.footerBlocks }));
     // Saving the same layout again is not a new version.
-    if (canonical(document) !== canonical(current.document)) {
+    if (canonical(newDocument) !== canonical(current.document)) {
       // Assets are append-only, so a logo found here is still there when the version is written.
-      await assertTemplateSavable(document, await templateAssets(scope.db, scope, document));
-      candidate = { base: current.currentVersionId, document };
+      await assertTemplateSavable(newDocument, await templateAssets(scope.db, scope, newDocument));
+      candidate = { base: current.currentVersionId, document: newDocument };
     }
   }
 

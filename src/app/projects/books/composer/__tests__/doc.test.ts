@@ -20,7 +20,7 @@ import {
   locate,
   moveBlock,
   moveByStep,
-  readingOrder,
+  moveRefusal,
   regionList,
   removeBlock,
   uniqueId,
@@ -120,6 +120,25 @@ describe('composer document operations', () => {
     const all = [...blockIds(doc)];
     expect(new Set(all).size).toBe(all.length);
     expect(uniqueId(doc, 'freeText')).toBe('freeText3');
-    expect(readingOrder(doc).map((x) => x.block.id)).toContain('columns');
+  });
+
+  it('keeps one title per region and the required body title in the body', () => {
+    const doc = klassisch();
+    expect(canAdd(doc, 'title', 'body')).toEqual({ ok: false, reason: 'This region has its title already.' });
+    expect(canAdd(doc, 'title', 'followingPageHeader')).toEqual({ ok: false, reason: 'This region has its title already.' });
+    expect(moveRefusal(doc, 'title', 'followingPageHeader')).toBe('Title is required in the body and stays there.');
+    // Alt+Down on the body's last block never carries a required block out of its region.
+    const lastTitle = change(doc, (d) => void moveBlock(d, 'title', 'body', 99));
+    expect(ids(lastTitle, 'body').at(-1)).toBe('title');
+    expect(change(lastTitle, (d) => { expect(moveByStep(d, 'title', 1)).toBe(false); })).toBe(lastTitle);
+    // Without a continuation title, a new title may go into the page 2 header, never a second into the body.
+    const noContinuation = change(doc, (d) => void removeBlock(d, 'continuation'));
+    expect(canAdd(noContinuation, 'title', 'followingPageHeader')).toEqual({ ok: true });
+  });
+
+  it('a move that changes nothing leaves the document untouched (no undo step, no preview request)', () => {
+    const doc = klassisch();
+    expect(change(doc, (d) => { expect(moveBlock(d, 'introText', 'body', 1)).toBe(false); })).toBe(doc);
+    expect(change(doc, (d) => { expect(moveBlock(d, 'outroText', 'body', 99)).toBe(false); })).toBe(doc);
   });
 });

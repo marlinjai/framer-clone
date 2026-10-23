@@ -84,6 +84,32 @@ export function clearWorkingCopy(templateId: string): void {
   }
 }
 
+const KNOWN_TYPES = new Set([
+  'logo', 'senderLine', 'recipient', 'documentMeta', 'title', 'introText', 'outroText', 'lineTable', 'totals', 'taxNote',
+  'paymentDetails', 'paymentQr', 'senderColumns', 'freeText', 'spacer', 'divider', 'columns',
+]);
+
+/**
+ * True when a stored copy is a template document the composer can show: the
+ * page, theme and the five regions, every block of a known type with an id.
+ * It may still fail the strict schema (an edit that ended with an emptied
+ * text): the composer restores it and the preview waits for the field, so a
+ * crash or reload mid-edit never loses the edits before it.
+ */
+export function hasDocumentShape(value: unknown): boolean {
+  const doc = value as { v?: unknown; page?: unknown; theme?: unknown; regions?: Record<string, unknown> } | null;
+  if (!doc || typeof doc !== 'object' || doc.v !== 2 || typeof doc.page !== 'object' || typeof doc.theme !== 'object' || !doc.regions) return false;
+  const r = doc.regions as { addressZone?: { left?: unknown; right?: unknown } } & Record<string, unknown>;
+  const lists = [r.firstPageHeader, r.addressZone?.left, r.addressZone?.right, r.body, r.followingPageHeader, r.footer];
+  const isBlock = (b: unknown): boolean => {
+    const x = b as { id?: unknown; type?: unknown; style?: unknown; cells?: unknown } | null;
+    if (!x || typeof x.id !== 'string' || typeof x.type !== 'string' || !KNOWN_TYPES.has(x.type) || typeof x.style !== 'object') return false;
+    if (x.type !== 'columns') return true;
+    return Array.isArray(x.cells) && x.cells.every((c: { blocks?: unknown }) => Array.isArray(c?.blocks) && c.blocks.every(isBlock));
+  };
+  return lists.every((l) => Array.isArray(l) && l.every(isBlock));
+}
+
 /** What to do with a stored copy when the template opens. */
 export type ResumeDecision =
   | { kind: 'none' }
