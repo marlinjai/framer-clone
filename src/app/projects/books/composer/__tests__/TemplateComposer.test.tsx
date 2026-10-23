@@ -639,13 +639,14 @@ describe('the template composer: your logos (choose a stored one, delete one nob
     await screen.findByDisplayValue('Hausvorlage');
     await waitFor(() => expect(document.querySelector('[data-outline-select="logo"]')).not.toBeNull());
     selectInOutline('logo');
-    return screen.findByRole('list', { name: 'Your logos' });
   }
+  const logoList = () => screen.findByRole('list', { name: 'Your logos' });
 
   it('lists the stored logos; choosing one sets it on every logo block and announces it; one in use offers no delete', async () => {
-    const list = await openLogo({
+    await openLogo({
       'GET /api/books/assets': () => ({ status: 200, body: { items: [stored(A, 400, false), stored(B, 300, true)] } }),
     });
+    const list = await logoList();
     const items = within(list).getAllByRole('listitem');
     expect(items).toHaveLength(2);
     // The logo in use says so and has no delete; the other one may be deleted.
@@ -673,7 +674,7 @@ describe('the template composer: your logos (choose a stored one, delete one nob
 
   it('deletes an unused logo after a confirmation that it cannot be undone; the focus moves to the list, then to the upload', async () => {
     let items = [stored(A, 400, false), stored(C, 200, false)];
-    const list = await openLogo({
+    await openLogo({
       'GET /api/books/assets': () => ({ status: 200, body: { items } }),
       [`DELETE /api/books/assets/${A}`]: () => {
         items = items.filter((i) => i.sha256 !== A);
@@ -684,6 +685,7 @@ describe('the template composer: your logos (choose a stored one, delete one nob
         return { status: 204, body: null };
       },
     });
+    const list = await logoList();
 
     // Cancel first: nothing is deleted, the focus goes back to the Delete button.
     const deleteA = within(list).getByRole('button', { name: /^Delete the logo 400/ });
@@ -714,19 +716,58 @@ describe('the template composer: your logos (choose a stored one, delete one nob
 
   it('a logo that came into use meanwhile is refused (409): the reason is announced and the list shows it in use', async () => {
     let inUse = false;
-    const list = await openLogo({
+    await openLogo({
       'GET /api/books/assets': () => ({ status: 200, body: { items: [stored(A, 400, inUse)] } }),
       [`DELETE /api/books/assets/${A}`]: () => {
         inUse = true;
         return { status: 409, body: { error: { code: 'asset_in_use', message: 'the logo is printed on an issued document', sha256: A } } };
       },
     });
+    const list = await logoList();
     fireEvent.click(within(list).getByRole('button', { name: /^Delete the logo 400/ }));
     const dialog = await screen.findByRole('alertdialog', { name: 'Delete this logo?' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
     expect(await screen.findByText('This logo is printed on an issued document or used by a template, so it stays.')).toBeTruthy();
     await waitFor(() => expect(within(screen.getByRole('list', { name: 'Your logos' })).getByText('In use')).toBeTruthy());
     expect(screen.queryByRole('button', { name: /^Delete the logo/ })).toBeNull();
+    // The refused row is still there: the focus is back on it, not somewhere else in the list.
+    await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toMatch(/^Choose the logo 400/));
+  });
+
+  it('a delete whose list cannot be read again moves the focus to the upload and says why', async () => {
+    let failing = false;
+    await openLogo({
+      'GET /api/books/assets': () =>
+        failing ? { status: 500, body: { error: { code: 'internal', message: 'boom' } } } : { status: 200, body: { items: [stored(A, 400, false)] } },
+      [`DELETE /api/books/assets/${A}`]: () => {
+        failing = true;
+        return { status: 204, body: null };
+      },
+    });
+    const list = await logoList();
+    fireEvent.click(within(list).getByRole('button', { name: /^Delete the logo 400/ }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Delete this logo?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText('Logo deleted.')).toBeTruthy();
+    expect((await screen.findByText(/^Your logos could not be loaded\./)).getAttribute('role')).toBe('alert');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Upload a logo')));
+  });
+
+  it('after a save the list is read again: a logo the saved version names shows "In use"', async () => {
+    let saved = false;
+    await openLogo({
+      'GET /api/books/assets': () => ({ status: 200, body: { items: [stored(A, 400, saved)] } }),
+      'PATCH /api/books/templates/tpl1': (body) => {
+        saved = true;
+        return { status: 200, body: template(2, body!.document) };
+      },
+    });
+    const list = await logoList();
+    fireEvent.click(within(list).getByRole('button', { name: /^Choose the logo 400/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(header()).toContain('Version 2'));
+    await waitFor(() => expect(within(screen.getByRole('list', { name: 'Your logos' })).getByText('In use')).toBeTruthy());
+    expect(calls.filter((c) => c.method === 'GET' && c.url === '/api/books/assets').length).toBeGreaterThanOrEqual(2);
   });
 
   it('an uploaded logo appears in the list; a list that cannot be read says so and the upload still works', async () => {
@@ -739,8 +780,9 @@ describe('the template composer: your logos (choose a stored one, delete one nob
         items = [stored(A, 400, false)];
         return { status: 201, body: { sha256: A, contentType: 'image/png', byteSize: 120, widthPx: 400, heightPx: 100 } };
       },
-    }).catch(() => null);
-    expect(await screen.findByText(/^Your logos could not be loaded\./)).toBeTruthy();
+    });
+    // Announced: the message is an alert.
+    expect((await screen.findByText(/^Your logos could not be loaded\./)).getAttribute('role')).toBe('alert');
     failing = false;
     const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'logo.png', { type: 'image/png' });
     fireEvent.change(screen.getByLabelText('Upload a logo'), { target: { files: [file] } });

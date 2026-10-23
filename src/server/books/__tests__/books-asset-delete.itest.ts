@@ -19,7 +19,12 @@
 //     lock before the first commits: an issue holding the logo makes a delete
 //     wait and then refuse; a delete holding it makes an issue wait and then
 //     refuse with LOGO_ASSET_MISSING (no number taken); the same two orders
-//     for a template save, and a template created naming the logo.
+//     for a template save, a template created naming the logo, an upload of
+//     the same file while a delete holds it (it waits, then stores it anew),
+//     and an owner's DELETE outside the application (the guard takes the lock
+//     too); a delete held up too long gives up with ASSET_BUSY. Without the
+//     locks the second transaction never waits, so these tests then fail on
+//     the wait helper's bound, not on an assertion about the bad outcome.
 // All data is synthetic; images are generated at run time.
 
 import { sql } from 'kysely';
@@ -98,19 +103,26 @@ async function inUse(scope: BooksScope): Promise<Record<string, boolean>> {
 }
 
 /**
- * Wait until a transaction waits for a logo lock in this mode ('ExclusiveLock'
- * for a delete, 'ShareLock' for an issue or a save), so the test commits the
- * first transaction only once the second really waits for it.
+ * Wait until a transaction waits for THIS logo's lock in this mode
+ * ('ExclusiveLock' for a delete, 'ShareLock' for an issue, a save or an
+ * upload), so the test commits the first transaction only once the second
+ * really waits for it. Matched on this database and on the lock's own key
+ * (repository/assets.ts: company and hash), because other test files running
+ * in parallel take advisory locks of their own.
  */
-async function waitUntilBlocked(mode: 'ExclusiveLock' | 'ShareLock'): Promise<void> {
+async function waitUntilBlocked(mode: 'ExclusiveLock' | 'ShareLock', scope: BooksScope, sha256: string): Promise<void> {
+  const key = `books-asset:${scope.tenantId}:${sha256}`;
   for (let i = 0; i < 1200; i++) {
     const { rows } = await sql<{ n: number }>`
       SELECT count(*)::int AS n FROM pg_locks
-       WHERE locktype = 'advisory' AND NOT granted AND mode = ${mode}`.execute(env.ownerDb);
+       WHERE locktype = 'advisory' AND NOT granted AND mode = ${mode}
+         AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+         AND objsubid = 1
+         AND ((classid::bigint << 32) | objid::bigint) = hashtextextended(${key}, 0)`.execute(env.ownerDb);
     if (rows[0].n > 0) return;
     await new Promise((r) => setTimeout(r, 25));
   }
-  throw new Error(`no transaction ever waited for a logo lock (${mode})`);
+  throw new Error(`no transaction ever waited for the lock of logo ${sha256} (${mode})`);
 }
 
 describe('deleteAsset and listAssets: what "in use" means', () => {
@@ -242,7 +254,7 @@ describe('deleteAsset racing an issue or a template save (both orders, two real 
         // uncommitted issue holds it: without the issue's lock the delete would go through.
         await updateTemplate(scope, template.id, { document: withLogo(null) });
         deletion = settle(deleteAsset(scope, sha));
-        await waitUntilBlocked('ExclusiveLock');
+        await waitUntilBlocked('ExclusiveLock', scope, sha);
       },
     });
     expect(issued.document.document.numberValue).toBe(62);
@@ -272,7 +284,7 @@ describe('deleteAsset racing an issue or a template save (both orders, two real 
           .where('id', '=', template.id)
           .execute();
         issuing = settle(issue(scope, id, { actorUserId: ACTOR }));
-        await waitUntilBlocked('ShareLock');
+        await waitUntilBlocked('ShareLock', scope, sha);
       },
     });
     expect(await issuing).toEqual({ code: 'LOGO_ASSET_MISSING', details: { blockIds: ['logo'] } });
@@ -291,7 +303,7 @@ describe('deleteAsset racing an issue or a template save (both orders, two real 
       beforeCommit: async () => {
         // The new version names the logo but is not committed: only the save's lock holds it.
         deletion = settle(deleteAsset(scope, sha));
-        await waitUntilBlocked('ExclusiveLock');
+        await waitUntilBlocked('ExclusiveLock', scope, sha);
       },
     });
     expect(saved.version).toBe(2);
@@ -309,7 +321,7 @@ describe('deleteAsset racing an issue or a template save (both orders, two real 
       beforeCommit: async () => {
         // The gate runs before the save's transaction and still sees the uncommitted delete's row.
         saving = settle(updateTemplate(scope, template.id, { document: withLogo(sha) }));
-        await waitUntilBlocked('ShareLock');
+        await waitUntilBlocked('ShareLock', scope, sha);
       },
     });
     expect(await saving).toEqual({
@@ -333,11 +345,70 @@ describe('deleteAsset racing an issue or a template save (both orders, two real 
     await deleteAsset(scope, sha, {
       beforeCommit: async () => {
         creating = settle(createTemplate(scope, { name: 'Neu', document: withLogo(sha) }));
-        await waitUntilBlocked('ShareLock');
+        await waitUntilBlocked('ShareLock', scope, sha);
       },
     });
     expect(await creating).toMatchObject({ code: 'TEMPLATE_INVALID' });
     expect(await env.ownerDb.selectFrom('document_template').select('id').where('tenant_id', '=', scope.tenantId).execute()).toEqual([]);
+  });
+
+  it('an upload of the same file while a delete holds it waits, then stores it anew (never answers a deleted logo)', async () => {
+    const { scope } = await company();
+    const bytes = makePng(165, 40);
+    const sha = (await storeLogo(scope, bytes, 'image/png')).asset.sha256;
+    let uploading: Promise<unknown> = Promise.resolve();
+    await deleteAsset(scope, sha, {
+      beforeCommit: async () => {
+        uploading = storeLogo(scope, bytes, 'image/png');
+        await waitUntilBlocked('ShareLock', scope, sha);
+      },
+    });
+    expect(await uploading).toMatchObject({ created: true, asset: { sha256: sha } });
+    expect(await inUse(scope)).toEqual({ [sha]: false });
+  });
+
+  it("an owner's DELETE outside the application waits for an issue holding the logo, then is refused (the guard locks too)", async () => {
+    const { scope, customerId } = await company();
+    const sha = await logo(scope, 166);
+    const template = await createTemplate(scope, { name: 'Race', document: withLogo(sha) });
+    const id = await draftWith(scope, customerId, template.id);
+
+    let deletion: Promise<unknown> = Promise.resolve();
+    await issue(scope, id, { actorUserId: ACTOR }, {
+      beforeCommit: async () => {
+        await updateTemplate(scope, template.id, { document: withLogo(null) });
+        deletion = env.ownerDb
+          .deleteFrom('books_asset')
+          .where('tenant_id', '=', scope.tenantId)
+          .where('sha256', '=', sha)
+          .execute()
+          .then(
+            () => 'deleted',
+            (e: { code?: string }) => e.code,
+          );
+        await waitUntilBlocked('ExclusiveLock', scope, sha);
+      },
+    });
+    expect(await deletion).toBe('BK015');
+    expect(await inUse(scope)).toEqual({ [sha]: true });
+  });
+
+  it('a delete held up longer than its bound gives up with ASSET_BUSY and deletes nothing', async () => {
+    const { scope, customerId } = await company();
+    const sha = await logo(scope, 167);
+    const template = await createTemplate(scope, { name: 'Race', document: withLogo(sha) });
+    const id = await draftWith(scope, customerId, template.id);
+
+    let deletion: unknown;
+    await issue(scope, id, { actorUserId: ACTOR }, {
+      beforeCommit: async () => {
+        await updateTemplate(scope, template.id, { document: withLogo(null) });
+        // The issue holds the logo for the whole wait: the delete gives up on its own.
+        deletion = await settle(deleteAsset(scope, sha));
+      },
+    });
+    expect(deletion).toEqual({ code: 'ASSET_BUSY', details: { sha256: sha } });
+    expect(await inUse(scope)).toEqual({ [sha]: true });
   });
 });
 

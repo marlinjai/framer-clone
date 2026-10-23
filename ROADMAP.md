@@ -126,11 +126,11 @@ connections to the suite. The four lines below are in that order.
   and goes live with the next deploy (which rolls 013). Phase 4 (the composer at
   /projects/books/templates/<id>: palette and keyboard-sortable outline, the real PDF with a
   selection overlay and column handles, the inspector with the logo picker, undo, the browser
-  working copy, live problems, versions with their documents) is built on branch
-  `feat/books-template-composer`, pending its pull request, merge and the browser proof on
-  "Books Testfirma". Open after that: deleting a logo nobody uses (decided in the phase 4 notes,
-  decision 9: allowed when no issued document and no live template's current version names it;
-  its own pull request with the list, the delete route and the migration). See
+  working copy, live problems, versions with their documents) is merged in #135, pending the
+  browser proof on "Books Testfirma" after the deploy. Deleting a logo nobody uses (phase 4
+  decision 9: allowed when no issued document and no live template's current version names it)
+  is built on branch `feat/books-logo-library`: migration 014 (BK015), the logo list and delete
+  routes, and "Your logos" in the composer's logo picker; the deploy rolls 014. See
   [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-23)
 - [ ] 9. E-invoicing for Books documents (XRechnung and ZUGFeRD profile EN 16931, built from the
   frozen document data, ZUGFeRD as a PDF/A-3 with the XML embedded): write its own plan in the

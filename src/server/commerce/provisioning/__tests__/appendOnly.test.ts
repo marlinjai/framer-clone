@@ -36,10 +36,11 @@ function revokedRights(): Map<string, Set<Right>> {
     let m: RegExpExecArray | null;
     while ((m = statement.exec(text)) !== null) {
       const [, verb, rightList, table] = m;
-      const rights = rightList
-        .split(',')
-        .map((r) => r.trim())
-        .filter((r): r is Right => r === 'UPDATE' || r === 'DELETE' || r === 'TRUNCATE');
+      const named = rightList.split(',').map((r) => r.trim());
+      // ALL (PRIVILEGES) covers every write right: a GRANT ALL gives them all back.
+      const rights: Right[] = named.some((r) => /^ALL(\s+PRIVILEGES)?$/.test(r))
+        ? ['UPDATE', 'DELETE', 'TRUNCATE']
+        : named.filter((r): r is Right => r === 'UPDATE' || r === 'DELETE' || r === 'TRUNCATE');
       if (rights.length === 0) continue;
       const revoked = state.get(table) ?? new Set<Right>();
       for (const r of rights) {

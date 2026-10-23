@@ -31,10 +31,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { booksApi, type LogoAssetView } from '@/lib/books/api';
 
-import { errorText } from '../ui';
+import { errorText, localDate } from '../ui';
 import { locate, logoBlockIds, type TemplateDocumentV2 } from './doc';
 import type { Update } from './Inspector';
 
@@ -72,12 +72,23 @@ async function svgToPng(file: Blob): Promise<Blob> {
 
 /** How a stored logo is named to a screen reader and in the dialog. */
 function logoName(a: LogoAssetView): string {
-  const day = new Date(a.createdAt);
-  const uploaded = Number.isNaN(day.getTime()) ? '' : `, uploaded ${day.toLocaleDateString('de-DE')}`;
+  const day = localDate(a.createdAt);
+  const uploaded = day ? `, uploaded ${day}` : '';
   return `${a.widthPx} × ${a.heightPx} pixels${uploaded}`;
 }
 
-export default function LogoPicker({ doc, assetSha256, update }: { doc: TemplateDocumentV2; assetSha256: string | null; update: Update }) {
+export default function LogoPicker({
+  doc,
+  assetSha256,
+  update,
+  savedVersion,
+}: {
+  doc: TemplateDocumentV2;
+  assetSha256: string | null;
+  update: Update;
+  /** The template's saved version: a save changes what is in use, so the list is read again. */
+  savedVersion?: number;
+}) {
   const inputId = useId();
   const hintId = `${inputId}-hint`;
   const listId = `${inputId}-logos`;
@@ -91,48 +102,54 @@ export default function LogoPicker({ doc, assetSha256, update }: { doc: Template
   const [listError, setListError] = useState<string | null>(null);
   /** The logo the delete dialog asks about (null: closed). */
   const [pending, setPending] = useState<LogoAssetView | null>(null);
-  /** Where the focus goes once a delete has settled: the list's first logo, or the upload. */
-  const focusAfterDelete = useRef(false);
+  /**
+   * The delete in progress, for the focus: while it runs the focus waits on its
+   * row; once it has settled, on the row if it is still there (refused), else on
+   * the first logo left, else on the upload.
+   */
+  const deleting = useRef<{ sha256: string; settled: boolean } | null>(null);
+  /** Bumped once a delete and the list read after it have settled: the focus moves after that render. */
+  const [settledTick, setSettledTick] = useState(0);
+  const mounted = useRef(true);
   /** The Delete button that opened the dialog (a cancel returns the focus to it). */
   const opener = useRef<HTMLElement | null>(null);
   const blocks = logoBlockIds(doc);
 
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   const reload = useCallback(async (): Promise<LogoAssetView[] | null> => {
     try {
       const { items } = await booksApi.listAssets();
+      if (!mounted.current) return null;
       setLogos(items);
       setListError(null);
       return items;
     } catch (err) {
-      setListError(`Your logos could not be loaded. ${errorText(err)}`);
+      if (mounted.current) setListError(`Your logos could not be loaded. ${errorText(err)}`);
       return null;
     }
   }, []);
 
+  // On opening, and after every save (a saved version changes which logos are in use).
   useEffect(() => {
-    let live = true;
-    booksApi.listAssets().then(
-      ({ items }) => {
-        if (!live) return;
-        setLogos(items);
-        setListError(null);
-      },
-      (err: unknown) => {
-        if (live) setListError(`Your logos could not be loaded. ${errorText(err)}`);
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, []);
+    void reload();
+  }, [reload, savedVersion]);
 
-  // After a delete settles and the list is drawn again: focus the first logo left, or the upload.
+  // After a delete and the list read after it have settled and been drawn (the controls enabled
+  // again): its row if it is still there, else the first logo left, else the upload.
   useEffect(() => {
-    if (!focusAfterDelete.current || logos === null) return;
-    focusAfterDelete.current = false;
+    const done = deleting.current;
+    if (!done?.settled) return;
+    deleting.current = null;
+    const own = list.current?.querySelector<HTMLButtonElement>(`button[data-logo-choose="${done.sha256}"]`);
     const first = list.current?.querySelector<HTMLButtonElement>('button[data-logo-choose]');
-    (first ?? input.current)?.focus();
-  }, [logos]);
+    (own ?? first ?? input.current)?.focus();
+  }, [settledTick]);
 
   function choose(sha256: string | null) {
     update((d) => {
@@ -173,7 +190,7 @@ export default function LogoPicker({ doc, assetSha256, update }: { doc: Template
   async function remove(a: LogoAssetView) {
     setStatus(null);
     setWorking('delete');
-    focusAfterDelete.current = true;
+    deleting.current = { sha256: a.sha256, settled: false };
     try {
       await booksApi.deleteAsset(a.sha256);
       setStatus({ kind: 'ok', text: 'Logo deleted.' });
@@ -181,12 +198,12 @@ export default function LogoPicker({ doc, assetSha256, update }: { doc: Template
       // asset_in_use (it came into use meanwhile) or asset_not_found (deleted elsewhere): say so, show the list as it is now.
       setStatus({ kind: 'error', text: errorText(err) });
     } finally {
-      setWorking(null);
-      const items = await reload();
-      // The list could not be read again: nothing will be drawn, so move the focus now.
-      if (items === null && focusAfterDelete.current) {
-        focusAfterDelete.current = false;
-        input.current?.focus();
+      // Read the list again first (a refused logo shows "In use" now), then enable the controls.
+      await reload();
+      if (mounted.current) {
+        deleting.current = { sha256: a.sha256, settled: true };
+        setWorking(null);
+        setSettledTick((t) => t + 1);
       }
     }
   }
@@ -233,7 +250,9 @@ export default function LogoPicker({ doc, assetSha256, update }: { doc: Template
         Your logos
       </span>
       {listError ? (
-        <p className="text-xs text-red-800">{listError}</p>
+        <p role="alert" className="text-xs text-red-800">
+          {listError}
+        </p>
       ) : logos === null ? (
         <p className="text-xs text-muted-foreground">Loading your logos…</p>
       ) : logos.length === 0 ? (
@@ -264,8 +283,8 @@ export default function LogoPicker({ doc, assetSha256, update }: { doc: Template
                   {chosen ? <span className="block text-foreground">Chosen</span> : null}
                 </span>
                 {a.inUse ? (
-                  <span className="shrink-0 rounded-full border border-gray-500 px-2 py-0.5 text-xs" title="Printed on an issued document or used by a template">
-                    In use
+                  <span className="shrink-0 rounded-full border border-gray-500 px-2 py-0.5 text-xs">
+                    In use<span className="sr-only">: printed on an issued document or used by a template, so it cannot be deleted</span>
                   </span>
                 ) : chosen ? null : (
                   <Button
@@ -299,7 +318,9 @@ export default function LogoPicker({ doc, assetSha256, update }: { doc: Template
             // A confirmed delete moves the focus itself once it has settled (the row is gone);
             // a cancelled one goes back to the Delete button that opened the dialog.
             event.preventDefault();
-            if (!focusAfterDelete.current) opener.current?.focus();
+            const target = deleting.current;
+            if (target) list.current?.querySelector<HTMLButtonElement>(`button[data-logo-choose="${target.sha256}"]`)?.focus();
+            else opener.current?.focus();
           }}
         >
           <AlertDialogHeader>
@@ -311,6 +332,7 @@ export default function LogoPicker({ doc, assetSha256, update }: { doc: Template
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
+              className={buttonVariants({ variant: 'destructive', size: 'sm' })}
               onClick={() => {
                 const target = pending;
                 if (target) void remove(target);

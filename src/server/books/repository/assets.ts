@@ -99,7 +99,7 @@ async function storedOrLimit(db: Db, scope: BooksScope, sha256: string): Promise
     .where('tenant_id', '=', scope.tenantId)
     .executeTakeFirstOrThrow();
   if (Number(n) >= MAX_ASSETS_PER_COMPANY) {
-    throw new BooksError('ASSET_LIMIT', `this company stores the most logos allowed (${MAX_ASSETS_PER_COMPANY}); reuse one of them`, {
+    throw new BooksError('ASSET_LIMIT', `this company stores the most logos allowed (${MAX_ASSETS_PER_COMPANY}); choose one of them, or delete one nobody uses`, {
       maxAssets: MAX_ASSETS_PER_COMPANY,
     });
   }
@@ -229,10 +229,15 @@ export async function listAssets(scope: BooksScope): Promise<LogoAssetListItem[]
   }));
 }
 
+/**
+ * How long a delete waits for an issue or a template save holding the logo
+ * before it gives up with ASSET_BUSY (409): an issue or a save takes well
+ * under a second, and the user can simply try again.
+ */
+export const DELETE_LOCK_TIMEOUT_MS = 5000;
+
 /** Test seams of {@link deleteAsset}. */
 export interface DeleteAssetHooks {
-  /** Runs inside the delete transaction once the logo is locked and found, before the DELETE (the race tests hold it here). */
-  afterLock?: () => Promise<void>;
   /** Runs inside the delete transaction after the DELETE, before the commit (the race tests hold it here). */
   beforeCommit?: () => Promise<void>;
 }
@@ -260,7 +265,8 @@ async function lockLogoKeys(trx: Transaction<CommerceDB>, scope: BooksScope, has
  * Delete one logo of the company that nothing uses. ASSET_NOT_FOUND for an
  * unknown or malformed hash and for another company's (existence never
  * leaks); ASSET_IN_USE (409) while an issued document froze it or a live
- * template's current version names it. The logo's lock is taken exclusively
+ * template's current version names it; ASSET_BUSY (409) when an issue or a
+ * save holds it longer than DELETE_LOCK_TIMEOUT_MS. The logo's lock is taken exclusively
  * first, so a delete waits for an issue or a template save holding it and then
  * sees what that committed (each statement of a READ COMMITTED transaction
  * reads what committed before it); the 014 guard checks every reference on the
@@ -273,7 +279,17 @@ export async function deleteAsset(scope: BooksScope, sha256: string, hooks: Dele
       .transaction()
       .setIsolationLevel('read committed')
       .execute(async (trx) => {
-        await lockLogoKeys(trx, scope, [sha256], 'exclusive');
+        // Waiting behind an issue or a save is bounded: while a delete waits, every later issue,
+        // save and upload naming this logo queues behind it, so a long wait gives up instead.
+        await sql`SET LOCAL lock_timeout = ${sql.lit(`${DELETE_LOCK_TIMEOUT_MS}ms`)}`.execute(trx);
+        try {
+          await lockLogoKeys(trx, scope, [sha256], 'exclusive');
+        } catch (err) {
+          if (sqlState(err) === '55P03') {
+            throw new BooksError('ASSET_BUSY', 'ASSET_BUSY: the logo is being used by an issue or a template save', { sha256 }, { cause: err });
+          }
+          throw err;
+        }
         const row = await trx
           .selectFrom('books_asset')
           .select('id')
@@ -281,7 +297,6 @@ export async function deleteAsset(scope: BooksScope, sha256: string, hooks: Dele
           .where('sha256', '=', sha256)
           .executeTakeFirst();
         if (!row) throw new BooksError('ASSET_NOT_FOUND', 'ASSET_NOT_FOUND', { sha256 });
-        if (hooks.afterLock) await hooks.afterLock();
         try {
           await trx.deleteFrom('books_asset').where('tenant_id', '=', scope.tenantId).where('id', '=', row.id).execute();
         } catch (err) {

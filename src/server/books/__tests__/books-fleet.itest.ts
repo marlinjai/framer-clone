@@ -486,6 +486,17 @@ describe('014_books_asset_delete through the fleet runner', () => {
     const [index] = await owner<{ n: number }[]>`
       SELECT count(*)::int AS n FROM pg_indexes WHERE schemaname = ${schema} AND indexname = 'sales_document_tenant_id_logo_sha256_idx'`;
     expect(index.n).toBe(1);
+    // ... and the function's document query can use it (scans forbidden, so the plan shows whether it may).
+    const plan = await owner.begin(async (tx) => {
+      await tx`SET LOCAL enable_seqscan = off`;
+      return tx.unsafe(
+        `EXPLAIN SELECT 1 FROM "${schema}".sales_document d WHERE d.tenant_id = $1 AND (d.template_snapshot -> 'logo' ->> 'sha256') = $2`,
+        [mine, Y],
+      );
+    });
+    expect((plan as unknown as Array<Record<string, string>>).map((r) => Object.values(r)[0]).join('\n')).toContain(
+      'sales_document_tenant_id_logo_sha256_idx',
+    );
     const inUse = async (sha256: string) =>
       (await owner<{ u: boolean }[]>`SELECT ${s}.books_asset_in_use(${mine}, ${sha256}) AS u`)[0].u;
     expect(await Promise.all([X, Y, Z, W, U].map(inUse))).toEqual([false, true, false, false, false]);

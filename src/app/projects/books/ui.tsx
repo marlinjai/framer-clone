@@ -67,6 +67,14 @@ export function Field({
   );
 }
 
+/** A timestamp's calendar day where the user is (a save after midnight in Germany is on the German date); '' when unreadable. */
+export function localDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+}
+
 /** The error text of anything a Books call can throw. */
 export function errorText(err: unknown): string {
   return err instanceof Error ? err.message : 'Something went wrong. Try again.';

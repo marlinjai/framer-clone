@@ -50,12 +50,18 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      statement of a READ COMMITTED transaction reads what committed before
  *      it) and is refused. The lock is a transaction-scoped advisory lock, not
  *      `FOR SHARE` and `FOR UPDATE` on the row: a row lock needs the UPDATE
- *      privilege, which the app role must never hold on this table.
+ *      privilege, which the app role must never hold on this table. The guard
+ *      takes the exclusive lock itself before it checks, so a DELETE from any
+ *      path (the owner, a maintenance script) waits the same way.
  *   5. The check is an index lookup on documents: `sales_document`'s frozen
  *      logo hash is indexed per company (partial, only rows that froze one),
  *      so a delete or the logo list does not read every invoice's snapshot.
  *      A company has a handful of templates; their current versions are read
- *      directly.
+ *      directly. The index is built inside the migration transaction (the
+ *      runner's), not CONCURRENTLY: it holds a SHARE lock on `sales_document`
+ *      while it builds, which blocks issues of that schema for the build's
+ *      length at boot. The tables hold a few thousand rows at most today, so
+ *      that is well under a second.
  *
  * House style as 007, 008, 012 and 013: BARE names, functions
  * `SET search_path FROM CURRENT`, custom SQLSTATE BK015 (BK014 belongs to
@@ -113,6 +119,10 @@ export const booksAssetDelete: Migration = {
       AS $$
       BEGIN
           IF TG_OP = 'DELETE' THEN
+              -- The logo's lock, exclusively (the key repository/assets.ts uses): a DELETE from
+              -- any path waits for an issue or a template save naming the logo, so the check
+              -- below sees what they committed. Re-entrant for deleteAsset, which holds it.
+              PERFORM pg_advisory_xact_lock(hashtextextended('books-asset:' || OLD."tenant_id" || ':' || OLD."sha256", 0));
               IF "books_asset_in_use"(OLD."tenant_id", OLD."sha256") THEN
                   RAISE EXCEPTION 'books_asset %: the logo is printed on an issued document or used by a live template', OLD."sha256"
                       USING ERRCODE = 'BK015';

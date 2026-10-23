@@ -26,17 +26,18 @@
 //      regular taxation); validate the sender block for it (SENDER_INCOMPLETE:
 //      under Section 19 one of tax number, VAT id or small-business id, under
 //      regular taxation tax number or VAT id, under reverse charge the VAT id);
-//      recompute every line and the totals from the inputs.
+//      recompute every line and the totals from the inputs. Read the template
+//      the document is frozen with and hold the logo it names until the commit
+//      (the shared logo lock, repository/assets.ts; gone, because a delete came
+//      first: LOGO_ASSET_MISSING; a delete coming after waits and is then
+//      refused, migration 014). Before the counter, so an issue waiting for a
+//      delete never holds up the company's other issues.
 //   6. Determine the issue date (argument or today in Europe/Berlin; never in
 //      the future).
 //   7. Lock the counter, check the date against the last number of the type
 //      (ISSUE_DATE_OUT_OF_ORDER), allocate the number, advance the counter.
-//   8. Freeze the template; hold the logo it names until the commit (the
-//      shared logo lock, repository/assets.ts; gone, because a delete came
-//      first: LOGO_ASSET_MISSING; a delete coming after waits and is then
-//      refused, migration 014). Update the document to
-//      issued with its number, dates, payment reference, snapshots and tax
-//      fields. The guard trigger checks the totals
+//   8. Update the document to issued with its number, dates, payment
+//      reference, snapshots and tax fields. The guard trigger checks the totals
 //      against the lines (BK005); the CHECKs check completeness.
 //   9. Insert the `issued` event. Commit.
 //
@@ -45,8 +46,8 @@
 // transaction, between steps 5 and 7: the cancellation's steps run through
 // cancelInvoiceIn (cancel.ts), so the credit note takes the next credit note
 // number, the old invoice turns cancelled, and only then does the replacement
-// take the next invoice number. Lock order: this draft, the old invoice, the
-// credit note counter, the invoice counter. An old invoice cancelled by
+// take the next invoice number. Lock order: this draft, its template's logo
+// (shared), the old invoice, the credit note counter, the invoice counter. An old invoice cancelled by
 // another path in the meantime is REPLACED_INVOICE_CANCELLED (checked before
 // the transaction for a fast answer, and again under its lock); the user can
 // then issue the draft as an ordinary invoice (updateDraft with
@@ -285,6 +286,28 @@ export async function issue(
           throw invalid('INVALID_LINE', [{ path: ['total'], message: 'the document total exceeds the largest amount (21,474,836.47 EUR)' }]);
         }
 
+        // The template, frozen below: its logo is held from here (before the counter is locked, so an
+        // issue waiting for a delete never holds up the other issues of the company).
+        const templateSnapshot = await templateSnapshotFor(trx, scope, row.template_id);
+        // One template, one logo (the snapshot freezes one): a layout saved before that rule named
+        // two images would lose one silently, so it is refused like any layout that does not fit.
+        const differing = logoBlocks(templateSnapshot.document).filter(
+          (l) => l.block.assetSha256 !== null && l.block.assetSha256 !== templateSnapshot.logo?.sha256,
+        );
+        if (differing.length > 0) {
+          const missing = differing.map((l) => `layout.logo_assets_differ.${l.block.id}`);
+          throw new BooksError('RENDER_INCOMPLETE', `RENDER_INCOMPLETE: ${missing.join(', ')}`, { missing });
+        }
+        // The logo the snapshot freezes, held until the commit (the shared logo lock): a delete of it
+        // waits for this issue and is then refused (the document names it), and one that came first
+        // leaves it gone, refused here by name before anything is frozen (migration 014, assets.ts).
+        if (templateSnapshot.logo && !(await lockLogos(trx, scope, [templateSnapshot.logo.sha256])).has(templateSnapshot.logo.sha256)) {
+          const blockIds = logoBlocks(templateSnapshot.document)
+            .filter((l) => l.block.assetSha256 === templateSnapshot.logo?.sha256)
+            .map((l) => l.block.id);
+          throw new BooksError('LOGO_ASSET_MISSING', `LOGO_ASSET_MISSING: ${blockIds.join(', ')}`, { blockIds });
+        }
+
         // The Correct flow: cancel the replaced invoice first (its credit note
         // takes its number before this invoice takes its own).
         let replaced: IssueResult['replaced'];
@@ -316,25 +339,6 @@ export async function issue(
           throw new BooksError('REVERSE_CHARGE_NOT_ALLOWED', 'REVERSE_CHARGE_NOT_ALLOWED: the recipient has no VAT id', {
             missing: ['recipient.vatId'],
           });
-        }
-        const templateSnapshot = await templateSnapshotFor(trx, scope, row.template_id);
-        // One template, one logo (the snapshot freezes one): a layout saved before that rule named
-        // two images would lose one silently, so it is refused like any layout that does not fit.
-        const differing = logoBlocks(templateSnapshot.document).filter(
-          (l) => l.block.assetSha256 !== null && l.block.assetSha256 !== templateSnapshot.logo?.sha256,
-        );
-        if (differing.length > 0) {
-          const missing = differing.map((l) => `layout.logo_assets_differ.${l.block.id}`);
-          throw new BooksError('RENDER_INCOMPLETE', `RENDER_INCOMPLETE: ${missing.join(', ')}`, { missing });
-        }
-        // The logo the snapshot freezes, held until the commit (the shared logo lock): a delete of it
-        // waits for this issue and is then refused (the document names it), and one that came first
-        // leaves it gone, refused here by name before anything is frozen (migration 014, assets.ts).
-        if (templateSnapshot.logo && !(await lockLogos(trx, scope, [templateSnapshot.logo.sha256])).has(templateSnapshot.logo.sha256)) {
-          const blockIds = logoBlocks(templateSnapshot.document)
-            .filter((l) => l.block.assetSha256 === templateSnapshot.logo?.sha256)
-            .map((l) => l.block.id);
-          throw new BooksError('LOGO_ASSET_MISSING', `LOGO_ASSET_MISSING: ${blockIds.join(', ')}`, { blockIds });
         }
         await trx
           .updateTable('sales_document')
