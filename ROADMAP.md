@@ -99,45 +99,46 @@ connections to the suite. The four lines below are in that order.
   NODE_IMAGE, `.nvmrc`, package.json engines and `@types/node` move together, as in the move to
   Node 22 of 2026-10-20 (pinned by digest, Dependabot proposes patch and minor releases but never a
   new major). (2026-10-20)
-- [ ] 8. A visual invoice template composer in the Books (asked by the owner on 2026-10-21): a
+- [x] 8. A visual invoice template composer in the Books (asked by the owner on 2026-10-21): a
   block-based A4 composer like the email editor whose canvas is the real PDF, versioned templates,
   legally required blocks that move but cannot be removed, a save gate running the completeness
   check, logos in the tenant schema, and a Correct flow (credit note plus a prefilled replacement
-  draft), plus an EPC QR payment block. Approved by the owner on 2026-10-22, phases 1 to 5
-  to be built: 1 Korrigieren (migration 011), 2 model and engine (012), 3 the shared editor
-  package, 4 the composer, 5 logos and fonts; English and e-invoicing later. Phases 1
-  (Korrigieren, #125, migration 011) and 2 (model, engine, versions, the save gate, the preview
-  route, #127, migration 012) are live since 2026-10-22: 012 applied to both company schemas,
-  checked in the browser on app.lumitra.co (a template saved through the gate and archived
-  again, a 3-page preview in 245 ms server time, imported invoices still served byte for byte;
-  a pre-012 database dump is on the database host). Proven end to end the same day on the test
-  company "Books Testfirma" (auth-brain organisation marlinjai, apps `sites` and `books`,
+  draft), plus an EPC QR payment block. Approved by the owner on 2026-10-22; phases 1 to 5 are
+  live and proven, English documents and e-invoicing are later work on their own lines below.
+  Phases 1 (Korrigieren, #125, migration 011) and 2 (model, engine, versions, the save gate, the
+  preview route, #127, migration 012) are live since 2026-10-22, proven on app.lumitra.co on the
+  test company "Books Testfirma" (auth-brain organisation marlinjai, apps `sites` and `books`,
   fictional sender, regular taxation, number series `TEST-{n}`, `TEST-GS-{n}`, `TEST-ANG-{n}`;
-  for proving Books changes without touching a real number series): a template with the EPC QR
-  block saved through the gate, a draft previewed with the QR placeholder, invoice TEST-1 issued
-  (stored PDF by `books-pdf-lib-3`, every legal field present, the printed QR code decoding to
-  EUR 240.84 and "Rechnung TEST-1"), and a later template edit leaving its PDF byte-identical.
-  Phase 3 (the shared editor package) is done since 2026-10-23: `@marlinjai/block-editor-react`
-  (snapshot undo history, inspector fields, the sortable outline with keyboard) is extracted in
-  email-editor #166, the email editor runs on it, 0.1.0 is on npm and email-editor's
-  `publish.yml` is its trusted publisher. Phase 5 (logos and Noto fonts: the `books_asset` table,
-  migration 013, the logo upload and download routes, the logo block drawn by the engine and
-  frozen at issue, Noto Sans and Noto Serif with a per-family drawable check) is merged in #134
-  and goes live with the next deploy (which rolls 013). Phase 4 (the composer at
-  /projects/books/templates/<id>: palette and keyboard-sortable outline, the real PDF with a
-  selection overlay and column handles, the inspector with the logo picker, undo, the browser
-  working copy, live problems, versions with their documents) is merged in #135, pending the
-  browser proof on "Books Testfirma" after the deploy. Deleting a logo nobody uses (phase 4
-  decision 9: allowed when no issued document and no live template's current version names it)
-  is built on branch `feat/books-logo-library`: migration 014 (BK015), the logo list and delete
-  routes, and "Your logos" in the composer's logo picker; the deploy rolls 014. See
+  for proving Books changes without touching a real number series): invoice TEST-1 with the EPC
+  QR code, its PDF byte-identical after a later template edit. Phase 3 (the shared editor
+  package `@marlinjai/block-editor-react`, email-editor #166, 0.1.0 on npm) is done since
+  2026-10-23. Phases 4 (the composer, #135) and 5 (logos and Noto fonts, #134, migration 013) are
+  deployed and proven on app.lumitra.co on 2026-10-23: a template created from Modern in the
+  composer, a logo uploaded, a QR block added, a block moved by keyboard, saved through the gate;
+  invoice TEST-2 issued with it (the stored PDF shows the logo, the QR code and every legal field,
+  and stayed byte-identical after a later template edit to version 4; the version list counts it
+  against version 3); a composer refresh after an edit takes 705 to 892 ms end to end on
+  production. The proof found Noto printing blank letters (pdf-lib subsetting), fixed in #136
+  (Noto embedded whole, a glyph-outline test) and deployed; TEST-3 issued in Noto Serif renders
+  correctly. The last piece, deleting a logo nobody uses (phase 4 decision 9: never while an
+  issued document or a live template's current version names it), is the pull request on branch
+  `feat/books-logo-library` (migration 014, BK015, the logo list and delete routes, "Your logos"
+  in the composer's logo picker); the plan is completed with it. See
   [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-23)
+- [ ] 8a. Prove the logo deletion on app.lumitra.co after the deploy that rolls migration
+  `014_books_asset_delete`: on "Books Testfirma", upload a spare logo and delete it from "Your
+  logos" in the composer, and check that the logo printed on TEST-2 shows "In use" and offers no
+  delete. (2026-10-23)
 - [ ] 9. E-invoicing for Books documents (XRechnung and ZUGFeRD profile EN 16931, built from the
   frozen document data, ZUGFeRD as a PDF/A-3 with the XML embedded): write its own plan in the
   first half of 2027, so every regular-taxed company using the Books can issue e-invoices before
   the German business-to-business obligation of 1 January 2028 (section 19 small businesses such
-  as Whiz-Art Media are exempt). Decided 2026-10-22; background in
-  [plan](docs/plans/2026-10-21-books-visual-template-composer.md), decision 14. (2026-10-22)
+  as Whiz-Art Media are exempt). Decided 2026-10-22 as phase 7 of the completed visual template
+  composer plan (its decision 14 has the background). (2026-10-23)
+- [ ] 10. English documents in the Books (phase 6 of the completed visual template composer plan,
+  "not now", decided 2026-10-22): an `en-GB` label dictionary, date and number formats, the locale
+  on the template and the completeness check per locale. Built when a client needs an English
+  invoice; about 3 agent days. (2026-10-23)
 - [x] The framer-clone Coolify Postgres database with the published port 5439: checked on
   2026-10-15, there is no framer-clone database or app in Coolify any more and port 5439 is closed
   on both servers, so nothing is left to restart. Done 2026-10-15.

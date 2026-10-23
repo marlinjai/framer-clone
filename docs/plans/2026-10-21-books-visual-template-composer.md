@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: completed
 date: 2026-10-21
 title: "Books: a visual invoice template composer that previews the real PDF"
 summary: "A block-based A4 composer for Books document templates (blocks panel, the real PDF as canvas with a selection overlay, inspector), a versioned template document model consumed by a new deterministic pdf-lib layout engine, legally required blocks that can be moved and styled but never removed, a save gate that runs the completeness check against probe documents, logos stored in the tenant schema, and a Correct flow for issued invoices (credit note plus a prefilled replacement draft). Adds an EPC QR payment block (GiroCode). Sliced into seven phases; approved by the owner on 2026-10-22, all phases to be built."
@@ -976,7 +976,8 @@ Built on branch `feat/books-logos-fonts`. Decided while building, say so if you 
    defines it), in ASCII or UTF-16.
 7. **At most 100 logos per company** (`409 asset_limit`, found in review): stored logos are
    append-only and never deleted, so the cap keeps one user with `editBooks` from filling the
-   schema. A company uses one or two. This adds a code to the contract. An upload already stored
+   schema (since the logo deletion build notes below, a logo nobody uses may be deleted; the cap
+   stays). A company uses one or two. This adds a code to the contract. An upload already stored
    or over the cap is answered before the decode, and both are asked again under the lock.
 8. **A logo adds at most 2 MB to a PDF** (found in the second review): pdf-lib stores a PNG's
    pixels without PNG's row filters, so a 23 KB PNG of smooth gradients became a 12 MB image
@@ -1005,7 +1006,8 @@ Built on branch `feat/books-logos-fonts`. Decided while building, say so if you 
 deleted. Today nothing is ever deleted (an issued document must re-render with its logo); an
 image uploaded by mistake that shows a person stays stored, which the General Data Protection
 Regulation (GDPR) right to erasure may require to change. Tracked on the ROADMAP.md line of
-this plan.
+this plan. Decided in the phase 4 notes (decision 9) and built: see the logo deletion build notes
+at the end.
 
 **Review (2026-10-23).** A fresh review of the whole diff (given only the diff and this plan)
 found one defect, four risks and twelve nits; all are fixed:
@@ -1151,7 +1153,9 @@ Built on branch `feat/books-template-composer`. Decided while building, say so i
    template's current version names it; never while either does. It is built in its own pull
    request (a list of the company's logos in the picker, a delete route, and a migration that
    lets exactly that delete through the append-only guard, with the issue path taking a share
-   lock on the logo so a delete can never race an issue).
+   lock on the logo so a delete can never race an issue). Built with transaction-scoped advisory
+   locks instead of row share locks (row locks need the UPDATE privilege, which the app role must
+   never hold on `books_asset`); see the logo deletion build notes, decision 1.
 10. **The outline is a labelled list, not an ARIA tree.** The arrow keys move between blocks,
     Alt+Up and Alt+Down move the selected block, Enter opens its inspector, the drag handles
     carry dnd-kit's keyboard sorting. A tree role would promise tree semantics (expand, collapse,
@@ -1207,3 +1211,168 @@ the bytes stay deterministic. A correct subsetter can shrink it later, as a new 
 id (changing it changes a family's document bytes). `fontEmbedding.test.ts` takes every embedded
 font back out of a rendered PDF and requires an outline for every printed character, for every
 family, and proves first that it detects the broken subset; text-based checks could not see it.
+
+## Logo deletion build notes (2026-10-23)
+
+Built on branch `feat/books-logo-library`, after the composer (#135) was merged. This is phase 4
+decision 9: a logo nobody uses may be deleted, never one an issued document or a live template
+holds.
+
+**What exists now.**
+
+- Migration `014_books_asset_delete` (custom code BK015, the next free one after 013's BK014):
+  - `books_asset_in_use(tenant_id, sha256)` is the one definition of "in use". A logo is in use
+    when a `sales_document` of the same company froze it (`template_snapshot -> 'logo' ->>
+    'sha256'`: every issued document and credit note, cancelled ones included), or a live (not
+    archived) `document_template` of the same company names it in any logo block of its current
+    version (a JSON path over the whole document, so blocks inside `columns` cells count too).
+  - The `books_asset` guard now refuses a DELETE of a logo in use (BK015, mapped to
+    `ASSET_IN_USE`, 409 `asset_in_use`) for every role, the owner included. UPDATE and TRUNCATE
+    stay refused (BK014).
+  - commerce_app gains DELETE on `books_asset`, never UPDATE: `books_asset` moved from
+    `APPEND_ONLY_TABLES` to a new `NO_UPDATE_TABLES` (UPDATE and TRUNCATE revoked after the
+    provisioning and fleet grants). Existing tenants get it when 014 rolls at boot.
+  - A partial index on `sales_document (tenant_id, frozen logo hash)`, so the check and the list
+    look documents up instead of reading every snapshot.
+- `repository/assets.ts`: `listAssets` (newest first, with `inUse` from the same SQL function),
+  `deleteAsset` and `lockLogos`. The issue path, `createTemplate` and `updateTemplate` lock the
+  logos they write inside their transactions; the upload takes the same lock before it answers a
+  stored logo.
+- Routes: `GET /api/books/assets` (`booksRoute('read')`, `{ items }`) and
+  `DELETE /api/books/assets/<sha256>` (`booksRoute('write')`, 204; 409 `asset_in_use`; 404
+  `asset_not_found` for an unknown, malformed or another company's hash). The upload and the
+  download by hash are unchanged.
+- Client: `booksApi.listAssets`, `booksApi.deleteAsset`, `LogoAssetView`, and the message for
+  `asset_in_use` ("This logo is printed on an issued document or used by a template, so it
+  stays.").
+- The composer's logo picker: below the upload, "Your logos" lists the company's logos as
+  thumbnail buttons; choosing one sets it on every logo block, exactly as an upload does. A logo
+  nothing uses has a Delete button with a confirmation saying it cannot be undone; a logo in use
+  shows "In use" and no delete.
+
+**Decisions.** Decided while building, say so if you disagree.
+
+1. **The locks are advisory locks, not `FOR SHARE` and `FOR UPDATE`.** The brief asked for row
+   locks. Postgres requires the UPDATE privilege for any row-locking clause, and commerce_app must
+   never hold UPDATE on `books_asset`. So the same protocol runs on transaction-scoped advisory
+   locks keyed by company and hash: the issue, a template save and the upload take the logo's
+   lock shared, a delete takes it exclusively before it deletes. Whichever transaction comes
+   second waits for the first to commit, then sees it (each statement of a READ COMMITTED
+   transaction reads what committed before it): a delete after an issue or save is refused by the
+   guard, an issue or save after a delete finds the logo gone. Shared locks never wait on each
+   other, and every caller takes them in hash order, so they cannot deadlock. The 014 guard takes
+   the same lock exclusively before it checks (found in review), so a DELETE from any path (the
+   owner, a maintenance script) waits the same way; it is re-entrant for the application's delete.
+2. **One SQL function decides, and the list asks it.** The list's `inUse` and the guard call the
+   same `books_asset_in_use`, so the picker never offers a delete the database refuses, except
+   in a race, which the delete then answers with 409. The app calls the function with its
+   schema named explicitly, because the scoped Kysely handle qualifies tables, not function
+   calls.
+3. **Older versions, archived templates and other companies do not hold a logo.** A document
+   issued from an older version froze the logo in its own snapshot, so the older version adds
+   nothing. An archived template prints nothing. Another company's use of the same image is
+   that company's own row.
+4. **A save that loses the race answers like the gate.** When the logo a new version names is
+   gone inside the transaction, the save is refused as `TEMPLATE_INVALID` with a
+   `LOGO_ASSET_MISSING` problem on the block (the gate's exact shape, through the shared
+   `missingLogoProblems`), not the issue-time code, whose message talks about issuing. The
+   composer shows it next to the block.
+5. **The issue holds the logo before it locks the counter.** The issue reads its template and
+   takes the logo's lock before the number counter (found in review): an issue waiting for a
+   delete never holds up the company's other issues. A logo gone is refused with
+   `LOGO_ASSET_MISSING` (422, the block ids in `blockIds`); nothing is issued and no number is
+   taken, as with phase 5's check at render.
+6. **The upload waits for a delete in progress.** Before the upload answers "already stored", it
+   takes the logo's lock shared and reads the row again. Without that, uploading a logo while
+   the same logo was being deleted could answer a hash that is gone a moment later.
+7. **The picker does not offer to delete the logo this template has chosen**, even when the
+   server says nothing uses it: the unsaved working copy names it, and deleting it would make the
+   next save fail. Removing the image or choosing another one makes it deletable.
+8. **Focus after a delete** goes to the first logo left in the list, or to the upload when none
+   is left; a cancelled confirmation returns the focus to the Delete button that opened it.
+   Results ("Logo deleted.", the 409 sentence, a failed list) are announced in the picker's
+   status line.
+9. **A delete waits at most 5 seconds** (found in review). While a delete waits for an issue or a
+   save, Postgres queues every later shared request for that logo behind it, so an unbounded
+   wait could park every issue naming the logo. After 5 s the delete gives up with `ASSET_BUSY`
+   (409 `asset_busy`, "try again in a moment"); nothing is deleted.
+10. **The list is read again after every save**, because a saved version changes which logos are
+   in use; "In use" carries its reason for screen readers, and a list that cannot be read is an
+   alert.
+11. **The plan is completed with this pull request.** Phases 1 to 5 are live and proven on
+   app.lumitra.co; the logo deletion is the last piece. Phases 6 (English documents, "not now")
+   and 7 (e-invoicing, its own plan in 2027) are later work with their own ROADMAP.md lines
+   (10 and 9), which name this plan without linking it. The browser proof of the deletion after
+   the deploy is its own line (8a).
+12. **The download stays cacheable for a year.** A deleted logo can stay in the browser cache of
+   someone who already saw it. That copy is in that person's own browser, private and behind the
+   session; nothing on the server keeps it. The same bytes uploaded again are the same hash, so
+   the cached answer is never wrong.
+
+**Tests.**
+
+- `books-asset-delete.itest.ts` (real Postgres, the repository as commerce_app):
+  - what "in use" means: an issued document holds its logo, also after its template moves on,
+    when cancelled, and with its credit note; a live template's current version holds its logo,
+    a newer version without it or archiving the template lets it go; another company's template
+    or document never holds it;
+  - the stateful-flow paths: forward (upload, use, stop using, delete), backtrack (a version
+    drops the logo and names it again), resume (the list read again), re-entry (the same bytes
+    after a delete are the same hash, a refused save works again after the upload);
+  - seven races, each with two real transactions, the second proven to wait on this logo's own
+    lock (`pg_locks`, matched on the database and the lock key, so other test files' advisory
+    locks never count) before the first commits: an issue first (the delete is refused), a
+    delete first (the issue is refused by name, stays a draft, takes no number), a template save
+    first, a delete first against a save whose gate already passed, a delete first against a
+    template create, an upload of the same file while a delete holds it (it waits, then stores
+    it anew), and an owner's DELETE outside the application while an issue holds the logo (it
+    waits, then BK015). With the locks switched off the races fail (on the wait helper's bound,
+    since the second transaction never waits). A delete held up past its bound answers
+    `ASSET_BUSY`.
+- `books-fleet.itest.ts`: 014 onto a schema at 013 whose app role holds no DELETE: the rights
+  afterwards, the index, the function, and per role (the app role and the owner): UPDATE and
+  TRUNCATE refused, an `EXPLAIN` showing the function's document query can use the index, a
+  DELETE of the logo in a `columns` cell of a live current version refused
+  (BK015), of logos named only by an older version, an archived template or another company's
+  template, or by nothing, allowed; a second run changes nothing. The 013 test now runs 013 and
+  014.
+- `books-assets.itest.ts` (the real routes): the list newest first with `inUse`, 204, 409
+  `asset_in_use` (also after the template moved on and was archived, the document still
+  re-rendering with the logo), 404 for another company's, an unknown and a malformed hash, the
+  guard (401 and 403 for both routes).
+- `appendOnly.test.ts` now reads the migrations in order and applies each REVOKE and GRANT, so a
+  later migration that changes a table's rights moves it to the matching list
+  (`NO_UPDATE_TABLES` holds `books_asset`); `provision.itest.ts` checks the rights of a fresh
+  provision.
+- `TemplateComposer.test.tsx`: choosing a stored logo sets it on both logo blocks and is saved;
+  "In use" offers no delete; the chosen logo offers no delete; the confirmation, cancel (focus
+  back to Delete), delete (focus to the first logo left, then to the upload); a 409 announced
+  with the list showing "In use" and the focus back on that row; a delete whose list cannot be
+  read again (an alert, the focus on the upload); the list read again after a save; a list that
+  cannot be read and the upload still working.
+- `appendOnly.test.ts` treats `GRANT ALL` as giving back every write right.
+
+**Review (2026-10-23).** A fresh review of the whole diff (given only the diff, this plan and
+decision 9) agreed with the advisory locks and found one defect, four risks and nine nits; all
+are fixed:
+- the defect: the race tests' wait helper matched any waiting advisory lock in the shared test
+  database, so another file's lock could make a race test pass without proving anything; it now
+  matches this database and the logo's own key, and the test header says how the tests fail
+  without the locks;
+- the risks: the guard did not take the lock, so a DELETE outside the application could race an
+  issue (decision 1, with a test); the issue locked the counter before the logo (decision 5); an
+  unbounded delete wait (decision 9); the index built inside the migration transaction (a SHARE
+  lock on `sales_document` for the build, well under a second at today's sizes, written into the
+  migration's header) and an `EXPLAIN` test that the function can use the index;
+- the nits: the list failure announced (an alert), the "In use" reason readable by screen
+  readers, the focus after a refused delete back on its row, the list read again after a save
+  and the mount effect reusing the reload, the date through the composer's shared `localDate`,
+  the confirm button styled as destructive, the stale plan passages (phase 5 decision 7, the
+  open question, phase 4 decision 9), the logo-limit messages now offering a delete, the upload
+  race test and the unused `afterLock` hook removed, UI tests for the focus after a 409 and after
+  a failed reload, a test helper that swallowed every failure, and `GRANT ALL` in the rights
+  test.
+
+
+**Operator step**: deploy. It rolls `014_books_asset_delete` across every tenant schema at boot:
+the function, the guard, the index and the app role's DELETE. No secret, no variable.
