@@ -40,32 +40,16 @@ import path from 'node:path';
 import fontkit from '@pdf-lib/fontkit';
 
 import { FONT_FAMILIES, type FontFamily } from '../template/schema';
+import { FONT_FILES, type PinnedFile } from './fontPins';
+import { undrawableWith } from './previewSafe';
 
 export interface FontFiles {
   regular: Uint8Array;
   bold: Uint8Array;
 }
 
-interface PinnedFile {
-  file: string;
-  sha256: string;
-}
-
-/** Each family's files and their pinned digests (decision 6: a family id never changes its files). */
-export const FONT_FILES: Record<FontFamily, { regular: PinnedFile; bold: PinnedFile }> = {
-  'dejavu-sans': {
-    regular: { file: 'DejaVuSans.ttf', sha256: '7da195a74c55bef988d0d48f9508bd5d849425c1770dba5d7bfc6ce9ed848954' },
-    bold: { file: 'DejaVuSans-Bold.ttf', sha256: 'e6476c1b80502924294eed40894c5b18e06c181444ca953e5334262df9c27724' },
-  },
-  'noto-sans': {
-    regular: { file: 'NotoSans-Regular.ttf', sha256: 'f3961a9cde016d41a4879aecda1474d3a36d6bf54fa0e4643de029cc2248b0e8' },
-    bold: { file: 'NotoSans-Bold.ttf', sha256: '87cb2d84472a7d66da659ee47b6cdb9552326e8c128245231f191b6ac72529d9' },
-  },
-  'noto-serif': {
-    regular: { file: 'NotoSerif-Regular.ttf', sha256: 'a15cfbbc1539d707115111d672d590a3d70d4f74b4c0a315956da20ae19a14e1' },
-    bold: { file: 'NotoSerif-Bold.ttf', sha256: '24ad531e6b05ddad8c3d89572d2c93eb86a6b74e652ce7ee3c3e171de68e84c3' },
-  },
-};
+// The pins live in fontPins.ts (no Node imports), so the browser checks the files it fetches against the same digests.
+export { FONT_FILES };
 
 const FONT_DIR = path.join(process.cwd(), 'assets', 'fonts');
 
@@ -114,14 +98,17 @@ export function canDraw(cp: number, family: FontFamily): boolean {
 
 /** The characters of `text` the family cannot draw (each once, in order). */
 export function undrawable(text: string, family: FontFamily): string[] {
-  const out: string[] = [];
-  for (const ch of text) {
-    const cp = ch.codePointAt(0)!;
-    // Variation selectors and joiners are invisible modifiers; they draw nothing.
-    if (cp === 0xfe0f || cp === 0xfe0e || cp === 0x200d) continue;
-    if (!canDraw(cp, family) && !out.includes(ch)) out.push(ch);
+  return undrawableWith(text, (cp) => canDraw(cp, family));
+}
+
+/** The bytes of the pinned font file with this digest (read and checked once per process), or null for any other digest. */
+export function fontFileByDigest(sha256: string): Uint8Array | null {
+  for (const family of FONT_FAMILIES) {
+    for (const face of ['regular', 'bold'] as const) {
+      if (FONT_FILES[family][face].sha256 === sha256) return fontFiles(family)[face];
+    }
   }
-  return out;
+  return null;
 }
 
 export { fontkit };
