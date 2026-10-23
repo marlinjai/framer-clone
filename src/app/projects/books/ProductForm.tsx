@@ -175,9 +175,10 @@ export default function ProductForm({ product, onSaved, onCancel }: Props) {
       className="rounded-lg border p-4"
       aria-labelledby={id('title')}
     >
-      <h2 id={id('title')} className="mb-3 text-base font-medium">
+      {/* Under the tab's own h2 (ProductsPanel), so the outline stays in order. */}
+      <h3 id={id('title')} className="mb-3 text-base font-medium">
         {title}
-      </h2>
+      </h3>
       <ErrorAlert message={error} onDismiss={() => setError(null)} />
       <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="Name (printed as the line's title)" htmlFor={id('name')} error={errors.name}>

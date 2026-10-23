@@ -88,7 +88,7 @@ async function provisionAt006WithId(): Promise<{ tgId: string; schema: string }>
   return { tgId, schema: tenantSchema(tgId) };
 }
 
-/** commerce_app's rights on every Books table of a schema. */
+/** commerce_app's rights on every Books table of a schema (the tables it has: a schema at an older migration lacks the later ones). */
 async function privileges(schema: string) {
   const rows = await owner<{ t: string; sel: boolean; ins: boolean; upd: boolean; del: boolean }[]>`
     SELECT t,
@@ -97,6 +97,7 @@ async function privileges(schema: string) {
            has_table_privilege('commerce_app', ${schema} || '.' || t, 'UPDATE') AS upd,
            has_table_privilege('commerce_app', ${schema} || '.' || t, 'DELETE') AS del
       FROM unnest(${BOOKS_TABLES}::text[]) AS t
+     WHERE to_regclass(quote_ident(${schema}) || '.' || quote_ident(t)) IS NOT NULL
      ORDER BY t
   `;
   return Object.fromEntries(rows.map((r) => [r.t, { sel: r.sel, ins: r.ins, upd: r.upd, del: r.del }]));
@@ -298,7 +299,7 @@ describe('012_books_template_v2 through the fleet runner', () => {
                 VALUES (${plain}, ${tenantId}, 'Plain', NULL, ${owner.json([{ unexpected: 1 }])}, now())`;
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2', '013_books_assets', '014_books_asset_delete']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2', '013_books_assets', '014_books_asset_delete', '015_books_products']);
 
     const columns = await owner<{ column_name: string }[]>`
       SELECT column_name FROM information_schema.columns WHERE table_schema = ${schema} AND table_name = 'document_template' ORDER BY column_name`;
@@ -384,7 +385,7 @@ describe('013_books_assets (and 014 after it) through the fleet runner', () => {
     // The fleet runner applies the whole set: 013, then 014 (which lets an unused logo be deleted,
     // tested on its own below).
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets', '014_books_asset_delete']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets', '014_books_asset_delete', '015_books_products']);
     expect(await owner`SELECT * FROM ${s}.document_template_version ORDER BY id`).toEqual(before);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
 
@@ -484,7 +485,7 @@ describe('014_books_asset_delete through the fleet runner', () => {
     });
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['014_books_asset_delete']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['014_books_asset_delete', '015_books_products']);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     // The frozen logo of a document is found through its own index.
     const [index] = await owner<{ n: number }[]>`
