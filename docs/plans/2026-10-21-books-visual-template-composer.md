@@ -1191,3 +1191,19 @@ add, Alt+Up, Enter, delete, drag in the canvas, column resize, save, resume, the
 race, a refused save, three pages scrolled with "Page n of m".
 
 **Operator step**: deploy. No migration, no secret, no variable.
+
+## Phase 5 fix (2026-10-23): Noto embedded whole
+
+Found in the browser proof on app.lumitra.co an hour after phase 5 went live: a template in Noto
+Serif (and Noto Sans) printed most letters blank ("Rechnung" as "R" and "g"), in pdf.js and in
+macOS's own renderer alike. pdf-lib's subsetter (`@pdf-lib/fontkit` 1.1.1) breaks the Noto files'
+glyph table; the text stays in the PDF, so the completeness check and every text-based test passed.
+DejaVu subsets correctly. Nothing was issued in Noto (the only Noto template was the proof's own,
+set back to DejaVu at once).
+
+Decided, say so if you disagree: Noto is embedded whole (`render/engine/fontEmbedding.ts`,
+`EMBED_SUBSET`), DejaVu stays subset. A Noto document is about 0.9 MB larger (regular and bold);
+the bytes stay deterministic. A correct subsetter can shrink it later, as a new decision per family
+id (changing it changes a family's document bytes). `fontEmbedding.test.ts` takes every embedded
+font back out of a rendered PDF and requires an outline for every printed character, for every
+family, and proves first that it detects the broken subset; text-based checks could not see it.

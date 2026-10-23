@@ -83,6 +83,7 @@ import {
   type Measure,
   type PageGeometry,
 } from './style';
+import { EMBED_SUBSET } from './fontEmbedding';
 import { embedAsset, type EngineImage } from './images';
 import { wrapText } from './text';
 
@@ -838,8 +839,9 @@ export async function renderTemplate(
   const pdf = await PDFDocument.create({ updateMetadata: false });
   pdf.registerFontkit(fontkit);
   const fonts: Fonts = {
-    regular: await pdf.embedFont(fontBytes.regular, { subset: true }),
-    bold: await pdf.embedFont(fontBytes.bold, { subset: true }),
+    // Subset where the subsetter is proven to keep every glyph's outline (fonts.ts EMBED_SUBSET).
+    regular: await pdf.embedFont(fontBytes.regular, { subset: EMBED_SUBSET[doc.theme.fontFamily] }),
+    bold: await pdf.embedFont(fontBytes.bold, { subset: EMBED_SUBSET[doc.theme.fontFamily] }),
   };
   // Every asset the logos name, embedded once, in a fixed order (the bytes do not depend on the map's order).
   const images = new Map<string, PDFImage>();
