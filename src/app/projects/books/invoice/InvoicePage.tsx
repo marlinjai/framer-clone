@@ -397,7 +397,13 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
           }
           const order = d.lines.map((x) => x.id).filter((x) => x !== current);
           order.splice(i, 0, current);
-          return booksApi.reorderLines(id, order, d.document.version);
+          if (order.every((x, k) => x === d.lines[k]?.id)) return d;
+          try {
+            return await booksApi.reorderLines(id, order, d.document.version);
+          } catch {
+            // The line is back, only not at its place: show the draft as it is rather than lose the add.
+            return d;
+          }
         },
         redo: (v) => booksApi.removeLine(id, resolveLine(l.id), v),
       },
