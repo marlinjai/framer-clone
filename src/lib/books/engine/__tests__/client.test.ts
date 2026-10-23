@@ -47,7 +47,7 @@ const PAYLOAD_JSON = {
   template: { theme: { fontFamily: 'dejavu-sans' } },
   logos: [],
 };
-const LAYOUT = { page: { width: 1, height: 1 }, pageCount: 1, blocks: [], tables: [], issues: [] };
+const LAYOUT = { page: { width: 1, height: 1 }, pageCount: 1, blocks: [], tables: [], fields: [], anchors: { rows: [], addLine: [] }, issues: [] };
 
 function renderer() {
   const workers: FakeWorker[] = [];
