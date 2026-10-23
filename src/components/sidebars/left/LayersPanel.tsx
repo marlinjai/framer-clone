@@ -30,6 +30,7 @@ import {
   Lock,
   Unlock,
   Trash2,
+  Copy,
   Image,
   Type,
   Square,
@@ -49,7 +50,7 @@ import {
   toggleFold,
   toggleFoldSubtree,
 } from '@/lib/layers/foldState';
-import { ancestorIdsOf, canDeleteLayer, deleteLayer } from '@/lib/layers/layerActions';
+import { ancestorIdsOf, canDeleteLayer, deleteLayer, duplicateLayer } from '@/lib/layers/layerActions';
 import { ContextMenu, type MenuItem, type MenuCloseReason } from './ContextMenu';
 
 // Map viewport label to device icon
@@ -308,6 +309,12 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
     deleteLayer(page, editorUI, getHistoryStore(), component);
   };
 
+  const onDuplicate = () => {
+    const page = editorUI.currentPage;
+    if (!page) return;
+    duplicateLayer(page, editorUI, getHistoryStore(), component);
+  };
+
   const menuItems: MenuItem[] = [
     {
       label: isHidden ? 'Show layer' : 'Hide layer',
@@ -327,7 +334,10 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
         }]
       : []),
     ...(deletable
-      ? [{ label: 'Delete layer', icon: <Trash2 size={14} />, onClick: onDelete, destructive: true }]
+      ? [
+          { label: 'Duplicate', icon: <Copy size={14} />, onClick: onDuplicate },
+          { label: 'Delete layer', icon: <Trash2 size={14} />, onClick: onDelete, destructive: true },
+        ]
       : []),
   ];
 

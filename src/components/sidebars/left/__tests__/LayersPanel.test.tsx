@@ -123,7 +123,7 @@ describe('row action buttons', () => {
     expect(armed).toBe(false);
     const menu = screen.getByRole('menu');
     const labels = within(menu).getAllByRole('menuitem').map(b => b.textContent);
-    expect(labels).toEqual(['Hide layer', 'Lock layer', 'Collapse', 'Delete layer']);
+    expect(labels).toEqual(['Hide layer', 'Lock layer', 'Collapse', 'Duplicate', 'Delete layer']);
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Lock layer' }));
     expect(main.canvasLocked).toBe(true);
     expect(screen.queryByRole('menu')).toBeNull();
