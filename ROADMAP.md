@@ -132,6 +132,14 @@ connections to the suite. The four lines below are in that order.
   answers 409 `asset_in_use`, and TEST-2's stored PDF is unchanged (sha256 698c6ba9...). The proof
   found a deleted logo still showing from the browser cache (served `immutable` for a year): now
   `private, no-cache`, revalidated by its ETag. (2026-10-23)
+- [ ] 8b. Write the invoice on the invoice (asked by the owner on 2026-10-23, "a pixel perfect
+  WYSIWYG editing experience closer to sevdesk but even more WYSIWYG"): the draft editor becomes the
+  real A4 page in the company's template, every field edited in place over the PDF, redrawn by the
+  layout engine running in the browser, plus sevdesk's breadth (subject line, reference number,
+  payment terms on the page, and the owner's choices among formatted texts, a product list, a total
+  discount, snippets and placeholders). Plan drafted, five questions on the decision page
+  (decision-pages/2026-10-23-wysiwyg-invoice-editor.html). See
+  [plan](docs/plans/2026-10-23-books-wysiwyg-invoice-editor.md). (2026-10-23)
 - [ ] 9. E-invoicing for Books documents (XRechnung and ZUGFeRD profile EN 16931, built from the
   frozen document data, ZUGFeRD as a PDF/A-3 with the XML embedded): write its own plan in the
   first half of 2027, so every regular-taxed company using the Books can issue e-invoices before
