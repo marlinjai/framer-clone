@@ -9,7 +9,8 @@ component (a MobX-State-Tree ComponentSnapshotIn). Shape of one node:
   "label": "<short name shown in the layers panel, e.g. Hero, Pricing card>",
   "props": {
     "children": "<text content, only on non-void tags without child nodes>",
-    "src": "<img only>", "alt": "<img only>", "imageQuery": "<img only: English stock-photo search>",
+    "src": "<img only>", "alt": "<img only>",
+    "imageQuery": "<img or container: English stock-photo search>",
     "href": "<a only>", "target": "<a only: _blank or _self>",
     "style": { "<camelCase CSS property>": <value or responsive map> }
   },
@@ -31,9 +32,17 @@ Rules:
 - Stock photos: an img without src gets "imageQuery", 2 to 6 English words describing the photo
   (at most 80 characters, plain words only). The server resolves at most
   12 images per generation to photos; the rest keep a placeholder.
+- Photo backgrounds: an imageQuery on a container (article, aside, div, footer, header, main, nav, section) puts the photo
+  under the container's content as the bottom layer of its backgroundImage. Write any scrim gradient into
+  style.backgroundImage yourself (no url()); the server appends the photo and sets backgroundSize,
+  backgroundRepeat and backgroundPosition. Without a photo the scrim and backgroundColor remain.
+- Crops: the server sets objectPosition (img) or backgroundPosition (photo background) to the photo's subject.
+  An img with aspectRatio and no height of its own gets height "auto", so the ratio shapes the box.
 - An existing image in the selected component whose src is on images.unsplash.com: either copy its src,
   title and data-credit-name, data-credit-url, data-credit-source-url props unchanged, or give a new imageQuery.
-  An Unsplash src without its credit props is dropped.
+  The same for a container whose backgroundImage has an images.unsplash.com url(): copy backgroundImage and
+  its three data-credit-* props unchanged, or drop the url() layer and give a new imageQuery.
+  An Unsplash photo without its credit props is dropped.
 - Never use these tags: base, embed, form, frame, frameset, iframe, input, link, math, meta, object, script, select, style, svg, template, textarea.
 - Budget: at most 200 nodes in total, nesting at most 10 levels,
   text at most 2000 characters per node. Prefer fewer, well-structured nodes.
@@ -49,25 +58,25 @@ desktop value would not fit a phone.
 ## Tags
 
 - a: may have children or text; props: href, target
-- article: may have children or text
-- aside: may have children or text
+- article: may have children or text; props: imageQuery
+- aside: may have children or text; props: imageQuery
 - button: may have children or text
-- div: may have children or text
+- div: may have children or text; props: imageQuery
 - em: may have children or text
-- footer: may have children or text
+- footer: may have children or text; props: imageQuery
 - h1: may have children or text
 - h2: may have children or text
 - h3: may have children or text
 - h4: may have children or text
 - h5: may have children or text
 - h6: may have children or text
-- header: may have children or text
+- header: may have children or text; props: imageQuery
 - img: void (no children, no text); props: src, alt, imageQuery
 - label: may have children or text
-- main: may have children or text
-- nav: may have children or text
+- main: may have children or text; props: imageQuery
+- nav: may have children or text; props: imageQuery
 - p: may have children or text
-- section: may have children or text
+- section: may have children or text; props: imageQuery
 - span: may have children or text
 - strong: may have children or text
 
@@ -136,4 +145,4 @@ desktop value would not fit a phone.
 
 ## Style keys
 
-alignContent, alignItems, alignSelf, backdropFilter, background, backgroundClip, backgroundColor, backgroundImage, backgroundPosition, backgroundRepeat, backgroundSize, border, borderBottom, borderBottomLeftRadius, borderBottomRightRadius, borderColor, borderLeft, borderRadius, borderRight, borderStyle, borderTop, borderTopLeftRadius, borderTopRightRadius, borderWidth, bottom, boxShadow, color, columnGap, cursor, display, filter, flex, flexBasis, flexDirection, flexGrow, flexShrink, flexWrap, font, fontFamily, fontSize, fontStyle, fontWeight, gap, grid, gridArea, gridAutoColumns, gridAutoFlow, gridAutoRows, gridColumn, gridRow, gridTemplate, gridTemplateAreas, gridTemplateColumns, gridTemplateRows, height, inset, justifyContent, justifyItems, justifySelf, left, letterSpacing, lineHeight, margin, marginBottom, marginLeft, marginRight, marginTop, maxHeight, maxWidth, minHeight, minWidth, mixBlendMode, objectFit, objectPosition, opacity, order, outline, overflow, overflowX, overflowY, padding, paddingBottom, paddingLeft, paddingRight, paddingTop, position, right, rowGap, textAlign, textDecoration, textTransform, top, transform, transformOrigin, transition, transitionDelay, transitionDuration, transitionProperty, transitionTimingFunction, whiteSpace, width, zIndex
+alignContent, alignItems, alignSelf, aspectRatio, backdropFilter, background, backgroundClip, backgroundColor, backgroundImage, backgroundPosition, backgroundRepeat, backgroundSize, border, borderBottom, borderBottomLeftRadius, borderBottomRightRadius, borderColor, borderLeft, borderRadius, borderRight, borderStyle, borderTop, borderTopLeftRadius, borderTopRightRadius, borderWidth, bottom, boxShadow, color, columnGap, cursor, display, filter, flex, flexBasis, flexDirection, flexGrow, flexShrink, flexWrap, font, fontFamily, fontSize, fontStyle, fontWeight, gap, grid, gridArea, gridAutoColumns, gridAutoFlow, gridAutoRows, gridColumn, gridRow, gridTemplate, gridTemplateAreas, gridTemplateColumns, gridTemplateRows, height, inset, justifyContent, justifyItems, justifySelf, left, letterSpacing, lineHeight, margin, marginBottom, marginLeft, marginRight, marginTop, maxHeight, maxWidth, minHeight, minWidth, mixBlendMode, objectFit, objectPosition, opacity, order, outline, overflow, overflowX, overflowY, padding, paddingBottom, paddingLeft, paddingRight, paddingTop, position, right, rowGap, textAlign, textDecoration, textTransform, top, transform, transformOrigin, transition, transitionDelay, transitionDuration, transitionProperty, transitionTimingFunction, whiteSpace, width, zIndex

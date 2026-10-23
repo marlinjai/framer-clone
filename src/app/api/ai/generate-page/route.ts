@@ -28,7 +28,10 @@
 // Budget per request: brief <= GENERATION_LIMITS.maxBriefChars, replace/insert
 // context <= MAX_CONTEXT_CHARS, max_tokens MAX_OUTPUT_TOKENS per attempt, at
 // most one repair attempt, node and depth caps enforced by the validator, and a
-// per-user rate limit (src/lib/ai/pageGen/rateLimit.ts).
+// per-user rate limit (src/lib/ai/pageGen/rateLimit.ts). When stock photos were
+// placed, one more small call (Haiku, effort low, at most 12 thumbnails, a
+// timeout) finds each photo's subject for its crop (src/lib/ai/pageGen/focalPoints.ts);
+// it is logged as its own AI call and never fails the generation.
 
 import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
@@ -76,8 +79,10 @@ import {
   applyStockPhotos,
   resolveStockImages,
   triggerStockDownloads,
+  type PlacedPhoto,
   type StockImageResolution,
 } from '@/lib/ai/pageGen/stockImages';
+import { FOCAL_MODEL, detectFocalPoints } from '@/lib/ai/pageGen/focalPoints';
 import type { AiEffort, AiModelKey } from '@/lib/ai/anthropicClient';
 
 export const dynamic = 'force-dynamic';
@@ -390,10 +395,18 @@ async function runGeneration(args: RunArgs): Promise<void> {
           }
           const stock = await resolveStockImagesSafely(imageRequests, signal);
           if (signal.aborted) return;
+          // Where each photo's subject is, so every crop keeps it in view.
+          const placed = await withFocalPoints(stock.placed, {
+            anthropic,
+            signal,
+            userId,
+            workspaceId: args.workspaceId,
+          });
+          if (signal.aborted) return;
           sse.send('gen:result', {
             generationId: requestId,
             ...result,
-            nodes: applyStockPhotos(result.nodes, stock.placed),
+            nodes: applyStockPhotos(result.nodes, placed),
             model: modelId,
             images: withInvalidQueries(stock.summary, invalidImageQueries),
           });
@@ -472,6 +485,57 @@ function withInvalidQueries(summary: StockImageSummary, invalid: number): StockI
     requested: summary.requested + invalid,
     fellBack: { ...summary.fellBack, invalid_query: invalid },
   };
+}
+
+/**
+ * The focal-point pass over the placed photos (src/lib/ai/pageGen/focalPoints.ts):
+ * one Haiku vision call, logged as its own AI call (its own request id and
+ * model, so the generation's log line keeps one model's tokens). A photo
+ * without a point keeps no `focal` and is written as a centred crop. Never
+ * throws: a failure here must not cost the user the generated page.
+ */
+async function withFocalPoints(
+  placed: PlacedPhoto[],
+  ctx: { anthropic: Anthropic; signal: AbortSignal; userId: string; workspaceId: string },
+): Promise<PlacedPhoto[]> {
+  if (placed.length === 0) return placed;
+  const timer = startAiCallTimer();
+  try {
+    const pass = await detectFocalPoints(
+      placed.map((p) => p.thumbSrc),
+      { client: ctx.anthropic, signal: ctx.signal },
+    );
+    if (pass.status !== 'skipped') {
+      recordUsage({
+        sessionId: ctx.userId,
+        inputTokens: pass.usage.inputTokens,
+        outputTokens: pass.usage.outputTokens,
+        cachedReadTokens: pass.usage.cacheReadTokens,
+        cachedWriteTokens: pass.usage.cacheWriteTokens,
+      });
+      logAiCall({
+        requestId: newRequestId(),
+        sessionId: `generate-page-focal:${ctx.workspaceId}`,
+        userId: ctx.userId,
+        model: FOCAL_MODEL,
+        promptChars: 0,
+        inputTokens: pass.usage.inputTokens,
+        outputTokens: pass.usage.outputTokens,
+        cachedReadTokens: pass.usage.cacheReadTokens,
+        cachedWriteTokens: pass.usage.cacheWriteTokens,
+        latencyMs: timer.latencyMs(),
+        status: pass.status === 'failed' ? 'error' : 'ok',
+        ...(pass.reason ? { errorCode: pass.reason } : {}),
+      });
+    }
+    return placed.map((p, i) => {
+      const focal = pass.points[i];
+      return focal ? { ...p, focal } : p;
+    });
+  } catch (err) {
+    console.warn(`[focal-points] pass threw, crops stay centred ${err instanceof Error ? err.name : 'error'}`);
+    return placed;
+  }
 }
 
 /**

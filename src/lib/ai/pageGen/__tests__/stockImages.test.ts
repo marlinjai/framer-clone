@@ -40,7 +40,7 @@ function json(body: unknown, status = 200): Response {
 }
 
 function req(nodeId: string, query: string, extra: Partial<ImageRequest> = {}): ImageRequest {
-  return { nodeId, query, ...extra };
+  return { nodeId, kind: 'img', query, ...extra };
 }
 
 let warn: ReturnType<typeof vi.spyOn>;
@@ -243,7 +243,10 @@ describe('applyStockPhotos', () => {
     const out = applyStockPhotos(nodes, [
       {
         nodeId: 'i2',
+        kind: 'img',
         src: 'https://images.unsplash.com/photo-a',
+        thumbSrc: 'https://images.unsplash.com/photo-a?w=512',
+        focal: { x: 30, y: 20 },
         downloadLocation: 'https://api.unsplash.com/photos/a/download',
         credit: { photoId: 'a', photographerName: 'Ana', photographerUrl: 'https://unsplash.com/@ana?u=1', unsplashUrl: 'https://unsplash.com/?u=1' },
       },
@@ -256,6 +259,7 @@ describe('applyStockPhotos', () => {
       'data-credit-name': 'Ana',
       'data-credit-url': 'https://unsplash.com/@ana?u=1',
       'data-credit-source-url': 'https://unsplash.com/?u=1',
+      style: { objectPosition: '30% 20%' },
     });
     expect(nodes[0].children[1].props.src).toBe('/images/sample-image.jpg'); // input untouched
   });
@@ -264,7 +268,9 @@ describe('applyStockPhotos', () => {
 describe('triggerStockDownloads', () => {
   const placed = (id: string, nodeId = id) => ({
     nodeId,
+    kind: 'img' as const,
     src: `https://images.unsplash.com/photo-${id}`,
+    thumbSrc: `https://images.unsplash.com/photo-${id}?w=512`,
     downloadLocation: `https://api.unsplash.com/photos/${id}/download`,
     credit: { photoId: id, photographerName: 'N', photographerUrl: 'https://unsplash.com/@n', unsplashUrl: 'https://unsplash.com/' },
   });
