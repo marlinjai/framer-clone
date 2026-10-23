@@ -10,6 +10,13 @@
 // 4): `variant_ref_source = 'owned'`, and every input the caller left out
 // (title, unit price, tax class) is copied from the variant and its product at
 // that moment. A later catalog change never alters a line already added.
+//
+// A line filled from the product and service list (015_books_products) is a
+// plain copy of the item's values, never a reference. Its `priceBasis` (net or
+// gross, the basis the item's price is quoted in) may differ from the draft's:
+// the price is then converted here, under the draft's tax profile at that
+// moment (convertUnitPrice in totals.ts), and stored in the draft's basis, so
+// the client never converts a price itself.
 
 import { randomUUID } from 'node:crypto';
 import type { Transaction } from 'kysely';
@@ -20,7 +27,7 @@ import { pricingRepository } from '../../commerce/repository/pricing';
 import { BooksError, invalid } from '../errors';
 import type { BooksScope } from '../scope';
 import { requireSettings } from '../settings';
-import { MAX_AMOUNT_CENTS, deriveLine, lineExceedsLimit, type LineInputs, type TaxClass } from '../totals';
+import { MAX_AMOUNT_CENTS, convertUnitPrice, deriveLine, lineExceedsLimit, type LineInputs, type TaxClass } from '../totals';
 import { finishDraftMutation, inDraftTransaction, lockDraft } from './documents';
 import { readPersistedView, selectLineRows, type DocumentRowWithSnapshots, type DocumentView } from './read';
 import { profileFor, selectCustomerRow } from './taxState';
@@ -50,6 +57,8 @@ const addInput = z.object({
   taxClass: lineFields.taxClass.optional(),
   taxRateOverride: lineFields.taxRateOverride.optional(),
   variantRef: z.string().min(1).optional(),
+  /** The basis `unitPrice` is quoted in, when it may differ from the draft's (a product list item). */
+  priceBasis: z.enum(['net', 'gross']).optional(),
   expectedVersion: z.number().int().min(0).optional(),
 });
 export type AddLineInput = z.input<typeof addInput>;
@@ -123,11 +132,16 @@ async function variantDefaults(
   return { title: title.slice(0, 300), unitPrice, taxClass };
 }
 
-/** Derived values of one line under the draft's current profile (INVALID_LINE beyond the money limit). */
-async function deriveForDraft(trx: Transaction<CommerceDB>, scope: BooksScope, row: DocumentRowWithSnapshots, line: LineInputs) {
+/** The draft's tax profile computed now (company settings and its customer's current tax fields). */
+async function draftProfile(trx: Transaction<CommerceDB>, scope: BooksScope, row: DocumentRowWithSnapshots) {
   const settings = await requireSettings(trx, scope);
   const customer = row.customer_id ? ((await selectCustomerRow(trx, scope, row.customer_id)) ?? null) : null;
-  const profile = profileFor(settings, customer);
+  return profileFor(settings, customer);
+}
+
+/** Derived values of one line under the draft's current profile (INVALID_LINE beyond the money limit). */
+async function deriveForDraft(trx: Transaction<CommerceDB>, scope: BooksScope, row: DocumentRowWithSnapshots, line: LineInputs) {
+  const profile = await draftProfile(trx, scope, row);
   const derived = deriveLine(line, {
     netOrGross: row.net_or_gross,
     kleinunternehmer: profile.kleinunternehmer,
@@ -146,6 +160,10 @@ export async function addLine(scope: BooksScope, id: string, input: AddLineInput
   const parsed = addInput.safeParse(input);
   if (!parsed.success) throw invalid('INVALID_LINE', parsed.error.issues);
   const args = parsed.data;
+  // The basis qualifies the price the caller sends, never a catalog price it leaves out.
+  if (args.priceBasis !== undefined && args.unitPrice === undefined) {
+    throw invalid('INVALID_LINE', [{ path: ['priceBasis'], message: 'priceBasis is sent only with the unitPrice it describes' }]);
+  }
 
   return inDraftTransaction(scope, async (trx) => {
     const row = await lockDraft(trx, scope, id, args.expectedVersion);
@@ -169,6 +187,20 @@ export async function addLine(scope: BooksScope, id: string, input: AddLineInput
       taxRateOverride: args.taxRateOverride ?? null,
     };
     assertLineRules(line);
+    if (args.priceBasis !== undefined && line.kind !== 'text' && args.priceBasis !== row.net_or_gross) {
+      const profile = await draftProfile(trx, scope, row);
+      line.unitPrice = convertUnitPrice(line.unitPrice, args.priceBasis, row.net_or_gross, {
+        taxClass: line.taxClass,
+        taxRateOverride: line.taxRateOverride,
+        kleinunternehmer: profile.kleinunternehmer,
+        reverseCharge: profile.reverseCharge,
+      });
+      if (line.unitPrice > MAX_AMOUNT_CENTS) {
+        throw invalid('INVALID_LINE', [
+          { path: ['unitPrice'], message: 'the price in the draft\'s basis exceeds the largest amount (21,474,836.47 EUR)' },
+        ]);
+      }
+    }
     const derived = await deriveForDraft(trx, scope, row, line);
 
     const last = await trx

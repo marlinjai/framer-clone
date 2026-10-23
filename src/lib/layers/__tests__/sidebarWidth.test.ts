@@ -6,6 +6,7 @@ import {
   LEFT_SIDEBAR_MAX_WIDTH,
   LEFT_SIDEBAR_MIN_WIDTH,
   clampLeftSidebarWidth,
+  layerActionsWidth,
   loadLeftSidebarWidth,
   saveLeftSidebarWidth,
 } from '../sidebarWidth';
@@ -58,5 +59,14 @@ describe('remembering the width', () => {
     });
     expect(() => saveLeftSidebarWidth(300)).not.toThrow();
     expect(loadLeftSidebarWidth()).toBe(LEFT_SIDEBAR_DEFAULT_WIDTH);
+  });
+});
+
+describe('layer row action strip width', () => {
+  it('is the buttons, the gaps between them and the right inset', () => {
+    expect(layerActionsWidth(0)).toBe(0);
+    expect(layerActionsWidth(1)).toBe(26);
+    expect(layerActionsWidth(3)).toBe(74);
+    expect(layerActionsWidth(4)).toBe(98);
   });
 });

@@ -80,7 +80,9 @@ export type BooksErrorCode =
   | 'ASSET_LIMIT'
   | 'ASSET_IN_USE'
   | 'ASSET_BUSY'
-  | 'LOGO_ASSET_MISSING';
+  | 'LOGO_ASSET_MISSING'
+  // The product and service list (015_books_products, repository/products.ts).
+  | 'DUPLICATE_PRODUCT';
 
 export class BooksError extends Error {
   readonly code: BooksErrorCode;

@@ -4,15 +4,20 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { tabFrom } from '../tabs';
+import { BOOKS_TABS, tabFrom } from '../tabs';
 
 describe('tabFrom', () => {
   it('opens a known tab and falls back to the documents', () => {
     expect(tabFrom('templates')).toBe('templates');
     expect(tabFrom('customers')).toBe('customers');
+    expect(tabFrom('products')).toBe('products');
     expect(tabFrom('documents')).toBe('documents');
     expect(tabFrom(undefined)).toBe('documents');
     expect(tabFrom(['templates'])).toBe('documents');
     expect(tabFrom('<script>')).toBe('documents');
+  });
+
+  it('lists every tab once, documents first', () => {
+    expect(BOOKS_TABS.map((t) => t.tab)).toEqual(['documents', 'customers', 'products', 'templates']);
   });
 });

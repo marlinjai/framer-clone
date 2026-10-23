@@ -42,3 +42,24 @@ export function saveLeftSidebarWidth(width: number): void {
     // storage unavailable: remembering the width is a nicety
   }
 }
+
+// ---------- Layer row action strip ----------
+//
+// A Layers row reveals its action buttons on hover, over the right end of the
+// row. Deep rows in a narrow sidebar have little room for the name, and the
+// full strip (hide, lock, more) would cover most of it, so a
+// click aimed at the name lands on a button. LayerNode makes each row a CSS
+// size container: below 172px of row content (icons, a 40px readable name and
+// the full strip) only "More" shows, whose menu holds every action, as does
+// right-click. The name reserves the strip's width while hovered, so it
+// truncates beside the buttons instead of running under them.
+
+const LAYER_ACTION_BUTTON = 22;
+const LAYER_ACTION_GAP = 2;
+const LAYER_ACTIONS_INSET = 4;
+
+/** Pixels a strip of `buttons` action buttons covers at the row's right end. */
+export function layerActionsWidth(buttons: number): number {
+  if (buttons <= 0) return 0;
+  return buttons * LAYER_ACTION_BUTTON + (buttons - 1) * LAYER_ACTION_GAP + LAYER_ACTIONS_INSET;
+}

@@ -651,6 +651,29 @@ export interface BooksAssetTable {
   created_at: Generated<Timestamp>;
 }
 
+/**
+ * 015_books_products: an item of the company's product and service list. Mutable,
+ * archived instead of deleted; draft lines copy its values and never reference it.
+ * `name_key` and `search_text` are folded by the repository (src/lib/books/searchKey.ts).
+ */
+export interface BooksProductTable {
+  id: string;
+  tenant_id: string;
+  kind: Generated<'service' | 'product'>;
+  name: string;
+  name_key: string;
+  description: string | null;
+  search_text: string;
+  unit_label: Generated<string>;
+  unit_price: number;
+  price_basis: Generated<'net' | 'gross'>;
+  tax_class: Generated<'standard' | 'reduced' | 'zero'>;
+  discount_bp: Generated<number>;
+  archived_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
+}
+
 // =============================================================================
 // The Database interface. GLOBAL keys are `public.`-qualified; tenant tables
 // are BARE. The two namespaces are disjoint by construction.
@@ -692,6 +715,7 @@ export interface CommerceDB {
   historical_import_extraction: HistoricalImportExtractionTable;
   document_template_version: DocumentTemplateVersionTable;
   books_asset: BooksAssetTable;
+  books_product: BooksProductTable;
 }
 
 // --- compile-time discipline guards (the package's brand types) --------------
