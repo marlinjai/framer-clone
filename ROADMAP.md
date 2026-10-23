@@ -30,7 +30,7 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   badge and a play control, the preview plays everything. Follows the motion rules: entrances
   under 300ms, ease-out, nothing perpetual, off under prefers-reduced-motion. Plus an optional
   per-site Lenis (MIT) smooth-scroll toggle, off by default and off under reduced motion. Decided
-  by Marlin on 2026-10-23; needs a plan before building. (2026-10-23)
+  by Marlin on 2026-10-23. See [plan](docs/plans/2026-10-23-motion-effects.md). (2026-10-23)
 - [ ] Scroll-driven page type (later): an opt-in page type for scrollytelling pages, the only place
   GSAP ScrollTrigger pinning and scrubbing is used, because there the scroll is the requested
   interaction (the sanctioned exception to the scroll-jacking rule, as the scroll-craft skill
