@@ -98,7 +98,7 @@ export const ALLOWED_REGIONS: Record<BlockType, readonly RegionName[]> = {
 };
 
 /** Required exactly once, and where (decision 3). */
-const REQUIRED: Array<{ type: BlockType; region: RegionName | null }> = [
+export const REQUIRED: ReadonlyArray<{ type: BlockType; region: RegionName | null }> = [
   { type: 'recipient', region: 'addressZone.left' },
   { type: 'documentMeta', region: null },
   { type: 'title', region: 'body' },
@@ -109,7 +109,7 @@ const REQUIRED: Array<{ type: BlockType; region: RegionName | null }> = [
 ];
 
 /** At most once per document (every block bound to document data). */
-const SINGLETONS = new Set<BlockType>([
+export const SINGLETONS: ReadonlySet<BlockType> = new Set<BlockType>([
   'senderLine',
   'recipient',
   'documentMeta',

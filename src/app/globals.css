@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* The Books template composer's inspector fields carry their own utility classes. */
+@source "../../node_modules/@marlinjai/block-editor-react/dist";
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));

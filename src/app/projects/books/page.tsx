@@ -9,9 +9,11 @@
 import React from 'react';
 
 import BooksHome from './BooksHome';
+import { tabFrom } from './tabs';
 
 export const dynamic = 'force-dynamic';
 
-export default function BooksPage() {
-  return <BooksHome />;
+export default async function BooksPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const { tab } = await searchParams;
+  return <BooksHome initialTab={tabFrom(tab)} />;
 }

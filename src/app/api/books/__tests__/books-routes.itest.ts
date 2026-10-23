@@ -85,6 +85,7 @@ import * as pdfRoute from '../documents/[id]/pdf/route';
 import * as templatesRoute from '../templates/route';
 import * as templateRoute from '../templates/[id]/route';
 import * as previewRoute from '../templates/preview/route';
+import * as versionsRoute from '../templates/[id]/versions/route';
 import { preset } from '@/server/books/template/presets';
 import * as settingsRoute from '../settings/route';
 
@@ -474,12 +475,12 @@ describe('Books routes: cancellation, rendering, templates', () => {
   it('templates: the first is the default, new drafts get it, one a draft uses cannot be removed, removing archives', async () => {
     const created = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, {
       name: 'Standard',
-      accentColor: '#2b4c7e',
-      footerBlocks: [{ heading: 'Hinweis', text: 'Synthetic small print.' }],
+      document: layout({ accent: '#2b4c7e', smallPrint: [{ heading: 'Hinweis', text: 'Synthetic small print.' }] }),
     });
     expect(created.status).toBe(201);
     expect(created.json.isDefault).toBe(true);
-    expect(created.json).toMatchObject({ version: 1, accentColor: '#2b4c7e', footerBlocks: [{ heading: 'Hinweis', text: 'Synthetic small print.' }] });
+    expect(created.json).toMatchObject({ version: 1, accentColor: '#2b4c7e' });
+    expect(created.json.document.regions.body.at(-1)).toMatchObject({ heading: 'Hinweis', text: 'Synthetic small print.' });
     expect(created.json.document).toMatchObject({ v: 2, theme: { accent: '#2b4c7e' } });
     const second = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Alt' });
     expect(second.json.isDefault).toBe(false);
@@ -577,8 +578,7 @@ describe('Books routes: review fixes', () => {
   it('the template is frozen at issue: editing it afterwards leaves the re-render byte-identical', async () => {
     const tpl = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, {
       name: 'Standard',
-      accentColor: '#2b4c7e',
-      footerBlocks: [{ heading: 'Hinweis', text: 'Original small print.' }],
+      document: layout({ accent: '#2b4c7e', smallPrint: [{ heading: 'Hinweis', text: 'Original small print.' }] }),
     });
     const customer = await newCustomer({ customerType: 'b2b' });
     const id = (await api.createDraft({ customerId: customer.id })).json.document.id;
@@ -588,8 +588,7 @@ describe('Books routes: review fixes', () => {
     expect(await extractPdfText(stored)).toContain('Original small print.');
 
     await call(templateRoute.PATCH, 'PATCH', `/api/books/templates/${tpl.json.id}`, { id: tpl.json.id }, {
-      accentColor: '#aa0000',
-      footerBlocks: [{ text: 'Changed small print.' }],
+      document: layout({ from: tpl.json.document, accent: '#aa0000', smallPrint: [{ text: 'Changed small print.' }] }),
     });
     const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
     const view = await getDocument(scope, id);
@@ -651,13 +650,14 @@ describe('Books routes: template versions and the preview', () => {
     expect(created.json.document).toEqual(preset('modern'));
     const id = created.json.id as string;
 
-    const same = await patchTemplate(id, { accentColor: created.json.accentColor });
+    const same = await patchTemplate(id, { document: created.json.document });
     expect(same.json.version).toBe(1);
     const renamed = await patchTemplate(id, { name: 'Modern blau' });
     expect(renamed.json).toMatchObject({ name: 'Modern blau', version: 1 });
 
-    const changed = await patchTemplate(id, { accentColor: '#1f4e79', footerBlocks: [{ text: 'Neue Hinweise.' }] });
-    expect(changed.json).toMatchObject({ version: 2, accentColor: '#1f4e79', footerBlocks: [{ heading: null, text: 'Neue Hinweise.' }] });
+    const changed = await patchTemplate(id, { document: layout({ from: created.json.document, accent: '#1f4e79', smallPrint: [{ text: 'Neue Hinweise.' }] }) });
+    expect(changed.json).toMatchObject({ version: 2, accentColor: '#1f4e79' });
+    expect(changed.json.document.regions.body.at(-1)).toMatchObject({ heading: null, text: 'Neue Hinweise.' });
     expect(changed.json.currentVersionId).not.toBe(created.json.currentVersionId);
     expect(await versionsOf(id)).toEqual([
       { version: 1, created_by: 'user-books' },
@@ -684,7 +684,7 @@ describe('Books routes: template versions and the preview', () => {
   it('refuses an edit made on an older version, and a layout the gate refuses; the working version stays', async () => {
     const created = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Standard' });
     const id = created.json.id as string;
-    await patchTemplate(id, { accentColor: '#1f4e79' });
+    await patchTemplate(id, { document: layout({ from: created.json.document, accent: '#1f4e79' }) });
 
     const stale = await patchTemplate(id, { document: created.json.document, baseVersionId: created.json.currentVersionId });
     expect(stale.status).toBe(409);
@@ -697,7 +697,7 @@ describe('Books routes: template versions and the preview', () => {
     expect(refused.json.error.code).toBe('template_invalid');
     expect(refused.json.error.problems).toContainEqual(expect.objectContaining({ code: 'REQUIRED_BLOCK_MISSING', field: 'totals' }));
 
-    const pale = await patchTemplate(id, { accentColor: '#ffee00' });
+    const pale = await patchTemplate(id, { document: layout({ from: created.json.document, accent: '#ffee00' }) });
     expect(pale.status).toBe(422);
     expect(pale.json.error.problems).toContainEqual(expect.objectContaining({ code: 'CONTRAST_TOO_LOW', field: 'theme.accent' }));
     expect((await versionsOf(id)).map((v) => v.version)).toEqual([1, 2]);
@@ -708,12 +708,12 @@ describe('Books routes: template versions and the preview', () => {
   });
 
   it('a draft previews the current version of its template', async () => {
-    const created = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Standard', footerBlocks: [{ text: 'Erste Fassung.' }] });
+    const created = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Standard', document: layout({ smallPrint: [{ text: 'Erste Fassung.' }] }) });
     const customer = await newCustomer({ customerType: 'b2b' });
     const id = (await api.createDraft({ customerId: customer.id })).json.document.id;
     await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
     expect(await extractPdfText(new Uint8Array(await (await pdf(id)).arrayBuffer()))).toContain('Erste Fassung.');
-    await patchTemplate(created.json.id, { footerBlocks: [{ text: 'Zweite Fassung.' }] });
+    await patchTemplate(created.json.id, { document: layout({ from: created.json.document, smallPrint: [{ text: 'Zweite Fassung.' }] }) });
     const text = await extractPdfText(new Uint8Array(await (await pdf(id)).arrayBuffer()));
     expect(text).toContain('Zweite Fassung.');
     expect(text).not.toContain('Erste Fassung.');
@@ -821,6 +821,55 @@ describe('Books routes: template versions and the preview', () => {
     state.session = null;
     const anonymous = await previewCall({ document: preset('klassisch'), subject: { kind: 'sample', variant: 'regular' } });
     expect(anonymous.status).toBe(401);
+  });
+  it('lists the versions newest first, each with the issued documents frozen with it', async () => {
+    const created = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Standard' });
+    const id = created.json.id as string;
+    const customer = await newCustomer({ customerType: 'b2b' });
+    const issued = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    await api.addLine(issued, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    await api.issue(issued);
+    // A draft is not counted: it freezes a version only at issue.
+    const draft = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    await api.addLine(draft, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    await patchTemplate(id, { document: layout({ from: created.json.document, accent: '#1f4e79' }) });
+
+    const res = await call(versionsRoute.GET, 'GET', `${tplPath(id)}/versions`, { id });
+    expect(res.status).toBe(200);
+    expect(res.json.items).toEqual([
+      expect.objectContaining({ version: 2, current: true, documentCount: 0 }),
+      expect.objectContaining({ id: created.json.currentVersionId, version: 1, current: false, documentCount: 1 }),
+    ]);
+    expect(Number.isNaN(Date.parse(res.json.items[0].createdAt))).toBe(false);
+
+    const mine = tenantId;
+    await company();
+    const foreign = await call(versionsRoute.GET, 'GET', `${tplPath(id)}/versions`, { id });
+    expect(foreign.status).toBe(404);
+    expect(foreign.json.error.code).toBe('template_not_found');
+    expect(mine).not.toBe(tenantId);
+  });
+
+  it('an archived template has no version list', async () => {
+    await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Standard' });
+    const second = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Zweite' });
+    const id = second.json.id as string;
+    expect((await call(templateRoute.DELETE, 'DELETE', tplPath(id), { id })).status).toBe(204);
+    const res = await call(versionsRoute.GET, 'GET', `${tplPath(id)}/versions`, { id });
+    expect(res.status).toBe(404);
+  });
+
+  it('a preview carries the structural problems of the unsaved layout, and none for a preset', async () => {
+    const clean = await previewCall({ document: preset('modern'), subject: { kind: 'sample', variant: 'regular' } });
+    expect(((await clean.json()) as Json).problems).toEqual([]);
+    const broken = structuredClone(preset('klassisch'));
+    broken.regions.body = broken.regions.body.filter((b) => b.type !== 'totals');
+    const res = await previewCall({ document: broken, subject: { kind: 'sample', variant: 'regular' } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Json;
+    expect(body.problems).toContainEqual(expect.objectContaining({ code: 'REQUIRED_BLOCK_MISSING', field: 'totals' }));
+    // It still renders: the composer shows the incomplete layout with what is wrong.
+    expect(body.layout.pageCount).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -1150,3 +1199,20 @@ describe('POST /documents/:id/correct and the replacement issue (the Correct flo
     expect((await api.patch(draftId, { replacesDocumentId: invoiceId })).status).toBe(400);
   });
 });
+
+/**
+ * A layout as the composer would send it: a document (Klassisch, or the given
+ * one) with another accent colour and small print at the end of the body.
+ */
+function layout(opts: { from?: Json; accent?: string; smallPrint?: Array<{ heading?: string | null; text: string }> } = {}): Json {
+  const doc = structuredClone(opts.from ?? preset('klassisch')) as Json;
+  if (opts.accent) doc.theme.accent = opts.accent;
+  if (opts.smallPrint) {
+    doc.regions.body = [
+      ...doc.regions.body.filter((b: Json) => !(b.type === 'freeText' && b.variant === 'smallPrint')),
+      ...opts.smallPrint.map((b, i) => ({ id: `smallPrint${i + 1}`, type: 'freeText', style: {}, heading: b.heading ?? null, text: b.text, variant: 'smallPrint' })),
+    ];
+  }
+  return doc;
+}
+

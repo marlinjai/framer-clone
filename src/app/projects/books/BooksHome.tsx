@@ -33,10 +33,11 @@ import {
 import { date, money } from '@/lib/books/units';
 
 import CustomerForm from './CustomerForm';
+import type { BooksTab } from './tabs';
 import TemplatesPanel from './TemplatesPanel';
 import { ErrorAlert, ImportedBadge, StatusBadge, errorText } from './ui';
 
-type Tab = 'documents' | 'customers' | 'templates';
+type Tab = BooksTab;
 
 const BLOCKING = new Set([
   'unauthorized',
@@ -47,9 +48,9 @@ const BLOCKING = new Set([
   'books_not_provisioned',
 ]);
 
-export default function BooksHome() {
+export default function BooksHome({ initialTab = 'documents' }: { initialTab?: Tab } = {}) {
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>('documents');
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [blocked, setBlocked] = useState<BooksApiError | null>(null);
   // The documents' filters: the typed number (applied after a short pause) and the issue year.

@@ -11,6 +11,15 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.135.0
         version: 0.135.0(zod@4.3.6)
+      '@dnd-kit/core':
+        specifier: ^6.3.1
+        version: 6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9)
+      '@dnd-kit/sortable':
+        specifier: ^8.0.0
+        version: 8.0.0(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(react@19.1.9)
+      '@dnd-kit/utilities':
+        specifier: ^3.2.2
+        version: 3.2.2(react@19.1.9)
       '@edge-runtime/cookies':
         specifier: 6.0.0
         version: 6.0.0
@@ -20,6 +29,9 @@ importers:
       '@marlinjai/auth-brain-sdk':
         specifier: ^1.7.1
         version: 1.7.1(zod@4.3.6)
+      '@marlinjai/block-editor-react':
+        specifier: ^0.1.2
+        version: 0.1.2(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(@dnd-kit/sortable@8.0.0(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(react@19.1.9))(@dnd-kit/utilities@3.2.2(react@19.1.9))(react-dom@19.1.9(react@19.1.9))(react@19.1.9)
       '@marlinjai/contacts-core':
         specifier: ^0.3.0
         version: 0.3.0(postgres@3.4.9)
@@ -137,6 +149,9 @@ importers:
       embla-carousel-react:
         specifier: ^8.6.0
         version: 8.6.0(react@19.1.9)
+      immer:
+        specifier: ^10.1.1
+        version: 10.2.0
       input-otp:
         specifier: ^1.4.2
         version: 1.4.2(react-dom@19.1.9(react@19.1.9))(react@19.1.9)
@@ -176,6 +191,9 @@ importers:
       pdf-lib:
         specifier: 1.17.1
         version: 1.17.1
+      pdfjs-dist:
+        specifier: 4.10.38
+        version: 4.10.38
       postgres:
         specifier: ^3.4.5
         version: 3.4.9
@@ -559,6 +577,28 @@ packages:
 
   '@date-fns/tz@1.4.1':
     resolution: {integrity: sha512-P5LUNhtbj6YfI3iJjw5EL9eUAG6OitD0W3fWQcpQjDRc/QIsL0tRNuO1PcDvPccWL1fSTXXdE1ds+l95DV/OFA==}
+
+  '@dnd-kit/accessibility@3.1.1':
+    resolution: {integrity: sha512-2P+YgaXF+gRsIihwwY1gCsQSYnu9Zyj2py8kY5fFvUM1qm2WA2u639R6YNVfU4GWr+ZM5mqEsfHZZLoRONbemw==}
+    peerDependencies:
+      react: '>=16.8.0'
+
+  '@dnd-kit/core@6.3.1':
+    resolution: {integrity: sha512-xkGBRQQab4RLwgXxoqETICr6S5JlogafbhNsidmrkVv2YRs5MLwpjoF2qpiGjQt8S9AoxtIV603s0GIUpY5eYQ==}
+    peerDependencies:
+      react: '>=16.8.0'
+      react-dom: '>=16.8.0'
+
+  '@dnd-kit/sortable@8.0.0':
+    resolution: {integrity: sha512-U3jk5ebVXe1Lr7c2wU7SBZjcWdQP+j7peHJfCspnA81enlu88Mgd7CC8Q+pub9ubP7eKVETzJW+IBAhsqbSu/g==}
+    peerDependencies:
+      '@dnd-kit/core': ^6.1.0
+      react: '>=16.8.0'
+
+  '@dnd-kit/utilities@3.2.2':
+    resolution: {integrity: sha512-+MKAJEOfaBe5SmV6t34p80MMKhjvUz0vRrvVJbPT0WElzaOJ/1xs+D+KDv+tD/NE5ujfrChEcshd4fLn0wpiqg==}
+    peerDependencies:
+      react: '>=16.8.0'
 
   '@edge-runtime/cookies@6.0.0':
     resolution: {integrity: sha512-VVO/8AwC2qVbygLb2IOkX1zWFx2yWIHzFv4D602CTnoRffd/+cdcXqpSydKaedFrk7a1dRYXbWwjzfV/gwZ2Gw==}
@@ -1158,6 +1198,27 @@ packages:
   '@marlinjai/auth-brain-shared@1.9.0':
     resolution: {integrity: sha512-C7W20fX2Nv+Y67iN8TUKwUXe+qT9LBOFXQ516hzRq3y5pUAjMD39rVxmVS2OX7jpgeSubL3501hFLtsR+A5Lrg==}
 
+  '@marlinjai/block-editor-react@0.1.2':
+    resolution: {integrity: sha512-5kHs1D/nSKOcEQ9+X1K+ncpS1cXAal3RbcrzjxOR6e6VpMlTlDWIGgnvPk3j4peT2+RnVaMSiW6tspRGIbrP8w==}
+    engines: {node: '>=20.19.0'}
+    peerDependencies:
+      '@dnd-kit/core': ^6.1.0
+      '@dnd-kit/sortable': ^8.0.0
+      '@dnd-kit/utilities': ^3.2.2
+      react: ^18.2.0 || ^19.0.0
+      react-dom: ^18.2.0 || ^19.0.0
+    peerDependenciesMeta:
+      '@dnd-kit/core':
+        optional: true
+      '@dnd-kit/sortable':
+        optional: true
+      '@dnd-kit/utilities':
+        optional: true
+      react:
+        optional: true
+      react-dom:
+        optional: true
+
   '@marlinjai/brain-core@1.0.0':
     resolution: {integrity: sha512-NSnglYHVE4oo6H2X0iZdz5ZSOHAZoj90U8ATS6SfAA2dbOvmi+nqRtBvyCVIbywWK5uHhBDdCSSyQDrGRsmhiQ==}
     peerDependencies:
@@ -1222,6 +1283,76 @@ packages:
 
   '@mermaid-js/parser@1.0.0':
     resolution: {integrity: sha512-vvK0Hi/VWndxoh03Mmz6wa1KDriSPjS2XMZL/1l19HFwygiObEEoEwSDxOqyLzzAI6J2PU3261JjTMTO7x+BPw==}
+
+  '@napi-rs/canvas-android-arm64@0.1.100':
+    resolution: {integrity: sha512-hjhCKhntPv9+t4ckHymdx0phYNcVW+GKQR6Lzw2zE+pOVjOplSmtx9nNNknTjbEDLcuLZqA1y8ufKg1XfgftzQ==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [android]
+
+  '@napi-rs/canvas-darwin-arm64@0.1.100':
+    resolution: {integrity: sha512-2PcswRaC7Ly645DGt88///zuFDhJxJYdKAs1uU3mfk1atYkXufgcgLfBpk6Tm12nCQBaNt1wpybuPZ4qOhTo8A==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@napi-rs/canvas-darwin-x64@0.1.100':
+    resolution: {integrity: sha512-ePNZtj7pNIva/siZMg+HmbeozkIjqUIYdoymH8HaA3qK7LfzFN4WMBM8G6HQ9ZC+H3+Dnn5pqtiXpgLykaPOhw==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@napi-rs/canvas-linux-arm-gnueabihf@0.1.100':
+    resolution: {integrity: sha512-d5cDB48oWFGU8/XPhUOFAlySgb/VAu7D+s8fi55K1Pcfg8aPplHWqMgibhVLU8ky7Pyg/fuiVLz4Nf3JrSTuUA==}
+    engines: {node: '>= 10'}
+    cpu: [arm]
+    os: [linux]
+
+  '@napi-rs/canvas-linux-arm64-gnu@0.1.100':
+    resolution: {integrity: sha512-rDxgxRu69RvDlX/bh9o22DxLsGr8EqsNgotL9+RwQE1S0b0cqeatqsw6aW45mukm0B42DIAaAacKaYQ8cqS1nw==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@napi-rs/canvas-linux-arm64-musl@0.1.100':
+    resolution: {integrity: sha512-K3mDW66N+xT2/V439u1alFANiBUjdEx2gLiNYnCmUsva5jZMxWTjafBYwTzYK+EMFMHrUoabuU+T1BIP5CgbYQ==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@napi-rs/canvas-linux-riscv64-gnu@0.1.100':
+    resolution: {integrity: sha512-mooqUBTIsccZpnoQC4NgrC1v6C1vof39etLNMnBwCY+p0gajWJvAHLGQ6g/gGyS5YrpDW+GefSN4+Cvcr08UWw==}
+    engines: {node: '>= 10'}
+    cpu: [riscv64]
+    os: [linux]
+
+  '@napi-rs/canvas-linux-x64-gnu@0.1.100':
+    resolution: {integrity: sha512-1eCvkDCazm7FFhsT7DfGOdSaHgZVK3bt/dSBl5EWHOWmnz+I7j8tPseJqqD81NF+MH21jKUK4wQSDjN0mdhnTg==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+
+  '@napi-rs/canvas-linux-x64-musl@0.1.100':
+    resolution: {integrity: sha512-20arT6lnI19S68qNlii73TSEDbECNgzMz2EpldC1V3mZFuRkeujXkcebRk0LRJe9SEUAooYiLokfMViY8IX7yA==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+
+  '@napi-rs/canvas-win32-arm64-msvc@0.1.100':
+    resolution: {integrity: sha512-DZFFT1wIAg37LJw37yhMRFfjATd3vTQzjZ1Yki8u2vhO6Hi5VE6BVaGQ1aaDu7xb4iMErz+9EOwjpS7xcxFeBw==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@napi-rs/canvas-win32-x64-msvc@0.1.100':
+    resolution: {integrity: sha512-MyT1j3mHC2+Lu4pBi9mKyMJhtP6U7k7EldY7sj/uS5gJA65gTXt8MefJQXLJo5d/vZbuWmfxzkEUNc/urV3pHA==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [win32]
+
+  '@napi-rs/canvas@0.1.100':
+    resolution: {integrity: sha512-xglYA6q3XO5P3BNJYxVZ1IV7DLVjp1Py6nwag88YntrS+3vKHyYcMqXVS4ZztJmwz2uGvz1FWhI/4LgbR5uQDA==}
+    engines: {node: '>= 10'}
 
   '@napi-rs/wasm-runtime@0.2.12':
     resolution: {integrity: sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ==}
@@ -4054,6 +4185,9 @@ packages:
     resolution: {integrity: sha512-Hs59xBNfUIunMFgWAbGX5cq6893IbWg4KnrjbYwX3tx0ztorVgTDA6B2sxf8ejHJ4wz8BqGUMYlnzNBer5NvGg==}
     engines: {node: '>= 4'}
 
+  immer@10.2.0:
+    resolution: {integrity: sha512-d/+XTN3zfODyjr89gM3mPq1WNX2B8pYsu7eORitdwyA2sBubnTl3laYlBk4sXY5FUa5qTZGBDPJICVbvqzjlbw==}
+
   import-fresh@3.3.1:
     resolution: {integrity: sha512-TR3KfrTZTYLPB6jUjfx6MF9WcWrHL9su5TObK4ZkYgBdWKPOFoSoQIdEuTuR82pmtxH2spWG9h6etwfr1pLBqQ==}
     engines: {node: '>=6'}
@@ -4965,6 +5099,10 @@ packages:
 
   pdf-lib@1.17.1:
     resolution: {integrity: sha512-V/mpyJAoTsN4cnP31vc0wfNA1+p20evqqnap0KLoRUN0Yk/p3wN52DOEsL4oBFcLdb76hlpKPtzJIgo67j/XLw==}
+
+  pdfjs-dist@4.10.38:
+    resolution: {integrity: sha512-/Y3fcFrXEAsMjJXeL9J8+ZG9U01LbuWaYypvDW2ycW1jL269L3js3DVBjDJ0Up9Np1uqDXsDrRihHANhZOlwdQ==}
+    engines: {node: '>=20'}
 
   perfect-debounce@1.0.0:
     resolution: {integrity: sha512-xCy9V055GLEqoFaHoC1SoLIaLmWctgCUaBaWxDZ7/Zx4CTyX7cJQLJOok/orfjZAh9kEYpjJa4d0KcJmCbctZA==}
@@ -6391,6 +6529,31 @@ snapshots:
 
   '@date-fns/tz@1.4.1': {}
 
+  '@dnd-kit/accessibility@3.1.1(react@19.1.9)':
+    dependencies:
+      react: 19.1.9
+      tslib: 2.8.1
+
+  '@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9)':
+    dependencies:
+      '@dnd-kit/accessibility': 3.1.1(react@19.1.9)
+      '@dnd-kit/utilities': 3.2.2(react@19.1.9)
+      react: 19.1.9
+      react-dom: 19.1.9(react@19.1.9)
+      tslib: 2.8.1
+
+  '@dnd-kit/sortable@8.0.0(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(react@19.1.9)':
+    dependencies:
+      '@dnd-kit/core': 6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9)
+      '@dnd-kit/utilities': 3.2.2(react@19.1.9)
+      react: 19.1.9
+      tslib: 2.8.1
+
+  '@dnd-kit/utilities@3.2.2(react@19.1.9)':
+    dependencies:
+      react: 19.1.9
+      tslib: 2.8.1
+
   '@edge-runtime/cookies@6.0.0': {}
 
   '@emnapi/core@1.8.1':
@@ -6808,6 +6971,17 @@ snapshots:
     dependencies:
       zod: 3.25.76
 
+  '@marlinjai/block-editor-react@0.1.2(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(@dnd-kit/sortable@8.0.0(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(react@19.1.9))(@dnd-kit/utilities@3.2.2(react@19.1.9))(react-dom@19.1.9(react@19.1.9))(react@19.1.9)':
+    dependencies:
+      clsx: 2.1.1
+      immer: 10.2.0
+    optionalDependencies:
+      '@dnd-kit/core': 6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9)
+      '@dnd-kit/sortable': 8.0.0(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(react@19.1.9)
+      '@dnd-kit/utilities': 3.2.2(react@19.1.9)
+      react: 19.1.9
+      react-dom: 19.1.9(react@19.1.9)
+
   '@marlinjai/brain-core@1.0.0(zod@4.3.6)':
     optionalDependencies:
       zod: 4.3.6
@@ -6938,6 +7112,54 @@ snapshots:
   '@mermaid-js/parser@1.0.0':
     dependencies:
       langium: 4.2.1
+
+  '@napi-rs/canvas-android-arm64@0.1.100':
+    optional: true
+
+  '@napi-rs/canvas-darwin-arm64@0.1.100':
+    optional: true
+
+  '@napi-rs/canvas-darwin-x64@0.1.100':
+    optional: true
+
+  '@napi-rs/canvas-linux-arm-gnueabihf@0.1.100':
+    optional: true
+
+  '@napi-rs/canvas-linux-arm64-gnu@0.1.100':
+    optional: true
+
+  '@napi-rs/canvas-linux-arm64-musl@0.1.100':
+    optional: true
+
+  '@napi-rs/canvas-linux-riscv64-gnu@0.1.100':
+    optional: true
+
+  '@napi-rs/canvas-linux-x64-gnu@0.1.100':
+    optional: true
+
+  '@napi-rs/canvas-linux-x64-musl@0.1.100':
+    optional: true
+
+  '@napi-rs/canvas-win32-arm64-msvc@0.1.100':
+    optional: true
+
+  '@napi-rs/canvas-win32-x64-msvc@0.1.100':
+    optional: true
+
+  '@napi-rs/canvas@0.1.100':
+    optionalDependencies:
+      '@napi-rs/canvas-android-arm64': 0.1.100
+      '@napi-rs/canvas-darwin-arm64': 0.1.100
+      '@napi-rs/canvas-darwin-x64': 0.1.100
+      '@napi-rs/canvas-linux-arm-gnueabihf': 0.1.100
+      '@napi-rs/canvas-linux-arm64-gnu': 0.1.100
+      '@napi-rs/canvas-linux-arm64-musl': 0.1.100
+      '@napi-rs/canvas-linux-riscv64-gnu': 0.1.100
+      '@napi-rs/canvas-linux-x64-gnu': 0.1.100
+      '@napi-rs/canvas-linux-x64-musl': 0.1.100
+      '@napi-rs/canvas-win32-arm64-msvc': 0.1.100
+      '@napi-rs/canvas-win32-x64-msvc': 0.1.100
+    optional: true
 
   '@napi-rs/wasm-runtime@0.2.12':
     dependencies:
@@ -10066,6 +10288,8 @@ snapshots:
 
   ignore@7.0.5: {}
 
+  immer@10.2.0: {}
+
   import-fresh@3.3.1:
     dependencies:
       parent-module: 1.0.1
@@ -11219,6 +11443,10 @@ snapshots:
       '@pdf-lib/upng': 1.0.1
       pako: 1.0.11
       tslib: 1.14.1
+
+  pdfjs-dist@4.10.38:
+    optionalDependencies:
+      '@napi-rs/canvas': 0.1.100
 
   perfect-debounce@1.0.0: {}
 
