@@ -73,6 +73,10 @@ const COLUMN_OVERRIDES: Record<string, string> = {
   'historical_import_item.status': 'Generated<HistoricalImportStatus>',
   'historical_import_extraction.outcome':
     "'ok' | 'refused' | 'invalid_output' | 'max_tokens' | 'unreadable' | 'error' | 'aborted' | null",
+  // 015_books_products: TEXT columns with a CHECK vocabulary (no enum type).
+  'books_product.kind': "Generated<'service' | 'product'>",
+  'books_product.price_basis': "Generated<'net' | 'gross'>",
+  'books_product.tax_class': "Generated<'standard' | 'reduced' | 'zero'>",
 };
 
 /** Named types the overrides above refer to, emitted with the scalar aliases. */
@@ -149,6 +153,8 @@ const TABLE_DOCS: Record<string, string> = {
     '010_books_upload_import: one model call of the upload import (the daily ceiling counts these).',
   books_asset:
     '013_books_assets: an uploaded logo (PNG or JPEG bytes), one per company and\nSHA-256, append-only (no updated_at).',
+  books_product:
+    '015_books_products: an item of the company\'s product and service list. Mutable,\narchived instead of deleted; draft lines copy its values and never reference it.\n`name_key` and `search_text` are folded by the repository (src/lib/books/searchKey.ts).',
 };
 
 /** Inline notes printed above a column. */

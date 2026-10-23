@@ -40,6 +40,7 @@ let owner: postgres.Sql;
 const BOOKS_TABLES = [
   'books_asset',
   'books_company_settings',
+  'books_product',
   'customer',
   'document_number_counter',
   'document_template',
@@ -129,6 +130,7 @@ async function fleetMigrate(schema: string) {
     '012_books_template_v2',
     '013_books_assets',
     '014_books_asset_delete',
+    '015_books_products',
   ]);
 }
 
@@ -193,6 +195,7 @@ describe('007_books through the fleet runner', () => {
       '012_books_template_v2',
       '013_books_assets',
       '014_books_asset_delete',
+      '015_books_products',
     ]);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     expect(await readCommerceTenantState(owner, tgId, schema)).toBe('ready');
@@ -239,6 +242,7 @@ describe('009_books_import over a schema already holding issued documents (as pr
       '012_books_template_v2',
       '013_books_assets',
       '014_books_asset_delete',
+      '015_books_products',
     ]);
 
     expect(await snapshot()).toEqual(before);

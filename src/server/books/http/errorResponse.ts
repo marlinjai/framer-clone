@@ -11,8 +11,9 @@
 //   400  the request itself is malformed (input, line, positions)
 //   404  the thing does not exist FOR THIS COMPANY (another company's id reads
 //        exactly like an unknown one, never 403, so existence never leaks)
-//   409  the state moved on (stale version, no longer a draft, a duplicate,
-//        an invalid transition), or the company is not initialised for the
+//   409  the state moved on (stale version, no longer a draft, a duplicate
+//        such as a second live list item of one name, an invalid
+//        transition), or the company is not initialised for the
 //        Books yet (`books_not_initialised`: run `pnpm books:init-company`)
 //   413  an uploaded logo is larger than 1 MB; 415 it is not a PNG or a JPEG
 //   422  the document cannot be issued or rendered as it stands (a missing
@@ -89,6 +90,7 @@ const STATUS: Record<BooksErrorCode, number> = {
   ASSET_IN_USE: 409,
   ASSET_BUSY: 409,
   LOGO_ASSET_MISSING: 422,
+  DUPLICATE_PRODUCT: 409,
 };
 
 /** The two codes that mean "this company was never set up for the Books". */
@@ -119,6 +121,8 @@ const MESSAGES: Partial<Record<BooksErrorCode, string>> = {
   ASSET_BUSY: 'the logo is being used by an invoice being issued or a template being saved; try again in a moment (nothing was deleted)',
   ASSET_IN_USE: 'the logo is printed on an issued document or used by a template, so it stays (nothing was deleted)',
   LOGO_ASSET_MISSING: "the template's logo is not stored for this company; choose the logo in the template again (nothing was issued)",
+  DUPLICATE_PRODUCT:
+    'another live item of the list has this name (case and accents do not count); choose another name or archive that item (nothing was saved)',
 };
 
 /** Lower snake case of a domain code, as the API answers it. */
