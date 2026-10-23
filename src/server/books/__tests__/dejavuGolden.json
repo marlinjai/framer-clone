@@ -1,0 +1,593 @@
+{
+  "recorded": "2026-10-23",
+  "renderer": "books-pdf-lib-3",
+  "documents": {
+    "klassisch": {
+      "v": 2,
+      "locale": "de-DE",
+      "page": {
+        "size": "A4",
+        "addressLayout": "din5008-b",
+        "marginsMm": {
+          "left": 20,
+          "right": 20,
+          "bottom": 10
+        },
+        "pageNumber": "right"
+      },
+      "theme": {
+        "fontFamily": "dejavu-sans",
+        "baseSizePt": 9.5,
+        "ink": "#1a1a1f",
+        "accent": "#333340",
+        "muted": "#61616b"
+      },
+      "regions": {
+        "firstPageHeader": [],
+        "addressZone": {
+          "left": [
+            {
+              "id": "senderLine",
+              "type": "senderLine",
+              "style": {
+                "sizePt": 7,
+                "color": "muted",
+                "spaceBelowPt": 8
+              }
+            },
+            {
+              "id": "recipient",
+              "type": "recipient",
+              "style": {}
+            }
+          ],
+          "right": [
+            {
+              "id": "documentMeta",
+              "type": "documentMeta",
+              "style": {
+                "sizePt": 8
+              },
+              "items": [
+                "number",
+                "issueDate",
+                "serviceDate",
+                "customerNumber",
+                "contract",
+                "recipientVatId"
+              ]
+            }
+          ]
+        },
+        "body": [
+          {
+            "id": "title",
+            "type": "title",
+            "style": {
+              "sizePt": 14,
+              "bold": true,
+              "color": "accent",
+              "spaceAbovePt": 24,
+              "spaceBelowPt": 8
+            }
+          },
+          {
+            "id": "introText",
+            "type": "introText",
+            "style": {
+              "spaceBelowPt": 8
+            }
+          },
+          {
+            "id": "lineTable",
+            "type": "lineTable",
+            "style": {},
+            "headerBand": false,
+            "columns": {
+              "pos": {
+                "visible": true,
+                "width": 0
+              },
+              "title": {
+                "visible": true,
+                "width": 0
+              },
+              "quantity": {
+                "visible": true,
+                "width": 0
+              },
+              "unit": {
+                "visible": true,
+                "width": 11
+              },
+              "unitPrice": {
+                "visible": true,
+                "width": 0
+              },
+              "rate": {
+                "visible": true,
+                "width": 0
+              },
+              "amount": {
+                "visible": true,
+                "width": 0
+              }
+            }
+          },
+          {
+            "id": "totals",
+            "type": "totals",
+            "style": {
+              "spaceAbovePt": 4,
+              "spaceBelowPt": 8
+            }
+          },
+          {
+            "id": "taxNote",
+            "type": "taxNote",
+            "style": {
+              "bold": true,
+              "spaceBelowPt": 8
+            }
+          },
+          {
+            "id": "paymentDetails",
+            "type": "paymentDetails",
+            "style": {
+              "spaceBelowPt": 8
+            },
+            "heading": null
+          },
+          {
+            "id": "outroText",
+            "type": "outroText",
+            "style": {
+              "spaceBelowPt": 8
+            }
+          }
+        ],
+        "followingPageHeader": [
+          {
+            "id": "continuation",
+            "type": "title",
+            "style": {
+              "sizePt": 9,
+              "bold": false,
+              "color": "muted",
+              "spaceBelowPt": 12
+            }
+          }
+        ],
+        "footer": [
+          {
+            "id": "footerRule",
+            "type": "divider",
+            "style": {
+              "spaceBelowPt": 4
+            },
+            "thicknessPt": 0.4,
+            "lineColor": "muted"
+          },
+          {
+            "id": "senderColumns",
+            "type": "senderColumns",
+            "style": {
+              "sizePt": 6.5,
+              "color": "muted"
+            },
+            "columns": [
+              "identity",
+              "contact",
+              "legal",
+              "bank"
+            ],
+            "layout": "columns"
+          }
+        ]
+      }
+    },
+    "modern": {
+      "v": 2,
+      "locale": "de-DE",
+      "page": {
+        "size": "A4",
+        "addressLayout": "din5008-b",
+        "marginsMm": {
+          "left": 20,
+          "right": 20,
+          "bottom": 10
+        },
+        "pageNumber": "right"
+      },
+      "theme": {
+        "fontFamily": "dejavu-sans",
+        "baseSizePt": 9.5,
+        "ink": "#1a1a1f",
+        "accent": "#2f5d8a",
+        "muted": "#61616b"
+      },
+      "regions": {
+        "firstPageHeader": [
+          {
+            "id": "logo",
+            "type": "logo",
+            "style": {
+              "align": "right"
+            },
+            "widthMm": 40,
+            "assetSha256": null
+          }
+        ],
+        "addressZone": {
+          "left": [
+            {
+              "id": "senderLine",
+              "type": "senderLine",
+              "style": {
+                "sizePt": 7,
+                "color": "muted",
+                "spaceBelowPt": 8
+              }
+            },
+            {
+              "id": "recipient",
+              "type": "recipient",
+              "style": {}
+            }
+          ],
+          "right": [
+            {
+              "id": "documentMeta",
+              "type": "documentMeta",
+              "style": {
+                "sizePt": 8
+              },
+              "items": [
+                "number",
+                "issueDate",
+                "serviceDate",
+                "customerNumber",
+                "contract",
+                "recipientVatId"
+              ]
+            }
+          ]
+        },
+        "body": [
+          {
+            "id": "title",
+            "type": "title",
+            "style": {
+              "sizePt": 14,
+              "bold": true,
+              "color": "accent",
+              "spaceAbovePt": 24,
+              "spaceBelowPt": 8
+            }
+          },
+          {
+            "id": "introText",
+            "type": "introText",
+            "style": {
+              "spaceBelowPt": 8
+            }
+          },
+          {
+            "id": "lineTable",
+            "type": "lineTable",
+            "style": {},
+            "headerBand": true,
+            "columns": {
+              "pos": {
+                "visible": true,
+                "width": 0
+              },
+              "title": {
+                "visible": true,
+                "width": 0
+              },
+              "quantity": {
+                "visible": true,
+                "width": 0
+              },
+              "unit": {
+                "visible": true,
+                "width": 11
+              },
+              "unitPrice": {
+                "visible": true,
+                "width": 0
+              },
+              "rate": {
+                "visible": true,
+                "width": 0
+              },
+              "amount": {
+                "visible": true,
+                "width": 0
+              }
+            }
+          },
+          {
+            "id": "totals",
+            "type": "totals",
+            "style": {
+              "spaceAbovePt": 4,
+              "spaceBelowPt": 8
+            }
+          },
+          {
+            "id": "taxNote",
+            "type": "taxNote",
+            "style": {
+              "bold": true,
+              "spaceBelowPt": 8
+            }
+          },
+          {
+            "id": "paymentDetails",
+            "type": "paymentDetails",
+            "style": {
+              "spaceBelowPt": 8
+            },
+            "heading": null
+          },
+          {
+            "id": "outroText",
+            "type": "outroText",
+            "style": {
+              "spaceBelowPt": 8
+            }
+          }
+        ],
+        "followingPageHeader": [
+          {
+            "id": "continuation",
+            "type": "title",
+            "style": {
+              "sizePt": 9,
+              "bold": false,
+              "color": "muted",
+              "spaceBelowPt": 12
+            }
+          }
+        ],
+        "footer": [
+          {
+            "id": "footerRule",
+            "type": "divider",
+            "style": {
+              "spaceBelowPt": 4
+            },
+            "thicknessPt": 0.5,
+            "lineColor": "accent"
+          },
+          {
+            "id": "senderColumns",
+            "type": "senderColumns",
+            "style": {
+              "sizePt": 6.5,
+              "color": "muted"
+            },
+            "columns": [
+              "identity",
+              "contact",
+              "legal",
+              "bank"
+            ],
+            "layout": "columns"
+          }
+        ]
+      }
+    },
+    "kompakt": {
+      "v": 2,
+      "locale": "de-DE",
+      "page": {
+        "size": "A4",
+        "addressLayout": "din5008-b",
+        "marginsMm": {
+          "left": 20,
+          "right": 20,
+          "bottom": 10
+        },
+        "pageNumber": "right"
+      },
+      "theme": {
+        "fontFamily": "dejavu-sans",
+        "baseSizePt": 8.5,
+        "ink": "#1a1a1f",
+        "accent": "#333340",
+        "muted": "#61616b"
+      },
+      "regions": {
+        "firstPageHeader": [],
+        "addressZone": {
+          "left": [
+            {
+              "id": "senderLine",
+              "type": "senderLine",
+              "style": {
+                "sizePt": 7,
+                "color": "muted",
+                "spaceBelowPt": 8
+              }
+            },
+            {
+              "id": "recipient",
+              "type": "recipient",
+              "style": {}
+            }
+          ],
+          "right": [
+            {
+              "id": "documentMeta",
+              "type": "documentMeta",
+              "style": {
+                "sizePt": 8
+              },
+              "items": [
+                "number",
+                "issueDate",
+                "serviceDate",
+                "customerNumber",
+                "contract",
+                "recipientVatId"
+              ]
+            }
+          ]
+        },
+        "body": [
+          {
+            "id": "title",
+            "type": "title",
+            "style": {
+              "sizePt": 12,
+              "bold": true,
+              "color": "accent",
+              "spaceAbovePt": 16,
+              "spaceBelowPt": 6
+            }
+          },
+          {
+            "id": "introText",
+            "type": "introText",
+            "style": {
+              "spaceBelowPt": 8
+            }
+          },
+          {
+            "id": "lineTable",
+            "type": "lineTable",
+            "style": {
+              "sizePt": 8
+            },
+            "headerBand": false,
+            "columns": {
+              "pos": {
+                "visible": true,
+                "width": 0
+              },
+              "title": {
+                "visible": true,
+                "width": 0
+              },
+              "quantity": {
+                "visible": true,
+                "width": 0
+              },
+              "unit": {
+                "visible": true,
+                "width": 11
+              },
+              "unitPrice": {
+                "visible": true,
+                "width": 0
+              },
+              "rate": {
+                "visible": true,
+                "width": 0
+              },
+              "amount": {
+                "visible": true,
+                "width": 0
+              }
+            }
+          },
+          {
+            "id": "totals",
+            "type": "totals",
+            "style": {
+              "spaceAbovePt": 4,
+              "spaceBelowPt": 8
+            }
+          },
+          {
+            "id": "taxNote",
+            "type": "taxNote",
+            "style": {
+              "bold": true,
+              "spaceBelowPt": 8
+            }
+          },
+          {
+            "id": "paymentDetails",
+            "type": "paymentDetails",
+            "style": {
+              "spaceBelowPt": 8
+            },
+            "heading": null
+          },
+          {
+            "id": "outroText",
+            "type": "outroText",
+            "style": {
+              "spaceBelowPt": 8
+            }
+          }
+        ],
+        "followingPageHeader": [
+          {
+            "id": "continuation",
+            "type": "title",
+            "style": {
+              "sizePt": 9,
+              "bold": false,
+              "color": "muted",
+              "spaceBelowPt": 12
+            }
+          }
+        ],
+        "footer": [
+          {
+            "id": "footerRule",
+            "type": "divider",
+            "style": {
+              "spaceBelowPt": 4
+            },
+            "thicknessPt": 0.4,
+            "lineColor": "muted"
+          },
+          {
+            "id": "senderColumns",
+            "type": "senderColumns",
+            "style": {
+              "sizePt": 6.5,
+              "color": "muted"
+            },
+            "columns": [
+              "identity",
+              "legal",
+              "bank",
+              "contact"
+            ],
+            "layout": "line"
+          }
+        ]
+      }
+    }
+  },
+  "hashes": {
+    "klassisch/smallBusiness": "5532107e9410f09bb4794eb9169fba8e33b33c730a1299035c470df8b47a8fa3",
+    "klassisch/regular": "b583a9cee82591d2ccfedb00108bef20c50201e46b38550ec08ecc3170bddcfe",
+    "klassisch/reverseCharge": "8232fff2e96e8c72e79d4d8da5fa987c3829e36e688cb6449566594647b4e271",
+    "klassisch/creditNote": "18d7866e75c32e174bd15b0c01aa06cec44fad3af92fcf6414d789e4d5c7868a",
+    "klassisch/longInvoice": "2d29401793f2f7667164cddba979c7c9f36a0a6a89014d81acd6ad3804a8c8b9",
+    "klassisch/longRecipient": "925c8e13735dd49e8e4e141cee974352349c332f6ed3e888b1385e1fbf61c8d0",
+    "klassisch/longDescription": "d198fad0fbdf27f3c8659ba2b7de4e7599a35f70eb4009bc3e48285935f08068",
+    "modern/smallBusiness": "633d4802ddcd424f04bfbacb916e612e5380f34c3812048732b342b2c407be05",
+    "modern/regular": "7d3bd007b2278b9fffccd3c97715f0d621bded1b3b0a1d7cc73a6d468844f926",
+    "modern/reverseCharge": "4d1fcb41d504277cef939b0a20088710b9eb108e7e8336bdbe2097ce1cd31db5",
+    "modern/creditNote": "83ec10d4e26976ed7c826974aeed5e91673878acca9d50dd2161096b354fa9a8",
+    "modern/longInvoice": "a673591f3b9646030d77efedb05f0c99d5e92de5fccab3f2cc411b233a3d43c7",
+    "modern/longRecipient": "297875d601294cf2714a5f64d5f482c4e1b1753a1796eedfcdc9278895d4c712",
+    "modern/longDescription": "46f3bc2b0995e7a761cfe41649a7d2e92791e8d58fabe468e455c208542c3f36",
+    "kompakt/smallBusiness": "77f9713faa88ca364c90cbc41212c0a2836f15daa3c7934b8d88e729b3332305",
+    "kompakt/regular": "1b07e976179759e4d2101323decf0647a928dc368a1ad6c8bd8414298415b9e4",
+    "kompakt/reverseCharge": "e8e930d790ed3d3d59589b1cf1ae503594c3b6dcc0c1d0293d430bc1239351dc",
+    "kompakt/creditNote": "1a328a81168df160438ac3040f9233b7ae125c988b1e0a7d6857c6fa7ce6c195",
+    "kompakt/longInvoice": "819a005aae295cc646b87efe83d4abe537d6cb5750471ed4e5d6fa8ccec50a4e",
+    "kompakt/longRecipient": "053390d5774f39898b949e17673abf4dcf60b795a92b67b394de1468eb3fa387",
+    "kompakt/longDescription": "f4768512190d0097ad01fd7aa177651a1c945ebe9f588eb9b8eabc899dde98a3"
+  }
+}

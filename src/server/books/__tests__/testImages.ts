@@ -5,9 +5,14 @@
 // jpeg-js. Deterministic: the same arguments give the same bytes in every
 // process, which the engine's fresh-process determinism check relies on.
 
+import { createHash } from 'node:crypto';
 import { crc32, deflateSync } from 'node:zlib';
 
 import { encode as encodeJpeg } from 'jpeg-js';
+
+import type { EngineImage } from '../render/engine';
+import { preset } from '../template/presets';
+import type { FontFamily, TemplateDocumentV2 } from '../template/schema';
 
 function chunk(type: string, data: Uint8Array): Buffer {
   const head = Buffer.alloc(8);
@@ -98,4 +103,27 @@ export function withJpegFrameMarker(jpeg: Uint8Array, marker: number): Uint8Arra
     }
   }
   throw new Error('withJpegFrameMarker: no baseline frame header');
+}
+
+/** The SHA-256 of bytes, the name an asset is stored under. */
+export function assetSha(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+/**
+ * Modern set in `family` with a generated logo (300 x 100 px) top right on
+ * the first page and small in the following-page header: the same template
+ * in the parent test and in the fresh process of engineChild.ts.
+ */
+export function logoCase(family: FontFamily, kind: 'png' | 'jpeg'): { doc: TemplateDocumentV2; assets: Map<string, EngineImage>; sha: string } {
+  const bytes = kind === 'png' ? makePng(300, 100) : makeJpeg(300, 100);
+  const sha = assetSha(bytes);
+  const doc = preset('modern');
+  doc.theme.fontFamily = family;
+  doc.regions.firstPageHeader = [{ id: 'logo', type: 'logo', style: { align: 'right' }, widthMm: 40, assetSha256: sha }];
+  doc.regions.followingPageHeader = [
+    { id: 'logoSmall', type: 'logo', style: { align: 'left', spaceBelowPt: 4 }, widthMm: 20, assetSha256: sha },
+    ...doc.regions.followingPageHeader,
+  ];
+  return { doc, assets: new Map([[sha, { contentType: kind === 'png' ? 'image/png' : 'image/jpeg', bytes }]]), sha };
 }

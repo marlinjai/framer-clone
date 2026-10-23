@@ -38,6 +38,7 @@ let ownerUrl: string;
 let owner: postgres.Sql;
 
 const BOOKS_TABLES = [
+  'books_asset',
   'books_company_settings',
   'customer',
   'document_number_counter',
@@ -105,7 +106,7 @@ function expectedPrivileges() {
   return Object.fromEntries(
     BOOKS_TABLES.map((t) => [
       t,
-      t === 'sales_document_event' || t === 'sales_document_file' || t === 'document_template_version'
+      t === 'sales_document_event' || t === 'sales_document_file' || t === 'document_template_version' || t === 'books_asset'
         ? { sel: true, ins: true, upd: false, del: false }
         : t === 'document_number_counter'
           ? { sel: true, ins: true, upd: true, del: false }
@@ -117,7 +118,15 @@ function expectedPrivileges() {
 async function fleetMigrate(schema: string) {
   const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
   const mine = result.schemas.find((s) => s.schema === schema);
-  expect(mine?.applied).toEqual(['007_books', '008_books_files', '009_books_import', '010_books_upload_import', '011_books_replacement', '012_books_template_v2']);
+  expect(mine?.applied).toEqual([
+    '007_books',
+    '008_books_files',
+    '009_books_import',
+    '010_books_upload_import',
+    '011_books_replacement',
+    '012_books_template_v2',
+    '013_books_assets',
+  ]);
 }
 
 describe('007_books through the fleet runner', () => {
@@ -172,7 +181,15 @@ describe('007_books through the fleet runner', () => {
     const { tgId, schema } = await provisionAt006WithId();
     const first = await ensureCommerceTenant({ tenantGroupId: tgId, slug: `fleet-${tgId.slice(0, 8)}`, connectionString: ownerUrl });
     expect(first.provisioned).toBe(true);
-    expect(first.applied).toEqual(['007_books', '008_books_files', '009_books_import', '010_books_upload_import', '011_books_replacement', '012_books_template_v2']);
+    expect(first.applied).toEqual([
+      '007_books',
+      '008_books_files',
+      '009_books_import',
+      '010_books_upload_import',
+      '011_books_replacement',
+      '012_books_template_v2',
+      '013_books_assets',
+    ]);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     expect(await readCommerceTenantState(owner, tgId, schema)).toBe('ready');
     const second = await ensureCommerceTenant({ tenantGroupId: tgId, slug: `fleet-${tgId.slice(0, 8)}`, connectionString: ownerUrl });
@@ -211,7 +228,13 @@ describe('009_books_import over a schema already holding issued documents (as pr
     const before = await snapshot();
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['009_books_import', '010_books_upload_import', '011_books_replacement', '012_books_template_v2']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual([
+      '009_books_import',
+      '010_books_upload_import',
+      '011_books_replacement',
+      '012_books_template_v2',
+      '013_books_assets',
+    ]);
 
     expect(await snapshot()).toEqual(before);
     const [link] = await owner<{ replaces_document_id: string | null; print_replaces_reference: boolean }[]>`
@@ -266,7 +289,7 @@ describe('012_books_template_v2 through the fleet runner', () => {
                 VALUES (${plain}, ${tenantId}, 'Plain', NULL, ${owner.json([{ unexpected: 1 }])}, now())`;
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2', '013_books_assets']);
 
     const columns = await owner<{ column_name: string }[]>`
       SELECT column_name FROM information_schema.columns WHERE table_schema = ${schema} AND table_name = 'document_template' ORDER BY column_name`;
@@ -328,6 +351,78 @@ describe('012_books_template_v2 through the fleet runner', () => {
   });
 });
 
+describe('013_books_assets through the fleet runner', () => {
+  it('adds the asset table to a schema at 012 holding issued documents: append-only for every role, unique per company and hash', async () => {
+    const tgId = assertTenantGroupId(randomUUID());
+    await provisionTenant(owner, {
+      ...commerceProvisionOptions(tgId, `asset-${tgId.slice(0, 8)}`),
+      tenantMigrations: COMMERCE_TENANT_MIGRATIONS.filter((m) => m.id < '013'),
+    });
+    const schema = tenantSchema(tgId);
+    const s = owner(schema);
+    // Something already there, which 013 must leave as it is.
+    const tenantId = randomUUID();
+    const templateId = randomUUID();
+    const versionId = randomUUID();
+    await owner.begin(async (tx) => {
+      await tx`INSERT INTO ${tx(schema)}.document_template (id, tenant_id, name, is_default, current_version_id, updated_at)
+               VALUES (${templateId}, ${tenantId}, 'Standard', true, ${versionId}, now())`;
+      await tx`INSERT INTO ${tx(schema)}.document_template_version (id, tenant_id, template_id, version, document)
+               VALUES (${versionId}, ${tenantId}, ${templateId}, 1, ${tx.json({ v: 2, regions: {} })})`;
+    });
+    const before = await owner`SELECT * FROM ${s}.document_template_version ORDER BY id`;
+
+    const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets']);
+    expect(await owner`SELECT * FROM ${s}.document_template_version ORDER BY id`).toEqual(before);
+    expect(await privileges(schema)).toEqual(expectedPrivileges());
+
+    const code = async (p: Promise<unknown>) => p.then(() => 'ok', (e: { code?: string }) => e.code);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const hash = 'ab'.repeat(32);
+    const insert = (db: postgres.Sql, tenant: string, sha256: string, over: Record<string, unknown> = {}) => {
+      const row = { id: randomUUID(), tenant_id: tenant, kind: 'logo', content_type: 'image/png', byte_size: png.length, sha256, width_px: 10, height_px: 10, content: png, ...over };
+      return db`INSERT INTO ${db(schema)}.books_asset ${db(row)}`;
+    };
+    const app = postgres(ownerUrl.replace('postgres@', 'commerce_app@'), { max: 1, prepare: false, onnotice: () => {} });
+    try {
+      expect(await code(insert(app, tenantId, hash))).toBe('ok');
+      // The same hash again for the same company is refused; for another company it is its own asset.
+      expect(await code(insert(app, tenantId, hash))).toBe('23505');
+      expect(await code(insert(app, randomUUID(), hash))).toBe('ok');
+      // The checks: kind, type, size against the content, the hash's form, the pixel bound.
+      expect(await code(insert(app, tenantId, 'cd'.repeat(32), { kind: 'favicon' }))).toBe('23514');
+      expect(await code(insert(app, tenantId, 'cd'.repeat(32), { content_type: 'image/svg+xml' }))).toBe('23514');
+      expect(await code(insert(app, tenantId, 'cd'.repeat(32), { byte_size: png.length + 1 }))).toBe('23514');
+      expect(await code(insert(app, tenantId, 'CD'.repeat(32)))).toBe('23514');
+      expect(await code(insert(app, tenantId, 'cd'.repeat(32), { width_px: 2001 }))).toBe('23514');
+      expect(await code(insert(app, tenantId, 'cd'.repeat(32), { height_px: 0 }))).toBe('23514');
+      // Append-only: the app role holds no UPDATE or DELETE at all.
+      expect(await code(app`UPDATE ${app(schema)}.books_asset SET width_px = 11 WHERE sha256 = ${hash}`)).toBe('42501');
+      expect(await code(app`DELETE FROM ${app(schema)}.books_asset WHERE sha256 = ${hash}`)).toBe('42501');
+      expect(await code(app`TRUNCATE ${app(schema)}.books_asset`)).toBe('42501');
+    } finally {
+      await app.end();
+    }
+    // ... and the trigger refuses every role, the owner included.
+    expect(await code(owner`UPDATE ${s}.books_asset SET width_px = 11 WHERE sha256 = ${hash}`)).toBe('BK014');
+    expect(await code(owner`DELETE FROM ${s}.books_asset WHERE sha256 = ${hash}`)).toBe('BK014');
+    expect(await code(owner`TRUNCATE ${s}.books_asset`)).toBe('BK014');
+    expect(await owner`SELECT count(*)::int AS n FROM ${s}.books_asset`).toEqual([{ n: 2 }]);
+
+    // Running 013 a second time (the runner forgets it applied it) changes nothing and does not fail.
+    const assetsBefore = await owner`SELECT id FROM ${s}.books_asset ORDER BY id`;
+    await owner`DELETE FROM ${s}.__tenant_db_migrations WHERE id = '013_books_assets'`;
+    await owner`DELETE FROM public.tenant_migration_progress WHERE schema_name = ${schema} AND migration_id = '013_books_assets'`;
+    const again = await migrateAllCommerceTenants({ connectionString: ownerUrl });
+    expect(again.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets']);
+    expect(await owner`SELECT id FROM ${s}.books_asset ORDER BY id`).toEqual(assetsBefore);
+    expect(await privileges(schema)).toEqual(expectedPrivileges());
+  });
+});
+
+// Last on purpose: it leaves a schema 012 refuses to migrate, and every fleet
+// run after it (which sweeps all schemas of this container) would fail on it.
 describe('012_books_template_v2 and a hand-set logo', () => {
   it('refuses to drop logo_file_id while a row holds a value (nothing is changed)', async () => {
     const tgId = assertTenantGroupId(randomUUID());

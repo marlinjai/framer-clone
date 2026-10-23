@@ -89,7 +89,7 @@ describe('every block type in every region it may stand in', () => {
     const { layout } = await render(withBlock(type, region), type === 'taxNote' ? 'smallBusiness' : 'longInvoice');
     const rects = layout.blocks.filter((r) => r.blockId === 'probe-block');
     if (type === 'logo') {
-      // No logo assets before phase 5: nothing drawn, no space taken.
+      // A logo without an asset draws nothing and takes no space (with one: engineLogo.test.ts).
       expect(rects).toEqual([]);
       return;
     }

@@ -3,7 +3,9 @@
 // The template document version 2 and its save gate (visual template
 // composer plan, decisions 3, 5, 7, 8): the presets parse and pass the whole
 // gate (the probe set against every preset), and every hand-made invalid
-// document is refused with the block, item or column named.
+// document is refused with the block, item or column named. Logos (phase 5):
+// the company's asset is drawn in the probe render, a missing one and two
+// different ones are refused by name.
 
 import { describe, expect, it } from 'vitest';
 
@@ -12,9 +14,10 @@ import { fontMeasure, templateProblems, assertTemplateSavable } from '../templat
 import { PRESETS, preset } from '../template/presets';
 import { PROBE_NAMES } from '../template/probes';
 import { structuralProblems, type ProblemCode } from '../template/rules';
-import { parseTemplateDocument, templateDocumentV2Schema, type Block, type TemplateDocumentV2 } from '../template/schema';
+import { parseTemplateDocument, templateDocumentV2Schema, templateLogo, type Block, type TemplateDocumentV2 } from '../template/schema';
 import { isBooksError } from '../errors';
 import { templateSnapshotSchema } from '../snapshots';
+import { assetSha, logoCase, makeJpeg } from './testImages';
 
 const codes = async (doc: TemplateDocumentV2): Promise<ProblemCode[]> => structuralProblems(doc, await fontMeasure('dejavu-sans')).map((p) => p.code);
 const without = (doc: TemplateDocumentV2, type: Block['type']): TemplateDocumentV2 => {
@@ -285,5 +288,49 @@ describe('the save gate', () => {
     const err = await assertTemplateSavable(without(preset('klassisch'), 'totals'), new Map()).catch((e: unknown) => e);
     expect(isBooksError(err, 'TEMPLATE_INVALID')).toBe(true);
     expect((err as { details: { problems: unknown[] } }).details.problems).toContainEqual(expect.objectContaining({ field: 'totals' }));
+  });
+});
+
+describe('the save gate and logos', () => {
+  const { doc: withLogo, assets, sha } = logoCase('dejavu-sans', 'png');
+
+  it('saves a template whose logo is an asset of the company (the probe render draws it)', async () => {
+    expect(await templateProblems(withLogo, { assets })).toEqual([]);
+    await expect(assertTemplateSavable(withLogo, assets)).resolves.toBeUndefined();
+  }, 60_000);
+
+  it('refuses a logo the company does not have, naming every block (LOGO_ASSET_MISSING)', async () => {
+    const problems = await templateProblems(withLogo, { assets: new Map() });
+    expect(problems).toEqual([
+      expect.objectContaining({ code: 'LOGO_ASSET_MISSING', blockId: 'logo', region: 'firstPageHeader', field: 'assetSha256' }),
+      expect.objectContaining({ code: 'LOGO_ASSET_MISSING', blockId: 'logoSmall', region: 'followingPageHeader', field: 'assetSha256' }),
+    ]);
+    const err = await assertTemplateSavable(withLogo, new Map()).catch((e: unknown) => e);
+    expect(isBooksError(err, 'TEMPLATE_INVALID')).toBe(true);
+  });
+
+  it('refuses two logo blocks naming different images (one template, one logo)', async () => {
+    const doc = structuredClone(withLogo);
+    doc.regions.footer.push({ id: 'otherLogo', type: 'logo', style: {}, widthMm: 20, assetSha256: 'a'.repeat(64) });
+    expect(await codes(doc)).toEqual(['LOGO_ASSETS_DIFFER']);
+    expect(structuralProblems(doc, await fontMeasure('dejavu-sans'))[0]).toMatchObject({ blockId: 'otherLogo', region: 'footer' });
+    // A logo block without an image beside one with an image is fine (it draws nothing).
+    doc.regions.footer[doc.regions.footer.length - 1] = { id: 'otherLogo', type: 'logo', style: {}, widthMm: 20, assetSha256: null };
+    expect(await codes(doc)).toEqual([]);
+  });
+
+  it('refuses a logo that pushes the letterhead into the address field (the probe render measures the real image)', async () => {
+    const tall = makeJpeg(100, 400);
+    const doc = structuredClone(withLogo);
+    doc.regions.firstPageHeader = [{ id: 'logo', type: 'logo', style: {}, widthMm: 30, assetSha256: assetSha(tall) }];
+    doc.regions.followingPageHeader = doc.regions.followingPageHeader.filter((b) => b.type !== 'logo');
+    const problems = await templateProblems(doc, { assets: new Map([[assetSha(tall), { contentType: 'image/jpeg', bytes: tall }]]) });
+    expect(problems).toContainEqual(expect.objectContaining({ code: 'LAYOUT_PROBLEM', field: 'HEADER_TOO_TALL', region: 'firstPageHeader' }));
+  }, 60_000);
+
+  it('freezes the one logo of a template for the issue snapshot', () => {
+    expect(templateLogo(withLogo)).toEqual({ sha256: sha });
+    expect(templateLogo(preset('modern'))).toBeNull();
+    expect(templateLogo(preset('klassisch'))).toBeNull();
   });
 });
