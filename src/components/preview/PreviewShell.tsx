@@ -1,6 +1,9 @@
 // PreviewShell wires together the toolbar and either the resizable fitted
-// frame or a fullscreen-fill frame. Mode is driven by the `?fullscreen=1`
-// query param so the choice is shareable and survives reloads. State
+// frame or a fullscreen-fill frame. `?fullscreen=1` records the choice so it
+// is shareable and survives reloads; real browser fullscreen (see
+// useFullscreen) is requested by the Fullscreen button or F, because browsers
+// refuse it without a user gesture. A load with the param therefore shows the
+// in-window fill with an "Enter fullscreen" prompt. State
 // (width, height, reload key) lives here so the toolbar's W/H inputs and
 // the gutters' drag deltas converge to a single source of truth.
 'use client';
@@ -14,8 +17,10 @@ import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
 import EditorCommerceProvider from '@/components/EditorCommerceProvider';
 import PreviewFrame from './PreviewFrame';
+import FullscreenExitControl from './FullscreenExitControl';
 import PreviewToolbar, { type PreviewMode } from './PreviewToolbar';
 import ResizeGutter from './ResizeGutter';
+import { useFullscreen } from './useFullscreen';
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 4000;
@@ -43,8 +48,10 @@ const PreviewShell = observer(({ missingPageId }: PreviewShellProps = {}) => {
   // The text goes in after the first paint, so the live region announces it.
   const [noticeReady, setNoticeReady] = useState(false);
   useEffect(() => setNoticeReady(true), []);
-  const mode: PreviewMode = searchParams.get('fullscreen') === '1' ? 'fullscreen' : 'fitted';
-  const isFullscreen = mode === 'fullscreen';
+  // The param alone (a load or reload) fills the window under the toolbar;
+  // `immersive` (real or fallback fullscreen) also drops every bit of chrome.
+  const paramFill = searchParams.get('fullscreen') === '1';
+  const rootRef = useRef<HTMLDivElement>(null);
 
   // Initial frame size: largest viewport's dimensions, falling back to a
   // standard desktop size if the page has no viewports yet.
@@ -59,14 +66,6 @@ const PreviewShell = observer(({ missingPageId }: PreviewShellProps = {}) => {
   const [windowWidth, setWindowWidth] = useState<number>(() =>
     typeof window === 'undefined' ? 1280 : window.innerWidth,
   );
-  useEffect(() => {
-    if (!isFullscreen) return;
-    const onResize = () => setWindowWidth(window.innerWidth);
-    onResize();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [isFullscreen]);
-
   const widthRef = useRef(width);
   widthRef.current = width;
 
@@ -89,12 +88,61 @@ const PreviewShell = observer(({ missingPageId }: PreviewShellProps = {}) => {
     window.history.replaceState(window.history.state, '', qs ? `${pathname}?${qs}` : pathname);
   }, [pathname, searchParams]);
 
+  // Esc, the exit control or the browser ended real fullscreen: back to the
+  // fitted preview, with the param gone so a reload agrees.
+  const onLeaveFullscreen = useCallback(() => {
+    replaceParams((params) => params.delete('fullscreen'));
+  }, [replaceParams]);
+  const fullscreen = useFullscreen(rootRef, { onLeave: onLeaveFullscreen });
+  const { immersive } = fullscreen;
+  const isFill = paramFill || immersive;
+  useEffect(() => {
+    if (!isFill) return;
+    const onResize = () => setWindowWidth(window.innerWidth);
+    onResize();
+    window.addEventListener('resize', onResize);
+    // Entering real fullscreen changes the width without always firing resize.
+    document.addEventListener('fullscreenchange', onResize);
+    document.addEventListener('webkitfullscreenchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      document.removeEventListener('fullscreenchange', onResize);
+      document.removeEventListener('webkitfullscreenchange', onResize);
+    };
+  }, [isFill]);
+  const mode: PreviewMode = isFill ? 'fullscreen' : 'fitted';
+
+  const onEnterFullscreen = useCallback(() => {
+    // The request goes first so it still counts as the click's user gesture.
+    const entering = fullscreen.enter();
+    if (!paramFill) replaceParams((params) => params.set('fullscreen', '1'));
+    return entering;
+  }, [fullscreen, paramFill, replaceParams]);
+  const onExitFullscreen = useCallback(() => {
+    void fullscreen.exit();
+    replaceParams((params) => params.delete('fullscreen'));
+  }, [fullscreen, replaceParams]);
+  // Fill from a load (param only): the button enters real fullscreen. Once
+  // immersive, or when fitted, it toggles as usual.
   const onToggleMode = useCallback(() => {
-    replaceParams((params) => {
-      if (isFullscreen) params.delete('fullscreen');
-      else params.set('fullscreen', '1');
-    });
-  }, [isFullscreen, replaceParams]);
+    if (immersive) onExitFullscreen();
+    else void onEnterFullscreen();
+  }, [immersive, onEnterFullscreen, onExitFullscreen]);
+
+  // F toggles fullscreen unless the person is typing somewhere.
+  const onToggleModeRef = useRef(onToggleMode);
+  onToggleModeRef.current = onToggleMode;
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== 'f' || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      e.preventDefault();
+      onToggleModeRef.current();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const onPageChange = useCallback((pageId: string) => {
     const next = project?.getPage(pageId);
@@ -139,13 +187,18 @@ const PreviewShell = observer(({ missingPageId }: PreviewShellProps = {}) => {
   return (
     <DataSourceProviderContext.Provider value={getSharedPrismaDataSourceProvider()}>
     <EditorCommerceProvider>
-    <div className="w-screen h-screen flex flex-col bg-gray-950">
+    <div ref={rootRef} className="w-screen h-screen flex flex-col bg-gray-950">
+      {immersive ? (
+        <FullscreenExitControl onExit={onExitFullscreen} />
+      ) : (
+      <>
       <PreviewToolbar
         viewportNodes={viewportNodes}
         width={width}
         height={height}
         activeBreakpointId={activeBreakpointId}
         mode={mode}
+        enterOnly={paramFill && !immersive}
         onWidthChange={setWidth}
         onHeightChange={setHeight}
         onPresetChange={onPresetChange}
@@ -180,8 +233,29 @@ const PreviewShell = observer(({ missingPageId }: PreviewShellProps = {}) => {
           </>
         ) : null}
       </div>
+      {paramFill && !immersive ? (
+        <div className="flex items-center gap-3 bg-gray-800 px-3 py-1.5 text-xs text-gray-200">
+          <span>This preview fills the window. Enter fullscreen to see the page alone (or press F).</span>
+          <button
+            type="button"
+            onClick={() => void onEnterFullscreen()}
+            className="rounded bg-brand px-2 py-1 text-white hover:opacity-90"
+          >
+            Enter fullscreen
+          </button>
+          <button
+            type="button"
+            onClick={onExitFullscreen}
+            className="rounded px-2 py-1 hover:bg-gray-700"
+          >
+            Show fitted preview
+          </button>
+        </div>
+      ) : null}
+      </>
+      )}
 
-      {isFullscreen ? (
+      {isFill ? (
         <div className="flex-1 min-h-0 overflow-hidden" style={{ background: '#0b0d12' }}>
           <PreviewFrame
             key={reloadKey}

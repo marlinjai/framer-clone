@@ -2,7 +2,7 @@
 // link and toggle staying inside THIS project's preview.
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { render, cleanup, fireEvent, screen, waitFor, act } from '@testing-library/react';
 import { getSnapshot } from 'mobx-state-tree';
 import { createRootStore, type RootStoreType } from '@/stores/RootStore';
 import ProjectModel, { type ProjectSnapshotOut } from '@/models/ProjectModel';
@@ -111,5 +111,77 @@ describe('PreviewShell', () => {
     render(<PreviewShell />);
     fireEvent.click(screen.getByRole('button', { name: /editor/i }));
     expect(push).toHaveBeenCalledWith(`/?page=${bakeryId}`);
+  });
+
+  describe('fullscreen', () => {
+    let current: Element | null;
+    beforeEach(() => {
+      current = null;
+      Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => current });
+      Object.defineProperty(document, 'fullscreenEnabled', { configurable: true, get: () => true });
+      HTMLElement.prototype.requestFullscreen = vi.fn(async function (this: HTMLElement) {
+        // eslint-disable-next-line @typescript-eslint/no-this-alias
+        current = this;
+        document.dispatchEvent(new Event('fullscreenchange'));
+      });
+    });
+    afterEach(() => {
+      delete (document as unknown as Record<string, unknown>).fullscreenElement;
+      delete (document as unknown as Record<string, unknown>).fullscreenEnabled;
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).requestFullscreen;
+    });
+
+    it('the button enters real fullscreen: only the page, plus a way out', async () => {
+      render(<PreviewShell />);
+      fireEvent.click(screen.getByRole('button', { name: 'Fullscreen' }));
+      await screen.findByRole('button', { name: 'Exit fullscreen' });
+      expect(screen.queryByRole('combobox', { name: 'Page' })).toBeNull();
+      expect(screen.queryByRole('status')).toBeNull();
+      expect(screen.getByTestId('frame')).toBeTruthy();
+      expect(replaceState.mock.calls.at(-1)?.[2]).toBe('/projects/site_1/preview?fullscreen=1');
+    });
+
+    it('Esc ends it: the fitted preview is back and the param is removed', async () => {
+      search = 'fullscreen=1';
+      render(<PreviewShell />);
+      fireEvent.click(screen.getAllByRole('button', { name: 'Enter fullscreen' })[0]);
+      await screen.findByRole('button', { name: 'Exit fullscreen' });
+      act(() => {
+        current = null;
+        document.dispatchEvent(new Event('fullscreenchange'));
+      });
+      expect(screen.queryByRole('button', { name: 'Exit fullscreen' })).toBeNull();
+      expect(replaceState.mock.calls.at(-1)?.[2]).toBe('/projects/site_1/preview');
+    });
+
+    it('a load with ?fullscreen=1 fills the window and offers Enter fullscreen (no dead state)', () => {
+      search = 'fullscreen=1';
+      render(<PreviewShell />);
+      expect(screen.getAllByRole('button', { name: 'Enter fullscreen' }).length).toBeGreaterThan(0);
+      expect(screen.getByRole('combobox', { name: 'Page' })).toBeTruthy();
+      expect(HTMLElement.prototype.requestFullscreen).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Show fitted preview' }));
+      expect(replaceState.mock.calls.at(-1)?.[2]).toBe('/projects/site_1/preview');
+    });
+
+    it('F toggles fullscreen, but not while typing in a field', async () => {
+      render(<PreviewShell />);
+      const select = screen.getByRole('combobox', { name: 'Page' });
+      fireEvent.keyDown(select, { key: 'f' });
+      expect(HTMLElement.prototype.requestFullscreen).not.toHaveBeenCalled();
+      fireEvent.keyDown(window, { key: 'f' });
+      await screen.findByRole('button', { name: 'Exit fullscreen' });
+      expect(HTMLElement.prototype.requestFullscreen).toHaveBeenCalledTimes(1);
+    });
+
+    it('a rejected request still gives the chrome-free view and an exit', async () => {
+      (HTMLElement.prototype.requestFullscreen as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('denied'));
+      render(<PreviewShell />);
+      fireEvent.click(screen.getByRole('button', { name: 'Fullscreen' }));
+      const exit = await screen.findByRole('button', { name: 'Exit fullscreen' });
+      expect(screen.queryByRole('combobox', { name: 'Page' })).toBeNull();
+      fireEvent.click(exit);
+      expect(screen.getByRole('combobox', { name: 'Page' })).toBeTruthy();
+    });
   });
 });
