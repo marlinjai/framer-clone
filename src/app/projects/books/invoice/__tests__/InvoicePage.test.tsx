@@ -62,6 +62,7 @@ const LAYOUT = {
     field({ id: 'line.l1.title', kind: 'text', source: 'line', documentField: 'title', lineId: 'l1', rects: rect(340, 80) }),
     field({ id: 'line.l1.quantity', kind: 'number', source: 'line', documentField: 'quantity', valueUnit: 'thousandths', lineId: 'l1', rects: rect(340, 300, 50) }),
     field({ id: 'line.l1.unitPrice', kind: 'money', source: 'line', documentField: 'unitPrice', valueUnit: 'cents', lineId: 'l1', rects: rect(340, 400, 70) }),
+    field({ id: 'line.l1.description', kind: 'multiline', source: 'line', documentField: 'description', lineId: 'l1', empty: true, room: 4, rects: rect(352, 80) }),
     field({ id: 'totals.1', kind: 'readonly', rects: rect(400, 400, 100) }),
   ],
   anchors: {
@@ -421,6 +422,17 @@ describe('the invoice page: review fixes', () => {
     fireEvent.change(search, { target: { value: 'Bera' } });
     fireEvent.keyDown(search, { key: 'Enter' });
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body?.title).toBe('Beratung'));
+  });
+});
+
+describe('the invoice page: margin markers', () => {
+  it('an empty line description with no room is a "+" left of the whole row, not over its columns', async () => {
+    server();
+    await opened();
+    const marker = fieldButton('line.l1.description');
+    expect(marker.getAttribute('aria-label')).toBe('Add details (Line 1, details)');
+    // The row starts at x 60 (the position number), the description at 80: the marker sits 34 px left of the row.
+    expect(marker.style.left).toBe('26px');
   });
 });
 

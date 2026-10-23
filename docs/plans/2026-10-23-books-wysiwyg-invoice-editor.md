@@ -551,3 +551,17 @@ one request per action, no second save from the blur of a closing editor. Field 
 small as the printed text they sit on (below 24 px at 100 % zoom): the targets are the text
 itself, the exception WCAG 2.5.8 makes for essential presentation, and "Use the form" on the same
 screen gives full-size controls.
+
+Production proof (2026-10-24, app.lumitra.co, company "Books Testfirma", headless automation
+Chrome at 1500 px): a new draft written entirely on the page. The customer was chosen from the
+address slot, a line was typed into the table ("Konzeption", 1,5 Std at 80 €), and a product was
+picked from the list (created for the proof, which also showed migration 015 live). The first
+line's quantity was edited in place to 2 (focus came back to it), a closing text was added, line
+2 was removed and undone back into place, and the service date was set on its printed line.
+Issued as TEST-4 (303,45 €: 255,00 € net, 48,45 € VAT at 19 %). The stored PDF (sha256
+bd7a91aa…) rendered with sips shows the same lines, figures, service date and closing text as the
+page did. It differs only in what issuing adds: no draft marks, the number and issue date, the
+payment QR code, and the due date in the payment line. Sampling the page every 50 ms through an
+edit and through remove plus undo showed it never blanks during a redraw. The fix found by the
+proof: an empty line description's "+" now sits left of the whole row, not over the position
+column.
