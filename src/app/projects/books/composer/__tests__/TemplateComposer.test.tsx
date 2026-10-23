@@ -23,13 +23,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { preset } from '@/server/books/template/presets';
 
 vi.mock('../PdfCanvas', () => ({
-  default: (props: {
+  default: function CanvasStandIn(props: {
     layout: { blocks: Array<{ blockId: string }> } | null;
     counter: number | null;
     labelOf: (id: string) => string;
     onSelect: (id: string) => void;
     onDrawn: (n: number) => void;
-  }) => {
+  }) {
     React.useEffect(() => {
       if (props.counter !== null) props.onDrawn(props.counter);
     }, [props.counter]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -120,7 +120,7 @@ export default function Outline(props: OutlineProps) {
         <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">
           To
           <select
-            className="rounded-md border border-gray-300 px-2 py-1 text-sm"
+            className="rounded-md border border-gray-500 px-2 py-1 text-sm"
             value={targetRegion}
             onChange={(e) => onTargetRegion(e.target.value as RegionName)}
           >
@@ -139,7 +139,7 @@ export default function Outline(props: OutlineProps) {
               <li key={type}>
                 <button
                   type="button"
-                  className="flex w-full flex-col items-start rounded-md border px-2 py-1 text-left text-sm hover:bg-accent focus-visible:outline-2 focus-visible:outline-blue-600 aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+                  className="flex w-full flex-col items-start rounded-md border px-2 py-1 text-left text-sm hover:bg-accent focus-visible:outline-2 focus-visible:outline-blue-600 aria-disabled:cursor-not-allowed aria-disabled:bg-gray-50 aria-disabled:text-gray-600"
                   aria-disabled={!check.ok || undefined}
                   aria-describedby={check.ok ? undefined : reasonId}
                   onClick={() => (check.ok ? onAdd(type, targetRegion) : onRefused(`${BLOCK_INFO[type].label}: ${check.reason}`))}
@@ -206,7 +206,7 @@ export default function Outline(props: OutlineProps) {
                   type="button"
                   {...dragHandleProps}
                   aria-label={`Move ${label}`}
-                  className="cursor-grab rounded p-0.5 text-gray-400 hover:text-gray-700 focus-visible:outline-2 focus-visible:outline-blue-600"
+                  className="flex size-6 shrink-0 cursor-grab items-center justify-center rounded text-gray-500 hover:text-gray-800 focus-visible:outline-2 focus-visible:outline-blue-600"
                 >
                   <GripVertical aria-hidden className="size-4" />
                 </button>

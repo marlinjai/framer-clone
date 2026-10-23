@@ -503,7 +503,8 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
   const pageCount = preview.result?.layout.pageCount ?? 0;
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex min-h-screen flex-col lg:h-screen">
+      <h1 className="sr-only">Template composer: {name}</h1>
       <header className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
         <Link href="/projects/books?tab=templates" className="text-sm underline">
           Templates
@@ -637,7 +638,7 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
         ) : null}
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[16rem_1fr_20rem] gap-0">
+      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-auto lg:grid-cols-[16rem_1fr_20rem] lg:overflow-hidden">
         <nav aria-label="Blocks" className="overflow-y-auto border-r p-3">
           <Outline
             doc={doc}
@@ -658,7 +659,7 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
             <label className="flex items-center gap-2">
               <span>Preview with</span>
               <select
-                className="rounded-md border border-gray-300 px-2 py-1"
+                className="rounded-md border border-gray-500 px-2 py-1"
                 value={subject.kind === 'sample' ? `sample:${subject.variant}` : `document:${subject.documentId}`}
                 onFocus={() => void loadDocuments()}
                 onChange={(e) => {
@@ -689,7 +690,7 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
             </label>
             <label className="flex items-center gap-2">
               <span>Zoom</span>
-              <select className="rounded-md border border-gray-300 px-2 py-1" value={String(zoom)} onChange={(e) => setZoom(Number(e.target.value))}>
+              <select className="rounded-md border border-gray-500 px-2 py-1" value={String(zoom)} onChange={(e) => setZoom(Number(e.target.value))}>
                 {ZOOMS.map((z) => (
                   <option key={z} value={String(z)}>
                     {Math.round(z * 100)} %
@@ -698,9 +699,15 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
               </select>
             </label>
             {pageCount > 0 ? <span className="text-muted-foreground">{pageCount === 1 ? '1 page' : `${pageCount} pages`}</span> : null}
-            <span className="ml-auto text-muted-foreground" role="status">
+            {/* Visual only: every edit refreshes the preview, and the live region says what matters. */}
+            <span className="ml-auto text-muted-foreground">
               {status}
             </span>
+            {preview.result ? (
+              <Button size="sm" variant="outline" onClick={() => openPdf(preview.result!.pdf)}>
+                Open the preview as PDF
+              </Button>
+            ) : null}
             {preview.error ? (
               <Button size="sm" variant="outline" onClick={preview.retry}>
                 Try again
@@ -732,7 +739,7 @@ function Composer({ template, onReload }: { template: TemplateView; onReload: ()
         </section>
 
         <aside aria-labelledby="inspector-title" ref={inspectorRef} className="overflow-y-auto border-l p-3">
-          <Inspector doc={doc} selectedId={selectedId} update={update} problems={problems} onSelect={select} onRemove={remove} />
+          <Inspector doc={doc} selectedId={selectedId} update={update} problems={problems} onSelect={select} onRemove={remove} onStep={step} />
           <Versions versions={versions} />
         </aside>
       </div>
@@ -765,6 +772,21 @@ function Versions({ versions }: { versions: TemplateVersionView[] | null }) {
 function normalized(doc: TemplateDocumentV2): string {
   const parsed = templateDocumentV2Schema.safeParse(doc);
   return JSON.stringify(parsed.success ? parsed.data : doc);
+}
+
+/**
+ * The preview as a PDF file in a new tab: the canvas is a picture, the file is
+ * the same document with its text, readable by the browser's PDF viewer and a
+ * screen reader.
+ */
+function openPdf(b64: string) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+  window.open(url, '_blank', 'noopener');
+  // The tab has read it by then; the address is not kept.
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 function formatTime(iso: string): string {

@@ -77,11 +77,13 @@ export interface InspectorProps {
   problems: TemplateProblemView[];
   onSelect: (blockId: string | null) => void;
   onRemove: (blockId: string) => void;
+  /** Move the selected block one step (the same as Alt+Up and Alt+Down; the way to reorder without dragging). */
+  onStep: (delta: -1 | 1) => void;
   /** The logo picker (phase 5): renders the upload and preview for a logo block. */
   renderLogoPicker?: (block: Extract<Block, { type: 'logo' }> | Extract<CellBlock, { type: 'logo' }>, update: Update) => React.ReactNode;
 }
 
-export default function Inspector({ doc, selectedId, update, problems, onSelect, onRemove, renderLogoPicker }: InspectorProps) {
+export default function Inspector({ doc, selectedId, update, problems, onSelect, onRemove, onStep, renderLogoPicker }: InspectorProps) {
   const at = selectedId ? locate(doc, selectedId) : null;
   if (!at) return <PageSettings doc={doc} update={update} />;
   const block = at.cell ? at.cell.block : at.block;
@@ -138,7 +140,13 @@ export default function Inspector({ doc, selectedId, update, problems, onSelect,
         />
       </div>
 
-      <div className="flex gap-2 border-t pt-3">
+      <div className="flex flex-wrap gap-2 border-t pt-3">
+        <Button size="sm" variant="outline" onClick={() => onStep(-1)} aria-keyshortcuts="Alt+ArrowUp">
+          Move up
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => onStep(1)} aria-keyshortcuts="Alt+ArrowDown">
+          Move down
+        </Button>
         {required ? null : (
           <Button size="sm" variant="outline" onClick={() => onRemove(block.id)}>
             Remove block
@@ -487,7 +495,7 @@ function WidthInput({ label, value, onChange }: { label: string; value: number; 
           step={1}
           value={value === 0 ? '' : value}
           placeholder="Auto"
-          className="w-16 rounded-md border border-gray-300 px-2 py-1 text-sm"
+          className="w-16 rounded-md border border-gray-500 px-2 py-1 text-sm"
           onChange={(e) => {
             const n = e.target.value === '' ? 0 : Math.round(Number(e.target.value));
             if (Number.isFinite(n)) onChange(Math.max(0, Math.min(100, n)));
@@ -519,7 +527,7 @@ function TextArea({ label, value, maxLength, required, onChange }: { label: stri
         rows={4}
         aria-invalid={empty || undefined}
         aria-describedby={hintId}
-        className="rounded-md border border-gray-300 px-2 py-1 text-sm"
+        className="rounded-md border border-gray-500 px-2 py-1 text-sm"
         onChange={(e) => onChange(e.target.value)}
       />
       <span id={hintId} className={`text-xs ${empty ? 'text-red-700' : 'text-muted-foreground'}`}>
@@ -680,7 +688,7 @@ function HexColorField({ label, value, onChange }: { label: string; value: strin
           type="color"
           aria-label={`${label}, colour picker`}
           value={value}
-          className="h-8 w-8 cursor-pointer rounded border border-gray-300"
+          className="h-8 w-8 cursor-pointer rounded border border-gray-500"
           onChange={(e) => onChange(e.target.value.toLowerCase())}
         />
         <input
@@ -689,7 +697,7 @@ function HexColorField({ label, value, onChange }: { label: string; value: strin
           spellCheck={false}
           aria-invalid={!valid || undefined}
           aria-describedby={valid ? undefined : hintId}
-          className="w-28 rounded-md border border-gray-300 px-2 py-1 font-mono text-sm"
+          className="w-28 rounded-md border border-gray-500 px-2 py-1 font-mono text-sm"
           onChange={(e) => {
             setText(e.target.value);
             if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) onChange(e.target.value.toLowerCase());

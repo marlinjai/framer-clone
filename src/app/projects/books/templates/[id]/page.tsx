@@ -11,6 +11,8 @@ import TemplateComposer from '../../composer/TemplateComposer';
 
 export const dynamic = 'force-dynamic';
 
+export const metadata = { title: 'Template composer' };
+
 export default async function TemplateComposerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return <TemplateComposer id={id} />;

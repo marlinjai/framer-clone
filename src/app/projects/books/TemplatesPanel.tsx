@@ -93,7 +93,7 @@ export default function TemplatesPanel() {
               </span>
               <span className="flex gap-2">
                 <Button size="sm" asChild>
-                  <Link href={`/projects/books/templates/${t.id}`} aria-label={`Edit the layout of ${t.name}`}>
+                  <Link href={`/projects/books/templates/${t.id}`} aria-label={`Edit layout of ${t.name}`}>
                     Edit layout
                   </Link>
                 </Button>
