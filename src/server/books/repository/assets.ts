@@ -290,6 +290,8 @@ export async function deleteAsset(scope: BooksScope, sha256: string, hooks: Dele
           }
           throw err;
         }
+        // The bound is for that wait only: the rest of the delete runs under the usual settings.
+        await sql`SET LOCAL lock_timeout TO DEFAULT`.execute(trx);
         const row = await trx
           .selectFrom('books_asset')
           .select('id')

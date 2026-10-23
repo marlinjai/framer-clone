@@ -489,10 +489,8 @@ describe('014_books_asset_delete through the fleet runner', () => {
     // ... and the function's document query can use it (scans forbidden, so the plan shows whether it may).
     const plan = await owner.begin(async (tx) => {
       await tx`SET LOCAL enable_seqscan = off`;
-      return tx.unsafe(
-        `EXPLAIN SELECT 1 FROM "${schema}".sales_document d WHERE d.tenant_id = $1 AND (d.template_snapshot -> 'logo' ->> 'sha256') = $2`,
-        [mine, Y],
-      );
+      return tx`EXPLAIN SELECT 1 FROM ${tx(schema)}.sales_document d
+                 WHERE d.tenant_id = ${mine} AND (d.template_snapshot -> 'logo' ->> 'sha256') = ${Y}`;
     });
     expect((plan as unknown as Array<Record<string, string>>).map((r) => Object.values(r)[0]).join('\n')).toContain(
       'sales_document_tenant_id_logo_sha256_idx',

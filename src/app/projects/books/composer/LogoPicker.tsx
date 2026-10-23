@@ -111,6 +111,7 @@ export default function LogoPicker({
   /** Bumped once a delete and the list read after it have settled: the focus moves after that render. */
   const [settledTick, setSettledTick] = useState(0);
   const mounted = useRef(true);
+  const statusLine = useRef<HTMLParagraphElement>(null);
   /** The Delete button that opened the dialog (a cancel returns the focus to it). */
   const opener = useRef<HTMLElement | null>(null);
   const blocks = logoBlockIds(doc);
@@ -122,15 +123,18 @@ export default function LogoPicker({
     };
   }, []);
 
+  /** The newest list request: an older answer arriving later never overwrites a newer one. */
+  const latest = useRef(0);
   const reload = useCallback(async (): Promise<LogoAssetView[] | null> => {
+    const request = ++latest.current;
     try {
       const { items } = await booksApi.listAssets();
-      if (!mounted.current) return null;
+      if (!mounted.current || request !== latest.current) return null;
       setLogos(items);
       setListError(null);
       return items;
     } catch (err) {
-      if (mounted.current) setListError(`Your logos could not be loaded. ${errorText(err)}`);
+      if (mounted.current && request === latest.current) setListError(`Your logos could not be loaded. ${errorText(err)}`);
       return null;
     }
   }, []);
@@ -242,7 +246,7 @@ export default function LogoPicker({
           Remove the image
         </Button>
       ) : null}
-      <p role="status" className={`text-xs ${status?.kind === 'error' ? 'text-red-800' : 'text-muted-foreground'}`}>
+      <p ref={statusLine} tabIndex={-1} role="status" className={`text-xs ${status?.kind === 'error' ? 'text-red-800' : 'text-muted-foreground'}`}>
         {working === 'upload' ? 'Uploading…' : working === 'delete' ? 'Deleting…' : (status?.text ?? '')}
       </p>
 
@@ -315,11 +319,11 @@ export default function LogoPicker({
       >
         <AlertDialogContent
           onCloseAutoFocus={(event) => {
-            // A confirmed delete moves the focus itself once it has settled (the row is gone);
-            // a cancelled one goes back to the Delete button that opened the dialog.
+            // A confirmed delete waits on the status line (the controls are disabled meanwhile) and
+            // moves the focus itself once it has settled; a cancelled one goes back to the Delete
+            // button that opened the dialog.
             event.preventDefault();
-            const target = deleting.current;
-            if (target) list.current?.querySelector<HTMLButtonElement>(`button[data-logo-choose="${target.sha256}"]`)?.focus();
+            if (deleting.current) statusLine.current?.focus();
             else opener.current?.focus();
           }}
         >

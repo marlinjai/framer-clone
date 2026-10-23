@@ -393,6 +393,37 @@ describe('deleteAsset racing an issue or a template save (both orders, two real 
     expect(await inUse(scope)).toEqual({ [sha]: true });
   });
 
+  it("an issue waiting for a delete holds no number: the company's other issues go through meanwhile", async () => {
+    const { scope, customerId } = await company();
+    const sha = await logo(scope, 168);
+    const template = await createTemplate(scope, { name: 'Race', document: withLogo(sha) });
+    const named = template.currentVersionId;
+    const waiting = await draftWith(scope, customerId, template.id);
+    const plain = await createTemplate(scope, { name: 'Ohne Logo', document: withLogo(null) });
+    const other = await draftWith(scope, customerId, plain.id);
+    await updateTemplate(scope, template.id, { document: withLogo(null) });
+
+    let first: Promise<unknown> = Promise.resolve();
+    let second: unknown;
+    await deleteAsset(scope, sha, {
+      beforeCommit: async () => {
+        await env.ownerDb
+          .updateTable('document_template')
+          .set({ current_version_id: named })
+          .where('tenant_id', '=', scope.tenantId)
+          .where('id', '=', template.id)
+          .execute();
+        first = settle(issue(scope, waiting, { actorUserId: ACTOR }));
+        await waitUntilBlocked('ShareLock', scope, sha);
+        // The first issue waits for this delete; another issue of the company must not wait for it.
+        second = (await issue(scope, other, { actorUserId: ACTOR })).document.document.numberValue;
+      },
+    });
+    expect(second).toBe(62);
+    expect(await first).toMatchObject({ code: 'LOGO_ASSET_MISSING' });
+    expect(await counterValue(scope.tenantId)).toBe(63);
+  });
+
   it('a delete held up longer than its bound gives up with ASSET_BUSY and deletes nothing', async () => {
     const { scope, customerId } = await company();
     const sha = await logo(scope, 167);

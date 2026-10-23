@@ -52,7 +52,9 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      `FOR SHARE` and `FOR UPDATE` on the row: a row lock needs the UPDATE
  *      privilege, which the app role must never hold on this table. The guard
  *      takes the exclusive lock itself before it checks, so a DELETE from any
- *      path (the owner, a maintenance script) waits the same way.
+ *      path (the owner, a maintenance script) waits the same way, and at most
+ *      5 seconds when its session set no lock timeout (55P03 then; a waiting
+ *      delete queues every later issue, save and upload of the logo).
  *   5. The check is an index lookup on documents: `sales_document`'s frozen
  *      logo hash is indexed per company (partial, only rows that froze one),
  *      so a delete or the logo list does not read every invoice's snapshot.
@@ -122,6 +124,12 @@ export const booksAssetDelete: Migration = {
               -- The logo's lock, exclusively (the key repository/assets.ts uses): a DELETE from
               -- any path waits for an issue or a template save naming the logo, so the check
               -- below sees what they committed. Re-entrant for deleteAsset, which holds it.
+              -- A session that set no lock timeout (the owner, a maintenance script) waits at
+              -- most 5 s, as the application's delete does: a waiting delete queues every later
+              -- issue, save and upload of the logo behind it. Lasts to the end of its transaction.
+              IF current_setting('lock_timeout') = '0' THEN
+                  PERFORM set_config('lock_timeout', '5000ms', true);
+              END IF;
               PERFORM pg_advisory_xact_lock(hashtextextended('books-asset:' || OLD."tenant_id" || ':' || OLD."sha256", 0));
               IF "books_asset_in_use"(OLD."tenant_id", OLD."sha256") THEN
                   RAISE EXCEPTION 'books_asset %: the logo is printed on an issued document or used by a live template', OLD."sha256"

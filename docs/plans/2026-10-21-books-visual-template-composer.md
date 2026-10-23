@@ -3,7 +3,7 @@ type: plan
 status: completed
 date: 2026-10-21
 title: "Books: a visual invoice template composer that previews the real PDF"
-summary: "A block-based A4 composer for Books document templates (blocks panel, the real PDF as canvas with a selection overlay, inspector), a versioned template document model consumed by a new deterministic pdf-lib layout engine, legally required blocks that can be moved and styled but never removed, a save gate that runs the completeness check against probe documents, logos stored in the tenant schema, and a Correct flow for issued invoices (credit note plus a prefilled replacement draft). Adds an EPC QR payment block (GiroCode). Sliced into seven phases; approved by the owner on 2026-10-22, all phases to be built."
+summary: "A block-based A4 composer for Books document templates (blocks panel, the real PDF as canvas with a selection overlay, inspector), a versioned template document model consumed by a new deterministic pdf-lib layout engine, legally required blocks that can be moved and styled but never removed, a save gate that runs the completeness check against probe documents, logos stored in the tenant schema, and a Correct flow for issued invoices (credit note plus a prefilled replacement draft). Adds an EPC QR payment block (GiroCode). Sliced into seven phases; approved by the owner on 2026-10-22. Phases 1 to 5 built and live; 6 (English documents) and 7 (e-invoicing) moved to their own ROADMAP.md lines."
 tags: [framer-clone, books, invoices, templates, pdf, editor, composer, gobd, ustg, e-invoicing]
 projects: [framer-clone, email-editor, receipt-ocr-app]
 ---
@@ -1328,7 +1328,8 @@ holds.
     it anew), and an owner's DELETE outside the application while an issue holds the logo (it
     waits, then BK015). With the locks switched off the races fail (on the wait helper's bound,
     since the second transaction never waits). A delete held up past its bound answers
-    `ASSET_BUSY`.
+    `ASSET_BUSY`, and while an issue waits for a delete, another issue of the company goes
+    through and takes the next number (decision 5).
 - `books-fleet.itest.ts`: 014 onto a schema at 013 whose app role holds no DELETE: the rights
   afterwards, the index, the function, and per role (the app role and the owner): UPDATE and
   TRUNCATE refused, an `EXPLAIN` showing the function's document query can use the index, a
@@ -1342,15 +1343,14 @@ holds.
   guard (401 and 403 for both routes).
 - `appendOnly.test.ts` now reads the migrations in order and applies each REVOKE and GRANT, so a
   later migration that changes a table's rights moves it to the matching list
-  (`NO_UPDATE_TABLES` holds `books_asset`); `provision.itest.ts` checks the rights of a fresh
-  provision.
+  (`NO_UPDATE_TABLES` holds `books_asset`), a `GRANT ALL` giving back every write right;
+  `provision.itest.ts` checks the rights of a fresh provision.
 - `TemplateComposer.test.tsx`: choosing a stored logo sets it on both logo blocks and is saved;
   "In use" offers no delete; the chosen logo offers no delete; the confirmation, cancel (focus
   back to Delete), delete (focus to the first logo left, then to the upload); a 409 announced
   with the list showing "In use" and the focus back on that row; a delete whose list cannot be
   read again (an alert, the focus on the upload); the list read again after a save; a list that
   cannot be read and the upload still working.
-- `appendOnly.test.ts` treats `GRANT ALL` as giving back every write right.
 
 **Review (2026-10-23).** A fresh review of the whole diff (given only the diff, this plan and
 decision 9) agreed with the advisory locks and found one defect, four risks and nine nits; all
@@ -1372,7 +1372,12 @@ are fixed:
   race test and the unused `afterLock` hook removed, UI tests for the focus after a 409 and after
   a failed reload, a test helper that swallowed every failure, and `GRANT ALL` in the rights
   test.
-
+A second fresh review of those fixes found no defect, two risks and eight nits; all are fixed:
+the guard's own lock wait bounded to 5 seconds for a session that set no lock timeout (the owner,
+a maintenance script); a test for decision 5; the delete's bound limited to its lock wait (reset
+afterwards); the focus during a confirmed delete on the status line instead of a disabled
+button; an older list answer never overwriting a newer one; comment wrapping, the plan's summary,
+the ROADMAP.md wording and the path of this plan on the e-invoicing line.
 
 **Operator step**: deploy. It rolls `014_books_asset_delete` across every tenant schema at boot:
 the function, the guard, the index and the app role's DELETE. No secret, no variable.

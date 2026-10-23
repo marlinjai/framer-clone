@@ -47,8 +47,8 @@
 // cancelInvoiceIn (cancel.ts), so the credit note takes the next credit note
 // number, the old invoice turns cancelled, and only then does the replacement
 // take the next invoice number. Lock order: this draft, its template's logo
-// (shared), the old invoice, the credit note counter, the invoice counter. An old invoice cancelled by
-// another path in the meantime is REPLACED_INVOICE_CANCELLED (checked before
+// (shared), the old invoice, the credit note counter, the invoice counter. An
+// old invoice cancelled by another path in the meantime is REPLACED_INVOICE_CANCELLED (checked before
 // the transaction for a fast answer, and again under its lock); the user can
 // then issue the draft as an ordinary invoice (updateDraft with
 // `replacesDocumentId: null`). Any failure rolls all of it back: nothing is
