@@ -23,6 +23,31 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   pass), and the properties panel has an Image section for fit, focal point and photo backgrounds
   (done, recorded in the 2026-10-23 design quality plan linked from the plan below). Phase 4's style references
   and screenshot loop stay open. See [plan](docs/plans/ai-driven-page-generation.md). (2026-10-23)
+- [ ] Motion and effects: an Effects section in the properties panel (appear on scroll, restrained
+  hover states, light scroll-linked transforms such as a small image parallax), stored per
+  breakpoint like any style, undoable and generatable by the AI, rendered on published pages with
+  CSS plus an IntersectionObserver or Motion (MIT). The canvas shows the final state with an effect
+  badge and a play control, the preview plays everything. Follows the motion rules: entrances
+  under 300ms, ease-out, nothing perpetual, off under prefers-reduced-motion. Plus an optional
+  per-site Lenis (MIT) smooth-scroll toggle, off by default and off under reduced motion. Decided
+  by Marlin on 2026-10-23; needs a plan before building. (2026-10-23)
+- [ ] Scroll-driven page type (later): an opt-in page type for scrollytelling pages, the only place
+  GSAP ScrollTrigger pinning and scrubbing is used, because there the scroll is the requested
+  interaction (the sanctioned exception to the scroll-jacking rule, as the scroll-craft skill
+  defines it). Not a general editor feature. Needs a plan. (2026-10-23)
+- [ ] Published site essentials from the owner's 19-point checklist of 2026-10-23: a Site settings
+  object (language, favicon set, default Open Graph image, title template, business and contact
+  data), robots.txt, sitemap.xml, canonical, noindex and JSON-LD per host, a designable 404 page,
+  loading states, forms with error states and a thank-you page, Impressum, privacy and terms
+  templates, and consent after checking whether the analytics tracker needs it. Audited the same
+  day: most are missing today, and every published site is marked `lang="en"`. See
+  [plan](docs/plans/2026-10-23-published-site-essentials.md). (2026-10-23)
+- [ ] Animated components, a few chosen ones: React Bits was checked on 2026-10-23 and is MIT plus
+  Commons Clause, which forbids redistributing its components "alone, in a bundle, or as a ported
+  version", so a builder that offers them to its customers cannot ship them. Instead build the
+  few worth having ourselves (a text reveal, a marquee, a logo loop) or take them from MIT sources
+  (Magic UI, Motion), avoiding the vibe-coded tells in the round 2 plan
+  (docs/plans/2026-10-23-ai-design-quality-round-2.md). (2026-10-23)
 - [x] Custom domains (Option B): a site owner connects their own domain to a published site
   (TXT ownership check, per-domain Let's Encrypt certificates through Traefik's file provider,
   a Domains panel in the editor; code in #103). Live since 2026-10-20: `domains.lumitra.co`
