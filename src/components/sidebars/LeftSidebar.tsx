@@ -1,18 +1,19 @@
 // src/components/sidebars/LeftSidebar.tsx
 // Split-pane sidebar: Pages on top, Components/Layers tabs on bottom, with a
 // draggable divider between. The split is our deliberate improvement over
-// Framer's mutually-exclusive tabs — the current page's layers stay visible
+// Framer's mutually-exclusive tabs: the current page's layers stay visible
 // while the user navigates between pages.
 'use client';
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useId, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
-import { ChevronLeft, ChevronRight, Layers, Boxes, Database, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useStore } from '@/hooks/useStore';
 import ComponentsPanel from './left/ComponentsPanel';
 import LayersPanel from './left/LayersPanel';
 import PagesPanel from './left/PagesPanel';
+import { PaneTabs, paneTabId, panePanelId, type PaneTab } from './left/PaneTabs';
 import ContentManagerPanel from '@/components/cms/ContentManagerPanel';
 
 // Default and clamp values for the top (Pages) section height. The bottom
@@ -21,10 +22,19 @@ const DEFAULT_TOP_HEIGHT = 240;
 const MIN_TOP_HEIGHT = 120;
 const MIN_BOTTOM_HEIGHT = 180;
 
+type BottomTab = 'components' | 'layers' | 'content';
+
+const BOTTOM_TABS: readonly PaneTab<BottomTab>[] = [
+  { id: 'components', label: 'Components' },
+  { id: 'layers', label: 'Layers' },
+  { id: 'content', label: 'Content' },
+];
+
 const LeftSidebar = observer(() => {
   const { editorUI } = useStore();
   const isCollapsed = editorUI.leftSidebarCollapsed;
-  const [activeTab, setActiveTab] = useState<'components' | 'layers' | 'content'>('layers');
+  const [activeTab, setActiveTab] = useState<BottomTab>('layers');
+  const tabsId = useId();
   const [searchQuery, setSearchQuery] = useState('');
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_HEIGHT);
   const paneContainerRef = useRef<HTMLDivElement>(null);
@@ -83,7 +93,7 @@ const LeftSidebar = observer(() => {
         </div>
       </div>
 
-      {/* Split panes — only rendered when the sidebar is expanded. */}
+      {/* Split panes, only rendered when the sidebar is expanded. */}
       {!isCollapsed && (
         <div ref={paneContainerRef} className="flex-1 flex flex-col overflow-hidden">
           {/* Top pane: Pages */}
@@ -103,42 +113,16 @@ const LeftSidebar = observer(() => {
             className="h-1 shrink-0 cursor-row-resize bg-border hover:bg-brand transition-colors"
           />
 
-          {/* Bottom pane: Components / Layers */}
+          {/* Bottom pane: Components / Layers / Content */}
           <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="flex shrink-0 border-b border-border">
-              <button
-                className={`flex-1 flex items-center justify-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'components'
-                    ? 'border-brand text-brand'
-                    : 'border-transparent text-muted-foreground hover:text-foreground'
-                }`}
-                onClick={() => setActiveTab('components')}
-              >
-                <Boxes size={16} />
-                <span>Components</span>
-              </button>
-              <button
-                className={`flex-1 flex items-center justify-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'layers'
-                    ? 'border-brand text-brand'
-                    : 'border-transparent text-muted-foreground hover:text-foreground'
-                }`}
-                onClick={() => setActiveTab('layers')}
-              >
-                <Layers size={16} />
-                <span>Layers</span>
-              </button>
-              <button
-                className={`flex-1 flex items-center justify-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'content'
-                    ? 'border-brand text-brand'
-                    : 'border-transparent text-muted-foreground hover:text-foreground'
-                }`}
-                onClick={() => setActiveTab('content')}
-              >
-                <Database size={16} />
-                <span>Content</span>
-              </button>
+            <div className="shrink-0 px-3 pt-3">
+              <PaneTabs
+                tabs={BOTTOM_TABS}
+                active={activeTab}
+                onChange={setActiveTab}
+                label="Sidebar panels"
+                idPrefix={tabsId}
+              />
             </div>
 
             <div className="p-3 border-b border-border shrink-0">
@@ -153,7 +137,12 @@ const LeftSidebar = observer(() => {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-3">
+            <div
+              role="tabpanel"
+              id={panePanelId(tabsId, activeTab)}
+              aria-labelledby={paneTabId(tabsId, activeTab)}
+              className="flex-1 overflow-y-auto p-3"
+            >
               {activeTab === 'components' && <ComponentsPanel />}
               {activeTab === 'layers' && <LayersPanel />}
               {activeTab === 'content' && <ContentManagerPanel />}

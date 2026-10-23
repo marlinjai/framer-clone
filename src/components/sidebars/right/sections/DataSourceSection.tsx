@@ -9,7 +9,8 @@ import { observer } from 'mobx-react-lite';
 import { Database } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { getBindableSlotsFor, getComponentEntry } from '@/lib/componentRegistry';
-import { CollapsibleSection } from '../primitives';
+import { cn } from '@/lib/utils';
+import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL } from '../primitives';
 import BindingControl from '../BindingControl';
 import QueryBuilder from '../QueryBuilder';
 
@@ -57,7 +58,7 @@ const StaticSlotControl = observer(
           value={value}
           placeholder={label}
           onChange={(e) => node.setTextContent(e.target.value)}
-          className="h-7 w-full rounded border border-border px-2 text-xs outline-none focus:border-brand"
+          className={FIELD_CONTROL}
         />
       );
     }
@@ -71,7 +72,7 @@ const StaticSlotControl = observer(
         aria-label={label}
         value={display}
         placeholder={`Unset (${label})`}
-        className="h-7 w-full rounded border border-border bg-muted px-2 text-xs text-muted-foreground outline-none"
+        className={cn(FIELD_CONTROL, 'bg-muted text-muted-foreground')}
       />
     );
   },
@@ -96,10 +97,11 @@ export const DataSourceSection = observer(({ component }: DataSourceSectionProps
   if (slotEntries.length === 0 && !showQueryBuilder) return null;
 
   return (
-    <CollapsibleSection title="Data" icon={<Database size={12} />}>
+    <CollapsibleSection title="Data" icon={<Database size={14} />}>
       {slotEntries.map(([slot, meta]) => (
-        <div key={slot} className="space-y-1">
-          <label className="text-[11px] text-muted-foreground">{meta.label}</label>
+        <div key={slot} className="flex min-w-0 flex-col gap-1.5">
+          {/* Stacked label: the field shares its row with the bind button. */}
+          <span className={FIELD_LABEL}>{meta.label}</span>
           <BindingControl node={component} slot={slot} meta={meta}>
             <StaticSlotControl node={component} slot={slot} label={meta.label} />
           </BindingControl>
@@ -107,8 +109,8 @@ export const DataSourceSection = observer(({ component }: DataSourceSectionProps
       ))}
 
       {showQueryBuilder && (
-        <div className="mt-2 border-t border-border pt-2">
-          <div className="mb-1 text-[11px] font-medium text-muted-foreground">Query</div>
+        <div className="mt-1 min-w-0 border-t border-border pt-3">
+          <div className={cn(FIELD_LABEL, 'mb-2 font-medium')}>Query</div>
           <QueryBuilder node={component} />
         </div>
       )}

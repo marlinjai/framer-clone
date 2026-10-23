@@ -2,14 +2,18 @@
 import React from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { FIELD_CONTROL, FIELD_LABEL, useFieldIdentity } from './field';
 
 interface PropertySelectProps {
+  /** Visible label above the field. Leave empty inside a PropertyRow. */
   label: string;
   value: string;
   onChange: (value: string) => void;
   options: { value: string; label: string }[];
   className?: string;
   placeholder?: string;
+  /** Accessible name when the field has no visible label of its own. */
+  'aria-label'?: string;
 }
 
 export function PropertySelect({
@@ -19,27 +23,26 @@ export function PropertySelect({
   options,
   className,
   placeholder = 'Select...',
+  'aria-label': ariaLabelProp,
 }: PropertySelectProps) {
-  return (
-    <div className={cn("flex flex-col gap-1", className)}>
-      <label
-        className="text-muted-foreground"
-        style={{ fontSize: '11px' }}
-      >
-        {label}
-      </label>
+  const { id, ariaLabel, showLabel } = useFieldIdentity(label, ariaLabelProp);
 
-      {/* .sel look: 30px, hairline border, radius 7, trailing chevron */}
-      <div className="relative">
+  return (
+    <div className={cn('flex min-w-0 flex-col gap-1.5', className)}>
+      {showLabel && (
+        <label htmlFor={id} className={FIELD_LABEL}>
+          {label}
+        </label>
+      )}
+
+      {/* Native select in the shared field spec, with a trailing chevron. */}
+      <div className="relative min-w-0">
         <select
+          id={id}
+          aria-label={ariaLabel}
           value={value || ''}
           onChange={(e) => onChange(e.target.value)}
-          className={cn(
-            "w-full h-[30px] appearance-none bg-background border border-border rounded-[7px]",
-            "pl-2 pr-7 text-foreground outline-none cursor-pointer",
-            "focus:border-brand focus:ring-3 focus:ring-brand/12 transition-colors",
-          )}
-          style={{ fontSize: '12.5px' }}
+          className={cn(FIELD_CONTROL, 'cursor-pointer appearance-none truncate pr-6')}
         >
           {placeholder && !value && (
             <option value="" disabled>{placeholder}</option>
@@ -49,10 +52,10 @@ export function PropertySelect({
           ))}
         </select>
 
-        {/* Trailing chevron */}
         <ChevronDown
-          size={13}
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
+          size={12}
+          aria-hidden
+          className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
         />
       </div>
     </div>
