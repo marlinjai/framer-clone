@@ -132,6 +132,20 @@ connections to the suite. The four lines below are in that order.
   answers 409 `asset_in_use`, and TEST-2's stored PDF is unchanged (sha256 698c6ba9...). The proof
   found a deleted logo still showing from the browser cache (served `immutable` for a year): now
   `private, no-cache`, revalidated by its ETag. (2026-10-23)
+- [ ] 8b. Write the invoice on the invoice (asked by the owner on 2026-10-23, "a pixel perfect
+  WYSIWYG editing experience closer to sevdesk but even more WYSIWYG"): the draft editor becomes the
+  real A4 page in the company's template, every field edited in place over the PDF, add-line and
+  line actions placed on the page, redrawn by the layout engine running in the browser; plus a
+  subject line, a reference number, payment terms on the page, formatted intro and closing texts
+  and a product and service list. Decided 2026-10-23 (the owner took every recommendation), in
+  progress. See [plan](docs/plans/2026-10-23-books-wysiwyg-invoice-editor.md). (2026-10-23)
+- [ ] 8c. A discount on the whole invoice ("Gesamtrabatt", as sevdesk), split across the tax rates
+  in proportion and printed so the tax per rate stays right (section 14 UStG): needs its own small
+  plan touching the tax engine, the totals block and the completeness check. Decided 2026-10-23 as
+  later work, after the in-place editor. (2026-10-23)
+- [ ] 8d. Text snippets and placeholders for intro and closing texts (sevdesk's "Textvorlage" and
+  "Platzhalter", for example the customer's name), with placeholders resolved to frozen data at
+  issue: after the in-place editor is in daily use. Decided 2026-10-23 as later work. (2026-10-23)
 - [ ] 9. E-invoicing for Books documents (XRechnung and ZUGFeRD profile EN 16931, built from the
   frozen document data, ZUGFeRD as a PDF/A-3 with the XML embedded): write its own plan in the
   first half of 2027, so every regular-taxed company using the Books can issue e-invoices before
