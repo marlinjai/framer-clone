@@ -174,8 +174,9 @@ const LeftSidebar = observer(() => {
           onPointerDown={onWidthHandlePointerDown}
           onDoubleClick={() => commitWidth(LEFT_SIDEBAR_DEFAULT_WIDTH)}
           onKeyDown={onWidthHandleKeyDown}
-          className={`absolute top-0 -right-[3px] z-10 h-full w-[6px] cursor-col-resize outline-none transition-colors hover:bg-brand focus-visible:bg-brand ${
-            isResizingWidth ? 'bg-brand' : ''
+          // 6px to grab, but only a centred 2px line shows on hover, focus and drag.
+          className={`absolute top-0 -right-[3px] z-10 h-full w-[6px] cursor-col-resize outline-none after:absolute after:inset-y-0 after:left-[2px] after:w-[2px] after:transition-colors hover:after:bg-brand focus-visible:after:bg-brand ${
+            isResizingWidth ? 'after:bg-brand' : ''
           }`}
         />
       )}
