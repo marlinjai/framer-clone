@@ -67,6 +67,14 @@ describe('resolution (canvas and panel agree)', () => {
     expect(node.getResponsiveStyleSource('color', T).source).toEqual({ kind: 'inherited', breakpointId: D });
   });
 
+  it('a map with nothing at or above a breakpoint is left out of its style, not emitted as undefined', () => {
+    // React clears a key that goes from undefined to absent with '', which
+    // wipes that side of an unchanged shorthand on undo.
+    const { rendered } = setup({ padding: '20px', paddingTop: { [T]: '40px' } });
+    expect('paddingTop' in rendered(D)).toBe(false);
+    expect(rendered(P).paddingTop).toBe('40px');
+  });
+
   it('own-only reads: the override on this breakpoint, else undefined', () => {
     const { node } = setup({ fontSize: { base: '40px', [T]: '28px' } });
     expect(node.getOwnResponsiveStyleValue('fontSize', D)).toBe('40px');

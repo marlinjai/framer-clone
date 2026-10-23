@@ -546,8 +546,19 @@ const ComponentModel: any = ComponentBase
     // breakpoint id (floating elements) reads as the largest breakpoint.
     getResolvedProps(breakpointId: string, allBreakpoints: { id: string; minWidth: number }[]) {
       const bpIds = new Set(allBreakpoints.map(bp => bp.id));
-      const resolve = (raw: unknown) =>
-        isResponsiveMap(raw, bpIds) ? resolveCascade(raw, breakpointId, allBreakpoints).value : raw;
+      // A map with no value at or above this breakpoint (a Tablet-only
+      // paddingTop, seen from Desktop) is left out entirely, never emitted as
+      // `undefined`: React clears a style key that goes from undefined to
+      // absent with `paddingTop: ''`, which also wipes that side of an
+      // unchanged `padding` shorthand (seen on undo in the browser).
+      const assign = (target: Record<string, any>, key: string, raw: unknown) => {
+        if (!isResponsiveMap(raw, bpIds)) {
+          target[key] = raw;
+          return;
+        }
+        const value = resolveCascade(raw, breakpointId, allBreakpoints).value;
+        if (value !== undefined) target[key] = value;
+      };
 
       const attributes: Record<string, any> = {};
       const style: Record<string, any> = {};
@@ -555,14 +566,13 @@ const ComponentModel: any = ComponentBase
       // resolve top-level props
       for (const [key, raw] of Object.entries(self.props)) {
         if (key === 'style') continue;
-        if (CSS_PROP_SET.has(key)) style[key] = resolve(raw);
-        else attributes[key] = resolve(raw);
+        assign(CSS_PROP_SET.has(key) ? style : attributes, key, raw);
       }
 
       // resolve nested style
       const rawStyle = (self.props as any).style;
       if (isObject(rawStyle)) {
-        for (const [sKey, sVal] of Object.entries(rawStyle)) style[sKey] = resolve(sVal);
+        for (const [sKey, sVal] of Object.entries(rawStyle)) assign(style, sKey, sVal);
       }
 
       return { attributes, style };
