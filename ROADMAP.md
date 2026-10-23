@@ -121,9 +121,9 @@ connections to the suite. The four lines below are in that order.
   production. The proof found Noto printing blank letters (pdf-lib subsetting), fixed in #136
   (Noto embedded whole, a glyph-outline test) and deployed; TEST-3 issued in Noto Serif renders
   correctly. The last piece, deleting a logo nobody uses (phase 4 decision 9: never while an
-  issued document or a live template's current version names it), is the pull request on branch
-  `feat/books-logo-library` (migration 014, BK015, the logo list and delete routes, "Your logos"
-  in the composer's logo picker); the plan is completed with it. See
+  issued document or a live template's current version names it), was built in #137 (migration
+  014, BK015, the logo list and delete routes, "Your logos" in the composer's logo picker), and
+  the plan was completed with it. See
   [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-23)
 - [ ] 8a. Prove the logo deletion on app.lumitra.co after the deploy that rolls migration
   `014_books_asset_delete`: on "Books Testfirma", upload a spare logo and delete it from "Your
