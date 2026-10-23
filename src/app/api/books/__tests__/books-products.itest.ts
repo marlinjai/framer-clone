@@ -55,6 +55,7 @@ import {
   FakeContactBook,
   FakeDirectory,
   initCompany,
+  newCustomer,
   newTenantId,
   openBooksEnv,
   scopeFor,
@@ -66,6 +67,7 @@ import * as productRoute from '../products/[id]/route';
 import * as documentsRoute from '../documents/route';
 import * as documentRoute from '../documents/[id]/route';
 import * as linesRoute from '../documents/[id]/lines/route';
+import * as documentCustomerRoute from '../documents/[id]/customer/route';
 
 let env: BooksEnv;
 let tenantId: string;
@@ -430,6 +432,30 @@ describe('a price quoted in the other basis is converted by the server', () => {
     // The same basis is stored as it is.
     const inNetToo = await addTo(net.json.document.id, inNet.document.version, netItem);
     expect(inNetToo.lines[1]).toMatchObject({ unitPrice: 10000 });
+  });
+
+  it('under reverse charge a gross quote loses its VAT, and a priceBasis without its price is refused', async () => {
+    const grossItem = await created({ name: 'Brutto', unitPrice: 11900, priceBasis: 'gross', taxClass: 'standard' });
+    const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
+    const { customer } = await newCustomer(scope, dir, { customerType: 'b2b', vatId: 'FR12345678901', countryCode: 'FR' });
+    const draft = await call(documentsRoute.POST, 'POST', '/api/books/documents', {}, { netOrGross: 'net' });
+    const docId = draft.json.document.id as string;
+    const withCustomer = await call(documentCustomerRoute.PUT, 'PUT', `/api/books/documents/${docId}/customer`, { id: docId }, {
+      customerId: customer.id,
+      expectedVersion: draft.json.document.version,
+    });
+    expect(withCustomer.status).toBe(200);
+    expect(withCustomer.json.document.reverseCharge).toBe(true);
+    const added = await addTo(docId, withCustomer.json.document.version, grossItem);
+    expect(added.lines[0]).toMatchObject({ unitPrice: 10000, subtotal: 10000, taxAmount: 0, taxTreatment: 'reverse_charge' });
+
+    const refused = await call(linesRoute.POST, 'POST', `/api/books/documents/${docId}/lines`, { id: docId }, {
+      title: 'Ohne Preis',
+      priceBasis: 'gross',
+      expectedVersion: added.document.version,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.json.error.code).toBe('invalid_line');
   });
 
   it('a small business stores the price as it is (net and gross are the same)', async () => {

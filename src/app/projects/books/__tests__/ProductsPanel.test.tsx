@@ -182,7 +182,7 @@ describe('ProductsPanel', () => {
     expect(status()).toContain('“Beratung” was added to the list.');
     expect(screen.queryByRole('form', { name: 'New item' })).toBeNull();
     // The focus lands on the new row.
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Change Beratung' }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Change Beratung' })));
   });
 
   it('backtrack and revise: wrong fields are named, tied and focused; a change and a taken name, then back', async () => {
@@ -220,7 +220,7 @@ describe('ProductsPanel', () => {
     const patch = calls.find((c) => c.method === 'PATCH')!;
     expect(patch.url).toBe(`/api/books/products/${items.find((i) => i.name === 'Hosting')!.id}`);
     expect(patch.body).toMatchObject({ unitPrice: 1500 });
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Change Hosting' }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Change Hosting' })));
 
     // Rename onto a taken name (other case, an accent): the server's refusal is shown under the name.
     fireEvent.click(screen.getByRole('button', { name: 'Change Hosting' }));
@@ -272,7 +272,7 @@ describe('ProductsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Archive Wartung' }));
     await screen.findByText(/No items yet/);
     expect(status()).toContain('“Wartung” was archived. Drafts that used it keep their lines.');
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'New item' }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'New item' })));
 
     // The name is free: a new item takes it.
     const form = await openNew();
@@ -337,6 +337,30 @@ describe('ProductsPanel, the details', () => {
     fireEvent.keyDown(form, { key: 'Escape' });
     expect(screen.queryByRole('form')).toBeNull();
     expect(items[0].name).toBe('Wartung');
+  });
+
+  it('another form never replaces one with typed values without asking', async () => {
+    server([item({ name: 'Wartung' }), item({ name: 'Hosting' })]);
+    render(<ProductsPanel onBlocked={onBlocked} />);
+    await screen.findByText('Hosting');
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+
+    // An untouched form is replaced without a question.
+    fireEvent.click(screen.getByRole('button', { name: 'Change Wartung' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Change Hosting' }));
+    expect(confirm).not.toHaveBeenCalled();
+    const form = screen.getByRole('form', { name: 'Change “Hosting”' });
+
+    fireEvent.change(within(form).getByLabelText('Unit price (EUR)'), { target: { value: '99' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Change Wartung' }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect((within(screen.getByRole('form', { name: 'Change “Hosting”' })).getByLabelText('Unit price (EUR)') as HTMLInputElement).value).toBe('99');
+
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Change Wartung' }));
+    expect(screen.getByRole('form', { name: 'Change “Wartung”' })).toBeTruthy();
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
   });
 });
 

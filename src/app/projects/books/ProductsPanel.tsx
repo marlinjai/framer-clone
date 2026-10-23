@@ -27,7 +27,7 @@ import { booksApi, type ProductView } from '@/lib/books/api';
 import { money, rate } from '@/lib/books/units';
 
 import { FirstPage, MoreRows } from './ListStatus';
-import ProductForm from './ProductForm';
+import ProductForm, { DISCARD_QUESTION } from './ProductForm';
 import { useCursorList } from './useCursorList';
 import { ErrorAlert, errorText } from './ui';
 
@@ -93,13 +93,26 @@ export default function ProductsPanel({
     }
   }, [focusTarget]);
 
+  // Whether the open form holds typed values: another form never replaces it without asking.
+  const formDirty = useRef(false);
+  const onDirtyChange = useCallback((dirty: boolean) => {
+    formDirty.current = dirty;
+  }, []);
+  function openForm(next: Exclude<Editing, null>) {
+    if (editing && formDirty.current && !window.confirm(DISCARD_QUESTION)) return;
+    formDirty.current = false;
+    setEditing(next);
+  }
+
   const closeForm = useCallback((back: { id: string } | null) => {
+    formDirty.current = false;
     setEditing(null);
     setFocusTarget(back ? { id: back.id, action: 'change' } : 'new');
   }, []);
 
   async function saved(product: ProductView, created: boolean) {
     setAnnouncement(created ? `“${product.name}” was added to the list.` : `“${product.name}” was saved.`);
+    formDirty.current = false;
     setEditing(null);
     await list.reload({ keepShown: true });
     setFocusTarget({ id: product.id, action: 'change' });
@@ -111,7 +124,11 @@ export default function ProductsPanel({
     try {
       await booksApi.archiveProduct(p.id);
       setAnnouncement(`“${p.name}” was archived. Drafts that used it keep their lines.`);
-      if (editing?.mode === 'change' && editing.product.id === p.id) setEditing(null);
+      if (editing?.mode === 'change' && editing.product.id === p.id) {
+        // The form showed the item now archived: it closes (archiving was asked for this very item).
+        formDirty.current = false;
+        setEditing(null);
+      }
       await list.reload({ keepShown: true });
       // Shown with archived items, the row stays and offers Restore; otherwise it is gone (the fallback).
       setFocusTarget({ id: p.id, action: 'restore' });
@@ -159,6 +176,7 @@ export default function ProductsPanel({
             product={editing.mode === 'change' ? editing.product : undefined}
             onCancel={() => closeForm(editing.mode === 'change' ? editing.product : null)}
             onSaved={(p) => void saved(p, editing.mode === 'new')}
+            onDirtyChange={onDirtyChange}
           />
         </div>
       ) : null}
@@ -183,7 +201,7 @@ export default function ProductsPanel({
           </label>
         </div>
         {editing?.mode !== 'new' ? (
-          <Button ref={newButton} variant="outline" onClick={() => setEditing({ mode: 'new' })}>
+          <Button ref={newButton} variant="outline" onClick={() => openForm({ mode: 'new' })}>
             New item
           </Button>
         ) : null}
@@ -230,7 +248,7 @@ export default function ProductsPanel({
                     size="sm"
                     variant="ghost"
                     aria-label={`Change ${p.name}`}
-                    onClick={() => setEditing({ mode: 'change', product: p })}
+                    onClick={() => openForm({ mode: 'change', product: p })}
                   >
                     Change
                   </Button>

@@ -160,6 +160,10 @@ export async function addLine(scope: BooksScope, id: string, input: AddLineInput
   const parsed = addInput.safeParse(input);
   if (!parsed.success) throw invalid('INVALID_LINE', parsed.error.issues);
   const args = parsed.data;
+  // The basis qualifies the price the caller sends, never a catalog price it leaves out.
+  if (args.priceBasis !== undefined && args.unitPrice === undefined) {
+    throw invalid('INVALID_LINE', [{ path: ['priceBasis'], message: 'priceBasis is sent only with the unitPrice it describes' }]);
+  }
 
   return inDraftTransaction(scope, async (trx) => {
     const row = await lockDraft(trx, scope, id, args.expectedVersion);

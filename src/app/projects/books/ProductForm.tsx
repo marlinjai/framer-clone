@@ -119,9 +119,14 @@ interface Props {
   product?: ProductView;
   onSaved: (product: ProductView) => void;
   onCancel: () => void;
+  /** Told whether something was typed, so the page can ask before replacing the form. */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
-export default function ProductForm({ product, onSaved, onCancel }: Props) {
+/** The question asked before typed values are dropped (Escape here, another form in the panel). */
+export const DISCARD_QUESTION = 'Discard what you typed in this form?';
+
+export default function ProductForm({ product, onSaved, onCancel, onDirtyChange }: Props) {
   const [draft, setDraft] = useState<ProductDraft>(product ? draftOfProduct(product) : EMPTY_PRODUCT);
   const [errors, setErrors] = useState<ProductErrors>({});
   const [error, setError] = useState<string | null>(null);
@@ -182,6 +187,9 @@ export default function ProductForm({ product, onSaved, onCancel }: Props) {
 
   const initial = product ? draftOfProduct(product) : EMPTY_PRODUCT;
   const dirty = (Object.keys(initial) as Array<keyof ProductDraft>).some((k) => initial[k] !== draft[k]);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
   const title = product ? `Change “${product.name}”` : 'New item';
   return (
     <form
@@ -191,7 +199,7 @@ export default function ProductForm({ product, onSaved, onCancel }: Props) {
         if (e.key !== 'Escape' || busy) return;
         e.preventDefault();
         // Typed values are never thrown away by one key without asking.
-        if (dirty && !window.confirm('Discard what you typed in this form?')) return;
+        if (dirty && !window.confirm(DISCARD_QUESTION)) return;
         onCancel();
       }}
       noValidate

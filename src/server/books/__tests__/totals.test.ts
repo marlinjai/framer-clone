@@ -39,11 +39,16 @@ describe('convertUnitPrice (a product list price in the draft basis)', () => {
     expect(asGross.subtotal + asGross.taxAmount).toBe(gross);
   });
 
-  it('leaves the price alone in the same basis, at 0 %, for a small business and under reverse charge', () => {
+  it('leaves the price alone in the same basis, at 0 %, and for a small business', () => {
     expect(convertUnitPrice(10000, 'net', 'net', regular)).toBe(10000);
     expect(convertUnitPrice(10000, 'net', 'gross', { ...regular, taxClass: 'zero' })).toBe(10000);
     expect(convertUnitPrice(10000, 'net', 'gross', { ...regular, kleinunternehmer: true })).toBe(10000);
-    expect(convertUnitPrice(10000, 'gross', 'net', { ...regular, reverseCharge: true })).toBe(10000);
+    expect(convertUnitPrice(11900, 'gross', 'net', { ...regular, kleinunternehmer: true })).toBe(11900);
+  });
+
+  it('under reverse charge takes the VAT out of a gross quote and adds none to a net one', () => {
+    expect(convertUnitPrice(11900, 'gross', 'net', { ...regular, reverseCharge: true })).toBe(10000);
+    expect(convertUnitPrice(10000, 'net', 'gross', { ...regular, reverseCharge: true })).toBe(10000);
   });
 });
 

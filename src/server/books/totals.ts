@@ -100,10 +100,15 @@ export function deriveLine(line: LineInputs, ctx: LineTaxContext): DerivedLine {
  * A unit price quoted in one basis (net or gross), in the other: what a line
  * picked from the product list stores when the item's price basis differs
  * from the draft's (invoice editor plan, phase 4). The rate is the line's
- * (its override, else its class), 0 for a small business or reverse charge,
- * where net and gross are the same. Rounded half up exactly as computeLineTax
+ * (its override, else its class). Rounded half up exactly as computeLineTax
  * rounds the tax of one unit: net to gross adds round(net * rate / 10000),
  * gross to net takes off round(gross * rate / (10000 + rate)).
+ *
+ * A small business charges no VAT, so its net and gross are the same: no
+ * change. Under reverse charge the draft charges no VAT either, so a net price
+ * goes into a gross draft as it is; but a GROSS quote still contains German VAT
+ * at its class rate, which the customer accounts for themselves, so it is taken
+ * off (the customer never pays the VAT amount as price).
  */
 export function convertUnitPrice(
   unitPrice: number,
@@ -111,7 +116,8 @@ export function convertUnitPrice(
   to: 'net' | 'gross',
   ctx: { taxClass: TaxClass | null; taxRateOverride: number | null; kleinunternehmer: boolean; reverseCharge: boolean },
 ): number {
-  if (from === to || ctx.kleinunternehmer || ctx.reverseCharge) return unitPrice;
+  if (from === to || ctx.kleinunternehmer) return unitPrice;
+  if (ctx.reverseCharge && from === 'net') return unitPrice;
   const rate = resolveLineRate(ctx.taxClass, ctx.taxRateOverride ?? undefined);
   return from === 'net'
     ? unitPrice + Math.round((unitPrice * rate) / 10000)
