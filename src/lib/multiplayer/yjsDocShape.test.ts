@@ -334,3 +334,31 @@ describe('encoded state preserves the round-trip', () => {
     expect(getSnapshot(project2)).toEqual(snap);
   });
 });
+
+describe('props.effects', () => {
+  it('is a nested Y.Map of effect groups (per-group last writer wins) and round-trips', () => {
+    const { project, ids } = buildFixtureProject();
+    const root = project.pages.get(ids.page)!.appComponentTree!;
+    const effects = {
+      appear: {
+        base: { kind: 'slide-up', distance: 16, duration: 280, delay: 0, stagger: 50 },
+        [ids.mobileBreakpoint]: { kind: 'none', distance: 16, duration: 280, delay: 0, stagger: 0 },
+      },
+      hover: 'lift',
+    };
+    root.setEffect('hover', 'lift');
+    root.setEffect('appear', effects.appear.base);
+    const snap = JSON.parse(JSON.stringify(getSnapshot(project)));
+    snap.pages[ids.page].appComponentTree.props.effects.appear = effects.appear;
+
+    const doc = mstSnapshotToYDoc(snap);
+    const rootProps = (doc.getMap(YJS_KEYS.nodes).get(ids.root) as Y.Map<any>).get(YJS_NODE_KEYS.props) as Y.Map<any>;
+    const effectsMap = rootProps.get(YJS_PROPS_KEYS.effects);
+    expect(effectsMap).toBeInstanceOf(Y.Map);
+    expect((effectsMap as Y.Map<any>).get('hover')).toBe('lift');
+    expect((effectsMap as Y.Map<any>).get('appear')).toEqual(effects.appear);
+
+    const decoded = yDocToMstSnapshot(doc) as any;
+    expect(decoded.pages[ids.page].appComponentTree.props.effects).toEqual(effects);
+  });
+});

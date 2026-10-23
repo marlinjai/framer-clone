@@ -20,6 +20,10 @@ import { createScope, pushPageFrame } from '@/lib/bindings/resolver/scope';
 import { buildTrackerSnippet } from '@/lib/renderer/publish/trackerSnippet';
 import { renderComponentNode } from './renderComponentNode';
 import { applyResponsiveStyles } from './applyResponsiveStyles';
+import { applyEffects } from './applyEffects';
+import EffectsIsland from './EffectsIsland';
+import { EffectsStyles } from '@/lib/effects/EffectsStyles';
+import { publishedEffectsBootScript } from '@/lib/effects/effects';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import CommercePageProviders from './CommercePageProviders';
 import type { PageSeoMetadata } from './snapshotToComponentNode';
@@ -63,6 +67,11 @@ export interface RenderPublishedPageInput {
    * style's base value applies at every width.
    */
   breakpoints?: readonly BreakpointRef[];
+  /**
+   * The site's smooth scrolling setting (Lenis): off by default, and off for
+   * visitors who ask for reduced motion.
+   */
+  smoothScroll?: boolean;
 }
 
 export interface RenderedPage {
@@ -112,7 +121,7 @@ function buildHeadSnippet(analytics: ResolvedAnalytics | undefined): string | nu
 export async function renderPublishedPage(
   input: RenderPublishedPageInput,
 ): Promise<RenderedPage> {
-  const { root, pageParams, cmsRepo, commerceRepo, analytics, breakpoints = [] } = input;
+  const { root, pageParams, cmsRepo, commerceRepo, analytics, breakpoints = [], smoothScroll = false } = input;
 
   const hydrated = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo });
 
@@ -120,7 +129,11 @@ export async function renderPublishedPage(
   // max-width media queries (desktop-first, the editor's cascade). Done on the
   // hydrated tree so cloned collection rows and the commerce islands (which
   // receive these props across the client boundary) carry the classes too.
-  const responsive = applyResponsiveStyles(hydrated, breakpoints);
+  // Effects first: they become data attributes plus custom properties in
+  // `style`, which the responsive pass then moves into the stylesheet per
+  // breakpoint like any responsive style.
+  const effects = applyEffects(hydrated, breakpoints);
+  const responsive = applyResponsiveStyles(effects.root, breakpoints);
 
   // The page frame drives any island re-resolution of {{page.params.*}}.
   const scope = pushPageFrame(createScope(), pageParams);
@@ -136,7 +149,19 @@ export async function renderPublishedPage(
           // any value containing `<`.
           <style data-fc-responsive="" dangerouslySetInnerHTML={{ __html: responsive.css }} />
         ) : null}
+        {effects.hasEffects || smoothScroll ? (
+          <EffectsStyles smoothScroll={smoothScroll} />
+        ) : null}
+        {effects.needsRuntime ? (
+          // Parsed and run before the content it gates: it injects the
+          // start-state rules (never part of the HTML, so nothing is hidden
+          // without JavaScript) unless the visitor asks for reduced motion.
+          <script data-fc-effects-boot="" dangerouslySetInnerHTML={{ __html: publishedEffectsBootScript() }} />
+        ) : null}
         <CommercePageProviders>{tree}</CommercePageProviders>
+        {effects.needsRuntime || smoothScroll ? (
+          <EffectsIsland effects={effects.needsRuntime} smoothScroll={smoothScroll} />
+        ) : null}
       </>
     ),
     headSnippet: buildHeadSnippet(analytics),
