@@ -256,8 +256,11 @@ describe('ProductsPanel', () => {
     expect(list().textContent).toContain('Product · 80,00 € per Stk');
 
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'BERATUNG strat' } });
-    await waitFor(() => expect(screen.queryByText('Druck')).toBeNull());
-    expect(within(list()).getByText('Beratúng')).toBeTruthy();
+    // "Druck" also goes while the list is being replaced (a loading state without the list): wait for the new list itself.
+    await waitFor(() => {
+      expect(screen.queryByText('Druck')).toBeNull();
+      expect(within(list()).getByText('Beratúng')).toBeTruthy();
+    });
     expect(calls.at(-1)!.url).toBe('/api/books/products?q=BERATUNG+strat');
 
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'nichts' } });

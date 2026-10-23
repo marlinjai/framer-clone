@@ -110,6 +110,8 @@ export interface DocumentView {
   servicePeriodEnd: string | null;
   dueDate: string | null;
   paymentTermsDays: number;
+  /** The reference printed in the document data ("Vertrag"), editable on a draft. */
+  contractReference: string | null;
   netOrGross: 'net' | 'gross';
   kleinunternehmer: boolean;
   reverseCharge: boolean;
