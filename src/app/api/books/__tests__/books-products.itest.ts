@@ -449,6 +449,18 @@ describe('a price quoted in the other basis is converted by the server', () => {
     const added = await addTo(docId, withCustomer.json.document.version, grossItem);
     expect(added.lines[0]).toMatchObject({ unitPrice: 10000, subtotal: 10000, taxAmount: 0, taxTreatment: 'reverse_charge' });
 
+    // The same in a GROSS draft: the basis matches the item's, and still the VAT comes off.
+    const grossDraft = await call(documentsRoute.POST, 'POST', '/api/books/documents', {}, { netOrGross: 'gross' });
+    const grossId = grossDraft.json.document.id as string;
+    const grossWithCustomer = await call(documentCustomerRoute.PUT, 'PUT', `/api/books/documents/${grossId}/customer`, { id: grossId }, {
+      customerId: customer.id,
+      expectedVersion: grossDraft.json.document.version,
+    });
+    expect(grossWithCustomer.json.document.reverseCharge).toBe(true);
+    const inGross = await addTo(grossId, grossWithCustomer.json.document.version, grossItem);
+    expect(inGross.lines[0]).toMatchObject({ unitPrice: 10000, taxAmount: 0, taxTreatment: 'reverse_charge' });
+    expect(inGross.document.total).toBe(10000);
+
     const refused = await call(linesRoute.POST, 'POST', `/api/books/documents/${docId}/lines`, { id: docId }, {
       title: 'Ohne Preis',
       priceBasis: 'gross',
