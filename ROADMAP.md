@@ -17,9 +17,12 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   guarded `/api/ai/generate-page` route, the editor's "Generate page" dialog with undo) shipped;
   real Unsplash stock photos instead of the placeholder and a Fast / Balanced / Best model slider
   (dialog and CMS agent) live since 2026-10-20 (#112, verified on app.lumitra.co: 4 photos from
-  images.unsplash.com with credits in the canvas and on the published page); phase 4's style
-  references and screenshot loop stay open. See [plan](docs/plans/ai-driven-page-generation.md).
-  (2026-10-20)
+  images.unsplash.com with credits in the canvas and on the published page). Since 2026-10-23 the
+  prompt carries a design brief distilled from the design skills, containers can hold a stock
+  photo behind text under a scrim, every stock photo is cropped around its subject (a Haiku vision
+  pass), and the properties panel has an Image section for fit, focal point and photo backgrounds
+  (done, recorded in the 2026-10-23 design quality plan linked from the plan below). Phase 4's style references
+  and screenshot loop stay open. See [plan](docs/plans/ai-driven-page-generation.md). (2026-10-23)
 - [x] Custom domains (Option B): a site owner connects their own domain to a published site
   (TXT ownership check, per-domain Let's Encrypt certificates through Traefik's file provider,
   a Domains panel in the editor; code in #103). Live since 2026-10-20: `domains.lumitra.co`

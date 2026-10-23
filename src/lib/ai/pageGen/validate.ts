@@ -12,6 +12,10 @@
 //     - forbidden tags (script, iframe, form, ...) dropped with their subtree,
 //     - text AND children on one node: the text becomes a leading text child,
 //     - children on a void tag dropped, missing labels and alt text filled,
+//     - an img with an aspectRatio but no height of its own gets height
+//       "auto" (the Image preset's fixed height would otherwise win),
+//     - an images.unsplash.com photo (img src or a container's background
+//       url() layer) without its complete credit dropped,
 //     - responsive-map keys matched to the request's breakpoint keys
 //       (case-insensitive, label match), unknown keys dropped,
 //     - ids assigned fresh and `parentId` set on every nested node (a whole
@@ -29,7 +33,8 @@
 // in the browser.
 
 import { v4 as uuidv4 } from 'uuid';
-import { STOCK_CREDIT_ATTRS, stockCreditProps } from './stockCredit';
+import { STOCK_CREDIT_ATTRS, stockCreditAttrs, stockCreditProps } from './stockCredit';
+import { parseAspectRatio, photoUrlOf, withPhotoUrl } from '@/lib/images/imageStyle';
 import ComponentModel, { ComponentTypeEnum, CSS_PROP_SET } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import {
@@ -37,6 +42,7 @@ import {
   FORBIDDEN_TAGS,
   GENERATION_LIMITS,
   IMAGE_QUERY_PROP,
+  PHOTO_BACKGROUND_TAGS,
   PLACEHOLDER_IMAGE_SRC,
   allowedPropKeysFor,
   getGenerationPreset,
@@ -61,17 +67,21 @@ export interface GeneratedNodeSnapshot {
 /** Unsplash's orientation filter values. */
 export type ImageOrientation = 'landscape' | 'portrait' | 'squarish';
 
+/** Where a stock photo goes: an img's src, or the photo layer of a container's background. */
+export type ImageRequestKind = 'img' | 'background';
+
 /**
  * One image the model described for a stock photo. Server-side data only: the
  * route resolves it and writes the photo into the node's props; it is never
  * sent to the editor.
  */
 export interface ImageRequest {
-  /** The img node's (fresh) id. */
+  /** The img or container node's (fresh) id. */
   nodeId: string;
+  kind: ImageRequestKind;
   /** The search query, trimmed, whitespace collapsed. */
   query: string;
-  /** From the box's width and height, when both are px. */
+  /** From the box's px width and height, or its aspectRatio (a background defaults to landscape). */
   orientation?: ImageOrientation;
   /** The box's width in px on the largest breakpoint, when known (sizes the hotlinked photo). */
   widthPx?: number;
@@ -155,6 +165,9 @@ function isUnsplashPage(value: unknown): value is string {
   }
 }
 
+/** A background with no px width says nothing about its size: assume a wide section. */
+const DEFAULT_BACKGROUND_WIDTH_PX = 1200;
+
 /** The credit attributes of an existing stock photo, when complete and well-formed. */
 function unsplashCredit(props: Record<string, unknown>) {
   const name = props['data-credit-name'];
@@ -224,17 +237,86 @@ class Validator {
     return value[BASE_KEY];
   }
 
-  /** The box geometry of an img, for the photo's orientation and size. */
-  private imageGeometry(style: Record<string, unknown>): { orientation?: ImageOrientation; widthPx?: number } {
+  /**
+   * The box geometry of an image or a photo background, for the photo's
+   * orientation and size: the shape from an explicit aspectRatio, else from a
+   * px width and height (minHeight for a background, which usually grows with
+   * its content). A background without a usable shape is a wide section
+   * (landscape), and without a px width it is sized as a full-width one.
+   */
+  private imageGeometry(
+    style: Record<string, unknown>,
+    kind: ImageRequestKind,
+  ): { orientation?: ImageOrientation; widthPx?: number } {
     const width = pxLength(this.primaryStyleValue(style.width));
-    const height = pxLength(this.primaryStyleValue(style.height));
-    // Only px boxes say their shape (aspectRatio is not an editor style key).
-    const ratio = width !== undefined && height !== undefined ? width / height : undefined;
-    const orientation = orientationFor(ratio);
+    const height =
+      pxLength(this.primaryStyleValue(style.height)) ??
+      (kind === 'background' ? pxLength(this.primaryStyleValue(style.minHeight)) : undefined);
+    const ratio =
+      parseAspectRatio(this.primaryStyleValue(style.aspectRatio)) ??
+      (width !== undefined && height !== undefined ? width / height : undefined);
+    const orientation = orientationFor(ratio) ?? (kind === 'background' ? 'landscape' : undefined);
+    const widthPx = width ?? (kind === 'background' ? DEFAULT_BACKGROUND_WIDTH_PX : undefined);
     return {
       ...(orientation ? { orientation } : {}),
-      ...(width !== undefined ? { widthPx: Math.round(width) } : {}),
+      ...(widthPx !== undefined ? { widthPx: Math.round(widthPx) } : {}),
     };
+  }
+
+  /**
+   * Keep a container's background photo only when it may be shown: an
+   * images.unsplash.com url() layer needs the complete credit the context
+   * carried (it is then written back as data-credit-* attributes), otherwise
+   * the photo layer is removed and the overlay layers (the scrim) stay. Works
+   * on a scalar backgroundImage and on every entry of a responsive map.
+   * Returns whether a photo layer is left, so a brief-provided URL wins over
+   * an imageQuery the same way an img's src does.
+   */
+  private photoBackground(
+    path: string,
+    style: Record<string, unknown>,
+    modelProps: Record<string, unknown>,
+    merged: Record<string, unknown>,
+  ): boolean {
+    const bg = style.backgroundImage;
+    if (bg === undefined) return false;
+    const credit = unsplashCredit(modelProps);
+    let hasPhoto = false;
+    let usedCredit = false;
+    let droppedUncredited = false;
+    const fix = (value: unknown): unknown => {
+      if (typeof value !== 'string') return value;
+      const url = photoUrlOf(value);
+      if (!url) return value;
+      if (isUnsplashPhotoUrl(url)) {
+        if (!credit) {
+          droppedUncredited = true;
+          const rest = withPhotoUrl(value, undefined);
+          return rest || undefined;
+        }
+        usedCredit = true;
+      }
+      hasPhoto = true;
+      return value;
+    };
+    if (isPlainObject(bg)) {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(bg)) {
+        const fixed = fix(v);
+        if (fixed !== undefined) out[k] = fixed;
+      }
+      if (Object.keys(out).length > 0) style.backgroundImage = out;
+      else delete style.backgroundImage;
+    } else {
+      const fixed = fix(bg);
+      if (fixed !== undefined) style.backgroundImage = fixed;
+      else delete style.backgroundImage;
+    }
+    if (droppedUncredited) {
+      this.warn(path, 'an Unsplash background photo without its credit cannot be kept, photo layer dropped');
+    }
+    if (usedCredit && credit) Object.assign(merged, stockCreditAttrs(credit));
+    return hasPhoto;
   }
 
   private warn(path: string, message: string): void {
@@ -399,9 +481,13 @@ class Validator {
     let imageQuery: string | undefined;
     let invalidQuery = false;
 
-    // An Unsplash photo's credit (an earlier generation's image, sent back in
-    // replace / insert context) is read separately below, never warned about.
-    const creditKeys = new Set<string>(type === 'img' ? ['title', ...STOCK_CREDIT_ATTRS] : []);
+    // An Unsplash photo's credit (an earlier generation's image or background,
+    // sent back in replace / insert context) is read separately below, never
+    // warned about. Containers never carry the hover title (see stockCredit.ts).
+    const isPhotoContainer = PHOTO_BACKGROUND_TAGS.has(type);
+    const creditKeys = new Set<string>(
+      type === 'img' ? ['title', ...STOCK_CREDIT_ATTRS] : isPhotoContainer ? STOCK_CREDIT_ATTRS : [],
+    );
     for (const [key, value] of Object.entries(modelProps)) {
       if (key === 'style' || creditKeys.has(key)) continue;
       if (!allowed.has(key)) {
@@ -443,10 +529,24 @@ class Validator {
     // Merge preset defaults under the model's props; style merges key by key.
     const presetDefaults = (preset?.defaultProps ?? {}) as Record<string, unknown>;
     const presetStyle = isPlainObject(presetDefaults.style) ? presetDefaults.style : {};
-    const style = { ...presetStyle, ...this.style(path, modelProps.style) };
+    const modelStyle = this.style(path, modelProps.style);
+    const style: Record<string, unknown> = { ...presetStyle, ...modelStyle };
+    if (type === 'img' && modelStyle.aspectRatio !== undefined && modelStyle.height === undefined) {
+      // The shape comes from the aspect ratio: a preset's fixed height would override it.
+      style.height = 'auto';
+    }
     const merged: Record<string, unknown> = { ...presetDefaults, ...props };
     delete merged.style;
+    const hasBackgroundPhoto = isPhotoContainer && this.photoBackground(path, style, modelProps, merged);
     if (Object.keys(style).length > 0) merged.style = style;
+    if (isPhotoContainer) {
+      // A photo the brief provided (a url() layer) wins over a stock-photo query.
+      if (imageQuery !== undefined && !hasBackgroundPhoto) {
+        this.imageRequests.push({ nodeId: id, kind: 'background', query: imageQuery, ...this.imageGeometry(style, 'background') });
+      } else if (invalidQuery && !hasBackgroundPhoto) {
+        this.invalidImageQueries += 1;
+      }
+    }
     if (type === 'img' && typeof props.src === 'string' && isUnsplashPhotoUrl(props.src)) {
       // An Unsplash photo is only ever shown with its credit: keep the credit
       // the context carried, or drop the photo (the query or placeholder
@@ -462,7 +562,7 @@ class Validator {
     if (type === 'img') {
       // A src the model was given in the brief wins over a stock-photo query.
       if (imageQuery !== undefined && typeof props.src !== 'string') {
-        this.imageRequests.push({ nodeId: id, query: imageQuery, ...this.imageGeometry(style) });
+        this.imageRequests.push({ nodeId: id, kind: 'img', query: imageQuery, ...this.imageGeometry(style, 'img') });
       } else if (invalidQuery && typeof props.src !== 'string') {
         this.invalidImageQueries += 1;
       }

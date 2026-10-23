@@ -8,7 +8,7 @@ import type {
 } from '@/lib/bindings/types';
 import type { Query } from '@/lib/bindings/dataSource/types';
 import { resolveViewportFrameHeight } from '@/lib/canvas/viewportFrame';
-import { hasStockCredit, withoutStockCredit } from '@/lib/ai/pageGen/stockCredit';
+import { hasStockCredit, withImageSrc, withoutStockCredit } from '@/lib/ai/pageGen/stockCredit';
 
 export type PropsRecord = Record<string, any>;
 
@@ -35,7 +35,7 @@ function isObject(x: any): x is Record<string, any> {
 }
 
 export const CSS_PROP_SET = new Set<string>([
-  'width','height','minWidth','minHeight','maxWidth','maxHeight',
+  'width','height','minWidth','minHeight','maxWidth','maxHeight','aspectRatio',
   'display','position','top','right','bottom','left','inset',
   'padding','paddingTop','paddingRight','paddingBottom','paddingLeft',
   'margin','marginTop','marginRight','marginBottom','marginLeft',
@@ -147,6 +147,12 @@ const ComponentModel: any = ComponentBase
     setRenderedViewportHeight(height: number | undefined) {
       const next = height === undefined || !Number.isFinite(height) ? undefined : Math.round(height);
       if (self.renderedViewportHeight !== next) self.renderedViewportHeight = next;
+    },
+
+    // Swap an image's src. A different picture no longer matches a stock
+    // photo's credit, so withImageSrc drops it.
+    setImageSrc(nextSrc: string) {
+      self.props = withImageSrc((self.props || {}) as Record<string, unknown>, nextSrc);
     },
 
     // Canvas positioning actions (for root components)
@@ -287,6 +293,13 @@ const ComponentModel: any = ComponentBase
       console.log(`🎨 Updated ${property} to:`, self.props.style[property]);
     },
     
+    // Remove a stock photo's credit (data-credit-* and the hover title), when
+    // the photo it describes was replaced by another picture. An action, so it
+    // works on the protected tree and is one undoable step.
+    clearStockCredit() {
+      if (hasStockCredit(self.props)) self.props = withoutStockCredit(self.props);
+    },
+
     // Replace the string text content of this component. Used for inline
     // editing of text / button / heading nodes. Leaves other props untouched.
     setTextContent(value: string) {

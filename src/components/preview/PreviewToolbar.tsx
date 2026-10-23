@@ -17,6 +17,8 @@ export interface PreviewToolbarProps {
   height: number;
   activeBreakpointId: string | undefined;
   mode: PreviewMode;
+  /** Filling the window only (a load with ?fullscreen=1): the button enters real fullscreen. */
+  enterOnly?: boolean;
   onWidthChange: (next: number) => void;
   onHeightChange: (next: number) => void;
   onPresetChange: (viewport: ComponentInstance) => void;
@@ -35,6 +37,7 @@ const PreviewToolbar = observer(({
   height,
   activeBreakpointId,
   mode,
+  enterOnly = false,
   onWidthChange,
   onHeightChange,
   onPresetChange,
@@ -47,6 +50,7 @@ const PreviewToolbar = observer(({
 }: PreviewToolbarProps) => {
   const router = useRouter();
   const isFullscreen = mode === 'fullscreen';
+  const showExit = isFullscreen && !enterOnly;
 
   return (
     <div className="flex items-center gap-2 h-12 px-3 bg-gray-900 text-gray-100 border-b border-gray-800">
@@ -77,11 +81,11 @@ const PreviewToolbar = observer(({
         type="button"
         onClick={onToggleMode}
         className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800"
-        title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-        aria-pressed={isFullscreen}
+        title={showExit ? 'Exit fullscreen' : 'Fullscreen'}
+        aria-pressed={showExit}
       >
-        {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-        <span className="text-xs">{isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}</span>
+        {showExit ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+        <span className="text-xs">{showExit ? 'Exit fullscreen' : enterOnly ? 'Enter fullscreen' : 'Fullscreen'}</span>
       </button>
 
       <div className="w-px h-6 bg-gray-700 mx-1" />

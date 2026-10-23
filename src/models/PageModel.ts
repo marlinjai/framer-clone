@@ -518,6 +518,12 @@ const PageModel = PageWithComponents
   getCanvasNode(nodeId: string): ComponentInstance | undefined {
     return self.canvasNodes.get(nodeId);
   },
+
+  // Any component on the page by id: the app tree, a floating element's
+  // subtree, or a top-level canvas node.
+  findComponent(componentId: string): ComponentInstance | undefined {
+    return findComponentInPage(self, componentId);
+  },
   
   // Get viewport nodes (breakpoint viewports)
   get viewportNodes(): ComponentInstance[] {

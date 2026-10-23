@@ -1,8 +1,10 @@
 'use client';
 import React, { useState, useEffect, useCallback } from 'react';
 import { cn } from '@/lib/utils';
+import { FIELD_CONTROL, FIELD_LABEL, useFieldIdentity } from './field';
 
 interface PropertySliderProps {
+  /** Visible label above the slider. Leave empty inside a PropertyRow. */
   label: string;
   value: number;
   onChange: (value: number) => void;
@@ -25,6 +27,7 @@ export function PropertySlider({
   suffix = '',
   className
 }: PropertySliderProps) {
+  const { id, name, showLabel } = useFieldIdentity(label, undefined);
   const displayValue = Math.round(value * displayMultiplier);
   const [localInput, setLocalInput] = useState(String(displayValue));
 
@@ -34,59 +37,61 @@ export function PropertySlider({
 
   const commitInput = useCallback((raw: string) => {
     const num = parseFloat(raw);
-    if (!isNaN(num)) onChange(num / displayMultiplier);
-  }, [onChange, displayMultiplier]);
+    if (isNaN(num)) {
+      setLocalInput(String(Math.round(value * displayMultiplier)));
+      return;
+    }
+    const next = Math.min(max, Math.max(min, num / displayMultiplier));
+    if (next !== value) onChange(next);
+    else setLocalInput(String(Math.round(value * displayMultiplier)));
+  }, [onChange, displayMultiplier, min, max, value]);
 
   // Fill percentage for the track
   const fillPct = max === min ? 0 : ((value - min) / (max - min)) * 100;
 
   return (
-    <div className={cn("flex flex-col gap-1", className)}>
-      <label
-        className="text-muted-foreground"
-        style={{ fontSize: '11px' }}
-      >
-        {label}
-      </label>
+    <div className={cn('flex min-w-0 flex-col gap-1.5', className)}>
+      {showLabel && (
+        <label htmlFor={id} className={FIELD_LABEL}>
+          {label}
+        </label>
+      )}
 
-      <div className="flex items-center gap-2">
-        {/* Custom slider track: 4px, bg-muted, iris fill, 14px white knob */}
-        <div className="flex-1 relative flex items-center" style={{ height: '14px' }}>
+      <div className="flex min-w-0 items-center gap-2">
+        {/* Custom slider track: 4px, bg-muted, brand fill, 14px knob */}
+        <div className="relative flex h-7 min-w-0 flex-1 items-center">
           {/* Track */}
-          <div className="absolute inset-x-0 rounded-full bg-muted" style={{ height: '4px' }}>
+          <div className="absolute inset-x-0 h-1 rounded-full bg-muted">
             {/* Fill */}
             <div
-              className="absolute left-0 top-0 bottom-0 bg-brand rounded-full"
+              className="absolute bottom-0 left-0 top-0 rounded-full bg-brand"
               style={{ width: `${fillPct}%` }}
             />
           </div>
 
           {/* Native range input, invisible but interactive */}
           <input
+            id={id}
             type="range"
             min={min}
             max={max}
             step={step}
             value={value}
             onChange={(e) => onChange(parseFloat(e.target.value))}
-            className="absolute inset-0 w-full opacity-0 cursor-pointer"
-            style={{ height: '100%' }}
+            className="peer absolute inset-0 h-full w-full cursor-pointer opacity-0"
           />
 
-          {/* Visual knob: 14px white circle with hairline border + shadow */}
+          {/* Visual knob: 14px circle with hairline border + shadow */}
           <div
-            className="absolute w-[14px] h-[14px] rounded-full bg-background border border-border shadow-sm pointer-events-none"
-            style={{
-              left: `calc(${fillPct}% - 7px)`,
-              top: '50%',
-              transform: 'translateY(-50%)',
-            }}
+            className="pointer-events-none absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full border border-border bg-background shadow-sm peer-focus-visible:ring-2 peer-focus-visible:ring-brand"
+            style={{ left: `calc(${fillPct}% - 7px)` }}
           />
         </div>
 
-        {/* 52px numeric input */}
+        {/* Numeric value, 52px */}
         <input
           type="text"
+          aria-label={name ? `${name} value` : 'Value'}
           value={localInput + suffix}
           onChange={(e) => {
             const raw = e.target.value.replace(suffix, '').trim();
@@ -96,12 +101,7 @@ export function PropertySlider({
           onKeyDown={(e) => {
             if (e.key === 'Enter') commitInput(localInput);
           }}
-          className={cn(
-            "h-[30px] bg-background border border-border rounded-[7px] px-2 font-mono text-center",
-            "text-foreground outline-none transition-colors",
-            "focus:border-brand focus:ring-3 focus:ring-brand/12",
-          )}
-          style={{ width: '52px', fontSize: '12.5px', flexShrink: 0 }}
+          className={cn(FIELD_CONTROL, 'w-[52px] flex-none px-1.5 text-center font-mono tabular-nums')}
         />
       </div>
     </div>

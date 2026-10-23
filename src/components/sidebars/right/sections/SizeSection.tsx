@@ -1,14 +1,26 @@
 'use client';
 import React, { useState } from 'react';
 import { observer } from 'mobx-react-lite';
-import { MoveDiagonal, ChevronDown, ChevronRight } from 'lucide-react';
+import { MoveDiagonal } from 'lucide-react';
 import { ComponentInstance } from '@/models/ComponentModel';
-import { CollapsibleSection, DimensionInput } from '../primitives';
-import { withImageSrc } from '@/lib/ai/pageGen/stockCredit';
+import {
+  CollapsibleSection,
+  DimensionInput,
+  DisclosureButton,
+  FieldPair,
+  PropertyRow,
+  TextInput,
+} from '../primitives';
 
 interface SizeSectionProps {
   component: ComponentInstance;
   breakpointId?: string;
+}
+
+/** Whole-pixel number from a DimensionInput value ("320px"), or the fallback when cleared. */
+function toPixels(value: string, fallback: number): number {
+  const n = parseInt(value, 10);
+  return isNaN(n) ? fallback : n;
 }
 
 export const SizeSection = observer(({ component, breakpointId }: SizeSectionProps) => {
@@ -16,6 +28,32 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
 
   const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
   const setStyleValue = (prop: string, value: string) => component.updateResponsiveStyle(prop, value, breakpointId);
+
+  // Canvas coordinates: shared by viewport frames and floating elements.
+  const canvasRow = (
+    <PropertyRow label="Canvas" group>
+      <FieldPair>
+        <DimensionInput
+          label=""
+          aria-label="Canvas X"
+          prefix="X"
+          value={component.canvasX || 0}
+          onChange={(v) => component.updateCanvasTransform({ x: toPixels(v, 0) })}
+          units={['px']}
+          placeholder="0"
+        />
+        <DimensionInput
+          label=""
+          aria-label="Canvas Y"
+          prefix="Y"
+          value={component.canvasY || 0}
+          onChange={(v) => component.updateCanvasTransform({ y: toPixels(v, 0) })}
+          units={['px']}
+          placeholder="0"
+        />
+      </FieldPair>
+    </PropertyRow>
+  );
 
   return (
     <CollapsibleSection
@@ -25,180 +63,120 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
     >
       {/* Viewport-specific controls */}
       {component.isViewportNode && (
-        <div className="flex flex-col gap-2.5 pb-1">
-          {/* Two-up: Min Width (BP) + Min Height (the frame grows with its content) */}
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <div className="flex flex-col gap-1">
-                <label className="text-muted-foreground" style={{ fontSize: '11px' }}>Min Width (BP)</label>
-                <input
-                  type="number"
-                  value={component.breakpointMinWidth || 320}
-                  onChange={(e) => {
-                    component.setViewportProperties({ breakpointMinWidth: parseInt(e.target.value) || 320 });
-                  }}
-                  className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
-                  style={{ fontSize: '12.5px' }}
-                  placeholder="320"
-                />
-              </div>
-            </div>
-            <div className="flex-1">
-              <div className="flex flex-col gap-1">
-                <label
-                  className="text-muted-foreground"
-                  style={{ fontSize: '11px' }}
-                  title="Minimum frame height on the canvas. The frame grows to fit the page content."
-                >
-                  Min Height
-                </label>
-                <input
-                  type="number"
-                  value={component.viewportHeight || 600}
-                  onChange={(e) => {
-                    component.setViewportProperties({ viewportHeight: parseInt(e.target.value) || 600 });
-                  }}
-                  className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
-                  style={{ fontSize: '12.5px' }}
-                  placeholder="600"
-                />
-              </div>
-            </div>
-          </div>
-          {/* Two-up: Canvas X + Canvas Y */}
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <div className="flex flex-col gap-1">
-                <label className="text-muted-foreground" style={{ fontSize: '11px' }}>Canvas X</label>
-                <input
-                  type="number"
-                  value={component.canvasX || 0}
-                  onChange={(e) => component.updateCanvasTransform({ x: parseInt(e.target.value) || 0 })}
-                  className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
-                  style={{ fontSize: '12.5px' }}
-                />
-              </div>
-            </div>
-            <div className="flex-1">
-              <div className="flex flex-col gap-1">
-                <label className="text-muted-foreground" style={{ fontSize: '11px' }}>Canvas Y</label>
-                <input
-                  type="number"
-                  value={component.canvasY || 0}
-                  onChange={(e) => component.updateCanvasTransform({ y: parseInt(e.target.value) || 0 })}
-                  className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
-                  style={{ fontSize: '12.5px' }}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
+        <>
+          <PropertyRow label="Breakpoint" hint="Minimum viewport width at which this breakpoint applies.">
+            <DimensionInput
+              label=""
+              value={component.breakpointMinWidth || 320}
+              onChange={(v) => component.setViewportProperties({ breakpointMinWidth: toPixels(v, 320) })}
+              units={['px']}
+              min={0}
+              placeholder="320"
+            />
+          </PropertyRow>
+          <PropertyRow label="Min height" hint="Minimum frame height on the canvas. The frame grows to fit the page content.">
+            <DimensionInput
+              label=""
+              value={component.viewportHeight || 600}
+              onChange={(v) => component.setViewportProperties({ viewportHeight: toPixels(v, 600) })}
+              units={['px']}
+              min={0}
+              placeholder="600"
+            />
+          </PropertyRow>
+          {canvasRow}
+        </>
       )}
 
       {/* Floating element position */}
-      {component.isFloatingElement && (
-        <div className="flex gap-2 pb-1">
-          <div className="flex-1">
-            <div className="flex flex-col gap-1">
-              <label className="text-muted-foreground" style={{ fontSize: '11px' }}>Canvas X</label>
-              <input
-                type="number"
-                value={component.canvasX || 0}
-                onChange={(e) => component.updateCanvasTransform({ x: parseInt(e.target.value) || 0 })}
-                className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
-                style={{ fontSize: '12.5px' }}
-              />
-            </div>
-          </div>
-          <div className="flex-1">
-            <div className="flex flex-col gap-1">
-              <label className="text-muted-foreground" style={{ fontSize: '11px' }}>Canvas Y</label>
-              <input
-                type="number"
-                value={component.canvasY || 0}
-                onChange={(e) => component.updateCanvasTransform({ y: parseInt(e.target.value) || 0 })}
-                className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
-                style={{ fontSize: '12.5px' }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      {component.isFloatingElement && canvasRow}
 
-      {/* Two-up: Width + Height on field grid */}
-      <div className="flex gap-2">
-        <div className="flex-1">
-          <div className="grid grid-cols-[auto_1fr] items-start gap-1">
-            <label className="text-muted-foreground pt-[9px]" style={{ fontSize: '11.5px' }}>W</label>
-            <DimensionInput
-              label=""
-              value={getStyleValue('width')}
-              onChange={(v) => setStyleValue('width', v)}
-            />
-          </div>
-        </div>
-        <div className="flex-1">
-          <div className="grid grid-cols-[auto_1fr] items-start gap-1">
-            <label className="text-muted-foreground pt-[9px]" style={{ fontSize: '11.5px' }}>H</label>
-            <DimensionInput
-              label=""
-              value={getStyleValue('height')}
-              onChange={(v) => setStyleValue('height', v)}
-            />
-          </div>
-        </div>
-      </div>
+      {/* Width + Height */}
+      <PropertyRow label="Size" group>
+        <FieldPair>
+          <DimensionInput
+            label=""
+            aria-label="Width"
+            prefix="W"
+            value={getStyleValue('width')}
+            onChange={(v) => setStyleValue('width', v)}
+            min={0}
+          />
+          <DimensionInput
+            label=""
+            aria-label="Height"
+            prefix="H"
+            value={getStyleValue('height')}
+            onChange={(v) => setStyleValue('height', v)}
+            min={0}
+          />
+        </FieldPair>
+      </PropertyRow>
 
       {/* Min / Max disclosure */}
-      <button
-        onClick={() => setShowMinMax(!showMinMax)}
-        className="flex items-center gap-1 text-muted-foreground hover:text-muted-foreground"
-        style={{ fontSize: '11.5px' }}
-      >
-        {showMinMax ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+      <DisclosureButton open={showMinMax} onToggle={() => setShowMinMax(!showMinMax)}>
         Min / Max
-      </button>
+      </DisclosureButton>
       {showMinMax && (
-        <div className="grid grid-cols-2 gap-2">
-          <DimensionInput
-            label="Min W"
-            value={getStyleValue('minWidth')}
-            onChange={(v) => setStyleValue('minWidth', v)}
-          />
-          <DimensionInput
-            label="Max W"
-            value={getStyleValue('maxWidth')}
-            onChange={(v) => setStyleValue('maxWidth', v)}
-          />
-          <DimensionInput
-            label="Min H"
-            value={getStyleValue('minHeight')}
-            onChange={(v) => setStyleValue('minHeight', v)}
-          />
-          <DimensionInput
-            label="Max H"
-            value={getStyleValue('maxHeight')}
-            onChange={(v) => setStyleValue('maxHeight', v)}
-          />
-        </div>
+        <>
+          <PropertyRow label="Min" group>
+            <FieldPair>
+              <DimensionInput
+                label=""
+                aria-label="Min width"
+                prefix="W"
+                value={getStyleValue('minWidth')}
+                onChange={(v) => setStyleValue('minWidth', v)}
+                min={0}
+                placeholder="0"
+              />
+              <DimensionInput
+                label=""
+                aria-label="Min height"
+                prefix="H"
+                value={getStyleValue('minHeight')}
+                onChange={(v) => setStyleValue('minHeight', v)}
+                min={0}
+                placeholder="0"
+              />
+            </FieldPair>
+          </PropertyRow>
+          <PropertyRow label="Max" group>
+            <FieldPair>
+              <DimensionInput
+                label=""
+                aria-label="Max width"
+                prefix="W"
+                value={getStyleValue('maxWidth')}
+                onChange={(v) => setStyleValue('maxWidth', v)}
+                units={['px', '%', 'none']}
+                min={0}
+                placeholder="none"
+              />
+              <DimensionInput
+                label=""
+                aria-label="Max height"
+                prefix="H"
+                value={getStyleValue('maxHeight')}
+                onChange={(v) => setStyleValue('maxHeight', v)}
+                units={['px', '%', 'none']}
+                min={0}
+                placeholder="none"
+              />
+            </FieldPair>
+          </PropertyRow>
+        </>
       )}
 
       {/* Image URL for img elements */}
       {component.type === 'img' && (
-        <div className="flex flex-col gap-1 pt-1">
-          <label className="text-muted-foreground" style={{ fontSize: '11px' }}>Image URL</label>
-          <input
-            type="text"
+        <PropertyRow label="Image URL">
+          <TextInput
             value={component.props?.src as string || ''}
-            onChange={(e) => {
-              // A different picture no longer matches a stock photo's credit: withImageSrc drops it.
-              component.props = withImageSrc((component.props || {}) as Record<string, unknown>, e.target.value);
-            }}
-            className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
-            style={{ fontSize: '12.5px' }}
+            onChange={(e) => component.setImageSrc(e.target.value)}
             placeholder="https://example.com/image.jpg"
           />
-        </div>
+        </PropertyRow>
       )}
     </CollapsibleSection>
   );

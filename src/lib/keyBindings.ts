@@ -9,7 +9,7 @@
 // Kept deliberately tiny. When the Settings page ships, swap `DEFAULT_BINDINGS`
 // for a MobX-observable map read from persisted user config.
 
-export type KeyBindingActionId = 'delete' | 'undo' | 'redo';
+export type KeyBindingActionId = 'delete' | 'undo' | 'redo' | 'clearSelection' | 'selectTool' | 'grabTool';
 
 // Descriptor for a single key combo. Modifier keys are normalised across macOS
 // (Cmd) and other platforms (Ctrl) via `primary: true` — the matcher treats
@@ -53,6 +53,27 @@ export const DEFAULT_BINDINGS: KeyBindingDefinition[] = [
       { key: 'z', primary: true, shift: true },
       // Windows-style alternative:
       { key: 'y', primary: true },
+    ],
+  },
+  {
+    action: 'clearSelection',
+    label: 'Clear selection',
+    bindings: [
+      { key: 'Escape' },
+    ],
+  },
+  {
+    action: 'selectTool',
+    label: 'Select tool',
+    bindings: [
+      { key: 'v' },
+    ],
+  },
+  {
+    action: 'grabTool',
+    label: 'Grab tool (hold Space to pan temporarily)',
+    bindings: [
+      { key: 'h' },
     ],
   },
 ];

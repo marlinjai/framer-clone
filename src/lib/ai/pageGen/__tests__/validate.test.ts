@@ -252,12 +252,12 @@ describe('validateGeneration: stock-photo queries', () => {
     });
     const imgs = result.nodes[0].children;
     expect(result.imageRequests).toEqual([
-      { nodeId: imgs[0].id, query: 'fresh sourdough loaves', orientation: 'landscape', widthPx: 600 },
-      { nodeId: imgs[1].id, query: 'baker portrait', orientation: 'portrait', widthPx: 300 },
+      { nodeId: imgs[0].id, kind: 'img', query: 'fresh sourdough loaves', orientation: 'landscape', widthPx: 600 },
+      { nodeId: imgs[1].id, kind: 'img', query: 'baker portrait', orientation: 'portrait', widthPx: 300 },
       // The Image preset's 240 x 160 box.
-      { nodeId: imgs[2].id, query: 'flour on a table', orientation: 'landscape', widthPx: 240 },
+      { nodeId: imgs[2].id, kind: 'img', query: 'flour on a table', orientation: 'landscape', widthPx: 240 },
       // A fluid width says nothing about the shape.
-      { nodeId: imgs[3].id, query: 'wide shot' },
+      { nodeId: imgs[3].id, kind: 'img', query: 'wide shot' },
     ]);
     for (const img of imgs) {
       expect(img.props).not.toHaveProperty('imageQuery');
@@ -289,8 +289,8 @@ describe('validateGeneration: stock-photo queries', () => {
     expect(result.warnings.some((w) => w.includes('imageQuery'))).toBe(true);
   });
 
-  it('never accepts a query on anything but an img', () => {
-    const result = ok({ nodes: [{ type: 'div', props: { imageQuery: 'bread' } }] });
+  it('never accepts a query on anything but an img or a container', () => {
+    const result = ok({ nodes: [{ type: 'p', props: { imageQuery: 'bread', children: 'Text' } }] });
     expect(result.imageRequests).toEqual([]);
     expect(result.warnings.some((w) => w.includes('"imageQuery" is not allowed'))).toBe(true);
   });

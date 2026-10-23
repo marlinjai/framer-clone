@@ -36,8 +36,12 @@ export const GENERATION_LIMITS = {
   maxDepth: 10,
   /** Longest text content of one node, in characters (longer is cut, with a warning). */
   maxTextChars: 2000,
-  /** Longest single style value, in characters (longer is dropped, with a warning). */
-  maxStyleValueChars: 400,
+  /**
+   * Longest single style value, in characters (longer is dropped, with a
+   * warning). Sized for a photo background echoed back in replace / insert
+   * context: a scrim gradient plus a sized images.unsplash.com URL.
+   */
+  maxStyleValueChars: 700,
   /** Longest layer label, in characters. */
   maxLabelChars: 80,
   /** Longest stock-photo search query of one image, in characters. */
@@ -47,11 +51,17 @@ export const GENERATION_LIMITS = {
 } as const;
 
 /**
- * The img-only prop that asks for a stock photo: a short English search query.
- * The validator takes it OUT of the props (it never reaches the editor) and the
- * route resolves it to a hotlinked Unsplash photo (./stockImages.ts).
+ * The prop that asks for a stock photo: a short English search query. On an
+ * img it becomes the image's src; on a container (PHOTO_BACKGROUND_TAGS) it
+ * becomes the photo layer of the container's backgroundImage, under any
+ * gradient (the scrim) the model wrote there. The validator takes it OUT of
+ * the props (it never reaches the editor) and the route resolves it to a
+ * hotlinked Unsplash photo (./stockImages.ts).
  */
 export const IMAGE_QUERY_PROP = 'imageQuery';
+
+/** Tags that may carry a photo background (imageQuery on a container). */
+export const PHOTO_BACKGROUND_TAGS: ReadonlySet<string> = CONTAINER_TYPES;
 
 /** One registry entry as the generator sees it: a named starting point for a node. */
 export interface GenerationPreset {
@@ -112,6 +122,7 @@ export function allowedPropKeysFor(tag: string): string[] {
   const keys: string[] = [];
   if (!isVoidTag(tag)) keys.push('children');
   if (tag === 'img') keys.push('src', 'alt', IMAGE_QUERY_PROP);
+  if (PHOTO_BACKGROUND_TAGS.has(tag)) keys.push(IMAGE_QUERY_PROP);
   if (tag === 'a') keys.push('href', 'target');
   return keys;
 }

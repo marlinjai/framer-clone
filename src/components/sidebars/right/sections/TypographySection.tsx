@@ -5,9 +5,10 @@ import { Type, AlignLeft, AlignCenter, AlignRight, AlignJustify } from 'lucide-r
 import { ComponentInstance } from '@/models/ComponentModel';
 import {
   CollapsibleSection,
-  PropertySelect,
   DimensionInput,
-  ToggleIconGroup
+  PropertyRow,
+  PropertySelect,
+  ToggleIconGroup,
 } from '../primitives';
 
 const FONT_FAMILY_OPTIONS = [
@@ -45,21 +46,18 @@ export const TypographySection = observer(({ component, breakpointId }: Typograp
       title="Typography"
       icon={<Type size={14} />}
     >
-      {/* Font Family on field grid */}
-      <div className="grid grid-cols-[64px_1fr] items-center gap-2">
-        <label className="text-muted-foreground" style={{ fontSize: '11.5px' }}>Font</label>
+      <PropertyRow label="Font">
         <PropertySelect
           label=""
           value={getStyleValue('fontFamily') || 'inherit'}
           onChange={(v) => setStyleValue('fontFamily', v)}
           options={FONT_FAMILY_OPTIONS}
         />
-      </div>
+      </PropertyRow>
 
-      {/* Font Size + Weight: two-up */}
-      <div className="grid grid-cols-2 gap-2">
+      <PropertyRow label="Size" hint="Font size">
         <DimensionInput
-          label="Size"
+          label=""
           value={getStyleValue('fontSize')}
           onChange={(v) => setStyleValue('fontSize', v)}
           units={['px', 'rem', 'em']}
@@ -67,56 +65,66 @@ export const TypographySection = observer(({ component, breakpointId }: Typograp
           min={1}
           step={1}
         />
+      </PropertyRow>
+
+      <PropertyRow label="Weight" hint="Font weight">
         <PropertySelect
-          label="Weight"
+          label=""
           value={getStyleValue('fontWeight') || '400'}
           onChange={(v) => setStyleValue('fontWeight', v)}
           options={FONT_WEIGHT_OPTIONS}
         />
-      </div>
+      </PropertyRow>
 
-      {/* Line Height + Letter Spacing: two-up */}
-      <div className="grid grid-cols-2 gap-2">
+      <PropertyRow label="Line height">
         <DimensionInput
-          label="Line H"
+          label=""
           value={getStyleValue('lineHeight')}
           onChange={(v) => setStyleValue('lineHeight', v)}
-          units={['px', 'em', '%']}
+          units={['', 'px', 'em', '%']}
+          min={0}
+          step={0.1}
           placeholder="1.5"
         />
+      </PropertyRow>
+
+      <PropertyRow label="Spacing" hint="Letter spacing">
         <DimensionInput
-          label="Spacing"
+          label=""
           value={getStyleValue('letterSpacing')}
           onChange={(v) => setStyleValue('letterSpacing', v)}
           units={['px', 'em']}
+          step={0.1}
           placeholder="0"
         />
-      </div>
+      </PropertyRow>
 
-      {/* Text Align */}
-      <ToggleIconGroup
-        label="Align"
-        value={getStyleValue('textAlign') || 'left'}
-        onChange={(v) => setStyleValue('textAlign', v)}
-        options={[
-          { value: 'left', icon: <AlignLeft size={12} />, tooltip: 'Left' },
-          { value: 'center', icon: <AlignCenter size={12} />, tooltip: 'Center' },
-          { value: 'right', icon: <AlignRight size={12} />, tooltip: 'Right' },
-          { value: 'justify', icon: <AlignJustify size={12} />, tooltip: 'Justify' },
-        ]}
-      />
+      <PropertyRow label="Align">
+        <ToggleIconGroup
+          label=""
+          value={getStyleValue('textAlign') || 'left'}
+          onChange={(v) => setStyleValue('textAlign', v)}
+          options={[
+            { value: 'left', icon: <AlignLeft size={13} />, tooltip: 'Left' },
+            { value: 'center', icon: <AlignCenter size={13} />, tooltip: 'Center' },
+            { value: 'right', icon: <AlignRight size={13} />, tooltip: 'Right' },
+            { value: 'justify', icon: <AlignJustify size={13} />, tooltip: 'Justify' },
+          ]}
+        />
+      </PropertyRow>
 
-      {/* Text Decoration */}
-      <ToggleIconGroup
-        label="Decoration"
-        value={getStyleValue('textDecoration') || 'none'}
-        onChange={(v) => setStyleValue('textDecoration', v)}
-        options={[
-          { value: 'none', icon: <span style={{ fontSize: '10px' }}>None</span>, tooltip: 'None' },
-          { value: 'underline', icon: <span style={{ fontSize: '10px', textDecoration: 'underline' }}>U</span>, tooltip: 'Underline' },
-          { value: 'line-through', icon: <span style={{ fontSize: '10px', textDecoration: 'line-through' }}>S</span>, tooltip: 'Strikethrough' },
-        ]}
-      />
+      <PropertyRow label="Decoration">
+        <ToggleIconGroup
+          label=""
+          value={getStyleValue('textDecoration') || 'none'}
+          onChange={(v) => setStyleValue('textDecoration', v)}
+          options={[
+            { value: 'none', icon: <span>None</span>, tooltip: 'None' },
+            { value: 'underline', icon: <span className="underline">U</span>, tooltip: 'Underline' },
+            { value: 'line-through', icon: <span className="line-through">S</span>, tooltip: 'Strikethrough' },
+          ]}
+        />
+      </PropertyRow>
     </CollapsibleSection>
   );
 });

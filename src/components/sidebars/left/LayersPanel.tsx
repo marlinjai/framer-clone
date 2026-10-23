@@ -195,7 +195,8 @@ interface LayerNodeProps {
 const LayerNode = observer(({ component, depth, breakpointId, getIcon }: LayerNodeProps) => {
   const { editorUI } = useStore();
   const IconComponent = getIcon(component);
-  const isSelected = editorUI.selectedComponent?.id === component.id &&
+  // Primary and extra (marquee / Shift+click) selections both highlight.
+  const isSelected = editorUI.isSelected(component.id) &&
                     (!breakpointId || editorUI.selectedViewportNode?.breakpointId === breakpointId);
   const hasChildren = component.children.length > 0;
   const isDraggable = !component.isViewportNode && component.hasParent;
@@ -220,9 +221,11 @@ const LayerNode = observer(({ component, depth, breakpointId, getIcon }: LayerNo
           isSelected ? 'bg-brand/10' : ''
         }`}
         style={{ paddingLeft: `${6 + depth * 14}px` }}
-        onClick={() => {
+        onClick={(e) => {
           if (component.isViewportNode) {
             editorUI.setSelectedViewportNode(component);
+          } else if (e.shiftKey) {
+            editorUI.toggleInSelection(component, breakpointId);
           } else {
             editorUI.selectComponent(component, breakpointId);
           }
