@@ -138,8 +138,7 @@ export function loadLogo(fetcher: Fetcher, logo: LogoRef): Promise<EngineImage> 
     logos.set(logo.sha256, known);
     return known;
   }
-  while (logos.size >= MAX_LOGOS) logos.delete(logos.keys().next().value!);
-  return remember(logos, logo.sha256, async () => {
+  const loading = remember(logos, logo.sha256, async () => {
     const bytes = await get(fetcher, `/api/books/assets/${logo.sha256}`, 'logo_fetch_failed', 'The logo');
     const digest = await sha256Hex(bytes);
     if (digest !== logo.sha256) {
@@ -147,6 +146,17 @@ export function loadLogo(fetcher: Fetcher, logo: LogoRef): Promise<EngineImage> 
     }
     return { contentType: logo.contentType, bytes };
   });
+  // Least recently used out, once this one is loaded (a logo that fails to load never pushes out a good one).
+  loading.then(
+    () => {
+      for (const old of [...logos.keys()]) {
+        if (logos.size <= MAX_LOGOS) break;
+        if (old !== logo.sha256) logos.delete(old);
+      }
+    },
+    () => {},
+  );
+  return loading;
 }
 
 /** Everything a draft render draws with, loaded (or taken from what this worker already loaded). */
