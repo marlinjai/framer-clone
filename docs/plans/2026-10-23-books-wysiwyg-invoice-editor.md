@@ -61,6 +61,25 @@ page breaks elsewhere), and the composer plan's founding rule is that screen and
 differ. Here the paper IS the screen; only the one field being typed in is drawn by the browser,
 and it is replaced by the real PDF the moment the user pauses.
 
+### 1a. Actions live on the page too, but never in the PDF
+
+Everything that is an action rather than content is an editing control placed on the page from
+the layout map, never drawn into the PDF, so it can never print (asked by the owner on 2026-10-23,
+pointing at sevdesk's "+ Position hinzufügen" row):
+
+- **Adding lines:** "+ Add line" sits directly under the line table's last row, as a ghost row
+  where the next line would print, with "+ Choose product" beside it (if the product list is
+  chosen) and "+ Discount on the invoice" (if that is chosen). A click adds an empty line at once,
+  shown as an inline row with the cursor in its description; the redraw a moment later moves the
+  totals, the tax lines and any page break to where they will print.
+- **Each line on hover or focus:** a small toolbar in the margin beside the row: remove,
+  duplicate, a drag handle to reorder (with move up and down as the single-pointer alternative),
+  and a menu for the line's discount, tax rate and kind (service, product, text line).
+- **Empty optional fields** (subject, reference number, closing text, a second address line) show
+  as quiet placeholders where they would print ("+ Add a subject"), only while editing.
+- **Keyboard:** Enter in a line's last field adds the next line; every control is reachable by Tab
+  in reading order, so the mouse and the keyboard can do the same things.
+
 ### 2. The engine runs in the browser for editing; the server stays the renderer of record
 
 Typing needs the page back within a fraction of a second, not a server round trip (0.7 to 0.9 s
