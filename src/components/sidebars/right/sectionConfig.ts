@@ -18,7 +18,9 @@ export function getComponentCategory(component: ComponentInstance): ComponentCat
 
 export const SECTION_MAP: Record<ComponentCategory, SectionId[]> = {
   viewport:  ['size', 'layout', 'styles'],
-  container: ['size', 'position', 'layout', 'image', 'styles'],
+  // Typography on a container sets the font its text inherits (a section's
+  // body family, which is how generated pages set fonts).
+  container: ['size', 'position', 'layout', 'typography', 'image', 'styles'],
   text:      ['size', 'position', 'typography', 'styles'],
   image:     ['size', 'position', 'image', 'styles'],
   generic:   ['size', 'position', 'styles'],
