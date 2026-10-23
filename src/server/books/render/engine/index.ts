@@ -37,10 +37,10 @@
 // (render/logoImage.ts) and loaded by repository/assets.ts. Each one is
 // embedded once per document from streams prepared once per process
 // (images.ts), then a logo block draws it at its width in millimetres with
-// the image's own aspect ratio, aligned by the block style, kept together. A logo naming an asset the caller did not
-// pass draws nothing and is a layout issue (LOGO_ASSET_MISSING), which refuses
-// a document of record like any other issue: an invoice is never issued with
-// its logo silently missing.
+// the image's own aspect ratio, aligned by the block style, kept together. A
+// logo naming an asset the caller did not pass draws nothing and is a layout
+// issue (LOGO_ASSET_MISSING), which refuses a document of record like any
+// other issue: an invoice is never issued with its logo silently missing.
 
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, rgb, type PDFFont, type PDFImage, type PDFPage, type RGB } from 'pdf-lib';

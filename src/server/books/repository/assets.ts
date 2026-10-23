@@ -12,9 +12,11 @@
 // two uploads of the same file at once both answer it (uploads of one company
 // run one at a time, under a transaction lock). A company stores at most
 // MAX_ASSETS_PER_COMPANY logos (ASSET_LIMIT, 409): stored logos are never
-// deleted, so the bound is what keeps the table small. Every query filters on the company: an
-// asset of another company reads as ASSET_NOT_FOUND, and a template can never
-// name one (the gate checks the company's own assets).
+// deleted, so the bound is what keeps the table small. Both answers are given
+// before the decode too, so an upload that cannot be stored costs no decode.
+// Every query filters on the company: an asset of another company reads as
+// ASSET_NOT_FOUND, and a template can never name one (the gate checks the
+// company's own assets).
 
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -59,6 +61,28 @@ function view(row: { sha256: string; content_type: string; byte_size: number; wi
   };
 }
 
+/** The stored asset with this hash, or null; ASSET_LIMIT when the company may store no other. */
+async function storedOrLimit(db: Db, scope: BooksScope, sha256: string): Promise<AssetView | null> {
+  const existing = await db
+    .selectFrom('books_asset')
+    .select(VIEW_COLUMNS)
+    .where('tenant_id', '=', scope.tenantId)
+    .where('sha256', '=', sha256)
+    .executeTakeFirst();
+  if (existing) return view(existing);
+  const { n } = await db
+    .selectFrom('books_asset')
+    .select((eb) => eb.fn.countAll<string>().as('n'))
+    .where('tenant_id', '=', scope.tenantId)
+    .executeTakeFirstOrThrow();
+  if (Number(n) >= MAX_ASSETS_PER_COMPANY) {
+    throw new BooksError('ASSET_LIMIT', `this company stores the most logos allowed (${MAX_ASSETS_PER_COMPANY}); reuse one of them`, {
+      maxAssets: MAX_ASSETS_PER_COMPANY,
+    });
+  }
+  return null;
+}
+
 /**
  * Check and store a logo (render/logoImage.ts: type, size, pixels, decode,
  * embed). Answers the stored asset and whether this call created it.
@@ -69,30 +93,22 @@ export async function storeLogo(
   declaredType: string,
   actor: { userId?: string | null } = {},
 ): Promise<{ asset: AssetView; created: boolean }> {
-  const checked = await checkLogoImage(bytes, declaredType);
   const sha256 = createHash('sha256').update(bytes).digest('hex');
+  // The cheap answers first (an upload already stored, a company at its limit), before the
+  // decode; both are asked again under the lock below.
+  const early = await withDbErrors(() => storedOrLimit(scope.db, scope, sha256));
+  if (early) return { asset: early, created: false };
+  const checked = await checkLogoImage(bytes, declaredType);
   return withDbErrors(() =>
     scope.db
       .transaction()
       .setIsolationLevel('read committed')
       .execute(async (trx) => {
-        // One upload of a company at a time: the cap below counts what is there, and a stored row is answered as it is.
+        // One upload of a company at a time: the cap counts what is there, and a stored row is
+        // answered as it is.
         await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`books-assets:${scope.tenantId}`}, 0))`.execute(trx);
-        const existing = await trx
-          .selectFrom('books_asset')
-          .select(VIEW_COLUMNS)
-          .where('tenant_id', '=', scope.tenantId)
-          .where('sha256', '=', sha256)
-          .executeTakeFirst();
-        if (existing) return { asset: view(existing), created: false };
-        const { n } = await trx
-          .selectFrom('books_asset')
-          .select((eb) => eb.fn.countAll<string>().as('n'))
-          .where('tenant_id', '=', scope.tenantId)
-          .executeTakeFirstOrThrow();
-        if (Number(n) >= MAX_ASSETS_PER_COMPANY) {
-          throw new BooksError('ASSET_LIMIT', `ASSET_LIMIT: a company stores at most ${MAX_ASSETS_PER_COMPANY} logos`, { maxAssets: MAX_ASSETS_PER_COMPANY });
-        }
+        const existing = await storedOrLimit(trx, scope, sha256);
+        if (existing) return { asset: existing, created: false };
         const inserted = await trx
           .insertInto('books_asset')
           .values({
@@ -112,6 +128,15 @@ export async function storeLogo(
         return { asset: view(inserted), created: true };
       }),
   );
+}
+
+/** One asset of the company without its bytes (a revalidation needs only this), or ASSET_NOT_FOUND. */
+export async function readAssetView(scope: BooksScope, sha256: string): Promise<AssetView> {
+  const row = SHA256.test(sha256)
+    ? await scope.db.selectFrom('books_asset').select(VIEW_COLUMNS).where('tenant_id', '=', scope.tenantId).where('sha256', '=', sha256).executeTakeFirst()
+    : undefined;
+  if (!row) throw new BooksError('ASSET_NOT_FOUND', 'ASSET_NOT_FOUND', { sha256: SHA256.test(sha256) ? sha256 : null });
+  return view(row);
 }
 
 /** One asset of the company with its bytes, or ASSET_NOT_FOUND (another company's reads exactly like an unknown one). */

@@ -884,11 +884,13 @@ Built on branch `feat/books-logos-fonts`. Decided while building, say so if you 
 - `render/logoImage.ts`, the upload checks, in order: the type (PNG or JPEG, named by the request
   and confirmed by the magic bytes); the size (1 MB); the pixel size read from the PNG header or
   the JPEG frame header BEFORE anything decodes the pixels (at most 2000 px on the longer side);
-  what a PDF would draw differently from a browser (a rotation flag in the Exif metadata, a CMYK
-  JPEG without the Adobe marker); the full decode (every PNG chunk's checksum, the image data
+  what a PDF would draw differently from a browser (a rotation flag in the Exif metadata, a
+  colour profile, gamma or primaries other than sRGB's, a CMYK JPEG without the Adobe marker);
+  the full decode (every PNG chunk's checksum, the image data
   inflated to exactly the size its header promises, interlaced or not; the JPEG decoded by
   `jpeg-js` without tolerance for missing data, at most 64 scans, in a coding every PDF reader
-  draws); then pdf-lib embeds it into a throwaway PDF and writes that PDF.
+  draws); then pdf-lib embeds it into a throwaway PDF and writes that PDF, which must stay
+  under 2 MB.
 - `repository/assets.ts`: `storeLogo` (uploads of one company run one at a time under a
   transaction lock: the same bytes again answer the stored row, a company holds at most 100
   logos), `readAsset`, and `templateAssets`, which every render path calls with the template it
@@ -901,7 +903,8 @@ Built on branch `feat/books-logos-fonts`. Decided while building, say so if you 
   with `{ sha256, contentType, byteSize, widthPx, heightPx }`; `413 asset_too_large`,
   `415 unsupported_asset_type`, `422 asset_invalid` (the message and `problem` say which:
   `undecodable`, `not_embeddable`, `too_many_pixels`). The download is `booksRoute('read')`,
-  `private, max-age=31536000, immutable`, the hash as ETag (a revalidation answers 304), nosniff,
+  `private, max-age=31536000, immutable`, the hash as entity tag (ETag; a revalidation answers
+  304 without reading the bytes), nosniff,
   same-origin only, `content-security-policy: default-src 'none'`; another company's, an unknown
   or a malformed hash answer `404 asset_not_found`. `src/lib/books/api.ts` has `uploadAsset`,
   `assetUrl`, `AssetView` and the messages, appended at the end.
@@ -910,8 +913,9 @@ Built on branch `feat/books-logos-fonts`. Decided while building, say so if you 
   `columns` cells. A logo wider than its box is `BLOCK_TOO_WIDE`; a logo naming an asset the
   caller did not pass draws nothing and is the layout issue `LOGO_ASSET_MISSING`.
   `render/engine/images.ts` prepares each image once per process (pdf-lib's own embedders into
-  a scratch PDF, the compressed streams kept, bounded, least recently used out) and copies the
-  streams into every PDF: pdf-lib re-decoded and re-compressed a PNG on every render, 0.7 to
+  a scratch PDF, the compressed streams kept, bounded by count and by 64 MB, least recently used
+  out, the key checked against the bytes' hash because the cache serves every company of the
+  process) and copies the streams into every PDF: pdf-lib re-decoded and re-compressed a PNG on every render, 0.7 to
   1.6 s for a 2000 px logo; prepared, the page renders in about 50 ms, with the same bytes.
 - Issue freezes `TemplateSnapshotV2.logo = { sha256 }` (or null), and the snapshot is the
   authority on re-render: a frozen layout is drawn with exactly that asset, read by hash from the
@@ -959,26 +963,41 @@ Built on branch `feat/books-logos-fonts`. Decided while building, say so if you 
    Only baseline, extended sequential and progressive Huffman JPEGs at 8 bits are accepted (what
    every PDF reader draws); lossless, hierarchical and arithmetic codings are refused as
    `not_embeddable` with the advice to save a baseline JPEG or a PNG. More than 64 scans are
-   refused before decoding (a progressive JPEG has about ten; thousands would burn CPU). The
+   refused before decoding (a progressive JPEG has about ten; thousands would burn central
+   processing unit (CPU) time). The
    tests encode their JPEGs with the same package at run time.
 6. **Refused because the PDF would differ from the composer** (found in review): a JPEG or PNG
-   whose Exif metadata says "rotate" (a browser turns it, pdf-lib does not) and a CMYK JPEG
-   without Adobe's colour marker (pdf-lib inverts every CMYK JPEG, which is right only for
-   Adobe's). Both are `not_embeddable` with the advice to save the image again.
+   whose Exif metadata says "rotate" (a browser turns it, pdf-lib does not); a colour profile
+   that is not sRGB (Display P3 screenshots, Adobe RGB), or a PNG gamma or primaries that are
+   not sRGB's without an sRGB chunk (a browser applies them, pdf-lib draws the plain numbers);
+   and a CMYK JPEG without Adobe's colour marker (pdf-lib inverts every CMYK JPEG, which is
+   right only for Adobe's). All are `not_embeddable` with the advice to save the image again.
+   A profile counts as sRGB when its description names sRGB or IEC 61966 (the standard that
+   defines it), in ASCII or UTF-16.
 7. **At most 100 logos per company** (`409 asset_limit`, found in review): stored logos are
    append-only and never deleted, so the cap keeps one user with `editBooks` from filling the
-   schema. A company uses one or two. This adds a code to the contract.
-8. **The unhinted Noto builds**: hinting only steers screen rasterisation, which PDF readers do
+   schema. A company uses one or two. This adds a code to the contract. An upload already stored
+   or over the cap is answered before the decode, and both are asked again under the lock.
+8. **A logo adds at most 2 MB to a PDF** (found in the second review): pdf-lib stores a PNG's
+   pixels without PNG's row filters, so a 23 KB PNG of smooth gradients became a 12 MB image
+   stream in every invoice. The trial PDF of the upload must stay under 2 MB
+   (`not_embeddable`, with its size and the advice to save it smaller or as a JPEG).
+9. **Issue refuses a layout naming two different logos** (found in the second review): a
+   template saved before the one-logo rule could; the snapshot freezes one, so the other would
+   vanish silently. It is refused like a layout that does not fit (`render_incomplete`,
+   `layout.logo_assets_differ.<block>`); documents already issued keep drawing only their
+   frozen logo (decision 3).
+10. **The unhinted Noto builds**: hinting only steers screen rasterisation, which PDF readers do
    themselves; the unhinted files are half the size with the same outlines. Both families use
    the release's standard character set (the larger `full` build exists only for Noto Sans), so
    the two Noto families cover the same characters. The four files add 1.8 MB to the image (the
    plan estimated 1.2 MB).
-9. **The families do not cover the same symbols**, and the drawable check is per family: DejaVu
+11. **The families do not cover the same symbols**, and the drawable check is per family: DejaVu
    draws arrows and the infinity sign, Noto does not; Noto draws the bitcoin sign, DejaVu does
    not; no family draws Chinese, Japanese or Korean. A document set in Noto with an arrow in a
    line title is refused at issue (`undrawable_text`, the field named), exactly as DejaVu refuses
    Chinese today, and the save gate refuses template text its family cannot draw.
-10. **A font file that is not its pin stops the process loudly** (every Books render and the
+12. **A font file that is not its pin stops the process loudly** (every Books render and the
     gate fail with the file named) instead of drawing an issued document with other glyphs.
     Decision 6 made enforceable: a new font version is a new family id.
 
@@ -1001,7 +1020,17 @@ found one defect, four risks and twelve nits; all are fixed:
   palette, `image/jpg`, an unreadable success answer in `uploadAsset`, the family argument made
   required in `undrawableFields`, messages for `asset_not_found`, the ETag and content security
   policy on the download, comment wrapping and acronyms.
-A second fresh review checked the fixes (below).
+A second fresh review of those fixes found no defect, five risks and fourteen nits; all are
+fixed: the 2 MB budget inside the PDF and a byte bound on the prepared images (decision 8); the
+prepared image's key checked against its bytes; a layout naming two logos refused at issue
+(decision 9); colour profiles, gamma and primaries (decision 6); a failed preparation no longer
+evicting a newer entry; the version 1 template read straight from the snapshot (no assertion
+on a version 2 snapshot the preview never draws); a test that emptied logo blocks draw exactly
+what the engine drew before assets existed; Exif orientation read only as a single SHORT value,
+with little-endian, out-of-range and cut-off tests; the post-end-marker message; the cheap
+checks before the decode and a test of the lock at 99 logos; messages built from the cap;
+`If-None-Match: *` and revalidation without reading the bytes; the latency test named for its
+90th percentile and run cold; comment wrapping and acronyms.
 
 **Tests.**
 
@@ -1011,13 +1040,17 @@ A second fresh review checked the fixes (below).
   30000 x 30000 (refused without inflating); truncated, damaged (checksum), not-deflate and
   size-mismatched PNGs; a palette PNG without its palette; truncated and garbled JPEGs; lossless
   and arithmetic JPEGs; rotation flags in JPEG and PNG; CMYK without the Adobe marker; scan
-  markers in metadata accepted, more than 64 scans refused; an empty file.
+  markers in metadata accepted, more than 64 scans refused; an empty file; Exif in both byte
+  orders and malformed; colour profiles, gamma and primaries in PNG and JPEG; a 23 KB PNG
+  refused for the 12 MB it would add to every PDF.
 - **Engine (`engineLogo.test.ts`):** every allowed region with each alignment (width, aspect,
   position, and the image drawn exactly where the layout map says), a tall JPEG, `columns` cells
   in four regions, a logo wider than its cell, one embedded image for several blocks on several
   pages, no asset, a missing asset, unrelated assets ignored, malformed stored blocks; a page
-  with a 2000 px RGBA logo within four times the one-page target, the same bytes whether the
-  image was prepared or found prepared; determinism with a PNG and a JPEG logo in each family
+  with a 2000 px RGBA (red, green, blue, alpha) logo within four times the one-page target, run
+  cold, the same bytes whether the image was prepared or found prepared; an asset whose bytes
+  are not its hash refused; logo blocks emptied by the snapshot drawing exactly the bytes of
+  blocks without an asset; determinism with a PNG and a JPEG logo in each family
   twice in one process and in a fresh process in another time zone (`engineChild.ts`).
 - **Fonts (`fonts.test.ts`):** each family's pinned static faces, an unknown family, the
   drawable check and the preview's "?" per family, the gate in each family on every preset, the
@@ -1033,8 +1066,9 @@ A second fresh review checked the fixes (below).
   role (42501) and for the owner (BK014); a second run changes nothing. The provisioning tests
   list 013 and the table.
 - **Routes on real Postgres (`books-assets.itest.ts`):** upload, dedup and a race of two
-  uploads, every refusal, the bounded stream, `image/jpg`, an empty body, the cap, the guard;
-  the download, its headers and the 304, another company's, unknown and malformed hashes;
+  uploads, every refusal, the bounded stream, `image/jpg`, an empty body, the cap and two
+  uploads racing at 99 logos, the guard; the download, its headers, the 304 (also for `*`, and a
+  404 for another company's), another company's, unknown and malformed hashes;
   templates with the company's, an unknown and another company's logo; the preview with and
   without the asset; the four stateful-flow paths of a document with a logo (forward: draft
   preview, issue freezing `logo: { sha256 }`, the image in the stored PDF; backtrack: logo and
@@ -1042,7 +1076,7 @@ A second fresh review checked the fixes (below).
   new logo; resume: the stored file served again; re-entry: an issue refused for a missing logo
   takes no number, the retry after the upload gets number 62); the lazy re-render reproducing
   the logo; a credit note carrying it; a document whose snapshot froze no logo drawn without one
-  and cancelled; each family issued and re-rendered byte-identically; a DejaVu document
+  and cancelled; a layout naming two logos refused at issue; each family issued and re-rendered byte-identically; a DejaVu document
   re-rendering identically after its template moved to Noto Serif; an arrow refused at issue
   under Noto.
 

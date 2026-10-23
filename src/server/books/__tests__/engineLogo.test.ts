@@ -17,13 +17,14 @@ import { PDFArray, PDFDocument, PDFName, PDFRawStream, PDFRef, decodePDFRawStrea
 import { describe, expect, it } from 'vitest';
 
 import { renderTemplate, type EngineImage, type EngineResult, type LayoutRect } from '../render/engine';
+import { clearPreparedImages } from '../render/engine/images';
 import { geometry, MM, PAGE_HEIGHT, r2 } from '../render/engine/style';
 import { fontFiles } from '../render/fonts';
 import { buildRenderModel } from '../render/model';
 import { preset } from '../template/presets';
 import { probe, probeInput, type ProbeName } from '../template/probes';
 import { ALLOWED_REGIONS } from '../template/rules';
-import { FONT_FAMILIES, type Block, type CellBlock, type RegionName, type TemplateDocumentV2 } from '../template/schema';
+import { FONT_FAMILIES, withOnlyLogo, type Block, type CellBlock, type RegionName, type TemplateDocumentV2 } from '../template/schema';
 import { assetSha, logoCase, makeJpeg, makePng } from './testImages';
 
 const sha = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
@@ -208,6 +209,26 @@ describe('assets', () => {
     expect(sha(b.bytes)).toBe(sha(a.bytes));
   });
 
+  it('refuses an asset whose bytes are not the hash it is passed under (the prepared images are shared)', async () => {
+    const doc = withBlocks('firstPageHeader', logo('lg', 'a'.repeat(64), 30));
+    await expect(render(doc, 'regular', new Map([['a'.repeat(64), { contentType: 'image/png', bytes: WIDE_PNG }]]))).rejects.toThrow(/other bytes/);
+  });
+
+  it('draws a layout with only the snapshot logo exactly as the engine drew logos before assets existed', async () => {
+    // Before phase 5 a logo block drew nothing whatever it named: emptying the other blocks gives those bytes.
+    const named = withBlocks('firstPageHeader', logo('lg', assetSha(WIDE_PNG), 30), logo('lg2', 'b'.repeat(64), 20));
+    const empty = withBlocks('firstPageHeader', logo('lg', null, 30), logo('lg2', null, 20));
+    const a = await render(withOnlyLogo(named, null), 'regular', new Map());
+    const b = await render(empty, 'regular', new Map());
+    expect(sha(a.bytes)).toBe(sha(b.bytes));
+    expect(a.layout.issues).toEqual([]);
+    // With the snapshot's logo, that one is drawn and the other stays empty.
+    const kept = await render(withOnlyLogo(named, { sha256: assetSha(WIDE_PNG) }), 'regular');
+    expect(rect(kept.layout, 'lg')).toHaveLength(1);
+    expect(rect(kept.layout, 'lg2')).toEqual([]);
+    expect(kept.layout.issues).toEqual([]);
+  });
+
   it('refuses a stored logo block with a malformed width or hash before drawing', async () => {
     const bad = withBlocks('firstPageHeader', { ...logo('lg', 'NOT-A-HASH', 30) });
     await expect(render(bad)).rejects.toThrow(/regions\.firstPageHeader\.\d+\.assetSha256/);
@@ -217,7 +238,9 @@ describe('assets', () => {
 });
 
 describe('latency with a logo (decision 12)', () => {
-  it('renders a page with a 2000 x 2000 px RGBA logo within four times the one-page target (the image is prepared once)', async () => {
+  it('renders a page with a 2000 x 2000 px RGBA (red, green, blue, alpha) logo within four times the one-page target', async () => {
+    // Cold: the first render prepares the image, the later ones copy the prepared streams.
+    clearPreparedImages();
     const big = makePng(2000, 2000);
     const doc = withBlocks('firstPageHeader', logo('lg', assetSha(big), 25, 'right'));
     const assets = new Map<string, EngineImage>([[assetSha(big), { contentType: 'image/png', bytes: big }]]);
@@ -230,7 +253,8 @@ describe('latency with a logo (decision 12)', () => {
       times.push(performance.now() - started);
     }
     times.sort((a, b) => a - b);
-    expect(times[Math.floor(times.length * 0.95) - 1]).toBeLessThan(600);
+    // The 90th percentile of ten runs.
+    expect(times[8]).toBeLessThan(600);
     // The render that prepared the image and the ones that found it prepared write the same bytes.
     expect(sha(last.bytes)).toBe(sha(first.bytes));
   }, 60_000);

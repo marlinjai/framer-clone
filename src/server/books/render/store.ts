@@ -49,9 +49,9 @@
 // snapshot names its logo (`logo: { sha256 }`, decision 4) and is the
 // authority: logo blocks naming any other hash are drawn empty, as the engine
 // of the time drew them. The asset table is append-only, so a re-render reads
-// exactly the image it was issued with. A logo the company
-// does not have refuses the document of record by name (LOGO_ASSET_MISSING),
-// never prints it without; a draft preview leaves it out.
+// exactly the image it was issued with. A logo the company does not have
+// refuses the document of record by name (LOGO_ASSET_MISSING), never prints
+// it without; a draft preview leaves it out.
 
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -66,6 +66,7 @@ import { selectCustomerRow } from '../repository/taxState';
 import { templateSnapshotFor } from '../repository/templates';
 import type { BooksScope } from '../scope';
 import { readSettings } from '../settings';
+import type { TemplateSnapshotV1 } from '../snapshots';
 import { logoBlocks, withOnlyLogo, type TemplateDocumentV2 } from '../template/schema';
 import { missingFields } from './completeness';
 import { assertDrawable, previewSafe, previewSafeTemplate } from './drawable';
@@ -97,6 +98,11 @@ type Layout = { kind: 'legacyV1'; template: RenderInput['template'] } | { kind: 
 /** The engine's inputs beyond the document: the company's assets the template names. */
 type EngineAssets = ReadonlyMap<string, EngineImage>;
 
+/** The version 1 layout of a snapshot (none for a document issued before 008). */
+function legacyTemplate(t: TemplateSnapshotV1 | null): RenderInput['template'] {
+  return t ? { accentColor: t.accentColor, footerBlocks: t.footerBlocks } : null;
+}
+
 /** The layout an issued document was frozen with (decision 4), drawn with the logo its snapshot froze and no other. */
 function frozenLayout(doc: DocumentView['document']): Layout {
   const t = doc.templateSnapshot;
@@ -105,7 +111,7 @@ function frozenLayout(doc: DocumentView['document']): Layout {
     assertRenderableTemplate(t.document);
     return { kind: 'engine', document: withOnlyLogo(t.document, t.logo) };
   }
-  return { kind: 'legacyV1', template: t ? { accentColor: t.accentColor, footerBlocks: t.footerBlocks } : null };
+  return { kind: 'legacyV1', template: legacyTemplate(t) };
 }
 
 /** A rendered document and the renderer that drew it (recorded on the stored file). */
@@ -170,10 +176,8 @@ async function issuedInput(db: Db, scope: BooksScope, view: DocumentView): Promi
     },
     corrects,
     replaces,
-    template: (() => {
-      const layout = frozenLayout(doc);
-      return layout.kind === 'legacyV1' ? layout.template : null;
-    })(),
+    // The version 1 renderer's layout; a version 2 snapshot is drawn by the engine (frozenLayout).
+    template: doc.templateSnapshot?.v === 2 ? null : legacyTemplate(doc.templateSnapshot),
   };
 }
 

@@ -114,7 +114,6 @@ const MESSAGES: Partial<Record<BooksErrorCode, string>> = {
   RENDER_INCOMPLETE: 'the PDF would lack a legally required field; nothing was issued or stored',
   TEMPLATE_INVALID: 'the template cannot be saved; fix the named problems (nothing was saved)',
   ASSET_NOT_FOUND: 'no logo with this hash is stored for this company',
-  ASSET_LIMIT: 'this company stores the most logos allowed (100); reuse one of them',
   LOGO_ASSET_MISSING: "the template's logo is not stored for this company; choose the logo in the template again (nothing was issued)",
 };
 

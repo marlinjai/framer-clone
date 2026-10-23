@@ -206,7 +206,7 @@ const MESSAGES: Record<string, string> = {
   unsupported_asset_type: 'A logo must be a PNG or a JPEG file. Convert it and upload it again.',
   asset_invalid: 'The logo cannot be used:',
   logo_asset_missing: 'The template’s logo is not stored for this company. Choose the logo in the template again; nothing was issued.',
-  asset_limit: 'This company already stores 100 logos, the most allowed. Choose one of them.',
+  asset_limit: 'This company already stores the most logos allowed. Choose one of them.',
   asset_not_found: 'This logo is not stored for this company.',
 };
 
@@ -375,8 +375,13 @@ async function uploadAsset(file: Blob): Promise<AssetView> {
     const err = (json as { error?: { code?: string; message?: string } } | null)?.error;
     const code = err?.code ?? `http_${res.status}`;
     // asset_invalid names the reason (undecodable, not embeddable, too many pixels): show it after the sentence.
+    const limit = (err as { maxAssets?: unknown } | undefined)?.maxAssets;
     const message =
-      code === 'asset_invalid' && err?.message ? `${MESSAGES[code]} ${err.message}.` : (MESSAGES[code] ?? err?.message ?? `The upload failed (${res.status}).`);
+      code === 'asset_invalid' && err?.message
+        ? `${MESSAGES[code]} ${err.message}.`
+        : code === 'asset_limit' && typeof limit === 'number'
+          ? `This company already stores ${limit} logos, the most allowed. Choose one of them.`
+          : (MESSAGES[code] ?? err?.message ?? `The upload failed (${res.status}).`);
     throw new BooksApiError(res.status, code, message, err ?? {});
   }
   if (json === null) throw new BooksApiError(res.status, 'bad_response', 'The server’s answer could not be read. Upload the logo again.');

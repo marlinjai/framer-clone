@@ -330,6 +330,34 @@ describe('POST /api/books/assets', () => {
     expect((await upload(jpeg, 'image/jpeg')).status).toBe(200);
   });
 
+  it('at 99 logos, two different uploads at once: exactly one is stored, the other is refused (the lock)', async () => {
+    const png = makePng(2, 2);
+    await env.ownerDb
+      .insertInto('books_asset')
+      .values(
+        Array.from({ length: 99 }, (_, i) => ({
+          id: randomUUID(),
+          tenant_id: tenantId,
+          kind: 'logo',
+          content_type: 'image/png',
+          byte_size: png.byteLength,
+          sha256: sha(new TextEncoder().encode(`filler ${i}`)),
+          width_px: 2,
+          height_px: 2,
+          content: Buffer.from(png),
+        })),
+      )
+      .execute();
+    const [a, b] = await Promise.all([upload(makePng(5, 5), 'image/png'), upload(makePng(6, 6), 'image/png')]);
+    expect([a.status, b.status].sort()).toEqual([201, 409]);
+    const [{ n }] = await env.ownerDb
+      .selectFrom('books_asset')
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .where('tenant_id', '=', tenantId)
+      .execute();
+    expect(Number(n)).toBe(100);
+  });
+
   it('needs a signed-in user with editBooks to upload and viewBooks to read', async () => {
     const png = makePng(10, 10);
     expect((await upload(png, 'image/png')).status).toBe(201);
@@ -360,6 +388,10 @@ describe('GET /api/books/assets/<sha256>', () => {
     expect(again.status).toBe(304);
     expect((await again.arrayBuffer()).byteLength).toBe(0);
     expect((await download(sha(jpeg), { 'if-none-match': '"other"' })).status).toBe(200);
+    expect((await download(sha(jpeg), { 'if-none-match': '*' })).status).toBe(304);
+    // A revalidation of another company's asset is a 404 like any other request.
+    await company();
+    expect((await download(sha(jpeg), { 'if-none-match': `"${sha(jpeg)}"` })).status).toBe(404);
   });
 
   it("answers 404 for another company's asset, an unknown hash and a malformed one", async () => {
@@ -488,6 +520,31 @@ describe('a document with a logo: the four stateful-flow paths', () => {
     expect(retried.status).toBe(200);
     expect(retried.json.document.document.documentNumber).toBe('62');
     expect(await images(await pdf(id))).toEqual([{ width: 90, height: 30 }]);
+  });
+});
+
+describe('a layout naming two different logos', () => {
+  it('is refused at issue by name (one template, one logo), nothing issued', async () => {
+    // A version written past the gate, as a template saved before the one-logo rule could be.
+    const png = makePng(90, 30);
+    const jpeg = makeJpeg(60, 30);
+    await upload(png, 'image/png');
+    await upload(jpeg, 'image/jpeg');
+    const tpl = await createTemplate({ name: 'Standard' });
+    const two = withLogo(sha(png));
+    two.regions.footer.push({ id: 'footerLogo', type: 'logo', style: {}, widthMm: 15, assetSha256: sha(jpeg) });
+    const versionId = randomUUID();
+    await env.ownerDb
+      .insertInto('document_template_version')
+      .values({ id: versionId, tenant_id: tenantId, template_id: tpl.json.id, version: 2, document: toJsonb(two) })
+      .execute();
+    await env.ownerDb.updateTable('document_template').set({ current_version_id: versionId }).where('id', '=', tpl.json.id).execute();
+    const id = await draftWithLine();
+    const refused = await issue(id);
+    expect(refused.status).toBe(422);
+    expect(refused.json.error).toMatchObject({ code: 'render_incomplete', missing: ['layout.logo_assets_differ.footerLogo'] });
+    const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
+    expect((await getDocument(scope, id)).document).toMatchObject({ status: 'draft', documentNumber: null });
   });
 });
 
