@@ -10,6 +10,12 @@
 // The flow is the pure reducer in src/lib/ai/pageGen/flow.ts (keyed to the
 // inputs and the captured target), so a cancelled or stale run can never land.
 // The transport is injectable for tests.
+//
+// After a generation is applied, one visual review round runs by default
+// (./VisualReview.tsx, plan docs/plans/2026-10-23-ai-design-quality-round-2.md
+// decision 4): the editor measures and captures the rendered page and an AI
+// fixes clipped text, overflow, collisions and weak contrast as one more undo
+// step. A failed review leaves the page as generated and says why.
 'use client';
 
 import React from 'react';
@@ -54,6 +60,16 @@ import {
 } from '@/lib/ai/pageGen/flow';
 import { GENERATION_LIMITS } from '@/lib/ai/pageGen/schema';
 import type { PageGenProgress, StockImageSummary } from '@/lib/ai/pageGen/protocol';
+import {
+  DEFAULT_REVIEW_SETTINGS,
+  ReviewModelToggle,
+  ReviewReport,
+  loadReviewSettings,
+  saveReviewSettings,
+  useVisualReview,
+  type ReviewRunnerOptions,
+  type ReviewSettings,
+} from '@/components/ai/VisualReview';
 
 const TARGETS: Array<{ kind: TargetKind; label: string }> = [
   { kind: 'newPage', label: 'New page' },
@@ -87,12 +103,15 @@ export interface GeneratePageDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   transport?: PageGenTransport;
+  /** The visual review run (injectable for tests). */
+  review?: ReviewRunnerOptions;
 }
 
 export const GeneratePageDialog = observer(function GeneratePageDialog({
   open,
   onOpenChange,
   transport = fetchPageGenTransport,
+  review: reviewRunner,
 }: GeneratePageDialogProps) {
   const { editorUI } = useStore();
   const project = editorUI.currentProject;
@@ -104,6 +123,11 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
   const abortRef = React.useRef<AbortController | null>(null);
   const stateRef = React.useRef(state);
   stateRef.current = state;
+  const review = useVisualReview(reviewRunner);
+  const [reviewSettings, setReviewSettings] = React.useState<ReviewSettings>(DEFAULT_REVIEW_SETTINGS);
+  const reviewSettingsRef = React.useRef(reviewSettings);
+  reviewSettingsRef.current = reviewSettings;
+  const lastBriefRef = React.useRef('');
 
   const inputs = state.inputs;
   const availability = describeTargetAvailability(inputs.targetKind, page, selected);
@@ -113,7 +137,14 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
   // previous run or result.
   React.useEffect(() => {
     if (open && projectId) dispatch({ type: 'reset', inputs: loadDraft(projectId) });
+    if (open) setReviewSettings(loadReviewSettings());
   }, [open, projectId]);
+
+  const editReviewSettings = (patch: Partial<ReviewSettings>) => {
+    const next = { ...reviewSettingsRef.current, ...patch };
+    setReviewSettings(next);
+    saveReviewSettings(next);
+  };
 
   // Abort a running generation when the dialog unmounts.
   React.useEffect(() => () => abortRef.current?.abort(), []);
@@ -132,6 +163,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
 
   const handleOpenChange = (next: boolean) => {
     if (!next && stateRef.current.phase === 'running') cancel();
+    if (!next && review.state.phase === 'running') review.cancel();
     onOpenChange(next);
   };
 
@@ -146,6 +178,8 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
     abortRef.current?.abort();
     abortRef.current = controller;
     dispatch({ type: 'start', requestKey });
+    review.reset();
+    lastBriefRef.current = brief;
 
     const isCurrent = () =>
       abortRef.current === controller && stateRef.current.phase === 'running' && stateRef.current.requestKey === requestKey;
@@ -176,6 +210,11 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
             warnings: result.warnings,
             images: result.images,
           });
+          // One review round of what was just applied (fails soft: the page
+          // stays as generated and the dialog says what failed).
+          if (shownPage && reviewSettingsRef.current.auto) {
+            void review.start(shownPage, reviewSettingsRef.current.model, lastBriefRef.current);
+          }
         },
         onError: (error) => {
           if (error.code === 'aborted' || !isCurrent()) return;
@@ -189,6 +228,8 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
 
   const undo = () => {
     if (!project || state.phase !== 'applied') return;
+    // The generation's undo takes the review's fixes with it.
+    review.reset();
     const outcome = undoGeneration(project, state.record, (fallbackId) => {
       const fallback = fallbackId ? project.getPage(fallbackId) : undefined;
       if (fallback && editorUI.currentPage?.id === (state.record as { pageId: string }).pageId) {
@@ -238,6 +279,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                   Could not undo: {state.undoError}
                 </p>
               )}
+              {!state.undone && <ReviewReport state={review.state} onUndo={review.undo} />}
             </div>
           ) : (
             <div className="grid gap-4">
@@ -301,6 +343,27 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
                 onChange={(model) => edit({ model })}
               />
 
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <label className="flex items-center gap-2" htmlFor="pagegen-review">
+                  <input
+                    id="pagegen-review"
+                    type="checkbox"
+                    className="size-4 accent-brand"
+                    checked={reviewSettings.auto}
+                    disabled={running}
+                    onChange={(e) => editReviewSettings({ auto: e.target.checked })}
+                  />
+                  <span>Review the layout with AI afterwards (one more round, a few cents)</span>
+                </label>
+                {reviewSettings.auto && (
+                  <ReviewModelToggle
+                    value={reviewSettings.model}
+                    disabled={running}
+                    onChange={(model) => editReviewSettings({ model })}
+                  />
+                )}
+              </div>
+
               {running && (
                 <p role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -325,15 +388,37 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
         </DialogBody>
 
         <DialogFooter>
-          {state.phase === 'applied' ? (
+          {state.phase === 'applied' && review.state.phase === 'running' ? (
+            <Button type="button" variant="outline" onClick={review.cancel}>
+              Stop review
+            </Button>
+          ) : state.phase === 'applied' ? (
             <>
+              {!state.undone && review.state.phase === 'idle' && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const shown = project?.getPage(state.record.pageId);
+                    if (shown) void review.start(shown, reviewSettings.model, lastBriefRef.current);
+                  }}
+                >
+                  Review layout
+                </Button>
+              )}
               {!state.undone && (
                 <Button type="button" variant="outline" onClick={undo}>
                   <Undo2 className="size-4" aria-hidden="true" />
                   {state.record.kind === 'newPage' ? 'Undo (remove page)' : 'Undo generation'}
                 </Button>
               )}
-              <Button type="button" onClick={() => dispatch({ type: 'reset', inputs: { ...inputs, brief: '' } })}>
+              <Button
+                type="button"
+                onClick={() => {
+                  review.reset();
+                  dispatch({ type: 'reset', inputs: { ...inputs, brief: '' } });
+                }}
+              >
                 Generate another
               </Button>
             </>
