@@ -4,6 +4,7 @@ import { types, Instance } from 'mobx-state-tree';
 import ProjectModel, { ProjectModelType } from '../models/ProjectModel';
 import PageModel, { PageModelType } from '../models/PageModel';
 import ComponentModel, { ComponentInstance } from '../models/ComponentModel';
+import { LEFT_SIDEBAR_DEFAULT_WIDTH, clampLeftSidebarWidth } from '@/lib/layers/sidebarWidth';
 // Removed BreakpointModel - breakpoints are now viewport nodes
 
 // Available tools in our design editor (expanded from basic ToolStore)
@@ -54,6 +55,14 @@ const EditorUIStore = types.model('EditorUI', {
   // Transient interaction state (won't be persisted).
   // Drag state lives in DragManager (src/lib/drag/DragManager.ts).
   hoverComponent: undefined as ComponentInstance | undefined,
+  // Left sidebar width in px while expanded (the collapsed rail is fixed).
+  // LeftSidebar loads the remembered width on mount and saves on change
+  // (src/lib/layers/sidebarWidth.ts); the store only holds the live value.
+  leftSidebarWidth: LEFT_SIDEBAR_DEFAULT_WIDTH,
+  // Folded Layers rows, by component id (src/lib/layers/foldState.ts).
+  // Replaced, never mutated, so observers see each change. Editor-session
+  // only: not saved with the project, not in undo history.
+  collapsedLayerIds: new Set<string>() as ReadonlySet<string>,
   // The id of the standalone demo editor's project (`/`), built in the browser
   // and held by no company: it has no project on the server to save or
   // publish to, until "Save as a new project" creates one.
@@ -262,6 +271,15 @@ const EditorUIStore = types.model('EditorUI', {
     self.rightSidebarCollapsed = !self.rightSidebarCollapsed;
   },
   
+  setLeftSidebarWidth(width: number) {
+    self.leftSidebarWidth = clampLeftSidebarWidth(width);
+  },
+
+  setCollapsedLayerIds(ids: ReadonlySet<string>) {
+    if (ids === self.collapsedLayerIds) return;
+    self.collapsedLayerIds = ids;
+  },
+
   // Transient interaction state
   setHoverComponent(component?: ComponentInstance) {
     self.hoverComponent = component;
