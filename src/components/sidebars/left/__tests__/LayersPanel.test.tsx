@@ -101,10 +101,13 @@ describe('row action buttons', () => {
     expect(image.canvasLocked).toBe(false);
   });
 
-  it('Delete layer removes a container too, as one undo step', () => {
+  it('Delete layer (in the More menu) removes a container too, as one undo step', () => {
     render(<LayersPanel />);
-    const { armed } = press(within(rowOf(main)).getByRole('button', { name: 'Delete layer' }));
+    // The hover strip is Hide, Lock and More; Delete lives in the menus.
+    expect(within(rowOf(main)).queryByRole('button', { name: 'Delete layer' })).toBeNull();
+    const { armed } = press(within(rowOf(main)).getByRole('button', { name: 'More layer actions' }));
     expect(armed).toBe(false);
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Delete layer' }));
     expect(page.findComponent(main.id)).toBeUndefined();
     expect(page.findComponent('span-child')).toBeUndefined();
     getHistoryStore()!.undo();
@@ -114,7 +117,8 @@ describe('row action buttons', () => {
 
   it('the page root offers no Delete', () => {
     render(<LayersPanel />);
-    expect(within(rowOf(root)).queryByRole('button', { name: 'Delete layer' })).toBeNull();
+    press(within(rowOf(root)).getByRole('button', { name: 'More layer actions' }));
+    expect(within(screen.getByRole('menu')).queryByRole('menuitem', { name: 'Delete layer' })).toBeNull();
   });
 
   it('the More menu and a right-click offer the same actions', () => {

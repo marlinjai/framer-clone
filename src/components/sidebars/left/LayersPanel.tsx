@@ -51,6 +51,7 @@ import {
   toggleFoldSubtree,
 } from '@/lib/layers/foldState';
 import { ancestorIdsOf, canDeleteLayer, deleteLayer, duplicateLayer } from '@/lib/layers/layerActions';
+import { layerActionsWidth } from '@/lib/layers/sidebarWidth';
 import { ContextMenu, type MenuItem, type MenuCloseReason } from './ContextMenu';
 
 // Map viewport label to device icon
@@ -279,6 +280,9 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
   const isLocked = !!component.canvasLocked;
   const isDimmed = isHidden || hiddenByAncestor;
   const deletable = canDeleteLayer(component);
+  // Width of the hover strip, reserved on the name so it truncates beside the
+  // buttons instead of running under them (see the row's container query).
+  const actionsWidth = layerActionsWidth(3);
   const name = component.displayName as string;
 
   // Open row menu, at the cursor (right-click) or under the More button.
@@ -359,10 +363,12 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
         data-layer-row={component.id}
         data-layer-breakpoint={breakpointId}
         onPointerDown={onPointerDown}
-        className={`group flex items-center gap-1.5 h-[28px] px-1.5 rounded-[6px] cursor-pointer hover:bg-accent relative ${
+        // @container: the row's own width (after its depth indent) decides
+        // whether the full action strip fits beside a readable name.
+        className={`@container group flex items-center gap-1.5 h-[28px] px-1.5 rounded-[6px] cursor-pointer hover:bg-accent relative ${
           isSelected ? 'bg-brand/10' : ''
         }`}
-        style={{ paddingLeft: `${6 + depth * 14}px` }}
+        style={{ paddingLeft: `${6 + depth * 14}px`, ['--layer-actions-w' as string]: `${actionsWidth}px` }}
         onClick={(e) => {
           if (component.isViewportNode) {
             editorUI.setSelectedViewportNode(component);
@@ -420,7 +426,7 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
         {/* Component name: 13px, truncate; selected gets text-brand + weight 500;
             hidden rows (and rows inside a hidden one) are dimmed */}
         <span
-          className={`flex-1 truncate ${isSelected ? 'text-brand' : 'text-foreground'} ${isDimmed ? 'opacity-50' : ''}`}
+          className={`flex-1 truncate group-hover:pr-[var(--layer-actions-w)] group-focus-within:pr-[var(--layer-actions-w)] @max-[172px]:group-hover:pr-[26px] @max-[172px]:group-focus-within:pr-[26px] ${isSelected ? 'text-brand' : 'text-foreground'} ${isDimmed ? 'opacity-50' : ''}`}
           style={{ fontSize: '13px', fontWeight: isSelected ? 500 : 400 }}
         >
           {name}
@@ -439,51 +445,40 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
         <span
           className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 rounded-[5px] bg-accent opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto"
         >
-          <button
-            type="button"
-            className={actionButtonClass}
-            title={isHidden ? 'Show layer' : 'Hide layer'}
-            aria-label={isHidden ? 'Show layer' : 'Hide layer'}
-            aria-pressed={isHidden}
-            onPointerDown={stopPointer}
-            onClick={(e) => {
-              e.stopPropagation();
-              component.toggleCanvasVisibility();
-            }}
-          >
-            {isHidden ? <EyeOff size={13} /> : <Eye size={13} />}
-          </button>
-
-          <button
-            type="button"
-            className={actionButtonClass}
-            title={isLocked ? 'Unlock layer' : 'Lock layer'}
-            aria-label={isLocked ? 'Unlock layer' : 'Lock layer'}
-            aria-pressed={isLocked}
-            onPointerDown={stopPointer}
-            onClick={(e) => {
-              e.stopPropagation();
-              component.toggleCanvasLock();
-            }}
-          >
-            {isLocked ? <Lock size={13} /> : <Unlock size={13} />}
-          </button>
-
-          {deletable && (
+          {/* Hide and lock: dropped when the row is too narrow for them beside
+              a readable name (deep rows, narrow sidebar). "More" and
+              right-click offer every action, Delete and Duplicate included. */}
+          <span className="flex items-center gap-0.5 @max-[172px]:hidden">
             <button
               type="button"
               className={actionButtonClass}
-              title="Delete layer"
-              aria-label="Delete layer"
+              title={isHidden ? 'Show layer' : 'Hide layer'}
+              aria-label={isHidden ? 'Show layer' : 'Hide layer'}
+              aria-pressed={isHidden}
               onPointerDown={stopPointer}
               onClick={(e) => {
                 e.stopPropagation();
-                onDelete();
+                component.toggleCanvasVisibility();
               }}
             >
-              <Trash2 size={13} />
+              {isHidden ? <EyeOff size={13} /> : <Eye size={13} />}
             </button>
-          )}
+
+            <button
+              type="button"
+              className={actionButtonClass}
+              title={isLocked ? 'Unlock layer' : 'Lock layer'}
+              aria-label={isLocked ? 'Unlock layer' : 'Lock layer'}
+              aria-pressed={isLocked}
+              onPointerDown={stopPointer}
+              onClick={(e) => {
+                e.stopPropagation();
+                component.toggleCanvasLock();
+              }}
+            >
+              {isLocked ? <Lock size={13} /> : <Unlock size={13} />}
+            </button>
+          </span>
 
           <button
             ref={moreButtonRef}
