@@ -124,6 +124,22 @@ export function isAutoSide(shorthand: unknown, longhand: unknown, side: Side): b
   return v === 'auto';
 }
 
+/**
+ * The one value a box (padding or margin) shows in a single field: the shared
+ * value when every effective side agrees, `'mixed'` when they differ, and
+ * undefined when nothing is authored. A longhand wins over the shorthand,
+ * exactly as in CSS, so the field never shows a stale shorthand after the
+ * sides were set one by one (on the canvas or in the panel).
+ */
+export function uniformBoxValue(shorthand: unknown, longhands: Record<Side, unknown>): string | 'mixed' | undefined {
+  const sides = (['top', 'right', 'bottom', 'left'] as Side[]).map(side =>
+    isSet(longhands[side]) ? String(longhands[side]).trim() : shorthandSide(shorthand, side),
+  );
+  if (sides.every(v => v === undefined)) return undefined;
+  const first = sides[0];
+  return sides.every(v => v === first) ? first : 'mixed';
+}
+
 /** One style write: property and value. */
 export interface StyleWrite {
   prop: string;

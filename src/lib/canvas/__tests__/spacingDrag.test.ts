@@ -11,6 +11,7 @@ import {
   shorthandSide,
   sidesForDrag,
   startSpacingDrag,
+  uniformBoxValue,
   valueFromDrag,
 } from '../spacingDrag';
 import type { Edges } from '../spacingGeometry';
@@ -185,5 +186,26 @@ describe('startSpacingDrag (model and history)', () => {
     drag.commit();
     expect(component.props.style.gap).toBe('15px');
     expect(history.history.length).toBe(1);
+  });
+});
+
+describe('uniformBoxValue', () => {
+  const none = { top: undefined, right: undefined, bottom: undefined, left: undefined };
+
+  it('is undefined when nothing is authored', () => {
+    expect(uniformBoxValue(undefined, none)).toBeUndefined();
+  });
+
+  it('reads a one-value shorthand', () => {
+    expect(uniformBoxValue('16px', none)).toBe('16px');
+  });
+
+  it('lets longhands win, so a drag that split the sides never shows the stale shorthand', () => {
+    expect(uniformBoxValue('16px', { top: '24px', right: '24px', bottom: '24px', left: '24px' })).toBe('24px');
+    expect(uniformBoxValue('16px', { ...none, top: '50px' })).toBe('mixed');
+  });
+
+  it('is mixed for a multi-value shorthand', () => {
+    expect(uniformBoxValue('8px 16px', none)).toBe('mixed');
   });
 });
