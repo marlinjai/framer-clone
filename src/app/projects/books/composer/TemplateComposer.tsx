@@ -219,14 +219,19 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // After "Load the newest version" the composer is new: focus goes to the offer of the earlier edits, or the name.
+  // After "Load the newest version" the composer is new: focus goes to the offer of the earlier edits once it is
+  // shown (the resume decision renders it a step later), or to the name when nothing is offered.
+  const focusPending = useRef(focusOnMount);
   useEffect(() => {
-    if (!focusOnMount) return;
-    const offer = window.document.querySelector<HTMLButtonElement>('[data-resume-offer] button');
-    (offer ?? nameRef.current)?.focus();
-    // Once, after the first render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!focusPending.current) return;
+    if (resume?.kind === 'stale') {
+      focusPending.current = false;
+      window.document.querySelector<HTMLButtonElement>('[data-resume-offer] button')?.focus();
+    } else if (resumeSettled.current) {
+      focusPending.current = false;
+      nameRef.current?.focus();
+    }
+  }, [resume]);
 
   // Keep unsaved edits as the working copy (not while an older copy is still offered).
   useEffect(() => {
@@ -318,7 +323,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
     }
   }
 
-  function remove(blockId: string, fromKeyboard = false) {
+  function remove(blockId: string) {
     const at = locate(doc, blockId);
     if (!at) return;
     const type = at.cell ? at.cell.block.type : at.block.type;
@@ -331,8 +336,9 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
     const neighbour = at.cell ? at.cell.rowId : (list[at.index + 1] ?? list[at.index - 1])?.id ?? null;
     update((d) => void removeBlock(d, blockId));
     setSelectedId(neighbour);
-    // The removed block's row is gone: keyboard focus moves to the block that took the selection.
-    if (fromKeyboard && neighbour) refocus.current = { announce: false };
+    // The removed block's row (or its Remove button) is gone: focus moves to the block that took the selection, or to
+    // the first block of the outline when the region is now empty.
+    refocus.current = { announce: false };
     announce(`${BLOCK_INFO[type].label} removed. Undo with Ctrl+Z or Cmd+Z.`);
   }
 
@@ -366,9 +372,12 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
     else announcePosition(selectedId);
   }
 
+  const positionTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(positionTimer.current), []);
   function announcePosition(blockId: string) {
     // Read on the next render, when the document holds the move.
-    window.setTimeout(() => {
+    window.clearTimeout(positionTimer.current);
+    positionTimer.current = window.setTimeout(() => {
       const at = locate(docRef.current, blockId);
       if (at) announce(`${BLOCK_INFO[(at.cell?.block ?? at.block).type].label}, ${REGION_LABELS[at.region].toLowerCase()}, position ${(at.cell?.index ?? at.index) + 1}.`);
     }, 0);
@@ -381,14 +390,23 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
   docRef.current = doc;
   useEffect(() => {
     const pending = refocus.current;
-    if (!pending || !selectedId) return;
+    if (!pending) return;
     refocus.current = null;
+    if (!selectedId) {
+      focusOutline();
+      return;
+    }
     Array.from(window.document.querySelectorAll<HTMLButtonElement>('[data-outline-select]'))
       .find((b) => b.dataset.outlineSelect === selectedId)
       ?.focus();
     if (pending.announce) announcePosition(selectedId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc, selectedId]);
+
+  /** Focus the first block of the outline (after the control that had focus went away). */
+  function focusOutline() {
+    window.setTimeout(() => window.document.querySelector<HTMLButtonElement>('[data-outline-select]')?.focus(), 0);
+  }
 
   // Enter on a block in the outline: select it, then (once the inspector shows it) focus its first control.
   const focusInspector = useRef(false);
@@ -500,13 +518,18 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key.toLowerCase() === 's') {
       e.preventDefault();
-      if (resume?.kind !== 'stale') void save();
+      if (resume?.kind === 'stale') announce('Choose first what happens to the earlier changes: apply them or discard them.');
+      else void save();
       return;
     }
     // In a text field the browser's own undo applies to the text being typed.
     if (editable) return;
     // On an outline drag handle the keys belong to the drag (Space, arrows, Escape while a block is picked up).
-    if (t.closest('[data-drag-handle]')) return;
+    // While a block is picked up (dnd-kit marks its handle pressed) every key belongs to the drag; on a resting handle,
+    // the keys that act on the selected block stay off too, since the handle belongs to another row.
+    const handle = t.closest('[data-drag-handle]');
+    if (handle?.getAttribute('aria-pressed') === 'true') return;
+    if (handle && (e.key === 'Delete' || e.key === 'Backspace' || (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')))) return;
     // While earlier edits are offered, nothing changes the document until the user has chosen.
     if (resume?.kind === 'stale') return;
     if (mod && e.key.toLowerCase() === 'z') {
@@ -528,7 +551,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
       e.preventDefault();
-      remove(selectedId, true);
+      remove(selectedId);
       return;
     }
     if (e.key === 'Escape' && selectedId) {
@@ -647,6 +670,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
                 setResume(null);
                 resumeSettled.current = true;
                 announce('The earlier changes are applied. Save to keep them.');
+                focusOutline();
               }}
             >
               Apply them anyway
@@ -659,6 +683,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
                 setResume(null);
                 resumeSettled.current = true;
                 announce('The earlier changes are discarded.');
+                focusOutline();
               }}
             >
               Discard them
@@ -741,6 +766,8 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
                 className="rounded-md border border-gray-500 px-2 py-1"
                 value={subject.kind === 'sample' ? `sample:${subject.variant}` : `document:${subject.documentId}`}
                 onFocus={() => void loadDocuments()}
+                // Opening the list again retries after a failed load (an already focused list sends no focus event).
+                onMouseDown={() => void loadDocuments()}
                 onChange={(e) => {
                   const raw = e.target.value;
                   const kind = raw.slice(0, raw.indexOf(':'));
@@ -824,7 +851,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
         </section>
 
         <aside aria-labelledby="inspector-title" ref={inspectorRef} className="overflow-y-auto border-l p-3">
-          <Inspector doc={doc} selectedId={selectedId} update={update} problems={problems} onSelect={select} onRemove={(id) => remove(id)} onStep={(d) => step(d)} />
+          <Inspector doc={doc} selectedId={selectedId} update={update} problems={problems} onSelect={select} onRemove={remove} onStep={(d) => step(d)} />
           <Versions versions={versions} />
         </aside>
       </div>

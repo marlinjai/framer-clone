@@ -1,0 +1,18 @@
+// src/app/projects/books/__tests__/tabs.test.ts
+//
+// The tab a link asks for: only a known tab opens, anything else is the documents.
+
+import { describe, expect, it } from 'vitest';
+
+import { tabFrom } from '../tabs';
+
+describe('tabFrom', () => {
+  it('opens a known tab and falls back to the documents', () => {
+    expect(tabFrom('templates')).toBe('templates');
+    expect(tabFrom('customers')).toBe('customers');
+    expect(tabFrom('documents')).toBe('documents');
+    expect(tabFrom(undefined)).toBe('documents');
+    expect(tabFrom(['templates'])).toBe('documents');
+    expect(tabFrom('<script>')).toBe('documents');
+  });
+});

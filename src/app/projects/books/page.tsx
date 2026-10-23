@@ -8,7 +8,8 @@
 
 import React from 'react';
 
-import BooksHome, { tabFrom } from './BooksHome';
+import BooksHome from './BooksHome';
+import { tabFrom } from './tabs';
 
 export const dynamic = 'force-dynamic';
 

@@ -78,7 +78,6 @@ function template(version = 1, document: unknown = preset('klassisch')) {
     version,
     document,
     accentColor: '#333340',
-    footerBlocks: [],
     defaultIntroText: null,
     defaultOutroText: null,
   };
@@ -353,6 +352,27 @@ describe('the template composer: re-entry', () => {
     });
     await waitFor(() => expect(header()).toContain('Version 2'));
     expect(screen.getByText(/They were made on version 1; version 2 was saved since/)).toBeTruthy();
+    // Focus lands on the offer, which now blocks editing.
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('Apply them anyway'));
+  });
+
+  it('the documents list says when it could not be loaded, and opening it again retries', async () => {
+    let fail = true;
+    server({
+      ...baseRoutes(),
+      'GET /api/books/documents': () =>
+        fail
+          ? { status: 503, body: { error: { code: 'contacts_unavailable', message: 'down' } } }
+          : { status: 200, body: { items: [{ id: 'd1', documentNumber: 'TEST-1', customerName: 'Probekunde' }], nextCursor: null } },
+    });
+    render(<TemplateComposer id="tpl1" />);
+    await opened();
+    const subject = screen.getByLabelText('Preview with') as HTMLSelectElement;
+    fireEvent.focus(subject);
+    expect(await screen.findByText('Your documents could not be loaded. Open this list again to retry.')).toBeTruthy();
+    fail = false;
+    fireEvent.mouseDown(subject);
+    expect(await screen.findByText('TEST-1, Probekunde')).toBeTruthy();
   });
 
   it('an unknown or removed template says so and leads back', async () => {

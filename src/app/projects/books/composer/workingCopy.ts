@@ -14,6 +14,8 @@
 // quota), so every access is wrapped: losing the working copy is a nicety lost,
 // never a failure of the composer.
 
+import { BLOCK_INFO } from './doc';
+
 const PREFIX = 'books-composer:';
 /** The working copy's own format version: a copy written by another format is dropped. */
 const FORMAT = 1;
@@ -84,10 +86,8 @@ export function clearWorkingCopy(templateId: string): void {
   }
 }
 
-const KNOWN_TYPES = new Set([
-  'logo', 'senderLine', 'recipient', 'documentMeta', 'title', 'introText', 'outroText', 'lineTable', 'totals', 'taxNote',
-  'paymentDetails', 'paymentQr', 'senderColumns', 'freeText', 'spacer', 'divider', 'columns',
-]);
+/** The block types the composer knows (its catalogue, kept in step with the schema by the type checker). */
+const KNOWN_TYPES = new Set<string>(Object.keys(BLOCK_INFO));
 
 /**
  * True when a stored copy is a template document the composer can show: the
@@ -98,12 +98,13 @@ const KNOWN_TYPES = new Set([
  */
 export function hasDocumentShape(value: unknown): boolean {
   const doc = value as { v?: unknown; page?: unknown; theme?: unknown; regions?: Record<string, unknown> } | null;
-  if (!doc || typeof doc !== 'object' || doc.v !== 2 || typeof doc.page !== 'object' || typeof doc.theme !== 'object' || !doc.regions) return false;
-  const r = doc.regions as { addressZone?: { left?: unknown; right?: unknown } } & Record<string, unknown>;
+  const isObject = (x: unknown) => typeof x === 'object' && x !== null;
+  if (!isObject(doc) || doc!.v !== 2 || !isObject(doc!.page) || !isObject(doc!.theme) || !isObject(doc!.regions)) return false;
+  const r = doc!.regions as { addressZone?: { left?: unknown; right?: unknown } } & Record<string, unknown>;
   const lists = [r.firstPageHeader, r.addressZone?.left, r.addressZone?.right, r.body, r.followingPageHeader, r.footer];
   const isBlock = (b: unknown): boolean => {
     const x = b as { id?: unknown; type?: unknown; style?: unknown; cells?: unknown } | null;
-    if (!x || typeof x.id !== 'string' || typeof x.type !== 'string' || !KNOWN_TYPES.has(x.type) || typeof x.style !== 'object') return false;
+    if (!x || typeof x.id !== 'string' || typeof x.type !== 'string' || !KNOWN_TYPES.has(x.type) || !isObject(x.style)) return false;
     if (x.type !== 'columns') return true;
     return Array.isArray(x.cells) && x.cells.every((c: { blocks?: unknown }) => Array.isArray(c?.blocks) && c.blocks.every(isBlock));
   };

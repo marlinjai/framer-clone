@@ -33,10 +33,11 @@ import {
 import { date, money } from '@/lib/books/units';
 
 import CustomerForm from './CustomerForm';
+import type { BooksTab } from './tabs';
 import TemplatesPanel from './TemplatesPanel';
 import { ErrorAlert, ImportedBadge, StatusBadge, errorText } from './ui';
 
-type Tab = 'documents' | 'customers' | 'templates';
+type Tab = BooksTab;
 
 const BLOCKING = new Set([
   'unauthorized',
@@ -46,11 +47,6 @@ const BLOCKING = new Set([
   'forbidden',
   'books_not_provisioned',
 ]);
-
-/** The tab a link asks for (the template composer's way back: ?tab=templates), else the documents. */
-export function tabFrom(value: string | string[] | undefined): Tab {
-  return value === 'customers' || value === 'templates' ? value : 'documents';
-}
 
 export default function BooksHome({ initialTab = 'documents' }: { initialTab?: Tab } = {}) {
   const router = useRouter();

@@ -155,7 +155,10 @@ export default function PdfCanvas(props: PdfCanvasProps) {
           if (!sameDoc) void doc.destroy();
           return;
         }
-        setDrawn({ doc, counter, layout, scale, canvases });
+        const next = { doc, counter, layout, scale, canvases };
+        // Known at once, so an unmount before the next render still closes this document.
+        drawnRef.current = next;
+        setDrawn(next);
         if (previous && previous.doc !== doc) void previous.doc.destroy();
         callbacks.current.onDrawn(counter);
       } catch (err) {
@@ -272,6 +275,9 @@ function PageView({ canvas, page, pageCount, layout, scale, selectedId, labelOf,
     return () => {
       near.disconnect();
       seen.disconnect();
+      // A disconnected observer sends no last word: a page that goes (the document got shorter) is forgotten here.
+      onNear(page, false);
+      onSeen(page, 0);
     };
   }, [page, onNear, onSeen]);
   const [drag, setDrag] = useState<DragState | null>(null);
