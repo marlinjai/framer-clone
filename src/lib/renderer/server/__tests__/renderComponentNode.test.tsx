@@ -20,6 +20,7 @@ import type {
   ProductVariantDTO,
 } from '@/lib/commerce/types';
 import { renderComponentNode } from '../renderComponentNode';
+import { applyResponsiveStyles } from '../applyResponsiveStyles';
 
 afterEach(() => {
   cleanup();
@@ -124,6 +125,29 @@ describe('renderComponentNode: graceful degradation', () => {
 });
 
 describe('renderComponentNode: interactive commerce islands', () => {
+  it('renders a responsive island host with its published class and no inline responsive style', () => {
+    const breakpoints = [
+      { id: 'bp-desktop', minWidth: 1200 },
+      { id: 'bp-phone', minWidth: 390 },
+    ];
+    for (const kind of ['cart-view', 'checkout-button'] as const) {
+      const node: ComponentNode = {
+        type: 'div',
+        id: `${kind}-host`,
+        props: {
+          'data-component-kind': kind,
+          className: 'shop',
+          style: { width: { base: '50%', 'bp-phone': '100%' } },
+        },
+      };
+      const { container, unmount } = renderWithProviders(applyResponsiveStyles(node, breakpoints).root);
+      const host = container.querySelector(`[data-component-kind="${kind}"]`) as HTMLElement;
+      expect(host.className).toBe(`shop fc-${kind}-host`);
+      expect(host.getAttribute('style')).toBeNull();
+      unmount();
+    }
+  });
+
   it('emits the cart-view island (empty cart marker)', () => {
     const node: ComponentNode = {
       type: 'div',
