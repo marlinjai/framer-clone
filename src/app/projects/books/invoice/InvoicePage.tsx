@@ -55,12 +55,18 @@ const ZOOMS = [0.75, 1, 1.25, 1.5];
 
 interface ActiveEditor {
   field: LayoutField;
-  /** The rectangle the editor sits on (a field may span pages). */
+  /** The rectangle the editor sits on (a field may span pages), and its index in the field's rectangles. */
   rect: FieldRect;
+  rectIndex: number;
   value: string;
   /** The value it started with: an unchanged value sends nothing. */
   initial: string;
   error: string | null;
+  /**
+   * The save was refused (the draft changed elsewhere, or the server's rule): the typed value stays, leaving the
+   * field does not send it again, and Enter compares with what is saved now, never with the value it started with.
+   */
+  retry: boolean;
 }
 
 interface UndoStep {
@@ -117,12 +123,21 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
   const [adding, setAdding] = useState<{ title: string; quantity: string; unit: string; price: string; error: string | null } | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
+  // Counts lines added with "again", so the new line's description takes focus for the next one.
+  const [nextLine, setNextLine] = useState(0);
   const [announcement, setAnnouncement] = useState('');
   const [undoStack, setUndoStack] = useState<UndoStep[]>([]);
   const [redoStack, setRedoStack] = useState<UndoStep[]>([]);
   const detailRef = useRef(detail);
   detailRef.current = detail;
   const focusAfter = useRef<string | null>(null);
+  // Set when the editor is closed on purpose, so the blur its removal causes does not save a second time.
+  const closing = useRef(false);
+  const savingLine = useRef(false);
+  // A line added back by undo (or again by redo) gets a new id: steps written for the old id follow it here.
+  const aliases = useRef(new Map<string, string>());
+  // The version this page's own last change produced: any other version means the draft changed elsewhere.
+  const ownVersion = useRef(doc.version);
   const announceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const announce = useCallback((text: string) => {
@@ -136,25 +151,55 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
   const family = page.payload?.fontFamily ?? 'dejavu-sans';
   const usable = useMemo(() => customers.filter((c) => !c.archivedAt), [customers]);
 
-  /** One saved step that can be undone; the stacks follow. */
+  const resolveLine = useCallback((lineId: string) => {
+    let x = lineId;
+    for (let i = 0; i < 50 && aliases.current.has(x); i++) x = aliases.current.get(x)!;
+    return x;
+  }, []);
+  const send = useCallback(
+    (req: FieldRequest, v: number) => call(id, req.kind === 'line' ? { ...req, lineId: resolveLine(req.lineId) } : req, v),
+    [id, resolveLine],
+  );
+
+  /** One change through the editor's change path, remembering the version it produced. */
+  const save = useCallback(
+    (fn: (version: number) => Promise<DocumentDetail>) =>
+      change(async () => {
+        const d = await fn(detailRef.current.document.version);
+        ownVersion.current = d.document.version;
+        return d;
+      }),
+    [change],
+  );
+
+  /** One saved step that can be undone (null: it cannot be, for example a first customer); the stacks follow. */
   const run = useCallback(
-    async (step: UndoStep, fn: (version: number) => Promise<DocumentDetail>, done: string) => {
-      const ok = await change(() => fn(detailRef.current.document.version));
+    async (step: UndoStep | null, fn: (version: number) => Promise<DocumentDetail>, done: string) => {
+      const ok = await save(fn);
       if (ok) {
-        setUndoStack((s) => [...s.slice(-49), step]);
+        if (step) setUndoStack((s) => [...s.slice(-49), step]);
         setRedoStack([]);
         announce(done);
       }
       return ok;
     },
-    [change, announce],
+    [save, announce],
   );
 
-  // Focus returns to the field (or control) that was edited once the new page is drawn.
-  // The canvas swaps in the new page a moment after this render (it draws first), so the field's button is looked
-  // for over the next frames, up to about a second.
+  // A change this page did not make (another tab, a reload after a conflict, the header's controls) ends the
+  // history: its steps hold values from before, and replaying them would overwrite that change.
   useEffect(() => {
-    if (!focusAfter.current || !page.drawn) return;
+    if (doc.version === ownVersion.current) return;
+    ownVersion.current = doc.version;
+    aliases.current.clear();
+    setUndoStack([]);
+    setRedoStack([]);
+  }, [doc.version]);
+
+  // Focus returns to the field (or control) that was edited. The canvas swaps in a new page a moment after it is
+  // drawn, so the target is looked for over the next frames, up to about a second; moving focus elsewhere first
+  // (another control, a click) cancels it.
+  const seekFocus = useCallback(() => {
     let frames = 0;
     let handle = 0;
     const tryFocus = () => {
@@ -168,15 +213,41 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     };
     tryFocus();
     return () => cancelAnimationFrame(handle);
-  }, [page.drawn]);
+  }, []);
+  const focusSoon = useCallback(
+    (key: string) => {
+      focusAfter.current = key;
+      seekFocus();
+    },
+    [seekFocus],
+  );
+  useEffect(() => {
+    if (!focusAfter.current || !page.drawn) return;
+    return seekFocus();
+  }, [page.drawn, seekFocus]);
+  useEffect(() => {
+    const onFocus = (e: FocusEvent) => {
+      if (focusAfter.current && (e.target as HTMLElement | null)?.dataset?.focusKey !== focusAfter.current) focusAfter.current = null;
+    };
+    window.document.addEventListener('focusin', onFocus);
+    return () => window.document.removeEventListener('focusin', onFocus);
+  }, []);
 
   // --- Fields. ---
 
-  function open(field: LayoutField, rect: FieldRect) {
+  function open(field: LayoutField, rect: FieldRect, rectIndex = 0) {
     if (busy) return;
     const value = editValue(field, detail);
     setMenuFor(null);
-    setActive({ field, rect, value, initial: value, error: null });
+    setPicking(false);
+    closing.current = false;
+    setActive({ field, rect, rectIndex, value, initial: value, error: null, retry: false });
+  }
+
+  function close(focusKey: string | null) {
+    closing.current = true;
+    setActive(null);
+    if (focusKey) focusSoon(focusKey);
   }
 
   function onType(value: string) {
@@ -186,16 +257,16 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     if (parsed.ok && parsed.local !== null && page.payload) page.redrawWith(applyLocal(page.payload, active.field, parsed.local));
   }
 
-  async function commit(close = true) {
-    if (!active) return;
-    const { field, value, initial } = active;
-    if (value === initial) {
-      if (close) {
-        focusAfter.current = field.id;
-        setActive(null);
-      }
-      return;
-    }
+  /** Save the open field: by key (Enter) focus returns to it, by leaving it (blur) focus stays where it went. */
+  async function commit(by: 'key' | 'blur') {
+    if (!active || closing.current) return;
+    // After a refused save, leaving the field keeps it open: only Enter sends it again.
+    if (by === 'blur' && active.retry) return;
+    const { field, value, rect, rectIndex } = active;
+    const focusKey = by === 'key' ? field.id : null;
+    // After a refusal the draft was read again: compare with what is saved now.
+    const initial = active.retry ? editValue(field, detailRef.current) : active.initial;
+    if (value === initial) return close(focusKey);
     const parsed = parseValue(field, value);
     if (!parsed.ok) {
       setActive({ ...active, error: parsed.message });
@@ -203,46 +274,65 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     }
     const before = parseValue(field, initial);
     const label = fieldLabel(field, detail);
-    focusAfter.current = field.id;
-    setActive(null);
+    close(null);
+    if (focusKey) focusAfter.current = focusKey;
     const forward = parsed.request;
-    const step: UndoStep = {
-      label,
-      undo: (v) => (before.ok ? call(id, before.request, v) : Promise.reject(new Error(before.message))),
-      redo: (v) => call(id, forward, v),
-    };
-    const ok = await run(step, (v) => call(id, forward, v), `${label} saved.`);
-    // A refused value (the server's rule) reopens the field with what was typed, so nothing is lost.
-    if (!ok) setActive({ field, rect: active.rect, value, initial, error: null });
+    // A value that cannot be sent back (no customer before the first one was chosen) is not a step to undo.
+    const step: UndoStep | null = before.ok
+      ? { label, undo: (v) => send(before.request, v), redo: (v) => send(forward, v) }
+      : null;
+    const ok = await run(step, (v) => send(forward, v), `${label} saved.`);
+    if (!ok) {
+      // Refused: the field reopens with what was typed, so nothing is lost and nothing overwrites a newer change.
+      closing.current = false;
+      setActive({
+        field,
+        rect,
+        rectIndex,
+        value,
+        initial,
+        retry: true,
+        error: 'Not saved. Enter saves it against the latest draft, Escape keeps what is saved.',
+      });
+    }
   }
 
   function cancelEdit() {
     if (!active) return;
-    focusAfter.current = active.field.id;
     // The page goes back to the saved text.
     if (page.payload) page.redrawWith(page.payload);
-    setActive(null);
+    close(active.field.id);
   }
 
   // --- Lines. ---
 
-  async function addLineFrom(body: Record<string, unknown>, label: string): Promise<boolean> {
+  /** Add a line (`body`) and return the new line's id; an add that names no new line is an error. */
+  async function addOne(body: Record<string, unknown>, v: number): Promise<{ d: DocumentDetail; newId: string }> {
     const beforeIds = new Set(detailRef.current.lines.map((l) => l.id));
-    let addedId: string | null = null;
+    const d = await booksApi.addLine(id, { ...body, expectedVersion: v });
+    const newId = d.lines.find((l) => !beforeIds.has(l.id))?.id;
+    if (!newId) throw new Error('The line was not added.');
+    return { d, newId };
+  }
+
+  async function addLineFrom(body: Record<string, unknown>, label: string, focusKey: string | null): Promise<boolean> {
+    // The first id this line had; undo removes it, redo adds it again under a new id that it is followed to.
+    let firstId: string | null = null;
     const step: UndoStep = {
       label,
-      undo: (v) => (addedId ? booksApi.removeLine(id, addedId, v) : Promise.reject(new Error('gone'))),
+      undo: (v) => booksApi.removeLine(id, resolveLine(firstId!), v),
       redo: async (v) => {
-        const d = await booksApi.addLine(id, { ...body, expectedVersion: v });
-        addedId = d.lines.find((l) => !beforeIds.has(l.id))?.id ?? addedId;
+        const { d, newId } = await addOne(body, v);
+        aliases.current.set(resolveLine(firstId!), newId);
         return d;
       },
     };
+    if (focusKey) focusAfter.current = focusKey;
     return run(
       step,
       async (v) => {
-        const d = await booksApi.addLine(id, { ...body, expectedVersion: v });
-        addedId = d.lines.find((l) => !beforeIds.has(l.id))?.id ?? null;
+        const { d, newId } = await addOne(body, v);
+        firstId = newId;
         return d;
       },
       `${label} added.`,
@@ -250,7 +340,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
   }
 
   async function saveNewLine(again: boolean) {
-    if (!adding) return;
+    if (!adding || savingLine.current || busy) return;
     const title = adding.title.trim();
     if (title === '') return setAdding({ ...adding, error: 'Enter a description for the line.' });
     const q = parseQuantity(adding.quantity || '1');
@@ -258,8 +348,17 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     const p = parseMoney(adding.price || '0');
     if (p === null || p < 0) return setAdding({ ...adding, error: 'Enter a unit price in euros, for example 80,00.' });
     const body = { kind: 'service', title, quantity: q, unitLabel: adding.unit.trim() || 'Stk', unitPrice: p, taxClass: 'standard' };
-    const ok = await addLineFrom(body, `Line “${title}”`);
-    if (ok) setAdding(again ? { title: '', quantity: '1', unit: adding.unit || 'Std', price: '', error: null } : null);
+    savingLine.current = true;
+    try {
+      const ok = await addLineFrom(body, `Line “${title}”`, again ? null : 'add-line');
+      if (!ok) return;
+      if (again) {
+        setAdding({ title: '', quantity: '1', unit: adding.unit || 'Std', price: '', error: null });
+        setNextLine((n) => n + 1);
+      } else setAdding(null);
+    } finally {
+      savingLine.current = false;
+    }
   }
 
   function lineAction(l: LineView, action: 'up' | 'down' | 'duplicate' | 'remove') {
@@ -272,67 +371,71 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
       const next = [...ids];
       [next[i], next[j]] = [next[j], next[i]];
       focusAfter.current = `menu:${l.id}`;
-      void run(
-        { label: 'Move', undo: (v) => booksApi.reorderLines(id, ids, v), redo: (v) => booksApi.reorderLines(id, next, v) },
-        (v) => booksApi.reorderLines(id, next, v),
-        `Line ${i + 1} moved ${action}.`,
-      );
+      const order = (list: string[]) => (v: number) => booksApi.reorderLines(id, list.map(resolveLine), v);
+      void run({ label: 'Move', undo: order(ids), redo: order(next) }, order(next), `Line ${i + 1} moved ${action}.`);
       return;
     }
     if (action === 'duplicate') {
-      void addLineFrom(copyOfLine(l), `A copy of line ${i + 1}`);
+      void addLineFrom(copyOfLine(l), `A copy of line ${i + 1}`, `menu:${l.id}`);
       return;
     }
-    // Remove: undo adds it back at its place.
+    // Remove: undo adds it back at its place (under a new id, which steps for the old one follow).
     const body = copyOfLine(l);
-    let restoredId: string | null = null;
+    focusAfter.current = ids[i + 1] ? `menu:${ids[i + 1]}` : ids[i - 1] ? `menu:${ids[i - 1]}` : 'add-line';
     void run(
       {
-        label: 'Remove',
+        label: `Remove line ${i + 1}`,
         undo: async (v) => {
-          const before = new Set(detailRef.current.lines.map((x) => x.id));
-          const d = await booksApi.addLine(id, { ...body, expectedVersion: v });
-          restoredId = d.lines.find((x) => !before.has(x.id))?.id ?? null;
-          if (!restoredId) return d;
-          const order = d.lines.map((x) => x.id).filter((x) => x !== restoredId);
-          order.splice(i, 0, restoredId);
+          let current = resolveLine(l.id);
+          let d = detailRef.current;
+          // An earlier undo that added the line but failed to put it back in place only needs the reorder.
+          if (!d.lines.some((x) => x.id === current)) {
+            const added = await addOne(body, v);
+            aliases.current.set(current, added.newId);
+            current = added.newId;
+            d = added.d;
+          }
+          const order = d.lines.map((x) => x.id).filter((x) => x !== current);
+          order.splice(i, 0, current);
           return booksApi.reorderLines(id, order, d.document.version);
         },
-        redo: (v) => (restoredId ? booksApi.removeLine(id, restoredId, v) : booksApi.removeLine(id, l.id, v)),
+        redo: (v) => booksApi.removeLine(id, resolveLine(l.id), v),
       },
-      (v) => booksApi.removeLine(id, l.id, v),
+      (v) => booksApi.removeLine(id, resolveLine(l.id), v),
       `Line ${i + 1} removed. Undo with Ctrl+Z or Cmd+Z.`,
     );
   }
 
   async function pickProduct(p: ProductView) {
     setPicking(false);
-    await addLineFrom({ ...lineFromProduct(p), quantity: 1000 }, `“${p.name}”`);
+    await addLineFrom({ ...lineFromProduct(p), quantity: 1000 }, `“${p.name}”`, 'choose-product');
   }
 
   // --- Undo and redo. ---
 
+  // A step that fails is taken off its stack (it no longer applies, or the draft changed), so the steps below it
+  // stay reachable; the editor's banner says why.
   const undo = useCallback(async () => {
     const step = undoStack[undoStack.length - 1];
     if (!step || busy) return;
-    const ok = await change(() => step.undo(detailRef.current.document.version));
+    const ok = await save((v) => step.undo(v));
+    setUndoStack((s) => (s[s.length - 1] === step ? s.slice(0, -1) : s));
     if (ok) {
-      setUndoStack((s) => s.slice(0, -1));
       setRedoStack((s) => [...s, step]);
       announce(`Undone: ${step.label}.`);
-    }
-  }, [undoStack, busy, change, announce]);
+    } else announce(`Could not undo ${step.label}; it was taken off the list.`);
+  }, [undoStack, busy, save, announce]);
 
   const redo = useCallback(async () => {
     const step = redoStack[redoStack.length - 1];
     if (!step || busy) return;
-    const ok = await change(() => step.redo(detailRef.current.document.version));
+    const ok = await save((v) => step.redo(v));
+    setRedoStack((s) => (s[s.length - 1] === step ? s.slice(0, -1) : s));
     if (ok) {
-      setRedoStack((s) => s.slice(0, -1));
       setUndoStack((s) => [...s, step]);
       announce(`Redone: ${step.label}.`);
-    }
-  }, [redoStack, busy, change, announce]);
+    } else announce(`Could not redo ${step.label}; it was taken off the list.`);
+  }, [redoStack, busy, save, announce]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -357,13 +460,33 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     if (!layout) return null;
     const style = (r: FieldRect): React.CSSProperties => ({ left: r.x * scale, top: r.y * scale, width: Math.max(r.width * scale, 12), height: Math.max(r.height * scale, 10) });
     const nodes: React.ReactNode[] = [];
+    let editorShown = false;
+    const editor = (rect: FieldRect) =>
+      active ? (
+        <InlineEditor
+          key="editor"
+          editor={active}
+          rect={rect}
+          scale={scale}
+          fontFamily={cssFontFamily(active.field.style.fontFamily)}
+          customers={usable}
+          label={fieldLabel(active.field, detail)}
+          onType={onType}
+          onCommit={(by) => void commit(by)}
+          onCancel={cancelEdit}
+        />
+      ) : null;
 
     for (const f of layout.fields) {
       f.rects.forEach((r, ri) => {
         if (r.page !== pageNo) return;
         const key = `${f.id}#${ri}`;
-        const isActive = active?.field.id === f.id && active.rect === r;
-        if (isActive) return;
+        // The open editor takes its field's place, in reading order, on the field's current rectangle.
+        if (active?.field.id === f.id && active.rectIndex === ri) {
+          editorShown = true;
+          nodes.push(editor(r));
+          return;
+        }
         const recipient = f.id.startsWith('recipient.');
         const editable = f.kind !== 'readonly' || recipient;
         if (!editable) {
@@ -386,10 +509,10 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
               tabIndex={ri === 0 ? 0 : -1}
               aria-label={`${placeholderText(f)} (${label})`}
               title={placeholderText(f)}
-              disabled={busy}
+              aria-disabled={busy || undefined}
               className="absolute flex size-5 items-center justify-center rounded-full border border-blue-500 bg-white text-blue-700 opacity-30 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-blue-600"
               style={{ left: r.x * scale - 34, top: Math.max(0, r.y * scale - 10) }}
-              onClick={() => open(f, r)}
+              onClick={() => open(f, r, ri)}
             >
               <Plus aria-hidden className="size-3" />
             </button>,
@@ -405,7 +528,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
             tabIndex={ri === 0 ? 0 : -1}
             aria-label={recipient ? `${label}: from the customer. Choose another customer` : `${label}: ${value || 'empty'}. Edit`}
             title={recipient ? readOnlyReason(f) : undefined}
-            disabled={busy}
+            aria-disabled={busy || undefined}
             className={`absolute rounded-[2px] text-left outline-none hover:ring-1 hover:ring-blue-400 focus-visible:ring-2 focus-visible:ring-blue-600 ${
               placeholder ? 'border border-dashed border-blue-400/70 bg-blue-50/60' : ''
             }`}
@@ -413,8 +536,8 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
             onClick={() => {
               if (recipient) {
                 const asCustomer: LayoutField = { ...f, kind: 'select', source: 'document', documentField: 'customerId', empty: false };
-                open(asCustomer, r);
-              } else open(f, r);
+                open(asCustomer, r, ri);
+              } else open(f, r, ri);
             }}
           >
             {placeholder ? (
@@ -444,9 +567,9 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
             aria-label={`Line ${n} actions`}
             aria-expanded={menuOpen}
             aria-haspopup="menu"
-            disabled={busy}
+            aria-disabled={busy || undefined}
             className="flex size-6 items-center justify-center rounded border border-gray-500 bg-white text-gray-700 opacity-60 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-blue-600"
-            onClick={() => setMenuFor(menuOpen ? null : l.id)}
+            onClick={() => !busy && setMenuFor(menuOpen ? null : l.id)}
           >
             <MoreHorizontal aria-hidden className="size-4" />
           </button>
@@ -468,18 +591,15 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
                 setMenuFor(null);
                 const f = syntheticLineField(l.id, 'taxClass', r);
                 const before = l.taxClass ?? 'standard';
-                if (before === taxClass) return;
-                void run(
-                  {
-                    label: `Line ${n}, tax rate`,
-                    undo: (v) => call(id, { kind: 'line', lineId: l.id, body: { taxClass: before } }, v),
-                    redo: (v) => call(id, { kind: 'line', lineId: l.id, body: { taxClass } }, v),
-                  },
-                  (v) => call(id, { kind: 'line', lineId: l.id, body: { taxClass } }, v),
-                  `${fieldLabel(f, detail)} saved.`,
-                );
+                if (before === taxClass) return focusSoon(`menu:${l.id}`);
+                focusAfter.current = `menu:${l.id}`;
+                const to = (tc: string) => (v: number) => send({ kind: 'line', lineId: l.id, body: { taxClass: tc } }, v);
+                void run({ label: `Line ${n}, tax rate`, undo: to(before), redo: to(taxClass) }, to(taxClass), `${fieldLabel(f, detail)} saved.`);
               }}
-              onClose={() => setMenuFor(null)}
+              onClose={() => {
+                setMenuFor(null);
+                focusSoon(`menu:${l.id}`);
+              }}
             />
           ) : null}
         </div>,
@@ -500,10 +620,11 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
             value={adding}
             fontFamily={cssFontFamily(family)}
             onChange={(v) => setAdding({ ...adding, ...v, error: null })}
+            next={nextLine}
             onSave={(again) => void saveNewLine(again)}
             onCancel={() => {
               setAdding(null);
-              focusAfter.current = 'add-line';
+              focusSoon('add-line');
             }}
           />,
         );
@@ -513,9 +634,10 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
             <button
               type="button"
               data-focus-key="add-line"
-              disabled={busy}
+              aria-disabled={busy || undefined}
               className="flex items-center gap-1 rounded border border-dashed border-blue-500 bg-white px-2 py-0.5 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-blue-600"
               onClick={() => {
+                if (busy) return;
                 setPicking(false);
                 setAdding({ title: '', quantity: '1', unit: 'Std', price: '', error: null });
               }}
@@ -524,35 +646,30 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
             </button>
             <button
               type="button"
-              disabled={busy}
+              data-focus-key="choose-product"
+              aria-disabled={busy || undefined}
               aria-expanded={picking}
               className="flex items-center gap-1 rounded border border-dashed border-blue-500 bg-white px-2 py-0.5 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-blue-600"
-              onClick={() => setPicking(!picking)}
+              onClick={() => !busy && setPicking(!picking)}
             >
               <Search aria-hidden className="size-3" /> Choose product
             </button>
-            {picking ? <ProductSearch onPick={(p) => void pickProduct(p)} onClose={() => setPicking(false)} /> : null}
+            {picking ? (
+              <ProductSearch
+                onPick={(p) => void pickProduct(p)}
+                onClose={() => {
+                  setPicking(false);
+                  focusSoon('choose-product');
+                }}
+              />
+            ) : null}
           </div>,
         );
       }
     }
 
-    // The open editor.
-    if (active && active.rect.page === pageNo) {
-      nodes.push(
-        <InlineEditor
-          key="editor"
-          editor={active}
-          scale={scale}
-          fontFamily={cssFontFamily(active.field.style.fontFamily)}
-          customers={usable}
-          label={fieldLabel(active.field, detail)}
-          onType={onType}
-          onCommit={() => void commit()}
-          onCancel={cancelEdit}
-        />,
-      );
-    }
+    // An editor for a field the page does not print (a line's tax class, a discount of 0) sits on its row.
+    if (active && !editorShown && active.rect.page === pageNo) nodes.push(editor(active.rect));
     return nodes;
   };
 
@@ -590,10 +707,10 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
             ))}
           </select>
         </label>
-        <Button size="sm" variant="outline" onClick={() => void undo()} disabled={busy || undoStack.length === 0} aria-keyshortcuts="Control+Z Meta+Z">
+        <Button size="sm" variant="outline" onClick={() => void undo()} disabled={undoStack.length === 0} aria-disabled={busy || undefined} aria-keyshortcuts="Control+Z Meta+Z">
           Undo
         </Button>
-        <Button size="sm" variant="outline" onClick={() => void redo()} disabled={busy || redoStack.length === 0} aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y">
+        <Button size="sm" variant="outline" onClick={() => void redo()} disabled={redoStack.length === 0} aria-disabled={busy || undefined} aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y">
           Redo
         </Button>
         <span className="text-muted-foreground">
@@ -644,6 +761,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
 
 function InlineEditor({
   editor,
+  rect,
   scale,
   fontFamily,
   customers,
@@ -653,15 +771,16 @@ function InlineEditor({
   onCancel,
 }: {
   editor: ActiveEditor;
+  rect: FieldRect;
   scale: number;
   fontFamily: string;
   customers: CustomerView[];
   label: string;
   onType: (value: string) => void;
-  onCommit: () => void;
+  onCommit: (by: 'key' | 'blur') => void;
   onCancel: () => void;
 }) {
-  const { field, rect, value, error } = editor;
+  const { field, value, error } = editor;
   const s = field.style;
   const errorId = `edit-error-${field.id}`;
   const box: React.CSSProperties = {
@@ -684,7 +803,7 @@ function InlineEditor({
     'aria-invalid': error ? true : undefined,
     'aria-describedby': error ? errorId : undefined,
     autoFocus: true,
-    onBlur: onCommit,
+    onBlur: () => onCommit('blur'),
   };
   const keys = (e: React.KeyboardEvent, multiline: boolean) => {
     if (e.key === 'Escape') {
@@ -692,7 +811,7 @@ function InlineEditor({
       onCancel();
     } else if (e.key === 'Enter' && (!multiline || e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      onCommit();
+      onCommit('key');
     }
   };
   const cls = 'w-full bg-white p-0 outline-2 outline-blue-600 ring-0 border-0';
@@ -723,9 +842,9 @@ function InlineEditor({
   } else if (field.documentField === 'servicePeriod') {
     const [start = '', end = ''] = value.split('/');
     control = (
-      <span className="flex gap-1 bg-white p-1 shadow" onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && onCommit()}>
-        <input aria-label={`${label}, first day`} type="date" autoFocus className="text-sm" value={start} onChange={(e) => onType(`${e.target.value}/${end}`)} onKeyDown={(e) => keys(e, false)} />
-        <input aria-label={`${label}, last day`} type="date" className="text-sm" value={end} onChange={(e) => onType(`${start}/${e.target.value}`)} onKeyDown={(e) => keys(e, false)} />
+      <span className="flex gap-1 bg-white p-1 shadow" onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && onCommit('blur')}>
+        <input aria-label={`${label}, first day`} aria-invalid={common['aria-invalid']} aria-describedby={common['aria-describedby']} type="date" autoFocus className="text-sm" value={start} onChange={(e) => onType(`${e.target.value}/${end}`)} onKeyDown={(e) => keys(e, false)} />
+        <input aria-label={`${label}, last day`} aria-invalid={common['aria-invalid']} aria-describedby={common['aria-describedby']} type="date" className="text-sm" value={end} onChange={(e) => onType(`${start}/${e.target.value}`)} onKeyDown={(e) => keys(e, false)} />
       </span>
     );
   } else if (field.kind === 'multiline') {
@@ -771,6 +890,7 @@ function NewLineRow({
   columns,
   value,
   fontFamily,
+  next,
   onChange,
   onSave,
   onCancel,
@@ -780,6 +900,8 @@ function NewLineRow({
   columns: Partial<Record<string, { x: number; width: number }>>;
   value: { title: string; quantity: string; unit: string; price: string; error: string | null };
   fontFamily: string;
+  /** Goes up when a line was added with Enter: the description takes focus for the next one. */
+  next: number;
   onChange: (v: Partial<{ title: string; quantity: string; unit: string; price: string }>) => void;
   onSave: (again: boolean) => void;
   onCancel: () => void;
@@ -790,6 +912,10 @@ function NewLineRow({
   };
   const input = 'absolute h-6 rounded-sm border border-blue-500 bg-white px-1 text-xs';
   const style = { fontFamily: `${fontFamily}, system-ui, sans-serif` };
+  const description = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (next > 0) description.current?.focus();
+  }, [next]);
   const keys = (e: React.KeyboardEvent, last: boolean) => {
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -802,7 +928,7 @@ function NewLineRow({
   const top = rect.y * scale;
   return (
     <div role="group" aria-label="New line" className="absolute inset-x-0 z-20" style={{ top, height: 0 }}>
-      <input aria-label="New line, description" autoFocus className={input} style={{ ...style, ...at('title', rect.x, rect.width * 0.4), top: 0 }} value={value.title} onChange={(e) => onChange({ title: e.target.value })} onKeyDown={(e) => keys(e, false)} />
+      <input ref={description} aria-label="New line, description" autoFocus className={input} style={{ ...style, ...at('title', rect.x, rect.width * 0.4), top: 0 }} value={value.title} onChange={(e) => onChange({ title: e.target.value })} onKeyDown={(e) => keys(e, false)} />
       <input aria-label="New line, quantity" inputMode="decimal" className={`${input} text-right`} style={{ ...style, ...at('quantity', rect.x + rect.width * 0.45, 50), top: 0 }} value={value.quantity} onChange={(e) => onChange({ quantity: e.target.value })} onKeyDown={(e) => keys(e, false)} />
       <input aria-label="New line, unit" className={input} style={{ ...style, ...at('unit', rect.x + rect.width * 0.55, 40), top: 0 }} value={value.unit} onChange={(e) => onChange({ unit: e.target.value })} onKeyDown={(e) => keys(e, false)} />
       <input aria-label="New line, unit price in euros" inputMode="decimal" className={`${input} text-right`} style={{ ...style, ...at('unitPrice', rect.x + rect.width * 0.65, 70), top: 0 }} value={value.price} onChange={(e) => onChange({ price: e.target.value })} onKeyDown={(e) => keys(e, true)} />
@@ -904,14 +1030,18 @@ function LineMenu({
 
 function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; onClose: () => void }) {
   const [q, setQ] = useState('');
-  const [items, setItems] = useState<ProductView[] | null>(null);
+  // The answer, with the search it answers: Enter picks only from the answer to what is typed now.
+  const [result, setResult] = useState<{ q: string; items: ProductView[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pickFirst = useRef(false);
+  const items = result?.items ?? null;
   useEffect(() => {
     let cancelled = false;
+    const query = q.trim();
     const t = setTimeout(() => {
       booksApi
-        .products({ q: q.trim() || undefined })
-        .then((page) => !cancelled && (setItems(page.items.filter((p) => !p.archivedAt)), setError(null)))
+        .products({ q: query || undefined })
+        .then((page) => !cancelled && (setResult({ q: query, items: page.items.filter((p) => !p.archivedAt) }), setError(null)))
         .catch((err: unknown) => !cancelled && setError(errorText(err)));
     }, 200);
     return () => {
@@ -919,6 +1049,13 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; 
       clearTimeout(t);
     };
   }, [q]);
+  const current = result !== null && result.q === q.trim();
+  useEffect(() => {
+    if (pickFirst.current && current && result.items[0]) {
+      pickFirst.current = false;
+      onPick(result.items[0]);
+    }
+  }, [current, result, onPick]);
   return (
     <div role="dialog" aria-label="Choose a product or service" className="absolute left-0 top-7 z-30 w-80 rounded-md border border-gray-500 bg-white p-2 shadow-lg">
       <label className="flex flex-col gap-1 text-xs font-medium text-gray-700">
@@ -929,8 +1066,15 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; 
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Escape') onClose();
-            if (e.key === 'Enter' && items && items[0]) onPick(items[0]);
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              onClose();
+            }
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              if (current && result.items[0]) onPick(result.items[0]);
+              else if (!current) pickFirst.current = true;
+            }
           }}
         />
       </label>

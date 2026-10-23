@@ -303,6 +303,127 @@ describe('the invoice page: backtrack and revise', () => {
   });
 });
 
+describe('the invoice page: review fixes', () => {
+  it('a quantity of 1000 opens as "1000" and undo sends 1000 back, never 1', async () => {
+    current = detail({ lines: [line({ quantity: 1000000 })] });
+    server();
+    await opened();
+    fireEvent.click(fieldButton('line.l1.quantity'));
+    const input = screen.getByRole('textbox', { name: 'Line 1, quantity' }) as HTMLInputElement;
+    expect(input.value).toBe('1000');
+    fireEvent.change(input, { target: { value: '5' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(live()).toBe('Line 1, quantity saved.'));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PATCH').at(-1)!.body).toEqual({ quantity: 1000000, expectedVersion: 4 }));
+  });
+
+  it('a step that fails is taken off the list, and the step below it still undoes', async () => {
+    let failNext = false;
+    server({
+      'PATCH /api/books/documents/doc-1': (b) => {
+        if (failNext) return { status: 422, body: { error: { code: 'validation', message: 'no' } } };
+        current = detail({ document: { ...current.document, ...stripVersion(b), version: current.document.version + 1 } });
+        return { status: 200, body: current };
+      },
+    });
+    await opened();
+    fireEvent.click(fieldButton('introText'));
+    const box = screen.getByRole('textbox', { name: 'Intro text' });
+    fireEvent.change(box, { target: { value: 'Hallo' } });
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(live()).toBe('Intro text saved.'));
+    fireEvent.click(fieldButton('line.l1.quantity'));
+    const q = screen.getByRole('textbox', { name: 'Line 1, quantity' });
+    fireEvent.change(q, { target: { value: '3' } });
+    fireEvent.keyDown(q, { key: 'Enter' });
+    await waitFor(() => expect(live()).toBe('Line 1, quantity saved.'));
+    // The quantity step undoes; the intro text step then fails once and is dropped.
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(live()).toBe('Undone: Line 1, quantity.'));
+    failNext = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(live()).toBe('Could not undo Intro text; it was taken off the list.'));
+    expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('after a refused save, leaving the field sends nothing; Enter compares with what is saved now', async () => {
+    let refuse = true;
+    server({
+      'PATCH /api/books/documents/doc-1/lines/l1': (b) => {
+        if (refuse) {
+          // Someone else changed the quantity meanwhile.
+          current = detail({ document: { version: 9 }, lines: [line({ quantity: 4000 })] });
+          return { status: 409, body: { error: { code: 'concurrent_edit', message: 'newer' } } };
+        }
+        current = detail({ document: { version: current.document.version + 1 }, lines: [line({ ...stripVersion(b) })] });
+        return { status: 200, body: current };
+      },
+    });
+    await opened();
+    fireEvent.click(fieldButton('line.l1.quantity'));
+    let input = screen.getByRole('textbox', { name: 'Line 1, quantity' });
+    fireEvent.change(input, { target: { value: '7' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    input = await screen.findByRole('textbox', { name: 'Line 1, quantity' });
+    await waitFor(() => expect(screen.getByText(/Not saved\. Enter saves it against the latest draft/)).toBeTruthy());
+    const patches = () => calls.filter((c) => c.method === 'PATCH').length;
+    const before = patches();
+    fireEvent.blur(input);
+    expect(patches()).toBe(before);
+    refuse = false;
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PATCH').at(-1)!.body).toEqual({ quantity: 7000, expectedVersion: 9 }));
+    // Undo goes back to the other person's 4, not to the 1,5 this editor started from.
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PATCH').at(-1)!.body).toEqual({ quantity: 4000, expectedVersion: 10 }));
+  });
+
+  it('a change made elsewhere ends the undo history', async () => {
+    server({
+      'PATCH /api/books/documents/doc-1': () => {
+        // Another tab saved meanwhile: this request is refused and the draft is read again at version 8.
+        current = detail({ document: { ...current.document, netOrGross: 'gross', version: 8 }, lines: current.lines });
+        return { status: 409, body: { error: { code: 'concurrent_edit', message: 'newer' } } };
+      },
+    });
+    await opened();
+    fireEvent.click(fieldButton('line.l1.quantity'));
+    const input = screen.getByRole('textbox', { name: 'Line 1, quantity' });
+    fireEvent.change(input, { target: { value: '2' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(fieldButton('introText'));
+    const box = screen.getByRole('textbox', { name: 'Intro text' });
+    fireEvent.change(box, { target: { value: 'Hallo' } });
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true));
+    expect(screen.getByRole('region', { name: 'Invoice page' })).toBeTruthy();
+  });
+
+  it('Enter in the product search waits for the answer to what was typed', async () => {
+    const answered: string[] = [];
+    server({
+      'GET /api/books/products': (_b, url) => {
+        const q = new URL(url, 'http://x').searchParams.get('q') ?? '';
+        answered.push(q);
+        const all = [
+          { id: 'p0', kind: 'goods', name: 'Aaa first', description: null, unitLabel: 'Stk', unitPrice: 100, priceBasis: 'net', taxClass: 'standard', discountBp: 0, archivedAt: null },
+          { id: 'p1', kind: 'service', name: 'Beratung', description: null, unitLabel: 'Std', unitPrice: 9900, priceBasis: 'net', taxClass: 'standard', discountBp: 0, archivedAt: null },
+        ];
+        return { status: 200, body: { items: all.filter((p) => p.name.toLowerCase().includes(q.toLowerCase())), nextCursor: null, total: 2 } };
+      },
+    });
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose product' }));
+    await screen.findByRole('button', { name: /Aaa first/ });
+    const search = screen.getByRole('textbox', { name: 'Search your products and services' });
+    fireEvent.change(search, { target: { value: 'Bera' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body?.title).toBe('Beratung'));
+  });
+});
+
 describe('the invoice page: re-entry', () => {
   it('"Use the form" switches to the form and is remembered; a narrow window gets the form', async () => {
     server();

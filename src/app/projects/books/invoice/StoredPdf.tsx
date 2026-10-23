@@ -17,6 +17,8 @@ import PdfCanvas from '../composer/PdfCanvas';
 
 export default function StoredPdf({ id, version, imported }: { id: string; version: number; imported: boolean }) {
   const [bytes, setBytes] = useState<Uint8Array | null>(null);
+  // Goes up with every PDF read, so the canvas draws new bytes (a new version) instead of keeping the open document.
+  const [loads, setLoads] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [zoom, setZoom] = useState(1);
@@ -28,6 +30,7 @@ export default function StoredPdf({ id, version, imported }: { id: string; versi
       .then(async (res) => {
         if (!res.ok) throw new Error(String(res.status));
         setBytes(new Uint8Array(await res.arrayBuffer()));
+        setLoads((n) => n + 1);
       })
       .catch(() => {
         if (!ctrl.signal.aborted) setError('The PDF could not be loaded. Try again, or use the download.');
@@ -63,7 +66,7 @@ export default function StoredPdf({ id, version, imported }: { id: string; versi
       <div className="overflow-auto rounded-lg bg-muted/40 p-6">
         <PdfCanvas
           pdf={bytes}
-          counter={bytes ? attempt + 1 : null}
+          counter={bytes ? loads : null}
           layout={null}
           zoom={zoom}
           dimmed={false}

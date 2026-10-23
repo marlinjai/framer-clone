@@ -48,7 +48,7 @@ import {
   type SettingsView,
 } from '@/lib/books/api';
 import { browserRenderSupported } from '@/lib/books/engine';
-import { date, money, moneyInput, parseMoney, parseQuantity, quantity, rate } from '@/lib/books/units';
+import { date, money, moneyInput, parseMoney, parseQuantity, quantity, quantityInput, rate } from '@/lib/books/units';
 
 import InvoicePage from './invoice/InvoicePage';
 import StoredPdf from './invoice/StoredPdf';
@@ -109,7 +109,7 @@ function draftOf(l: LineView): LineDraft {
   return {
     kind: l.kind,
     title: l.title,
-    quantity: l.kind === 'text' ? '' : quantity(l.quantity),
+    quantity: l.kind === 'text' ? '' : quantityInput(l.quantity),
     unitLabel: l.unitLabel,
     unitPrice: l.kind === 'text' ? '' : moneyInput(l.unitPrice),
     taxClass: l.taxClass ?? 'standard',

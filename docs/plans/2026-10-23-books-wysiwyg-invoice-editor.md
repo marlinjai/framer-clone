@@ -494,3 +494,60 @@ business and under reverse charge.
 
 Operator step: none by hand. The next deploy rolls migration `015_books_products` at boot (purely
 additive: one new table and two indexes).
+
+## Phase 3 build notes (2026-10-23): the editor on the page
+
+Where it lives: `src/app/projects/books/invoice/` (`InvoicePage.tsx` the page and its actions,
+`InlineEditor` inside it; `fields.ts` the field to value and value to request mapping;
+`useDraftPage.ts` the render input, the local redraw and the font faces; `StoredPdf.tsx` an issued
+or imported document's stored PDF). `DocumentEditor.tsx` shows the page instead of the recipient,
+lines and totals sections when the window is at least 1024 px wide, the browser can run the engine
+(a Web Worker) and the draft is not an import; "Use the form" switches back and is remembered per
+browser (storage access guarded, it is a convenience only).
+
+What a person can do on the page:
+
+- Click or Tab to any printed field the layout map marks editable and type in place: the editor
+  takes the field's font (the same font files as CSS faces), size, colour and alignment at the
+  current zoom. Enter commits a one-line field, Ctrl or Cmd plus Enter a multi-line one, Escape
+  leaves it, leaving the field commits. Text fields redraw on the page while typing (150 ms after
+  the last key); figures wait for the server's answer, which recomputes amounts, tax and totals.
+- Empty fields show where they would print ("Add an intro text"); where the slot has no room (an
+  empty line description right above the next row) a small "+" sits in the left margin instead,
+  never over printed text.
+- The address chooses the customer (the address itself comes from the contact). Computed figures,
+  the sender and the small print are not fields.
+- Each row has an actions menu at the right margin: move up or down, duplicate, add or change the
+  discount, the VAT class, remove. "Add line" opens inputs placed on the table's columns, Enter in
+  the price adds it and starts the next; "Choose product" adds from the product list.
+- Undo and redo (buttons, Ctrl or Cmd plus Z, Shift plus Z, Ctrl plus Y) replay each change as a
+  draft edit with the current version; a removed line comes back at its place.
+- A change refused because the draft changed elsewhere (409) reloads the draft and keeps the typed
+  value open in the field.
+- An issued invoice shows its stored PDF, the document of record, read-only and never drawn again.
+
+Proven 2026-10-23 in headless Chrome against a local stand-in for the Books API (the real page,
+the real engine and pdf.js): 22 fields on the probe draft, quantity edit recomputed by the server,
+intro text typed and saved, a line added, a product picked, a line removed and undone back to its
+place, the customer changed, focus returned to the edited field, the issued view drawn from the
+stored PDF. Tests: `invoice/__tests__/InvoicePage.test.tsx` covers the four stateful-flow paths
+(forward; backtrack and revise including undo, redo and a stale-version refusal; resume from the
+server's answer; re-entry through the form preference, a narrow window and an issued invoice).
+
+Fresh review (2026-10-23, an agent given only the diff), every finding fixed in the same change:
+quantities of 1000 and more opened as "1.000", which reads back as 1 (the form had the same bug;
+both now start from `quantityInput`, without thousands dots); a failing undo step blocked the
+stacks (now taken off with a spoken note); undo steps followed a line's old id after it was added
+back (steps now follow the line through an alias); a refused save reopened the field and the next
+blur overwrote the newer change (leaving the field now sends nothing, Enter compares with what is
+saved now, and any version this page did not produce ends the history); focus could be pulled to
+a stale field and was lost after menus, Escape and removals (focus now goes to the trigger, the
+neighbouring row or "Add line", and moving focus elsewhere cancels it; busy controls are
+`aria-disabled` instead of disabled, so focus is never dropped); the open editor now takes its
+field's place in reading order; Enter in the product search waits for the answer to what was
+typed; a double Enter in the new line adds one line; the stored PDF redraws for a new version;
+a local redraw waiting from typing no longer draws over the server's answer. Checked in Chrome:
+one request per action, no second save from the blur of a closing editor. Field buttons are as
+small as the printed text they sit on (below 24 px at 100 % zoom): the targets are the text
+itself, the exception WCAG 2.5.8 makes for essential presentation, and "Use the form" on the same
+screen gives full-size controls.

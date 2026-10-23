@@ -14,7 +14,7 @@
 
 import type { DocumentDetail, LineView } from '@/lib/books/api';
 import type { RenderInputPayload } from '@/lib/books/engine';
-import { moneyInput, parseMoney, parsePercent, parseQuantity, quantity } from '@/lib/books/units';
+import { moneyInput, parseMoney, parsePercent, parseQuantity, quantityInput } from '@/lib/books/units';
 import type { LayoutField } from '@/server/books/render/engine';
 
 /** The tax classes a line may choose, as the page offers them. */
@@ -55,7 +55,7 @@ export function editValue(field: LayoutField, detail: DocumentDetail): string {
       case 'description':
         return line.description ?? '';
       case 'quantity':
-        return quantity(line.quantity);
+        return quantityInput(line.quantity);
       case 'unitLabel':
         return line.unitLabel;
       case 'unitPrice':

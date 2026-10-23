@@ -113,6 +113,8 @@ export function useDraftPage(documentId: string, version: number): DraftPageStat
   useEffect(() => {
     let cancelled = false;
     const ctrl = new AbortController();
+    // A local redraw still waiting from typing would draw over the server's answer.
+    clearTimeout(timer.current);
     setPending(true);
     fetchRenderInput(documentId, { signal: ctrl.signal })
       .then((input) => {

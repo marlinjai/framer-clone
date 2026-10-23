@@ -140,7 +140,9 @@ connections to the suite. The four lines below are in that order.
   and a product and service list. Decided 2026-10-23 (the owner took every recommendation), in
   progress: phase 1 built (the engine draws drafts in a browser worker, byte-identical to the
   server, proven in headless Chrome); phase 2 (every editable field's rectangle and style, the
-  add-line and row anchors in the layout map) built 2026-10-23. See
+  add-line and row anchors in the layout map) built 2026-10-23; phase 3 (the editor on the page,
+  line actions, product picker, undo, the issued invoice as its stored PDF) built 2026-10-23. Left:
+  phase 4's subject line and formatted texts, phase 5's proof on Books Testfirma. See
   [plan](docs/plans/2026-10-23-books-wysiwyg-invoice-editor.md). (2026-10-23)
 - [ ] 8c. A discount on the whole invoice ("Gesamtrabatt", as sevdesk), split across the tax rates
   in proportion and printed so the tax per rate stays right (section 14 UStG): needs its own small
