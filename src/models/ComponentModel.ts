@@ -8,7 +8,7 @@ import type {
 } from '@/lib/bindings/types';
 import type { Query } from '@/lib/bindings/dataSource/types';
 import { resolveViewportFrameHeight } from '@/lib/canvas/viewportFrame';
-import { hasStockCredit, withoutStockCredit } from '@/lib/ai/pageGen/stockCredit';
+import { hasStockCredit, withImageSrc, withoutStockCredit } from '@/lib/ai/pageGen/stockCredit';
 
 export type PropsRecord = Record<string, any>;
 
@@ -147,6 +147,12 @@ const ComponentModel: any = ComponentBase
     setRenderedViewportHeight(height: number | undefined) {
       const next = height === undefined || !Number.isFinite(height) ? undefined : Math.round(height);
       if (self.renderedViewportHeight !== next) self.renderedViewportHeight = next;
+    },
+
+    // Swap an image's src. A different picture no longer matches a stock
+    // photo's credit, so withImageSrc drops it.
+    setImageSrc(nextSrc: string) {
+      self.props = withImageSrc((self.props || {}) as Record<string, unknown>, nextSrc);
     },
 
     // Canvas positioning actions (for root components)

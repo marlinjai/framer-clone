@@ -54,4 +54,16 @@ describe('editing an image that carries a stock credit', () => {
     expect(hasStockCredit(node.props)).toBe(false);
     expect(node.props.src).toBe(photo);
   });
+
+  it('setImageSrc swaps the src through an action, so a protected tree accepts it', () => {
+    const node = ComponentModel.create({ id: 'i', type: 'img', componentType: 'host', props });
+    expect(() => node.setImageSrc('https://example.com/mine.jpg')).not.toThrow();
+    expect(node.props).toEqual({ src: 'https://example.com/mine.jpg', alt: 'A' });
+  });
+
+  it('setImageSrc keeps the credit for the same photo at another size', () => {
+    const node = ComponentModel.create({ id: 'i', type: 'img', componentType: 'host', props });
+    node.setImageSrc('https://images.unsplash.com/photo-1?w=1200');
+    expect(hasStockCredit(node.props)).toBe(true);
+  });
 });

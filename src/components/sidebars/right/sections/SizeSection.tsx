@@ -11,7 +11,6 @@ import {
   PropertyRow,
   TextInput,
 } from '../primitives';
-import { withImageSrc } from '@/lib/ai/pageGen/stockCredit';
 
 interface SizeSectionProps {
   component: ComponentInstance;
@@ -174,10 +173,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
         <PropertyRow label="Image URL">
           <TextInput
             value={component.props?.src as string || ''}
-            onChange={(e) => {
-              // A different picture no longer matches a stock photo's credit: withImageSrc drops it.
-              component.props = withImageSrc((component.props || {}) as Record<string, unknown>, e.target.value);
-            }}
+            onChange={(e) => component.setImageSrc(e.target.value)}
             placeholder="https://example.com/image.jpg"
           />
         </PropertyRow>
