@@ -43,15 +43,17 @@ const RightSidebar = observer(() => {
   return (
     <div className={`
       bg-background border-l border-border flex flex-col transition-all duration-300 ease-in-out h-[calc(100vh-4rem)]
-      ${isCollapsed ? 'w-12' : 'w-64'}
+      ${isCollapsed ? 'w-12' : 'w-[272px]'}
     `}>
       {/* Header with collapse toggle and dynamic title */}
       <RightSidebarHeader />
 
       {/* Content - only show when not collapsed */}
       {!isCollapsed && (
-        <div className="flex-1 overflow-y-auto">
-          <div className="p-3">
+        // overflow-x-hidden is only the last guard: rows are built to fit
+        // (PropertyRow's minmax(0,1fr) track), sections own their 12px inset.
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">
+          <div className="min-w-0">
             {target ? (
               <>
                 {sections.map((sectionId) => {
@@ -69,9 +71,7 @@ const RightSidebar = observer(() => {
                 <DataSourceSection component={target} breakpointId={breakpointId} />
               </>
             ) : (
-              <div className="flex items-center space-x-2 mb-3">
-                <span className="text-sm text-muted-foreground">Select an element to edit properties</span>
-              </div>
+              <p className="p-3 text-[12px] text-muted-foreground">Select an element to edit its properties.</p>
             )}
           </div>
         </div>

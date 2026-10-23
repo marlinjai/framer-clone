@@ -3,7 +3,14 @@ import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { Move } from 'lucide-react';
 import { ComponentInstance } from '@/models/ComponentModel';
-import { CollapsibleSection, PropertySelect, DimensionInput } from '../primitives';
+import {
+  CollapsibleSection,
+  DimensionInput,
+  FieldPair,
+  PropertyRow,
+  PropertySelect,
+  TextInput,
+} from '../primitives';
 
 const POSITION_OPTIONS = [
   { value: 'static', label: 'Static' },
@@ -30,58 +37,68 @@ export const PositionSection = observer(({ component, breakpointId }: PositionSe
       icon={<Move size={14} />}
       defaultOpen={position !== 'static'}
     >
-      {/* Position type on field grid */}
-      <div className="grid grid-cols-[64px_1fr] items-center gap-2">
-        <label className="text-muted-foreground" style={{ fontSize: '11.5px' }}>Position</label>
+      <PropertyRow label="Position">
         <PropertySelect
           label=""
           value={position}
           onChange={(v) => setStyleValue('position', v)}
           options={POSITION_OPTIONS}
         />
-      </div>
+      </PropertyRow>
 
+      {/* Insets: two-up rows, prefixed T / B and L / R */}
       {position !== 'static' && (
-        <div className="grid grid-cols-2 gap-2">
-          <DimensionInput
-            label="Top"
-            value={getStyleValue('top')}
-            onChange={(v) => setStyleValue('top', v)}
-            placeholder="auto"
-          />
-          <DimensionInput
-            label="Right"
-            value={getStyleValue('right')}
-            onChange={(v) => setStyleValue('right', v)}
-            placeholder="auto"
-          />
-          <DimensionInput
-            label="Bottom"
-            value={getStyleValue('bottom')}
-            onChange={(v) => setStyleValue('bottom', v)}
-            placeholder="auto"
-          />
-          <DimensionInput
-            label="Left"
-            value={getStyleValue('left')}
-            onChange={(v) => setStyleValue('left', v)}
-            placeholder="auto"
-          />
-        </div>
+        <>
+          <PropertyRow label="Vertical" hint="Top and bottom offsets" group>
+            <FieldPair>
+              <DimensionInput
+                label=""
+                aria-label="Top"
+                prefix="T"
+                value={getStyleValue('top')}
+                onChange={(v) => setStyleValue('top', v)}
+                placeholder="auto"
+              />
+              <DimensionInput
+                label=""
+                aria-label="Bottom"
+                prefix="B"
+                value={getStyleValue('bottom')}
+                onChange={(v) => setStyleValue('bottom', v)}
+                placeholder="auto"
+              />
+            </FieldPair>
+          </PropertyRow>
+          <PropertyRow label="Horizontal" hint="Left and right offsets" group>
+            <FieldPair>
+              <DimensionInput
+                label=""
+                aria-label="Left"
+                prefix="L"
+                value={getStyleValue('left')}
+                onChange={(v) => setStyleValue('left', v)}
+                placeholder="auto"
+              />
+              <DimensionInput
+                label=""
+                aria-label="Right"
+                prefix="R"
+                value={getStyleValue('right')}
+                onChange={(v) => setStyleValue('right', v)}
+                placeholder="auto"
+              />
+            </FieldPair>
+          </PropertyRow>
+        </>
       )}
 
-      {/* Z-Index on field grid */}
-      <div className="grid grid-cols-[64px_1fr] items-center gap-2">
-        <label className="text-muted-foreground" style={{ fontSize: '11.5px' }}>Z-Index</label>
-        <input
-          type="text"
+      <PropertyRow label="Z-Index">
+        <TextInput
           value={getStyleValue('zIndex') || ''}
           onChange={(e) => setStyleValue('zIndex', e.target.value)}
-          className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 text-foreground outline-none focus:border-brand"
-          style={{ fontSize: '12.5px' }}
           placeholder="auto"
         />
-      </div>
+      </PropertyRow>
     </CollapsibleSection>
   );
 });

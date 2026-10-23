@@ -1,16 +1,22 @@
 'use client';
 import React, { useState } from 'react';
 import { observer } from 'mobx-react-lite';
-import { Paintbrush, ChevronDown, ChevronRight } from 'lucide-react';
-import { Switch } from '@/components/ui/switch';
+import { Paintbrush } from 'lucide-react';
 import { ComponentInstance } from '@/models/ComponentModel';
 import {
   CollapsibleSection,
   ColorInput,
-  PropertySlider,
+  DimensionInput,
+  DisclosureButton,
+  FieldPair,
+  PropertyRow,
   PropertySelect,
-  DimensionInput
+  PropertySlider,
+  PropertySwitch,
+  TextInput,
 } from '../primitives';
+
+const RADIUS_UNITS = ['px', '%'];
 
 const OVERFLOW_OPTIONS = [
   { value: 'visible', label: 'Visible' },
@@ -33,7 +39,9 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
   const setStyleValue = (prop: string, value: string | number) => component.updateResponsiveStyle(prop, value, breakpointId);
 
   const currentDisplay = getStyleValue('display');
-  const opacity = parseFloat(getStyleValue('opacity') ?? '1') || 1;
+  // `|| 1` would read a real opacity of 0 as 1, so only an unparseable value falls back.
+  const parsedOpacity = parseFloat(getStyleValue('opacity') ?? '1');
+  const opacity = Number.isNaN(parsedOpacity) ? 1 : parsedOpacity;
   const isVisible = currentDisplay !== 'none';
 
   return (
@@ -42,9 +50,7 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
       icon={<Paintbrush size={14} />}
       badge={breakpointId ? 'Responsive' : undefined}
     >
-      {/* Opacity: field grid with slider + 52px input */}
-      <div className="grid grid-cols-[64px_1fr] items-center gap-2">
-        <label className="text-muted-foreground" style={{ fontSize: '11.5px' }}>Opacity</label>
+      <PropertyRow label="Opacity">
         <PropertySlider
           label=""
           value={opacity}
@@ -55,12 +61,10 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
           displayMultiplier={100}
           suffix="%"
         />
-      </div>
+      </PropertyRow>
 
-      {/* Visibility: field grid with iris Switch */}
-      <div className="grid grid-cols-[64px_1fr] items-center gap-2">
-        <label className="text-muted-foreground" style={{ fontSize: '11.5px' }}>Visible</label>
-        <Switch
+      <PropertyRow label="Visible">
+        <PropertySwitch
           checked={isVisible}
           onCheckedChange={(checked) => {
             if (!checked) {
@@ -74,120 +78,115 @@ export const StylesSection = observer(({ component, breakpointId }: StylesSectio
             }
           }}
         />
-      </div>
+      </PropertyRow>
 
-      {/* Fill: field grid with color swatch + hex input */}
-      <div className="grid grid-cols-[64px_1fr] items-start gap-2">
-        <label className="text-muted-foreground pt-[9px]" style={{ fontSize: '11.5px' }}>Fill</label>
+      <PropertyRow label="Fill">
         <ColorInput
           label=""
           value={getStyleValue('backgroundColor') || '#ffffff'}
           onChange={(v) => setStyleValue('backgroundColor', v)}
         />
-      </div>
+      </PropertyRow>
 
-      {/* Text color (hidden for img): field grid */}
+      {/* Text color (hidden for img) */}
       {component.type !== 'img' && (
-        <div className="grid grid-cols-[64px_1fr] items-start gap-2">
-          <label className="text-muted-foreground pt-[9px]" style={{ fontSize: '11.5px' }}>Text</label>
+        <PropertyRow label="Text">
           <ColorInput
             label=""
             value={getStyleValue('color') || '#000000'}
             onChange={(v) => setStyleValue('color', v)}
           />
-        </div>
+        </PropertyRow>
       )}
 
-      {/* Overflow: field grid with select */}
-      <div className="grid grid-cols-[64px_1fr] items-center gap-2">
-        <label className="text-muted-foreground" style={{ fontSize: '11.5px' }}>Overflow</label>
+      <PropertyRow label="Overflow">
         <PropertySelect
           label=""
           value={getStyleValue('overflow') || 'visible'}
           onChange={(v) => setStyleValue('overflow', v)}
           options={OVERFLOW_OPTIONS}
         />
-      </div>
+      </PropertyRow>
 
-      {/* Border Radius: field grid */}
-      <div className="grid grid-cols-[64px_1fr] items-start gap-2">
-        <label className="text-muted-foreground pt-[9px]" style={{ fontSize: '11.5px' }}>Radius</label>
+      <PropertyRow label="Radius">
         <DimensionInput
           label=""
           value={getStyleValue('borderRadius')}
           onChange={(v) => setStyleValue('borderRadius', v)}
-          units={['px', '%']}
+          units={RADIUS_UNITS}
+          min={0}
           placeholder="0"
         />
-      </div>
+      </PropertyRow>
 
-      {/* Individual corners disclosure */}
-      <button
-        onClick={() => setShowCorners(!showCorners)}
-        className="flex items-center gap-1 text-muted-foreground hover:text-muted-foreground"
-        style={{ fontSize: '11.5px' }}
-      >
-        {showCorners ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+      {/* Individual corners */}
+      <DisclosureButton open={showCorners} onToggle={() => setShowCorners(!showCorners)}>
         Individual corners
-      </button>
+      </DisclosureButton>
       {showCorners && (
-        <div className="grid grid-cols-2 gap-2">
-          <DimensionInput label="TL" value={getStyleValue('borderTopLeftRadius')} onChange={(v) => setStyleValue('borderTopLeftRadius', v)} units={['px', '%']} placeholder="0" />
-          <DimensionInput label="TR" value={getStyleValue('borderTopRightRadius')} onChange={(v) => setStyleValue('borderTopRightRadius', v)} units={['px', '%']} placeholder="0" />
-          <DimensionInput label="BL" value={getStyleValue('borderBottomLeftRadius')} onChange={(v) => setStyleValue('borderBottomLeftRadius', v)} units={['px', '%']} placeholder="0" />
-          <DimensionInput label="BR" value={getStyleValue('borderBottomRightRadius')} onChange={(v) => setStyleValue('borderBottomRightRadius', v)} units={['px', '%']} placeholder="0" />
-        </div>
+        <>
+          <PropertyRow label="Top" hint="Top-left and top-right corners" group>
+            <FieldPair>
+              <DimensionInput label="" aria-label="Top-left radius" prefix="L" value={getStyleValue('borderTopLeftRadius')} onChange={(v) => setStyleValue('borderTopLeftRadius', v)} units={RADIUS_UNITS} min={0} placeholder="0" />
+              <DimensionInput label="" aria-label="Top-right radius" prefix="R" value={getStyleValue('borderTopRightRadius')} onChange={(v) => setStyleValue('borderTopRightRadius', v)} units={RADIUS_UNITS} min={0} placeholder="0" />
+            </FieldPair>
+          </PropertyRow>
+          <PropertyRow label="Bottom" hint="Bottom-left and bottom-right corners" group>
+            <FieldPair>
+              <DimensionInput label="" aria-label="Bottom-left radius" prefix="L" value={getStyleValue('borderBottomLeftRadius')} onChange={(v) => setStyleValue('borderBottomLeftRadius', v)} units={RADIUS_UNITS} min={0} placeholder="0" />
+              <DimensionInput label="" aria-label="Bottom-right radius" prefix="R" value={getStyleValue('borderBottomRightRadius')} onChange={(v) => setStyleValue('borderBottomRightRadius', v)} units={RADIUS_UNITS} min={0} placeholder="0" />
+            </FieldPair>
+          </PropertyRow>
+        </>
       )}
 
-      {/* Border disclosure */}
-      <button
-        onClick={() => setShowBorder(!showBorder)}
-        className="flex items-center gap-1 text-muted-foreground hover:text-muted-foreground"
-        style={{ fontSize: '11.5px' }}
-      >
-        {showBorder ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+      {/* Border */}
+      <DisclosureButton open={showBorder} onToggle={() => setShowBorder(!showBorder)}>
         Border
-      </button>
+      </DisclosureButton>
       {showBorder && (
-        <div className="flex flex-col gap-2.5">
-          <DimensionInput
-            label="Border Width"
-            value={getStyleValue('borderWidth')}
-            onChange={(v) => setStyleValue('borderWidth', v)}
-            units={['px']}
-            placeholder="0"
-          />
-          <PropertySelect
-            label="Border Style"
-            value={getStyleValue('borderStyle') || 'none'}
-            onChange={(v) => setStyleValue('borderStyle', v)}
-            options={[
-              { value: 'none', label: 'None' },
-              { value: 'solid', label: 'Solid' },
-              { value: 'dashed', label: 'Dashed' },
-              { value: 'dotted', label: 'Dotted' },
-            ]}
-          />
-          <ColorInput
-            label="Border Color"
-            value={getStyleValue('borderColor') || '#000000'}
-            onChange={(v) => setStyleValue('borderColor', v)}
-          />
-        </div>
+        <>
+          <PropertyRow label="Width" hint="Border width">
+            <DimensionInput
+              label=""
+              value={getStyleValue('borderWidth')}
+              onChange={(v) => setStyleValue('borderWidth', v)}
+              units={['px']}
+              min={0}
+              placeholder="0"
+            />
+          </PropertyRow>
+          <PropertyRow label="Style" hint="Border style">
+            <PropertySelect
+              label=""
+              value={getStyleValue('borderStyle') || 'none'}
+              onChange={(v) => setStyleValue('borderStyle', v)}
+              options={[
+                { value: 'none', label: 'None' },
+                { value: 'solid', label: 'Solid' },
+                { value: 'dashed', label: 'Dashed' },
+                { value: 'dotted', label: 'Dotted' },
+              ]}
+            />
+          </PropertyRow>
+          <PropertyRow label="Color" hint="Border color">
+            <ColorInput
+              label=""
+              value={getStyleValue('borderColor') || '#000000'}
+              onChange={(v) => setStyleValue('borderColor', v)}
+            />
+          </PropertyRow>
+        </>
       )}
 
-      {/* Box Shadow: field grid */}
-      <div className="grid grid-cols-[64px_1fr] items-center gap-2">
-        <label className="text-muted-foreground" style={{ fontSize: '11.5px' }}>Shadow</label>
-        <input
-          type="text"
+      <PropertyRow label="Shadow">
+        <TextInput
+          mono
           value={getStyleValue('boxShadow') || ''}
           onChange={(e) => setStyleValue('boxShadow', e.target.value)}
-          className="h-[30px] w-full bg-background border border-border rounded-[7px] px-2 font-mono text-foreground outline-none focus:border-brand"
-          style={{ fontSize: '11px' }}
           placeholder="0 2px 4px rgba(0,0,0,0.1)"
         />
-      </div>
+      </PropertyRow>
     </CollapsibleSection>
   );
 });

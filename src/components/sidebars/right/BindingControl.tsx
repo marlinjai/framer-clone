@@ -89,7 +89,7 @@ const BindingControl = observer(({ node, slot, meta, children }: BindingControlP
       <div className="flex items-center gap-1.5">
         {readBinding ? (
           <div
-            className={`flex h-7 flex-1 items-center gap-1.5 rounded border px-2 text-xs ${
+            className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded border px-2 text-xs ${
               broken
                 ? 'border-warning bg-warning/10 text-warning'
                 : 'border-brand/20 bg-brand/10 text-brand'
@@ -105,7 +105,7 @@ const BindingControl = observer(({ node, slot, meta, children }: BindingControlP
             )}
           </div>
         ) : (
-          <div className="flex-1">{children}</div>
+          <div className="min-w-0 flex-1">{children}</div>
         )}
 
         {readBinding ? (
