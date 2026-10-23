@@ -145,6 +145,26 @@ The owner took every recommendation of the decision page
 5. **Text snippets and placeholders later**, after the editor is in daily use (its own ROADMAP
    line).
 
+## Constraints for phase 4 (decided before building, so nothing is built around them)
+
+- **Italic is embedded only when a document has italic text.** pdf-lib embeds every face it is
+  given, used or not; embedding the italic faces always would change the bytes of every document,
+  issued ones included, on their next re-render. A document without italic runs keeps exactly
+  today's bytes (the golden tests assert it).
+- **Formatted text stays plain to the legal checks.** Whatever stores bold, italic and lists (a
+  small run model in the document, not free markup), the text the PDF yields when read back is the
+  plain words, so `missingFields` is unchanged, and the undrawable-character check runs on the
+  content, never on markup.
+- **The subject is a template block and a document field.** sevdesk's "Betreff" prints where the
+  layout says: a new optional `subject` block in the template model (palette, rules, engine,
+  presets) and a `subject` column on `sales_document` (migration). The reference number already
+  exists as the document's `contractReference` (printed in the document data as "Vertrag"); it is
+  made editable on the page, not added again.
+- **The engine stays browser-safe.** Audited 2026-10-23: the engine, the render model, `format`,
+  `labels` and `epcQr` import nothing from Node; `logoImage.ts` (upload checks, `node:zlib`) is
+  upload-side only and must stay out of the engine's imports; `previewSafe` gets a browser version
+  that measures coverage from the fetched font bytes.
+
 ## Phases
 
 | Phase | What | Size |
