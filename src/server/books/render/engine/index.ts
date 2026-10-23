@@ -31,18 +31,28 @@
 // positions, and the layout issues) is returned next to the bytes and never
 // stored; the composer draws its selection outlines from it, and the save gate
 // refuses a template whose layout has issues.
+//
+// Logos (decision 15): the caller passes the bytes of the company's assets the
+// template names (`options.assets`, by SHA-256), checked at upload
+// (render/logoImage.ts) and loaded by repository/assets.ts. Each one is embedded once, then a logo block draws it
+// at its width in millimetres with the image's own aspect ratio, aligned by
+// the block style, kept together. A logo naming an asset the caller did not
+// pass draws nothing and is a layout issue (LOGO_ASSET_MISSING), which refuses
+// a document of record like any other issue: an invoice is never issued with
+// its logo silently missing.
 
 import fontkit from '@pdf-lib/fontkit';
-import { PDFDocument, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib';
+import { PDFDocument, rgb, type PDFFont, type PDFImage, type PDFPage, type RGB } from 'pdf-lib';
 
 import { label, pageOf } from '../../template/labels';
-import type {
-  Block,
-  CellBlock,
-  RegionName,
-  TableColumn,
-  TemplateDocumentV2,
-  ThemeColor,
+import {
+  logoBlocks,
+  type Block,
+  type CellBlock,
+  type RegionName,
+  type TableColumn,
+  type TemplateDocumentV2,
+  type ThemeColor,
 } from '../../template/schema';
 import { darkRuns, epcPayload, qrMatrix, QUIET_ZONE_MODULES } from '../epcQr';
 import type { ModelLine, RenderModel } from '../model';
@@ -82,11 +92,19 @@ export interface EngineFonts {
   bold: Uint8Array;
 }
 
+/** An image checked at upload (render/logoImage.ts): PNG or JPEG bytes. */
+export interface EngineImage {
+  contentType: 'image/png' | 'image/jpeg';
+  bytes: Uint8Array;
+}
+
 export interface EngineOptions {
   /** Stamp every page "VORSCHAU, KEIN BELEG" (the template preview route). */
   preview?: boolean;
   /** The page cap (MAX_PAGES unless a test lowers it). */
   maxPages?: number;
+  /** The company's assets the template's logo blocks name, by SHA-256 (others are ignored). */
+  assets?: ReadonlyMap<string, EngineImage>;
 }
 
 export interface LayoutRect {
@@ -109,7 +127,8 @@ export type LayoutIssueCode =
   | 'TABLE_TOO_NARROW'
   | 'ADDRESS_FIELD_OVERFLOW'
   | 'ADDRESS_ZONE_TOO_TALL'
-  | 'PAGE_LIMIT';
+  | 'PAGE_LIMIT'
+  | 'LOGO_ASSET_MISSING';
 
 /** The most pages one document may run to; beyond it nothing more is placed (and the layout has an issue). */
 export const MAX_PAGES = 200;
@@ -197,6 +216,7 @@ class Binder {
     readonly doc: TemplateDocumentV2,
     readonly fonts: Fonts,
     readonly geo: PageGeometry,
+    readonly images: ReadonlyMap<string, PDFImage>,
   ) {
     const c = (hex: string) => {
       const [r, g, b] = hexToRgb(hex);
@@ -273,8 +293,7 @@ class Binder {
 
     switch (block.type) {
       case 'logo':
-        // Phase 5 brings logo assets; until then the block draws nothing and takes no space.
-        return null;
+        return keep(this.logo(block, x, width, region));
       case 'senderLine':
         return keep(m.senderLine ? this.lines(block.id, x, width, [m.senderLine], { size, bold, color, align }) : []);
       case 'recipient':
@@ -334,6 +353,32 @@ class Binder {
         // Unreachable for a checked document (assertRenderableTemplate); never skip a block silently.
         throw new Error(`renderTemplate: unknown block type ${(block as { type?: unknown }).type as string}`);
     }
+  }
+
+  /** The logo at its width with the image's aspect ratio, aligned in its box; nothing without an asset. */
+  logo(block: Extract<Block | CellBlock, { type: 'logo' }>, x: number, width: number, region: RegionName): Chunk[] {
+    if (block.assetSha256 === null) return [];
+    const image = this.images.get(block.assetSha256);
+    if (!image) {
+      this.issues.push({ code: 'LOGO_ASSET_MISSING', blockId: block.id, region });
+      return [];
+    }
+    const w = r2(block.widthMm * MM);
+    const h = r2((w * image.height) / image.width);
+    // A logo wider than its box (a narrow cell, the address zone's right side) would run into its neighbour.
+    if (w > width) this.issues.push({ code: 'BLOCK_TOO_WIDE', blockId: block.id, region });
+    const room = Math.max(0, width - w);
+    const align = block.style.align ?? 'left';
+    const left = r2(align === 'right' ? x + room : align === 'center' ? x + room / 2 : x);
+    return [
+      {
+        blockId: block.id,
+        x: left,
+        width: w,
+        h,
+        draw: (dc, top) => dc.page.drawImage(image, { x: left, y: r2(PAGE_HEIGHT - top - h), width: w, height: h }),
+      },
+    ];
   }
 
   meta(block: Extract<Block, { type: 'documentMeta' }>, x: number, width: number, size: number, color: RGB): Chunk[] {
@@ -744,6 +789,10 @@ export function assertRenderableTemplate(doc: TemplateDocumentV2): void {
       if (!THEME_COLORS.has(b.lineColor)) fail(`${path}.lineColor`);
     }
     if (b.type === 'spacer') num(b.heightPt, `${path}.heightPt`);
+    if (b.type === 'logo') {
+      if (num(b.widthMm, `${path}.widthMm`) === 0) fail(`${path}.widthMm`);
+      if (b.assetSha256 !== null && !(typeof b.assetSha256 === 'string' && /^[0-9a-f]{64}$/.test(b.assetSha256))) fail(`${path}.assetSha256`);
+    }
     if (b.type === 'paymentQr') {
       num(b.sizeMm, `${path}.sizeMm`);
       if (typeof b.caption !== 'string') fail(`${path}.caption`);
@@ -794,8 +843,16 @@ export async function renderTemplate(
     regular: await pdf.embedFont(fontBytes.regular, { subset: true }),
     bold: await pdf.embedFont(fontBytes.bold, { subset: true }),
   };
+  // Every asset the logos name, embedded once, in a fixed order (the bytes do not depend on the map's order).
+  const images = new Map<string, PDFImage>();
+  const shas = [...new Set(logoBlocks(doc).map((l) => l.block.assetSha256).filter((s): s is string => s !== null))].sort();
+  for (const sha of shas) {
+    const asset = options.assets?.get(sha);
+    if (!asset) continue;
+    images.set(sha, asset.contentType === 'image/png' ? await pdf.embedPng(asset.bytes) : await pdf.embedJpg(asset.bytes));
+  }
   const geo = geometry(doc);
-  const b = new Binder(model, doc, fonts, geo);
+  const b = new Binder(model, doc, fonts, geo, images);
   const full = { x: geo.left, width: geo.contentWidth };
 
   // The footer and the following-page header reserve their space on every page.

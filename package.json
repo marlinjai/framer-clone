@@ -78,6 +78,7 @@
     "date-fns": "^4.1.0",
     "embla-carousel-react": "^8.6.0",
     "input-otp": "^1.4.2",
+    "jpeg-js": "0.4.4",
     "kysely": "0.27.6",
     "lucide-react": "^0.540.0",
     "mobx": "^6.13.7",

@@ -147,6 +147,8 @@ const TABLE_DOCS: Record<string, string> = {
     "010_books_upload_import: the staging row of one uploaded past-invoice PDF.\nMutable until `imported` (then frozen by trigger, BK010). The JSONB columns\nare parsed with zod on read (src/server/books/upload/staging.ts); they hold\nthe extracted printed invoice, the user's corrected record (keyed to the\nextraction it corrects) and the named problems.",
   historical_import_extraction:
     '010_books_upload_import: one model call of the upload import (the daily ceiling counts these).',
+  books_asset:
+    '013_books_assets: an uploaded logo (PNG or JPEG bytes), one per company and\nSHA-256, append-only (no updated_at).',
 };
 
 /** Inline notes printed above a column. */

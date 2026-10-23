@@ -298,7 +298,8 @@ function footer(w: Writer, page: PDFPage, index: number, count: number): void {
 export async function renderLegacyV1(model: RenderModel): Promise<Uint8Array> {
   const pdf = await PDFDocument.create({ updateMetadata: false });
   pdf.registerFontkit(fontkit);
-  const files = fontFiles();
+  // The version 1 layout knows one font: DejaVu Sans, its files pinned in fonts.ts.
+  const files = fontFiles('dejavu-sans');
   const fonts: Fonts = {
     regular: await pdf.embedFont(files.regular, { subset: true }),
     bold: await pdf.embedFont(files.bold, { subset: true }),

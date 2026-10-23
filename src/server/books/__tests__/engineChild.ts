@@ -12,6 +12,6 @@ import { buildRenderModel } from '../render/model';
 import { preset } from '../template/presets';
 import { probe, probeInput } from '../template/probes';
 
-void renderTemplate(buildRenderModel(probeInput(probe('reverseCharge'))), preset('modern'), fontFiles()).then(({ bytes }) => {
+void renderTemplate(buildRenderModel(probeInput(probe('reverseCharge'))), preset('modern'), fontFiles('dejavu-sans')).then(({ bytes }) => {
   process.stdout.write(`${createHash('sha256').update(bytes).digest('hex')}\n`);
 });

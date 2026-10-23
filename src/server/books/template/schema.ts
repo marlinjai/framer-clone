@@ -12,11 +12,17 @@
 // and the size, contrast and width rules live in rules.ts (the structural
 // check of the save gate); the probe render lives in gate.ts.
 //
-// Phase 2 scope (Build notes): the font enum holds only DejaVu Sans, the one
-// family embedded today; Noto Sans and Noto Serif widen it in phase 5. A logo
-// block has no asset until phase 5 and draws nothing.
+// Fonts (decision 6): the three embedded families, each a regular and a bold
+// face (render/fonts.ts pins their files). A logo block names an uploaded
+// asset of the company by its SHA-256 (decision 15, the `books_asset` table);
+// every logo block of one template names the same asset (rules.ts), which the
+// issue snapshot freezes.
 
 import { z } from 'zod';
+
+/** The embedded font families (decision 6); a family id never changes its files. */
+export const FONT_FAMILIES = ['dejavu-sans', 'noto-sans', 'noto-serif'] as const;
+export type FontFamily = (typeof FONT_FAMILIES)[number];
 
 /** Font sizes a block may use, in points (decision 3). */
 export const SIZE_SCALE = [6.5, 7, 7.5, 8, 9, 9.5, 10, 11, 12, 14, 16, 20] as const;
@@ -76,7 +82,7 @@ export const logoBlockSchema = z
     ...base,
     type: z.literal('logo'),
     widthMm: z.number().int().min(15).max(80),
-    /** The logo asset (phase 5); null draws nothing and takes no space. */
+    /** The logo asset (`books_asset.sha256` of the company); null draws nothing and takes no space. */
     assetSha256: z.string().regex(/^[0-9a-f]{64}$/).nullable(),
   })
   .strict();
@@ -244,8 +250,8 @@ export const templateDocumentV2Schema = z
       .strict(),
     theme: z
       .object({
-        /** Phase 2: the one embedded family; Noto Sans and Noto Serif arrive in phase 5. */
-        fontFamily: z.enum(['dejavu-sans']),
+        /** One of the embedded families (decision 6). */
+        fontFamily: z.enum(FONT_FAMILIES),
         baseSizePt: z.number().min(8).max(11).refine((v) => Number.isInteger(v * 2), 'in steps of 0.5 pt'),
         ink: hexColor,
         accent: hexColor,
@@ -312,6 +318,21 @@ export function allBlocks(doc: TemplateDocumentV2): Array<{ region: RegionName; 
     }
   }
   return out;
+}
+
+/** Every logo block of a document with its region, columns cells included. */
+export function logoBlocks(doc: TemplateDocumentV2): Array<{ region: RegionName; block: Extract<Block, { type: 'logo' }> }> {
+  return allBlocks(doc).flatMap((e) => (e.block.type === 'logo' ? [{ region: e.region, block: e.block }] : []));
+}
+
+/**
+ * The template's logo asset: the one SHA-256 its logo blocks name (rules.ts
+ * refuses two different ones), or null when no logo block names an asset.
+ * This is what the issue snapshot freezes (`TemplateSnapshotV2.logo`).
+ */
+export function templateLogo(doc: TemplateDocumentV2): { sha256: string } | null {
+  const sha = logoBlocks(doc).find((l) => l.block.assetSha256 !== null)?.block.assetSha256;
+  return sha ? { sha256: sha } : null;
 }
 
 /** Parse a template document (throws a ZodError naming the paths). */

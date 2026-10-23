@@ -70,7 +70,13 @@ export type BooksErrorCode =
   // The Correct flow (011_books_replacement, correct.ts).
   | 'NOT_CORRECTABLE'
   | 'REPLACED_INVOICE_CANCELLED'
-  | 'REPLACEMENT_INCOMPLETE';
+  | 'REPLACEMENT_INCOMPLETE'
+  // Logos (013_books_assets, render/logoImage.ts, repository/assets.ts).
+  | 'ASSET_TOO_LARGE'
+  | 'UNSUPPORTED_ASSET_TYPE'
+  | 'ASSET_INVALID'
+  | 'ASSET_NOT_FOUND'
+  | 'LOGO_ASSET_MISSING';
 
 export class BooksError extends Error {
   readonly code: BooksErrorCode;

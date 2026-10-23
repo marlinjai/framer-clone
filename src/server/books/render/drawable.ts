@@ -1,14 +1,17 @@
 // src/server/books/render/drawable.ts
 //
-// Which printed fields contain characters the embedded fonts cannot draw
-// (fonts.ts). A document of record must print every name, address and line as
-// written, so issue refuses (UNDRAWABLE_TEXT) and names the fields; nothing is
-// ever transliterated or replaced on an issued document. Only the draft preview
-// replaces such characters with "?" (`previewSafe`), and says so by being a draft.
+// Which printed fields contain characters the document's font family cannot
+// draw (fonts.ts, decision 6: the coverage of the family the document is
+// actually set in, the template's `theme.fontFamily`; DejaVu Sans for a
+// version 1 layout). A document of record must print every name, address and
+// line as written, so issue refuses (UNDRAWABLE_TEXT) and names the fields;
+// nothing is ever transliterated or replaced on an issued document. Only the
+// draft preview replaces such characters with "?" (`previewSafe`), and says so
+// by being a draft.
 
 import { BooksError } from '../errors';
 import { templateTexts } from '../template/rules';
-import type { Block, CellBlock, TemplateDocumentV2 } from '../template/schema';
+import type { Block, CellBlock, FontFamily, TemplateDocumentV2 } from '../template/schema';
 import { undrawable } from './fonts';
 import type { RenderInput, RenderModel } from './model';
 
@@ -50,11 +53,17 @@ function printedFields(input: RenderInput): Array<[string, string | null | undef
   return fields;
 }
 
-/** The fields with undrawable characters (names only, never the values), the template's own texts included. */
+/** The family a document is set in: its template's, or DejaVu Sans (the version 1 renderer's only font). */
+export function familyOf(template?: TemplateDocumentV2 | null): FontFamily {
+  return template ? template.theme.fontFamily : 'dejavu-sans';
+}
+
+/** The fields with undrawable characters in the template's family (names only, never the values), the template's own texts included. */
 export function undrawableFields(input: RenderInput, template?: TemplateDocumentV2 | null): string[] {
+  const family = familyOf(template);
   const own: Array<[string, string]> = template ? templateTexts(template).map((t) => [`template.${t.blockId}.${t.field}`, t.text]) : [];
   return [...printedFields(input), ...own]
-    .filter(([, v]) => typeof v === 'string' && undrawable(v).length > 0)
+    .filter(([, v]) => typeof v === 'string' && undrawable(v, family).length > 0)
     .map(([f]) => f);
 }
 
@@ -70,15 +79,15 @@ export function assertDrawable(input: RenderInput, template?: TemplateDocumentV2
   }
 }
 
-function replaceUndrawable(text: string): string {
-  const bad = new Set(undrawable(text));
+function replaceUndrawable(text: string, family: FontFamily): string {
+  const bad = new Set(undrawable(text, family));
   if (bad.size === 0) return text;
   return [...text].map((ch) => (bad.has(ch) ? '?' : ch)).join('');
 }
 
-/** A draft preview's model with undrawable characters shown as "?" (never for a document of record). */
-export function previewSafe(model: RenderModel): RenderModel {
-  const t = replaceUndrawable;
+/** A draft preview's model with the characters `family` cannot draw shown as "?" (never for a document of record). */
+export function previewSafe(model: RenderModel, family: FontFamily): RenderModel {
+  const t = (text: string) => replaceUndrawable(text, family);
   return {
     ...model,
     senderLine: t(model.senderLine),
@@ -105,9 +114,9 @@ export function previewSafe(model: RenderModel): RenderModel {
   };
 }
 
-/** A preview's template with undrawable characters in its own texts shown as "?" (never for a document of record). */
+/** A preview's template with undrawable characters in its own texts (in its own family) shown as "?" (never for a document of record). */
 export function previewSafeTemplate(doc: TemplateDocumentV2): TemplateDocumentV2 {
-  const t = replaceUndrawable;
+  const t = (text: string) => replaceUndrawable(text, doc.theme.fontFamily);
   const fix = <B extends Block | CellBlock>(b: B): B => {
     if (b.type === 'freeText') return { ...b, heading: b.heading && t(b.heading), text: t(b.text) };
     if (b.type === 'paymentDetails') return { ...b, heading: b.heading && t(b.heading) };

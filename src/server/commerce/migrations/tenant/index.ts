@@ -12,6 +12,7 @@ import { booksImport } from './009_books_import';
 import { booksUploadImport } from './010_books_upload_import';
 import { booksReplacement } from './011_books_replacement';
 import { booksTemplateV2 } from './012_books_template_v2';
+import { booksAssets } from './013_books_assets';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -69,6 +70,9 @@ import { booksTemplateV2 } from './012_books_template_v2';
  *                            deleting, existing templates converted to the
  *                            Klassisch layout as version 1, the version 1 layout
  *                            columns dropped
+ *   013_books_assets       : the logos templates print: books_asset (PNG or JPEG
+ *                            bytes, unique per company and SHA-256, append-only,
+ *                            BK014)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -84,4 +88,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   booksUploadImport,
   booksReplacement,
   booksTemplateV2,
+  booksAssets,
 ];

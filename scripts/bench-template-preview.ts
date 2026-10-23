@@ -36,7 +36,7 @@ async function probeWithPages(doc: TemplateDocumentV2, pages: number): Promise<P
       ...base,
       lines: Array.from({ length: n }, (_, i) => ({ ...base.lines[i % base.lines.length], id: `l${i}`, position: i + 1 })),
     };
-    const { layout } = await renderTemplate(buildRenderModel(probeInput(p)), doc, fontFiles());
+    const { layout } = await renderTemplate(buildRenderModel(probeInput(p)), doc, fontFiles(doc.theme.fontFamily));
     if (layout.pageCount === pages) return p;
   }
   throw new Error(`no line count gives ${pages} pages`);
@@ -44,7 +44,8 @@ async function probeWithPages(doc: TemplateDocumentV2, pages: number): Promise<P
 
 async function preview(p: Probe, doc: TemplateDocumentV2): Promise<{ ms: number; pages: number; bytes: number }> {
   const started = performance.now();
-  const { bytes, layout } = await renderTemplate(previewSafe(buildRenderModel(probeInput(p))), previewSafeTemplate(doc), fontFiles(), {
+  const family = doc.theme.fontFamily;
+  const { bytes, layout } = await renderTemplate(previewSafe(buildRenderModel(probeInput(p)), family), previewSafeTemplate(doc), fontFiles(family), {
     preview: true,
   });
   const body = JSON.stringify({ pdf: Buffer.from(bytes).toString('base64'), layout });

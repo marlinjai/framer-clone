@@ -14,9 +14,12 @@
 //   409  the state moved on (stale version, no longer a draft, a duplicate,
 //        an invalid transition), or the company is not initialised for the
 //        Books yet (`books_not_initialised`: run `pnpm books:init-company`)
+//   413  an uploaded logo is larger than 1 MB; 415 it is not a PNG or a JPEG
 //   422  the document cannot be issued or rendered as it stands (a missing
 //        customer, no billable line, an incomplete sender or recipient, a tax
-//        case outside the supported scope): the user fixes the document
+//        case outside the supported scope, a logo the company does not have):
+//        the user fixes the document; or an uploaded logo cannot be decoded,
+//        embedded, or has more than 2000 px on its longer side
 //   503  the shared contacts database could not be read; nothing was written,
 //        retrying is safe
 
@@ -78,6 +81,11 @@ const STATUS: Record<BooksErrorCode, number> = {
   COUNTER_RAISE_UNCONFIRMED: 409,
   READING_WOULD_BE_REPLACED: 409,
   IMPORT_NOT_READY: 422,
+  ASSET_TOO_LARGE: 413,
+  UNSUPPORTED_ASSET_TYPE: 415,
+  ASSET_INVALID: 422,
+  ASSET_NOT_FOUND: 404,
+  LOGO_ASSET_MISSING: 422,
 };
 
 /** The two codes that mean "this company was never set up for the Books". */
@@ -104,6 +112,7 @@ const MESSAGES: Partial<Record<BooksErrorCode, string>> = {
     'the corrected invoice could not be issued together with the cancellation of the invoice it replaces; nothing was issued',
   RENDER_INCOMPLETE: 'the PDF would lack a legally required field; nothing was issued or stored',
   TEMPLATE_INVALID: 'the template cannot be saved; fix the named problems (nothing was saved)',
+  LOGO_ASSET_MISSING: "the template's logo is not stored for this company; choose the logo in the template again (nothing was issued)",
 };
 
 /** Lower snake case of a domain code, as the API answers it. */
