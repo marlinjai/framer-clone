@@ -23,6 +23,7 @@ import type {
   ProjectSnapshotOut,
 } from '@/models/ProjectModel';
 import type { PageSnapshotIn, PageSnapshotOut } from '@/models/PageModel';
+import { normalizeSiteSettings, type SiteSettings } from '@/lib/site/siteSettings';
 
 /**
  * The persistence-shaped form of a single page: the MST page identifier, its
@@ -61,6 +62,8 @@ export interface PersistedSite {
   apiKeyRef: string | null;
   /** LumitraBindingModel.enabled — gates snippet injection on publish. */
   lumitraEnabled: boolean;
+  /** ProjectModel.siteSettings, normalized (the `site_settings` column). */
+  siteSettings: SiteSettings;
   /**
    * ProjectModel.metadata.createdAt as epoch ms (MST `types.Date` serializes to
    * a number). Persisted so it survives a load -> save round-trip.
@@ -110,6 +113,7 @@ export function projectToPersisted(
     ingestionEndpoint: snap.lumitra?.ingestionEndpoint ?? null,
     apiKeyRef: snap.lumitra?.apiKeyRef ?? null,
     lumitraEnabled: snap.lumitra?.enabled ?? false,
+    siteSettings: normalizeSiteSettings(snap.siteSettings),
     // MST `types.Date` serializes to epoch ms in the SnapshotOut.
     projectCreatedAt: snap.metadata.createdAt as number,
     projectUpdatedAt: snap.metadata.updatedAt as number,
@@ -130,6 +134,8 @@ export interface SiteRowData {
   ingestionEndpoint: string | null;
   apiKeyRef: string | null;
   lumitraEnabled: boolean;
+  /** The `site_settings` JSON column (any shape; normalized here). */
+  siteSettings?: unknown;
   /** Persistence-layer Date columns (Prisma returns `Date`). */
   projectCreatedAt: Date;
   projectUpdatedAt: Date;
@@ -174,6 +180,7 @@ export function persistedToProjectSnapshot(row: SiteRowData): ProjectSnapshotIn 
       updatedAt: row.projectUpdatedAt.getTime(),
     },
     pages,
+    siteSettings: normalizeSiteSettings(row.siteSettings),
   };
 
   if (hasBinding) {

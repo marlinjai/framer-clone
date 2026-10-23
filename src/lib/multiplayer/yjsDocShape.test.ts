@@ -334,3 +334,34 @@ describe('encoded state preserves the round-trip', () => {
     expect(getSnapshot(project2)).toEqual(snap);
   });
 });
+
+describe('site settings and page noindex survive the round-trip', () => {
+  it('carries the site settings blob and the page noIndex flag both ways', () => {
+    const { project } = buildFixtureProject();
+    project.updateSiteSettings({
+      ...project.site,
+      siteName: 'Bäckerei',
+      language: 'de',
+      business: { ...project.site.business, phone: '+49 89 123456' },
+    });
+    const page = project.pagesArray[0];
+    page.updateMetadata({ noIndex: true, ogImage: 'https://cdn.example.com/og.jpg' });
+
+    const doc = mstSnapshotToYDoc(getSnapshot(project) as any);
+    const stored = doc.getMap(YJS_KEYS.project).get(YJS_PROJECT_KEYS.siteSettings) as any;
+    expect(stored.language).toBe('de');
+
+    const rebuilt = ProjectModel.create(yDocToMstSnapshot(doc));
+    expect(rebuilt.site).toEqual(project.site);
+    expect(rebuilt.pages.get(page.id)!.metadata.noIndex).toBe(true);
+    expect(rebuilt.pages.get(page.id)!.metadata.ogImage).toBe('https://cdn.example.com/og.jpg');
+  });
+
+  it('a doc written before site settings existed loads with the defaults', () => {
+    const { project } = buildFixtureProject();
+    const doc = mstSnapshotToYDoc(getSnapshot(project) as any);
+    doc.getMap(YJS_KEYS.project).delete(YJS_PROJECT_KEYS.siteSettings);
+    const rebuilt = ProjectModel.create(yDocToMstSnapshot(doc));
+    expect(rebuilt.site.language).toBe('en');
+  });
+});

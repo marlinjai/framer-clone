@@ -188,6 +188,7 @@ export class SiteRepository {
         ingestionEndpoint: true,
         apiKeyRef: true,
         lumitraEnabled: true,
+        siteSettings: true,
         projectCreatedAt: true,
         projectUpdatedAt: true,
         pages: {
@@ -205,6 +206,7 @@ export class SiteRepository {
       ingestionEndpoint: row.ingestionEndpoint,
       apiKeyRef: row.apiKeyRef,
       lumitraEnabled: row.lumitraEnabled,
+      siteSettings: row.siteSettings,
       projectCreatedAt: row.projectCreatedAt,
       projectUpdatedAt: row.projectUpdatedAt,
       pages: row.pages.map((p) => ({ pageId: p.pageId, snapshot: p.snapshot })),
@@ -300,6 +302,7 @@ export class SiteRepository {
         ingestionEndpoint: persisted.ingestionEndpoint,
         apiKeyRef: persisted.apiKeyRef,
         lumitraEnabled: persisted.lumitraEnabled,
+        siteSettings: persisted.siteSettings as unknown as Prisma.InputJsonValue,
         // projectCreatedAt is immutable (set on create); only the
         // application "last edited" time advances on update.
         projectUpdatedAt: new Date(persisted.projectUpdatedAt),
@@ -331,6 +334,7 @@ export class SiteRepository {
             ingestionEndpoint: persisted.ingestionEndpoint,
             apiKeyRef: persisted.apiKeyRef,
             lumitraEnabled: persisted.lumitraEnabled,
+            siteSettings: persisted.siteSettings as unknown as Prisma.InputJsonValue,
             projectCreatedAt: new Date(persisted.projectCreatedAt),
             projectUpdatedAt: new Date(persisted.projectUpdatedAt),
             redirects: redirects as unknown as Prisma.InputJsonValue,
