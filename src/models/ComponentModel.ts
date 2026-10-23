@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { types, Instance, SnapshotIn, SnapshotOut, getParent, hasParent as hasMstParent } from 'mobx-state-tree';
+import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
 import React from 'react';
 import type {
   BindingEntry,
@@ -42,22 +43,7 @@ function isObject(x: any): x is Record<string, any> {
   return !!x && typeof x === 'object' && !Array.isArray(x);
 }
 
-export const CSS_PROP_SET = new Set<string>([
-  'width','height','minWidth','minHeight','maxWidth','maxHeight','aspectRatio',
-  'display','position','top','right','bottom','left','inset',
-  'padding','paddingTop','paddingRight','paddingBottom','paddingLeft',
-  'margin','marginTop','marginRight','marginBottom','marginLeft',
-  'gap','rowGap','columnGap',
-  'flex','flexGrow','flexShrink','flexBasis','flexDirection','flexWrap','alignItems','alignContent','alignSelf','justifyItems','justifySelf','justifyContent','order',
-  'grid','gridTemplate','gridTemplateColumns','gridTemplateRows','gridTemplateAreas','gridArea','gridColumn','gridRow','gridAutoFlow','gridAutoRows','gridAutoColumns',
-  'font','fontFamily','fontSize','fontWeight','fontStyle','lineHeight','letterSpacing','textAlign','textDecoration','textTransform','whiteSpace',
-  'color','background','backgroundColor','backgroundImage','backgroundSize','backgroundPosition','backgroundRepeat','backgroundClip',
-  'border','borderWidth','borderStyle','borderColor','borderTop','borderRight','borderBottom','borderLeft',
-  'borderRadius','borderTopLeftRadius','borderTopRightRadius','borderBottomLeftRadius','borderBottomRightRadius','boxShadow','outline',
-  'opacity','filter','backdropFilter','mixBlendMode',
-  'transform','transformOrigin','transition','transitionProperty','transitionDuration','transitionDelay','transitionTimingFunction',
-  'overflow','overflowX','overflowY','zIndex','cursor','objectFit','objectPosition'
-]);
+export { CSS_PROP_SET };
 
 /** A breakpoint of the page a component lives on: a viewport frame's id, min width and label. */
 export interface PageBreakpoint {
