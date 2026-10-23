@@ -14,6 +14,7 @@ import { booksReplacement } from './011_books_replacement';
 import { booksTemplateV2 } from './012_books_template_v2';
 import { booksAssets } from './013_books_assets';
 import { booksAssetDelete } from './014_books_asset_delete';
+import { booksProducts } from './015_books_products';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -80,6 +81,10 @@ import { booksAssetDelete } from './014_books_asset_delete';
  *                            names it (BK015, one definition of "in use" in
  *                            books_asset_in_use), UPDATE and TRUNCATE stay
  *                            refused (BK014); commerce_app may DELETE
+ *   015_books_products     : the company's list of products and services
+ *                            (books_product, mutable, archived instead of
+ *                            deleted, a name unique among the live items);
+ *                            draft lines copy its values, never reference it
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -97,4 +102,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   booksTemplateV2,
   booksAssets,
   booksAssetDelete,
+  booksProducts,
 ];

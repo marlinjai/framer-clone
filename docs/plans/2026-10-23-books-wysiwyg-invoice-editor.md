@@ -300,3 +300,74 @@ surfaced as `invalid_input`; the render-input route loaded every logo's bytes to
 recently used out); an answer for another document id is refused; wrong file names in comments;
 the harness asset stand-in answered any kind; `.next-harness` in `.dockerignore` and tsconfig.
 Kept on purpose: `public` caching of the font route (decision 2). The fixes were reviewed again.
+=======
+## Products build notes (2026-10-23)
+
+What was built (phase 4, the product and service list; branch `feat/books-products`):
+
+- **Migration `015_books_products`**: a per-company table `books_product` (kind service or
+  product, name, description, unit label, unit price in integer cents never negative, the basis
+  the price is quoted in, net or gross, tax class standard, reduced or zero, a default discount in
+  basis points, `archived_at`). A normal mutable table, archived instead of deleted. Lines COPY an
+  item's values and never reference it (no foreign key, none ever added), so changing or archiving
+  an item never changes a draft or an issued document; the migration header says so. No trigger
+  and no new BK code (nothing to refuse beyond CHECKs and one unique index); no REVOKE (the app
+  role reads, inserts and updates it like any mutable table).
+- **Repository and routes**: `GET /api/books/products?q=&includeArchived=1&cursor=` (100 a page,
+  live first, then by folded name), `POST /api/books/products`, `GET|PATCH|DELETE
+  /api/books/products/<id>` (DELETE archives; `PATCH { archived: false }` restores, alone in its
+  request). Read guard `viewBooks`, write guard `editBooks`; another company's id answers 404. A
+  name a live item already has answers 409 `duplicate_product` (create, rename, restore).
+- **Client**: `ProductView` and `ProductInput` in `src/lib/books/api.ts`, the calls and the
+  message for `duplicate_product`; `lineFromProduct(product)` in `src/lib/books/products.ts`
+  returns exactly the body of `POST .../lines` (kind, title, description, unitLabel, unitPrice,
+  priceBasis, taxClass, discountBp) for phase 3's line search.
+- **Management page**: the "Products and services" tab (`ProductsPanel.tsx`, `ProductForm.tsx`):
+  search, create, change, archive, restore, show archived; prices typed in euros and shown in
+  German format; errors under their field and tied to it; focus kept in place after each change.
+
+Decided while building, say so if you disagree:
+
+1. **A price has a basis (net or gross), and the server converts it.** A line's unit price is in
+   the draft's basis; an item has no draft. The add-line route takes `priceBasis` with the
+   `unitPrice` it describes and converts on the server under the draft's tax profile at that
+   moment (`convertUnitPrice` in `totals.ts`, rounded as one unit's tax is). The client never
+   converts (decision 3). A small business stores the price as it is (net equals gross). Under
+   reverse charge a gross quote loses its German VAT (the customer accounts for it), a net price
+   stays as it is.
+2. **Names compare folded**: case, accents, compatibility forms and repeated spaces do not count,
+   and "ß" is "ss" ("Beratung" and "BERATÚNG" are one name). The fold is the application's
+   (`src/lib/books/searchKey.ts`, stored as `name_key` and `search_text`), as the database has no
+   accent extension; `name_key` is bounded to 600 characters (a ligature can fold to 18 letters).
+   The search matches every typed word in name and description.
+3. **One name rule** for the form and the server (`productNameProblem`): 1 to 300 characters (a
+   line title), at least one letter or digit, a bounded fold. The default unit is `Stk`, as a line's.
+4. **A change sends only the fields that differ** from the item as opened (no version column: the
+   list is not a legal record; two windows changing different fields both keep their change).
+5. **The list cursor holds the sort key** (archived flag, folded name, id), so a page continues
+   where the last ended even when that row was renamed or archived meanwhile.
+6. **Shared list status moved** (`FirstPage`, `MoreRows`) from BooksHome into `ListStatus.tsx`;
+   `Field` gained an error slot with `fieldA11y` (aria-invalid, aria-describedby).
+
+Review: a fresh agent reviewed the full diff and found 13 issues (the net or gross price with no
+server path, focus moved before the reloaded rows were shown, an unbounded fold overflowing the
+index, a full-body PATCH overwriting another window, client and server name rules differing,
+two default units, "19 % VAT" shown to a small business, busy buttons, Escape dropping typed
+values, a truncated description, missing paging tests, archive touching an archived item, restore
+not refolding); all fixed. Its re-review found 3 more (reverse charge kept the VAT in a gross
+quote, `priceBasis` applied to a catalog price, another form replacing a typed one silently); all
+fixed. WCAG 2.2 AA checked with the `wcag` skill (labels, errors tied to fields, focus order and
+visibility, status messages, label in name, reflow at 320 px, target size).
+
+Tests: `pnpm test` 2949 passed (225 files), `pnpm test:integration` 528 passed (48 files),
+typecheck, lint, build and `db:codegen-commerce` (no diff) clean. New: the four stateful-flow
+paths of the tab plus its details (`ProductsPanel.test.tsx`), the fold, the name rule and
+`lineFromProduct` (`src/lib/books/__tests__/products.test.ts`), `convertUnitPrice`
+(`totals.test.ts`), and on real Postgres (`books-products.itest.ts`): guards, company scoping,
+uniqueness among live items, archive frees the name, search, paging, a line from an item unchanged
+after the item is changed and archived, and the price conversion in both directions, for a small
+business and under reverse charge.
+
+Operator step: none by hand. The next deploy rolls migration `015_books_products` at boot (purely
+additive: one new table and two indexes).
+>>>>>>> origin/main

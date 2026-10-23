@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_AMOUNT_CENTS,
   applyDiscount,
+  convertUnitPrice,
   deriveLine,
   lineExceedsLimit,
   lineNetBeforeDiscount,
@@ -22,6 +23,34 @@ const NET: LineTaxContext = { netOrGross: 'net', kleinunternehmer: false, revers
 function line(overrides: Partial<LineInputs>): LineInputs {
   return { kind: 'service', quantity: 1000, unitPrice: 10000, discountBp: 0, taxClass: null, taxRateOverride: null, ...overrides };
 }
+
+describe('convertUnitPrice (a product list price in the draft basis)', () => {
+  const regular = { taxClass: 'standard' as const, taxRateOverride: null, kleinunternehmer: false, reverseCharge: false };
+
+  it('adds or takes off the line rate exactly as one unit is taxed', () => {
+    expect(convertUnitPrice(10000, 'net', 'gross', regular)).toBe(11900);
+    expect(convertUnitPrice(11900, 'gross', 'net', regular)).toBe(10000);
+    expect(convertUnitPrice(1000, 'net', 'gross', { ...regular, taxClass: 'reduced' })).toBe(1070);
+    expect(convertUnitPrice(999, 'gross', 'net', regular)).toBe(999 - Math.round((999 * 1900) / 11900));
+    expect(convertUnitPrice(1000, 'net', 'gross', { ...regular, taxClass: null, taxRateOverride: 500 })).toBe(1050);
+    // The derived gross line equals what the net price would have printed.
+    const gross = convertUnitPrice(8333, 'net', 'gross', regular);
+    const asGross = deriveLine(line({ unitPrice: gross, taxClass: 'standard' }), { ...NET, netOrGross: 'gross' });
+    expect(asGross.subtotal + asGross.taxAmount).toBe(gross);
+  });
+
+  it('leaves the price alone in the same basis, at 0 %, and for a small business', () => {
+    expect(convertUnitPrice(10000, 'net', 'net', regular)).toBe(10000);
+    expect(convertUnitPrice(10000, 'net', 'gross', { ...regular, taxClass: 'zero' })).toBe(10000);
+    expect(convertUnitPrice(10000, 'net', 'gross', { ...regular, kleinunternehmer: true })).toBe(10000);
+    expect(convertUnitPrice(11900, 'gross', 'net', { ...regular, kleinunternehmer: true })).toBe(11900);
+  });
+
+  it('under reverse charge takes the VAT out of a gross quote and adds none to a net one', () => {
+    expect(convertUnitPrice(11900, 'gross', 'net', { ...regular, reverseCharge: true })).toBe(10000);
+    expect(convertUnitPrice(10000, 'net', 'gross', { ...regular, reverseCharge: true })).toBe(10000);
+  });
+});
 
 describe('totals', () => {
   it('line subtotal from thousandths quantity and discount', () => {
