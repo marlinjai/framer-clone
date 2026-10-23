@@ -4,9 +4,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { getSnapshot } from 'mobx-state-tree';
 import { createRootStore, getHistoryStore } from '@/stores/RootStore';
-import { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
+import { createFloatingCanvasComponent, createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
 import ProjectModel from '@/models/ProjectModel';
-import { ancestorIdsOf, canDeleteLayer, deleteLayer, isLockedOnCanvas } from '../layerActions';
+import { ancestorIdsOf, canDeleteLayer, deleteLayer, duplicateLayer, isLockedOnCanvas } from '../layerActions';
 
 function setup() {
   const store = createRootStore();
@@ -110,5 +110,52 @@ describe('deleteLayer', () => {
     expect(editorUI.selectedComponent).toBe(image);
     expect(editorUI.selectedComponentList.map(c => c.id)).toEqual([image.id]);
     expect(editorUI.selectedViewportNode).toBe(desktop);
+  });
+});
+
+describe('duplicate', () => {
+  it('copies the subtree with fresh ids right after the original and selects the copy', () => {
+    const { page, editorUI, history, root, main, desktop } = setup();
+    editorUI.selectComponent(main, desktop.breakpointId);
+    expect(duplicateLayer(page, editorUI, history, main)).toBe(1);
+    const children = root.children as ComponentInstance[];
+    const index = children.findIndex(c => c.id === main.id);
+    const copy = children[index + 1];
+    expect(copy.id).not.toBe(main.id);
+    expect(copy.parentId).toBe(root.id);
+    expect(copy.type).toBe(main.type);
+    const [copiedChild] = copy.children as ComponentInstance[];
+    expect(copiedChild.id).not.toBe((main.children[0] as ComponentInstance).id);
+    expect(copiedChild.parentId).toBe(copy.id);
+    expect(copiedChild.props.children).toBe('Nested');
+    expect(editorUI.selectedComponent).toBe(copy);
+  });
+
+  it('copies a selected parent and its selected child once, as one undo step', () => {
+    const { page, editorUI, history, root, main, nested, desktop } = setup();
+    const before = root.children.length;
+    editorUI.setSelection([main, nested], desktop.breakpointId);
+    expect(duplicateLayer(page, editorUI, history)).toBe(1);
+    expect(root.children.length).toBe(before + 1);
+    history.undo();
+    expect(root.children.length).toBe(before);
+  });
+
+  it('offsets a floating copy on the canvas', () => {
+    const { page, editorUI, history } = setup();
+    page.addCanvasNode(createFloatingCanvasComponent('float-1', 'div', { children: 'Badge' }, 100, 200));
+    const floating = page.findComponent('float-1')!;
+    expect(duplicateLayer(page, editorUI, history, floating)).toBe(1);
+    const copy = editorUI.selectedComponent as ComponentInstance;
+    expect(copy.id).not.toBe(floating.id);
+    expect(copy.isFloatingElement).toBe(true);
+    expect([copy.canvasX, copy.canvasY]).toEqual([124, 224]);
+    expect(page.findComponent(copy.id)).toBe(copy);
+  });
+
+  it('never duplicates the page root or a breakpoint frame', () => {
+    const { page, editorUI, history, root, desktop } = setup();
+    expect(duplicateLayer(page, editorUI, history, root)).toBe(0);
+    expect(duplicateLayer(page, editorUI, history, desktop)).toBe(0);
   });
 });

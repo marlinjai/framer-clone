@@ -334,6 +334,58 @@ const PageModel = PageWithComponents
   // floating / viewport node (removeCanvasNode). Clears editorUI selections so no
   // safeReference is left dangling on a destroyed node. Viewport nodes are skipped:
   // we don't want Backspace to nuke entire breakpoint frames.
+  /**
+   * Duplicate a node and its whole subtree as one history entry. Every id in
+   * the copy is fresh and every child's parentId follows it. A tree child is
+   * inserted right after the original; a floating element is placed 24px down
+   * and right of it on the canvas. The page root and breakpoint frames are not
+   * duplicable. Returns the copy, or undefined when nothing was duplicated.
+   */
+  duplicateComponent(componentId: string): ComponentInstance | undefined {
+    const component = findComponentInPage(self, componentId);
+    if (!component) {
+      console.warn(`[PageModel] duplicateComponent: ${componentId} not found`);
+      return undefined;
+    }
+    const appTree = self.appComponentTree as ComponentInstance;
+    if (component.id === appTree.id || component.isViewportNode) return undefined;
+
+    const withFreshIds = (snap: ComponentSnapshotIn, parentId: string | undefined): ComponentSnapshotIn => {
+      const id = uuidv4();
+      return {
+        ...snap,
+        id,
+        parentId,
+        children: (snap.children ?? []).map((c: ComponentSnapshotIn) => withFreshIds(c, id)),
+      };
+    };
+
+    if (component.hasParent && component.parentId) {
+      const parent = findComponentInPage(self, component.parentId);
+      if (!parent) return undefined;
+      const index = parent.children.findIndex((c: ComponentInstance) => c.id === component.id);
+      const copy = ComponentModel.create(withFreshIds(getSnapshot(component) as ComponentSnapshotIn, parent.id));
+      parent.addChild(copy, index + 1);
+      self.updatedAt = new Date();
+      return copy;
+    }
+
+    if (self.canvasNodes.has(component.id)) {
+      const snap = withFreshIds(getSnapshot(component) as ComponentSnapshotIn, undefined);
+      const copy = ComponentModel.create({
+        ...snap,
+        canvasX: (component.canvasX ?? 0) + 24,
+        canvasY: (component.canvasY ?? 0) + 24,
+      });
+      self.canvasNodes.set(copy.id, copy);
+      self.updatedAt = new Date();
+      return self.canvasNodes.get(copy.id);
+    }
+
+    console.warn(`[PageModel] duplicateComponent: could not locate owner for ${componentId}`);
+    return undefined;
+  },
+
   deleteComponent(componentId: string): boolean {
     const component = findComponentInPage(self, componentId);
     if (!component) {

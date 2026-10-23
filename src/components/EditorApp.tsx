@@ -18,6 +18,7 @@ import { openProject, pageIdFromLocation, pickPage, restoreStashedDemo } from '@
 import EditorNotice from './EditorNotice';
 import { isEditableTarget, resolveAction } from '@/lib/keyBindings';
 import { deleteSelection } from '@/lib/canvas/deleteSelection';
+import { duplicateLayer } from '@/lib/layers/layerActions';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
 import EditorCommerceProvider from '@/components/EditorCommerceProvider';
@@ -156,6 +157,17 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
         e.preventDefault();
         // Every selected node, as one undo step.
         deleteSelection(page, rootStore.editorUI, getHistoryStore());
+        return;
+      }
+
+      if (match.action === 'duplicate') {
+        // Always swallow Cmd+D so the browser never opens its bookmark dialog.
+        e.preventDefault();
+        if (rootStore.editorUI.selectedTool === EditorTool.GRAB) return;
+        const page = rootStore.editorUI.currentPage;
+        if (!page || rootStore.editorUI.selectedComponentList.length === 0) return;
+        // Every selected node, as one undo step; the copies become the selection.
+        duplicateLayer(page, rootStore.editorUI, getHistoryStore());
         return;
       }
 

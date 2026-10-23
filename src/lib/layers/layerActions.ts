@@ -49,6 +49,43 @@ export function canDeleteLayer(component: ComponentInstance): boolean {
   return component.hasParent || component.isFloatingElement;
 }
 
+/** Whether a Layers row offers Duplicate: the same nodes Delete accepts. */
+export const canDuplicateLayer = canDeleteLayer;
+
+/**
+ * Duplicate from a Layers row or Cmd+D. When the row is part of the selection
+ * (or no row is given) every selected node is duplicated, skipping nodes whose
+ * ancestor is also selected so a subtree is copied once; all copies form one
+ * undo step and become the new selection, the first copy as primary.
+ * Returns how many copies were made.
+ */
+export function duplicateLayer(
+  page: PageModelType,
+  editorUI: EditorUIType,
+  history: HistoryStoreInstance | null,
+  component?: ComponentInstance,
+): number {
+  const useSelection = !component || editorUI.isSelected(component.id);
+  const candidates = useSelection ? editorUI.selectedComponentList : [component];
+  const find: FindComponent = (id) => page.findComponent(id);
+  const chosen = new Set(candidates.map((c: ComponentInstance) => c.id));
+  const roots = candidates.filter(
+    (c: ComponentInstance) => canDuplicateLayer(c) && !ancestorIdsOf(c, find).some(id => chosen.has(id)),
+  );
+  if (roots.length === 0) return 0;
+
+  const breakpointId = editorUI.selectedViewportNode?.breakpointId;
+  history?.startBatch('Duplicate');
+  const copies: ComponentInstance[] = [];
+  for (const node of roots) {
+    const copy = page.duplicateComponent(node.id);
+    if (copy) copies.push(copy);
+  }
+  history?.commitBatch();
+  if (copies.length > 0) editorUI.setSelection(copies, breakpointId);
+  return copies.length;
+}
+
 /**
  * Delete from a Layers row. When the row is part of the selection the whole
  * selection goes (one undo step, as Delete on the canvas). Otherwise only the
