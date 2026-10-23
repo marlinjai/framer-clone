@@ -758,3 +758,142 @@ describe('POST /api/ai/generate-page stock photos', () => {
     expect(await res.text()).not.toContain('test-unsplash-key');
   });
 });
+
+// --- Design tells (src/lib/ai/pageGen/tells.ts) ------------------------------
+const EM_DASH = '\u2014';
+
+const TELL_PAGE = {
+  title: 'Bakery',
+  nodes: [
+    {
+      type: 'section',
+      label: 'Hero',
+      children: [
+        { type: 'h1', label: 'Headline', props: { children: "It's not a bakery, it's a ritual." } },
+        { type: 'a', label: 'CTA', props: { href: '#order', children: 'Order now ->' } },
+      ],
+    },
+    {
+      type: 'section',
+      label: 'How it works',
+      children: [
+        {
+          type: 'div',
+          label: 'Bento',
+          props: { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' } },
+          children: [1, 2, 3, 4].map((i) => ({
+            type: 'div',
+            label: 'Tile',
+            props: {
+              style: { backgroundColor: '#f4f1ea', padding: '24px', ...(i === 1 ? { gridColumn: 'span 2' } : {}) },
+            },
+            children: [{ type: 'p', props: { children: `Step ${i}` } }],
+          })),
+        },
+      ],
+    },
+  ],
+};
+
+const CLEAN_PAGE = {
+  title: 'Bakery',
+  nodes: [
+    {
+      type: 'section',
+      label: 'Hero',
+      children: [
+        { type: 'h1', label: 'Headline', props: { children: 'Bread the slow way' } },
+        { type: 'a', label: 'CTA', props: { href: '#order', children: 'Order now' } },
+      ],
+    },
+  ],
+};
+
+describe('POST /api/ai/generate-page design tells', () => {
+  it('applies the safe fixes without a repair round and lists them as automatic fixes', async () => {
+    anthropicState.turns = [
+      toolTurn({
+        title: `Bakery ${EM_DASH} fresh`,
+        nodes: [
+          {
+            type: 'section',
+            label: 'Hero',
+            children: [
+              { type: 'h1', props: { children: `Fresh bread ${EM_DASH} baked daily \u{1F35E}` } },
+              { type: 'p', props: { children: 'Open 8:00 \u2013 18:30' } },
+              { type: 'button', props: { children: 'Order →' } },
+            ],
+          },
+        ],
+      }),
+    ];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(1);
+    const result = evs.find((e) => e.event === 'gen:result')!.data as {
+      title: string;
+      warnings: string[];
+      tells: string[];
+      nodes: Array<{ children: Array<{ props: Record<string, unknown> }> }>;
+    };
+    expect(result.title).toBe('Bakery: fresh');
+    const [h1, p, button] = result.nodes[0].children;
+    expect(h1.props.children).toBe('Fresh bread: baked daily');
+    expect(p.props.children).toBe('Open 8:00-18:30');
+    expect(button.props.children).toBe('Order');
+    expect(result.warnings.join('\n')).toMatch(/dashes/);
+    expect(result.warnings.join('\n')).toMatch(/emoji/);
+    expect(result.warnings.join('\n')).toMatch(/arrow/);
+    expect(result.tells).toEqual([]);
+    expect(JSON.stringify(result)).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  it('sends the unfixable tells into the repair round and applies the clean second page', async () => {
+    anthropicState.turns = [toolTurn(TELL_PAGE), toolTurn(CLEAN_PAGE)];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(2);
+    expect(evs.some((e) => e.event === 'gen:progress' && e.data.phase === 'repairing')).toBe(true);
+    const repairTurn = JSON.stringify((anthropicState.calls[1].params.messages as Array<{ content: unknown }>).at(-1)!.content);
+    expect(repairTurn).toContain('tool_result');
+    expect(repairTurn).toContain('tells of generated design');
+    expect(repairTurn).toContain('How it works > Bento: a bento grid');
+    expect(repairTurn).toContain('Hero > Headline:');
+    expect(repairTurn).toContain("not X, it's Y");
+    // The arrow was fixed automatically, so it is not sent back as a problem.
+    expect(repairTurn).not.toContain('arrow glyph');
+    const result = evs.find((e) => e.event === 'gen:result')!.data as { tells: string[]; warnings: string[] };
+    expect(result.tells).toEqual([]);
+    expect(result.warnings.join('\n')).toMatch(/repair round removed 2 of 2 tells/);
+    expect(evs.at(-1)!.data).toMatchObject({ attempts: 2 });
+  });
+
+  it('applies the second page with its remaining tells reported, and never loops a third time', async () => {
+    anthropicState.turns = [toolTurn(TELL_PAGE), toolTurn(TELL_PAGE), toolTurn(CLEAN_PAGE)];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(2);
+    const result = evs.find((e) => e.event === 'gen:result')!.data as { tells: string[] };
+    expect(result.tells).toHaveLength(2);
+    expect(result.tells.join('\n')).toMatch(/bento grid/);
+  });
+
+  it('keeps the valid first page when the repair round fails validation', async () => {
+    anthropicState.turns = [toolTurn(TELL_PAGE), toolTurn({ nodes: [] })];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(evs.some((e) => e.event === 'gen:error')).toBe(false);
+    const result = evs.find((e) => e.event === 'gen:result')!.data as {
+      tells: string[];
+      warnings: string[];
+      nodes: Array<{ label: string; children: Array<{ props: Record<string, unknown> }> }>;
+    };
+    expect(result.nodes.map((n) => n.label)).toEqual(['Hero', 'How it works']);
+    expect(result.nodes[0].children[1].props.children).toBe('Order now');
+    expect(result.tells).toHaveLength(2);
+    expect(result.warnings.join('\n')).toMatch(/design repair round failed/);
+  });
+
+  it('keeps the valid first page when the provider fails during the repair round', async () => {
+    anthropicState.turns = [toolTurn(TELL_PAGE), { throws: Object.assign(new Error('overloaded'), { status: 529 }) }];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(evs.some((e) => e.event === 'gen:error')).toBe(false);
+    expect((evs.find((e) => e.event === 'gen:result')!.data as { tells: string[] }).tells).toHaveLength(2);
+  });
+});

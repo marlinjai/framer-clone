@@ -44,6 +44,8 @@ export type FlowState =
       record: GenerationUndoRecord;
       nodeCount: number;
       warnings: string[];
+      /** Tells of generated design left in the applied page (./tells.ts). */
+      tells?: string[];
       /** Stock photos placed and images that kept the placeholder (with why). */
       images?: StockImageSummary;
       undone: boolean;
@@ -60,6 +62,7 @@ export type FlowAction =
       record: GenerationUndoRecord;
       nodeCount: number;
       warnings: string[];
+      tells?: string[];
       images?: StockImageSummary;
     }
   | { type: 'failed'; requestKey: string; error: FlowError }
@@ -111,6 +114,7 @@ export function flowReducer(state: FlowState, action: FlowAction): FlowState {
         record: action.record,
         nodeCount: action.nodeCount,
         warnings: action.warnings,
+        ...(action.tells && action.tells.length > 0 ? { tells: action.tells } : {}),
         ...(action.images ? { images: action.images } : {}),
         undone: false,
       };

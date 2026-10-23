@@ -25,6 +25,13 @@
 //   429 -> this user already has a generation running, or hit the window limit
 //   503 -> auth-brain (`auth_unavailable`) or OpenFGA (`authz_unavailable`) down
 //
+// Every valid output goes through the design-tells screen
+// (src/lib/ai/pageGen/tells.ts): the safe fixes (dashes, emoji, banned fonts,
+// button arrows) are applied, and tells it cannot fix (bento grids, rows of
+// identical cards, purple on black, ...) are sent back in the SAME single
+// repair round validation errors use. If that round fails or leaves tells, the
+// best valid page is still applied and the tells are reported in the result.
+//
 // Budget per request: brief <= GENERATION_LIMITS.maxBriefChars, replace/insert
 // context <= MAX_CONTEXT_CHARS, max_tokens MAX_OUTPUT_TOKENS per attempt, at
 // most one repair attempt, node and depth caps enforced by the validator, and a
@@ -57,7 +64,7 @@ import { createSseStream, SSE_HEADERS } from '@/lib/ai/sse';
 import { logAiCall, startAiCallTimer, type AiCallStatus } from '@/lib/ai/aiLogger';
 import { recordUsage } from '@/lib/ai/aiUsageStub';
 import { GENERATION_LIMITS, deriveBreakpointKeys, type BreakpointKey } from '@/lib/ai/pageGen/schema';
-import { validateGeneration } from '@/lib/ai/pageGen/validate';
+import { validateGeneration, type GenerationResult } from '@/lib/ai/pageGen/validate';
 import {
   EMIT_TOOL_NAME,
   briefMessage,
@@ -65,7 +72,15 @@ import {
   repairMessage,
   requestContextText,
   stableSystemText,
+  tellRepairMessage,
 } from '@/lib/ai/pageGen/prompt';
+import {
+  autoFixTells,
+  describeFinding,
+  detectTells,
+  treeStats,
+  type TellFinding,
+} from '@/lib/ai/pageGen/tells';
 import {
   DEFAULT_PAGE_GEN_MODEL,
   PAGE_GEN_MODELS,
@@ -246,6 +261,9 @@ async function runGeneration(args: RunArgs): Promise<void> {
   let attempts = 0;
   let status: AiCallStatus = 'ok';
   let errorCode: string | undefined;
+  // Applies the best valid page when the repair round fails; set once the
+  // stream runs (returns false while there is none).
+  let deliverBest: (reason: string) => Promise<boolean> = async () => false;
 
   const fail = (payload: PageGenErrorPayload): void => {
     errorCode = String(payload.code);
@@ -285,6 +303,55 @@ async function runGeneration(args: RunArgs): Promise<void> {
     ];
 
     let lastProblems: string[] = [];
+    // A valid page that only failed the tells screen: applied if the repair
+    // round cannot do better, never thrown away.
+    let best: ScreenedGeneration | undefined;
+    let tellsBefore = 0;
+    let received = 0;
+
+    const deliver = async (c: ScreenedGeneration, attempt: number, notes: string[]): Promise<void> => {
+      const { imageRequests, invalidImageQueries, ...result } = c.result;
+      if (imageRequests.length > 0) {
+        sse.send('gen:progress', { phase: 'images', receivedChars: received, attempt });
+      }
+      const stock = await resolveStockImagesSafely(imageRequests, signal);
+      if (signal.aborted) return;
+      // Where each photo's subject is, so every crop keeps it in view.
+      const placed = await withFocalPoints(stock.placed, {
+        anthropic,
+        signal,
+        userId,
+        workspaceId: args.workspaceId,
+      });
+      if (signal.aborted) return;
+      const repaired = best !== undefined && c !== best;
+      const repairNote =
+        repaired && tellsBefore > c.remaining.length
+          ? [`Design: a repair round removed ${tellsBefore - c.remaining.length} of ${tellsBefore} tells of generated design`]
+          : [];
+      // Counts only, never page content.
+      console.info(
+        `[generate-page] tells fixed=${c.fixCount} remaining=${c.remaining.length} repaired=${repaired} attempts=${attempt}`,
+      );
+      sse.send('gen:result', {
+        generationId: requestId,
+        ...result,
+        warnings: [...result.warnings, ...c.fixLines, ...repairNote, ...notes],
+        tells: c.remaining.map(describeFinding),
+        nodes: applyStockPhotos(result.nodes, placed),
+        model: modelId,
+        images: withInvalidQueries(stock.summary, invalidImageQueries),
+      });
+      // The photos are now in a result the editor applies: tell Unsplash
+      // (its download tracking), unless the client already went away.
+      if (!signal.aborted) triggerStockDownloads(stock.placed);
+    };
+    deliverBest = async (reason: string) => {
+      if (!best || signal.aborted) return false;
+      await deliver(best, attempts, [`The design repair round failed (${reason}); the first version was applied`]);
+      return true;
+    };
+
     while (attempts < MAX_ATTEMPTS) {
       attempts += 1;
       const attempt = attempts;
@@ -306,7 +373,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
         },
         { signal },
       );
-      let received = 0;
+      received = 0;
       let lastReported = 0;
       // The raw tool-input fragments, kept for a strict parse below.
       let rawInput = '';
@@ -366,6 +433,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
       // tool input off mid-way).
       const refusal = refusalMessage(final);
       if (refusal) {
+        if (await deliverBest('the model declined')) return;
         fail({ code: 'refused', message: refusal });
         return;
       }
@@ -377,6 +445,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
       sse.send('gen:progress', { phase: 'validating', receivedChars: received, attempt });
 
       let problems: string[];
+      let repairText = repairMessage;
       if (final.stop_reason === 'max_tokens') {
         // Checked before validation: a cut-off eager input usually still
         // parses as a valid-looking partial object.
@@ -388,34 +457,19 @@ async function runGeneration(args: RunArgs): Promise<void> {
       } else {
         const outcome = validateGeneration(toolUse.input, { breakpoints });
         if (outcome.ok) {
-          // The image requests are server-side data: resolved here, never sent.
-          const { imageRequests, invalidImageQueries, ...result } = outcome.result;
-          if (imageRequests.length > 0) {
-            sse.send('gen:progress', { phase: 'images', receivedChars: received, attempt });
+          const screened = screenTells(outcome.result, breakpoints);
+          if (screened.remaining.length === 0 || attempts >= MAX_ATTEMPTS) {
+            await deliver(screened, attempt, []);
+            return;
           }
-          const stock = await resolveStockImagesSafely(imageRequests, signal);
-          if (signal.aborted) return;
-          // Where each photo's subject is, so every crop keeps it in view.
-          const placed = await withFocalPoints(stock.placed, {
-            anthropic,
-            signal,
-            userId,
-            workspaceId: args.workspaceId,
-          });
-          if (signal.aborted) return;
-          sse.send('gen:result', {
-            generationId: requestId,
-            ...result,
-            nodes: applyStockPhotos(result.nodes, placed),
-            model: modelId,
-            images: withInvalidQueries(stock.summary, invalidImageQueries),
-          });
-          // The photos are now in a result the editor applies: tell Unsplash
-          // (its download tracking), unless the client already went away.
-          if (!signal.aborted) triggerStockDownloads(stock.placed);
-          return;
+          // Usable, but with tells the screen cannot fix: one repair round.
+          best = screened;
+          tellsBefore = screened.remaining.length;
+          problems = screened.remaining.map(describeFinding);
+          repairText = tellRepairMessage;
+        } else {
+          problems = outcome.errors;
         }
-        problems = outcome.errors;
       }
       lastProblems = problems;
 
@@ -431,21 +485,30 @@ async function runGeneration(args: RunArgs): Promise<void> {
             type: 'tool_result' as const,
             tool_use_id: t.id,
             is_error: true,
-            content: repairMessage(problems),
+            content: repairText(problems),
           })),
         });
       } else {
-        messages.push({ role: 'user', content: repairMessage(problems) });
+        messages.push({ role: 'user', content: repairText(problems) });
       }
     }
 
+    if (await deliverBest(lastProblems[0] ?? 'no usable output')) return;
     fail({
       code: 'invalid_output',
       message: 'The AI produced a page the editor cannot use. Try again, or simplify the brief.',
       details: lastProblems.slice(0, 20),
     });
   } catch (err) {
-    fail(classifyProviderError(err));
+    // A provider error in the repair round must not cost the user the valid
+    // first page.
+    let delivered = false;
+    try {
+      delivered = await deliverBest(classifyProviderError(err).message);
+    } catch {
+      delivered = false;
+    }
+    if (!delivered) fail(classifyProviderError(err));
   } finally {
     sse.send('usage', { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, attempts });
     if (heartbeat) clearInterval(heartbeat);
@@ -475,6 +538,44 @@ async function runGeneration(args: RunArgs): Promise<void> {
       errorCode,
     });
   }
+}
+
+/** A valid generation after the design-tells screen. */
+interface ScreenedGeneration {
+  /** The validated result with the safe fixes applied (stats recounted). */
+  result: GenerationResult;
+  /** One line per kind of fix, for the dialog's list of automatic fixes. */
+  fixLines: string[];
+  fixCount: number;
+  /** Tells the screen could not fix. */
+  remaining: TellFinding[];
+}
+
+/**
+ * Run the tells screen (src/lib/ai/pageGen/tells.ts) over a validated result:
+ * apply the safe fixes, then detect what is left. Nodes that will get a stock
+ * photo are exempt from the rules that would misread their placeholder.
+ */
+function screenTells(result: GenerationResult, breakpoints: BreakpointKey[]): ScreenedGeneration {
+  const opts = {
+    photoNodeIds: new Set(result.imageRequests.map((r) => r.nodeId)),
+    breakpointKeys: breakpoints.map((b) => b.key),
+  };
+  const fixed = autoFixTells({ title: result.title, description: result.description, nodes: result.nodes }, opts);
+  const remaining = [...fixed.findings, ...detectTells(fixed.tree, opts).filter((f) => !f.autoFixable)];
+  const nodes = fixed.tree.nodes;
+  return {
+    result: {
+      ...result,
+      ...(fixed.tree.title !== undefined ? { title: fixed.tree.title } : {}),
+      ...(fixed.tree.description !== undefined ? { description: fixed.tree.description } : {}),
+      nodes,
+      stats: treeStats(nodes),
+    },
+    fixLines: fixed.fixes.map((f) => f.detail),
+    fixCount: fixed.fixes.reduce((n, f) => n + f.count, 0),
+    remaining,
+  };
 }
 
 /** Count the images whose description the validator refused as placeholders too. */
