@@ -16,6 +16,9 @@
 //       "auto" (the Image preset's fixed height would otherwise win),
 //     - an images.unsplash.com photo (img src or a container's background
 //       url() layer) without its complete credit dropped,
+//     - a fontFamily outside the self-hosted font library (Inter, Geist, an
+//       unhosted font) replaced by the library default of its category; a
+//       library family gets its canonical fallback stack (src/lib/fonts),
 //     - responsive-map keys matched to the request's breakpoint keys
 //       (case-insensitive, label match), unknown keys dropped,
 //     - ids assigned fresh and `parentId` set on every nested node (a whole
@@ -35,6 +38,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { STOCK_CREDIT_ATTRS, stockCreditAttrs, stockCreditProps } from './stockCredit';
 import { parseAspectRatio, photoUrlOf, withPhotoUrl } from '@/lib/images/imageStyle';
+import { normalizeFontFamily } from '@/lib/fonts/registry';
 import ComponentModel, { ComponentTypeEnum, CSS_PROP_SET } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import {
@@ -383,6 +387,16 @@ class Validator {
     if (urls.some((u) => !isSafeSrc(u))) {
       this.warn(path, `style.${key}: url() to a disallowed location dropped`);
       return undefined;
+    }
+    // Font families: library families keep their canonical stack, system
+    // stacks stay, anything else (Inter, Geist, a font this app does not host)
+    // becomes the library default of its category (src/lib/fonts/registry.ts).
+    if (key === 'fontFamily' || key.startsWith('fontFamily.')) {
+      const font = normalizeFontFamily(v);
+      if (font.reason) {
+        this.warn(path, `style.${key}: ${font.reason}`);
+      }
+      return font.value;
     }
     return v;
   }

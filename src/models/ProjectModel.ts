@@ -155,7 +155,7 @@ export const ProjectModel = types
       const appTree = createIntrinsicComponent('root-' + uuidv4(), 'div', {
         style: {
           padding: '16px',
-          fontFamily: 'Inter, sans-serif',
+          fontFamily: 'system-ui, sans-serif',
         },
       });
 
@@ -210,7 +210,7 @@ export const ProjectModel = types
           type: 'div',
           componentType: 'host',
           label: 'Page',
-          props: { style: { display: 'flex', flexDirection: 'column', width: '100%', fontFamily: 'Inter, sans-serif' } },
+          props: { style: { display: 'flex', flexDirection: 'column', width: '100%', fontFamily: 'system-ui, sans-serif' } },
           children: input.sections.map(s => ({ ...s, parentId: rootId })),
         },
         canvasNodes,

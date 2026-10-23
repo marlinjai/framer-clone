@@ -26,7 +26,7 @@ describe('stableSystemText', () => {
     ['no viewport units', 'Never vh, svh or dvh'],
     ['hero text budget', 'at most 20 words'],
     ['overused hero', 'Left text with right image is the most overused hero'],
-    ['system font stacks', 'no web fonts are loaded'],
+    ['the font library', 'only the self-hosted families under "## Fonts" load'],
     ['display ceiling', 'never above 96'],
     ['tracking floor', 'never tighter'],
     ['measure', '65 to 75 characters'],

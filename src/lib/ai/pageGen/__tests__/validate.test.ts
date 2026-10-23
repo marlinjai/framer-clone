@@ -341,3 +341,46 @@ describe('validateGeneration: existing stock photos (replace / insert context)',
     expect(result.invalidImageQueries).toBe(1);
   });
 });
+
+describe('validateGeneration: font families (the self-hosted library, src/lib/fonts)', () => {
+  it('keeps library families with their canonical stack, per responsive entry', () => {
+    const result = ok({
+      nodes: [
+        {
+          type: 'h1',
+          props: {
+            children: 'Hi',
+            style: { fontFamily: { base: 'Fraunces, serif', mobile: "'Big Shoulders', sans-serif" } },
+          },
+        },
+      ],
+    });
+    expect(result.nodes[0].props.style).toMatchObject({
+      fontFamily: {
+        base: "'Fraunces', Georgia, 'Times New Roman', serif",
+        mobile: "'Big Shoulders', 'Arial Narrow', 'Roboto Condensed', Impact, sans-serif",
+      },
+    });
+    expect(result.warnings.some((w) => w.includes('fontFamily'))).toBe(false);
+  });
+
+  it('replaces banned and unhosted families by their category default, with a warning', () => {
+    const result = ok({
+      nodes: [
+        { type: 'p', props: { children: 'a', style: { fontFamily: 'Inter, sans-serif' } } },
+        { type: 'p', props: { children: 'b', style: { 'font-family': "'Lora', serif" } } },
+        { type: 'p', props: { children: 'c', style: { fontFamily: 'Georgia, serif' } } },
+      ],
+    });
+    expect(result.nodes[0].props.style).toMatchObject({ fontFamily: "'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" });
+    expect(result.nodes[1].props.style).toMatchObject({ fontFamily: "'Fraunces', Georgia, 'Times New Roman', serif" });
+    expect(result.nodes[2].props.style).toMatchObject({ fontFamily: 'Georgia, serif' });
+    expect(result.warnings.filter((w) => w.includes('style.fontFamily'))).toHaveLength(2);
+    expect(result.warnings.some((w) => w.includes('"Inter" is a banned typeface'))).toBe(true);
+  });
+
+  it('lets a preset button inherit the section font instead of forcing one', () => {
+    const result = ok({ nodes: [{ type: 'button', preset: 'button', props: { children: 'Go' } }] });
+    expect(result.nodes[0].props.style).toMatchObject({ fontFamily: 'inherit' });
+  });
+});

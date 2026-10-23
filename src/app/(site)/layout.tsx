@@ -15,6 +15,7 @@
 
 import React from 'react';
 import type { Metadata } from 'next';
+import { SYSTEM_FONT_STACK } from '@/lib/fonts/registry';
 
 export async function generateMetadata(): Promise<Metadata> {
   return {
@@ -31,5 +32,14 @@ export default function SiteLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  return <>{children}</>;
+  return (
+    <>
+      {/* The root layout puts the editor's Geist on <html> (Tailwind preflight).
+          A published page that sets no font family of its own falls back to the
+          system stack instead, never to a face the editor chrome happens to use.
+          Constant text from the font registry, never site data. */}
+      <style data-fc-site-base="" dangerouslySetInnerHTML={{ __html: `body{font-family:${SYSTEM_FONT_STACK}}` }} />
+      {children}
+    </>
+  );
 }

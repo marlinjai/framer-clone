@@ -107,7 +107,7 @@ const ProjectStore = types.model('ProjectStore', {
         padding: '16px',
         borderRadius: '8px',
         marginBottom: '20px',
-        fontFamily: 'Inter, sans-serif'
+        fontFamily: 'system-ui, sans-serif'
       },
       children: 'Welcome to Framer Clone!'
     });
@@ -119,7 +119,7 @@ const ProjectStore = types.model('ProjectStore', {
         backgroundColor: 'black',
         borderRadius: '8px',
         boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-        fontFamily: 'Inter, sans-serif',
+        fontFamily: 'system-ui, sans-serif',
         color: 'white',
       },
       children: 'This is the main content area. Click on components to select them across viewports!'
@@ -183,7 +183,7 @@ const ProjectStore = types.model('ProjectStore', {
           width: '300px',
           height: '100px',
           fontSize: '16px',
-          fontFamily: 'Inter, sans-serif',
+          fontFamily: 'system-ui, sans-serif',
           color: '#000000',
           padding: '8px',
           boxSizing: 'border-box',
