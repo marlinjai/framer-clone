@@ -18,7 +18,7 @@
 //
 // What this layer cannot see is the bundler (a Buffer shim, a different
 // module resolved for the browser): parity layer (b) renders in a real browser
-// from the built worker chunk (scripts/books-engine-browser-parity).
+// from the built worker chunk (src/app/dev/books-engine, `pnpm harness:books-engine`).
 
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -218,7 +218,7 @@ describe('the browser draft render refuses instead of drawing differently', () =
     const template = preset('klassisch');
     template.regions.firstPageHeader = [{ id: 'logo', type: 'logo', style: {}, widthMm: 40, assetSha256: LOGO_SHA }];
     const payload = wire(probeInput(probe('regular'), true), template, [{ sha256: LOGO_SHA, contentType: 'image/png' }]);
-    const swapped = filesFetcher({ [`/api/books/assets/${LOGO_SHA}`]: () => new Response(makePng(10, 10)) });
+    const swapped = filesFetcher({ [`/api/books/assets/${LOGO_SHA}`]: () => new Response(makePng(10, 10) as BodyInit) });
     expect((await failure(renderDraftPayload(swapped, payload))).code).toBe('logo_hash_mismatch');
   });
 
