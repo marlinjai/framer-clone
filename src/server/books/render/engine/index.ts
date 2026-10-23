@@ -34,9 +34,10 @@
 //
 // Logos (decision 15): the caller passes the bytes of the company's assets the
 // template names (`options.assets`, by SHA-256), checked at upload
-// (render/logoImage.ts) and loaded by repository/assets.ts. Each one is embedded once, then a logo block draws it
-// at its width in millimetres with the image's own aspect ratio, aligned by
-// the block style, kept together. A logo naming an asset the caller did not
+// (render/logoImage.ts) and loaded by repository/assets.ts. Each one is
+// embedded once per document from streams prepared once per process
+// (images.ts), then a logo block draws it at its width in millimetres with
+// the image's own aspect ratio, aligned by the block style, kept together. A logo naming an asset the caller did not
 // pass draws nothing and is a layout issue (LOGO_ASSET_MISSING), which refuses
 // a document of record like any other issue: an invoice is never issued with
 // its logo silently missing.
@@ -82,7 +83,10 @@ import {
   type Measure,
   type PageGeometry,
 } from './style';
+import { embedAsset, type EngineImage } from './images';
 import { wrapText } from './text';
+
+export type { EngineImage };
 
 /** Recorded on every stored file rendered by this engine. */
 export const RENDERER_ID = 'books-pdf-lib-3';
@@ -90,12 +94,6 @@ export const RENDERER_ID = 'books-pdf-lib-3';
 export interface EngineFonts {
   regular: Uint8Array;
   bold: Uint8Array;
-}
-
-/** An image checked at upload (render/logoImage.ts): PNG or JPEG bytes. */
-export interface EngineImage {
-  contentType: 'image/png' | 'image/jpeg';
-  bytes: Uint8Array;
 }
 
 export interface EngineOptions {
@@ -849,7 +847,7 @@ export async function renderTemplate(
   for (const sha of shas) {
     const asset = options.assets?.get(sha);
     if (!asset) continue;
-    images.set(sha, asset.contentType === 'image/png' ? await pdf.embedPng(asset.bytes) : await pdf.embedJpg(asset.bytes));
+    images.set(sha, await embedAsset(pdf, sha, asset));
   }
   const geo = geometry(doc);
   const b = new Binder(model, doc, fonts, geo, images);

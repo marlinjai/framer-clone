@@ -21,6 +21,11 @@
 //     served again from the database, unchanged), re-entry (an issue refused
 //     because the logo is missing issues nothing and takes no number; once
 //     fixed, the retry issues with the number the refused attempt would have had);
+//   - the snapshot's logo is the authority: a stored file rendered again on
+//     download reproduces it, a credit note carries it, and a document whose
+//     snapshot froze no logo is drawn without one (and can be cancelled) even
+//     when its layout names a hash;
+//   - the cap of 100 logos per company, `image/jpg`, an empty body, the ETag;
 //   - documents set in each family: issued and re-rendered byte-identically,
 //     a document issued under DejaVu Sans still re-renders identically after
 //     its template moved to Noto.
@@ -77,6 +82,7 @@ import * as documentsRoute from '../documents/route';
 import * as linesRoute from '../documents/[id]/lines/route';
 import * as issueRoute from '../documents/[id]/issue/route';
 import * as pdfRoute from '../documents/[id]/pdf/route';
+import * as cancelRoute from '../documents/[id]/cancel/route';
 import * as templatesRoute from '../templates/route';
 import * as templateRoute from '../templates/[id]/route';
 import * as previewRoute from '../templates/preview/route';
@@ -153,8 +159,8 @@ async function upload(bytes: Uint8Array | ReadableStream<Uint8Array>, type: stri
   return { status: res.status, json: JSON.parse(await res.text()) };
 }
 
-async function download(hash: string): Promise<Response> {
-  return assetRoute.GET(new Request(`http://localhost:3000/api/books/assets/${hash}`, { headers: HEADERS }), {
+async function download(hash: string, extra: Record<string, string> = {}): Promise<Response> {
+  return assetRoute.GET(new Request(`http://localhost:3000/api/books/assets/${hash}`, { headers: { ...HEADERS, ...extra } }), {
     params: Promise.resolve({ sha256: hash }),
   });
 }
@@ -290,6 +296,40 @@ describe('POST /api/books/assets', () => {
     expect(await env.ownerDb.selectFrom('books_asset').select('id').where('tenant_id', '=', tenantId).execute()).toEqual([]);
   });
 
+  it('reads image/jpg as image/jpeg, refuses an empty body, and caps a company at 100 logos (409)', async () => {
+    const jpeg = makeJpeg(24, 12);
+    const jpg = await upload(jpeg, 'image/jpg');
+    expect(jpg.status).toBe(201);
+    expect(jpg.json.contentType).toBe('image/jpeg');
+    const empty = await upload(new Uint8Array(0), 'image/png');
+    expect(empty.status).toBe(422);
+    expect(empty.json.error).toMatchObject({ code: 'asset_invalid', message: 'the file is empty' });
+
+    // 99 more stored logos (written directly; each a distinct hash), then the 101st upload is refused.
+    const png = makePng(2, 2);
+    await env.ownerDb
+      .insertInto('books_asset')
+      .values(
+        Array.from({ length: 99 }, (_, i) => ({
+          id: randomUUID(),
+          tenant_id: tenantId,
+          kind: 'logo',
+          content_type: 'image/png',
+          byte_size: png.byteLength,
+          sha256: sha(new TextEncoder().encode(`filler ${i}`)),
+          width_px: 2,
+          height_px: 2,
+          content: Buffer.from(png),
+        })),
+      )
+      .execute();
+    const over = await upload(makePng(3, 3), 'image/png');
+    expect(over.status).toBe(409);
+    expect(over.json.error).toMatchObject({ code: 'asset_limit', maxAssets: 100 });
+    // A logo already stored is still answered (no new row).
+    expect((await upload(jpeg, 'image/jpeg')).status).toBe(200);
+  });
+
   it('needs a signed-in user with editBooks to upload and viewBooks to read', async () => {
     const png = makePng(10, 10);
     expect((await upload(png, 'image/png')).status).toBe(201);
@@ -312,7 +352,14 @@ describe('GET /api/books/assets/<sha256>', () => {
     expect(res.headers.get('content-type')).toBe('image/jpeg');
     expect(res.headers.get('cache-control')).toBe('private, max-age=31536000, immutable');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('content-security-policy')).toBe("default-src 'none'");
+    expect(res.headers.get('etag')).toBe(`"${sha(jpeg)}"`);
     expect(Buffer.from(await res.arrayBuffer()).equals(Buffer.from(jpeg))).toBe(true);
+    // A revalidation with the hash answers 304 without the bytes.
+    const again = await download(sha(jpeg), { 'if-none-match': `W/"${sha(jpeg)}"` });
+    expect(again.status).toBe(304);
+    expect((await again.arrayBuffer()).byteLength).toBe(0);
+    expect((await download(sha(jpeg), { 'if-none-match': '"other"' })).status).toBe(200);
   });
 
   it("answers 404 for another company's asset, an unknown hash and a malformed one", async () => {
@@ -479,5 +526,68 @@ describe('documents set in each family', () => {
     const refused = await issue(id);
     expect(refused.status).toBe(422);
     expect(refused.json.error).toMatchObject({ code: 'undrawable_text', fields: ['line2.title'] });
+  });
+});
+
+describe('issued documents and their frozen logo', () => {
+  /** Turn an issued document into one stored before its file existed (as before 008): the next download renders and stores it. */
+  async function dropStoredFile(id: string, snapshotPatch?: (snapshot: Json) => Json) {
+    const owner = env.fx.owner;
+    const s = owner(env.schema);
+    await owner`ALTER TABLE ${s}.sales_document DISABLE TRIGGER USER`;
+    await owner`ALTER TABLE ${s}.sales_document_file DISABLE TRIGGER USER`;
+    try {
+      if (snapshotPatch) {
+        const [row] = await owner<{ template_snapshot: Json }[]>`SELECT template_snapshot FROM ${s}.sales_document WHERE id = ${id}`;
+        await owner`UPDATE ${s}.sales_document SET template_snapshot = ${owner.json(snapshotPatch(row.template_snapshot))} WHERE id = ${id}`;
+      }
+      await owner`UPDATE ${s}.sales_document SET rendered_pdf_file_id = NULL WHERE id = ${id}`;
+      await owner`DELETE FROM ${s}.sales_document_file WHERE document_id = ${id}`;
+    } finally {
+      await owner`ALTER TABLE ${s}.sales_document ENABLE TRIGGER USER`;
+      await owner`ALTER TABLE ${s}.sales_document_file ENABLE TRIGGER USER`;
+    }
+  }
+
+  it('the lazy render of a stored file reproduces the logo, and a credit note carries the same logo', async () => {
+    const png = makePng(300, 100);
+    await upload(png, 'image/png');
+    await createTemplate({ name: 'Mit Logo', document: withLogo(sha(png)) });
+    const id = await draftWithLine();
+    expect((await issue(id)).status).toBe(200);
+    const stored = await pdf(id);
+    await dropStoredFile(id);
+    // Rendered again on download from the frozen data and the stored asset: the same bytes.
+    expect(Buffer.from(await pdf(id)).equals(Buffer.from(stored))).toBe(true);
+
+    const cancelled = await call(cancelRoute.POST, 'POST', `/api/books/documents/${id}/cancel`, { id }, { reason: 'issued in error' });
+    expect(cancelled.status).toBe(200);
+    const creditId = cancelled.json.creditNote.document.id as string;
+    const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
+    expect((await getDocument(scope, creditId)).document.templateSnapshot).toMatchObject({ logo: { sha256: sha(png) } });
+    expect(await images(await pdf(creditId))).toEqual([{ width: 300, height: 100 }]);
+  });
+
+  it('a document whose snapshot froze no logo is drawn without one, though its layout names a hash, and can be cancelled', async () => {
+    // As a template saved before logos existed could be: a hash in the layout the engine of the time never drew.
+    const png = makePng(300, 100);
+    await upload(png, 'image/png');
+    await createTemplate({ name: 'Alt', document: withLogo(sha(png)) });
+    const id = await draftWithLine();
+    expect((await issue(id)).status).toBe(200);
+    await dropStoredFile(id, (snapshot) => ({ ...snapshot, logo: null }));
+    const stored = await pdf(id);
+    expect(await images(stored)).toEqual([]);
+    const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
+    expect(Buffer.from(await renderIssuedDocument(scope, await getDocument(scope, id))).equals(Buffer.from(stored))).toBe(true);
+
+    // The same with a hash the company never had: nothing is missing, because nothing is drawn.
+    const ghostId = await draftWithLine();
+    expect((await issue(ghostId)).status).toBe(200);
+    await dropStoredFile(ghostId, (snapshot) => ({ ...snapshot, document: withLogo('c'.repeat(64)), logo: null }));
+    expect(await images(await pdf(ghostId))).toEqual([]);
+    const cancelled = await call(cancelRoute.POST, 'POST', `/api/books/documents/${ghostId}/cancel`, { id: ghostId }, { reason: 'issued in error' });
+    expect(cancelled.status).toBe(200);
+    expect(await images(await pdf(cancelled.json.creditNote.document.id))).toEqual([]);
   });
 });

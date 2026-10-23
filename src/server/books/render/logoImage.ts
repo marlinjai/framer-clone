@@ -10,18 +10,25 @@
 //      confirmed by the file's magic bytes (UNSUPPORTED_ASSET_TYPE, 415);
 //   2. the size: at most 1 MB (ASSET_TOO_LARGE, 413; the route reads the body
 //      bounded, so a larger one is never held in memory whole);
-//   3. the header: the pixel size read from the PNG IHDR or the JPEG frame
-//      header, at most 2000 px on the longer side, BEFORE anything decodes the
-//      pixels: a 1 MB file can declare 20000 x 20000 pixels, and decoding it
-//      would allocate gigabytes;
-//   4. the content, fully decoded: every PNG chunk's CRC, the image data
-//      inflated to exactly the size its header promises; the JPEG decoded by
-//      jpeg-js without tolerance for missing data, in a coding every PDF
-//      reader draws (baseline, extended sequential or progressive, 8 bit);
-//   5. the proof: pdf-lib embeds it into a throwaway PDF and writes that PDF,
+//   3. the header: the pixel size read from the PNG image header chunk
+//      (IHDR) or the JPEG start-of-frame segment, at most 2000 px on the
+//      longer side, BEFORE anything decodes the pixels: a 1 MB file can
+//      declare 20000 x 20000 pixels, and decoding it would allocate gigabytes;
+//   4. what a PDF would draw differently from a browser: a rotation flag in
+//      the Exif metadata (the exchangeable image file format a camera writes;
+//      a browser turns the image, pdf-lib does not, so the composer and the
+//      invoice would disagree) and a CMYK (cyan, magenta, yellow, black) JPEG
+//      without the Adobe marker (pdf-lib inverts every CMYK JPEG, which is only right for
+//      Adobe's); both are refused with the advice to save the image again;
+//   5. the content, fully decoded: every PNG chunk's cyclic redundancy check
+//      (CRC), the image data inflated to exactly the size its header promises;
+//      the JPEG decoded by jpeg-js without tolerance for missing data, in a
+//      coding every PDF reader draws (baseline, extended sequential or
+//      progressive, 8 bit, at most 64 scans);
+//   6. the proof: pdf-lib embeds it into a throwaway PDF and writes that PDF,
 //      exactly as the engine will (render/engine).
 //
-// A failure of 3 to 5 is ASSET_INVALID (422) with a message saying which.
+// A failure of 3 to 6 is ASSET_INVALID (422) with a message saying which.
 // Pure apart from node:zlib; no database.
 
 import { crc32, inflateSync } from 'node:zlib';
@@ -56,6 +63,34 @@ export function sniffLogoType(bytes: Uint8Array): LogoContentType | null {
 
 function invalid(problem: 'undecodable' | 'too_many_pixels' | 'not_embeddable', message: string): BooksError {
   return new BooksError('ASSET_INVALID', message, { problem });
+}
+
+/**
+ * The orientation tag (0x0112) of an Exif block (a TIFF, Tagged Image File
+ * Format, structure: byte order, then the first directory of tags), or null when there is none or the block
+ * cannot be read (an unreadable block is not a rotation).
+ */
+export function exifOrientation(tiff: Uint8Array): number | null {
+  if (tiff.length < 8) return null;
+  const little = tiff[0] === 0x49 && tiff[1] === 0x49;
+  if (!little && !(tiff[0] === 0x4d && tiff[1] === 0x4d)) return null;
+  const view = new DataView(tiff.buffer, tiff.byteOffset, tiff.byteLength);
+  const ifd = view.getUint32(4, little);
+  if (ifd + 2 > tiff.length) return null;
+  const count = view.getUint16(ifd, little);
+  for (let i = 0; i < count; i += 1) {
+    const entry = ifd + 2 + i * 12;
+    if (entry + 12 > tiff.length) return null;
+    if (view.getUint16(entry, little) === 0x0112) return view.getUint16(entry + 8, little);
+  }
+  return null;
+}
+
+function checkOrientation(tiff: Uint8Array): void {
+  const orientation = exifOrientation(tiff);
+  if (orientation !== null && orientation !== 1) {
+    throw invalid('not_embeddable', 'the image carries a rotation flag a PDF does not apply; save it again upright (without the rotation flag)');
+  }
 }
 
 function checkPixels(widthPx: number, heightPx: number): void {
@@ -124,6 +159,8 @@ function checkPng(bytes: Uint8Array): { widthPx: number; heightPx: number } {
       checkPixels(header.width, header.height);
     } else if (type === 'IDAT') {
       data.push(body);
+    } else if (type === 'eXIf') {
+      checkOrientation(body);
     } else if (type === 'IEND') {
       ended = true;
       at = end;
@@ -152,7 +189,9 @@ const JPEG_FRAMES = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xc
 
 function checkJpeg(bytes: Uint8Array): { widthPx: number; heightPx: number } {
   let at = 2;
-  let frame: { width: number; height: number } | null = null;
+  let frame: { width: number; height: number; components: number } | null = null;
+  let adobe = false;
+  let scanAt = -1;
   // The segments up to the first scan: the frame header must come before it.
   while (at + 4 <= bytes.length) {
     if (bytes[at] !== 0xff) throw invalid('undecodable', 'the JPEG is malformed');
@@ -178,15 +217,35 @@ function checkJpeg(bytes: Uint8Array): { widthPx: number; heightPx: number } {
       const components = bytes[at + 9];
       if (precision !== 8) throw invalid('not_embeddable', 'the JPEG is not 8 bits per channel; save it as a baseline JPEG or a PNG');
       if (![1, 3, 4].includes(components)) throw invalid('not_embeddable', 'the JPEG has an unsupported number of colour channels');
-      // A height of 0 is defined later in the scan (DNL), which pdf-lib cannot read.
+      // A height of 0 is defined later in the scan (a define-number-of-lines marker), which pdf-lib cannot read.
       if (height === 0) throw invalid('not_embeddable', 'the JPEG does not state its height in the frame header');
       checkPixels(width, height);
-      frame = { width, height };
+      frame = { width, height, components };
     }
-    if (marker === 0xda) break;
+    const segment = bytes.subarray(at + 4, at + 2 + length);
+    // APP1 "Exif\0\0": the camera metadata, with the rotation flag.
+    if (marker === 0xe1 && segment.length > 6 && String.fromCharCode(...segment.subarray(0, 6)) === 'Exif\0\0') {
+      checkOrientation(segment.subarray(6));
+    }
+    // APP14 "Adobe": how the colour channels are stored.
+    if (marker === 0xee && segment.length >= 5 && String.fromCharCode(...segment.subarray(0, 5)) === 'Adobe') adobe = true;
+    if (marker === 0xda) {
+      scanAt = at;
+      break;
+    }
     at += 2 + length;
   }
   if (!frame) throw invalid('undecodable', 'the JPEG has no frame header');
+  if (frame.components === 4 && !adobe) {
+    throw invalid('not_embeddable', 'the JPEG is CMYK without the Adobe colour marker and would print with wrong colours; save it as RGB');
+  }
+  if (scanAt < 0) throw invalid('undecodable', 'the JPEG has no image data');
+  // Each scan starts with a marker (in the coded data a 0xFF byte is always followed by 0x00 or a
+  // restart marker). Counted from the first scan on: metadata before it (an Exif thumbnail) may hold its own.
+  let scans = 0;
+  for (let i = scanAt; i < bytes.length - 1; i += 1) if (bytes[i] === 0xff && bytes[i + 1] === 0xda) scans += 1;
+  // A progressive JPEG has about ten; thousands of tiny scans would burn CPU in the decoder.
+  if (scans > 64) throw invalid('undecodable', `the JPEG has ${scans} scans, at most 64`);
   if (bytes[bytes.length - 2] !== 0xff || bytes[bytes.length - 1] !== 0xd9) throw invalid('undecodable', 'the JPEG is cut off');
   let decoded: { width: number; height: number };
   try {
@@ -207,6 +266,7 @@ export async function checkLogoImage(bytes: Uint8Array, declared: string): Promi
   if (!(LOGO_CONTENT_TYPES as readonly string[]).includes(declared)) {
     throw new BooksError('UNSUPPORTED_ASSET_TYPE', 'a logo is a PNG or a JPEG (image/png or image/jpeg)', { contentType: declared });
   }
+  if (bytes.byteLength === 0) throw invalid('undecodable', 'the file is empty');
   const sniffed = sniffLogoType(bytes);
   if (sniffed !== declared) {
     throw new BooksError(

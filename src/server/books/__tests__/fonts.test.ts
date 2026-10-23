@@ -82,7 +82,7 @@ describe('the drawable check per family', () => {
     expect(undrawable('A → B ∞', 'noto-serif')).toEqual(['→', '∞']);
     expect(undrawable('₿', 'dejavu-sans')).toEqual(['₿']);
     expect(undrawable('₿', 'noto-sans')).toEqual([]);
-    // No family draws CJK.
+    // No family draws Chinese, Japanese or Korean.
     for (const family of FONT_FAMILIES) expect(undrawable('中', family)).toEqual(['中']);
   });
 
@@ -91,7 +91,7 @@ describe('the drawable check per family', () => {
     f.lines[0] = { ...f.lines[0], title: 'Umzug → Lager' };
     const input = issuedInput(f);
     expect(familyOf(null)).toBe('dejavu-sans');
-    expect(undrawableFields(input)).toEqual([]);
+    expect(undrawableFields(input, null)).toEqual([]);
     expect(undrawableFields(input, preset('klassisch'))).toEqual([]);
     expect(undrawableFields(input, withFamily(preset('klassisch'), 'noto-sans'))).toEqual(['line1.title']);
     expect(undrawableFields(input, withFamily(preset('klassisch'), 'noto-serif'))).toEqual(['line1.title']);

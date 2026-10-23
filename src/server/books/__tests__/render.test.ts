@@ -66,7 +66,7 @@ describe('embedded Unicode fonts', () => {
     const f = smallBusinessInvoice();
     f.document.customerSnapshot = { ...f.document.customerSnapshot!, name: 'Łukasz Żółć 😀', addressLine1: 'ул. Пушкина 10' };
     f.lines[0] = { ...f.lines[0], title: 'Dvořák-Workshop für Ελληνικά' };
-    expect(undrawableFields(issuedInput(f))).toEqual([]);
+    expect(undrawableFields(issuedInput(f), null)).toEqual([]);
     const text = await renderedText(f);
     expect(text).toContain('Łukasz Żółć 😀');
     expect(text).toContain('ул. Пушкина 10');
@@ -78,9 +78,9 @@ describe('embedded Unicode fonts', () => {
     const f = smallBusinessInvoice();
     f.document.customerSnapshot = { ...f.document.customerSnapshot!, name: '中文公司' };
     f.lines[2] = { ...f.lines[2], description: '說明' };
-    expect(undrawableFields(issuedInput(f))).toEqual(['recipient.name', 'line3.description']);
+    expect(undrawableFields(issuedInput(f), null)).toEqual(['recipient.name', 'line3.description']);
     try {
-      assertDrawable(issuedInput(f));
+      assertDrawable(issuedInput(f), null);
       throw new Error('expected a refusal');
     } catch (err) {
       expect(isBooksError(err, 'UNDRAWABLE_TEXT')).toBe(true);

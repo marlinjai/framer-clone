@@ -54,12 +54,12 @@ function printedFields(input: RenderInput): Array<[string, string | null | undef
 }
 
 /** The family a document is set in: its template's, or DejaVu Sans (the version 1 renderer's only font). */
-export function familyOf(template?: TemplateDocumentV2 | null): FontFamily {
+export function familyOf(template: TemplateDocumentV2 | null): FontFamily {
   return template ? template.theme.fontFamily : 'dejavu-sans';
 }
 
 /** The fields with undrawable characters in the template's family (names only, never the values), the template's own texts included. */
-export function undrawableFields(input: RenderInput, template?: TemplateDocumentV2 | null): string[] {
+export function undrawableFields(input: RenderInput, template: TemplateDocumentV2 | null): string[] {
   const family = familyOf(template);
   const own: Array<[string, string]> = template ? templateTexts(template).map((t) => [`template.${t.blockId}.${t.field}`, t.text]) : [];
   return [...printedFields(input), ...own]
@@ -68,7 +68,7 @@ export function undrawableFields(input: RenderInput, template?: TemplateDocument
 }
 
 /** Refuse a document of record that would not print as written. */
-export function assertDrawable(input: RenderInput, template?: TemplateDocumentV2 | null): void {
+export function assertDrawable(input: RenderInput, template: TemplateDocumentV2 | null): void {
   const fields = undrawableFields(input, template);
   if (fields.length > 0) {
     throw new BooksError(

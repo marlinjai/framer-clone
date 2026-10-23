@@ -30,5 +30,5 @@ export async function boundedBytes(req: Request, limit: number): Promise<Uint8Ar
 export async function boundedText(req: Request, limit: number): Promise<string | null> {
   const bytes = await boundedBytes(req, limit);
   // As req.text() did: a leading byte order mark is not part of the JSON.
-  return bytes === null ? null : Buffer.from(bytes).toString('utf8').replace(/^﻿/, '');
+  return bytes === null ? null : Buffer.from(bytes).toString('utf8').replace(/^\uFEFF/, '');
 }

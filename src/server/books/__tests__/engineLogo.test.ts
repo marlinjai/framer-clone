@@ -216,6 +216,26 @@ describe('assets', () => {
   });
 });
 
+describe('latency with a logo (decision 12)', () => {
+  it('renders a page with a 2000 x 2000 px RGBA logo within four times the one-page target (the image is prepared once)', async () => {
+    const big = makePng(2000, 2000);
+    const doc = withBlocks('firstPageHeader', logo('lg', assetSha(big), 25, 'right'));
+    const assets = new Map<string, EngineImage>([[assetSha(big), { contentType: 'image/png', bytes: big }]]);
+    const first = await render(doc, 'regular', assets);
+    const times: number[] = [];
+    let last: EngineResult = first;
+    for (let i = 0; i < 10; i += 1) {
+      const started = performance.now();
+      last = await render(doc, 'regular', assets);
+      times.push(performance.now() - started);
+    }
+    times.sort((a, b) => a - b);
+    expect(times[Math.floor(times.length * 0.95) - 1]).toBeLessThan(600);
+    // The render that prepared the image and the ones that found it prepared write the same bytes.
+    expect(sha(last.bytes)).toBe(sha(first.bytes));
+  }, 60_000);
+});
+
 describe('determinism with a logo', () => {
   const cases = FONT_FAMILIES.flatMap((family) => (['png', 'jpeg'] as const).map((kind) => [family, kind] as const));
 

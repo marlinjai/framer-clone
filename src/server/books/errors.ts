@@ -76,6 +76,7 @@ export type BooksErrorCode =
   | 'UNSUPPORTED_ASSET_TYPE'
   | 'ASSET_INVALID'
   | 'ASSET_NOT_FOUND'
+  | 'ASSET_LIMIT'
   | 'LOGO_ASSET_MISSING';
 
 export class BooksError extends Error {

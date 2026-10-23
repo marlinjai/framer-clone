@@ -1,7 +1,7 @@
 // src/server/books/__tests__/testImages.ts
 //
 // Test images built at run time (no binary fixtures in the repository): PNGs
-// written chunk by chunk with node:zlib (deflate and CRC-32), JPEGs encoded by
+// written chunk by chunk with node:zlib (deflate and the CRC-32 checksum), JPEGs encoded by
 // jpeg-js. Deterministic: the same arguments give the same bytes in every
 // process, which the engine's fresh-process determinism check relies on.
 
@@ -30,33 +30,56 @@ export interface PngOptions {
   declare?: { width: number; height: number };
   /** Replace the compressed image data (with a correct checksum). */
   idat?: Uint8Array;
+  /** Write the pixels in the seven Adam7 interlace passes. */
+  interlace?: boolean;
+  /** Extra chunks written after the header (type, data), such as eXIf or PLTE. */
+  chunks?: Array<[string, Uint8Array]>;
+  /** The colour type written into the header (to declare a palette image without a palette). */
+  declareColorType?: number;
 }
+
+/** The Adam7 passes: first column, first row, column step, row step. */
+const ADAM7 = [
+  [0, 0, 8, 8],
+  [4, 0, 8, 8],
+  [0, 4, 4, 8],
+  [2, 0, 4, 4],
+  [0, 2, 2, 4],
+  [1, 0, 2, 2],
+  [0, 1, 1, 2],
+];
 
 /** A `width` x `height` PNG of a diagonal colour ramp (8 bits per channel). */
 export function makePng(width: number, height: number, opts: PngOptions = {}): Uint8Array {
   const colorType = opts.colorType ?? 6;
   const channels = colorType === 6 ? 4 : 3;
-  const raw = Buffer.alloc(height * (1 + width * channels));
-  for (let y = 0; y < height; y += 1) {
-    const row = y * (1 + width * channels);
-    raw[row] = 0; // filter: none
-    for (let x = 0; x < width; x += 1) {
-      const at = row + 1 + x * channels;
-      raw[at] = (x * 7) & 0xff;
-      raw[at + 1] = (y * 5) & 0xff;
-      raw[at + 2] = ((x + y) * 3) & 0xff;
-      if (channels === 4) raw[at + 3] = 255;
+  // Rows of filter type 0 (none), whole image or pass by pass.
+  const passes = (opts.interlace ? ADAM7 : [[0, 0, 1, 1]]).filter(([x0, y0]) => x0 < width && y0 < height);
+  const size = passes.reduce((sum, [x0, y0, dx, dy]) => sum + Math.ceil((height - y0) / dy) * (1 + Math.ceil((width - x0) / dx) * channels), 0);
+  const raw = Buffer.alloc(size);
+  let at = 0;
+  for (const [x0, y0, dx, dy] of passes) {
+    for (let y = y0; y < height; y += dy) {
+      raw[at++] = 0;
+      for (let x = x0; x < width; x += dx) {
+        raw[at++] = (x * 7) & 0xff;
+        raw[at++] = (y * 5) & 0xff;
+        raw[at++] = ((x + y) * 3) & 0xff;
+        if (channels === 4) raw[at++] = 255;
+      }
     }
   }
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(opts.declare?.width ?? width, 0);
   ihdr.writeUInt32BE(opts.declare?.height ?? height, 4);
   ihdr[8] = 8;
-  ihdr[9] = colorType;
+  ihdr[9] = opts.declareColorType ?? colorType;
+  ihdr[12] = opts.interlace ? 1 : 0;
   return new Uint8Array(
     Buffer.concat([
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
       chunk('IHDR', ihdr),
+      ...(opts.chunks ?? []).map(([type, data]) => chunk(type, data)),
       chunk('IDAT', opts.idat ?? deflateSync(raw)),
       chunk('IEND', new Uint8Array(0)),
     ]),
@@ -78,7 +101,7 @@ export function makeJpeg(width: number, height: number, quality = 80): Uint8Arra
   return new Uint8Array(encodeJpeg({ data, width, height }, quality).data);
 }
 
-/** Overwrite the width and height in a JPEG's baseline frame header (SOF0). */
+/** Overwrite the width and height in a JPEG's baseline start-of-frame segment (marker 0xC0). */
 export function withJpegSize(jpeg: Uint8Array, width: number, height: number): Uint8Array {
   const out = new Uint8Array(jpeg);
   for (let i = 2; i < out.length - 9; i += 1) {

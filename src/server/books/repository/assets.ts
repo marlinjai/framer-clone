@@ -9,14 +9,16 @@
 // issued document re-renders with exactly the image it was issued with.
 //
 // Uploading the same bytes again answers the stored row (`created: false`);
-// two uploads of the same file at once both answer it (the unique key decides,
-// the loser reads the winner's row). Every query filters on the company: an
+// two uploads of the same file at once both answer it (uploads of one company
+// run one at a time, under a transaction lock). A company stores at most
+// MAX_ASSETS_PER_COMPANY logos (ASSET_LIMIT, 409): stored logos are never
+// deleted, so the bound is what keeps the table small. Every query filters on the company: an
 // asset of another company reads as ASSET_NOT_FOUND, and a template can never
 // name one (the gate checks the company's own assets).
 
 import { createHash, randomUUID } from 'node:crypto';
 
-import type { Kysely, Transaction } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 
 import type { CommerceDB } from '../../commerce/db-types';
 import { BooksError, withDbErrors } from '../errors';
@@ -37,6 +39,13 @@ export interface AssetView {
 }
 
 const SHA256 = /^[0-9a-f]{64}$/;
+
+/**
+ * The most logos one company stores. Assets are append-only (an issued
+ * document names its logo by hash and must re-render), so a bound keeps one
+ * user with editBooks from filling the schema; a company uses one or two.
+ */
+export const MAX_ASSETS_PER_COMPANY = 100;
 
 const VIEW_COLUMNS = ['sha256', 'content_type', 'byte_size', 'width_px', 'height_px'] as const;
 
@@ -62,34 +71,47 @@ export async function storeLogo(
 ): Promise<{ asset: AssetView; created: boolean }> {
   const checked = await checkLogoImage(bytes, declaredType);
   const sha256 = createHash('sha256').update(bytes).digest('hex');
-  return withDbErrors(async () => {
-    const inserted = await scope.db
-      .insertInto('books_asset')
-      .values({
-        id: randomUUID(),
-        tenant_id: scope.tenantId,
-        kind: 'logo',
-        content_type: checked.contentType,
-        byte_size: bytes.byteLength,
-        sha256,
-        width_px: checked.widthPx,
-        height_px: checked.heightPx,
-        content: Buffer.from(bytes),
-        created_by: actor.userId ?? null,
-      })
-      // The same bytes again (or a concurrent upload of them) keep the stored row; the append-only table is never updated.
-      .onConflict((oc) => oc.columns(['tenant_id', 'sha256']).doNothing())
-      .returning(VIEW_COLUMNS)
-      .executeTakeFirst();
-    if (inserted) return { asset: view(inserted), created: true };
-    const existing = await scope.db
-      .selectFrom('books_asset')
-      .select(VIEW_COLUMNS)
-      .where('tenant_id', '=', scope.tenantId)
-      .where('sha256', '=', sha256)
-      .executeTakeFirstOrThrow();
-    return { asset: view(existing), created: false };
-  });
+  return withDbErrors(() =>
+    scope.db
+      .transaction()
+      .setIsolationLevel('read committed')
+      .execute(async (trx) => {
+        // One upload of a company at a time: the cap below counts what is there, and a stored row is answered as it is.
+        await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`books-assets:${scope.tenantId}`}, 0))`.execute(trx);
+        const existing = await trx
+          .selectFrom('books_asset')
+          .select(VIEW_COLUMNS)
+          .where('tenant_id', '=', scope.tenantId)
+          .where('sha256', '=', sha256)
+          .executeTakeFirst();
+        if (existing) return { asset: view(existing), created: false };
+        const { n } = await trx
+          .selectFrom('books_asset')
+          .select((eb) => eb.fn.countAll<string>().as('n'))
+          .where('tenant_id', '=', scope.tenantId)
+          .executeTakeFirstOrThrow();
+        if (Number(n) >= MAX_ASSETS_PER_COMPANY) {
+          throw new BooksError('ASSET_LIMIT', `ASSET_LIMIT: a company stores at most ${MAX_ASSETS_PER_COMPANY} logos`, { maxAssets: MAX_ASSETS_PER_COMPANY });
+        }
+        const inserted = await trx
+          .insertInto('books_asset')
+          .values({
+            id: randomUUID(),
+            tenant_id: scope.tenantId,
+            kind: 'logo',
+            content_type: checked.contentType,
+            byte_size: bytes.byteLength,
+            sha256,
+            width_px: checked.widthPx,
+            height_px: checked.heightPx,
+            content: Buffer.from(bytes),
+            created_by: actor.userId ?? null,
+          })
+          .returning(VIEW_COLUMNS)
+          .executeTakeFirstOrThrow();
+        return { asset: view(inserted), created: true };
+      }),
+  );
 }
 
 /** One asset of the company with its bytes, or ASSET_NOT_FOUND (another company's reads exactly like an unknown one). */

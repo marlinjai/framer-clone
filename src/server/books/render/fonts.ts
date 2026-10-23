@@ -22,10 +22,11 @@
 // a font is a NEW family id, never new bytes under an old id, so an issued
 // document re-renders with the bytes it was issued with.
 //
-// What a family cannot draw (CJK, many emoji, other scripts) is NEVER printed
-// as a substitute on a document of record: `undrawable()` finds it, per family,
-// and issue refuses with the field named (UNDRAWABLE_TEXT). Only a draft
-// preview, which is not a document, shows a "?" in its place.
+// What a family cannot draw (Chinese, Japanese and Korean, many emoji, other
+// scripts) is NEVER printed as a substitute on a document of record:
+// `undrawable()` finds it, per family, and issue refuses with the field named
+// (UNDRAWABLE_TEXT). Only a draft preview, which is not a document, shows a
+// "?" in its place.
 //
 // The files are read from disk once per process and family. The production
 // image gets them through `outputFileTracingIncludes` in next.config.ts (a glob

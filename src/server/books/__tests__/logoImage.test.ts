@@ -7,10 +7,12 @@
 // header that lies about a huge size is refused without inflating anything);
 // damaged, truncated or unembeddable files refused with the reason named.
 
+import { deflateSync } from 'node:zlib';
+
 import { describe, expect, it } from 'vitest';
 
 import { isBooksError, type BooksError } from '../errors';
-import { checkLogoImage, MAX_LOGO_BYTES, MAX_LOGO_PX, sniffLogoType } from '../render/logoImage';
+import { checkLogoImage, exifOrientation, MAX_LOGO_BYTES, MAX_LOGO_PX, sniffLogoType } from '../render/logoImage';
 import { makeJpeg, makePng, withJpegFrameMarker, withJpegSize } from './testImages';
 
 async function refusal(bytes: Uint8Array, type: string): Promise<BooksError> {
@@ -117,5 +119,87 @@ describe('damaged files (422 asset_invalid, undecodable)', () => {
       const err = await refusal(withJpegFrameMarker(makeJpeg(16, 16), marker), 'image/jpeg');
       expect(err.details).toEqual({ problem: 'not_embeddable' });
     }
+  });
+});
+
+/** A minimal Exif block (big-endian TIFF, one directory) carrying an orientation. */
+function exif(orientation: number): Uint8Array {
+  const b = Buffer.alloc(26);
+  b.write('MM', 0, 'latin1');
+  b.writeUInt16BE(42, 2);
+  b.writeUInt32BE(8, 4);
+  b.writeUInt16BE(1, 8);
+  b.writeUInt16BE(0x0112, 10); // orientation
+  b.writeUInt16BE(3, 12); // SHORT
+  b.writeUInt32BE(1, 14);
+  b.writeUInt16BE(orientation, 18);
+  b.writeUInt32BE(0, 22);
+  return new Uint8Array(b);
+}
+
+/** A JPEG with one extra segment right after its start marker. */
+function withSegment(jpeg: Uint8Array, marker: number, data: Uint8Array): Uint8Array {
+  const head = Buffer.from([0xff, marker, (data.length + 2) >> 8, (data.length + 2) & 0xff]);
+  return new Uint8Array(Buffer.concat([jpeg.subarray(0, 2), head, data, jpeg.subarray(2)]));
+}
+
+const exifSegment = (orientation: number) => new Uint8Array(Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), exif(orientation)]));
+
+describe('what a PDF would draw differently from a browser', () => {
+  it('reads the orientation of an Exif block', () => {
+    expect(exifOrientation(exif(6))).toBe(6);
+    expect(exifOrientation(exif(1))).toBe(1);
+    expect(exifOrientation(new Uint8Array([1, 2, 3]))).toBeNull();
+  });
+
+  it('refuses a JPEG or PNG with a rotation flag, accepts an upright one', async () => {
+    const jpeg = makeJpeg(32, 16);
+    expect((await refusal(withSegment(jpeg, 0xe1, exifSegment(6)), 'image/jpeg')).details).toEqual({ problem: 'not_embeddable' });
+    expect(await checkLogoImage(withSegment(jpeg, 0xe1, exifSegment(1)), 'image/jpeg')).toMatchObject({ widthPx: 32 });
+    const rotated = await refusal(makePng(8, 8, { chunks: [['eXIf', exif(8)]] }), 'image/png');
+    expect(rotated.message).toContain('rotation flag');
+    expect(await checkLogoImage(makePng(8, 8, { chunks: [['eXIf', exif(1)]] }), 'image/png')).toMatchObject({ widthPx: 8 });
+  });
+
+  it('refuses a CMYK JPEG without the Adobe colour marker', async () => {
+    // Four channels declared in the frame header: refused from the header, before decoding.
+    const jpeg = makeJpeg(16, 16);
+    const cmyk = new Uint8Array(jpeg);
+    const sof = cmyk.findIndex((b, i) => b === 0xff && cmyk[i + 1] === 0xc0);
+    cmyk[sof + 9] = 4;
+    const err = await refusal(cmyk, 'image/jpeg');
+    expect(err.details).toEqual({ problem: 'not_embeddable' });
+    expect(err.message).toContain('CMYK');
+  });
+});
+
+describe('more files', () => {
+  it('accepts interlaced PNGs of awkward sizes', async () => {
+    for (const [w, h] of [[1, 1], [9, 3], [3, 9], [17, 13], [64, 1]]) {
+      expect(await checkLogoImage(makePng(w, h, { interlace: true }), 'image/png'), `${w} x ${h}`).toEqual({ contentType: 'image/png', widthPx: w, heightPx: h });
+    }
+  });
+
+  it('refuses an empty file and a palette PNG without its palette', async () => {
+    const empty = await refusal(new Uint8Array(0), 'image/png');
+    expect(empty).toMatchObject({ code: 'ASSET_INVALID', message: 'the file is empty' });
+    // Declared as a palette image (colour type 3, one byte per pixel) but no PLTE chunk.
+    const noPalette = makePng(4, 4, { declareColorType: 3, idat: deflateSync(Buffer.alloc(4 * (1 + 4))) });
+    expect((await refusal(noPalette, 'image/png')).details).toEqual({ problem: 'not_embeddable' });
+  });
+
+  it('counts scans from the first one, so metadata holding scan markers is fine, and refuses more than 64', async () => {
+    const jpeg = makeJpeg(16, 16);
+    const comment = new Uint8Array(200).fill(0xda);
+    for (let i = 0; i < comment.length; i += 2) comment[i] = 0xff;
+    expect(await checkLogoImage(withSegment(jpeg, 0xfe, comment), 'image/jpeg')).toMatchObject({ widthPx: 16 });
+    const many = Buffer.alloc(140);
+    for (let i = 0; i < many.length; i += 2) {
+      many[i] = 0xff;
+      many[i + 1] = 0xda;
+    }
+    const flooded = new Uint8Array(Buffer.concat([jpeg.subarray(0, jpeg.length - 2), many, jpeg.subarray(jpeg.length - 2)]));
+    const err = await refusal(flooded, 'image/jpeg');
+    expect(err.message).toMatch(/scans, at most 64/);
   });
 });

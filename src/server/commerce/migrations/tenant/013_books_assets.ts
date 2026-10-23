@@ -20,7 +20,8 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      owner included), plus the house REVOKE for the app role, re-applied
  *      after the provisioning grants through APPEND_ONLY_TABLES. An issued
  *      document's frozen snapshot names its logo by hash and re-renders from
- *      this table, so a stored logo is never changed or removed (GoBD: the
+ *      this table, so a stored logo is never changed or removed (GoBD, the
+ *      German rules for keeping books and records electronically: the
  *      document must re-render as issued).
  *   3. The content is self-describing and bounded, as the upload checked it:
  *      `kind` is 'logo', the type is PNG or JPEG, `byte_size` equals the

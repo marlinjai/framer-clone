@@ -46,8 +46,10 @@
 // font family (its files pinned in fonts.ts) and with the company's logo,
 // read from `books_asset` by the hash the template names, through the same
 // handle as the rest (inside the issue transaction). An issued document's
-// frozen template names its logo, and the asset table is append-only, so a
-// re-render reads exactly the image it was issued with. A logo the company
+// snapshot names its logo (`logo: { sha256 }`, decision 4) and is the
+// authority: logo blocks naming any other hash are drawn empty, as the engine
+// of the time drew them. The asset table is append-only, so a re-render reads
+// exactly the image it was issued with. A logo the company
 // does not have refuses the document of record by name (LOGO_ASSET_MISSING),
 // never prints it without; a draft preview leaves it out.
 
@@ -64,10 +66,10 @@ import { selectCustomerRow } from '../repository/taxState';
 import { templateSnapshotFor } from '../repository/templates';
 import type { BooksScope } from '../scope';
 import { readSettings } from '../settings';
-import { logoBlocks, type TemplateDocumentV2 } from '../template/schema';
+import { logoBlocks, withOnlyLogo, type TemplateDocumentV2 } from '../template/schema';
 import { missingFields } from './completeness';
 import { assertDrawable, previewSafe, previewSafeTemplate } from './drawable';
-import { renderTemplate, RENDERER_ID, type EngineImage } from './engine';
+import { assertRenderableTemplate, renderTemplate, RENDERER_ID, type EngineImage } from './engine';
 import { extractPdfText } from './extractText';
 import { fontFiles } from './fonts';
 import { fileNamePart } from './format';
@@ -95,10 +97,14 @@ type Layout = { kind: 'legacyV1'; template: RenderInput['template'] } | { kind: 
 /** The engine's inputs beyond the document: the company's assets the template names. */
 type EngineAssets = ReadonlyMap<string, EngineImage>;
 
-/** The layout an issued document was frozen with (decision 4). */
+/** The layout an issued document was frozen with (decision 4), drawn with the logo its snapshot froze and no other. */
 function frozenLayout(doc: DocumentView['document']): Layout {
   const t = doc.templateSnapshot;
-  if (t?.v === 2) return { kind: 'engine', document: t.document };
+  if (t?.v === 2) {
+    // A stored document is read with a shape check only: a malformed one fails here, naming the path.
+    assertRenderableTemplate(t.document);
+    return { kind: 'engine', document: withOnlyLogo(t.document, t.logo) };
+  }
   return { kind: 'legacyV1', template: t ? { accentColor: t.accentColor, footerBlocks: t.footerBlocks } : null };
 }
 

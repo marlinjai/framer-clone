@@ -335,6 +335,33 @@ export function templateLogo(doc: TemplateDocumentV2): { sha256: string } | null
   return sha ? { sha256: sha } : null;
 }
 
+/**
+ * The document with every logo block that does not show `logo` emptied
+ * (`assetSha256: null`, which draws nothing and takes no space). An issued
+ * document is drawn with the logo its snapshot froze and no other: a template
+ * saved before logos existed could name a hash the engine of the time never
+ * drew, and its documents froze `logo: null`; they must re-render exactly as
+ * issued.
+ */
+export function withOnlyLogo(doc: TemplateDocumentV2, logo: { sha256: string } | null): TemplateDocumentV2 {
+  const keep = <B extends Block | CellBlock>(b: B): B => {
+    if (b.type === 'logo') return b.assetSha256 !== null && b.assetSha256 === logo?.sha256 ? b : { ...b, assetSha256: null };
+    if (b.type === 'columns') return { ...b, cells: b.cells.map((c) => ({ ...c, blocks: c.blocks.map(keep) })) };
+    return b;
+  };
+  const r = doc.regions;
+  return {
+    ...doc,
+    regions: {
+      firstPageHeader: r.firstPageHeader.map(keep),
+      addressZone: { left: r.addressZone.left.map(keep), right: r.addressZone.right.map(keep) },
+      body: r.body.map(keep),
+      followingPageHeader: r.followingPageHeader.map(keep),
+      footer: r.footer.map(keep),
+    },
+  };
+}
+
 /** Parse a template document (throws a ZodError naming the paths). */
 export function parseTemplateDocument(value: unknown): TemplateDocumentV2 {
   return templateDocumentV2Schema.parse(value);

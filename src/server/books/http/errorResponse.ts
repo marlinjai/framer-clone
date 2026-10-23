@@ -85,6 +85,7 @@ const STATUS: Record<BooksErrorCode, number> = {
   UNSUPPORTED_ASSET_TYPE: 415,
   ASSET_INVALID: 422,
   ASSET_NOT_FOUND: 404,
+  ASSET_LIMIT: 409,
   LOGO_ASSET_MISSING: 422,
 };
 
@@ -112,6 +113,8 @@ const MESSAGES: Partial<Record<BooksErrorCode, string>> = {
     'the corrected invoice could not be issued together with the cancellation of the invoice it replaces; nothing was issued',
   RENDER_INCOMPLETE: 'the PDF would lack a legally required field; nothing was issued or stored',
   TEMPLATE_INVALID: 'the template cannot be saved; fix the named problems (nothing was saved)',
+  ASSET_NOT_FOUND: 'no logo with this hash is stored for this company',
+  ASSET_LIMIT: 'this company stores the most logos allowed (100); reuse one of them',
   LOGO_ASSET_MISSING: "the template's logo is not stored for this company; choose the logo in the template again (nothing was issued)",
 };
 
