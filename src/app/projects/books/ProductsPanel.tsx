@@ -14,7 +14,9 @@
 // Every change reloads the rows already shown (the user keeps their place) and
 // is announced in a status line; when the control that had the focus goes away
 // (an archived row, a closed form), the focus moves to a stable place: the row's
-// next control, the "New item" button or the status line. Prices are shown in
+// next control, the "New item" button or the search field, once the reloaded
+// rows are on screen. For a small business the VAT class reads "no VAT
+// charged". Prices are shown in
 // German format (1.234,50 €).
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -36,8 +38,19 @@ const TAX_LABELS: Record<ProductView['taxClass'], string> = {
 };
 
 type Editing = { mode: 'new' } | { mode: 'change'; product: ProductView } | null;
+type FocusTarget = { id: string; action: 'change' | 'archive' | 'restore' } | 'new' | null;
 
-export default function ProductsPanel({ onBlocked }: { onBlocked: (err: unknown) => void }) {
+/**
+ * `smallBusiness`: the company charges no VAT (§ 19 UStG), so an item's VAT
+ * class is shown as not charged rather than as a rate it never invoices.
+ */
+export default function ProductsPanel({
+  onBlocked,
+  smallBusiness = false,
+}: {
+  onBlocked: (err: unknown) => void;
+  smallBusiness?: boolean;
+}) {
   const [searchInput, setSearchInput] = useState('');
   const [q, setQ] = useState('');
   const [showArchived, setShowArchived] = useState(false);
@@ -47,8 +60,10 @@ export default function ProductsPanel({ onBlocked }: { onBlocked: (err: unknown)
   const [busyId, setBusyId] = useState<string | null>(null);
   const newButton = useRef<HTMLButtonElement>(null);
   const searchField = useRef<HTMLInputElement>(null);
-  // Where the focus goes once the list shows the result of a change (a row id and which button).
-  const focusAfter = useRef<{ id: string; action: 'change' | 'archive' | 'restore' } | 'new' | null>(null);
+  // Where the focus goes once a change is shown: set only AFTER the list was
+  // reloaded (or at once when nothing is reloaded), so it lands on the rows
+  // of the same render, never on rows a slower answer replaces afterwards.
+  const [focusTarget, setFocusTarget] = useState<FocusTarget>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setQ(searchInput.trim()), 250);
@@ -65,30 +80,29 @@ export default function ProductsPanel({ onBlocked }: { onBlocked: (err: unknown)
   // gone (archived while archived items are hidden, or filtered out by the
   // search) hands the focus to "New item", else to the search field.
   useEffect(() => {
-    const target = focusAfter.current;
-    if (target === null || list.items === null) return;
-    focusAfter.current = null;
+    if (focusTarget === null) return;
+    setFocusTarget(null);
     const fallback = () => (newButton.current ?? searchField.current)?.focus();
-    if (target === 'new') fallback();
+    if (focusTarget === 'new') fallback();
     else {
       const el =
-        document.getElementById(`product-row-${target.id}-${target.action}`) ??
-        document.getElementById(`product-row-${target.id}-change`);
+        document.getElementById(`product-row-${focusTarget.id}-${focusTarget.action}`) ??
+        document.getElementById(`product-row-${focusTarget.id}-change`);
       if (el) el.focus();
       else fallback();
     }
-  }, [list.items, editing]);
+  }, [focusTarget]);
 
   const closeForm = useCallback((back: { id: string } | null) => {
-    focusAfter.current = back ? { id: back.id, action: 'change' } : 'new';
     setEditing(null);
+    setFocusTarget(back ? { id: back.id, action: 'change' } : 'new');
   }, []);
 
   async function saved(product: ProductView, created: boolean) {
     setAnnouncement(created ? `“${product.name}” was added to the list.` : `“${product.name}” was saved.`);
-    focusAfter.current = { id: product.id, action: 'change' };
     setEditing(null);
     await list.reload({ keepShown: true });
+    setFocusTarget({ id: product.id, action: 'change' });
   }
 
   async function archive(p: ProductView) {
@@ -97,10 +111,10 @@ export default function ProductsPanel({ onBlocked }: { onBlocked: (err: unknown)
     try {
       await booksApi.archiveProduct(p.id);
       setAnnouncement(`“${p.name}” was archived. Drafts that used it keep their lines.`);
-      // Shown with archived items, the row stays and offers Restore; otherwise it goes.
-      focusAfter.current = { id: p.id, action: 'restore' };
       if (editing?.mode === 'change' && editing.product.id === p.id) setEditing(null);
       await list.reload({ keepShown: true });
+      // Shown with archived items, the row stays and offers Restore; otherwise it is gone (the fallback).
+      setFocusTarget({ id: p.id, action: 'restore' });
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -114,8 +128,8 @@ export default function ProductsPanel({ onBlocked }: { onBlocked: (err: unknown)
     try {
       await booksApi.restoreProduct(p.id);
       setAnnouncement(`“${p.name}” was restored.`);
-      focusAfter.current = { id: p.id, action: 'archive' };
       await list.reload({ keepShown: true });
+      setFocusTarget({ id: p.id, action: 'archive' });
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -198,12 +212,17 @@ export default function ProductsPanel({ onBlocked }: { onBlocked: (err: unknown)
                       </span>
                     ) : null}
                   </span>
-                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
                     {p.kind === 'service' ? 'Service' : 'Product'} · {money(p.unitPrice)} per {p.unitLabel}{' '}
-                    {p.priceBasis === 'net' ? 'net' : 'gross'} · {TAX_LABELS[p.taxClass]}
+                    {p.priceBasis === 'net' ? 'net' : 'gross'} ·{' '}
+                    {smallBusiness ? 'no VAT charged (small business)' : TAX_LABELS[p.taxClass]}
                     {p.discountBp > 0 ? ` · ${rate(p.discountBp)} discount` : ''}
-                    {p.description ? ` · ${p.description}` : ''}
                   </span>
+                  {p.description ? (
+                    <span className="mt-0.5 block whitespace-pre-line break-words text-xs text-muted-foreground">
+                      {p.description}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="flex shrink-0 gap-1">
                   <Button
@@ -221,7 +240,7 @@ export default function ProductsPanel({ onBlocked }: { onBlocked: (err: unknown)
                       size="sm"
                       variant="ghost"
                       aria-label={`Restore ${p.name}`}
-                      aria-disabled={busyId === p.id}
+                      aria-disabled={busyId !== null}
                       onClick={() => {
                         if (busyId === null) void restore(p);
                       }}
@@ -234,7 +253,7 @@ export default function ProductsPanel({ onBlocked }: { onBlocked: (err: unknown)
                       size="sm"
                       variant="ghost"
                       aria-label={`Archive ${p.name}`}
-                      aria-disabled={busyId === p.id}
+                      aria-disabled={busyId !== null}
                       onClick={() => {
                         if (busyId === null) void archive(p);
                       }}

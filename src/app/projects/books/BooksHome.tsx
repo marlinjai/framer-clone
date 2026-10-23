@@ -334,7 +334,9 @@ export default function BooksHome({ initialTab = 'documents' }: { initialTab?: T
         </section>
       ) : null}
 
-      {tab === 'products' ? <ProductsPanel onBlocked={blockOnly} /> : null}
+      {tab === 'products' ? (
+        <ProductsPanel onBlocked={blockOnly} smallBusiness={settings?.settings?.taxStatus === 'small_business'} />
+      ) : null}
 
       {tab === 'templates' ? <TemplatesPanel /> : null}
     </main>

@@ -18,7 +18,7 @@
 
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
@@ -64,6 +64,8 @@ function server(seed: Item[] = []) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
+      // Answer on a later macrotask, as a real network does: React commits what it has before the answer arrives.
+      await new Promise((r) => setTimeout(r, 0));
       const method = init?.method ?? 'GET';
       const body = init?.body ? (JSON.parse(String(init.body)) as Json) : null;
       calls.push({ method, url, body });
@@ -133,7 +135,7 @@ describe('productBody', () => {
         kind: 'service',
         name: 'Beratung',
         description: null,
-        unitLabel: 'Std',
+        unitLabel: 'Stk',
         unitPrice: 123450,
         priceBasis: 'net',
         taxClass: 'standard',
@@ -170,13 +172,13 @@ describe('ProductsPanel', () => {
       kind: 'service',
       name: 'Beratung',
       description: 'Workshop und Konzept',
-      unitLabel: 'Std',
+      unitLabel: 'Stk',
       unitPrice: 123450,
       priceBasis: 'gross',
       taxClass: 'reduced',
       discountBp: 1000,
     });
-    expect(list().textContent).toContain('1.234,50 € per Std gross · 7 % VAT · 10 % discount');
+    expect(list().textContent).toContain('1.234,50 € per Stk gross · 7 % VAT · 10 % discount');
     expect(status()).toContain('“Beratung” was added to the list.');
     expect(screen.queryByRole('form', { name: 'New item' })).toBeNull();
     // The focus lands on the new row.
@@ -214,7 +216,7 @@ describe('ProductsPanel', () => {
     expect((within(edit).getByLabelText('Unit price (EUR)') as HTMLInputElement).value).toBe('12,50');
     fireEvent.change(within(edit).getByLabelText('Unit price (EUR)'), { target: { value: '15' } });
     fireEvent.click(within(edit).getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(list().textContent).toContain('15,00 € per Std'));
+    await waitFor(() => expect(list().textContent).toContain('15,00 € per Stk'));
     const patch = calls.find((c) => c.method === 'PATCH')!;
     expect(patch.url).toBe(`/api/books/products/${items.find((i) => i.name === 'Hosting')!.id}`);
     expect(patch.body).toMatchObject({ unitPrice: 1500 });
@@ -253,22 +255,12 @@ describe('ProductsPanel', () => {
     expect(list().textContent).toContain('99,00 € per Std net');
     expect(list().textContent).toContain('Product · 80,00 € per Stk');
 
-    vi.useFakeTimers();
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'BERATUNG strat' } });
-    await act(async () => {
-      vi.advanceTimersByTime(300);
-    });
-    vi.useRealTimers();
     await waitFor(() => expect(screen.queryByText('Druck')).toBeNull());
     expect(within(list()).getByText('Beratúng')).toBeTruthy();
     expect(calls.at(-1)!.url).toBe('/api/books/products?q=BERATUNG+strat');
 
-    vi.useFakeTimers();
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'nichts' } });
-    await act(async () => {
-      vi.advanceTimersByTime(300);
-    });
-    vi.useRealTimers();
     await screen.findByText('No item matches this search.');
   });
 
@@ -309,11 +301,50 @@ describe('ProductsPanel', () => {
   });
 });
 
+describe('ProductsPanel, the details', () => {
+  it('a change sends only what differs; nothing changed sends nothing; Escape asks before dropping typed values', async () => {
+    server([item({ name: 'Wartung', description: 'Monatlich\nvor Ort' })]);
+    render(<ProductsPanel onBlocked={onBlocked} smallBusiness />);
+    await screen.findByText('Wartung');
+    // A small business charges no VAT: the list does not claim a rate; the description is shown whole.
+    expect(list().textContent).toContain('no VAT charged (small business)');
+    expect(list().textContent).not.toContain('19 %');
+    expect(within(list()).getByText(/Monatlich\s+vor Ort/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change Wartung' }));
+    let form = screen.getByRole('form', { name: 'Change “Wartung”' });
+    fireEvent.click(within(form).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(screen.queryByRole('form')).toBeNull());
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change Wartung' }));
+    form = screen.getByRole('form', { name: 'Change “Wartung”' });
+    fireEvent.change(within(form).getByLabelText('VAT'), { target: { value: 'zero' } });
+    fireEvent.click(within(form).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
+    expect(calls.find((c) => c.method === 'PATCH')!.body).toEqual({ taxClass: 'zero' });
+    await waitFor(() => expect(screen.queryByRole('form')).toBeNull());
+
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    fireEvent.click(screen.getByRole('button', { name: 'Change Wartung' }));
+    form = screen.getByRole('form', { name: 'Change “Wartung”' });
+    fireEvent.change(within(form).getByLabelText(/^Name/), { target: { value: 'Wartung Plus' } });
+    fireEvent.keyDown(form, { key: 'Escape' });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('form', { name: 'Change “Wartung”' })).toBeTruthy();
+    confirm.mockReturnValue(true);
+    fireEvent.keyDown(form, { key: 'Escape' });
+    expect(screen.queryByRole('form')).toBeNull();
+    expect(items[0].name).toBe('Wartung');
+  });
+});
+
 describe('BooksHome', () => {
   it('has a Products and services tab that opens the list', async () => {
     server([item({ name: 'Beratung' })]);
     const fetchList = globalThis.fetch as ReturnType<typeof vi.fn>;
-    const inner = fetchList.getMockImplementation()!;
+    const inner = fetchList.getMockImplementation() as (url: string, init?: RequestInit) => Promise<Response>;
     fetchList.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url === '/api/books/settings') {
         return new Response(JSON.stringify({ initialised: true, settings: null, counters: [] }), { status: 200 });

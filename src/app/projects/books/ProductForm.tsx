@@ -8,13 +8,16 @@
 // the server checks every value again. A problem is shown under its field and
 // tied to it (aria-invalid, aria-describedby), and the focus moves to the first
 // field with a problem; a name another live item has (the server's
-// duplicate_product) is shown under the name. Escape cancels.
+// duplicate_product) is shown under the name. A change sends only the fields
+// that differ from the item as opened. Escape cancels, after asking when
+// something was typed.
 
 import React, { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { BooksApiError, booksApi, type ProductInput, type ProductView } from '@/lib/books/api';
+import { DEFAULT_PRODUCT_UNIT, productNameProblem } from '@/lib/books/products';
 import { moneyInput, parseMoney, parsePercent, rate } from '@/lib/books/units';
 
 import { ErrorAlert, Field, errorText, fieldA11y } from './ui';
@@ -41,7 +44,7 @@ export const EMPTY_PRODUCT: ProductDraft = {
   kind: 'service',
   name: '',
   description: '',
-  unitLabel: 'Std',
+  unitLabel: DEFAULT_PRODUCT_UNIT,
   unitPrice: '',
   priceBasis: 'net',
   taxClass: 'standard',
@@ -66,9 +69,8 @@ export function draftOfProduct(p: ProductView): ProductDraft {
 export function productBody(d: ProductDraft): { ok: true; body: ProductInput } | { ok: false; errors: ProductErrors } {
   const errors: ProductErrors = {};
   const name = d.name.trim();
-  if (name === '') errors.name = 'Enter a name.';
-  else if (name.length > 300) errors.name = 'Use at most 300 characters.';
-  else if (!/[\p{L}\p{N}]/u.test(name)) errors.name = 'A name needs at least one letter or digit.';
+  const nameProblem = productNameProblem(name);
+  if (nameProblem) errors.name = nameProblem;
   if (d.description.length > 4000) errors.description = 'Use at most 4000 characters.';
   const unit = d.unitLabel.trim();
   if (unit === '') errors.unitLabel = 'Enter a unit, for example Std or Stk.';
@@ -98,6 +100,19 @@ export function productBody(d: ProductDraft): { ok: true; body: ProductInput } |
 }
 
 const ORDER: ProductField[] = ['name', 'description', 'unitLabel', 'unitPrice', 'discount'];
+
+/**
+ * The fields of `body` that differ from the item as it was opened: a change
+ * sends only these, so a field another window changed meanwhile is not
+ * overwritten with the value this form happened to show.
+ */
+export function changedFields(product: ProductView, body: ProductInput): Partial<ProductInput> {
+  const out: Partial<ProductInput> = {};
+  for (const key of Object.keys(body) as Array<keyof ProductInput>) {
+    if (body[key] !== product[key]) (out as Record<string, unknown>)[key] = body[key];
+  }
+  return out;
+}
 
 interface Props {
   /** The item being changed; absent for a new one. */
@@ -142,10 +157,15 @@ export default function ProductForm({ product, onSaved, onCancel }: Props) {
       return;
     }
     setErrors({});
+    if (product && Object.keys(changedFields(product, result.body)).length === 0) {
+      // Nothing changed: nothing to send.
+      onSaved(product);
+      return;
+    }
     setBusy(true);
     try {
       const saved = product
-        ? await booksApi.updateProduct(product.id, result.body)
+        ? await booksApi.updateProduct(product.id, changedFields(product, result.body))
         : await booksApi.createProduct(result.body);
       onSaved(saved);
     } catch (err) {
@@ -160,16 +180,19 @@ export default function ProductForm({ product, onSaved, onCancel }: Props) {
     }
   }
 
+  const initial = product ? draftOfProduct(product) : EMPTY_PRODUCT;
+  const dirty = (Object.keys(initial) as Array<keyof ProductDraft>).some((k) => initial[k] !== draft[k]);
   const title = product ? `Change “${product.name}”` : 'New item';
   return (
     <form
       ref={form}
       onSubmit={submit}
       onKeyDown={(e) => {
-        if (e.key === 'Escape' && !busy) {
-          e.preventDefault();
-          onCancel();
-        }
+        if (e.key !== 'Escape' || busy) return;
+        e.preventDefault();
+        // Typed values are never thrown away by one key without asking.
+        if (dirty && !window.confirm('Discard what you typed in this form?')) return;
+        onCancel();
       }}
       noValidate
       className="rounded-lg border p-4"

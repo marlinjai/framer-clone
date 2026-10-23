@@ -33,7 +33,10 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      (src/lib/books/searchKey.ts: lower case, accents removed, `ß` as `ss`,
  *      whitespace collapsed), so "Beratung", "beratung" and "Beratúng" are one
  *      name. `search_text` is the same fold of name and description, which the
- *      list search matches with LIKE. Both are written by the repository on
+ *      list search matches with LIKE. The fold can grow a name (one ligature
+ *      such as U+FDFA becomes 18 letters), so `name_key` is bounded to 600
+ *      characters, well inside what a btree index entry holds; the repository
+ *      refuses a longer one as invalid input. Both are written by the repository on
  *      every insert and update (repository/products.ts); the database has no
  *      accent folding without an extension, and none is installed.
  *   4. Every value is one a line accepts, checked with the same bounds as
@@ -78,7 +81,7 @@ export const booksProducts: Migration = {
           CONSTRAINT "books_product_kind_check" CHECK ("kind" IN ('service', 'product')),
           CONSTRAINT "books_product_name_check"
               CHECK (length("name") BETWEEN 1 AND 300 AND "name" = btrim("name")),
-          CONSTRAINT "books_product_name_key_check" CHECK (length("name_key") >= 1),
+          CONSTRAINT "books_product_name_key_check" CHECK (length("name_key") BETWEEN 1 AND 600),
           CONSTRAINT "books_product_description_check"
               CHECK ("description" IS NULL OR length("description") <= 4000),
           CONSTRAINT "books_product_unit_label_check"

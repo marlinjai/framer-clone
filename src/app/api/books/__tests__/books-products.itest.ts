@@ -182,6 +182,9 @@ describe('create, change, validation', () => {
     expect((await refused({ name: '   ' })).code).toBe('invalid_input');
     expect((await refused({ name: '́' })).code).toBe('invalid_input');
     expect((await refused({ name: 'x'.repeat(301) })).code).toBe('invalid_input');
+    // The form's rule: a letter or digit, and a fold that fits the stored bound (never a 500).
+    expect((await refused({ name: '-' })).code).toBe('invalid_input');
+    expect((await refused({ name: 'ﷺ'.repeat(300) })).code).toBe('invalid_input');
     expect((await refused({ discountBp: 10001 })).code).toBe('invalid_input');
     expect((await refused({ kind: 'text' })).code).toBe('invalid_input');
     expect((await refused({ taxClass: 'luxury' })).code).toBe('invalid_input');
@@ -310,9 +313,44 @@ describe('the search and the order', () => {
     const third = await listProducts(scope, { limit: 2, cursor: second.nextCursor! });
     expect(third.items.map((i) => i.name)).toEqual(['Emil', 'Zacharias']);
     expect(third.nextCursor).toBeNull();
-    // Through the route: 100 a page, the cursor passed on.
-    const page = await api.list();
-    expect(page.json).toMatchObject({ nextCursor: null, total: 5 });
+  });
+
+  it('pages across the border between live and archived items without a gap or a repeat', async () => {
+    const scope = scopeFor(env.appDb, env.tgId, tenantId, dir);
+    const made: Json[] = [];
+    for (const name of ['Anton', 'Berta', 'Caesar', 'Dora', 'Emil']) made.push(await created({ name }));
+    // Anton and Dora archived: live Berta, Caesar, Emil, then archived Anton, Dora.
+    await api.archive(made[0].id);
+    await api.archive(made[3].id);
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 5; i += 1) {
+      const page = await listProducts(scope, { limit: 2, includeArchived: true, cursor });
+      seen.push(...page.items.map((p) => `${p.name}${p.archivedAt ? ' (archived)' : ''}`));
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
+    }
+    expect(seen).toEqual(['Berta', 'Caesar', 'Emil', 'Anton (archived)', 'Dora (archived)']);
+  });
+
+  it('answers 100 items a page through the route, the cursor fetching the rest', async () => {
+    const now = new Date();
+    await env.appDb
+      .insertInto('books_product')
+      .values(
+        Array.from({ length: 101 }, (_, i) => {
+          const name = `Posten ${String(i).padStart(3, '0')}`;
+          return { id: `bulk-${tenantId}-${i}`, tenant_id: tenantId, name, name_key: name.toLowerCase(), search_text: name.toLowerCase(), unit_price: 100, updated_at: now };
+        }),
+      )
+      .execute();
+    const first = await api.list();
+    expect(first.json.items).toHaveLength(100);
+    expect(first.json.total).toBe(101);
+    expect(first.json.nextCursor).toEqual(expect.any(String));
+    const second = await api.list(`?cursor=${encodeURIComponent(first.json.nextCursor)}`);
+    expect(names(second)).toEqual(['Posten 100']);
+    expect(second.json.nextCursor).toBeNull();
   });
 });
 
@@ -330,8 +368,8 @@ describe('a line filled from an item is a copy', () => {
     const draft = await call(documentsRoute.POST, 'POST', '/api/books/documents', {}, {});
     expect(draft.status).toBe(201);
     const docId = draft.json.document.id as string;
-    const { line, priceBasis } = lineFromProduct(product as Parameters<typeof lineFromProduct>[0]);
-    expect(priceBasis).toBe(draft.json.document.netOrGross);
+    const line = lineFromProduct(product as Parameters<typeof lineFromProduct>[0]);
+    expect(line.priceBasis).toBe(draft.json.document.netOrGross);
     const added = await call(linesRoute.POST, 'POST', `/api/books/documents/${docId}/lines`, { id: docId }, {
       ...line,
       expectedVersion: draft.json.document.version,
@@ -363,5 +401,43 @@ describe('a line filled from an item is a copy', () => {
       .where('document_id', '=', docId)
       .executeTakeFirstOrThrow();
     expect(row).toEqual({ variant_ref: null, variant_ref_source: 'none' });
+  });
+});
+
+describe('a price quoted in the other basis is converted by the server', () => {
+  async function addTo(docId: string, version: number, product: Json) {
+    const res = await call(linesRoute.POST, 'POST', `/api/books/documents/${docId}/lines`, { id: docId }, {
+      ...lineFromProduct(product as Parameters<typeof lineFromProduct>[0]),
+      expectedVersion: version,
+    });
+    expect(res.status).toBe(201);
+    return res.json;
+  }
+
+  it('net item into a gross draft and gross item into a net draft, under a regular company', async () => {
+    const netItem = await created({ name: 'Netto', unitPrice: 10000, priceBasis: 'net', taxClass: 'standard' });
+    const grossItem = await created({ name: 'Brutto', unitPrice: 10700, priceBasis: 'gross', taxClass: 'reduced' });
+
+    const gross = await call(documentsRoute.POST, 'POST', '/api/books/documents', {}, { netOrGross: 'gross' });
+    expect(gross.json.document.netOrGross).toBe('gross');
+    const inGross = await addTo(gross.json.document.id, gross.json.document.version, netItem);
+    expect(inGross.lines[0]).toMatchObject({ unitPrice: 11900, subtotal: 10000, taxAmount: 1900, taxRate: 1900 });
+
+    const net = await call(documentsRoute.POST, 'POST', '/api/books/documents', {}, { netOrGross: 'net' });
+    const inNet = await addTo(net.json.document.id, net.json.document.version, grossItem);
+    expect(inNet.lines[0]).toMatchObject({ unitPrice: 10000, subtotal: 10000, taxAmount: 700, taxRate: 700 });
+
+    // The same basis is stored as it is.
+    const inNetToo = await addTo(net.json.document.id, inNet.document.version, netItem);
+    expect(inNetToo.lines[1]).toMatchObject({ unitPrice: 10000 });
+  });
+
+  it('a small business stores the price as it is (net and gross are the same)', async () => {
+    activate(newTenantId());
+    await initCompany(scopeFor(env.appDb, env.tgId, tenantId, dir), { taxStatus: 'small_business' });
+    const netItem = await created({ name: 'Netto', unitPrice: 10000, priceBasis: 'net' });
+    const gross = await call(documentsRoute.POST, 'POST', '/api/books/documents', {}, { netOrGross: 'gross' });
+    const added = await addTo(gross.json.document.id, gross.json.document.version, netItem);
+    expect(added.lines[0]).toMatchObject({ unitPrice: 10000, taxAmount: 0 });
   });
 });

@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ProductView } from '../api';
-import { lineFromProduct } from '../products';
+import { lineFromProduct, productNameProblem } from '../products';
 import { foldKey, searchWords } from '../searchKey';
 
 describe('foldKey', () => {
@@ -41,24 +41,35 @@ const product: ProductView = {
   updatedAt: '2026-10-23T08:00:00.000Z',
 };
 
+describe('productNameProblem', () => {
+  it('is the one name rule of the form and the server', () => {
+    expect(productNameProblem('Beratung')).toBeNull();
+    expect(productNameProblem('')).toBe('Enter a name.');
+    expect(productNameProblem('-')).toMatch(/letter or digit/);
+    expect(productNameProblem('!!!')).toMatch(/letter or digit/);
+    expect(productNameProblem('x'.repeat(301))).toMatch(/300/);
+    // U+FDFA folds to 18 letters: 300 of them fit the 300 characters but not the stored fold.
+    expect(productNameProblem('ﷺ'.repeat(300))).toMatch(/too long/);
+    expect(productNameProblem('ﷺ'.repeat(10))).toBeNull();
+  });
+});
+
 describe('lineFromProduct', () => {
-  it('copies the item into exactly the fields of a line, and says the basis of the price', () => {
+  it('copies the item into exactly the fields of a line, with the basis of its price', () => {
     expect(lineFromProduct(product)).toEqual({
-      line: {
-        kind: 'product',
-        title: 'Druck A4',
-        description: 'Farbig, beidseitig',
-        unitLabel: 'Stk',
-        unitPrice: 1250,
-        taxClass: 'reduced',
-        discountBp: 500,
-      },
+      kind: 'product',
+      title: 'Druck A4',
+      description: 'Farbig, beidseitig',
+      unitLabel: 'Stk',
+      unitPrice: 1250,
       priceBasis: 'gross',
+      taxClass: 'reduced',
+      discountBp: 500,
     });
   });
 
   it('gives no description for a blank one, and never carries the item id', () => {
-    const { line } = lineFromProduct({ ...product, description: '   ' });
+    const line = lineFromProduct({ ...product, description: '   ' });
     expect(line.description).toBeNull();
     expect(Object.keys(line)).not.toContain('id');
     expect(JSON.stringify(lineFromProduct(product))).not.toContain('p1');
@@ -66,7 +77,7 @@ describe('lineFromProduct', () => {
 
   it('is a copy: changing the item afterwards leaves the fields as they were', () => {
     const p = { ...product };
-    const { line } = lineFromProduct(p);
+    const line = lineFromProduct(p);
     p.name = 'Renamed';
     p.unitPrice = 1;
     expect(line.title).toBe('Druck A4');

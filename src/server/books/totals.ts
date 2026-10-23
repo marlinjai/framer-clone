@@ -18,7 +18,7 @@
 // tax_amount holds in both modes. Rounding is half up (Math.round on
 // non-negative values).
 
-import { computeLineTax, type TaxTreatment } from '../tax/germanVat';
+import { computeLineTax, resolveLineRate, type TaxTreatment } from '../tax/germanVat';
 import type { TaxSummary } from './snapshots';
 
 export type LineKind = 'service' | 'product' | 'text';
@@ -94,6 +94,28 @@ export function deriveLine(line: LineInputs, ctx: LineTaxContext): DerivedLine {
     kleinunternehmer: ctx.kleinunternehmer,
   });
   return { subtotal: tax.net, taxRate: tax.rate, taxAmount: tax.tax, taxTreatment: tax.treatment };
+}
+
+/**
+ * A unit price quoted in one basis (net or gross), in the other: what a line
+ * picked from the product list stores when the item's price basis differs
+ * from the draft's (invoice editor plan, phase 4). The rate is the line's
+ * (its override, else its class), 0 for a small business or reverse charge,
+ * where net and gross are the same. Rounded half up exactly as computeLineTax
+ * rounds the tax of one unit: net to gross adds round(net * rate / 10000),
+ * gross to net takes off round(gross * rate / (10000 + rate)).
+ */
+export function convertUnitPrice(
+  unitPrice: number,
+  from: 'net' | 'gross',
+  to: 'net' | 'gross',
+  ctx: { taxClass: TaxClass | null; taxRateOverride: number | null; kleinunternehmer: boolean; reverseCharge: boolean },
+): number {
+  if (from === to || ctx.kleinunternehmer || ctx.reverseCharge) return unitPrice;
+  const rate = resolveLineRate(ctx.taxClass, ctx.taxRateOverride ?? undefined);
+  return from === 'net'
+    ? unitPrice + Math.round((unitPrice * rate) / 10000)
+    : unitPrice - Math.round((unitPrice * rate) / (10000 + rate));
 }
 
 export interface DocumentTotals {

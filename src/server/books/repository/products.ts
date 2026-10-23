@@ -22,6 +22,7 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
 
+import { DEFAULT_PRODUCT_UNIT, productNameProblem } from '@/lib/books/products';
 import { foldKey, searchWords } from '@/lib/books/searchKey';
 
 import { BooksError, constraintName, invalid, sqlState } from '../errors';
@@ -91,12 +92,14 @@ export const MAX_SEARCH_LENGTH = 100;
 // The same bounds as a draft line (lines.ts), so a copied item is always a valid line.
 const fields = {
   kind: z.enum(['service', 'product']),
+  // The form's rule (src/lib/books/products.ts): 1 to 300 characters, a letter or digit, a bounded fold.
   name: z
     .string()
     .trim()
-    .min(1)
-    .max(300)
-    .refine((v) => foldKey(v) !== '', 'a name needs at least one letter or digit'),
+    .superRefine((v, ctx) => {
+      const problem = productNameProblem(v);
+      if (problem) ctx.addIssue({ code: 'custom', message: problem });
+    }),
   // Whitespace only is no description.
   description: z
     .string()
@@ -115,7 +118,7 @@ const createInput = z
     kind: fields.kind.default('service'),
     name: fields.name,
     description: fields.description.optional(),
-    unitLabel: fields.unitLabel.default('Stk'),
+    unitLabel: fields.unitLabel.default(DEFAULT_PRODUCT_UNIT),
     unitPrice: fields.unitPrice,
     priceBasis: fields.priceBasis.default('net'),
     taxClass: fields.taxClass.default('standard'),
@@ -234,39 +237,47 @@ export async function updateProduct(scope: BooksScope, id: string, input: Update
   });
 }
 
-/** Archive an item: it leaves the search and its name is free again. Idempotent. */
+/** Archive an item: it leaves the search and its name is free again. Idempotent (an archived item is left as it is). */
 export async function archiveProduct(scope: BooksScope, id: string): Promise<Product> {
+  const now = new Date();
   const row = await scope.db
     .updateTable('books_product')
-    .set((eb) => ({ archived_at: eb.fn.coalesce('archived_at', eb.val(new Date())), updated_at: new Date() }))
+    .set({ archived_at: now, updated_at: now })
     .where('tenant_id', '=', scope.tenantId)
     .where('id', '=', id)
+    .where('archived_at', 'is', null)
     .returning(PRODUCT_COLUMNS)
     .executeTakeFirst();
-  if (!row) throw notFound(id);
-  return mapProduct(row);
+  return row ? mapProduct(row) : getProduct(scope, id);
 }
 
-/** Restore an archived item; DUPLICATE_PRODUCT when a live item has its name now. Idempotent. */
+/**
+ * Restore an archived item; DUPLICATE_PRODUCT when a live item has its name
+ * now. Idempotent. The folded columns are written again under the row lock, so
+ * a restored item is compared and found by today's fold.
+ */
 export async function unarchiveProduct(scope: BooksScope, id: string): Promise<Product> {
-  const current = await scope.db
-    .selectFrom('books_product')
-    .select(PRODUCT_COLUMNS)
-    .where('tenant_id', '=', scope.tenantId)
-    .where('id', '=', id)
-    .executeTakeFirst();
-  if (!current) throw notFound(id);
-  if (current.archived_at === null) return mapProduct(current);
-  const row = await uniqueName(() =>
-    scope.db
-      .updateTable('books_product')
-      .set({ archived_at: null, updated_at: new Date() })
+  return scope.db.transaction().execute(async (trx) => {
+    const current = await trx
+      .selectFrom('books_product')
+      .select(PRODUCT_COLUMNS)
       .where('tenant_id', '=', scope.tenantId)
       .where('id', '=', id)
-      .returning(PRODUCT_COLUMNS)
-      .executeTakeFirstOrThrow(),
-  );
-  return mapProduct(row);
+      .forUpdate()
+      .executeTakeFirst();
+    if (!current) throw notFound(id);
+    if (current.archived_at === null) return mapProduct(current);
+    const row = await uniqueName(() =>
+      trx
+        .updateTable('books_product')
+        .set({ archived_at: null, ...folded(current.name, current.description), updated_at: new Date() })
+        .where('tenant_id', '=', scope.tenantId)
+        .where('id', '=', id)
+        .returning(PRODUCT_COLUMNS)
+        .executeTakeFirstOrThrow(),
+    );
+    return mapProduct(row);
+  });
 }
 
 export async function getProduct(scope: BooksScope, id: string): Promise<Product> {
@@ -317,7 +328,7 @@ const listInput = z.object({
   q: z.string().max(MAX_SEARCH_LENGTH).default(''),
   includeArchived: z.boolean().default(false),
   limit: z.number().int().min(1).max(100).default(50),
-  cursor: z.string().min(1).max(2000).optional(),
+  cursor: z.string().min(1).max(4000).optional(),
 });
 export type ListProductsInput = z.input<typeof listInput>;
 
