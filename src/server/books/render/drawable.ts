@@ -6,14 +6,16 @@
 // version 1 layout). A document of record must print every name, address and
 // line as written, so issue refuses (UNDRAWABLE_TEXT) and names the fields;
 // nothing is ever transliterated or replaced on an issued document. Only the
-// draft preview replaces such characters with "?" (`previewSafe`), and says so
-// by being a draft.
+// draft preview replaces such characters with "?" (`previewSafe`, the server's
+// coverage over the one body in previewSafe.ts that the browser's draft render
+// shares), and says so by being a draft.
 
 import { BooksError } from '../errors';
 import { templateTexts } from '../template/rules';
-import type { Block, CellBlock, FontFamily, TemplateDocumentV2 } from '../template/schema';
-import { undrawable } from './fonts';
+import type { FontFamily, TemplateDocumentV2 } from '../template/schema';
+import { canDraw, undrawable } from './fonts';
 import type { RenderInput, RenderModel } from './model';
+import { previewSafeTemplateWith, previewSafeWith } from './previewSafe';
 
 /** Every printed text of a render input, by field name. */
 function printedFields(input: RenderInput): Array<[string, string | null | undefined]> {
@@ -79,60 +81,12 @@ export function assertDrawable(input: RenderInput, template: TemplateDocumentV2 
   }
 }
 
-function replaceUndrawable(text: string, family: FontFamily): string {
-  const bad = new Set(undrawable(text, family));
-  if (bad.size === 0) return text;
-  return [...text].map((ch) => (bad.has(ch) ? '?' : ch)).join('');
-}
-
 /** A draft preview's model with the characters `family` cannot draw shown as "?" (never for a document of record). */
 export function previewSafe(model: RenderModel, family: FontFamily): RenderModel {
-  const t = (text: string) => replaceUndrawable(text, family);
-  return {
-    ...model,
-    senderLine: t(model.senderLine),
-    recipientBlock: model.recipientBlock.map(t),
-    meta: model.meta.map((m) => ({ label: m.label, value: t(m.value) })),
-    reference: model.reference && t(model.reference),
-    intro: model.intro && t(model.intro),
-    lines: model.lines.map((l) => ({ ...l, title: t(l.title), details: l.details.map(t), unit: t(l.unit) })),
-    notes: model.notes.map(t),
-    payment: model.payment.map(t),
-    outro: model.outro && t(model.outro),
-    smallPrint: model.smallPrint.map((b) => ({ heading: b.heading && t(b.heading), text: t(b.text) })),
-    footer: model.footer.map((col) => col.map(t)),
-    shortTitle: t(model.shortTitle),
-    metaItems: Object.fromEntries(
-      Object.entries(model.metaItems).map(([k, v]) => [k, v ? { label: v.label, value: t(v.value) } : null]),
-    ) as RenderModel['metaItems'],
-    senderColumns: {
-      identity: model.senderColumns.identity.map(t),
-      contact: model.senderColumns.contact.map(t),
-      legal: model.senderColumns.legal.map(t),
-      bank: model.senderColumns.bank.map(t),
-    },
-  };
+  return previewSafeWith(model, (cp) => canDraw(cp, family));
 }
 
 /** A preview's template with undrawable characters in its own texts (in its own family) shown as "?" (never for a document of record). */
 export function previewSafeTemplate(doc: TemplateDocumentV2): TemplateDocumentV2 {
-  const t = (text: string) => replaceUndrawable(text, doc.theme.fontFamily);
-  const fix = <B extends Block | CellBlock>(b: B): B => {
-    if (b.type === 'freeText') return { ...b, heading: b.heading && t(b.heading), text: t(b.text) };
-    if (b.type === 'paymentDetails') return { ...b, heading: b.heading && t(b.heading) };
-    if (b.type === 'paymentQr') return { ...b, caption: t(b.caption) };
-    if (b.type === 'columns') return { ...b, cells: b.cells.map((c) => ({ ...c, blocks: c.blocks.map(fix) })) };
-    return b;
-  };
-  const r = doc.regions;
-  return {
-    ...doc,
-    regions: {
-      firstPageHeader: r.firstPageHeader.map(fix),
-      addressZone: { left: r.addressZone.left.map(fix), right: r.addressZone.right.map(fix) },
-      body: r.body.map(fix),
-      followingPageHeader: r.followingPageHeader.map(fix),
-      footer: r.footer.map(fix),
-    },
-  };
+  return previewSafeTemplateWith(doc, (cp) => canDraw(cp, doc.theme.fontFamily));
 }
