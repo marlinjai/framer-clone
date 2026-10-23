@@ -14,7 +14,12 @@
 // (append-only): a template document of model version 2 (template/schema.ts),
 // numbered 1, 2, 3. Saving a layout writes a new version and moves the
 // current one, in one transaction, only after the save gate passes
-// (template/gate.ts: the structural rules and the probe render).
+// (template/gate.ts: the structural rules and the probe render). The logos a
+// new version names are held (the shared logo lock, repository/assets.ts) in
+// that transaction and checked again: an unused logo may be deleted while the
+// gate runs (migration 014), so a save either sees the delete and refuses
+// (LOGO_ASSET_MISSING on the block) or holds the logo until its version, which
+// names it, is committed.
 //
 // The layout is edited only as a whole document, by the visual composer
 // (phase 4, /projects/books/templates/<id>); the phase 3 form's partial edits
@@ -38,10 +43,10 @@ import type { CommerceDB } from '../../commerce/db-types';
 import { BooksError, constraintName, invalid, sqlState, withDbErrors } from '../errors';
 import type { BooksScope } from '../scope';
 import { storedTemplateDocumentSchema, toJsonb, type TemplateSnapshotV2 } from '../snapshots';
-import { assertTemplateSavable } from '../template/gate';
+import { assertTemplateSavable, missingLogoProblems } from '../template/gate';
 import { klassisch, PRESETS, preset } from '../template/presets';
-import { templateDocumentV2Schema, templateLogo, type TemplateDocumentV2 } from '../template/schema';
-import { templateAssets } from './assets';
+import { logoBlocks, templateDocumentV2Schema, templateLogo, type TemplateDocumentV2 } from '../template/schema';
+import { lockLogos, templateAssets } from './assets';
 
 type Db = Kysely<CommerceDB> | Transaction<CommerceDB>;
 
@@ -65,6 +70,12 @@ export interface DocumentTemplate {
 /** Who saves a version (the signed-in user), recorded on the version row. */
 export interface TemplateActor {
   userId?: string | null;
+}
+
+/** Test seams of a template write. */
+export interface TemplateWriteHooks {
+  /** Runs inside the write's transaction just before the commit (the logo race tests hold it here). */
+  beforeCommit?: () => Promise<void>;
 }
 
 type TemplateRow = {
@@ -285,6 +296,22 @@ async function lockTemplates(trx: Transaction<CommerceDB>, scope: BooksScope): P
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`books-templates:${scope.tenantId}`}, 0))`.execute(trx);
 }
 
+/**
+ * Inside the transaction that writes a version: hold the logos the document
+ * names until the commit (the shared logo lock) and refuse the save (TEMPLATE_INVALID with
+ * LOGO_ASSET_MISSING on the block, as the gate answers) when one is gone. The
+ * gate checked them before the transaction, but an unused logo may be deleted
+ * in between (migration 014); with the lock, a delete either came first and is
+ * seen here, or waits for this save and is then refused (the new version names
+ * the logo).
+ */
+async function lockTemplateLogos(trx: Transaction<CommerceDB>, scope: BooksScope, document: TemplateDocumentV2): Promise<void> {
+  const named = logoBlocks(document).flatMap((l) => (l.block.assetSha256 !== null ? [l.block.assetSha256] : []));
+  if (named.length === 0) return;
+  const problems = missingLogoProblems(document, await lockLogos(trx, scope, named));
+  if (problems.length > 0) throw new BooksError('TEMPLATE_INVALID', 'the template cannot be saved', { problems });
+}
+
 async function clearDefault(trx: Transaction<CommerceDB>, scope: BooksScope, except: string | null): Promise<void> {
   let q = trx
     .updateTable('document_template')
@@ -295,7 +322,12 @@ async function clearDefault(trx: Transaction<CommerceDB>, scope: BooksScope, exc
   await q.execute();
 }
 
-export async function createTemplate(scope: BooksScope, input: CreateTemplateInput, actor: TemplateActor = {}): Promise<DocumentTemplate> {
+export async function createTemplate(
+  scope: BooksScope,
+  input: CreateTemplateInput,
+  actor: TemplateActor = {},
+  hooks: TemplateWriteHooks = {},
+): Promise<DocumentTemplate> {
   const parsed = createInput.safeParse(input);
   if (!parsed.success) throw invalid('INVALID_INPUT', parsed.error.issues);
   const args = parsed.data;
@@ -312,6 +344,7 @@ export async function createTemplate(scope: BooksScope, input: CreateTemplateInp
         .setIsolationLevel('read committed')
         .execute(async (trx) => {
           await lockTemplates(trx, scope);
+          await lockTemplateLogos(trx, scope, document);
           // The first template of a company is its default, unless told otherwise.
           const existing = await trx
             .selectFrom('document_template')
@@ -348,7 +381,9 @@ export async function createTemplate(scope: BooksScope, input: CreateTemplateInp
               created_by: actor.userId ?? null,
             })
             .execute();
-          return mapTemplate(await selectTemplates(trx, scope).where('t.id', '=', id).executeTakeFirstOrThrow());
+          const saved = mapTemplate(await selectTemplates(trx, scope).where('t.id', '=', id).executeTakeFirstOrThrow());
+          if (hooks.beforeCommit) await hooks.beforeCommit();
+          return saved;
         }),
     );
   } catch (err) {
@@ -361,6 +396,7 @@ export async function updateTemplate(
   id: string,
   input: UpdateTemplateInput,
   actor: TemplateActor = {},
+  hooks: TemplateWriteHooks = {},
 ): Promise<DocumentTemplate> {
   const parsed = updateInput.safeParse(input);
   if (!parsed.success) throw invalid('INVALID_INPUT', parsed.error.issues);
@@ -381,7 +417,7 @@ export async function updateTemplate(
     }
     // Saving the same layout again is not a new version.
     if (canonical(newDocument) !== canonical(current.document)) {
-      // Assets are append-only, so a logo found here is still there when the version is written.
+      // A logo found here may be deleted before the version is written: the transaction locks and checks it again.
       await assertTemplateSavable(newDocument, await templateAssets(scope.db, scope, newDocument));
       candidate = { base: current.currentVersionId, document: newDocument };
     }
@@ -411,6 +447,7 @@ export async function updateTemplate(
                 currentVersionId: row.current_version_id,
               });
             }
+            await lockTemplateLogos(trx, scope, candidate.document);
             const last = await trx
               .selectFrom('document_template_version')
               .select((eb) => eb.fn.max('version').as('version'))
@@ -445,7 +482,9 @@ export async function updateTemplate(
             .where('tenant_id', '=', scope.tenantId)
             .where('id', '=', id)
             .execute();
-          return mapTemplate(await selectTemplates(trx, scope).where('t.id', '=', id).executeTakeFirstOrThrow());
+          const saved = mapTemplate(await selectTemplates(trx, scope).where('t.id', '=', id).executeTakeFirstOrThrow());
+          if (hooks.beforeCommit) await hooks.beforeCommit();
+          return saved;
         }),
     );
   } catch (err) {
@@ -509,7 +548,7 @@ export async function templateSnapshotFor(db: Db, scope: BooksScope, templateId:
     templateVersionId: row.current_version_id,
     name: row.name,
     document,
-    // The template's one logo (rules.ts), by hash: the re-render reads exactly these bytes (books_asset is append-only).
+    // The template's one logo (rules.ts), by hash: the re-render reads exactly these bytes (never changed, never deleted while a document names them).
     logo: templateLogo(document),
   };
 }

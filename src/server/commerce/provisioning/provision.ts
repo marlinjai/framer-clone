@@ -54,7 +54,9 @@
 // grant or not grant (it grants nothing; new tables used to depend on the
 // schema's default privileges, see books-fleet.itest.ts). A
 // future migration that adds an append-only table must REVOKE in its own body
-// AND be added to APPEND_ONLY_TABLES (a unit test fails if the two disagree).
+// AND be added to APPEND_ONLY_TABLES (a unit test fails if the two disagree;
+// it reads the migrations in order, so a later migration that changes a
+// table's rights, as 014 did for books_asset, moves it to another list).
 
 import postgres from 'postgres';
 import {
@@ -81,8 +83,9 @@ import {
  * stock ledger, the corrective documents, the placed order (an immutable
  * invoice) with its lines, the Books audit trail (sales_document_event, 007),
  * the Books stored documents of record (sales_document_file, 008), the saved
- * versions of the Books document templates (document_template_version, 012) and
- * the Books logos (books_asset, 013).
+ * versions of the Books document templates (document_template_version, 012).
+ * The Books logos (books_asset) were here from 013 until 014 made an unused
+ * logo deletable: they are in NO_UPDATE_TABLES now.
  */
 export const APPEND_ONLY_TABLES = [
   'stock_movement',
@@ -93,7 +96,6 @@ export const APPEND_ONLY_TABLES = [
   'sales_document_event',
   'sales_document_file',
   'document_template_version',
-  'books_asset',
 ] as const;
 
 /**
@@ -139,8 +141,19 @@ export const COMMERCE_APP_ROLE_BOOTSTRAP = 'verify' as const satisfies AppRoleBo
 export const NO_DELETE_TABLES = ['document_number_counter', 'historical_import_extraction', 'historical_import_item'] as const;
 
 /**
- * REVOKE UPDATE, DELETE, TRUNCATE on every append-only table of `schema`, and
- * DELETE, TRUNCATE on every no-delete table, from the app role. Idempotent. (The
+ * The tables commerce_app may read, insert and delete from but never UPDATE:
+ * the Books logos (books_asset, 014). The bytes behind a hash never change (an
+ * issued document re-renders from them); a logo nobody uses may be deleted,
+ * and the 014 trigger refuses the DELETE of one still in use for every role
+ * (BK015). This REVOKE keeps UPDATE and TRUNCATE away from the app role before
+ * the trigger is reached.
+ */
+export const NO_UPDATE_TABLES = ['books_asset'] as const;
+
+/**
+ * REVOKE UPDATE, DELETE, TRUNCATE on every append-only table of `schema`,
+ * DELETE, TRUNCATE on every no-delete table, and UPDATE, TRUNCATE on every
+ * no-update table, from the app role. Idempotent. (The
  * runner never grants TRUNCATE, so revoking it is belt and braces; it keeps the
  * REVOKEs identical to what the migrations write.) Pass it as `provisionTenant`'s `seed` (via
  * {@link commerceProvisionOptions}) so it runs inside the provisioning
@@ -156,7 +169,7 @@ export async function revokeAppendOnlyWrites(
   // REVOKE on a missing table would abort the whole transaction.
   const present = await tx<{ table_name: string }[]>`
     SELECT table_name FROM information_schema.tables
-     WHERE table_schema = ${schema} AND table_name = ANY(${[...APPEND_ONLY_TABLES, ...NO_DELETE_TABLES]})
+     WHERE table_schema = ${schema} AND table_name = ANY(${[...APPEND_ONLY_TABLES, ...NO_DELETE_TABLES, ...NO_UPDATE_TABLES]})
   `;
   const existing = new Set(present.map((r) => r.table_name));
   for (const table of APPEND_ONLY_TABLES) {
@@ -166,6 +179,10 @@ export async function revokeAppendOnlyWrites(
   for (const table of NO_DELETE_TABLES) {
     if (!existing.has(table)) continue;
     await tx`REVOKE DELETE, TRUNCATE ON ${tx(schema)}.${tx(table)} FROM ${tx(appRole)}`;
+  }
+  for (const table of NO_UPDATE_TABLES) {
+    if (!existing.has(table)) continue;
+    await tx`REVOKE UPDATE, TRUNCATE ON ${tx(schema)}.${tx(table)} FROM ${tx(appRole)}`;
   }
 }
 

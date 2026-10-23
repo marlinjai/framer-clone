@@ -86,6 +86,7 @@ const STATUS: Record<BooksErrorCode, number> = {
   ASSET_INVALID: 422,
   ASSET_NOT_FOUND: 404,
   ASSET_LIMIT: 409,
+  ASSET_IN_USE: 409,
   LOGO_ASSET_MISSING: 422,
 };
 
@@ -114,6 +115,7 @@ const MESSAGES: Partial<Record<BooksErrorCode, string>> = {
   RENDER_INCOMPLETE: 'the PDF would lack a legally required field; nothing was issued or stored',
   TEMPLATE_INVALID: 'the template cannot be saved; fix the named problems (nothing was saved)',
   ASSET_NOT_FOUND: 'no logo with this hash is stored for this company',
+  ASSET_IN_USE: 'the logo is printed on an issued document or used by a template, so it stays (nothing was deleted)',
   LOGO_ASSET_MISSING: "the template's logo is not stored for this company; choose the logo in the template again (nothing was issued)",
 };
 

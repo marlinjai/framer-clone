@@ -17,12 +17,21 @@
 //   415 unsupported_asset_type  not image/png or image/jpeg, or the bytes are not what the type says
 //   422 asset_invalid           undecodable, not embeddable, or too many pixels (the message says which)
 // The log line carries the hash and the size only.
+//
+// GET /api/books/assets
+//   -> 200 { items: [{ sha256, contentType, byteSize, widthPx, heightPx, createdAt, inUse }] }
+//
+// The company's logos, newest first, for the composer's logo list (phase 4
+// decision 9), behind the Books read guard. `inUse` is the definition the
+// delete applies (migration 014: an issued document froze it, or a live
+// template's current version names it), so the list offers a delete only for
+// a logo the database lets go.
 
 import { BooksError } from '@/server/books/errors';
 import { boundedBytes } from '@/server/books/http/boundedBody';
 import { booksRoute } from '@/server/books/http/route';
 import { LOGO_CONTENT_TYPES, MAX_LOGO_BYTES } from '@/server/books/render/logoImage';
-import { storeLogo } from '@/server/books/repository/assets';
+import { listAssets, storeLogo } from '@/server/books/repository/assets';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -42,4 +51,8 @@ export const POST = booksRoute('write', async (ctx, req) => {
   const { asset, created } = await storeLogo(ctx.scope, bytes, type, { userId: ctx.userId });
   console.info(`[books] logo ${asset.sha256} ${created ? 'stored' : 'already stored'} (${asset.byteSize} bytes)`);
   return Response.json(asset, { status: created ? 201 : 200, headers: { 'cache-control': 'no-store' } });
+});
+
+export const GET = booksRoute('read', async (ctx) => {
+  return Response.json({ items: await listAssets(ctx.scope) }, { headers: { 'cache-control': 'no-store' } });
 });

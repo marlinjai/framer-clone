@@ -26,6 +26,11 @@
 //     snapshot froze no logo is drawn without one (and can be cancelled) even
 //     when its layout names a hash;
 //   - the cap of 100 logos per company, `image/jpg`, an empty body, the ETag;
+//   - the logo list and the delete (phase 4 decision 9, migration 014): newest
+//     first with `inUse`, 204 for an unused logo, 409 `asset_in_use` for one a
+//     live template or an issued document holds (also after its template moved
+//     on or was archived), 404 for another company's, an unknown or a malformed
+//     hash, the guard;
 //   - documents set in each family: issued and re-rendered byte-identically,
 //     a document issued under DejaVu Sans still re-renders identically after
 //     its template moved to Noto.
@@ -646,5 +651,86 @@ describe('issued documents and their frozen logo', () => {
     const cancelled = await call(cancelRoute.POST, 'POST', `/api/books/documents/${ghostId}/cancel`, { id: ghostId }, { reason: 'issued in error' });
     expect(cancelled.status).toBe(200);
     expect(await images(await pdf(cancelled.json.creditNote.document.id))).toEqual([]);
+  });
+});
+
+describe('GET /api/books/assets and DELETE /api/books/assets/<sha256> (composer decision 9)', () => {
+  const list = () => call(assetsRoute.GET, 'GET', '/api/books/assets');
+  const remove = (hash: string) => call(assetRoute.DELETE, 'DELETE', `/api/books/assets/${hash}`, { sha256: hash });
+
+  it('lists the company logos newest first with whether each is in use; deletes an unused one (204) and refuses one in use (409)', async () => {
+    expect(await list()).toEqual({ status: 200, json: { items: [] } });
+    const used = makePng(310, 100);
+    const spare = makePng(311, 100);
+    await upload(used, 'image/png');
+    await new Promise((r) => setTimeout(r, 20));
+    await upload(spare, 'image/png');
+    const template = await createTemplate({ name: 'Mit Logo', document: withLogo(sha(used)) });
+    expect(template.status).toBe(201);
+
+    const listed = await list();
+    expect(listed.status).toBe(200);
+    expect(listed.json.items).toEqual([
+      { sha256: sha(spare), contentType: 'image/png', byteSize: spare.byteLength, widthPx: 311, heightPx: 100, createdAt: expect.any(String), inUse: false },
+      { sha256: sha(used), contentType: 'image/png', byteSize: used.byteLength, widthPx: 310, heightPx: 100, createdAt: expect.any(String), inUse: true },
+    ]);
+
+    const refused = await remove(sha(used));
+    expect(refused.status).toBe(409);
+    expect(refused.json.error).toMatchObject({ code: 'asset_in_use', sha256: sha(used) });
+    expect(refused.json.error.message).toContain('so it stays');
+
+    const res = await assetRoute.DELETE(jsonRequest('DELETE', `/api/books/assets/${sha(spare)}`), { params: Promise.resolve({ sha256: sha(spare) }) });
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe('');
+    expect((await download(sha(spare))).status).toBe(404);
+    expect((await list()).json.items.map((a: Json) => a.sha256)).toEqual([sha(used)]);
+    // Deleted twice: the second finds nothing.
+    expect((await remove(sha(spare))).json.error.code).toBe('asset_not_found');
+  });
+
+  it('a logo printed on an issued document stays after its template moves on or is archived', async () => {
+    const png = makePng(312, 100);
+    await upload(png, 'image/png');
+    const template = await createTemplate({ name: 'Rechnung', document: withLogo(sha(png)) });
+    const id = await draftWithLine();
+    expect((await issue(id)).status).toBe(200);
+    expect((await patchTemplate(template.json.id, { document: withLogo(null) })).status).toBe(200);
+    expect((await list()).json.items).toEqual([expect.objectContaining({ sha256: sha(png), inUse: true })]);
+    expect((await remove(sha(png))).status).toBe(409);
+    // The template no longer matters: archived (it holds no draft), the document still holds the logo.
+    expect((await call(templateRoute.DELETE, 'DELETE', `/api/books/templates/${template.json.id}`, { id: template.json.id })).status).toBe(204);
+    expect((await remove(sha(png))).status).toBe(409);
+    // The document re-renders with it.
+    expect(await images(await pdf(id))).toEqual([{ width: 312, height: 100 }]);
+  });
+
+  it("another company's logo, an unknown and a malformed hash are 404 asset_not_found; the list is the company's own", async () => {
+    const png = makePng(313, 100);
+    await upload(png, 'image/png');
+    const firstTenant = tenantId;
+    await company();
+    expect(await list()).toEqual({ status: 200, json: { items: [] } });
+    for (const hash of [sha(png), 'e'.repeat(64), 'not-a-hash', 'E'.repeat(64)]) {
+      const res = await remove(hash);
+      expect(res.status, hash).toBe(404);
+      expect(res.json.error.code).toBe('asset_not_found');
+    }
+    // The first company's logo is untouched.
+    const rows = await env.ownerDb.selectFrom('books_asset').select('sha256').where('tenant_id', '=', firstTenant).execute();
+    expect(rows).toEqual([{ sha256: sha(png) }]);
+  });
+
+  it('the guard: no session is 401, no Books right is 403, for the list and the delete; nothing is deleted', async () => {
+    const png = makePng(314, 100);
+    await upload(png, 'image/png');
+    state.can = false;
+    expect((await list()).status).toBe(403);
+    expect((await remove(sha(png))).status).toBe(403);
+    state.can = true;
+    state.session = null;
+    expect((await list()).status).toBe(401);
+    expect((await remove(sha(png))).status).toBe(401);
+    expect(await env.ownerDb.selectFrom('books_asset').select('sha256').where('tenant_id', '=', tenantId).execute()).toEqual([{ sha256: sha(png) }]);
   });
 });

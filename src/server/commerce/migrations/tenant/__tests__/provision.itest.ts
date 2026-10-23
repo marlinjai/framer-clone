@@ -52,6 +52,7 @@ const EXPECTED_MIGRATION_IDS = [
   '011_books_replacement',
   '012_books_template_v2',
   '013_books_assets',
+  '014_books_asset_delete',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {
