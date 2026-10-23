@@ -272,6 +272,59 @@ export async function getTemplate(scope: BooksScope, id: string): Promise<Docume
   return mapTemplate(row);
 }
 
+/** One saved version of a template, as the composer's version list shows it. */
+export interface TemplateVersionSummary {
+  id: string;
+  version: number;
+  createdAt: Date;
+  /** Whether this is the template's current version. */
+  current: boolean;
+  /** The issued documents laid out with this version (their frozen snapshots name it). */
+  documentCount: number;
+}
+
+/**
+ * The saved versions of one live template, newest first, each with the number
+ * of issued documents frozen with it ("Version 3 of 21.10.2026, used by 4
+ * documents"). A draft is not counted: it always previews the current version
+ * and freezes one only at issue. Another company's or an archived template is
+ * TEMPLATE_NOT_FOUND, as in getTemplate.
+ */
+export async function listTemplateVersions(scope: BooksScope, templateId: string): Promise<TemplateVersionSummary[]> {
+  const template = await scope.db
+    .selectFrom('document_template')
+    .select(['id', 'current_version_id'])
+    .where('tenant_id', '=', scope.tenantId)
+    .where('id', '=', templateId)
+    .where('archived_at', 'is', null)
+    .executeTakeFirst();
+  if (!template) throw new BooksError('TEMPLATE_NOT_FOUND', 'TEMPLATE_NOT_FOUND', { templateId });
+  const rows = await scope.db
+    .selectFrom('document_template_version as v')
+    .select((eb) => [
+      'v.id',
+      'v.version',
+      'v.created_at',
+      eb
+        .selectFrom('sales_document as d')
+        .select((c) => c.fn.countAll<string>().as('n'))
+        .where('d.tenant_id', '=', scope.tenantId)
+        .where(sql<string>`d.template_snapshot->>'templateVersionId'`, '=', eb.ref('v.id'))
+        .as('document_count'),
+    ])
+    .where('v.tenant_id', '=', scope.tenantId)
+    .where('v.template_id', '=', templateId)
+    .orderBy('v.version', 'desc')
+    .execute();
+  return rows.map((r) => ({
+    id: r.id,
+    version: r.version,
+    createdAt: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
+    current: r.id === template.current_version_id,
+    documentCount: Number(r.document_count ?? 0),
+  }));
+}
+
 /** The company's default template id, or null when it has none. */
 export async function defaultTemplateId(scope: BooksScope): Promise<string | null> {
   const row = await scope.db

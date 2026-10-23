@@ -85,6 +85,7 @@ import * as pdfRoute from '../documents/[id]/pdf/route';
 import * as templatesRoute from '../templates/route';
 import * as templateRoute from '../templates/[id]/route';
 import * as previewRoute from '../templates/preview/route';
+import * as versionsRoute from '../templates/[id]/versions/route';
 import { preset } from '@/server/books/template/presets';
 import * as settingsRoute from '../settings/route';
 
@@ -821,6 +822,55 @@ describe('Books routes: template versions and the preview', () => {
     state.session = null;
     const anonymous = await previewCall({ document: preset('klassisch'), subject: { kind: 'sample', variant: 'regular' } });
     expect(anonymous.status).toBe(401);
+  });
+  it('lists the versions newest first, each with the issued documents frozen with it', async () => {
+    const created = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Standard' });
+    const id = created.json.id as string;
+    const customer = await newCustomer({ customerType: 'b2b' });
+    const issued = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    await api.addLine(issued, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    await api.issue(issued);
+    // A draft is not counted: it freezes a version only at issue.
+    const draft = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    await api.addLine(draft, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    await patchTemplate(id, { accentColor: '#1f4e79' });
+
+    const res = await call(versionsRoute.GET, 'GET', `${tplPath(id)}/versions`, { id });
+    expect(res.status).toBe(200);
+    expect(res.json.items).toEqual([
+      expect.objectContaining({ version: 2, current: true, documentCount: 0 }),
+      expect.objectContaining({ id: created.json.currentVersionId, version: 1, current: false, documentCount: 1 }),
+    ]);
+    expect(Number.isNaN(Date.parse(res.json.items[0].createdAt))).toBe(false);
+
+    const mine = tenantId;
+    await company();
+    const foreign = await call(versionsRoute.GET, 'GET', `${tplPath(id)}/versions`, { id });
+    expect(foreign.status).toBe(404);
+    expect(foreign.json.error.code).toBe('template_not_found');
+    expect(mine).not.toBe(tenantId);
+  });
+
+  it('an archived template has no version list', async () => {
+    await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Standard' });
+    const second = await call(templatesRoute.POST, 'POST', '/api/books/templates', {}, { name: 'Zweite' });
+    const id = second.json.id as string;
+    expect((await call(templateRoute.DELETE, 'DELETE', tplPath(id), { id })).status).toBe(204);
+    const res = await call(versionsRoute.GET, 'GET', `${tplPath(id)}/versions`, { id });
+    expect(res.status).toBe(404);
+  });
+
+  it('a preview carries the structural problems of the unsaved layout, and none for a preset', async () => {
+    const clean = await previewCall({ document: preset('modern'), subject: { kind: 'sample', variant: 'regular' } });
+    expect(((await clean.json()) as Json).problems).toEqual([]);
+    const broken = structuredClone(preset('klassisch'));
+    broken.regions.body = broken.regions.body.filter((b) => b.type !== 'totals');
+    const res = await previewCall({ document: broken, subject: { kind: 'sample', variant: 'regular' } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Json;
+    expect(body.problems).toContainEqual(expect.objectContaining({ code: 'REQUIRED_BLOCK_MISSING', field: 'totals' }));
+    // It still renders: the composer shows the incomplete layout with what is wrong.
+    expect(body.layout.pageCount).toBeGreaterThanOrEqual(1);
   });
 });
 
