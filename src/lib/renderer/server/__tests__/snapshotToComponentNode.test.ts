@@ -104,6 +104,7 @@ describe('snapshotToComponentNode', () => {
       ogDescription: '',
       ogImage: 'https://x/og.png',
       canonicalUrl: '',
+      noIndex: false,
     });
   });
 

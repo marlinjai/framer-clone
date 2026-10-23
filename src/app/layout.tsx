@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { getRequestLanguage, resolveSiteForRequest } from "@/server/sites/requestSite";
 // NOTE (MT-15): the data-table-react CMS-grid stylesheets + cms-grid-theme.css
 // used to be imported HERE, in the root layout, which ships them to EVERY route
 // — including the published storefront under `(site)`, which has no data-table.
@@ -24,17 +25,32 @@ const geistMono = Geist_Mono({
 // create next app" defaults were editor scaffolding that leaked into the
 // storefront `<head>`. The storefront supplies its own metadata via
 // `src/app/(site)/layout.tsx` + per-page `generateMetadata`; editor surfaces
-// can set their own titles. Keep this empty so nothing editor-specific ships to
-// published sites.
-export const metadata: Metadata = {};
+// can set their own titles. Nothing editor-specific ships to published sites:
+// the platform icon is linked only on hosts that name no published site (the
+// editor). A published site gets its own favicon from Site settings, and
+// `/favicon.ico` answers per host (src/app/favicon.ico/route.ts).
+export async function generateMetadata(): Promise<Metadata> {
+  try {
+    if (await resolveSiteForRequest()) return {};
+  } catch (err) {
+    console.error("root layout: could not resolve the site for the icon links.", err);
+    return {};
+  }
+  return { icons: { icon: "/platform-favicon.ico" } };
+}
 
-export default function RootLayout({
+// `<html lang>`: a published site's language from its Site settings
+// (src/server/sites/requestSite.ts), `en` for the editor and unknown hosts.
+// Only the root layout may render `<html>`, so it reads the request's site
+// (one cached resolution shared with the (site) layout and the page).
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const lang = await getRequestLanguage();
   return (
-    <html lang="en" className="light">
+    <html lang={lang} className="light">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

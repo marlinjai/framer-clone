@@ -9,7 +9,6 @@
 // headless with fakes (the route wires the real, server-only dependencies).
 
 import React from 'react';
-import type { Metadata } from 'next';
 import {
   hydrateBindings,
   type ComponentNode,
@@ -22,7 +21,6 @@ import { renderComponentNode } from './renderComponentNode';
 import { applyResponsiveStyles } from './applyResponsiveStyles';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import CommercePageProviders from './CommercePageProviders';
-import type { PageSeoMetadata } from './snapshotToComponentNode';
 
 /**
  * The resolved analytics binding for a published page. `ingestionKey` is the
@@ -141,29 +139,4 @@ export async function renderPublishedPage(
     ),
     headSnippet: buildHeadSnippet(analytics),
   };
-}
-
-/**
- * Map the page SEO metadata onto a Next.js Metadata object for `generateMetadata`.
- * Empty fields are omitted so Next falls back to its defaults rather than
- * emitting empty tags.
- */
-export function pageSeoToMetadata(meta: PageSeoMetadata): Metadata {
-  const metadata: Metadata = {};
-  if (meta.title) metadata.title = meta.title;
-  if (meta.description) metadata.description = meta.description;
-  if (meta.keywords.length > 0) metadata.keywords = meta.keywords;
-  if (meta.canonicalUrl) metadata.alternates = { canonical: meta.canonicalUrl };
-
-  const ogTitle = meta.ogTitle || meta.title;
-  const ogDescription = meta.ogDescription || meta.description;
-  const hasOg = ogTitle || ogDescription || meta.ogImage;
-  if (hasOg) {
-    metadata.openGraph = {
-      ...(ogTitle ? { title: ogTitle } : {}),
-      ...(ogDescription ? { description: ogDescription } : {}),
-      ...(meta.ogImage ? { images: [{ url: meta.ogImage }] } : {}),
-    };
-  }
-  return metadata;
 }

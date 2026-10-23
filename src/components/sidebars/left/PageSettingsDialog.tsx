@@ -18,7 +18,8 @@
 //   one undo step and travels the same way as every other page edit.
 //
 // The page name doubles as the browser tab and search result title
-// (pageSeoToMetadata uses metadata.title), so there is no separate SEO title.
+// (pageMetadata in src/lib/site/publishedHead.ts uses metadata.title, through
+// the site's title template), so there is no separate SEO title.
 //
 // Search and sharing: the page's own sharing image (Open Graph, an https URL;
 // empty uses the site's default from Site settings), "Hide from search
