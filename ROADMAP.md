@@ -114,8 +114,12 @@ connections to the suite. The four lines below are in that order.
   block saved through the gate, a draft previewed with the QR placeholder, invoice TEST-1 issued
   (stored PDF by `books-pdf-lib-3`, every legal field present, the printed QR code decoding to
   EUR 240.84 and "Rechnung TEST-1"), and a later template edit leaving its PDF byte-identical.
-  Open: phases 3 to 5. See
-  [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-22)
+  Phase 3 (the shared editor package) is done since 2026-10-23: `@marlinjai/block-editor-react`
+  (snapshot undo history, inspector fields, the sortable outline with keyboard) is extracted in
+  email-editor #166, the email editor runs on it, 0.1.0 is on npm and email-editor's
+  `publish.yml` is its trusted publisher. Open: phases 4 (the composer interface, which builds on
+  2 and 3) and 5 (logos and Noto fonts). See
+  [plan](docs/plans/2026-10-21-books-visual-template-composer.md). (2026-10-23)
 - [ ] 9. E-invoicing for Books documents (XRechnung and ZUGFeRD profile EN 16931, built from the
   frozen document data, ZUGFeRD as a PDF/A-3 with the XML embedded): write its own plan in the
   first half of 2027, so every regular-taxed company using the Books can issue e-invoices before

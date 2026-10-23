@@ -849,3 +849,21 @@ needed.
 
 **Operator step**: deploy, which rolls `012_books_template_v2` across every tenant schema at boot
 and converts the existing templates. Nothing else is new (no secret, no variable).
+
+## Phase 3 build notes (2026-10-23): the shared editor package
+
+- `@marlinjai/block-editor-react` lives in the email-editor monorepo (`packages/block-editor-react`,
+  its own release set `block-editor-v*`), extracted in email-editor #166 (merged 2026-10-23). It
+  holds `SnapshotHistory` (React-free under `/history`, opt-in coalescing of quick edits to one
+  field), `useUndoableState` (the same history for a plain JSON document with Immer recipes), the
+  inspector's field primitives, and under `/outline` (the one entry that needs dnd-kit)
+  `SortableOutline` with `planOutlineDrop`, keyboard sorting and `rowLabel` announcements. The
+  React entries carry `"use client"`, so the Next.js App Router here can import them. No MJML,
+  MobX or MobX-State-Tree dependency, so it serves MobX-State-Tree 6 there and 7 here. The API for
+  phase 4 is in that package's README.
+- The email editor runs on it in the same change (undo and redo, the Layers panel, the inspector
+  fields), so there is one implementation and no copy.
+- Publishing: 0.1.0 was published by hand on 2026-10-23 (npm only registers a trusted publisher
+  on a package that exists); email-editor's `publish.yml` is registered as its trusted publisher
+  the same day, and 0.1.1 (same code, email-editor #171) is the first version published through
+  it, which validates the registration. Phase 4 adds the package as a dependency here.
