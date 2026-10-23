@@ -59,7 +59,8 @@ function server(r: Record<string, Handler>) {
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? 'GET';
-      const body = init?.body ? (JSON.parse(String(init.body)) as Json) : null;
+      // A logo upload sends the file itself, not JSON.
+      const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Json) : init?.body ? { file: init.body } : null;
       calls.push({ method, url, body });
       const handler = routes[`${method} ${url.split('?')[0]}`];
       if (!handler) return new Response(JSON.stringify({ error: { code: 'not_found', message: 'nf' } }), { status: 404 });
@@ -552,6 +553,59 @@ describe('the template composer: re-entry after a save', () => {
     expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true);
     selectInOutline('title');
     expect((screen.getByLabelText('Text size') as HTMLSelectElement).value).toBe('20');
+  });
+});
+
+describe('the template composer: the logo', () => {
+  const SHA = 'a'.repeat(64);
+
+  it('an uploaded logo goes to every logo block, and a refused upload says why', async () => {
+    const modern = preset('modern') as unknown as Json;
+    // A second logo block, in the page 2 header.
+    modern.regions.followingPageHeader.push({ id: 'logo2', type: 'logo', style: {}, widthMm: 20, assetSha256: null });
+    let refuse = true;
+    server({
+      ...baseRoutes(),
+      'GET /api/books/templates/tpl1': () => ({ status: 200, body: template(1, modern) }),
+      'POST /api/books/assets': () =>
+        refuse
+          ? { status: 422, body: { error: { code: 'asset_invalid', message: 'the image is wider than 2000 pixels' } } }
+          : { status: 201, body: { sha256: SHA, contentType: 'image/png', byteSize: 120, widthPx: 400, heightPx: 100 } },
+      'PATCH /api/books/templates/tpl1': (body) => ({ status: 200, body: template(2, body!.document) }),
+    });
+    render(<TemplateComposer id="tpl1" />);
+    await screen.findByDisplayValue('Hausvorlage');
+    await waitFor(() => expect(document.querySelector('[data-outline-select="logo"]')).not.toBeNull());
+    selectInOutline('logo');
+    expect(screen.getByText('No image yet: the block prints nothing until one is chosen.')).toBeTruthy();
+    expect(screen.getByText(/A template prints one logo: every logo block shows it./)).toBeTruthy();
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'logo.png', { type: 'image/png' });
+
+    fireEvent.change(screen.getByLabelText('Upload a logo'), { target: { files: [file] } });
+    expect(await screen.findByText(/The logo cannot be used: the image is wider than 2000 pixels/)).toBeTruthy();
+    expect(header()).not.toContain('unsaved');
+
+    refuse = false;
+    fireEvent.change(screen.getByLabelText('Upload a logo'), { target: { files: [file] } });
+    expect(await screen.findByText('Logo set (400 × 100 pixels).')).toBeTruthy();
+    expect(screen.getByAltText('The current logo').getAttribute('src')).toBe(`/api/books/assets/${SHA}`);
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(header()).toContain('Version 2'));
+    const saved = calls.find((c) => c.method === 'PATCH')!.body!.document;
+    expect(saved.regions.firstPageHeader[0].assetSha256).toBe(SHA);
+    expect(saved.regions.followingPageHeader.find((b: Json) => b.id === 'logo2').assetSha256).toBe(SHA);
+  });
+
+  it('a file that is not an image is refused before anything is sent', async () => {
+    server({ ...baseRoutes(), 'GET /api/books/templates/tpl1': () => ({ status: 200, body: template(1, preset('modern')) }) });
+    render(<TemplateComposer id="tpl1" />);
+    await screen.findByDisplayValue('Hausvorlage');
+    await waitFor(() => expect(document.querySelector('[data-outline-select="logo"]')).not.toBeNull());
+    selectInOutline('logo');
+    const file = new File(['%PDF-'], 'brief.pdf', { type: 'application/pdf' });
+    fireEvent.change(screen.getByLabelText('Upload a logo'), { target: { files: [file] } });
+    expect(await screen.findByText('Choose a PNG, JPEG or SVG file.')).toBeTruthy();
+    expect(calls.some((c) => c.url.startsWith('/api/books/assets'))).toBe(false);
   });
 });
 

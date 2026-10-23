@@ -80,6 +80,10 @@ export function problemText(p: TemplateProblemView): string {
         : `The ${f?.replace('theme.', '') ?? ''} colour is too light to read on white paper (at least 4.5:1 contrast is needed). Pick a darker one.`;
     case 'CELLS_TOO_WIDE':
       return 'The cells of this columns row are wider than the page together (12 units at most).';
+    case 'LOGO_ASSET_MISSING':
+      return 'This logo is not stored for this company. Upload it again in the logo block.';
+    case 'LOGO_ASSETS_DIFFER':
+      return 'The logo blocks show different images; a document prints one logo. Choose the same image in each, or remove one.';
     case 'UNDRAWABLE_TEXT':
       return `The ${f ?? 'text'} holds characters the document font cannot print. ${capitalize(p.message.split(': ').slice(1).join(': '))}`.trim();
     case 'LAYOUT_PROBLEM':

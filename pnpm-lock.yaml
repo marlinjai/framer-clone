@@ -30,8 +30,8 @@ importers:
         specifier: ^1.7.1
         version: 1.7.1(zod@4.3.6)
       '@marlinjai/block-editor-react':
-        specifier: ^0.1.0
-        version: 0.1.0(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(@dnd-kit/sortable@8.0.0(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(react@19.1.9))(@dnd-kit/utilities@3.2.2(react@19.1.9))(react-dom@19.1.9(react@19.1.9))(react@19.1.9)
+        specifier: ^0.1.2
+        version: 0.1.2(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(@dnd-kit/sortable@8.0.0(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(react@19.1.9))(@dnd-kit/utilities@3.2.2(react@19.1.9))(react-dom@19.1.9(react@19.1.9))(react@19.1.9)
       '@marlinjai/contacts-core':
         specifier: ^0.3.0
         version: 0.3.0(postgres@3.4.9)
@@ -1198,8 +1198,8 @@ packages:
   '@marlinjai/auth-brain-shared@1.9.0':
     resolution: {integrity: sha512-C7W20fX2Nv+Y67iN8TUKwUXe+qT9LBOFXQ516hzRq3y5pUAjMD39rVxmVS2OX7jpgeSubL3501hFLtsR+A5Lrg==}
 
-  '@marlinjai/block-editor-react@0.1.0':
-    resolution: {integrity: sha512-n3+qLhOUSeNGbuih73KSTgrmKz1yme+vYp5ADf+rtxm5VrQ5H+gz6BbWzauRBUdkWlGl3Fz8xf3E7/jPxIIfrg==}
+  '@marlinjai/block-editor-react@0.1.2':
+    resolution: {integrity: sha512-5kHs1D/nSKOcEQ9+X1K+ncpS1cXAal3RbcrzjxOR6e6VpMlTlDWIGgnvPk3j4peT2+RnVaMSiW6tspRGIbrP8w==}
     engines: {node: '>=20.19.0'}
     peerDependencies:
       '@dnd-kit/core': ^6.1.0
@@ -6971,7 +6971,7 @@ snapshots:
     dependencies:
       zod: 3.25.76
 
-  '@marlinjai/block-editor-react@0.1.0(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(@dnd-kit/sortable@8.0.0(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(react@19.1.9))(@dnd-kit/utilities@3.2.2(react@19.1.9))(react-dom@19.1.9(react@19.1.9))(react@19.1.9)':
+  '@marlinjai/block-editor-react@0.1.2(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(@dnd-kit/sortable@8.0.0(@dnd-kit/core@6.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9))(react@19.1.9))(@dnd-kit/utilities@3.2.2(react@19.1.9))(react-dom@19.1.9(react@19.1.9))(react@19.1.9)':
     dependencies:
       clsx: 2.1.1
       immer: 10.2.0

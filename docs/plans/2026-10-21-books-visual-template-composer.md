@@ -1082,3 +1082,112 @@ checks before the decode and a test of the lock at 99 logos; messages built from
 
 **Operator step**: deploy, which rolls `013_books_assets` across every tenant schema at boot.
 Nothing else is new (no secret, no variable).
+
+## Phase 4 build notes (2026-10-23): the composer
+
+Built on branch `feat/books-template-composer`. Decided while building, say so if you disagree.
+
+**What exists now.**
+
+- `/projects/books/templates/<id>` (`src/app/projects/books/composer/`), opened with "Edit layout"
+  from the templates list; a new template starts from Klassisch, Modern or Kompakt and opens there.
+  Three panels:
+  - **Left (`Outline.tsx`):** the palette lists the blocks the chosen region can take, the others
+    folded under "Not available here" with the reason ("Already in the template", "Not allowed in
+    the footer"); the document structure is `SortableOutline` from `@marlinjai/block-editor-react`
+    with the regions as groups, pointer and keyboard sorting, lock badges on required blocks,
+    a problem count per block.
+  - **Middle (`PdfCanvas.tsx`):** the preview PDF drawn with pdf.js 4.10.38 (worker from the same
+    bundle, loaded only on this page), an overlay from the layout map (hover, click to select,
+    drag to reorder within a page, the line table's column borders as resize handles), the
+    preview subject (the seven fictional samples or one of the company's 50 newest documents),
+    zoom, "Page n of m", "Open the preview as PDF".
+  - **Right (`Inspector.tsx`):** the selected block's fields from the schema's bounded scales,
+    move up and down, remove (optional blocks only), the logo picker (`LogoPicker.tsx`); page and
+    theme when nothing is selected; the saved versions with their issued documents.
+- `doc.ts`: the document operations (add, move, remove, cells), on the gate's own rules.
+  `workingCopy.ts`: the unsaved edits in `localStorage`. `usePreview.ts`: the refresh.
+  `problems.ts`: the gate's codes in words.
+- Server: `GET /api/books/templates/<id>/versions` (newest first, each with the issued documents
+  frozen with it, one grouped query), and the preview answer carries `problems`, the gate's
+  structural step, so the composer shows them while the user edits.
+- The phase 3 form's partial edits (`accentColor`, `footerBlocks` on POST and PATCH) are removed
+  from the repository, the routes and the client: the composer saves the layout as a whole
+  document. (The phase 2 notes above describe the form as it was then.) The list keeps the accent
+  colour as a read-only swatch.
+- `@marlinjai/block-editor-react` ^0.1.0, the three `@dnd-kit` packages and `pdfjs-dist` are new
+  dependencies; `globals.css` scans the package for its Tailwind classes.
+
+**Decisions.**
+
+1. **The composer is English**, like the rest of the editor (phase 1 decision 1); the documents
+   stay German. Decision 8's German sentences become English ones in `problems.ts`.
+2. **Live problems come from the server.** The structural rules need the embedded fonts' widths;
+   rather than ship the fonts to the browser, every preview answer carries them (cheap: the
+   measurer is built once per process). The probe render still runs only on save.
+3. **Order rules are not enforced on moves.** Totals after the table, the tax note right after
+   the totals and the return line above the address are shown live next to the block and refused
+   by the gate on save; refusing the move itself would make reordering fiddly, since it often
+   passes through such a state. Where a block may stand, the title once per region, and the
+   required instance staying in its region ARE enforced on every move and addition.
+4. **A document the schema refuses is never sent.** An emptied text (the one way the inspector
+   can leave the schema) pauses the preview and the save with a message naming the block.
+5. **The working copy restores what it can show.** A copy made on the current version comes back
+   with a notice and as one undo step; one made on an older version is offered, and the panels
+   and saving wait for "Apply them anyway" or "Discard them". A copy that fails the strict schema
+   but is a template document (an edit that ended mid-retyping) is restored; only one that is not
+   a template document is dropped.
+6. **Screen readers hear the edits, not every refresh.** The preview is announced only when its
+   page count changes or it fails; moves, removals, refusals and saves are announced; the visible
+   status line is not a live region.
+7. **Only the pages near the viewport are drawn**, at a pixel ratio of at most 2, with one PDF
+   open at a time: a long real document cannot exhaust the browser's canvas memory.
+8. **One logo per template in the picker.** An uploaded logo goes to every logo block (phase 5's
+   `LOGO_ASSETS_DIFFER`), and a new logo block takes the template's image. SVG files are turned
+   into PNG in the browser (the plan's decision 15).
+9. **A logo nobody uses may be deleted** (the question the phase 5 notes left open). GoBD only
+   protects what an issued document was printed with, and GDPR's right to erasure requires that
+   an uploaded image can be removed. So: deletable when no issued document's snapshot and no live
+   template's current version names it; never while either does. It is built in its own pull
+   request (a list of the company's logos in the picker, a delete route, and a migration that
+   lets exactly that delete through the append-only guard, with the issue path taking a share
+   lock on the logo so a delete can never race an issue).
+10. **The outline is a labelled list, not an ARIA tree.** The arrow keys move between blocks,
+    Alt+Up and Alt+Down move the selected block, Enter opens its inspector, the drag handles
+    carry dnd-kit's keyboard sorting. A tree role would promise tree semantics (expand, collapse,
+    levels) the regions do not have.
+
+**Accessibility (WCAG 2.2 AA, with the `wcag` skill before the pull request).** Every action has
+a keyboard path and a single-pointer path (move buttons for SC 2.5.7); drag handles are 24 px
+(SC 2.5.8); control borders and icons reach 3:1 (SC 1.4.11; the shared package's fields got the
+same fix in `@marlinjai/block-editor-react` 0.1.2, email-editor #172); one polite live region; the
+preview is also available as a PDF with its text (SC 1.1.1); a page title and heading; panels stack
+on narrow screens (SC 1.4.10); focus has a place after every removal, refused move, reload and
+choice; shortcuts listen on the window, so they keep working when focus falls back to the page.
+
+**Latency** (decision 12's browser target, p95 under 800 ms from a change to new pages drawn):
+measured in the automation browser against the real engine, 558 to 711 ms per refresh after an
+edit for one to three pages on the Mac (the first preview of a session is slower, about 860 to
+1180 ms, while pdf.js loads). On app.lumitra.co it is measured again in the browser proof.
+
+**Review.** Two fresh reviews: the first found 7 defects, 11 risks and 9 nits (the title rule,
+focus after a refused move, Enter on a row, Escape in the name, the working copy dropped
+mid-edit, cells offering what their region refuses, the order comment, keys during a drag, the
+offer racing edits, no-op moves as undo steps, canvas memory, the version count query, and more);
+all fixed or decided above. The second checked those fixes and found two more defects (the Books
+page calling a client module's function on the server, focus after a reload landing before the
+offer existed) and a partial fix (the documents list retry); all fixed, with tests.
+
+**Tests.** `composer/__tests__/`: `doc.test.ts` (operations against the gate's rules, the title
+rule, no-op moves), `workingCopy.test.ts`, `usePreview.test.tsx` (debounce, abort, a late answer
+dropped, failure, disabled), `TemplateComposer.test.tsx` (the four stateful-flow paths: forward,
+backtrack and revise with a refused save, resume and the offer, re-entry after a save and after a
+lost race; the keyboard paths, renaming, cells, the documents list, the logo picker);
+`books-routes.itest.ts` (the version list with counts, tenant scoping and archived templates,
+structural problems in the preview, the routes without the form's fields). Checked in the
+automation browser with the development server and the production build (`node
+.next/standalone/server.js`, the pdf.js worker served as JavaScript): select, edit, undo and redo,
+add, Alt+Up, Enter, delete, drag in the canvas, column resize, save, resume, the offer, the lost
+race, a refused save, three pages scrolled with "Page n of m".
+
+**Operator step**: deploy. No migration, no secret, no variable.

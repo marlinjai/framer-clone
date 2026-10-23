@@ -23,6 +23,7 @@ import {
   META_ITEMS,
   REGIONS,
   SENDER_COLUMNS,
+  templateLogo,
   type Block,
   type BlockType,
   type CellBlock,
@@ -203,20 +204,10 @@ export function logoBlockIds(doc: TemplateDocumentV2): string[] {
   });
 }
 
-/** The image the template's logo blocks print (one per template), or null. */
-export function templateLogo(doc: TemplateDocumentV2): string | null {
-  for (const id of logoBlockIds(doc)) {
-    const at = locate(doc, id);
-    const b = at?.cell?.block ?? at?.block;
-    if (b?.type === 'logo' && b.assetSha256) return b.assetSha256;
-  }
-  return null;
-}
-
 /** A new block, a logo taking the template's image so all logo blocks print the same one. */
 function newBlockFor(doc: TemplateDocumentV2, type: BlockType, id: string): Block {
   const block = newBlock(type, id);
-  if (block.type === 'logo') block.assetSha256 = templateLogo(doc);
+  if (block.type === 'logo') block.assetSha256 = templateLogo(doc)?.sha256 ?? null;
   return block;
 }
 

@@ -62,7 +62,7 @@ export const POST = booksRoute('write', async (ctx, req) => {
   if (!parsed.success) throw invalid('INVALID_INPUT', parsed.error.issues);
 
   const preview = await renderPreview(ctx.scope, parsed.data.document, parsed.data.subject);
-  const problems = structuralProblems(parsed.data.document, await fontMeasure());
+  const problems = structuralProblems(parsed.data.document, await fontMeasure(parsed.data.document.theme.fontFamily));
   console.info(`[books] template preview: ${preview.layout.pageCount} page(s), ${preview.renderMs} ms`);
   return Response.json(
     { pdf: Buffer.from(preview.pdf).toString('base64'), layout: preview.layout, renderMs: preview.renderMs, problems },

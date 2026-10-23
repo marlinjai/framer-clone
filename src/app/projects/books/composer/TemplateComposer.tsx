@@ -64,6 +64,7 @@ import {
   type TemplateDocumentV2,
 } from './doc';
 import Inspector, { type Update } from './Inspector';
+import LogoPicker from './LogoPicker';
 import Outline from './Outline';
 import PdfCanvas, { type ColumnResize } from './PdfCanvas';
 import { problemText } from './problems';
@@ -851,7 +852,11 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
         </section>
 
         <aside aria-labelledby="inspector-title" ref={inspectorRef} className="overflow-y-auto border-l p-3">
-          <Inspector doc={doc} selectedId={selectedId} update={update} problems={problems} onSelect={select} onRemove={remove} onStep={(d) => step(d)} />
+          <Inspector doc={doc} selectedId={selectedId} update={update} problems={problems} onSelect={select}
+            onRemove={remove}
+            onStep={(d) => step(d)}
+            renderLogoPicker={(block, upd) => <LogoPicker doc={doc} assetSha256={block.assetSha256} update={upd} />}
+          />
           <Versions versions={versions} />
         </aside>
       </div>
