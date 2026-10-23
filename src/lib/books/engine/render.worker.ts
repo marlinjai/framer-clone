@@ -22,16 +22,19 @@ const scope = self as unknown as {
 const fetcher = (path: string) => fetch(new URL(path, scope.location.origin), { credentials: 'same-origin' });
 
 const cancelled = new Set<number>();
+/** The highest id taken from the queue: requests run in id order, so a cancel at or below it comes too late and is not kept. */
+let started = 0;
 let queue: Promise<void> = Promise.resolve();
 
 async function run(id: number, payload: Extract<WorkerRequest, { type: 'render' }>['payload']): Promise<void> {
+  started = id;
   if (cancelled.delete(id)) return;
-  const started = performance.now();
+  const t0 = performance.now();
   try {
     const { bytes, layout } = await renderDraftPayload(fetcher, payload);
     // A buffer of exactly the PDF, so the transfer hands over nothing else.
     const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? bytes.buffer : bytes.slice().buffer;
-    const renderMs = Math.round((performance.now() - started) * 10) / 10;
+    const renderMs = Math.round((performance.now() - t0) * 10) / 10;
     scope.postMessage({ type: 'rendered', id, bytes: buffer as ArrayBuffer, layout, renderMs }, [buffer as ArrayBuffer]);
   } catch (err) {
     scope.postMessage({ type: 'failed', id, error: serializeRenderError(err) });
@@ -41,7 +44,7 @@ async function run(id: number, payload: Extract<WorkerRequest, { type: 'render' 
 scope.onmessage = (e) => {
   const msg = e.data;
   if (msg.type === 'cancel') {
-    cancelled.add(msg.id);
+    if (msg.id > started) cancelled.add(msg.id);
     return;
   }
   if (msg.type === 'render') queue = queue.then(() => run(msg.id, msg.payload));

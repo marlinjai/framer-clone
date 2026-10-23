@@ -7,7 +7,7 @@
 // render model, "?" for what the family cannot draw, the layout engine,
 // "ENTWURF" on every page). The worker (render.worker.ts) runs this; the
 // parity tests import it directly. Nothing here, nor anything it imports, may
-// import Node (engineImportGraph.test.ts walks the graph and fails on a
+// import Node (__tests__/importGraph.test.ts walks the graph and fails on a
 // `node:` import, on the server's fonts.ts or on logoImage.ts).
 
 import { assertRenderableTemplate, type EngineResult } from '@/server/books/render/engine';

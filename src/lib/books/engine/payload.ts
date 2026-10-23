@@ -6,7 +6,11 @@
 // here (the render model writes the document's `issuedAt` into the PDF's
 // metadata, so a string where a date belongs would change the bytes). Light
 // on purpose: no engine import, so the editor's page bundle does not carry the
-// engine; the worker checks the template in full before drawing.
+// engine; the worker checks the template in full before drawing. The fields
+// of the document and its lines are not checked one by one: a payload the
+// editor broke (a quantity that is not an integer) fails in the worker as
+// `render_failed` with the engine's message, still a named error and never a
+// page drawn differently.
 
 import type { RenderInput } from '@/server/books/render/model';
 import { FONT_FILES } from '@/server/books/render/fontPins';

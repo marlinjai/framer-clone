@@ -61,7 +61,7 @@ import type { Kysely, Transaction } from 'kysely';
 import type { CommerceDB } from '../../commerce/db-types';
 import { BooksError, withDbErrors } from '../errors';
 import { readRecipient } from '../recipients';
-import { templateAssets } from '../repository/assets';
+import { templateAssetRefs, templateAssets } from '../repository/assets';
 import { getDocument, selectDocumentRow, type DocumentView } from '../repository/read';
 import { selectCustomerRow } from '../repository/taxState';
 import { templateSnapshotFor } from '../repository/templates';
@@ -196,7 +196,7 @@ async function replacedInvoice(db: Db, scope: BooksScope, doc: DocumentView['doc
 async function draftInput(
   scope: BooksScope,
   view: DocumentView,
-): Promise<{ input: RenderInput; document: TemplateDocumentV2; assets: EngineAssets }> {
+): Promise<{ input: RenderInput; document: TemplateDocumentV2 }> {
   const doc = view.document;
   const settings = await readSettings(scope.db, scope);
   let recipient: RenderRecipient | null = null;
@@ -223,7 +223,6 @@ async function draftInput(
   // The current version of the draft's template (the built-in Klassisch layout without one).
   const { document } = await templateSnapshotFor(scope.db, scope, doc.templateId);
   return {
-    assets: await templateAssets(scope.db, scope, document),
     input: {
       draft: true,
       document: doc,
@@ -256,7 +255,11 @@ export async function documentRenderInput(scope: BooksScope, documentId: string)
 
 /** What the browser needs to draw a draft exactly as the draft PDF route draws it (WYSIWYG invoice editor plan, phase 1). */
 export interface DraftRenderSource {
-  /** The draft's version (the optimistic-concurrency counter every change of the editor carries). */
+  /**
+   * The document row's version as it was read (the optimistic-concurrency counter every change of
+   * the editor carries). The sender, the customer's contact and the template are read live after
+   * it, as the draft PDF route reads them, so they are not pinned to this version.
+   */
   version: number;
   /** The render input, from live data, as the draft PDF route reads it. */
   input: RenderInput;
@@ -271,7 +274,9 @@ export interface DraftRenderSource {
  * /api/books/documents/<id>/render-input): the same live data, template and
  * logos the draft PDF route renders with (`documentPdf`). An issued or
  * imported document is refused (NOT_RENDERABLE): its stored document of record
- * is what is shown and downloaded, and the browser never draws one.
+ * is what is shown and downloaded, and the browser never draws one. (An
+ * imported document is never a draft; the check says so rather than relying
+ * on it.)
  */
 export async function draftRenderSource(scope: BooksScope, documentId: string): Promise<DraftRenderSource> {
   const view = await getDocument(scope, documentId);
@@ -280,15 +285,9 @@ export async function draftRenderSource(scope: BooksScope, documentId: string): 
       documentId,
     });
   }
-  const { input, document, assets } = await draftInput(scope, view);
-  return {
-    version: view.document.version,
-    input,
-    template: document,
-    logos: [...assets.entries()]
-      .map(([sha256, asset]) => ({ sha256, contentType: asset.contentType }))
-      .sort((a, b) => (a.sha256 < b.sha256 ? -1 : a.sha256 > b.sha256 ? 1 : 0)),
-  };
+  const { input, document } = await draftInput(scope, view);
+  // The logos' hashes and types only: the browser fetches the bytes once and keeps them.
+  return { version: view.document.version, input, template: document, logos: await templateAssetRefs(scope.db, scope, document) };
 }
 
 function fileNameFor(view: DocumentView, draft: boolean): string {
@@ -447,7 +446,8 @@ export async function storeRenderedDocument(scope: BooksScope, documentId: strin
 export async function documentPdf(scope: BooksScope, documentId: string): Promise<RenderedPdf> {
   const view = await getDocument(scope, documentId);
   if (view.document.status === 'draft') {
-    const { input, document, assets } = await draftInput(scope, view);
+    const { input, document } = await draftInput(scope, view);
+    const assets = await templateAssets(scope.db, scope, document);
     const family = document.theme.fontFamily;
     // The one draft path the browser's worker shares (draftRender.ts), with the files from disk.
     const { bytes } = await renderDraft(input, document, { fonts: fontFiles(family), canDraw: (cp) => canDraw(cp, family), assets });

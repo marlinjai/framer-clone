@@ -33,6 +33,20 @@ class FakeWorker implements WorkerLike {
 }
 
 const PAYLOAD = { format: 1 } as unknown as RenderInputPayload;
+/** A well-formed render input answer (the parser checks the shape, not the document's fields). */
+const PAYLOAD_JSON = {
+  format: 1,
+  documentId: 'doc-1',
+  documentVersion: 3,
+  fontFamily: 'dejavu-sans',
+  input: {
+    draft: true,
+    document: { id: 'doc-1', issuedAt: null, createdAt: '2026-10-23T10:00:00.000Z', updatedAt: '2026-10-23T10:00:00.000Z' },
+    lines: [],
+  },
+  template: { theme: { fontFamily: 'dejavu-sans' } },
+  logos: [],
+};
 const LAYOUT = { page: { width: 1, height: 1 }, pageCount: 1, blocks: [], tables: [], issues: [] };
 
 function renderer() {
@@ -147,6 +161,29 @@ describe('fetchRenderInput', () => {
     const ctl = new AbortController();
     ctl.abort();
     expect((await rejection(fetchRenderInput('doc-1', { signal: ctl.signal }))).code).toBe('aborted');
+  });
+
+  it('an abort while the body is read: aborted, not a malformed answer', async () => {
+    const ctl = new AbortController();
+    vi.stubGlobal('fetch', async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        ctl.abort();
+        throw new DOMException('The operation was aborted.', 'AbortError');
+      },
+    }));
+    expect((await rejection(fetchRenderInput('doc-1', { signal: ctl.signal }))).code).toBe('aborted');
+  });
+
+  it("an answer for another document: invalid_input", async () => {
+    const body = JSON.parse(JSON.stringify(PAYLOAD_JSON));
+    vi.stubGlobal('fetch', async () => Response.json({ ...body, documentId: 'doc-2' }));
+    const e = await rejection(fetchRenderInput('doc-1'));
+    expect(e.code).toBe('invalid_input');
+    expect(e.details.path).toBe('documentId');
+    vi.stubGlobal('fetch', async () => Response.json(body));
+    await expect(fetchRenderInput('doc-1')).resolves.toMatchObject({ documentId: 'doc-1' });
   });
 
   it('a malformed answer: invalid_input', async () => {

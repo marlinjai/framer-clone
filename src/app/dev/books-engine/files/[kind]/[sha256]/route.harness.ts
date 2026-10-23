@@ -20,6 +20,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ kind: s
     const bytes = fontFileByDigest(sha256);
     return bytes ? new Response(Buffer.from(bytes), { headers: { 'content-type': 'font/ttf' } }) : new Response('not found', { status: 404 });
   }
+  if (kind !== 'assets') return new Response('not found', { status: 404 });
   // The generated logos are deterministic: the same bytes as in the cases route.
   const logo = (['png', 'jpeg'] as const).map((k) => logoCase('dejavu-sans', k)).find((c) => c.sha === sha256)?.assets.get(sha256);
   return logo ? new Response(Buffer.from(logo.bytes), { headers: { 'content-type': logo.contentType } }) : new Response('not found', { status: 404 });

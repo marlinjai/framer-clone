@@ -7,14 +7,16 @@
 // by their SHA-256, read from assets/fonts by the server's own loader
 // (render/fonts.ts, which refuses a file on disk that differs from its pin).
 // The browser fetches only the family a template uses and checks each file's
-// digest again before drawing with it (src/lib/books/engine/fonts.ts).
+// digest again before drawing with it (src/lib/books/engine/resources.ts).
 //
 // A file behind a digest never changes (a family id never changes its files,
 // decision 6 of the composer plan), so the answer is cached for a year,
-// `immutable`; `public` is right because the files are the same open-licensed
-// fonts for everyone (Bitstream Vera and SIL Open Font licences,
-// assets/fonts). Behind the Books read guard like every /api/books route, so
-// only a signed-in user of a company with the Books opens it. Any digest that
+// `immutable`. Behind the Books read guard like every /api/books route, but
+// `public` on purpose: the files are the same open-licensed fonts for
+// everyone (Bitstream Vera and SIL Open Font licences, assets/fonts, which
+// anyone may redistribute), so a shared cache serving a stored copy to a
+// signed-out visitor gives away nothing; the guard keeps the route from
+// being an anonymous download endpoint, not the bytes secret. Any digest that
 // is not a pinned font (malformed, unknown, a logo's) answers 404 `not_found`.
 // The standalone build traces assets/fonts for every Books route
 // (next.config.ts `outputFileTracingIncludes`).

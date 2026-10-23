@@ -18,9 +18,10 @@
 //             that cannot be fetched is an error (`logo_fetch_failed`), never
 //             a page drawn without it.
 //
-// Fonts, coverage and logos are kept for the life of the worker (a file
-// behind a digest never changes); a failed fetch is not kept, so the next
-// render tries again. Pure apart from the `fetch` passed in: no Node imports.
+// Fonts and coverage are kept for the life of the worker (a file behind a
+// digest never changes; three families at most), logos up to MAX_LOGOS, least
+// recently used out; a failed fetch is not kept, so the next render tries
+// again. Pure apart from the `fetch` passed in: no Node imports.
 
 import fontkit from '@pdf-lib/fontkit';
 
@@ -125,8 +126,19 @@ export function coverageOf(family: FontFamily, files: EngineFonts): CanDraw {
   return can;
 }
 
+/** How many logos a worker keeps (a company uses one or two; a company switch brings others). */
+const MAX_LOGOS = 8;
+
 /** A logo by its hash, fetched and checked against it. */
 export function loadLogo(fetcher: Fetcher, logo: LogoRef): Promise<EngineImage> {
+  const known = logos.get(logo.sha256);
+  if (known) {
+    // Most recently used last.
+    logos.delete(logo.sha256);
+    logos.set(logo.sha256, known);
+    return known;
+  }
+  while (logos.size >= MAX_LOGOS) logos.delete(logos.keys().next().value!);
   return remember(logos, logo.sha256, async () => {
     const bytes = await get(fetcher, `/api/books/assets/${logo.sha256}`, 'logo_fetch_failed', 'The logo');
     const digest = await sha256Hex(bytes);

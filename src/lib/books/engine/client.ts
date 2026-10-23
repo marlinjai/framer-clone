@@ -178,7 +178,13 @@ export async function fetchRenderInput(documentId: string, options: RenderDraftO
     if (options.signal?.aborted) throw abortedError();
     throw new BrowserRenderError('render_input_failed', `The draft could not be loaded (${err instanceof Error ? err.message : String(err)}).`);
   }
-  const body: unknown = await res.json().catch(() => null);
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    // An abort while the body is read is a cancel, never a malformed answer.
+    if (options.signal?.aborted) throw abortedError();
+  }
   if (!res.ok) {
     const error = (body as { error?: { code?: unknown; message?: unknown } } | null)?.error;
     throw new BrowserRenderError(
@@ -187,5 +193,9 @@ export async function fetchRenderInput(documentId: string, options: RenderDraftO
       { status: res.status, code: typeof error?.code === 'string' ? error.code : null },
     );
   }
-  return parseRenderInputPayload(body);
+  const payload = parseRenderInputPayload(body);
+  if (payload.documentId !== documentId) {
+    throw new BrowserRenderError('invalid_input', 'The render input belongs to another document.', { path: 'documentId' });
+  }
+  return payload;
 }
