@@ -12,7 +12,8 @@ component (a MobX-State-Tree ComponentSnapshotIn). Shape of one node:
     "src": "<img only>", "alt": "<img only>",
     "imageQuery": "<img or container: English stock-photo search>",
     "href": "<a only>", "target": "<a only: _blank or _self>",
-    "style": { "<camelCase CSS property>": <value or responsive map> }
+    "style": { "<camelCase CSS property>": <value or responsive map> },
+    "effects": { "appear": { ... } }  (optional, see Motion)
   },
   "children": [ <nodes> ]
 }
@@ -54,6 +55,19 @@ request context) plus the "base" key: {"base": "64px", "mobile": "24px"}. "base"
 every breakpoint without its own key; always include "base" in a responsive map. Give every
 layout-relevant property (padding, fontSize, gridTemplateColumns, flexDirection) a mobile value when the
 desktop value would not fit a phone.
+
+## Motion
+
+Optional "props.effects": {"appear": {"kind": <"fade", "slide-up", "slide-left", "slide-right", "scale">, "stagger": <ms>, "delay": <ms>}}.
+An appear plays once when the element scrolls into view; the published page shows everything
+without it for visitors who ask for reduced motion. Use it sparingly, at most one per section:
+- the hero content block (fade or slide-up) and the headline block of a few sections;
+- a list, grid or row of cards or figures: "stagger" 30 to 80 on the parent, so its children
+  reveal one after another (the parent needs at least two children);
+- "delay" (0 to 600) only to follow a reveal right above. Duration is set by the editor
+  (280ms); never ask for slow or repeated motion.
+Never on the navigation, the footer, body paragraphs or every element. No hover or scroll
+effects: those are dropped. At most 8 appear effects per generation.
 
 ## Tags
 

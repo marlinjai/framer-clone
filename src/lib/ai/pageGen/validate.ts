@@ -52,6 +52,7 @@ import {
   type BreakpointKey,
   type GenerationPreset,
 } from './schema';
+import { EFFECTS_PROP, cleanGeneratedEffects } from './promptSections/effects';
 
 /** One validated node, ready for ComponentModel.create (responsive keys are still breakpoint KEYS). */
 export interface GeneratedNodeSnapshot {
@@ -210,6 +211,8 @@ class Validator {
   readonly imageRequests: ImageRequest[] = [];
   invalidImageQueries = 0;
   nodeCount = 0;
+  /** Appear effects accepted so far (capped: motion is used sparingly). */
+  appearCount = 0;
   maxDepth = 0;
   private readonly tags = new Set(listGenerationTags());
   private readonly bpKeys: Map<string, string>;
@@ -474,6 +477,7 @@ class Validator {
     let text: string | undefined;
     let imageQuery: string | undefined;
     let invalidQuery = false;
+    let rawEffects: unknown;
 
     // An Unsplash photo's credit (an earlier generation's image or background,
     // sent back in replace / insert context) is read separately below, never
@@ -484,6 +488,11 @@ class Validator {
     );
     for (const [key, value] of Object.entries(modelProps)) {
       if (key === 'style' || creditKeys.has(key)) continue;
+      if (key === EFFECTS_PROP) {
+        // Cleaned after the children are known (stagger needs two of them).
+        rawEffects = value;
+        continue;
+      }
       if (!allowed.has(key)) {
         this.warn(path, `prop "${key}" is not allowed on <${type}>, dropped`);
         continue;
@@ -582,6 +591,21 @@ class Validator {
       if (Array.isArray(raw.children)) rawChildren = raw.children;
       else this.warn(path, 'children must be an array, ignored');
     }
+
+    // ---- effects (appear only, clamped, capped per generation) ----
+    // Decided before the children, so the cap keeps the outer reveals (a
+    // section) over inner ones. Stagger needs two children to make sense.
+    delete merged[EFFECTS_PROP];
+    if (rawEffects !== undefined) {
+      const childCount = isVoidTag(type) || preset?.dataComponentKind ? 0 : rawChildren.length;
+      const cleaned = cleanGeneratedEffects(rawEffects, childCount, this.appearCount);
+      for (const w of cleaned.warnings) this.warn(path, w);
+      if (cleaned.effects) {
+        merged[EFFECTS_PROP] = cleaned.effects;
+        this.appearCount += 1;
+      }
+    }
+
     const children: GeneratedNodeSnapshot[] = [];
     if (isVoidTag(type)) {
       if (rawChildren.length > 0) this.warn(path, `<${type}> cannot have children, ${rawChildren.length} dropped`);
