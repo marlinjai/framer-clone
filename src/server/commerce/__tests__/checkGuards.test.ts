@@ -21,7 +21,7 @@ function rules(text: string, opts: { isWorkersConfig?: boolean } = {}): string[]
 }
 
 describe('KNOWN_TENANT_TABLES (read from the per-tenant migration set)', () => {
-  it('lists exactly the 19 commerce and 13 Books tenant tables', () => {
+  it('lists exactly the 19 commerce, 13 Books and 1 forms tenant tables', () => {
     expect(knownTables).toEqual(
       [
         // Books (007_books, 008_books_files, 010_books_upload_import, 012_books_template_v2, 013_books_assets, 015_books_products)
@@ -38,6 +38,8 @@ describe('KNOWN_TENANT_TABLES (read from the per-tenant migration set)', () => {
         'sales_document_event',
         'sales_document_file',
         'sales_document_line',
+        // Forms (016_form_submissions)
+        'form_submission',
         // Commerce (001 to 006)
         'credit_note',
         'credit_note_ref',
