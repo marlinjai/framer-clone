@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { types, Instance, SnapshotIn, SnapshotOut } from 'mobx-state-tree';
+import { types, Instance, SnapshotIn, SnapshotOut, getParent, hasParent as hasMstParent } from 'mobx-state-tree';
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
 import React from 'react';
 import type {
@@ -10,6 +10,14 @@ import type {
 import type { Query } from '@/lib/bindings/dataSource/types';
 import { resolveViewportFrameHeight } from '@/lib/canvas/viewportFrame';
 import { hasStockCredit, withImageSrc, withoutStockCredit } from '@/lib/ai/pageGen/stockCredit';
+import {
+  isResponsiveMap,
+  largestFirst,
+  resetCascade,
+  resolveCascade,
+  writeCascade,
+  type Resolved,
+} from '@/lib/responsive/cascade';
 
 export type PropsRecord = Record<string, any>;
 
@@ -37,34 +45,35 @@ function isObject(x: any): x is Record<string, any> {
 
 export { CSS_PROP_SET };
 
-function isResponsiveMap(v: any, breakpointIds: Set<string>): v is Record<string, any> {
-  return isObject(v) && Object.keys(v).some(k => breakpointIds.has(k) || k === 'base');
+/** A breakpoint of the page a component lives on: a viewport frame's id, min width and label. */
+export interface PageBreakpoint {
+  id: string;
+  minWidth: number;
+  label: string;
 }
 
-function resolveResponsiveValue(
-  map: Record<string, any>,
-  breakpointId: string,
-  ordered: { id: string; minWidth: number }[],
-  primaryId: string
-) {
-  if (map[breakpointId] !== undefined) return map[breakpointId];
-  if (map[primaryId] !== undefined) return map[primaryId];
-
-  const idx = ordered.findIndex(b => b.id === breakpointId);
-
-  // search smaller first
-  for (let i = idx - 1; i >= 0; i--) {
-    const id = ordered[i].id;
-    if (map[id] !== undefined) return map[id];
+/**
+ * The breakpoints of the page holding `node`, largest first, read from the
+ * page's viewport frames. Walks up the tree to the first node that has
+ * viewport nodes (the page); PageModel cannot be imported here (it imports
+ * this file).
+ */
+function findPageBreakpoints(node: unknown): PageBreakpoint[] {
+  let current: any = node;
+  while (current && hasMstParent(current)) {
+    current = getParent(current);
+    if (current && typeof current === 'object' && 'canvasNodes' in current && 'viewportNodes' in current) {
+      const frames = (current.viewportNodes as any[]).filter(v => v.breakpointId);
+      return largestFirst(
+        frames.map(v => ({
+          id: v.breakpointId as string,
+          minWidth: (v.breakpointMinWidth as number | undefined) ?? 0,
+          label: (v.label as string | undefined) || 'Breakpoint',
+        })),
+      ) as PageBreakpoint[];
+    }
   }
-
-  // then search larger
-  for (let i = idx + 1; i < ordered.length; i++) {
-    const id = ordered[i].id;
-    if (map[id] !== undefined) return map[id];
-  }
-
-  return map.base;
+  return [];
 }
 
 // ---------- BASE MODEL (no recursion) ----------
@@ -125,6 +134,35 @@ const ComponentModel: any = ComponentBase
   // desktop one for the same page.
   .volatile(() => ({
     renderedViewportHeight: undefined as number | undefined,
+  }))
+  .views(self => ({
+    /** The breakpoints of the page this component is on, largest first (empty when not on a page). */
+    get pageBreakpoints(): PageBreakpoint[] {
+      return findPageBreakpoints(self);
+    },
+  }))
+  .views(self => ({
+    /**
+     * The breakpoints the cascade runs over for an edit on `breakpointId`. A
+     * node that is not on a page treats that breakpoint as the only (so the
+     * largest) one, and writes `base`.
+     */
+    cascadeBreakpoints(breakpointId?: string): PageBreakpoint[] {
+      const page = self.pageBreakpoints;
+      if (page.length > 0) return page;
+      return breakpointId ? [{ id: breakpointId, minWidth: 0, label: '' }] : [];
+    },
+
+    /**
+     * True when an edit on `breakpointId` writes the base: the page's largest
+     * breakpoint, no breakpoint (floating elements) or one the page does not
+     * know. Every other breakpoint writes an override.
+     */
+    isLargestBreakpoint(breakpointId?: string): boolean {
+      if (!breakpointId) return true;
+      const page = self.pageBreakpoints;
+      return page.length === 0 || page[0].id === breakpointId || !page.some(b => b.id === breakpointId);
+    },
   }))
   .actions(self => ({
     // Record the measured canvas height of a viewport frame (layout px, not
@@ -237,48 +275,40 @@ const ComponentModel: any = ComponentBase
       self.parentId = undefined;
     },
     
-    // Responsive style management with proper MST object replacement
+    // Responsive style writes, desktop-first (src/lib/responsive/cascade.ts):
+    // an edit on the largest breakpoint (or without one, for floating
+    // elements) writes `base`; a smaller breakpoint writes its own override;
+    // an empty value there removes the override, so it inherits again. The
+    // frozen props object is replaced whole (MST requirement). One action, so
+    // one undo step.
     updateResponsiveStyle(property: string, value: any, breakpointId?: string) {
       const currentProps = self.props || {};
-      const currentStyle = currentProps.style || {};
-      const currentValue = currentStyle[property];
-      
-      if (breakpointId) {
-        // Create or update responsive map
-        let newValueMap;
-        if (typeof currentValue === 'object' && currentValue && !Array.isArray(currentValue)) {
-          // Update existing responsive map
-          newValueMap = { ...currentValue, [breakpointId]: value };
-        } else {
-          // Create new responsive map, preserving existing value as base
-          newValueMap = { 
-            base: currentValue || '',
-            [breakpointId]: value 
-          };
-        }
-        
-        // Replace entire props object (MST requirement)
-        self.props = {
-          ...currentProps,
-          style: {
-            ...currentStyle,
-            [property]: newValueMap
-          }
-        };
-      } else {
-        // Set direct value (no breakpoint context)
-        self.props = {
-          ...currentProps,
-          style: {
-            ...currentStyle,
-            [property]: value
-          }
-        };
-      }
-      
-      console.log(`🎨 Updated ${property} to:`, self.props.style[property]);
+      const style: Record<string, any> = { ...(currentProps.style || {}) };
+      const next = writeCascade(style[property], value, breakpointId, self.cascadeBreakpoints(breakpointId));
+      if (next === undefined) delete style[property];
+      else style[property] = next;
+      self.props = { ...currentProps, style };
     },
-    
+
+    // Remove the overrides of `properties` on `breakpointId`, so each inherits
+    // from the next larger breakpoint again. No-op on the largest breakpoint.
+    // One action for all of them, so one undo step (a W / H row resets both).
+    resetResponsiveStyles(properties: readonly string[], breakpointId: string) {
+      const currentProps = self.props || {};
+      const style: Record<string, any> = { ...(currentProps.style || {}) };
+      const breakpoints = self.cascadeBreakpoints(breakpointId);
+      let changed = false;
+      for (const property of properties) {
+        if (!(property in style)) continue;
+        const next = resetCascade(style[property], breakpointId, breakpoints);
+        if (JSON.stringify(next) === JSON.stringify(style[property])) continue;
+        changed = true;
+        if (next === undefined) delete style[property];
+        else style[property] = next;
+      }
+      if (changed) self.props = { ...currentProps, style };
+    },
+
     // Remove a stock photo's credit (data-credit-* and the hover title), when
     // the photo it describes was replaced by another picture. An action, so it
     // works on the protected tree and is one undoable step.
@@ -340,17 +370,49 @@ const ComponentModel: any = ComponentBase
       self.props = { ...self.props, query };
     },
   }))
+  .actions(self => ({
+    /** Remove the override of one style property on `breakpointId` (it inherits again). */
+    resetResponsiveStyle(property: string, breakpointId: string) {
+      self.resetResponsiveStyles([property], breakpointId);
+    },
+  }))
   .views(self => ({
-    // Moved from actions to views so MobX tracks reads for observer re-renders
+    // Views (not actions) so MobX tracks the reads for observer re-renders.
+
+    /**
+     * Where the value of a style property on `breakpointId` comes from: its
+     * own value, a larger breakpoint, or nowhere (src/lib/responsive/cascade.ts).
+     * A plain (non-map) value is the base, so it is the largest breakpoint's
+     * own value and inherited from it everywhere smaller.
+     */
+    getResponsiveStyleSource(property: string, breakpointId?: string): Resolved {
+      const stored = (self.props?.style || {})[property];
+      const breakpoints = self.cascadeBreakpoints(breakpointId);
+      const resolved = resolveCascade(stored, breakpointId, breakpoints);
+      if (resolved.source.kind !== 'base') return resolved;
+      const primaryId = breakpoints[0]?.id;
+      return {
+        value: resolved.value,
+        source: self.isLargestBreakpoint(breakpointId) || !primaryId
+          ? { kind: 'own' }
+          : { kind: 'inherited', breakpointId: primaryId },
+      };
+    },
+
+    /** The value a style property renders with on `breakpointId`: exactly what the canvas shows. */
     getResponsiveStyleValue(property: string, breakpointId?: string): any {
-      const currentStyle = self.props?.style || {};
-      const currentValue = currentStyle[property];
+      return this.getResponsiveStyleSource(property, breakpointId).value;
+    },
 
-      if (breakpointId && typeof currentValue === 'object' && currentValue && !Array.isArray(currentValue)) {
-        return currentValue[breakpointId] || currentValue.base;
-      }
-
-      return currentValue;
+    /**
+     * The value set on `breakpointId` itself (its override, or the base on the
+     * largest breakpoint); undefined when it is inherited. For code that must
+     * restore exactly what was stored, such as a cancelled drag: writing an
+     * inherited value back would create an override that never existed.
+     */
+    getOwnResponsiveStyleValue(property: string, breakpointId?: string): any {
+      const resolved = this.getResponsiveStyleSource(property, breakpointId);
+      return resolved.source.kind === 'own' ? resolved.value : undefined;
     },
 
     get isHostElement() { return self.componentType === ComponentTypeEnum.HOST; },
@@ -476,10 +538,27 @@ const ComponentModel: any = ComponentBase
       return out;
     },
 
-    // In a real app, you’d traverse up to project/page to access breakpoints
-    getResolvedProps(breakpointId: string, allBreakpoints: { id: string; minWidth: number }[], primaryId: string) {
-      const ordered = [...allBreakpoints].sort((a,b)=>a.minWidth-b.minWidth);
-      const bpIds = new Set(ordered.map(bp => bp.id));
+    // Resolve every responsive map (top-level props and nested style) for one
+    // breakpoint with the desktop-first cascade (src/lib/responsive/cascade.ts).
+    // `allBreakpoints` must be all of the page's breakpoints: the primary is
+    // derived from their min widths (the largest). Non-map values pass
+    // through unchanged. An empty
+    // breakpoint id (floating elements) reads as the largest breakpoint.
+    getResolvedProps(breakpointId: string, allBreakpoints: { id: string; minWidth: number }[]) {
+      const bpIds = new Set(allBreakpoints.map(bp => bp.id));
+      // A map with no value at or above this breakpoint (a Tablet-only
+      // paddingTop, seen from Desktop) is left out entirely, never emitted as
+      // `undefined`: React clears a style key that goes from undefined to
+      // absent with `paddingTop: ''`, which also wipes that side of an
+      // unchanged `padding` shorthand (seen on undo in the browser).
+      const assign = (target: Record<string, any>, key: string, raw: unknown) => {
+        if (!isResponsiveMap(raw, bpIds)) {
+          target[key] = raw;
+          return;
+        }
+        const value = resolveCascade(raw, breakpointId, allBreakpoints).value;
+        if (value !== undefined) target[key] = value;
+      };
 
       const attributes: Record<string, any> = {};
       const style: Record<string, any> = {};
@@ -487,27 +566,13 @@ const ComponentModel: any = ComponentBase
       // resolve top-level props
       for (const [key, raw] of Object.entries(self.props)) {
         if (key === 'style') continue;
-
-        if (isResponsiveMap(raw, bpIds)) {
-          const val = resolveResponsiveValue(raw, breakpointId, ordered, primaryId);
-          if (CSS_PROP_SET.has(key)) style[key] = val;
-          else attributes[key] = val;
-        } else {
-          if (CSS_PROP_SET.has(key)) style[key] = raw;
-          else attributes[key] = raw;
-        }
+        assign(CSS_PROP_SET.has(key) ? style : attributes, key, raw);
       }
 
       // resolve nested style
       const rawStyle = (self.props as any).style;
       if (isObject(rawStyle)) {
-        for (const [sKey, sVal] of Object.entries(rawStyle)) {
-          if (isResponsiveMap(sVal, bpIds)) {
-            style[sKey] = resolveResponsiveValue(sVal, breakpointId, ordered, primaryId);
-          } else {
-            style[sKey] = sVal;
-          }
-        }
+        for (const [sKey, sVal] of Object.entries(rawStyle)) assign(style, sKey, sVal);
       }
 
       return { attributes, style };

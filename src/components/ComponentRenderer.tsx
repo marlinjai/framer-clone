@@ -14,7 +14,6 @@ interface ComponentRendererProps {
   component: ComponentInstance;
   breakpointId: string;
   allBreakpoints: { id: string; minWidth: number; label?: string }[];
-  primaryId: string;
   // Active binding scope. Threaded from the page root (and through data
   // renderers, which push a row frame per row) so descendants resolve
   // `{{row.field}}` / `{{page.params.*}}`. Defaults to an empty scope.
@@ -23,7 +22,7 @@ interface ComponentRendererProps {
   lockedByAncestor?: boolean;
 }
 
-const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, primaryId, scope, lockedByAncestor = false }: ComponentRendererProps) => {
+const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, scope, lockedByAncestor = false }: ComponentRendererProps) => {
   const activeScope = scope ?? createScope();
   const { editorUI } = useStore();
   const editRef = React.useRef<HTMLElement | null>(null);
@@ -64,7 +63,7 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
   // nodes get the same treatment via GroundWrapper's `visible` prop.
   if (!component.canvasVisible) return null;
 
-  const { attributes, style } = component.getResolvedProps(breakpointId, allBreakpoints, primaryId);
+  const { attributes, style } = component.getResolvedProps(breakpointId, allBreakpoints);
 
   // Apply read bindings against the active scope. Feed style in alongside the
   // attributes so dot-path slots (e.g. `style.color`) resolve, then split it
@@ -157,7 +156,6 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
       component={node}
       breakpointId={breakpointId}
       allBreakpoints={allBreakpoints}
-      primaryId={primaryId}
       scope={childScope}
       lockedByAncestor={isLocked}
     />

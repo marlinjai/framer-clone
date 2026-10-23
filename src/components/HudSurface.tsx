@@ -544,6 +544,11 @@ const HudSurface = observer(() => {
       ? (target.viewportBounds?.height ?? target.viewportHeight ?? startScreenHeight / zoom)
       : startScreenHeight / zoom;
     const startMinHeight = kind === 'viewport' ? target.viewportHeight : undefined;
+    // What ESC restores on a tree node: the width and height set on this
+    // breakpoint itself (empty when inherited from a larger one), never the
+    // measured px, which would leave an override that was not there.
+    const ownWidth = kind === 'tree' ? target.getOwnResponsiveStyleValue('width', breakpointId) ?? '' : '';
+    const ownHeight = kind === 'tree' ? target.getOwnResponsiveStyleValue('height', breakpointId) ?? '' : '';
 
     const startPos = { x: event.clientX, y: event.clientY };
     const startCanvasPos = { x: target.canvasX ?? 0, y: target.canvasY ?? 0 };
@@ -627,8 +632,8 @@ const HudSurface = observer(() => {
 
     const restoreOriginal = () => {
       if (kind === 'tree') {
-        target!.updateResponsiveStyle('width', `${Math.round(startWidth)}px`, breakpointId);
-        target!.updateResponsiveStyle('height', `${Math.round(startHeight)}px`, breakpointId);
+        target!.updateResponsiveStyle('width', ownWidth, breakpointId);
+        target!.updateResponsiveStyle('height', ownHeight, breakpointId);
       } else if (kind === 'floating') {
         target!.updateResponsiveStyle('width', `${Math.round(startWidth)}px`);
         target!.updateResponsiveStyle('height', `${Math.round(startHeight)}px`);
@@ -722,15 +727,27 @@ const HudSurface = observer(() => {
 
     const perCorner = event.altKey;
     const writeBp = kind === 'tree' ? breakpointId : undefined;
+    // Values in effect at this breakpoint (own or inherited from a larger
+    // one, src/lib/responsive/cascade.ts) seed the drag; each property's own
+    // value is what ESC restores, so a cancel never turns an inherited value
+    // into an override.
     const readProp = (p: string) => target!.getResponsiveStyleValue(p, writeBp);
+    const readOwn = (p: string) => target!.getOwnResponsiveStyleValue(p, writeBp) ?? '';
+    const writesBase = target!.isLargestBreakpoint(writeBp);
 
-    // Capture originals so ESC can fully restore state.
     const origBorderRadius = readProp('borderRadius') ?? '';
     const origCornerValues: Record<RadiusCorner, string | number> = {
       tl: readProp('borderTopLeftRadius') ?? '',
       tr: readProp('borderTopRightRadius') ?? '',
       bl: readProp('borderBottomLeftRadius') ?? '',
       br: readProp('borderBottomRightRadius') ?? '',
+    };
+    const ownBorderRadius = readOwn('borderRadius');
+    const ownCornerValues: Record<RadiusCorner, string | number> = {
+      tl: readOwn('borderTopLeftRadius'),
+      tr: readOwn('borderTopRightRadius'),
+      bl: readOwn('borderBottomLeftRadius'),
+      br: readOwn('borderBottomRightRadius'),
     };
 
     // Starting radius: for per-corner drag, prefer that corner's explicit value,
@@ -772,7 +789,9 @@ const HudSurface = observer(() => {
         target!.updateResponsiveStyle(CORNER_TO_RADIUS_PROP[corner], px, writeBp);
       } else {
         target!.updateResponsiveStyle('borderRadius', px, writeBp);
-        // Clear any pre-existing per-corner overrides so the unified value wins.
+        // Per-corner values in effect would beat the unified value. On the
+        // largest breakpoint they are cleared; below it an inherited corner
+        // cannot be cleared, only overridden, so it takes the same value.
         for (const p of INDIVIDUAL_CORNER_PROPS) {
           if (origCornerValues[({
             borderTopLeftRadius: 'tl',
@@ -780,7 +799,7 @@ const HudSurface = observer(() => {
             borderBottomLeftRadius: 'bl',
             borderBottomRightRadius: 'br',
           } as const)[p]] !== '') {
-            target!.updateResponsiveStyle(p, '', writeBp);
+            target!.updateResponsiveStyle(p, writesBase ? '' : px, writeBp);
           }
         }
       }
@@ -792,15 +811,15 @@ const HudSurface = observer(() => {
       if (perCorner) {
         target!.updateResponsiveStyle(
           CORNER_TO_RADIUS_PROP[corner],
-          origCornerValues[corner],
+          ownCornerValues[corner],
           writeBp,
         );
       } else {
-        target!.updateResponsiveStyle('borderRadius', origBorderRadius, writeBp);
-        target!.updateResponsiveStyle('borderTopLeftRadius', origCornerValues.tl, writeBp);
-        target!.updateResponsiveStyle('borderTopRightRadius', origCornerValues.tr, writeBp);
-        target!.updateResponsiveStyle('borderBottomLeftRadius', origCornerValues.bl, writeBp);
-        target!.updateResponsiveStyle('borderBottomRightRadius', origCornerValues.br, writeBp);
+        target!.updateResponsiveStyle('borderRadius', ownBorderRadius, writeBp);
+        target!.updateResponsiveStyle('borderTopLeftRadius', ownCornerValues.tl, writeBp);
+        target!.updateResponsiveStyle('borderTopRightRadius', ownCornerValues.tr, writeBp);
+        target!.updateResponsiveStyle('borderBottomLeftRadius', ownCornerValues.bl, writeBp);
+        target!.updateResponsiveStyle('borderBottomRightRadius', ownCornerValues.br, writeBp);
       }
       updateOverlayPosition();
     };

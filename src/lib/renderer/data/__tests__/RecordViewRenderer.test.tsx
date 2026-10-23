@@ -68,7 +68,6 @@ function renderWithId(id: string | undefined, provider: InMemoryDataSourceProvid
         component={makeRecordViewNode()}
         breakpointId={BP}
         allBreakpoints={ALL_BP}
-        primaryId={BP}
         scope={scope}
       />
     </DataSourceProviderContext.Provider>,

@@ -10,6 +10,7 @@ import {
   PropertySelect,
   ToggleIconGroup,
 } from '../primitives';
+import { styleSource } from '../breakpointSource';
 
 const FONT_FAMILY_OPTIONS = [
   { value: 'inherit', label: 'Inherit' },
@@ -40,13 +41,15 @@ interface TypographySectionProps {
 export const TypographySection = observer(({ component, breakpointId }: TypographySectionProps) => {
   const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
   const setStyleValue = (prop: string, value: string) => component.updateResponsiveStyle(prop, value, breakpointId);
+  // Where each row's value comes from on this breakpoint (the dot before the label).
+  const src = (...props: string[]) => styleSource(component, breakpointId, props);
 
   return (
     <CollapsibleSection
       title="Typography"
       icon={<Type size={14} />}
     >
-      <PropertyRow label="Font">
+      <PropertyRow label="Font" source={src('fontFamily')}>
         <PropertySelect
           label=""
           value={getStyleValue('fontFamily') || 'inherit'}
@@ -55,7 +58,7 @@ export const TypographySection = observer(({ component, breakpointId }: Typograp
         />
       </PropertyRow>
 
-      <PropertyRow label="Size" hint="Font size">
+      <PropertyRow label="Size" source={src('fontSize')} hint="Font size">
         <DimensionInput
           label=""
           value={getStyleValue('fontSize')}
@@ -67,7 +70,7 @@ export const TypographySection = observer(({ component, breakpointId }: Typograp
         />
       </PropertyRow>
 
-      <PropertyRow label="Weight" hint="Font weight">
+      <PropertyRow label="Weight" source={src('fontWeight')} hint="Font weight">
         <PropertySelect
           label=""
           value={getStyleValue('fontWeight') || '400'}
@@ -76,7 +79,7 @@ export const TypographySection = observer(({ component, breakpointId }: Typograp
         />
       </PropertyRow>
 
-      <PropertyRow label="Line height">
+      <PropertyRow label="Line height" source={src('lineHeight')}>
         <DimensionInput
           label=""
           value={getStyleValue('lineHeight')}
@@ -88,7 +91,7 @@ export const TypographySection = observer(({ component, breakpointId }: Typograp
         />
       </PropertyRow>
 
-      <PropertyRow label="Spacing" hint="Letter spacing">
+      <PropertyRow label="Spacing" source={src('letterSpacing')} hint="Letter spacing">
         <DimensionInput
           label=""
           value={getStyleValue('letterSpacing')}
@@ -99,7 +102,7 @@ export const TypographySection = observer(({ component, breakpointId }: Typograp
         />
       </PropertyRow>
 
-      <PropertyRow label="Align">
+      <PropertyRow label="Align" source={src('textAlign')}>
         <ToggleIconGroup
           label=""
           value={getStyleValue('textAlign') || 'left'}
@@ -113,7 +116,7 @@ export const TypographySection = observer(({ component, breakpointId }: Typograp
         />
       </PropertyRow>
 
-      <PropertyRow label="Decoration">
+      <PropertyRow label="Decoration" source={src('textDecoration')}>
         <ToggleIconGroup
           label=""
           value={getStyleValue('textDecoration') || 'none'}

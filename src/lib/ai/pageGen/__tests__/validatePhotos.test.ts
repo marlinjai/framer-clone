@@ -109,7 +109,7 @@ describe('validateGeneration: photo backgrounds', () => {
     const result = ok({
       nodes: [{ type: 'section', props: { style: { backgroundImage: { base: `url("${UNSPLASH}")`, mobile: `${SCRIM}, url("${UNSPLASH}")` } } } }],
     });
-    // base and the pinned primary (desktop) were only the photo: gone; mobile keeps its scrim.
+    // base was only the photo: gone; mobile keeps its scrim.
     expect((result.nodes[0].props.style as Record<string, unknown>).backgroundImage).toEqual({ mobile: SCRIM });
   });
 

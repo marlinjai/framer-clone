@@ -16,7 +16,10 @@ import {
 } from '../spacingDrag';
 import type { Edges } from '../spacingGeometry';
 import HistoryStore from '@/stores/HistoryStore';
-import { createIntrinsicComponent } from '@/models/ComponentModel';
+import { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
+import PageModel from '@/models/PageModel';
+import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
+import { getSnapshot } from 'mobx-state-tree';
 
 const PT = { kind: 'padding', side: 'top' } as const;
 
@@ -90,6 +93,12 @@ describe('Alt mirror and shorthands', () => {
       .toEqual([{ prop: 'paddingTop', value: '24px' }, { prop: 'paddingBottom', value: '24px' }]);
   });
 
+  it('below the largest breakpoint overrides the shorthand with the four sides instead of clearing it', () => {
+    const authored = (p: string) => (p === 'padding' ? '16px' : undefined);
+    const writes = boxWrites({ kind: 'padding', sides: ['top'], value: 26, start, authored, clearShorthand: false });
+    expect(writes.at(-1)).toEqual({ prop: 'padding', value: '26px 16px 16px 16px' });
+  });
+
   it('expands an authored shorthand into four longhands and clears it', () => {
     const authored = (p: string) => (p === 'margin' ? '0 0 20px' : undefined);
     const writes = boxWrites({
@@ -145,7 +154,9 @@ describe('startSpacingDrag (model and history)', () => {
     expect(component.getResponsiveStyleValue('paddingTop', 'desktop')).toBe('26px');
     expect(component.getResponsiveStyleValue('paddingBottom', 'desktop')).toBe('26px'); // Alt mirror
     expect(component.getResponsiveStyleValue('paddingLeft', 'desktop')).toBe('16px'); // expanded
-    expect(component.props.style.padding).toEqual({ base: '16px', desktop: '' }); // cleared at this breakpoint
+    // Not on a page, so 'desktop' is the only (largest) breakpoint: the
+    // shorthand is cleared from the base, which removes it.
+    expect('padding' in component.props.style).toBe(false);
     expect(history.history.length).toBe(1);
 
     history.undo();
@@ -186,6 +197,44 @@ describe('startSpacingDrag (model and history)', () => {
     drag.commit();
     expect(component.props.style.gap).toBe('15px');
     expect(history.history.length).toBe(1);
+  });
+});
+
+describe('startSpacingDrag on a page (desktop-first cascade)', () => {
+  function onPage(style: Record<string, unknown>) {
+    const page = PageModel.create({
+      id: 'page',
+      metadata: { title: 'Home' },
+      appComponentTree: getSnapshot(createIntrinsicComponent('root', 'div', {})),
+      canvasNodes: defaultViewportSnapshots(['bp-d', 'bp-t', 'bp-p']),
+    });
+    page.appComponentTree.addChild(createIntrinsicComponent('box', 'div', { style }));
+    const component = page.appComponentTree.children[0] as ComponentInstance;
+    const history = HistoryStore.create({});
+    history.setTargetStore(page);
+    return { component, history, original: JSON.parse(JSON.stringify(component.props)) };
+  }
+  const start: Edges = { top: 16, right: 16, bottom: 16, left: 16 };
+
+  it('on Tablet with a Desktop shorthand, overrides it on Tablet only; Phone follows, Desktop does not; undo restores', () => {
+    const { component, history, original } = onPage({ padding: '16px' });
+    const drag = startSpacingDrag({ component, breakpointId: 'bp-t', target: PT, start, scale: 1, mirror: false, history });
+    drag.update({ dx: 0, dy: 10, snap: false });
+    drag.commit();
+    expect(component.props.style.padding).toEqual({ base: '16px', 'bp-t': '26px 16px 16px 16px' });
+    expect(component.getResponsiveStyleValue('paddingTop', 'bp-p')).toBe('26px');
+    expect(component.getResponsiveStyleValue('paddingTop', 'bp-d')).toBeUndefined();
+    history.undo();
+    expect(component.props).toEqual(original);
+  });
+
+  it('Escape without a history store restores own values: no Tablet override appears', () => {
+    const { component, original } = onPage({ paddingTop: '16px' });
+    const drag = startSpacingDrag({ component, breakpointId: 'bp-t', target: PT, start, scale: 1, mirror: false, history: null });
+    drag.update({ dx: 0, dy: 10, snap: false });
+    expect(component.getResponsiveStyleValue('paddingTop', 'bp-t')).toBe('26px');
+    drag.cancel();
+    expect(component.props).toEqual(original);
   });
 });
 

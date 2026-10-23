@@ -12,6 +12,7 @@ import {
   PropertySwitch,
   ToggleIconGroup,
 } from '../primitives';
+import { styleSource } from '../breakpointSource';
 import { uniformBoxValue } from '@/lib/canvas/spacingDrag';
 import { getHistoryStore } from '@/stores/RootStore';
 
@@ -30,6 +31,8 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
 
   const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
   const setStyleValue = (prop: string, value: string) => component.updateResponsiveStyle(prop, value, breakpointId);
+  // Where each row's value comes from on this breakpoint (the dot before the label).
+  const src = (...props: string[]) => styleSource(component, breakpointId, props);
 
   // The single Padding field reflects the four effective sides (the canvas
   // handles write sides one by one), and setting it writes all four, so a
@@ -45,7 +48,13 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
     const history = getHistoryStore();
     history?.startBatch('Padding');
     for (const side of ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft']) setStyleValue(side, v);
-    setStyleValue('padding', '');
+    // The shorthand is cleared on the largest breakpoint. Below it, one in
+    // effect may be inherited, which only an override replaces: it takes the
+    // same value, so it changes with the sides (React re-applies a changed
+    // shorthand after removing longhands on undo; see spacingDrag.ts). An
+    // empty field removes this breakpoint's overrides, so all inherit again.
+    const shorthandInEffect = getStyleValue('padding') !== undefined;
+    setStyleValue('padding', component.isLargestBreakpoint(breakpointId) || !shorthandInEffect ? '' : v);
     history?.commitBatch();
   };
 
@@ -58,7 +67,7 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
       title="Layout"
       icon={<LayoutGrid size={14} />}
     >
-      <PropertyRow label="Display">
+      <PropertyRow label="Display" source={src('display')}>
         <ToggleIconGroup
           label=""
           value={display}
@@ -73,7 +82,7 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
 
       {display === 'flex' && (
         <>
-          <PropertyRow label="Direction">
+          <PropertyRow label="Direction" source={src('flexDirection')}>
             <ToggleIconGroup
               label=""
               value={getStyleValue('flexDirection') || 'column'}
@@ -85,7 +94,7 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
             />
           </PropertyRow>
 
-          <PropertyRow label="Justify">
+          <PropertyRow label="Justify" source={src('justifyContent')}>
             <ToggleIconGroup
               label=""
               value={getStyleValue('justifyContent') || 'flex-start'}
@@ -99,7 +108,7 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
             />
           </PropertyRow>
 
-          <PropertyRow label="Align">
+          <PropertyRow label="Align" source={src('alignItems')}>
             <ToggleIconGroup
               label=""
               value={getStyleValue('alignItems') || 'stretch'}
@@ -113,7 +122,7 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
             />
           </PropertyRow>
 
-          <PropertyRow label="Wrap">
+          <PropertyRow label="Wrap" source={src('flexWrap')}>
             <PropertySwitch
               checked={getStyleValue('flexWrap') === 'wrap'}
               onCheckedChange={(checked) => setStyleValue('flexWrap', checked ? 'wrap' : 'nowrap')}
@@ -124,7 +133,7 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
 
       {/* Gap (flex/grid only) */}
       {isFlexOrGrid && (
-        <PropertyRow label="Gap">
+        <PropertyRow label="Gap" source={src('gap', 'rowGap', 'columnGap')}>
           <DimensionInput
             label=""
             value={getStyleValue('gap')}
@@ -136,7 +145,7 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
         </PropertyRow>
       )}
 
-      <PropertyRow label="Padding">
+      <PropertyRow label="Padding" source={src('padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft')}>
         <DimensionInput
           label=""
           value={paddingAll === 'mixed' ? '' : paddingAll}
@@ -153,13 +162,13 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
       </DisclosureButton>
       {showPaddingSides && (
         <>
-          <PropertyRow label="Vertical" hint="Top and bottom padding" group>
+          <PropertyRow label="Vertical" source={src('paddingTop', 'paddingBottom')} hint="Top and bottom padding" group>
             <FieldPair>
               <DimensionInput label="" aria-label="Padding top" prefix="T" value={getStyleValue('paddingTop')} onChange={(v) => setStyleValue('paddingTop', v)} units={PADDING_UNITS} min={0} placeholder="0" />
               <DimensionInput label="" aria-label="Padding bottom" prefix="B" value={getStyleValue('paddingBottom')} onChange={(v) => setStyleValue('paddingBottom', v)} units={PADDING_UNITS} min={0} placeholder="0" />
             </FieldPair>
           </PropertyRow>
-          <PropertyRow label="Horizontal" hint="Left and right padding" group>
+          <PropertyRow label="Horizontal" source={src('paddingLeft', 'paddingRight')} hint="Left and right padding" group>
             <FieldPair>
               <DimensionInput label="" aria-label="Padding left" prefix="L" value={getStyleValue('paddingLeft')} onChange={(v) => setStyleValue('paddingLeft', v)} units={PADDING_UNITS} min={0} placeholder="0" />
               <DimensionInput label="" aria-label="Padding right" prefix="R" value={getStyleValue('paddingRight')} onChange={(v) => setStyleValue('paddingRight', v)} units={PADDING_UNITS} min={0} placeholder="0" />
