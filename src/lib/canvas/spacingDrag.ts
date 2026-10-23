@@ -26,6 +26,13 @@
 //   with `paddingTop: ''` and does not re-apply the unchanged shorthand, so
 //   the side would render as 0 until a remount (seen in the browser). With
 //   the shorthand itself changing, React re-applies it after the removals.
+//   On a breakpoint smaller than the largest the shorthand may be inherited
+//   (desktop-first cascade, src/lib/responsive/cascade.ts), and an inherited
+//   value cannot be cleared there, only overridden. So on those breakpoints
+//   the shorthand is not cleared but overridden with the four sides it now
+//   has (`26px 16px 16px 16px`): it still changes, so undo re-applies it.
+//   "Authored" below means the value in effect at the breakpoint (its own or
+//   inherited); the Escape fallback restores each property's own value.
 // - A gap drag writes `gap`, like the panel's single Gap field. When the
 //   element authors the axis longhand (rowGap / columnGap) and it is the one
 //   in effect, or authors only the other axis's longhand, the axis longhand
@@ -147,9 +154,11 @@ export interface StyleWrite {
 }
 
 /**
- * The writes for a padding or margin drag. `authored` reads the value
- * authored for a property at the breakpoint being edited, `start` the
- * computed px of every side (used when the shorthand is expanded).
+ * The writes for a padding or margin drag. `authored` reads the value in
+ * effect for a property at the breakpoint being edited, `start` the computed
+ * px of every side (used when the shorthand is expanded). `clearShorthand`
+ * (the largest breakpoint) clears an expanded shorthand; elsewhere it is
+ * overridden with the four sides, since an inherited one cannot be cleared.
  */
 export function boxWrites(input: {
   kind: BoxKind;
@@ -157,16 +166,18 @@ export function boxWrites(input: {
   value: number;
   start: Edges;
   authored: (prop: string) => unknown;
+  clearShorthand?: boolean;
 }): StyleWrite[] {
-  const { kind, sides, value, start, authored } = input;
+  const { kind, sides, value, start, authored, clearShorthand = true } = input;
   const px = (n: number) => `${n}px`;
   if (!isSet(authored(kind))) return sides.map(side => ({ prop: sideProp(kind, side), value: px(value) }));
-  // Expand: every longhand explicit, the shorthand cleared at this breakpoint.
+  // Expand: every longhand explicit, the shorthand cleared (or, below the
+  // largest breakpoint, overridden with the same four sides).
   const writes: StyleWrite[] = (['top', 'right', 'bottom', 'left'] as Side[]).map(side => ({
     prop: sideProp(kind, side),
     value: px(sides.includes(side) ? value : Math.round(start[side])),
   }));
-  writes.push({ prop: kind, value: '' });
+  writes.push({ prop: kind, value: clearShorthand ? '' : writes.map(w => w.value).join(' ') });
   return writes;
 }
 
@@ -239,9 +250,13 @@ export function startSpacingDrag(input: {
   const min = minValueFor(target, startValue);
   const label = target.kind === 'gap' ? 'Gap' : target.kind === 'padding' ? 'Padding' : 'Margin';
 
-  // Originals for the fallback restore (no history store).
+  // Originals for the fallback restore (no history store): each property's
+  // own value at this breakpoint, so restoring never turns an inherited value
+  // into an override.
   const originals = new Map<string, unknown>();
   const authored = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
+  const own = (prop: string) => component.getOwnResponsiveStyleValue(prop, breakpointId);
+  const clearShorthand = component.isLargestBreakpoint(breakpointId);
   const styleKeys = () => Object.keys((component.props?.style as Record<string, unknown> | undefined) ?? {});
 
   history?.startBatch(label);
@@ -258,9 +273,10 @@ export function startSpacingDrag(input: {
           value,
           start: input.start as Edges,
           authored,
+          clearShorthand,
         });
     for (const w of writes) {
-      if (!originals.has(w.prop)) originals.set(w.prop, authored(w.prop) ?? '');
+      if (!originals.has(w.prop)) originals.set(w.prop, own(w.prop) ?? '');
       component.updateResponsiveStyle(w.prop, w.value, breakpointId);
     }
   };

@@ -264,7 +264,6 @@ describe('hydrateBindings commerce parity with the live preview render', () => {
           component,
           breakpointId: BP,
           allBreakpoints: [{ id: BP, minWidth: 0, label: 'Desktop' }],
-          primaryId: BP,
           scope,
         }),
       ),

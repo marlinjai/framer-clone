@@ -345,16 +345,10 @@ class Validator {
         this.warn(path, `style.${key}: responsive map had no usable value, dropped`);
         return undefined;
       }
-      // The editor resolves a breakpoint without its own value from the
-      // PRIMARY (largest) breakpoint first, then the nearest smaller one, and
-      // reads "base" last (ComponentModel.getResolvedProps). So "base" only
-      // means "every other breakpoint" if the primary key carries it: pin the
-      // primary to base, or to the largest breakpoint the model did give.
-      const primary = this.orderedKeys[0];
-      if (primary && out[primary] === undefined) {
-        const fallbackKey = out[BASE_KEY] !== undefined ? BASE_KEY : this.orderedKeys.find((k) => out[k] !== undefined);
-        if (fallbackKey) out[primary] = out[fallbackKey];
-      }
+      // Kept as given: the editor and the published page resolve a breakpoint
+      // desktop-first (src/lib/responsive/cascade.ts: its own value, then each
+      // larger breakpoint's, then "base"), so "base" already reaches every
+      // breakpoint without one, and a smaller key's value its smaller ones.
       return out;
     }
     return this.scalarStyleValue(path, key, raw);

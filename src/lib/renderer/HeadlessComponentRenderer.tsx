@@ -25,7 +25,6 @@ export interface HeadlessComponentRendererProps {
   component: ComponentInstance;
   breakpointId: string;
   allBreakpoints: { id: string; minWidth: number; label?: string }[];
-  primaryId: string;
   // Active binding scope (mirrors the editor `ComponentRenderer`). Threaded so
   // descendants resolve `{{row.field}}` / `{{page.params.*}}` and so the
   // editor + headless paths produce identical output. Defaults to empty.
@@ -36,7 +35,6 @@ const HeadlessComponentRenderer = observer(({
   component,
   breakpointId,
   allBreakpoints,
-  primaryId,
   scope,
 }: HeadlessComponentRendererProps) => {
   // The Layers panel's eye (canvasVisible) is NOT honoured here: it hides a
@@ -50,7 +48,6 @@ const HeadlessComponentRenderer = observer(({
   const { attributes, style } = component.getResolvedProps(
     breakpointId,
     allBreakpoints,
-    primaryId,
   );
 
   // Apply read bindings against the active scope. Style is fed in alongside
@@ -69,7 +66,6 @@ const HeadlessComponentRenderer = observer(({
       component={node}
       breakpointId={breakpointId}
       allBreakpoints={allBreakpoints}
-      primaryId={primaryId}
       scope={childScope}
     />
   );

@@ -323,7 +323,7 @@ describe('POST /api/ai/generate-page generation', () => {
     };
     expect(result.title).toBe('Bakery');
     expect(result.model).toBe('claude-sonnet-5-5');
-    expect(result.nodes[0].props.style.padding).toEqual({ base: '64px', mobile: '24px', desktop: '64px' });
+    expect(result.nodes[0].props.style.padding).toEqual({ base: '64px', mobile: '24px' });
     expect(result.nodes[0].children[0].parentId).toBe(result.nodes[0].id);
 
     // The request the model saw: cached schema prefix, per-request context after it.

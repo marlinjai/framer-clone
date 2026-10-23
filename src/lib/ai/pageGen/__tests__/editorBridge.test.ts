@@ -155,7 +155,7 @@ describe('applyResult', () => {
     const hero = (created.appComponentTree as ComponentInstance).children[0] as ComponentInstance;
     const desktop = target.breakpoints.find((b) => b.label === 'Desktop')!.id;
     const mobile = target.breakpoints.find((b) => b.label === 'Mobile')!.id;
-    expect(hero.props.style.padding).toEqual({ base: '64px', [mobile]: '24px', [desktop]: '64px' });
+    expect(hero.props.style.padding).toEqual({ base: '64px', [mobile]: '24px' });
     expect(hero.parentId).toBe(created.appComponentTree.id);
     expect((hero.children[0] as ComponentInstance).parentId).toBe(hero.id);
     expect(created.viewportNodes.map((v: ComponentInstance) => v.breakpointId).sort()).toEqual(
@@ -163,8 +163,9 @@ describe('applyResult', () => {
     );
     // Responsive resolution through the real model.
     const bps = target.breakpoints.map((b) => ({ id: b.id, minWidth: b.minWidth }));
-    expect(hero.getResolvedProps(mobile, bps, desktop).style.padding).toBe('24px');
-    expect(hero.getResolvedProps(target.breakpoints.find((b) => b.label === 'Tablet')!.id, bps, desktop).style.padding).toBe('64px');
+    expect(hero.getResolvedProps(mobile, bps).style.padding).toBe('24px');
+    expect(hero.getResolvedProps(target.breakpoints.find((b) => b.label === 'Tablet')!.id, bps).style.padding).toBe('64px');
+    expect(hero.getResolvedProps(desktop, bps).style.padding).toBe('64px');
 
     const history = getHistoryStore()!;
     expect(history.history.length).toBe(1);

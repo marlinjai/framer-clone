@@ -11,6 +11,7 @@ import {
   PropertySelect,
   TextInput,
 } from '../primitives';
+import { styleSource } from '../breakpointSource';
 
 const POSITION_OPTIONS = [
   { value: 'static', label: 'Static' },
@@ -28,6 +29,8 @@ interface PositionSectionProps {
 export const PositionSection = observer(({ component, breakpointId }: PositionSectionProps) => {
   const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
   const setStyleValue = (prop: string, value: string) => component.updateResponsiveStyle(prop, value, breakpointId);
+  // Where each row's value comes from on this breakpoint (the dot before the label).
+  const src = (...props: string[]) => styleSource(component, breakpointId, props);
 
   const position = getStyleValue('position') || 'static';
 
@@ -37,7 +40,7 @@ export const PositionSection = observer(({ component, breakpointId }: PositionSe
       icon={<Move size={14} />}
       defaultOpen={position !== 'static'}
     >
-      <PropertyRow label="Position">
+      <PropertyRow label="Position" source={src('position')}>
         <PropertySelect
           label=""
           value={position}
@@ -49,7 +52,7 @@ export const PositionSection = observer(({ component, breakpointId }: PositionSe
       {/* Insets: two-up rows, prefixed T / B and L / R */}
       {position !== 'static' && (
         <>
-          <PropertyRow label="Vertical" hint="Top and bottom offsets" group>
+          <PropertyRow label="Vertical" source={src('top', 'bottom')} hint="Top and bottom offsets" group>
             <FieldPair>
               <DimensionInput
                 label=""
@@ -69,7 +72,7 @@ export const PositionSection = observer(({ component, breakpointId }: PositionSe
               />
             </FieldPair>
           </PropertyRow>
-          <PropertyRow label="Horizontal" hint="Left and right offsets" group>
+          <PropertyRow label="Horizontal" source={src('left', 'right')} hint="Left and right offsets" group>
             <FieldPair>
               <DimensionInput
                 label=""
@@ -92,7 +95,7 @@ export const PositionSection = observer(({ component, breakpointId }: PositionSe
         </>
       )}
 
-      <PropertyRow label="Z-Index">
+      <PropertyRow label="Z-Index" source={src('zIndex')}>
         <TextInput
           value={getStyleValue('zIndex') || ''}
           onChange={(e) => setStyleValue('zIndex', e.target.value)}

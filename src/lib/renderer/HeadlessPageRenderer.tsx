@@ -28,14 +28,12 @@ const HeadlessPageRenderer = observer(({ page, breakpointId }: HeadlessPageRende
     minWidth: v.breakpointMinWidth!,
     label: v.label!,
   }));
-  const primaryId = viewportNodes[0]?.breakpointId ?? breakpointId;
 
   return (
     <HeadlessComponentRenderer
       component={appComponentTree}
       breakpointId={breakpointId}
       allBreakpoints={allBreakpoints}
-      primaryId={primaryId}
     />
   );
 });

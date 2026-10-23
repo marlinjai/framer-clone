@@ -54,7 +54,6 @@ function renderFrame(viewport: ReturnType<typeof createViewportNode>) {
       viewport={viewport}
       appComponentTree={tree}
       breakpoints={breakpoints}
-      primaryBreakpointId="bp-d"
       scope={scope}
     />,
   );

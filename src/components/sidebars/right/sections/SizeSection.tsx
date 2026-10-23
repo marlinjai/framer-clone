@@ -11,6 +11,7 @@ import {
   PropertyRow,
   TextInput,
 } from '../primitives';
+import { breakpointLabel, styleSource } from '../breakpointSource';
 
 interface SizeSectionProps {
   component: ComponentInstance;
@@ -28,6 +29,8 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
 
   const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
   const setStyleValue = (prop: string, value: string) => component.updateResponsiveStyle(prop, value, breakpointId);
+  // Where each row's value comes from on this breakpoint (the dot before the label).
+  const src = (...props: string[]) => styleSource(component, breakpointId, props);
 
   // Canvas coordinates: shared by viewport frames and floating elements.
   const canvasRow = (
@@ -59,7 +62,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
     <CollapsibleSection
       title="Size"
       icon={<MoveDiagonal size={14} />}
-      badge={breakpointId ? component.label || undefined : undefined}
+      badge={breakpointLabel(component, breakpointId)}
     >
       {/* Viewport-specific controls */}
       {component.isViewportNode && (
@@ -92,7 +95,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
       {component.isFloatingElement && canvasRow}
 
       {/* Width + Height */}
-      <PropertyRow label="Size" group>
+      <PropertyRow label="Size" source={src('width', 'height')} group>
         <FieldPair>
           <DimensionInput
             label=""
@@ -119,7 +122,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
       </DisclosureButton>
       {showMinMax && (
         <>
-          <PropertyRow label="Min" group>
+          <PropertyRow label="Min" source={src('minWidth', 'minHeight')} group>
             <FieldPair>
               <DimensionInput
                 label=""
@@ -141,7 +144,7 @@ export const SizeSection = observer(({ component, breakpointId }: SizeSectionPro
               />
             </FieldPair>
           </PropertyRow>
-          <PropertyRow label="Max" group>
+          <PropertyRow label="Max" source={src('maxWidth', 'maxHeight')} group>
             <FieldPair>
               <DimensionInput
                 label=""

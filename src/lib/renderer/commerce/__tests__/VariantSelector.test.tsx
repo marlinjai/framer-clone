@@ -72,7 +72,6 @@ const renderNode: RenderNode = (node: ComponentInstance, childScope: BindingScop
     component={node}
     breakpointId={BP}
     allBreakpoints={ALL_BP}
-    primaryId={BP}
     scope={childScope}
   />
 );
