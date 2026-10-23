@@ -12,6 +12,8 @@ import {
   PropertySwitch,
   ToggleIconGroup,
 } from '../primitives';
+import { uniformBoxValue } from '@/lib/canvas/spacingDrag';
+import { getHistoryStore } from '@/stores/RootStore';
 
 const PADDING_UNITS = ['px', 'rem', '%'];
 
@@ -28,6 +30,24 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
 
   const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
   const setStyleValue = (prop: string, value: string) => component.updateResponsiveStyle(prop, value, breakpointId);
+
+  // The single Padding field reflects the four effective sides (the canvas
+  // handles write sides one by one), and setting it writes all four, so a
+  // side longhand can never silently override what the field shows.
+  const paddingAll = uniformBoxValue(getStyleValue('padding'), {
+    top: getStyleValue('paddingTop'),
+    right: getStyleValue('paddingRight'),
+    bottom: getStyleValue('paddingBottom'),
+    left: getStyleValue('paddingLeft'),
+  });
+  const setPaddingAll = (v: string) => {
+    // Five writes, one undo step.
+    const history = getHistoryStore();
+    history?.startBatch('Padding');
+    for (const side of ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft']) setStyleValue(side, v);
+    setStyleValue('padding', '');
+    history?.commitBatch();
+  };
 
   const rawDisplay = getStyleValue('display');
   const display = rawDisplay || 'block';
@@ -119,11 +139,11 @@ export const LayoutSection = observer(({ component, breakpointId }: LayoutSectio
       <PropertyRow label="Padding">
         <DimensionInput
           label=""
-          value={getStyleValue('padding')}
-          onChange={(v) => setStyleValue('padding', v)}
+          value={paddingAll === 'mixed' ? '' : paddingAll}
+          onChange={setPaddingAll}
           units={PADDING_UNITS}
           min={0}
-          placeholder="0"
+          placeholder={paddingAll === 'mixed' ? 'Mixed' : '0'}
         />
       </PropertyRow>
 

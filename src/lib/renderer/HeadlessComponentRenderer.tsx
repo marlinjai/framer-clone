@@ -39,9 +39,11 @@ const HeadlessComponentRenderer = observer(({
   primaryId,
   scope,
 }: HeadlessComponentRendererProps) => {
-  // Honor LayersPanel visibility toggle in preview too: if the user hid the
-  // node in the editor, it's hidden in preview as well.
-  if (!component.canvasVisible) return null;
+  // The Layers panel's eye (canvasVisible) is NOT honoured here: it hides a
+  // layer on the editor canvas only, as in Framer. Preview shows what the
+  // published page shows (the server renderer ignores the flag too); hiding
+  // from visitors is the Visible switch in the Styles section (display:
+  // none). See src/lib/layers/layerActions.ts.
 
   const activeScope = scope ?? createScope();
 

@@ -8,6 +8,7 @@ import RightSidebar from "@/components/sidebars/RightSidebar";
 import Toolbar from "@/components/Toolbar";
 import TopBar from "@/components/TopBar";
 import HudSurface from "@/components/HudSurface";
+import SpacingHandlesLayer from "@/components/SpacingHandlesLayer";
 import { TransformProvider, useTransformContext } from '@/contexts/TransformContext';
 import { DropIndicatorLayer, DragGhostLayer } from '@/lib/drag';
 import makeInspectable from 'mobx-devtools-mst';
@@ -240,6 +241,9 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
 
       {/* Framer-style HudSurface for overlays (outside canvas) */}
       <HudSurface />
+
+      {/* Padding, margin and gap bands with drag handles for the selection */}
+      <SpacingHandlesLayer />
 
       {/* Drag overlays. Single painters shared by every drag source.
           Render nothing unless a gesture is active. */}

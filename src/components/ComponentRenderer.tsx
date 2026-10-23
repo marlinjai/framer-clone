@@ -19,9 +19,11 @@ interface ComponentRendererProps {
   // renderers, which push a row frame per row) so descendants resolve
   // `{{row.field}}` / `{{page.params.*}}`. Defaults to an empty scope.
   scope?: BindingScope;
+  // An ancestor is locked in the Layers panel: this node is locked too.
+  lockedByAncestor?: boolean;
 }
 
-const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, primaryId, scope }: ComponentRendererProps) => {
+const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, primaryId, scope, lockedByAncestor = false }: ComponentRendererProps) => {
   const activeScope = scope ?? createScope();
   const { editorUI } = useStore();
   const editRef = React.useRef<HTMLElement | null>(null);
@@ -45,11 +47,15 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
   // stay put. Text-editing suppresses drag until the user exits edit mode.
   const canMove = component.hasParent;
   const isEditing = editorUI.editingComponent?.id === component.id;
+  // Locked in the Layers panel (itself or an ancestor): not selectable or
+  // draggable on the canvas. Pointer events pass through to the nearest
+  // unlocked ancestor, which takes the click (src/lib/layers/layerActions.ts).
+  const isLocked = lockedByAncestor || !!component.canvasLocked;
 
   // Hook must be called unconditionally. Pass null source when the component
   // is not movable; useDragSource returns a no-op handler in that case.
   const { onPointerDown } = useDragSource(
-    canMove && !isEditing ? { kind: 'moveNode', nodeId: component.id } : null,
+    canMove && !isEditing && !isLocked ? { kind: 'moveNode', nodeId: component.id } : null,
     component,
   );
 
@@ -67,8 +73,11 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
   const { style: boundStyle, ...resolvedAttributes } = resolvedProps as Record<string, any>;
   const effectiveStyle = (boundStyle ?? {}) as Record<string, any>;
 
-  // In the editor, always allow pointer events so components can be selected.
-  const editorStyle = Object.keys(effectiveStyle).length ? { ...effectiveStyle, pointerEvents: 'auto' as const } : undefined;
+  // In the editor, always allow pointer events so components can be selected,
+  // except locked ones, which the pointer must pass through.
+  const editorStyle = isLocked
+    ? { ...effectiveStyle, pointerEvents: 'none' as const }
+    : Object.keys(effectiveStyle).length ? { ...effectiveStyle, pointerEvents: 'auto' as const } : undefined;
 
   // Text-editing eligibility: a single string-valued `children` and no nested
   // components. Anything with child components renders its own subtree and
@@ -85,6 +94,8 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
     ...resolvedAttributes,
     style: editorStyle,
     onClick: (e: React.MouseEvent) => {
+      // A locked node lets the click bubble to its nearest unlocked ancestor.
+      if (isLocked) return;
       e.stopPropagation();
       if (editorUI.selectedTool === EditorTool.SELECT) {
         // Shift+click adds the node to the selection or takes it out.
@@ -94,7 +105,7 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
       (resolvedAttributes as any)?.onClick?.(e);
     },
     onDoubleClick: (e: React.MouseEvent) => {
-      if (!isTextEditable) return;
+      if (!isTextEditable || isLocked) return;
       if (editorUI.selectedTool !== EditorTool.SELECT) return;
       e.stopPropagation();
       e.preventDefault();
@@ -148,6 +159,7 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, p
       allBreakpoints={allBreakpoints}
       primaryId={primaryId}
       scope={childScope}
+      lockedByAncestor={isLocked}
     />
   );
 
