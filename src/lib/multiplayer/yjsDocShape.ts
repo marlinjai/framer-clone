@@ -54,6 +54,7 @@ import {
   CanvasNodeType,
 } from '@/models/ComponentModel';
 import type { PageSnapshotIn } from '@/models/PageModel';
+import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 
 // ---------------------------------------------------------------------------
 // Schema constants
@@ -80,6 +81,8 @@ export const YJS_PROJECT_KEYS = {
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
   primaryBreakpointId: 'primaryBreakpointId',
+  /** Site settings (src/lib/site/siteSettings.ts) as one plain JSON blob. */
+  siteSettings: 'siteSettings',
 } as const;
 
 export const YJS_PAGE_KEYS = {
@@ -394,6 +397,13 @@ export function mstSnapshotToYDoc(snapshot: ProjectSnapshotIn): Y.Doc {
     project.set(YJS_PROJECT_KEYS.description, projectDescription);
     project.set(YJS_PROJECT_KEYS.createdAt, projectCreatedAt);
     project.set(YJS_PROJECT_KEYS.updatedAt, projectUpdatedAt);
+    // Site settings: one plain JSON blob (atomic LWW, like page metadata; the
+    // dialog saves the whole object at once). Normalized so the doc never
+    // stores a partial or malformed shape.
+    project.set(
+      YJS_PROJECT_KEYS.siteSettings,
+      normalizeSiteSettings(snapshot.siteSettings ?? {}),
+    );
 
     for (const [pageId, page] of pagesEntries) {
       const pageMap = new Y.Map<any>();
@@ -509,6 +519,7 @@ function normalisePageMetadata(
     ogImage: typeof m.ogImage === 'string' ? m.ogImage : '',
     canonicalUrl:
       typeof m.canonicalUrl === 'string' ? m.canonicalUrl : '',
+    noIndex: m.noIndex === true,
   };
 }
 
@@ -640,6 +651,8 @@ export function yDocToMstSnapshot(doc: Y.Doc): ProjectSnapshotIn {
     | number
     | undefined;
 
+  const siteSettings = project.get(YJS_PROJECT_KEYS.siteSettings) as unknown;
+
   const pagesSnapshot: Record<string, PageSnapshotIn> = {};
   for (const pageId of pageOrder.toArray()) {
     const pageMap = pagesById.get(pageId);
@@ -697,6 +710,7 @@ export function yDocToMstSnapshot(doc: Y.Doc): ProjectSnapshotIn {
     },
     pages: pagesSnapshot,
   };
+  if (siteSettings !== undefined) snapshot.siteSettings = normalizeSiteSettings(siteSettings);
 
   return snapshot as ProjectSnapshotIn;
 }

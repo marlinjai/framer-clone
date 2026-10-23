@@ -85,6 +85,9 @@ const PageMetadataModel = types.model('PageMetadata', {
   ogDescription: types.optional(types.string, ''),
   ogImage: types.optional(types.string, ''),
   canonicalUrl: types.optional(types.string, ''),
+  // Keep this page out of search engines: a robots noindex meta tag on the
+  // published page, and left out of the site's sitemap.xml.
+  noIndex: types.optional(types.boolean, false),
 });
 
 // Stage 1 (base) – fields without circular references

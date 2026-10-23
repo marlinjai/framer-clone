@@ -177,6 +177,7 @@ describe('pageSeoToMetadata', () => {
     ogDescription: '',
     ogImage: 'https://x/og.png',
     canonicalUrl: 'https://x/p',
+    noIndex: false,
   };
 
   it('maps title/description/keywords/canonical and falls back OG to title/description', () => {
@@ -201,6 +202,7 @@ describe('pageSeoToMetadata', () => {
       ogDescription: '',
       ogImage: '',
       canonicalUrl: '',
+      noIndex: false,
     });
     expect(meta.title).toBeUndefined();
     expect(meta.openGraph).toBeUndefined();
