@@ -232,6 +232,20 @@ const HistoryStore = types
         // Patches are discarded — caller is responsible for restoring state.
         self.batch = undefined;
       },
+
+      // Abort a gesture and undo what it did: applies the batch's own inverse
+      // patches (unrecorded) and drops the batch. Restores the exact prior
+      // state, including keys the gesture created, which a caller writing
+      // "original values" back cannot do.
+      revertBatch() {
+        const batch = self.batch;
+        if (!batch) return;
+        self.batch = undefined;
+        if (!self.targetStore || batch.inversePatches.length === 0) return;
+        withoutRecording(() => {
+          applyPatch(self.targetStore!, batch.inversePatches.slice().reverse());
+        });
+      },
     };
   });
 
