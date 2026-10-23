@@ -22,7 +22,7 @@ import { observer } from 'mobx-react-lite';
 import { Crop } from 'lucide-react';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { CONTAINER_TYPES } from '../sectionConfig';
-import { CollapsibleSection, DimensionInput, PropertySelect, PropertySlider } from '../primitives';
+import { CollapsibleSection, DimensionInput, FieldPair, PropertyRow, PropertySelect, PropertySlider } from '../primitives';
 import {
   formatFocalPosition,
   parseFocalPosition,
@@ -193,12 +193,12 @@ function FocalControls({ src, value, onChange }: FocalControlsProps) {
       <Row label="Focus" top>
         <FocalPointPicker src={src} point={point} onChange={set} />
       </Row>
-      <Row label="X / Y">
-        <div className="grid grid-cols-2 gap-2">
-          <DimensionInput label="" value={`${Math.round(point.x)}%`} onChange={axis('x')} units={['%']} min={0} max={100} placeholder="50" />
-          <DimensionInput label="" value={`${Math.round(point.y)}%`} onChange={axis('y')} units={['%']} min={0} max={100} placeholder="50" />
-        </div>
-      </Row>
+      <PropertyRow label="Focus position" group>
+        <FieldPair>
+          <DimensionInput label="" prefix="X" aria-label="Focus X" value={`${Math.round(point.x)}%`} onChange={axis('x')} units={['%']} min={0} max={100} placeholder="50" />
+          <DimensionInput label="" prefix="Y" aria-label="Focus Y" value={`${Math.round(point.y)}%`} onChange={axis('y')} units={['%']} min={0} max={100} placeholder="50" />
+        </FieldPair>
+      </PropertyRow>
     </>
   );
 }
