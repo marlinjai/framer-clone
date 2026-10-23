@@ -48,8 +48,9 @@
 // handle as the rest (inside the issue transaction). An issued document's
 // snapshot names its logo (`logo: { sha256 }`, decision 4) and is the
 // authority: logo blocks naming any other hash are drawn empty, as the engine
-// of the time drew them. The asset table is append-only, so a re-render reads
-// exactly the image it was issued with. A logo the company does not have
+// of the time drew them. A stored logo never changes, and one an issued
+// document names is never deleted (013, 014), so a re-render reads exactly the
+// image it was issued with. A logo the company does not have
 // refuses the document of record by name (LOGO_ASSET_MISSING), never prints
 // it without; a draft preview leaves it out.
 

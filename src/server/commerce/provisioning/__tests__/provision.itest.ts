@@ -35,7 +35,7 @@ import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainer
 import postgres from 'postgres';
 import { randomUUID } from 'node:crypto';
 import { migrateCommercePublic } from '../public';
-import { APPEND_ONLY_TABLES, provisionCommerceTenant, migrateAllCommerceTenants } from '../provision';
+import { APPEND_ONLY_TABLES, NO_UPDATE_TABLES, provisionCommerceTenant, migrateAllCommerceTenants } from '../provision';
 
 const DB_NAME = 'framer_clone_test';
 
@@ -100,6 +100,17 @@ async function expectAppendOnly(schema: string): Promise<void> {
       can_delete: false,
     });
   }
+  // The Books logos (014): deletable (the trigger refuses one in use), never updated.
+  for (const table of NO_UPDATE_TABLES) {
+    const qualified = `${schema}."${table}"`;
+    const rows = await probe!`
+      SELECT
+        has_table_privilege('commerce_app', ${qualified}, 'UPDATE') AS can_update,
+        has_table_privilege('commerce_app', ${qualified}, 'DELETE') AS can_delete,
+        has_table_privilege('commerce_app', ${qualified}, 'TRUNCATE') AS can_truncate
+    `;
+    expect({ table, ...rows[0] }).toEqual({ table, can_update: false, can_delete: true, can_truncate: false });
+  }
 }
 
 describe('CM-11 commerce per-tenant provisioning (provisionCommerceTenant → provisionTenant)', () => {
@@ -144,6 +155,7 @@ describe('CM-11 commerce per-tenant provisioning (provisionCommerceTenant → pr
       '011_books_replacement',
       '012_books_template_v2',
       '013_books_assets',
+      '014_books_asset_delete',
     ]);
 
     // The registry row exists and is ACTIVE (the runner flips status only after

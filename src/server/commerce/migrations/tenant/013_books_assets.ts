@@ -22,7 +22,9 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      document's frozen snapshot names its logo by hash and re-renders from
  *      this table, so a stored logo is never changed or removed (GoBD, the
  *      German rules for keeping books and records electronically: the
- *      document must re-render as issued).
+ *      document must re-render as issued). Since 014_books_asset_delete a
+ *      logo nothing uses may be deleted (an issued document's logo and a live
+ *      template's still may not), and the app role holds DELETE.
  *   3. The content is self-describing and bounded, as the upload checked it:
  *      `kind` is 'logo', the type is PNG or JPEG, `byte_size` equals the
  *      content's length and is at most 1 MB, the pixel size is 1 to 2000 on

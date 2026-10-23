@@ -106,11 +106,13 @@ function expectedPrivileges() {
   return Object.fromEntries(
     BOOKS_TABLES.map((t) => [
       t,
-      t === 'sales_document_event' || t === 'sales_document_file' || t === 'document_template_version' || t === 'books_asset'
+      t === 'sales_document_event' || t === 'sales_document_file' || t === 'document_template_version'
         ? { sel: true, ins: true, upd: false, del: false }
         : t === 'document_number_counter'
           ? { sel: true, ins: true, upd: true, del: false }
-          : { sel: true, ins: true, upd: true, del: true },
+          : t === 'books_asset'
+            ? { sel: true, ins: true, upd: false, del: true }
+            : { sel: true, ins: true, upd: true, del: true },
     ]),
   );
 }
@@ -126,6 +128,7 @@ async function fleetMigrate(schema: string) {
     '011_books_replacement',
     '012_books_template_v2',
     '013_books_assets',
+    '014_books_asset_delete',
   ]);
 }
 
@@ -189,6 +192,7 @@ describe('007_books through the fleet runner', () => {
       '011_books_replacement',
       '012_books_template_v2',
       '013_books_assets',
+      '014_books_asset_delete',
     ]);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     expect(await readCommerceTenantState(owner, tgId, schema)).toBe('ready');
@@ -234,6 +238,7 @@ describe('009_books_import over a schema already holding issued documents (as pr
       '011_books_replacement',
       '012_books_template_v2',
       '013_books_assets',
+      '014_books_asset_delete',
     ]);
 
     expect(await snapshot()).toEqual(before);
@@ -289,7 +294,7 @@ describe('012_books_template_v2 through the fleet runner', () => {
                 VALUES (${plain}, ${tenantId}, 'Plain', NULL, ${owner.json([{ unexpected: 1 }])}, now())`;
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2', '013_books_assets']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2', '013_books_assets', '014_books_asset_delete']);
 
     const columns = await owner<{ column_name: string }[]>`
       SELECT column_name FROM information_schema.columns WHERE table_schema = ${schema} AND table_name = 'document_template' ORDER BY column_name`;
@@ -351,8 +356,8 @@ describe('012_books_template_v2 through the fleet runner', () => {
   });
 });
 
-describe('013_books_assets through the fleet runner', () => {
-  it('adds the asset table to a schema at 012 holding issued documents: append-only for every role, unique per company and hash', async () => {
+describe('013_books_assets (and 014 after it) through the fleet runner', () => {
+  it('adds the asset table to a schema at 012 holding issued documents: never updated by any role, unique per company and hash', async () => {
     const tgId = assertTenantGroupId(randomUUID());
     await provisionTenant(owner, {
       ...commerceProvisionOptions(tgId, `asset-${tgId.slice(0, 8)}`),
@@ -372,8 +377,10 @@ describe('013_books_assets through the fleet runner', () => {
     });
     const before = await owner`SELECT * FROM ${s}.document_template_version ORDER BY id`;
 
+    // The fleet runner applies the whole set: 013, then 014 (which lets an unused logo be deleted,
+    // tested on its own below).
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets', '014_books_asset_delete']);
     expect(await owner`SELECT * FROM ${s}.document_template_version ORDER BY id`).toEqual(before);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
 
@@ -397,26 +404,126 @@ describe('013_books_assets through the fleet runner', () => {
       expect(await code(insert(app, tenantId, 'CD'.repeat(32)))).toBe('23514');
       expect(await code(insert(app, tenantId, 'cd'.repeat(32), { width_px: 2001 }))).toBe('23514');
       expect(await code(insert(app, tenantId, 'cd'.repeat(32), { height_px: 0 }))).toBe('23514');
-      // Append-only: the app role holds no UPDATE or DELETE at all.
+      // The app role never updates or truncates.
       expect(await code(app`UPDATE ${app(schema)}.books_asset SET width_px = 11 WHERE sha256 = ${hash}`)).toBe('42501');
-      expect(await code(app`DELETE FROM ${app(schema)}.books_asset WHERE sha256 = ${hash}`)).toBe('42501');
       expect(await code(app`TRUNCATE ${app(schema)}.books_asset`)).toBe('42501');
     } finally {
       await app.end();
     }
     // ... and the trigger refuses every role, the owner included.
     expect(await code(owner`UPDATE ${s}.books_asset SET width_px = 11 WHERE sha256 = ${hash}`)).toBe('BK014');
-    expect(await code(owner`DELETE FROM ${s}.books_asset WHERE sha256 = ${hash}`)).toBe('BK014');
     expect(await code(owner`TRUNCATE ${s}.books_asset`)).toBe('BK014');
     expect(await owner`SELECT count(*)::int AS n FROM ${s}.books_asset`).toEqual([{ n: 2 }]);
 
-    // Running 013 a second time (the runner forgets it applied it) changes nothing and does not fail.
+    // Running 013 and 014 a second time (the runner forgets it applied them) changes nothing and does not fail.
     const assetsBefore = await owner`SELECT id FROM ${s}.books_asset ORDER BY id`;
-    await owner`DELETE FROM ${s}.__tenant_db_migrations WHERE id = '013_books_assets'`;
-    await owner`DELETE FROM public.tenant_migration_progress WHERE schema_name = ${schema} AND migration_id = '013_books_assets'`;
+    for (const id of ['013_books_assets', '014_books_asset_delete']) {
+      await owner`DELETE FROM ${s}.__tenant_db_migrations WHERE id = ${id}`;
+      await owner`DELETE FROM public.tenant_migration_progress WHERE schema_name = ${schema} AND migration_id = ${id}`;
+    }
     const again = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(again.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets']);
+    expect(again.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets', '014_books_asset_delete']);
     expect(await owner`SELECT id FROM ${s}.books_asset ORDER BY id`).toEqual(assetsBefore);
+    expect(await privileges(schema)).toEqual(expectedPrivileges());
+  });
+});
+
+describe('014_books_asset_delete through the fleet runner', () => {
+  it('lets every role delete only a logo nothing uses; UPDATE and TRUNCATE stay refused; commerce_app gains DELETE, never UPDATE', async () => {
+    const tgId = assertTenantGroupId(randomUUID());
+    await provisionTenant(owner, {
+      ...commerceProvisionOptions(tgId, `asset-del-${tgId.slice(0, 8)}`),
+      tenantMigrations: COMMERCE_TENANT_MIGRATIONS.filter((m) => m.id < '014'),
+    });
+    const schema = tenantSchema(tgId);
+    const s = owner(schema);
+    // A tenant provisioned before 014 shipped: the app role held no DELETE (013's REVOKE, re-applied
+    // through the append-only list of the time). Today's provisioning code already grants it, so the
+    // old state is restored by hand.
+    await owner`REVOKE DELETE ON ${s}.books_asset FROM commerce_app`;
+    expect((await privileges(schema)).books_asset).toEqual({ sel: true, ins: true, upd: false, del: false });
+
+    const mine = randomUUID();
+    const theirs = randomUUID();
+    const h = (c: string) => c.repeat(64);
+    // Y: in a columns cell of a live template's current version (in use). W: only in that
+    // template's older version. Z: only in an archived template. X: only in ANOTHER company's
+    // template. U: named by nothing.
+    const [X, Y, Z, W, U] = [h('1'), h('2'), h('3'), h('4'), h('5')];
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const logoAt = (sha256: string) => ({ type: 'logo', id: 'logo', assetSha256: sha256 });
+    await owner.begin(async (tx) => {
+      for (const sha256 of [X, Y, Z, W, U]) {
+        await tx`INSERT INTO ${tx(schema)}.books_asset ${tx({ id: randomUUID(), tenant_id: mine, kind: 'logo', content_type: 'image/png', byte_size: png.length, sha256, width_px: 10, height_px: 10, content: png })}`;
+      }
+      const template = async (tenant: string, name: string, docs: unknown[], archived: boolean) => {
+        const id = randomUUID();
+        const versions = docs.map(() => randomUUID());
+        await tx`INSERT INTO ${tx(schema)}.document_template (id, tenant_id, name, is_default, current_version_id, archived_at, updated_at)
+                 VALUES (${id}, ${tenant}, ${name}, false, ${versions.at(-1)!}, ${archived ? new Date() : null}, now())`;
+        for (const [i, doc] of docs.entries()) {
+          await tx`INSERT INTO ${tx(schema)}.document_template_version (id, tenant_id, template_id, version, document)
+                   VALUES (${versions[i]}, ${tenant}, ${id}, ${i + 1}, ${tx.json(doc as never)})`;
+        }
+      };
+      await template(
+        mine,
+        'Live',
+        [
+          { v: 2, regions: { firstPageHeader: [logoAt(W)] } },
+          { v: 2, regions: { body: [{ type: 'columns', id: 'row', cells: [{ blocks: [] }, { blocks: [logoAt(Y)] }] }] } },
+        ],
+        false,
+      );
+      await template(mine, 'Archived', [{ v: 2, regions: { firstPageHeader: [logoAt(Z)] } }], true);
+      await template(theirs, 'Theirs', [{ v: 2, regions: { firstPageHeader: [logoAt(X)] } }], false);
+    });
+
+    const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['014_books_asset_delete']);
+    expect(await privileges(schema)).toEqual(expectedPrivileges());
+    // The frozen logo of a document is found through its own index.
+    const [index] = await owner<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM pg_indexes WHERE schemaname = ${schema} AND indexname = 'sales_document_tenant_id_logo_sha256_idx'`;
+    expect(index.n).toBe(1);
+    // ... and the function's document query can use it (scans forbidden, so the plan shows whether it may).
+    const plan = await owner.begin(async (tx) => {
+      await tx`SET LOCAL enable_seqscan = off`;
+      return tx`EXPLAIN SELECT 1 FROM ${tx(schema)}.sales_document d
+                 WHERE d.tenant_id = ${mine} AND (d.template_snapshot -> 'logo' ->> 'sha256') = ${Y}`;
+    });
+    expect((plan as unknown as Array<Record<string, string>>).map((r) => Object.values(r)[0]).join('\n')).toContain(
+      'sales_document_tenant_id_logo_sha256_idx',
+    );
+    const inUse = async (sha256: string) =>
+      (await owner<{ u: boolean }[]>`SELECT ${s}.books_asset_in_use(${mine}, ${sha256}) AS u`)[0].u;
+    expect(await Promise.all([X, Y, Z, W, U].map(inUse))).toEqual([false, true, false, false, false]);
+
+    const code = async (p: Promise<unknown>) => p.then(() => 'ok', (e: { code?: string }) => e.code);
+    const app = postgres(ownerUrl.replace('postgres@', 'commerce_app@'), { max: 1, prepare: false, onnotice: () => {} });
+    try {
+      expect(await code(app`UPDATE ${app(schema)}.books_asset SET width_px = 11 WHERE sha256 = ${U}`)).toBe('42501');
+      expect(await code(app`TRUNCATE ${app(schema)}.books_asset`)).toBe('42501');
+      expect(await code(app`DELETE FROM ${app(schema)}.books_asset WHERE tenant_id = ${mine} AND sha256 = ${Y}`)).toBe('BK015');
+      // The app role may call the definition the logo list uses.
+      expect((await app<{ u: boolean }[]>`SELECT ${app(schema)}.books_asset_in_use(${mine}, ${Y}) AS u`)[0].u).toBe(true);
+      for (const sha256 of [X, Z, W, U]) {
+        expect(await code(app`DELETE FROM ${app(schema)}.books_asset WHERE tenant_id = ${mine} AND sha256 = ${sha256}`), sha256).toBe('ok');
+      }
+    } finally {
+      await app.end();
+    }
+    expect(await code(owner`UPDATE ${s}.books_asset SET width_px = 11 WHERE sha256 = ${Y}`)).toBe('BK014');
+    expect(await code(owner`TRUNCATE ${s}.books_asset`)).toBe('BK014');
+    expect(await code(owner`DELETE FROM ${s}.books_asset WHERE sha256 = ${Y}`)).toBe('BK015');
+    expect(await owner`SELECT sha256 FROM ${s}.books_asset ORDER BY sha256`).toEqual([{ sha256: Y }]);
+
+    // Running 014 a second time changes nothing and does not fail; the guard and the rights hold.
+    await owner`DELETE FROM ${s}.__tenant_db_migrations WHERE id = '014_books_asset_delete'`;
+    await owner`DELETE FROM public.tenant_migration_progress WHERE schema_name = ${schema} AND migration_id = '014_books_asset_delete'`;
+    const again = await migrateAllCommerceTenants({ connectionString: ownerUrl });
+    expect(again.schemas.find((x) => x.schema === schema)?.applied).toEqual(['014_books_asset_delete']);
+    expect(await code(owner`DELETE FROM ${s}.books_asset WHERE sha256 = ${Y}`)).toBe('BK015');
     expect(await privileges(schema)).toEqual(expectedPrivileges());
   });
 });

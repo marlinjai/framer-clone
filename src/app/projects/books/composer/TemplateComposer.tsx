@@ -45,7 +45,7 @@ import {
 } from '@/lib/books/api';
 import { templateDocumentV2Schema } from '@/server/books/template/schema';
 
-import { ErrorAlert, errorText } from '../ui';
+import { ErrorAlert, errorText, localDate } from '../ui';
 import {
   BLOCK_INFO,
   COLUMN_LABELS,
@@ -855,7 +855,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
           <Inspector doc={doc} selectedId={selectedId} update={update} problems={problems} onSelect={select}
             onRemove={remove}
             onStep={(d) => step(d)}
-            renderLogoPicker={(block, upd) => <LogoPicker doc={doc} assetSha256={block.assetSha256} update={upd} />}
+            renderLogoPicker={(block, upd) => <LogoPicker doc={doc} assetSha256={block.assetSha256} update={upd} savedVersion={base.version} />}
           />
           <Versions versions={versions} />
         </aside>
@@ -904,14 +904,6 @@ function openPdf(b64: string) {
   window.open(url, '_blank', 'noopener');
   // The tab has read it by then; the address is not kept.
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
-
-/** A timestamp's calendar day where the user is (a save after midnight in Germany is on the German date). */
-function localDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
 }
 
 function formatTime(iso: string): string {

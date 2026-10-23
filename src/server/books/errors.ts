@@ -5,11 +5,12 @@
 // Details carry names and ids only, never a recipient's name, address or any
 // other personal value.
 //
-// Trigger errors from 007_books, 009_books_import and 011_books_replacement are mapped by SQLSTATE
+// Trigger errors from 007_books, 009_books_import, 011_books_replacement and
+// 014_books_asset_delete are mapped by SQLSTATE
 // (BK001 -> NOT_DRAFT, BK004 -> INVALID_TRANSITION, BK005 -> TOTALS_MISMATCH,
 // BK007 -> IMPORT_INCOMPLETE, BK008 -> INVALID_LINE,
 // BK009 -> CURRENCY_NOT_SUPPORTED, BK011 -> NOT_CORRECTABLE,
-// BK013 -> REPLACEMENT_INCOMPLETE); every other database error propagates
+// BK013 -> REPLACEMENT_INCOMPLETE, BK015 -> ASSET_IN_USE); every other database error propagates
 // unchanged. Errors surface, never swallowed.
 
 export type BooksErrorCode =
@@ -71,12 +72,14 @@ export type BooksErrorCode =
   | 'NOT_CORRECTABLE'
   | 'REPLACED_INVOICE_CANCELLED'
   | 'REPLACEMENT_INCOMPLETE'
-  // Logos (013_books_assets, render/logoImage.ts, repository/assets.ts).
+  // Logos (013_books_assets, 014_books_asset_delete, render/logoImage.ts, repository/assets.ts).
   | 'ASSET_TOO_LARGE'
   | 'UNSUPPORTED_ASSET_TYPE'
   | 'ASSET_INVALID'
   | 'ASSET_NOT_FOUND'
   | 'ASSET_LIMIT'
+  | 'ASSET_IN_USE'
+  | 'ASSET_BUSY'
   | 'LOGO_ASSET_MISSING';
 
 export class BooksError extends Error {
@@ -127,6 +130,7 @@ const TRIGGER_CODES: Record<string, BooksErrorCode> = {
   BK009: 'CURRENCY_NOT_SUPPORTED',
   BK011: 'NOT_CORRECTABLE',
   BK013: 'REPLACEMENT_INCOMPLETE',
+  BK015: 'ASSET_IN_USE',
 };
 
 /**

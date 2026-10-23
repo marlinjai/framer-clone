@@ -13,6 +13,7 @@ import { booksUploadImport } from './010_books_upload_import';
 import { booksReplacement } from './011_books_replacement';
 import { booksTemplateV2 } from './012_books_template_v2';
 import { booksAssets } from './013_books_assets';
+import { booksAssetDelete } from './014_books_asset_delete';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -73,6 +74,12 @@ import { booksAssets } from './013_books_assets';
  *   013_books_assets       : the logos templates print: books_asset (PNG or JPEG
  *                            bytes, unique per company and SHA-256, append-only,
  *                            BK014)
+ *   014_books_asset_delete : a logo nobody uses may be deleted: books_asset
+ *                            refuses a DELETE while an issued document froze
+ *                            the logo or a live template's current version
+ *                            names it (BK015, one definition of "in use" in
+ *                            books_asset_in_use), UPDATE and TRUNCATE stay
+ *                            refused (BK014); commerce_app may DELETE
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -89,4 +96,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   booksReplacement,
   booksTemplateV2,
   booksAssets,
+  booksAssetDelete,
 ];

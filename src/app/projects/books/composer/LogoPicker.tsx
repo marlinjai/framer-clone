@@ -9,13 +9,32 @@
 // pixels on the longer side, decodable, sRGB) and stores it once per company:
 // uploading the same image again reuses it. A template prints one logo, so
 // the chosen image goes to every logo block of the template.
+//
+// "Your logos" (phase 4 decision 9, migration 014) lists the company's stored
+// logos, newest first: choosing one sets it exactly as an upload does. A logo
+// nothing uses can be deleted after a confirmation (it cannot be undone); one
+// printed on an issued document or used by a template shows "In use" and
+// offers no delete (the server refuses it anyway, 409 asset_in_use), and the
+// one this template has chosen is not offered either, because the unsaved
+// working copy names it. After a delete the focus moves to the first logo left,
+// or to the upload when none is; every result is announced in the status line.
 
-import React, { useId, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 
-import { Button } from '@/components/ui/button';
-import { booksApi } from '@/lib/books/api';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { booksApi, type LogoAssetView } from '@/lib/books/api';
 
-import { errorText } from '../ui';
+import { errorText, localDate } from '../ui';
 import { locate, logoBlockIds, type TemplateDocumentV2 } from './doc';
 import type { Update } from './Inspector';
 
@@ -51,13 +70,90 @@ async function svgToPng(file: Blob): Promise<Blob> {
   }
 }
 
-export default function LogoPicker({ doc, assetSha256, update }: { doc: TemplateDocumentV2; assetSha256: string | null; update: Update }) {
+/** How a stored logo is named to a screen reader and in the dialog. */
+function logoName(a: LogoAssetView): string {
+  const day = localDate(a.createdAt);
+  const uploaded = day ? `, uploaded ${day}` : '';
+  return `${a.widthPx} × ${a.heightPx} pixels${uploaded}`;
+}
+
+export default function LogoPicker({
+  doc,
+  assetSha256,
+  update,
+  savedVersion,
+}: {
+  doc: TemplateDocumentV2;
+  assetSha256: string | null;
+  update: Update;
+  /** The template's saved version: a save changes what is in use, so the list is read again. */
+  savedVersion?: number;
+}) {
   const inputId = useId();
   const hintId = `${inputId}-hint`;
+  const listId = `${inputId}-logos`;
   const input = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
+  const list = useRef<HTMLUListElement>(null);
+  /** What runs now: an upload or a delete (the controls wait meanwhile). */
+  const [working, setWorking] = useState<'upload' | 'delete' | null>(null);
+  const busy = working !== null;
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [logos, setLogos] = useState<LogoAssetView[] | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  /** The logo the delete dialog asks about (null: closed). */
+  const [pending, setPending] = useState<LogoAssetView | null>(null);
+  /**
+   * The delete in progress, for the focus: while it runs the focus waits on its
+   * row; once it has settled, on the row if it is still there (refused), else on
+   * the first logo left, else on the upload.
+   */
+  const deleting = useRef<{ sha256: string; settled: boolean } | null>(null);
+  /** Bumped once a delete and the list read after it have settled: the focus moves after that render. */
+  const [settledTick, setSettledTick] = useState(0);
+  const mounted = useRef(true);
+  const statusLine = useRef<HTMLParagraphElement>(null);
+  /** The Delete button that opened the dialog (a cancel returns the focus to it). */
+  const opener = useRef<HTMLElement | null>(null);
   const blocks = logoBlockIds(doc);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  /** The newest list request: an older answer arriving later never overwrites a newer one. */
+  const latest = useRef(0);
+  const reload = useCallback(async (): Promise<LogoAssetView[] | null> => {
+    const request = ++latest.current;
+    try {
+      const { items } = await booksApi.listAssets();
+      if (!mounted.current || request !== latest.current) return null;
+      setLogos(items);
+      setListError(null);
+      return items;
+    } catch (err) {
+      if (mounted.current && request === latest.current) setListError(`Your logos could not be loaded. ${errorText(err)}`);
+      return null;
+    }
+  }, []);
+
+  // On opening, and after every save (a saved version changes which logos are in use).
+  useEffect(() => {
+    void reload();
+  }, [reload, savedVersion]);
+
+  // After a delete and the list read after it have settled and been drawn (the controls enabled
+  // again): its row if it is still there, else the first logo left, else the upload.
+  useEffect(() => {
+    const done = deleting.current;
+    if (!done?.settled) return;
+    deleting.current = null;
+    const own = list.current?.querySelector<HTMLButtonElement>(`button[data-logo-choose="${done.sha256}"]`);
+    const first = list.current?.querySelector<HTMLButtonElement>('button[data-logo-choose]');
+    (own ?? first ?? input.current)?.focus();
+  }, [settledTick]);
 
   function choose(sha256: string | null) {
     update((d) => {
@@ -70,7 +166,7 @@ export default function LogoPicker({ doc, assetSha256, update }: { doc: Template
 
   async function upload(file: File) {
     setStatus(null);
-    setBusy(true);
+    setWorking('upload');
     try {
       const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name);
       if (!isSvg && file.type !== 'image/png' && file.type !== 'image/jpeg') {
@@ -81,11 +177,38 @@ export default function LogoPicker({ doc, assetSha256, update }: { doc: Template
       const stored = await booksApi.uploadAsset(blob);
       choose(stored.sha256);
       setStatus({ kind: 'ok', text: `Logo set (${stored.widthPx} × ${stored.heightPx} pixels).` });
+      void reload();
     } catch (err) {
       setStatus({ kind: 'error', text: err instanceof Error && !('code' in err) ? err.message : errorText(err) });
     } finally {
-      setBusy(false);
+      setWorking(null);
       if (input.current) input.current.value = '';
+    }
+  }
+
+  function chooseStored(a: LogoAssetView) {
+    choose(a.sha256);
+    setStatus({ kind: 'ok', text: `Logo set (${a.widthPx} × ${a.heightPx} pixels).` });
+  }
+
+  async function remove(a: LogoAssetView) {
+    setStatus(null);
+    setWorking('delete');
+    deleting.current = { sha256: a.sha256, settled: false };
+    try {
+      await booksApi.deleteAsset(a.sha256);
+      setStatus({ kind: 'ok', text: 'Logo deleted.' });
+    } catch (err) {
+      // asset_in_use (it came into use meanwhile) or asset_not_found (deleted elsewhere): say so, show the list as it is now.
+      setStatus({ kind: 'error', text: errorText(err) });
+    } finally {
+      // Read the list again first (a refused logo shows "In use" now), then enable the controls.
+      await reload();
+      if (mounted.current) {
+        deleting.current = { sha256: a.sha256, settled: true };
+        setWorking(null);
+        setSettledTick((t) => t + 1);
+      }
     }
   }
 
@@ -123,9 +246,107 @@ export default function LogoPicker({ doc, assetSha256, update }: { doc: Template
           Remove the image
         </Button>
       ) : null}
-      <p role="status" className={`text-xs ${status?.kind === 'error' ? 'text-red-800' : 'text-muted-foreground'}`}>
-        {busy ? 'Uploading…' : (status?.text ?? '')}
+      <p ref={statusLine} tabIndex={-1} role="status" className={`text-xs ${status?.kind === 'error' ? 'text-red-800' : 'text-muted-foreground'}`}>
+        {working === 'upload' ? 'Uploading…' : working === 'delete' ? 'Deleting…' : (status?.text ?? '')}
       </p>
+
+      <span id={listId} className="mt-1 text-xs font-medium text-gray-600">
+        Your logos
+      </span>
+      {listError ? (
+        <p role="alert" className="text-xs text-red-800">
+          {listError}
+        </p>
+      ) : logos === null ? (
+        <p className="text-xs text-muted-foreground">Loading your logos…</p>
+      ) : logos.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No logos stored yet. An uploaded logo appears here.</p>
+      ) : (
+        <ul ref={list} aria-labelledby={listId} className="flex flex-col gap-2">
+          {logos.map((a) => {
+            const chosen = a.sha256 === assetSha256;
+            const name = logoName(a);
+            return (
+              <li key={a.sha256} className="flex items-center gap-2">
+                <button
+                  type="button"
+                  data-logo-choose={a.sha256}
+                  aria-pressed={chosen}
+                  aria-label={`Choose the logo ${name}`}
+                  disabled={busy}
+                  onClick={() => chooseStored(a)}
+                  className={`flex h-12 w-24 shrink-0 items-center justify-center rounded border bg-white p-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground ${
+                    chosen ? 'border-foreground ring-2 ring-foreground' : 'border-gray-500'
+                  }`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element -- a private, authenticated asset; the image optimiser cannot fetch it */}
+                  <img src={booksApi.assetUrl(a.sha256)} alt="" className="max-h-full max-w-full object-contain" />
+                </button>
+                <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+                  {a.widthPx} × {a.heightPx}
+                  {chosen ? <span className="block text-foreground">Chosen</span> : null}
+                </span>
+                {a.inUse ? (
+                  <span className="shrink-0 rounded-full border border-gray-500 px-2 py-0.5 text-xs">
+                    In use<span className="sr-only">: printed on an issued document or used by a template, so it cannot be deleted</span>
+                  </span>
+                ) : chosen ? null : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0 border-gray-500"
+                    disabled={busy}
+                    aria-label={`Delete the logo ${name}`}
+                    onClick={(e) => {
+                      opener.current = e.currentTarget;
+                      setPending(a);
+                    }}
+                  >
+                    Delete
+                  </Button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <AlertDialog
+        open={pending !== null}
+        onOpenChange={(next) => {
+          if (!next) setPending(null);
+        }}
+      >
+        <AlertDialogContent
+          onCloseAutoFocus={(event) => {
+            // A confirmed delete waits on the status line (the controls are disabled meanwhile) and
+            // moves the focus itself once it has settled; a cancelled one goes back to the Delete
+            // button that opened the dialog.
+            event.preventDefault();
+            if (deleting.current) statusLine.current?.focus();
+            else opener.current?.focus();
+          }}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this logo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pending ? `The logo (${logoName(pending)}) is removed from this company's logos. This cannot be undone.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className={buttonVariants({ variant: 'destructive', size: 'sm' })}
+              onClick={() => {
+                const target = pending;
+                if (target) void remove(target);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

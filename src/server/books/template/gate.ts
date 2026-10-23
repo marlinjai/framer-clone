@@ -61,17 +61,27 @@ export interface GateOptions {
   assets?: ReadonlyMap<string, EngineImage>;
 }
 
+/**
+ * The logo blocks naming an image the company does not have (`stored` holds
+ * the hashes it has). The gate asks it before the probe render; a template
+ * save asks it again inside its transaction, on the logos it locked, because a
+ * logo may be deleted in between (repository/templates.ts, migration 014).
+ */
+export function missingLogoProblems(doc: TemplateDocumentV2, stored: { has(sha256: string): boolean }): TemplateProblem[] {
+  return logoBlocks(doc).flatMap(({ block, region }) =>
+    block.assetSha256 !== null && !stored.has(block.assetSha256)
+      ? [{ code: 'LOGO_ASSET_MISSING' as const, message: 'the logo names an image this company has not uploaded', blockId: block.id, region, field: 'assetSha256' }]
+      : [],
+  );
+}
+
 /** Every reason the template cannot be saved (empty when it can). */
 export async function templateProblems(doc: TemplateDocumentV2, options: GateOptions = {}): Promise<TemplateProblem[]> {
   const render = options.render ?? renderTemplate;
   const assets = options.assets ?? new Map<string, EngineImage>();
   const family = doc.theme.fontFamily;
   const structural = structuralProblems(doc, await fontMeasure(family));
-  const missingLogos: TemplateProblem[] = logoBlocks(doc).flatMap(({ block, region }) =>
-    block.assetSha256 !== null && !assets.has(block.assetSha256)
-      ? [{ code: 'LOGO_ASSET_MISSING' as const, message: 'the logo names an image this company has not uploaded', blockId: block.id, region, field: 'assetSha256' }]
-      : [],
-  );
+  const missingLogos = missingLogoProblems(doc, assets);
   const drawable: TemplateProblem[] = templateTexts(doc).flatMap((t) => {
     const chars = undrawable(t.text, family);
     return chars.length === 0

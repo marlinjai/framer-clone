@@ -255,8 +255,10 @@ const MESSAGES: Record<string, string> = {
   unsupported_asset_type: 'A logo must be a PNG or a JPEG file. Convert it and upload it again.',
   asset_invalid: 'The logo cannot be used:',
   logo_asset_missing: 'The template’s logo is not stored for this company. Choose the logo in the template again; nothing was issued.',
-  asset_limit: 'This company already stores the most logos allowed. Choose one of them.',
+  asset_limit: 'This company already stores the most logos allowed. Choose one of them, or delete one nobody uses.',
   asset_not_found: 'This logo is not stored for this company.',
+  asset_in_use: 'This logo is printed on an issued document or used by a template, so it stays.',
+  asset_busy: 'This logo is being used by an invoice being issued or a template being saved. Try again in a moment.',
 };
 
 export class BooksApiError extends Error {
@@ -397,6 +399,10 @@ export const booksApi = {
   uploadAsset: (file: Blob) => uploadAsset(file),
   /** The URL of a stored logo by its hash (an <img> source). */
   assetUrl: (sha256: string) => `/api/books/assets/${sha256}`,
+  /** The company's stored logos, newest first, each saying whether it is in use. */
+  listAssets: () => request<{ items: LogoAssetView[] }>('GET', '/api/books/assets'),
+  /** Delete a logo nobody uses; one printed on an issued document or used by a template answers asset_in_use. */
+  deleteAsset: (sha256: string) => request<void>('DELETE', `/api/books/assets/${encodeURIComponent(sha256)}`),
 };
 
 /** A stored logo, as the upload answers it. */
@@ -406,6 +412,13 @@ export interface AssetView {
   byteSize: number;
   widthPx: number;
   heightPx: number;
+}
+
+/** A stored logo in the company's logo list. */
+export interface LogoAssetView extends AssetView {
+  createdAt: string;
+  /** Printed on an issued document, or named by a live template's current version: it cannot be deleted. */
+  inUse: boolean;
 }
 
 /** Send a logo as the raw request body with its own type; the server checks the bytes. */
@@ -437,7 +450,7 @@ async function uploadAsset(file: Blob): Promise<AssetView> {
       code === 'asset_invalid' && err?.message
         ? `${MESSAGES[code]} ${err.message}.`
         : code === 'asset_limit' && typeof limit === 'number'
-          ? `This company already stores ${limit} logos, the most allowed. Choose one of them.`
+          ? `This company already stores ${limit} logos, the most allowed. Choose one of them, or delete one nobody uses.`
           : (MESSAGES[code] ?? err?.message ?? `The upload failed (${res.status}).`);
     throw new BooksApiError(res.status, code, message, err ?? {});
   }

@@ -65,7 +65,8 @@ function server(r: Record<string, Handler>) {
       const handler = routes[`${method} ${url.split('?')[0]}`];
       if (!handler) return new Response(JSON.stringify({ error: { code: 'not_found', message: 'nf' } }), { status: 404 });
       const res = handler(body);
-      return new Response(JSON.stringify(res.body), { status: res.status });
+      // A 204 has no body (the Response constructor refuses one).
+      return res.status === 204 ? new Response(null, { status: 204 }) : new Response(JSON.stringify(res.body), { status: res.status });
     }),
   );
 }
@@ -104,6 +105,7 @@ function baseRoutes(version = 1): Record<string, Handler> {
     }),
     'POST /api/books/templates/preview': () => previewAnswer(),
     'GET /api/books/documents': () => ({ status: 200, body: { items: [], nextCursor: null } }),
+    'GET /api/books/assets': () => ({ status: 200, body: { items: [] } }),
   };
 }
 
@@ -605,7 +607,187 @@ describe('the template composer: the logo', () => {
     const file = new File(['%PDF-'], 'brief.pdf', { type: 'application/pdf' });
     fireEvent.change(screen.getByLabelText('Upload a logo'), { target: { files: [file] } });
     expect(await screen.findByText('Choose a PNG, JPEG or SVG file.')).toBeTruthy();
-    expect(calls.some((c) => c.url.startsWith('/api/books/assets'))).toBe(false);
+    expect(calls.some((c) => c.method === 'POST' && c.url.startsWith('/api/books/assets'))).toBe(false);
   });
 });
 
+
+describe('the template composer: your logos (choose a stored one, delete one nobody uses)', () => {
+  const A = 'a'.repeat(64);
+  const B = 'b'.repeat(64);
+  const C = 'c'.repeat(64);
+  const stored = (sha256: string, widthPx: number, inUse: boolean) => ({
+    sha256,
+    contentType: 'image/png',
+    byteSize: 120,
+    widthPx,
+    heightPx: 100,
+    createdAt: '2026-10-22T09:00:00.000Z',
+    inUse,
+  });
+
+  async function openLogo(extra: Record<string, Handler>) {
+    const modern = preset('modern') as unknown as Json;
+    modern.regions.followingPageHeader.push({ id: 'logo2', type: 'logo', style: {}, widthMm: 20, assetSha256: null });
+    server({
+      ...baseRoutes(),
+      'GET /api/books/templates/tpl1': () => ({ status: 200, body: template(1, modern) }),
+      'PATCH /api/books/templates/tpl1': (body) => ({ status: 200, body: template(2, body!.document) }),
+      ...extra,
+    });
+    render(<TemplateComposer id="tpl1" />);
+    await screen.findByDisplayValue('Hausvorlage');
+    await waitFor(() => expect(document.querySelector('[data-outline-select="logo"]')).not.toBeNull());
+    selectInOutline('logo');
+  }
+  const logoList = () => screen.findByRole('list', { name: 'Your logos' });
+
+  it('lists the stored logos; choosing one sets it on every logo block and announces it; one in use offers no delete', async () => {
+    await openLogo({
+      'GET /api/books/assets': () => ({ status: 200, body: { items: [stored(A, 400, false), stored(B, 300, true)] } }),
+    });
+    const list = await logoList();
+    const items = within(list).getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    // The logo in use says so and has no delete; the other one may be deleted.
+    expect(within(items[1]).getByText('In use')).toBeTruthy();
+    expect(within(items[1]).queryByRole('button', { name: /^Delete/ })).toBeNull();
+    expect(within(items[0]).getByRole('button', { name: 'Delete the logo 400 × 100 pixels, uploaded 22.10.2026' })).toBeTruthy();
+
+    const choose = within(list).getByRole('button', { name: 'Choose the logo 400 × 100 pixels, uploaded 22.10.2026' });
+    expect(choose.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(choose);
+    expect(await screen.findByText('Logo set (400 × 100 pixels).')).toBeTruthy();
+    expect(screen.getByText('Logo set (400 × 100 pixels).').getAttribute('role')).toBe('status');
+    expect(screen.getByAltText('The current logo').getAttribute('src')).toBe(`/api/books/assets/${A}`);
+    // Chosen: pressed, and no delete (the working copy names it).
+    const row = within(screen.getByRole('list', { name: 'Your logos' })).getAllByRole('listitem')[0];
+    expect(within(row).getByRole('button', { name: /^Choose the logo 400/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(within(row).queryByRole('button', { name: /^Delete/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(header()).toContain('Version 2'));
+    const saved = calls.find((c) => c.method === 'PATCH')!.body!.document;
+    expect(saved.regions.firstPageHeader[0].assetSha256).toBe(A);
+    expect(saved.regions.followingPageHeader.find((b: Json) => b.id === 'logo2').assetSha256).toBe(A);
+  });
+
+  it('deletes an unused logo after a confirmation that it cannot be undone; the focus moves to the list, then to the upload', async () => {
+    let items = [stored(A, 400, false), stored(C, 200, false)];
+    await openLogo({
+      'GET /api/books/assets': () => ({ status: 200, body: { items } }),
+      [`DELETE /api/books/assets/${A}`]: () => {
+        items = items.filter((i) => i.sha256 !== A);
+        return { status: 204, body: null };
+      },
+      [`DELETE /api/books/assets/${C}`]: () => {
+        items = items.filter((i) => i.sha256 !== C);
+        return { status: 204, body: null };
+      },
+    });
+    const list = await logoList();
+
+    // Cancel first: nothing is deleted, the focus goes back to the Delete button.
+    const deleteA = within(list).getByRole('button', { name: /^Delete the logo 400/ });
+    fireEvent.click(deleteA);
+    let dialog = await screen.findByRole('alertdialog', { name: 'Delete this logo?' });
+    expect(dialog.textContent).toContain('This cannot be undone.');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+    await waitFor(() => expect(document.activeElement).toBe(deleteA));
+
+    // Confirmed: deleted, announced, the list drawn again and the focus on its first logo.
+    fireEvent.click(deleteA);
+    dialog = await screen.findByRole('alertdialog', { name: 'Delete this logo?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText('Logo deleted.')).toBeTruthy();
+    await waitFor(() => expect(within(screen.getByRole('list', { name: 'Your logos' })).getAllByRole('listitem')).toHaveLength(1));
+    expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.url)).toEqual([`/api/books/assets/${A}`]);
+    await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toMatch(/^Choose the logo 200/));
+
+    // The last one: the focus goes to the upload.
+    fireEvent.click(screen.getByRole('button', { name: /^Delete the logo 200/ }));
+    dialog = await screen.findByRole('alertdialog', { name: 'Delete this logo?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText('No logos stored yet. An uploaded logo appears here.')).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Upload a logo')));
+  });
+
+  it('a logo that came into use meanwhile is refused (409): the reason is announced and the list shows it in use', async () => {
+    let inUse = false;
+    await openLogo({
+      'GET /api/books/assets': () => ({ status: 200, body: { items: [stored(A, 400, inUse)] } }),
+      [`DELETE /api/books/assets/${A}`]: () => {
+        inUse = true;
+        return { status: 409, body: { error: { code: 'asset_in_use', message: 'the logo is printed on an issued document', sha256: A } } };
+      },
+    });
+    const list = await logoList();
+    fireEvent.click(within(list).getByRole('button', { name: /^Delete the logo 400/ }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Delete this logo?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText('This logo is printed on an issued document or used by a template, so it stays.')).toBeTruthy();
+    await waitFor(() => expect(within(screen.getByRole('list', { name: 'Your logos' })).getByText('In use')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /^Delete the logo/ })).toBeNull();
+    // The refused row is still there: the focus is back on it, not somewhere else in the list.
+    await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toMatch(/^Choose the logo 400/));
+  });
+
+  it('a delete whose list cannot be read again moves the focus to the upload and says why', async () => {
+    let failing = false;
+    await openLogo({
+      'GET /api/books/assets': () =>
+        failing ? { status: 500, body: { error: { code: 'internal', message: 'boom' } } } : { status: 200, body: { items: [stored(A, 400, false)] } },
+      [`DELETE /api/books/assets/${A}`]: () => {
+        failing = true;
+        return { status: 204, body: null };
+      },
+    });
+    const list = await logoList();
+    fireEvent.click(within(list).getByRole('button', { name: /^Delete the logo 400/ }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Delete this logo?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText('Logo deleted.')).toBeTruthy();
+    expect((await screen.findByText(/^Your logos could not be loaded\./)).getAttribute('role')).toBe('alert');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Upload a logo')));
+  });
+
+  it('after a save the list is read again: a logo the saved version names shows "In use"', async () => {
+    let saved = false;
+    await openLogo({
+      'GET /api/books/assets': () => ({ status: 200, body: { items: [stored(A, 400, saved)] } }),
+      'PATCH /api/books/templates/tpl1': (body) => {
+        saved = true;
+        return { status: 200, body: template(2, body!.document) };
+      },
+    });
+    const list = await logoList();
+    fireEvent.click(within(list).getByRole('button', { name: /^Choose the logo 400/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(header()).toContain('Version 2'));
+    await waitFor(() => expect(within(screen.getByRole('list', { name: 'Your logos' })).getByText('In use')).toBeTruthy());
+    expect(calls.filter((c) => c.method === 'GET' && c.url === '/api/books/assets').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('an uploaded logo appears in the list; a list that cannot be read says so and the upload still works', async () => {
+    let failing = true;
+    let items: Array<ReturnType<typeof stored>> = [];
+    await openLogo({
+      'GET /api/books/assets': () =>
+        failing ? { status: 500, body: { error: { code: 'internal', message: 'boom' } } } : { status: 200, body: { items } },
+      'POST /api/books/assets': () => {
+        items = [stored(A, 400, false)];
+        return { status: 201, body: { sha256: A, contentType: 'image/png', byteSize: 120, widthPx: 400, heightPx: 100 } };
+      },
+    });
+    // Announced: the message is an alert.
+    expect((await screen.findByText(/^Your logos could not be loaded\./)).getAttribute('role')).toBe('alert');
+    failing = false;
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'logo.png', { type: 'image/png' });
+    fireEvent.change(screen.getByLabelText('Upload a logo'), { target: { files: [file] } });
+    expect(await screen.findByText('Logo set (400 × 100 pixels).')).toBeTruthy();
+    const list = await screen.findByRole('list', { name: 'Your logos' });
+    expect(within(list).getByRole('button', { name: /^Choose the logo 400/ }).getAttribute('aria-pressed')).toBe('true');
+  });
+});
