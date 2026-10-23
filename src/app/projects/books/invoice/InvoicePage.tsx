@@ -467,6 +467,9 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     const style = (r: FieldRect): React.CSSProperties => ({ left: r.x * scale, top: r.y * scale, width: Math.max(r.width * scale, 12), height: Math.max(r.height * scale, 10) });
     const nodes: React.ReactNode[] = [];
     let editorShown = false;
+    // A line's margin marker sits left of the whole row (its position number), never over the table's columns.
+    const marginX = (f: LayoutField, r: FieldRect) =>
+      (f.lineId ? layout.anchors.rows.find((row) => row.lineId === f.lineId)?.rects.find((x) => x.page === r.page)?.x : undefined) ?? r.x;
     const editor = (rect: FieldRect) =>
       active ? (
         <InlineEditor
@@ -517,7 +520,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
               title={placeholderText(f)}
               aria-disabled={busy || undefined}
               className="absolute flex size-5 items-center justify-center rounded-full border border-blue-500 bg-white text-blue-700 opacity-30 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-blue-600"
-              style={{ left: r.x * scale - 34, top: Math.max(0, r.y * scale - 10) }}
+              style={{ left: marginX(f, r) * scale - 34, top: Math.max(0, r.y * scale - 10) }}
               onClick={() => open(f, r, ri)}
             >
               <Plus aria-hidden className="size-3" />
