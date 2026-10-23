@@ -146,6 +146,56 @@ export interface TemplateView {
   defaultOutroText: string | null;
 }
 
+/** One saved version of a template (the composer's version list). */
+export interface TemplateVersionView {
+  id: string;
+  version: number;
+  createdAt: string;
+  current: boolean;
+  /** Issued documents frozen with this version. */
+  documentCount: number;
+}
+
+/** What the template preview renders: a fictional sample, or one of the company's documents. */
+export type PreviewSubject = { kind: 'sample'; variant: string } | { kind: 'document'; documentId: string };
+
+/** One reason a template cannot be saved (the save gate's answer, also sent with every preview). */
+export interface TemplateProblemView {
+  code: string;
+  message: string;
+  region?: string;
+  blockId?: string;
+  field?: string;
+  probe?: string;
+}
+
+/** A block's place on a preview page: points from the page's left and top edge. */
+export interface LayoutRectView {
+  blockId: string;
+  region: string;
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface LayoutMapView {
+  page: { width: number; height: number };
+  pageCount: number;
+  blocks: LayoutRectView[];
+  tables: Array<{ blockId: string; columns: Partial<Record<string, { x: number; width: number }>> }>;
+  issues: Array<{ code: string; blockId: string | null; region: string }>;
+}
+
+export interface TemplatePreview {
+  /** The PDF, base64. */
+  pdf: string;
+  layout: LayoutMapView;
+  renderMs: number;
+  problems: TemplateProblemView[];
+}
+
 export interface SettingsView {
   initialised: boolean;
   settings: {
@@ -222,7 +272,7 @@ export class BooksApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
@@ -230,8 +280,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       headers: body === undefined ? undefined : { 'content-type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
       cache: 'no-store',
+      signal,
     });
-  } catch {
+  } catch (err) {
+    // A request the caller aborted (a newer preview replaced it) is not a network failure.
+    if (signal?.aborted) throw err;
     throw new BooksApiError(0, 'network', 'The server could not be reached. Check your connection and try again.');
   }
   if (res.status === 204) return undefined as T;
@@ -332,6 +385,11 @@ export const booksApi = {
       `/api/books/documents/${id}/cancel`,
       { reason },
     ),
+  template: (id: string) => request<TemplateView>('GET', `/api/books/templates/${id}`),
+  templateVersions: (id: string) => request<{ items: TemplateVersionView[] }>('GET', `/api/books/templates/${id}/versions`),
+  /** The composer's live preview of an unsaved layout (never stored); `signal` aborts a superseded one. */
+  previewTemplate: (body: { document: unknown; subject: PreviewSubject }, signal?: AbortSignal) =>
+    request<TemplatePreview>('POST', '/api/books/templates/preview', body, signal),
   templates: () => request<{ items: TemplateView[] }>('GET', '/api/books/templates'),
   createTemplate: (body: unknown) => request<TemplateView>('POST', '/api/books/templates', body),
   updateTemplate: (id: string, body: unknown) => request<TemplateView>('PATCH', `/api/books/templates/${id}`, body),

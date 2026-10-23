@@ -50,6 +50,11 @@ const BLOCKING = new Set([
 export default function BooksHome() {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>('documents');
+  // A link may open a tab directly (the template composer's way back: ?tab=templates).
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get('tab');
+    if (wanted === 'customers' || wanted === 'templates') setTab(wanted);
+  }, []);
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [blocked, setBlocked] = useState<BooksApiError | null>(null);
   // The documents' filters: the typed number (applied after a short pause) and the issue year.
