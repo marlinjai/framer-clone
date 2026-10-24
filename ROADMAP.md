@@ -37,14 +37,15 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   GSAP ScrollTrigger pinning and scrubbing is used, because there the scroll is the requested
   interaction (the sanctioned exception to the scroll-jacking rule, as the scroll-craft skill
   defines it). Not a general editor feature. Needs a plan. (2026-10-23)
-- [ ] Published site essentials, the rest of the owner's 19-point checklist of 2026-10-23. Built by
+- [x] Published site essentials, the rest of the owner's 19-point checklist of 2026-10-23. Built by
   2026-10-24 (plan sections "as built"): Site settings, lang, favicon set, Open Graph defaults, title
   template, robots.txt, sitemap.xml, canonical, noindex, JSON-LD, the designable 404 page, loading
   states, forms with a thank-you page, Impressum, privacy and terms templates, the publish warning
-  for a missing Impressum, and the first-party consent banner that loads analytics only after
-  consent. Still open, decision 7 of the plan: every generated page gets a primary call to action
-  above the fold, a missing alt text becomes a repair finding instead of the silent "Image"
-  fallback, and a sticky mobile call to action primitive (instead of raw position fixed). See
+  for a missing Impressum, the first-party consent banner that loads analytics only after consent,
+  and decision 7 of the generator: a primary call to action in the hero of every new marketing page
+  and meaningful alt texts as repair findings (no silent "Image" fallback; an alt field with a
+  Decorative switch and a warning in the Image section), plus the sticky mobile call to action
+  component. Form notification emails stay open on their own line below. See
   [plan](docs/plans/2026-10-23-published-site-essentials.md). (2026-10-24)
 - [ ] Form notification emails: forms (built 2026-10-24, see the site essentials plan, decision 4)
   store submissions per company and show them in the editor's inbox, but framer-clone has no mail
