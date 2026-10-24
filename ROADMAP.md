@@ -169,7 +169,7 @@ connections to the suite. The four lines below are in that order.
   answers 409 `asset_in_use`, and TEST-2's stored PDF is unchanged (sha256 698c6ba9...). The proof
   found a deleted logo still showing from the browser cache (served `immutable` for a year): now
   `private, no-cache`, revalidated by its ETag. (2026-10-23)
-- [ ] 8b. Write the invoice on the invoice (asked by the owner on 2026-10-23, "a pixel perfect
+- [x] 8b. Write the invoice on the invoice (asked by the owner on 2026-10-23, "a pixel perfect
   WYSIWYG editing experience closer to sevdesk but even more WYSIWYG"): the draft editor becomes the
   real A4 page in the company's template, every field edited in place over the PDF, add-line and
   line actions placed on the page, redrawn by the layout engine running in the browser; plus a
@@ -181,9 +181,9 @@ connections to the suite. The four lines below are in that order.
   line actions, product picker, undo, the issued invoice as its stored PDF) live and proven on
   Books Testfirma 2026-10-24 (TEST-4 written on the page and issued); the subject line (migration
   016, a template block, on the page and in the form) live and proven 2026-10-24 (TEST-5); formatted
-  intro and closing texts part 1 (italic faces, migration 018, the engine) live 2026-10-24; part 2,
-  the formatting editor on the page (bold, italic, bullet lists), built 2026-10-24. Left: its proof
-  on Books Testfirma. See
+  intro and closing texts (italic faces, migration 018, the engine, the formatting editor on the
+  page) live and proven 2026-10-24 (TEST-6). Done 2026-10-24; the whole-invoice discount and the
+  snippets are 8c and 8d. See
   [plan](docs/plans/2026-10-23-books-wysiwyg-invoice-editor.md). (2026-10-23)
 - [ ] 8c. A discount on the whole invoice ("Gesamtrabatt", as sevdesk), split across the tax rates
   in proportion and printed so the tax per rate stays right (section 14 UStG): needs its own small

@@ -536,6 +536,15 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     const style = (r: FieldRect): React.CSSProperties => ({ left: r.x * scale, top: r.y * scale, width: Math.max(r.width * scale, 12), height: Math.max(r.height * scale, 10) });
     const nodes: React.ReactNode[] = [];
     let editorShown = false;
+    // The margin markers placed on this page so far: two empty slots that print at the same place (an empty subject
+    // right above an empty intro) would put their "+" on top of each other, the lower one out of a mouse's reach.
+    const markers: Array<{ left: number; top: number }> = [];
+    const markerAt = (left: number, top: number) => {
+      let x = left;
+      while (markers.some((m) => Math.abs(m.left - x) < 22 && Math.abs(m.top - top) < 22)) x -= 24;
+      markers.push({ left: x, top });
+      return { left: x, top };
+    };
     // A line's margin marker sits left of the whole row (its position number), never over the table's columns.
     const marginX = (f: LayoutField, r: FieldRect) =>
       (f.lineId ? layout.anchors.rows.find((row) => row.lineId === f.lineId)?.rects.find((x) => x.page === r.page)?.x : undefined) ?? r.x;
@@ -589,7 +598,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
               title={placeholderText(f)}
               aria-disabled={busy || undefined}
               className="absolute flex size-5 items-center justify-center rounded-full border border-blue-500 bg-white text-blue-700 opacity-30 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-blue-600"
-              style={{ left: marginX(f, r) * scale - 34, top: Math.max(0, r.y * scale - 10) }}
+              style={markerAt(marginX(f, r) * scale - 34, Math.max(0, r.y * scale - 10))}
               onClick={() => open(f, r, ri)}
             >
               <Plus aria-hidden className="size-3" />
