@@ -59,3 +59,27 @@ Site settings object, lang, favicon set, OG image, title template and canonical 
 unblock the rest); then robots, sitemap, noindex and JSON-LD; then the 404 page type and loading
 states; then forms with the thank-you page; then legal templates; then consent after the tracker
 check. Each step ships on its own.
+
+## Forms as built (decision 4, 2026-10-24)
+
+Decided while building, each reversible:
+
+- **Components, not raw tags.** Form, Text, Email, Phone, Textarea, Select, Checkbox, Consent checkbox
+  and Submit button are registry presets marked `data-form-kind` (`src/lib/forms/definition.ts`). The
+  container and fields are divs in the editor (so they get the layout and spacing controls); the
+  published page renders a real `<form>` island (`src/lib/renderer/forms/FormIsland.tsx`). Raw `form`,
+  `input`, `select` and `textarea` stay in the generator's FORBIDDEN_TAGS, so the tag list did not need
+  an exception.
+- **The server reads the form from the published snapshot**, never from the request, and validates with
+  the same module the island uses (`src/lib/forms/validation.ts`).
+- **No mail.** The repository has no mail transport (no Lumitra Mail client, Resend or SMTP), so
+  submissions are stored only and read in the editor's Form submissions view; the Form section says so.
+  The notification email field was left out rather than shipped as a control that does nothing.
+- **No IP stored**, not even hashed (an IPv4 hash is reversible by enumeration). Rate limits are in
+  memory per IP and per form.
+- **Without JavaScript** the form posts normally: a thank-you page answers 303, an inline success or an
+  error answers a small self-contained HTML page with a link back (the page route stays untouched).
+- **Deletes:** one submission (owner), all of a project's (after the project delete commits, loud 500
+  `delete_submissions_failed` on failure), all of a workspace's (company erasure, `deleteWorkspaceSubmissions`)
+  and the schema drop. No company erasure orchestrator exists in the repository yet; it must call
+  `deleteWorkspaceSubmissions` or drop the schema.
