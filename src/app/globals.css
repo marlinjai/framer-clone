@@ -4,6 +4,10 @@
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
+/* A phone: under 768px wide, or a touch screen held sideways (at most 500px
+   high). Must stay identical to PHONE_MEDIA_QUERY in src/hooks/use-mobile.ts
+   (a test compares them); plan docs/plans/2026-10-24-editor-on-phones.md. */
+@custom-variant phone (@media (max-width: 767.98px), (max-height: 500px) and (pointer: coarse));
 
 @theme inline {
   --color-background: var(--background);

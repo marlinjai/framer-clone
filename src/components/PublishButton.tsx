@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
 import { markServerVersion } from '@/stores/openProject';
 import { useSiteAddress } from '@/contexts/SiteAddressContext';
+import { TopBarStatus } from './TopBarStatus';
 import { checkBeforePublish, hasPublishIssues, type PublishCheck } from '@/lib/legal/publishCheck';
 
 type PublishState =
@@ -148,13 +149,14 @@ const PublishButton = observer(() => {
   };
 
   return (
-    <div className="flex items-center gap-2 mr-2">
+    <div className="flex items-center gap-2 mr-1 lg:mr-2">
       {state.kind === 'success' && (
-        <span
-          role="status"
-          aria-live="polite"
-          className="flex items-center gap-1 text-xs text-brand max-w-[280px] truncate"
+        <TopBarStatus
+          kind="success"
           title={state.message}
+          onDismiss={() => setState({ kind: 'idle' })}
+          inlineMaxWidth="lg:max-w-[280px]"
+          toneClassName="text-brand"
         >
           <span className="truncate">{state.message}</span>
           {state.liveLabel && (
@@ -177,16 +179,12 @@ const PublishButton = observer(() => {
               )}
             </>
           )}
-        </span>
+        </TopBarStatus>
       )}
       {state.kind === 'error' && (
-        <span
-          role="alert"
-          className="text-xs text-destructive max-w-[200px] truncate"
-          title={state.message}
-        >
-          {state.message}
-        </span>
+        <TopBarStatus kind="error" title={state.message} onDismiss={() => setState({ kind: 'idle' })}>
+          <span className="truncate">{state.message}</span>
+        </TopBarStatus>
       )}
       {state.kind === 'confirm' && (
         <PublishLegalNotice
@@ -249,7 +247,7 @@ function PublishLegalNotice({ check, onCreateImpressum, onOpenPage, onPublishAny
           onCancel();
         }
       }}
-      className="fixed right-4 top-16 z-100 mt-2 flex w-[360px] max-w-[calc(100vw-32px)] flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950 shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+      className="fixed right-4 top-16 phone:top-12 z-100 mt-2 flex w-[360px] max-w-[calc(100vw-32px)] flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950 shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
     >
       <p id="publish-legal-title" className="text-[13px] font-semibold">
         {check.missingImpressum ? 'Your site has no Impressum yet' : 'Your legal pages still have placeholders'}

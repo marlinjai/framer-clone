@@ -8,6 +8,11 @@
 // Arrow keys, Home / End, double-click resets) and remembered per browser
 // (src/lib/layers/sidebarWidth.ts). The sidebar floats over the full-screen
 // canvas, so nothing else in the editor offsets itself by this width.
+//
+// On phones the same panel renders inside a bottom sheet (`variant="sheet"`,
+// plan docs/plans/2026-10-24-editor-on-phones.md): it fills the sheet, and the
+// desktop-only parts (collapse toggle, width handle, remembered width) are left
+// out, so nothing done on a phone changes the desktop layout.
 'use client';
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
@@ -44,9 +49,16 @@ const BOTTOM_TABS: readonly PaneTab<BottomTab>[] = [
   { id: 'content', label: 'Content' },
 ];
 
-const LeftSidebar = observer(() => {
+export interface LeftSidebarProps {
+  /** 'docked' (default): the desktop side panel. 'sheet': fills a phone bottom sheet. */
+  variant?: 'docked' | 'sheet';
+}
+
+const LeftSidebar = observer(({ variant = 'docked' }: LeftSidebarProps) => {
   const { editorUI } = useStore();
-  const isCollapsed = editorUI.leftSidebarCollapsed;
+  const isSheet = variant === 'sheet';
+  // A sheet is always expanded and never reads or writes the desktop state.
+  const isCollapsed = isSheet ? false : editorUI.leftSidebarCollapsed;
   const [activeTab, setActiveTab] = useState<BottomTab>('layers');
   const tabsId = useId();
   const [searchQuery, setSearchQuery] = useState('');
@@ -62,10 +74,12 @@ const LeftSidebar = observer(() => {
 
   // The remembered width is read after mount (storage is browser-only, and
   // reading it during render would differ from the server render).
+  // The sheet has no width of its own, so it never touches the remembered one.
   useEffect(() => {
+    if (isSheet) return;
     editorUI.setLeftSidebarWidth(loadLeftSidebarWidth());
     setWidthLoaded(true);
-  }, [editorUI]);
+  }, [editorUI, isSheet]);
 
   const commitWidth = useCallback((next: number) => {
     const clamped = clampLeftSidebarWidth(next);
@@ -151,16 +165,16 @@ const LeftSidebar = observer(() => {
 
   return (
     <div
-      className={`
+      className={isSheet ? 'relative bg-background flex flex-col h-full w-full' : `
         relative bg-background border-r border-border flex flex-col h-[calc(100vh-4rem)]
         ${widthLoaded && !isResizingWidth ? 'transition-[width] duration-300 ease-in-out' : ''}
         ${isCollapsed ? 'w-12' : ''}
       `}
-      style={isCollapsed ? undefined : { width }}
+      style={isCollapsed || isSheet ? undefined : { width }}
     >
-      {/* Width handle on the right edge, only while expanded. A 6px hit area
-          centred on the border; hover and focus show the brand line. */}
-      {!isCollapsed && (
+      {/* Width handle on the right edge, only while docked and expanded. A 6px
+          hit area centred on the border; hover and focus show the brand line. */}
+      {!isCollapsed && !isSheet && (
         <div
           role="separator"
           aria-orientation="vertical"
@@ -181,22 +195,25 @@ const LeftSidebar = observer(() => {
         />
       )}
 
-      {/* Collapse toggle */}
-      <div className="border-b border-border shrink-0">
-        <div className="h-12 flex items-center justify-between px-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => editorUI.toggleLeftSidebar()}
-            className="p-1 hover:bg-accent"
-          >
-            {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-          </Button>
-          {!isCollapsed && (
-            <div className="text-sm font-medium text-foreground">Design</div>
-          )}
+      {/* Collapse toggle (docked only: the sheet has its own title and close button) */}
+      {!isSheet && (
+        <div className="border-b border-border shrink-0">
+          <div className="h-12 flex items-center justify-between px-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => editorUI.toggleLeftSidebar()}
+              aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              className="p-1 hover:bg-accent"
+            >
+              {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+            </Button>
+            {!isCollapsed && (
+              <div className="text-sm font-medium text-foreground">Design</div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Split panes, only rendered when the sidebar is expanded. */}
       {!isCollapsed && (

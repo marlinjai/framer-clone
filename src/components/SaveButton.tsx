@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
 import { markServerVersion } from '@/stores/openProject';
 import SaveAsNewProjectDialog from './SaveAsNewProjectDialog';
+import { TopBarStatus } from './TopBarStatus';
 
 type SaveState =
   | { kind: 'idle' }
@@ -86,25 +87,11 @@ const SaveButton = observer(() => {
   const saving = state.kind === 'saving';
 
   return (
-    <div className="flex items-center gap-2 mr-2">
-      {state.kind === 'success' && (
-        <span
-          role="status"
-          aria-live="polite"
-          className="text-xs text-muted-foreground max-w-[200px] truncate"
-          title={state.message}
-        >
-          {state.message}
-        </span>
-      )}
-      {state.kind === 'error' && (
-        <span
-          role="alert"
-          className="text-xs text-destructive max-w-[200px] truncate"
-          title={state.message}
-        >
-          {state.message}
-        </span>
+    <div className="flex items-center gap-2 mr-1 lg:mr-2">
+      {(state.kind === 'success' || state.kind === 'error') && (
+        <TopBarStatus kind={state.kind} title={state.message} onDismiss={() => setState({ kind: 'idle' })}>
+          <span className="truncate">{state.message}</span>
+        </TopBarStatus>
       )}
       <Button
         type="button"
@@ -115,7 +102,8 @@ const SaveButton = observer(() => {
         title="Save this project (does not publish)"
       >
         <Save size={16} />
-        {saving ? 'Saving...' : 'Save'}
+        {/* Icon only on a phone; the label stays the button's name. */}
+        <span className="max-sm:sr-only">{saving ? 'Saving...' : 'Save'}</span>
       </Button>
       {isUnsavedDemo && project ? (
         <SaveAsNewProjectDialog

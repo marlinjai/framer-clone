@@ -43,6 +43,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { useStore } from '@/hooks/useStore';
+import { useControllableOpen, type ControllableOpenProps } from '@/hooks/useControllableOpen';
 import type { ProjectModelType } from '@/models/ProjectModel';
 import {
   WEEKDAYS,
@@ -610,10 +611,15 @@ export function SiteSettingsDialog({ project, open, onClose }: SiteSettingsDialo
   );
 }
 
+export interface SiteSettingsButtonProps extends ControllableOpenProps {
+  /** Extra classes for the trigger (the compact top bar hides it and opens the dialog from its More menu). */
+  triggerClassName?: string;
+}
+
 /** The top-bar entry: a gear button opening the dialog for the current project. */
-const SiteSettingsButton = observer(() => {
+const SiteSettingsButton = observer(({ open: openProp, onOpenChange, triggerClassName = '' }: SiteSettingsButtonProps) => {
   const project = useStore().editorUI.currentProject;
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = useControllableOpen({ open: openProp, onOpenChange });
   if (!project) return null;
   return (
     <>
@@ -622,7 +628,7 @@ const SiteSettingsButton = observer(() => {
         onClick={() => setOpen(true)}
         title="Site settings"
         aria-label="Site settings"
-        className="mr-2 flex h-8 w-8 items-center justify-center rounded text-foreground hover:bg-accent"
+        className={`mr-2 flex h-8 w-8 items-center justify-center rounded text-foreground hover:bg-accent ${triggerClassName}`}
       >
         <Settings size={16} />
       </button>

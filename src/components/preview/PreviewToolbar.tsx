@@ -1,7 +1,8 @@
 // Top toolbar for /preview. Hosts back navigation, reload, fullscreen, the
 // breakpoint preset selector, and W/H number inputs. All controls are
 // stateless: they read from props and call onChange callbacks owned by the
-// shell.
+// shell. Under 768px the button labels collapse to icons (they stay the
+// accessible names) and the width and height inputs are hidden.
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
@@ -53,7 +54,7 @@ const PreviewToolbar = observer(({
   const showExit = isFullscreen && !enterOnly;
 
   return (
-    <div className="flex items-center gap-2 h-12 px-3 bg-gray-900 text-gray-100 border-b border-gray-800">
+    <div className="flex items-center gap-1 md:gap-2 h-12 px-2 md:px-3 bg-gray-900 text-gray-100 border-b border-gray-800">
       {/* Back to editor */}
       <button
         type="button"
@@ -62,10 +63,10 @@ const PreviewToolbar = observer(({
         title="Back to the editor, on this page"
       >
         <ArrowLeft size={14} />
-        <span className="text-xs">Editor</span>
+        <span className="text-xs max-md:sr-only">Editor</span>
       </button>
 
-      <div className="w-px h-6 bg-gray-700 mx-1" />
+      <div className="w-px h-6 bg-gray-700 mx-1 max-md:hidden" />
 
       <button
         type="button"
@@ -74,7 +75,7 @@ const PreviewToolbar = observer(({
         title="Reload preview"
       >
         <RefreshCw size={14} />
-        <span className="text-xs">Reload</span>
+        <span className="text-xs max-md:sr-only">Reload</span>
       </button>
 
       <button
@@ -85,17 +86,17 @@ const PreviewToolbar = observer(({
         aria-pressed={showExit}
       >
         {showExit ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-        <span className="text-xs">{showExit ? 'Exit fullscreen' : enterOnly ? 'Enter fullscreen' : 'Fullscreen'}</span>
+        <span className="text-xs max-md:sr-only">{showExit ? 'Exit fullscreen' : enterOnly ? 'Enter fullscreen' : 'Fullscreen'}</span>
       </button>
 
-      <div className="w-px h-6 bg-gray-700 mx-1" />
+      <div className="w-px h-6 bg-gray-700 mx-1 max-md:hidden" />
 
       {/* Which page to preview (also in fullscreen). */}
       <select
         aria-label="Page"
         value={currentPageId}
         onChange={(e) => onPageChange(e.target.value)}
-        className="max-w-[220px] bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100"
+        className="min-w-0 max-w-[220px] max-md:max-w-[120px] bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100"
         title="Page to preview"
       >
         {pages.map((p) => (
@@ -117,7 +118,8 @@ const PreviewToolbar = observer(({
               const v = viewportNodes.find(n => n.breakpointId === e.target.value);
               if (v) onPresetChange(v);
             }}
-            className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100"
+            aria-label="Breakpoint"
+            className="min-w-0 max-md:max-w-[110px] bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100"
             title="Breakpoint preset"
           >
             {viewportNodes.map(v => (
@@ -127,18 +129,22 @@ const PreviewToolbar = observer(({
             ))}
           </select>
 
-          <NumberInput
-            ariaLabel="Width"
-            value={width}
-            onCommit={onWidthChange}
-            suffix="W"
-          />
-          <NumberInput
-            ariaLabel="Height"
-            value={height}
-            onCommit={onHeightChange}
-            suffix="H"
-          />
+          {/* Width and height inputs: not on a phone, where the breakpoint
+              preset is the useful control and there is no room. */}
+          <div className="flex items-center gap-2 max-md:hidden">
+            <NumberInput
+              ariaLabel="Width"
+              value={width}
+              onCommit={onWidthChange}
+              suffix="W"
+            />
+            <NumberInput
+              ariaLabel="Height"
+              value={height}
+              onCommit={onHeightChange}
+              suffix="H"
+            />
+          </div>
         </>
       )}
     </div>
