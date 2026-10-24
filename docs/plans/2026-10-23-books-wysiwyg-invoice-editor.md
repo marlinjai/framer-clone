@@ -566,6 +566,17 @@ edit and through remove plus undo showed it never blanks during a redraw. The fi
 proof: an empty line description's "+" now sits left of the whole row, not over the position
 column.
 
+Resume after a reload (2026-10-24, the test strategy's resume path, which phase 3 had left out).
+What is typed into an open field is kept in the tab's session storage on every keystroke, per
+document. After a reload the field reopens with it. **Decided while building (deviation from
+"restored and committed after the reload"): it is never saved on its own.** The draft may have
+changed while the tab was away (another tab, another person), and saving silently is exactly the
+overwrite the review closed for refused saves. So the restored field behaves like a refused save:
+leaving it sends nothing, Enter saves it against the draft as it is now, Escape drops it. A value
+equal to what is saved now is not restored. Storage refused by the browser (a private window, a
+sandboxed frame) changes nothing but the recovery. Proven in Chrome: typed an intro text,
+reloaded, the text came back unsent, Enter saved it with one request.
+
 ## Phase 4 build notes (2026-10-24): the subject line
 
 - **Data.** Migration `016_books_subject` adds `sales_document.subject` (nullable TEXT, at most 200

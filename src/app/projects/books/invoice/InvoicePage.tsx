@@ -95,6 +95,39 @@ function placeholderText(f: LayoutField): string {
   }
 }
 
+/**
+ * What is being typed into a field, kept per document in this tab's session storage on every keystroke, so a
+ * reload (or a crash of the tab) loses nothing: the field reopens with it after the reload. Storage is a
+ * convenience only: when the browser refuses it (a private window, a sandboxed frame) nothing changes.
+ */
+interface Unsaved {
+  field: LayoutField;
+  rectIndex: number;
+  value: string;
+}
+const unsavedKey = (documentId: string) => `books-invoice-unsaved:${documentId}`;
+function rememberUnsaved(documentId: string, entry: Unsaved | null): void {
+  try {
+    if (entry) window.sessionStorage.setItem(unsavedKey(documentId), JSON.stringify(entry));
+    else window.sessionStorage.removeItem(unsavedKey(documentId));
+  } catch {
+    // Storage refused: the value lives only in the open editor, as without this.
+  }
+}
+function readUnsaved(documentId: string): Unsaved | null {
+  try {
+    const raw = window.sessionStorage.getItem(unsavedKey(documentId));
+    if (!raw) return null;
+    const entry = JSON.parse(raw) as Partial<Unsaved>;
+    if (!entry.field || typeof entry.field.id !== 'string' || typeof entry.value !== 'string') return null;
+    const rects: unknown = entry.field.rects;
+    if (!Array.isArray(rects) || rects.length === 0 || rects.some((r) => !r || typeof r !== 'object')) return null;
+    return { field: entry.field, rectIndex: typeof entry.rectIndex === 'number' ? entry.rectIndex : 0, value: entry.value };
+  } catch {
+    return null;
+  }
+}
+
 /** The request a field change becomes, as a call. */
 function call(id: string, req: FieldRequest, version: number): Promise<DocumentDetail> {
   if (req.kind === 'customer') return booksApi.setCustomer(id, req.customerId, version);
@@ -248,6 +281,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
 
   function close(focusKey: string | null) {
     closing.current = true;
+    rememberUnsaved(id, null);
     setActive(null);
     if (focusKey) focusSoon(focusKey);
   }
@@ -255,6 +289,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
   function onType(value: string) {
     if (!active) return;
     setActive({ ...active, value, error: null });
+    rememberUnsaved(id, { field: active.field, rectIndex: active.rectIndex, value });
     const parsed = parseValue(active.field, value);
     if (parsed.ok && parsed.local !== null && page.payload) page.redrawWith(applyLocal(page.payload, active.field, parsed.local));
   }
@@ -276,7 +311,9 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     }
     const before = parseValue(field, initial);
     const label = fieldLabel(field, detail);
-    close(null);
+    // The stored copy stays while the save is pending: a reload mid-request must still bring the typed value back.
+    closing.current = true;
+    setActive(null);
     if (focusKey) focusAfter.current = focusKey;
     const forward = parsed.request;
     // A value that cannot be sent back (no customer before the first one was chosen) is not a step to undo.
@@ -284,9 +321,11 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
       ? { label, undo: (v) => send(before.request, v), redo: (v) => send(forward, v) }
       : null;
     const ok = await run(step, (v) => send(forward, v), `${label} saved.`);
-    if (!ok) {
+    if (ok) rememberUnsaved(id, null);
+    else {
       // Refused: the field reopens with what was typed, so nothing is lost and nothing overwrites a newer change.
       closing.current = false;
+      rememberUnsaved(id, { field, rectIndex, value });
       setActive({
         field,
         rect,
@@ -305,6 +344,32 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     if (page.payload) page.redrawWith(page.payload);
     close(active.field.id);
   }
+
+  // After a reload: what was being typed comes back in its field, never saved on its own (the draft may have
+  // changed meanwhile). Enter saves it against the draft as it is now, Escape drops it, like a refused save.
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current || !layout) return;
+    restored.current = true;
+    const entry = readUnsaved(id);
+    if (!entry) return;
+    const current = layout.fields.find((f) => f.id === entry.field.id);
+    const field: LayoutField = current ? { ...entry.field, rects: current.rects, style: current.style } : entry.field;
+    const rectIndex = Math.min(entry.rectIndex, field.rects.length - 1);
+    const rect = field.rects[rectIndex];
+    const saved = editValue(field, detailRef.current);
+    if (!rect || entry.value === saved) return rememberUnsaved(id, null);
+    closing.current = false;
+    setActive({
+      field,
+      rect,
+      rectIndex,
+      value: entry.value,
+      initial: saved,
+      retry: true,
+      error: 'Restored what you were typing before the page reloaded. Enter saves it, Escape drops it.',
+    });
+  }, [layout, id]);
 
   // --- Lines. ---
 
