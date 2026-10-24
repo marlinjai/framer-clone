@@ -108,4 +108,9 @@ describe('what the browser leaves behind', () => {
   it('reads an ordered list as bullet items, and a heading as a paragraph', () => {
     expect(read('<ol><li>a</li><li>b</li></ol><h2>Titel</h2>')).toEqual({ v: 1, blocks: [item({ text: 'a' }), item({ text: 'b' }), para({ text: 'Titel' })] });
   });
+
+  it('drops an empty list item left at the end, but keeps one typed between two others', () => {
+    expect(read('<ul><li>a</li><li><br></li></ul>')).toEqual({ v: 1, blocks: [item({ text: 'a' })] });
+    expect(read('<ul><li>a</li><li><br></li><li>b</li></ul>')).toEqual({ v: 1, blocks: [item({ text: 'a' }), item(), item({ text: 'b' })] });
+  });
 });

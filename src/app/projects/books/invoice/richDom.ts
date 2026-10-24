@@ -155,6 +155,9 @@ export function richFromDom(root: HTMLElement): RichText {
       walkInline(node, top, 'paragraph');
     }
   });
+  // An empty list item left at the end (the editor's "<li><br></li>" after Enter) would print a bullet with no text;
+  // like trailing empty paragraphs, it is dropped. An empty bullet between two others stays: it was typed there.
+  while (blocks.length > 1 && blocks[blocks.length - 1].kind === 'bullet' && blocks[blocks.length - 1].runs.length === 0) blocks.pop();
   return normalizeRichText({ v: 1, blocks: blocks.length > 0 ? blocks : [{ kind: 'paragraph', runs: [] }] });
 }
 
