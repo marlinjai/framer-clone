@@ -1,9 +1,9 @@
 ---
 type: plan
-status: in-progress
+status: completed
 date: 2026-10-23
 title: "Books: write the invoice on the invoice (a WYSIWYG document editor)"
-summary: "Replace the form-based invoice editor with editing directly on the real A4 page: every field (recipient, dates, subject, texts, each line) is edited in place over the PDF the invoice will be printed as, laid out by the company's template, redrawn within a fraction of a second by the layout engine running in the browser. Adds sevdesk's breadth where it is missing: subject line, reference number, payment terms on the page, formatted intro and closing texts, a product and service list with search, and a total discount."
+summary: "Replace the form-based invoice editor with editing directly on the real A4 page: every field (recipient, dates, subject, texts, each line) is edited in place over the PDF the invoice will be printed as, laid out by the company's template, redrawn within a fraction of a second by the layout engine running in the browser. Adds sevdesk's breadth where it is missing: subject line, reference number, payment terms on the page, formatted intro and closing texts, a product and service list with search (the total discount was moved to its own plan, ROADMAP 8c)."
 tags: [framer-clone, books, invoices, editor, wysiwyg, pdf, sevdesk]
 projects: [framer-clone]
 ---
@@ -709,3 +709,12 @@ reloaded, the text came back unsent, Enter saved it with one request.
   - **Over the limit:** a text over 4000 characters says so with its length, instead of "could not be read".
   - **Explicit styles:** an explicit "not bold" or "not italic" switches the inherited style off.
   - **Spaces:** several spaces, or a space at a line's edge, show in the editor as they print.
+- **Production proof (2026-10-24, Books Testfirma, after #157's deploy):** a new draft, the intro written on the page with the
+  real keyboard: a sentence with "Auftrag" in bold (Cmd+B) and "vereinbarten Leistungen" in italic (Cmd+I), Enter, and two
+  bullet items from the toolbar, saved with Cmd+Enter. The runs were stored exactly as typed, the plain words were derived by the
+  server, the editor typed in the real italic face, and the page redrew the formatting. Issued as TEST-6 (303,45 €). The
+  stored PDF, rendered with sips, shows the bold word, the italic words and the two bullet items as on the page. Its fonts
+  are DejaVu Sans, Bold and Oblique, and not the bold oblique face, which no run used.
+- **Found by the proof:** on a fresh draft whose template has both a subject and an intro, both empty, their "+" margin
+  markers landed on the same spot. The subject's covered the intro's, so a mouse could not reach "Add an intro text" (the
+  keyboard could). Markers that would overlap now sit side by side.
