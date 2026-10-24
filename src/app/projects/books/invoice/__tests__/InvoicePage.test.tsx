@@ -630,13 +630,100 @@ describe('the invoice page: formatted intro and closing texts', () => {
     expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
   });
 
+  it('refuses an edit the run model cannot hold (underline, a font) before the browser applies it', async () => {
+    server();
+    await opened();
+    fireEvent.click(fieldButton('introText'));
+    const box = screen.getByRole('textbox', { name: 'Intro text' });
+    const edit = (inputType: string) => {
+      const e = new InputEvent('beforeinput', { inputType, bubbles: true, cancelable: true });
+      box.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(edit('formatUnderline')).toBe(true);
+    expect(edit('formatFontName')).toBe(true);
+    expect(edit('formatSetBlockTextDirection')).toBe(true);
+    expect(edit('insertFromDrop')).toBe(true);
+    expect(edit('insertText')).toBe(false);
+    expect(edit('insertParagraph')).toBe(false);
+    expect(edit('deleteContentBackward')).toBe(false);
+    expect(edit('formatBold')).toBe(false);
+  });
+
+  it('a key an input method composes with is left to it: Escape cancels the conversion, not the edit', async () => {
+    server();
+    await opened();
+    fireEvent.click(fieldButton('introText'));
+    const box = screen.getByRole('textbox', { name: 'Intro text' });
+    fireEvent.keyDown(box, { key: 'Escape', isComposing: true });
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true, keyCode: 229 });
+    expect(screen.getByRole('textbox', { name: 'Intro text' })).toBe(box);
+  });
+
+  it('shows the style at the caret as a solid pressed button, and a press between the buttons keeps the text focused', async () => {
+    (document as unknown as { queryCommandState: unknown }).queryCommandState = (c: string) => c === 'bold';
+    try {
+      server();
+      await opened();
+      fireEvent.click(fieldButton('introText'));
+      typeRich(screen.getByRole('textbox', { name: 'Intro text' }), '<p><b>fett</b></p>');
+      const toolbar = screen.getByRole('toolbar', { name: 'Intro text, formatting' });
+      const bold = within(toolbar).getByRole('button', { name: 'Bold' });
+      expect(bold.getAttribute('aria-pressed')).toBe('true');
+      expect(bold.className).toContain('bg-blue-700');
+      expect(within(toolbar).getByRole('button', { name: 'Italic' }).getAttribute('aria-pressed')).toBe('false');
+      expect(fireEvent.mouseDown(toolbar)).toBe(false);
+      // The tab stop follows the arrow keys.
+      bold.focus();
+      fireEvent.keyDown(bold, { key: 'ArrowLeft' });
+      const list = within(toolbar).getByRole('button', { name: 'Bullet list' });
+      expect(document.activeElement).toBe(list);
+      expect(list.tabIndex).toBe(0);
+      expect(bold.tabIndex).toBe(-1);
+      // Escape from the toolbar leaves the text as it was.
+      fireEvent.keyDown(list, { key: 'Escape' });
+      expect(screen.queryByRole('textbox', { name: 'Intro text' })).toBeNull();
+      expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+    } finally {
+      delete (document as unknown as { queryCommandState?: unknown }).queryCommandState;
+    }
+  });
+
+  it('says how long a text over the limit is, instead of failing to read it', async () => {
+    server();
+    await opened();
+    fireEvent.click(fieldButton('introText'));
+    const box = screen.getByRole('textbox', { name: 'Intro text' });
+    typeRich(box, `<p>${'x'.repeat(4001)}</p>`);
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    expect(screen.getByRole('alert').textContent).toBe('Keep the text to at most 4000 characters (now 4001).');
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+  });
+
+  it('a browser without editing commands still edits and saves the text, with no toolbar', async () => {
+    delete (document as unknown as { execCommand?: unknown }).execCommand;
+    server();
+    await opened();
+    fireEvent.click(fieldButton('introText'));
+    expect(screen.queryByRole('toolbar')).toBeNull();
+    const box = screen.getByRole('textbox', { name: 'Intro text' });
+    typeRich(box, '<p>ohne Format</p>');
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({
+        introFormat: { v: 1, blocks: [{ kind: 'paragraph', runs: [{ text: 'ohne Format' }] }] },
+        expectedVersion: 3,
+      }),
+    );
+  });
+
   it('a paste comes in as plain text, whatever the clipboard holds', async () => {
     server();
     await opened();
     fireEvent.click(fieldButton('introText'));
     const box = screen.getByRole('textbox', { name: 'Intro text' });
-    fireEvent.paste(box, { clipboardData: { getData: (type: string) => (type === 'text/plain' ? 'eingefügt' : '<h1 style="color:red">eingefügt</h1>') } });
-    expect(exec).toHaveBeenCalledWith('insertText', false, 'eingefügt');
+    fireEvent.paste(box, { clipboardData: { getData: (type: string) => (type === 'text/plain' ? 'eins\r\nzwei' : '<h1 style="color:red">eins</h1>') } });
+    expect(exec).toHaveBeenCalledWith('insertText', false, 'eins\nzwei');
   });
 });
 

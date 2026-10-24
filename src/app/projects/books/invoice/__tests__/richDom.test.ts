@@ -58,6 +58,26 @@ describe('what the browser leaves behind', () => {
     expect(read('<p>erste\nzweite</p><p>dritte</p>')).toEqual({ v: 1, blocks: [para({ text: 'erste' }), para({ text: 'zweite' }), para({ text: 'dritte' })] });
   });
 
+  it('keeps a blank line made by a line break at the start of a block, and ignores a <br> right before a block', () => {
+    expect(read('<p><br>Text</p>')).toEqual({ v: 1, blocks: [para(), para({ text: 'Text' })] });
+    expect(read('<p><br><br>Text</p>')).toEqual({ v: 1, blocks: [para(), para(), para({ text: 'Text' })] });
+    expect(read('<p>\nText</p>')).toEqual({ v: 1, blocks: [para(), para({ text: 'Text' })] });
+    expect(read('<div>a<br><ul><li>b</li></ul></div>')).toEqual({ v: 1, blocks: [para({ text: 'a' }), item({ text: 'b' })] });
+  });
+
+  it('switches an inherited style off where a span says so', () => {
+    expect(read('<p><b>fett <span style="font-weight: normal">normal</span></b> <i>schräg <span style="font-style: normal">gerade</span></i></p>')).toEqual({
+      v: 1,
+      blocks: [para({ text: 'fett ', bold: true }, { text: 'normal ' }, { text: 'schräg ', italic: true }, { text: 'gerade' })],
+    });
+  });
+
+  it('writes runs of spaces and spaces at a line edge so the editor shows them, and reads them back', () => {
+    const spaced: RichText = { v: 1, blocks: [para({ text: ' zwei  Leer   zeichen ' })] };
+    expect(richToHtml(spaced)).toBe('<p>\u00a0zwei\u00a0 Leer\u00a0 \u00a0zeichen\u00a0</p>');
+    expect(richFromDom(dom(richToHtml(spaced)))).toEqual(spaced);
+  });
+
   it('turns non-breaking spaces into spaces', () => {
     expect(read('<p>zwei Wörter </p>')).toEqual({ v: 1, blocks: [para({ text: 'zwei Wörter ' })] });
   });

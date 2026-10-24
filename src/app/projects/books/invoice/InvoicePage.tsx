@@ -884,6 +884,9 @@ function InlineEditor({
     onBlur: () => onCommit('blur'),
   };
   const keys = (e: React.KeyboardEvent, multiline: boolean) => {
+    // A key pressed while an input method composes (Japanese, Chinese) belongs to it: its Enter confirms a
+    // character and its Escape cancels a conversion, never the field.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       onCancel();

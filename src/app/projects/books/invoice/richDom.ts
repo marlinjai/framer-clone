@@ -23,8 +23,20 @@ import { normalizeRichText, type RichText, type TextBlock, type TextRun } from '
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-function runHtml(r: TextRun): string {
-  let html = esc(r.text);
+/**
+ * Spaces as an editing surface shows them: a run of several spaces, or a space at a line's start or end, would
+ * collapse to nothing in HTML, so they alternate with non-breaking spaces, as Chrome writes them (and `richFromDom`
+ * reads a non-breaking space back as a space).
+ */
+function keepSpaces(text: string, lineStart: boolean, lineEnd: boolean): string {
+  let t = text.replace(/ {2,}/g, (m) => Array.from(m, (_, i) => (i % 2 === 0 ? '\u00a0' : ' ')).join(''));
+  if (lineStart && t.startsWith(' ')) t = `\u00a0${t.slice(1)}`;
+  if (lineEnd && t.endsWith(' ')) t = `${t.slice(0, -1)}\u00a0`;
+  return t;
+}
+
+function runHtml(r: TextRun, lineStart: boolean, lineEnd: boolean): string {
+  let html = esc(keepSpaces(r.text, lineStart, lineEnd));
   if (r.italic) html = `<em>${html}</em>`;
   if (r.bold) html = `<strong>${html}</strong>`;
   return html;
@@ -36,7 +48,7 @@ export function richToHtml(rich: RichText): string {
   let inList = false;
   for (const block of rich.blocks) {
     // An empty block holds a <br>, so the caret has a line to sit in.
-    const inner = block.runs.length === 0 ? '<br>' : block.runs.map(runHtml).join('');
+    const inner = block.runs.length === 0 ? '<br>' : block.runs.map((r, i) => runHtml(r, i === 0, i === block.runs.length - 1)).join('');
     if (block.kind === 'bullet') {
       if (!inList) html += '<ul>';
       inList = true;
@@ -59,8 +71,13 @@ interface Style {
 function styleOf(el: HTMLElement, inherited: Style): Style {
   const tag = el.tagName;
   const weight = el.style?.fontWeight ?? '';
-  const bold = inherited.bold || tag === 'B' || tag === 'STRONG' || weight === 'bold' || weight === 'bolder' || Number(weight) >= 600;
-  const italic = inherited.italic || tag === 'I' || tag === 'EM' || el.style?.fontStyle === 'italic' || el.style?.fontStyle === 'oblique';
+  const fontStyle = el.style?.fontStyle ?? '';
+  let bold = inherited.bold || tag === 'B' || tag === 'STRONG' || weight === 'bold' || weight === 'bolder' || Number(weight) >= 600;
+  let italic = inherited.italic || tag === 'I' || tag === 'EM' || fontStyle === 'italic' || fontStyle === 'oblique';
+  // An explicit "not bold" or "not italic" switches the inherited style off (Chrome writes such a span when it
+  // cannot split the bold or italic element around the selection).
+  if (weight === 'normal' || weight === 'lighter' || (weight !== '' && Number(weight) < 600)) bold = false;
+  if (fontStyle === 'normal') italic = false;
   return { bold, italic };
 }
 
@@ -83,7 +100,11 @@ export function richFromDom(root: HTMLElement): RichText {
       // <br> is: what the editor shows on two lines is saved on two lines.
       const parts = (node.textContent ?? '').replace(/\u00a0/g, ' ').split(/\r\n?|\n/);
       parts.forEach((text, i) => {
-        if (i > 0) open(kind);
+        // The line before the break exists even when it is empty (a break at the start of a block is a blank line).
+        if (i > 0) {
+          ensure(kind);
+          open(kind);
+        }
         if (text !== '') ensure(kind).runs.push({ text, ...(style.bold ? { bold: true as const } : {}), ...(style.italic ? { italic: true as const } : {}) });
       });
       return;
@@ -93,8 +114,9 @@ export function richFromDom(root: HTMLElement): RichText {
     if (el.tagName === 'BR') {
       // A line break inside a block: the next line is a block of its own, of the same kind. A <br> that ends its
       // block draws no line (the browser keeps it there to hold an empty line open), so it starts nothing.
+      // The line before it exists even when empty: a <br> at the start of a block leaves a blank line.
+      ensure(kind);
       if (!endsBlock(el)) open(kind);
-      else ensure(kind);
       return;
     }
     if (BLOCK_TAGS.has(el.tagName)) {
@@ -136,11 +158,15 @@ export function richFromDom(root: HTMLElement): RichText {
   return normalizeRichText({ v: 1, blocks: blocks.length > 0 ? blocks : [{ kind: 'paragraph', runs: [] }] });
 }
 
-/** Whether nothing with text or another line break follows a <br> before the end of its block. */
+/**
+ * Whether the <br> draws no line: nothing with text or another line break follows it before the end of its block,
+ * or a block element follows it directly (Chrome leaves "a<br><ul>..." when a list item is turned back into text).
+ */
 function endsBlock(br: HTMLElement): boolean {
   let node: Node | null = br;
   while (node) {
     for (let next = node.nextSibling; next; next = next.nextSibling) {
+      if (next.nodeType === 1 && BLOCK_TAGS.has((next as HTMLElement).tagName)) return true;
       if (next.nodeType === 1 && (next as HTMLElement).tagName === 'BR') return false;
       if ((next.textContent ?? '') !== '') return false;
       if (next.nodeType === 1 && (next as HTMLElement).querySelector('br')) return false;

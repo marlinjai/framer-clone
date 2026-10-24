@@ -695,3 +695,17 @@ reloaded, the text came back unsent, Enter saved it with one request.
   break character, so the editor showed two lines while the runs held one. The box no longer keeps
   white space (Chrome then inserts a `<br>`), and a line break character reads as a line break
   anyway. All five shapes now read as Chrome shows them.
+- **Fresh review of part 2 (2026-10-24), every finding fixed in the same pull request, the browser-shape ones checked in Chrome:**
+  - **Blank lines:** a line break at the start of a line lost its blank line, and a `<br>` right before a list (a middle list item turned back into text) added a blank line the editor did not show. Both now read as shown.
+  - **Formatting the PDF cannot hold:** underline, fonts and writing direction, from a shortcut or the macOS context menu, were shown and then silently dropped. A `beforeinput` filter now refuses every edit outside the run model, and Cmd+U is refused in Chrome.
+  - **Input methods:** Escape or Enter while a Japanese or Chinese input method composes belongs to the input method. It discarded or saved the edit before, in the formatting editor and in the page's other inline editors.
+  - **Toolbar:**
+    - The pressed state is a solid fill, with more than 3 to 1 contrast (WCAG 1.4.11).
+    - A press anywhere on the toolbar keeps the text focused.
+    - It floats above the text instead of pushing it down from where the PDF prints it.
+    - Its tab stop follows the arrow keys, and Escape and Ctrl or Cmd plus Enter work from it.
+    - It is hidden where the browser has no editing commands.
+  - **Paste:** a pasted text has one kind of line break (Windows' `\r\n` added a blank line per line).
+  - **Over the limit:** a text over 4000 characters says so with its length, instead of "could not be read".
+  - **Explicit styles:** an explicit "not bold" or "not italic" switches the inherited style off.
+  - **Spaces:** several spaces, or a space at a line's edge, show in the editor as they print.

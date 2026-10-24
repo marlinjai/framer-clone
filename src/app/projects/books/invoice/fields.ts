@@ -16,7 +16,7 @@ import type { DocumentDetail, LineView } from '@/lib/books/api';
 import type { RenderInputPayload } from '@/lib/books/engine';
 import { moneyInput, parseMoney, parsePercent, parseQuantity, quantityInput } from '@/lib/books/units';
 import type { LayoutField } from '@/server/books/render/engine';
-import { derivePair, normalizeRichText, richFromPlain, richTextSchema, type RichText } from '@/server/books/render/richText';
+import { derivePair, normalizeRichText, RICH_TEXT_MAX_PLAIN, richFromPlain, richTextSchema, type RichText } from '@/server/books/render/richText';
 
 /** The tax classes a line may choose, as the page offers them. */
 export const TAX_CLASS_OPTIONS = [
@@ -64,6 +64,16 @@ function parseRich(value: string): RichText | null | 'invalid' {
     return parsed.success ? (parsed.data as RichText) : 'invalid';
   } catch {
     return null;
+  }
+}
+
+/** How many characters the plain text of an editor's value has (read leniently: the value may be over a limit). */
+function plainLength(value: string): number {
+  try {
+    const v = JSON.parse(value) as { blocks?: Array<{ runs?: Array<{ text?: unknown }> }> };
+    return (v.blocks ?? []).map((b) => (b.runs ?? []).map((r) => (typeof r.text === 'string' ? r.text : '')).join('')).join('\n').length;
+  } catch {
+    return value.length;
   }
 }
 
@@ -257,7 +267,16 @@ export function parseValue(field: LayoutField, raw: string): ParsedValue {
       // The formatting editor's value is the runs (`editorValue`); the server derives the plain words from them.
       // A plain value (an unsaved entry kept before the editor formatted) still saves as plain text.
       const rich = parseRich(text);
-      if (rich === 'invalid') return { ok: false, message: 'This text could not be read. Type it again.' };
+      if (rich === 'invalid') {
+        const length = plainLength(text);
+        return {
+          ok: false,
+          message:
+            length > RICH_TEXT_MAX_PLAIN
+              ? `Keep the text to at most ${RICH_TEXT_MAX_PLAIN} characters (now ${length}).`
+              : 'This text could not be read. Type it again.',
+        };
+      }
       if (rich === null) return docReq({ [key]: trimmed === '' ? null : text.trimEnd() }, text.trimEnd());
       return docReq({ [key === 'introText' ? 'introFormat' : 'outroFormat']: rich }, text);
     }
