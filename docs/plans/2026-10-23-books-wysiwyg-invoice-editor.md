@@ -604,3 +604,14 @@ reloaded, the text came back unsent, Enter saved it with one request.
 - **Golden bytes.** `engineFields.test.ts` gained `UPDATE_ENGINE_GOLDEN=1` to pin a deliberate
   change of what the presets or probes print; all 126 renders changed because every probe now has
   a subject.
+- **Fresh review (2026-10-24), every finding fixed in the same pull request:**
+  - The form's text fields mark a failed save on the field itself (`aria-invalid`, the reason named) until it saves. The banner alone is cleared by the next change, and the typed text looked saved.
+  - A field left without a change sends nothing and takes the saved value, so it never writes an old value back over an edit made in another window.
+  - The queue reads the version of the latest answer, kept by the editor on every answer, reloads included. It was a ref written during render, and stale after a conflict.
+  - A text over its limit is refused with a message instead of being cut by `maxLength`.
+  - Hints and errors are linked to their inputs, and Enter keeps the focus.
+  - The issued view is a description list.
+  - The draft preview replaces characters the font cannot print in the subject too (`previewSafe` had missed it).
+  - The document's GET and PATCH answer `printsSubject`, so the form offers the subject only where the template prints it, and otherwise points to the template composer.
+  - The issue-time check tests the subject only when a block prints it.
+  - Migration 016 waits at most 5 s for its lock, as 014 does.

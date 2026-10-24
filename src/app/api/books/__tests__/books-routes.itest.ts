@@ -465,6 +465,8 @@ describe('Books routes: cancellation, rendering, templates', () => {
     const draft = await api.createDraft({ customerId: customer.id, subject: 'Website-Relaunch' });
     const id = draft.json.document.id as string;
     expect(draft.json.document.subject).toBe('Website-Relaunch');
+    // The built-in Klassisch layout (no template of the company's own yet) prints the subject.
+    expect((await api.get(id)).json.printsSubject).toBe(true);
     const v = draft.json.document.version as number;
 
     const broken = await api.patch(id, { subject: 'Zeile eins\nZeile zwei', expectedVersion: v });

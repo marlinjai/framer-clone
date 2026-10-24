@@ -42,6 +42,7 @@ export function previewSafeWith(model: RenderModel, canDraw: CanDraw): RenderMod
     recipientBlock: model.recipientBlock.map(t),
     meta: model.meta.map((m) => ({ label: m.label, value: t(m.value) })),
     reference: model.reference && t(model.reference),
+    subject: model.subject && t(model.subject),
     intro: model.intro && t(model.intro),
     lines: model.lines.map((l) => ({ ...l, title: t(l.title), details: l.details.map(t), unit: t(l.unit) })),
     notes: model.notes.map(t),

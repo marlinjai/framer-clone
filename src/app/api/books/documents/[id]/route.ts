@@ -1,7 +1,11 @@
 // src/app/api/books/documents/[id]/route.ts
 //
-// GET   /api/books/documents/<id>  -> DocumentDetail
-// PATCH /api/books/documents/<id>  -> DocumentDetail  (a draft's header fields)
+// GET   /api/books/documents/<id>  -> DocumentDetail and `printsSubject`
+// PATCH /api/books/documents/<id>  -> DocumentDetail and `printsSubject`  (a draft's header fields)
+//
+// `printsSubject` says whether the document's template prints the subject (a
+// draft's current template, an issued document's frozen one), so the form can
+// say where a subject goes instead of taking one that never prints.
 //
 // GET is the RESUME path of the editor (stateful-flow standard, path 3): the
 // editor keeps no state of its own beyond the last answer, so a reload is this
@@ -27,6 +31,7 @@ import { documentDetail } from '@/server/books/http/views';
 import { getCustomer } from '@/server/books/repository/customers';
 import { updateDraft } from '@/server/books/repository/documents';
 import { getDocument } from '@/server/books/repository/read';
+import { documentPrintsSubject } from '@/server/books/render/store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -53,7 +58,7 @@ export const GET = booksRoute<Params>('read', async (ctx, _req, { params }) => {
   const { id } = await params;
   const view = await getDocument(ctx.scope, id);
   const detail = await documentDetail(ctx.contactBook, ctx.companyId, view, (cid) => getCustomer(ctx.scope, cid));
-  return Response.json(detail);
+  return Response.json({ ...detail, printsSubject: await documentPrintsSubject(ctx.scope, view) });
 });
 
 export const PATCH = booksRoute<Params>('write', async (ctx, req, { params }) => {
@@ -66,5 +71,6 @@ export const PATCH = booksRoute<Params>('write', async (ctx, req, { params }) =>
   }
   const view = await updateDraft(ctx.scope, id, parsed.data);
   const detail = await documentDetail(ctx.contactBook, ctx.companyId, view, (cid) => getCustomer(ctx.scope, cid));
-  return Response.json(detail);
+  // A template change can add or remove the subject block, so the answer says again whether it prints.
+  return Response.json({ ...detail, printsSubject: await documentPrintsSubject(ctx.scope, view) });
 });
