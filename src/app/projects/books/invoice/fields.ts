@@ -16,7 +16,7 @@ import type { DocumentDetail, LineView } from '@/lib/books/api';
 import type { RenderInputPayload } from '@/lib/books/engine';
 import { moneyInput, parseMoney, parsePercent, parseQuantity, quantityInput } from '@/lib/books/units';
 import type { LayoutField } from '@/server/books/render/engine';
-import { derivePair, richFromPlain } from '@/server/books/render/richText';
+import { derivePair, normalizeRichText, richFromPlain, richTextSchema, type RichText } from '@/server/books/render/richText';
 
 /** The tax classes a line may choose, as the page offers them. */
 export const TAX_CLASS_OPTIONS = [
@@ -42,6 +42,54 @@ export function lineOf(field: LayoutField, detail: DocumentDetail): LineView | n
 export function percentInput(bp: number): string {
   const frac = String(bp % 100).padStart(2, '0').replace(/0+$/, '');
   return `${Math.floor(bp / 100)}${frac ? `,${frac}` : ''}`;
+}
+
+/** The intro and closing texts are edited with their formatting: their editor's value is the runs, as JSON. */
+export function isRichField(field: LayoutField): boolean {
+  return field.source === 'document' && (field.documentField === 'introText' || field.documentField === 'outroText');
+}
+
+/** The formatted text a document has in a field: its stored format, or its plain text as paragraphs. */
+export function richValueOf(field: LayoutField, detail: DocumentDetail): RichText {
+  const doc = detail.document;
+  const intro = field.documentField === 'introText';
+  return normalizeRichText((intro ? doc.introFormat : doc.outroFormat) ?? richFromPlain((intro ? doc.introText : doc.outroText) ?? ''));
+}
+
+/** An editor's value as runs: the runs, null for a plain value, 'invalid' for JSON that is not the run model. */
+function parseRich(value: string): RichText | null | 'invalid' {
+  if (!value.startsWith('{')) return null;
+  try {
+    const parsed = richTextSchema.safeParse(JSON.parse(value));
+    return parsed.success ? (parsed.data as RichText) : 'invalid';
+  } catch {
+    return null;
+  }
+}
+
+/** The runs an editor's value holds (a plain value read as paragraphs). */
+export function richOfValue(value: string): RichText {
+  const rich = parseRich(value);
+  return rich === null || rich === 'invalid' ? normalizeRichText(richFromPlain(value)) : rich;
+}
+
+/** The value an inline editor opens with: the runs (as JSON) for a formatted text, `editValue` for every other. */
+export function editorValue(field: LayoutField, detail: DocumentDetail): string {
+  return isRichField(field) ? JSON.stringify(richValueOf(field, detail)) : editValue(field, detail);
+}
+
+/**
+ * Whether two editor values save the same thing. For a formatted text that is the stored pair the server derives,
+ * so a trailing empty line or runs split differently by the browser are not a change.
+ */
+export function sameValue(field: LayoutField, a: string, b: string): boolean {
+  if (a === b) return true;
+  if (!isRichField(field)) return false;
+  const pair = (v: string) => {
+    const rich = parseRich(v);
+    return JSON.stringify(derivePair(rich === null || rich === 'invalid' ? richFromPlain(v) : rich));
+  };
+  return pair(a) === pair(b);
 }
 
 /** The value an inline editor starts with (the stored one, in the form a person types). */
@@ -205,8 +253,14 @@ export function parseValue(field: LayoutField, raw: string): ParsedValue {
       if (trimmed.length > 200) return { ok: false, message: 'Keep the subject to one line of at most 200 characters.' };
       return docReq({ subject: trimmed === '' ? null : trimmed }, trimmed);
     case 'introText':
-    case 'outroText':
-      return docReq({ [key]: trimmed === '' ? null : text.trimEnd() }, text.trimEnd());
+    case 'outroText': {
+      // The formatting editor's value is the runs (`editorValue`); the server derives the plain words from them.
+      // A plain value (an unsaved entry kept before the editor formatted) still saves as plain text.
+      const rich = parseRich(text);
+      if (rich === 'invalid') return { ok: false, message: 'This text could not be read. Type it again.' };
+      if (rich === null) return docReq({ [key]: trimmed === '' ? null : text.trimEnd() }, text.trimEnd());
+      return docReq({ [key === 'introText' ? 'introFormat' : 'outroFormat']: rich }, text);
+    }
     default:
       return { ok: false, message: 'Not editable here.' };
   }
@@ -228,10 +282,11 @@ export function applyLocal(payload: RenderInputPayload, field: LayoutField, loca
     };
   }
   if (key === 'introText' || key === 'outroText') {
-    // The typed plain text replaces the stored format too (the engine draws a format before the plain text),
-    // derived exactly as the server will store it, so the page shows what saving prints.
+    // The typed text replaces the stored format too (the engine draws a format before the plain text), derived
+    // exactly as the server will store it, so the page shows what saving prints.
     const formatKey = key === 'introText' ? 'introFormat' : 'outroFormat';
-    const pair = derivePair(richFromPlain(local));
+    const rich = parseRich(local);
+    const pair = derivePair(rich === null || rich === 'invalid' ? richFromPlain(local) : rich);
     return { ...payload, input: { ...payload.input, document: { ...payload.input.document, [key]: pair.text, [formatKey]: pair.format } } };
   }
   if (key === 'contractReference' || key === 'subject') {

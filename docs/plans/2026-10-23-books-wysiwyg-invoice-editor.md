@@ -666,3 +666,27 @@ reloaded, the text came back unsent, Enter saved it with one request.
   - The font-embedding test covers all four faces of every family (no blank glyph).
   - A misplaced comment was moved back to `paragraphs()`.
 - **Noted, not changed:** drafts saved before this change with line breaks keep a null format and still print as one paragraph, until their text is saved again. Building a format at render time would change the bytes of documents already rendered, so it is deliberately not done.
+
+## Phase 4 build notes (2026-10-24): formatted texts, part 2 (the formatting editor on the page)
+
+- **The editor.** On the invoice page, the intro and closing texts open in a formatting editor (`invoice/RichTextEditor.tsx`). It sits in place, in the invoice's own faces, with a toolbar of Bold, Italic and Bullet list (`aria-pressed`, one tab stop, arrow keys between the buttons). Ctrl or Cmd plus B and I toggle bold and italic, Ctrl or Cmd plus Enter saves, and Escape leaves the text as it was. Leaving the editor saves; moving between the text and its toolbar is not leaving.
+- **Decided while building: the browser's own editing commands, not an editing model of our own.** The text is a contenteditable box using the browser's bold, italic and list commands, which are deprecated in name but reliable in every browser for this small set. Writing our own editing model would have cost a week for no visible gain. The rule that keeps it safe: the box's content is scratch and the runs are the truth. `richFromDom` reads the box back as runs after every change and nothing else reads it. It accepts what Chrome and a paste leave behind (`p`, `div`, lists, `b`/`strong`, `i`/`em`, styled spans) and drops everything else.
+- **Further decisions:**
+  - A line break inside a block starts a new block of the same kind, because the run model has no soft break: a line is a block, as in the plain text.
+  - A non-breaking space becomes a space, so it never reaches the PDF.
+  - A block that only wraps other blocks adds no empty line: Chrome nests a new list in the paragraph it was started from.
+- **Paste and drop.** A paste comes in as plain text, whatever the clipboard holds, and a drop is refused. Nothing outside the run model gets in.
+- **Saving, undo, resume.** For these two fields the open editor's value is the runs (as JSON).
+  - A save sends `introFormat` / `outroFormat`, and the server derives the plain words (part 1).
+  - "Unchanged" compares the stored pair the server would derive, so runs split differently or a trailing empty line are not an edit.
+  - Undo sends the runs before, formatting included.
+  - The reload recovery (#150) keeps the runs, not the box's HTML.
+  - The live redraw while typing uses the same derivation as the server.
+  - The page's notice "saving here removes formatting" is gone. The form keeps its hint, because the form edits plain words.
+- **Real italics while typing.** The page registers the italic faces as CSS fonts the first time a formatting editor opens, so italic in the editor is the invoice's real italic face, not a slanted upright (checked in Chrome: `document.fonts.check` true for the italic face).
+- **Proven in Chrome against the stand-in, with the real keyboard:** plain text, then Cmd+B, Cmd+I, Enter, a bullet list from the toolbar, then save. The result was the runs exactly as typed, with one request, the page redrawn with bold, italic and the list, and focus back on the field. The first run of this check found the Chrome nesting described above, fixed and pinned by a test.
+- **Tests:**
+  - both conversions, against every shape listed above;
+  - the four stateful-flow paths: forward (bold from the keyboard, the runs saved); backtrack (Escape leaves the format, undo sends the format before); resume (the runs survive a reload and come back unsent, formatted); re-entry (a formatted text opens with its runs, an unchanged one sends nothing);
+  - the toolbar;
+  - a paste.

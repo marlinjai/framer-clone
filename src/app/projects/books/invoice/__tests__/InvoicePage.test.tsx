@@ -167,6 +167,11 @@ function wideWindow(wide: boolean) {
 }
 
 const live = () => screen.getByRole('region', { name: 'Invoice page' }).querySelector('p[aria-live]')!.textContent ?? '';
+/** Type into the formatting editor: its content as the browser leaves it, then the browser's input event. */
+const typeRich = (box: HTMLElement, html: string) => {
+  box.innerHTML = html;
+  fireEvent.input(box);
+};
 const fieldButton = (id: string) => document.querySelector<HTMLButtonElement>(`[data-field-id="${id}"]`)!;
 
 beforeEach(() => {
@@ -211,9 +216,14 @@ describe('the invoice page: forward', () => {
     expect(slot.textContent).toContain('Add an intro text');
     fireEvent.click(slot);
     const box = screen.getByRole('textbox', { name: 'Intro text' });
-    fireEvent.change(box, { target: { value: 'Vielen Dank.\nHier die Leistungen.' } });
+    typeRich(box, '<p>Vielen Dank.</p><p>Hier die Leistungen.</p>');
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
-    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ introText: 'Vielen Dank.\nHier die Leistungen.', expectedVersion: 3 }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({
+        introFormat: { v: 1, blocks: [{ kind: 'paragraph', runs: [{ text: 'Vielen Dank.' }] }, { kind: 'paragraph', runs: [{ text: 'Hier die Leistungen.' }] }] },
+        expectedVersion: 3,
+      }),
+    );
   });
 
   it('an empty subject offers "Add a subject" where it would print; the typed line is saved trimmed', async () => {
@@ -276,21 +286,6 @@ describe('the invoice page: backtrack and revise', () => {
     fireEvent.keyDown(input, { key: 'Escape' });
     expect(screen.queryByRole('textbox', { name: 'Line 1, unit price' })).toBeNull();
     expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
-  });
-
-  it('a formatted intro edited as plain words says so, and undo sends its formatting back', async () => {
-    const format = { v: 1, blocks: [{ kind: 'paragraph', runs: [{ text: 'Hallo ' }, { text: 'Welt', bold: true }] }] };
-    current = detail({ document: { introText: 'Hallo Welt', introFormat: format } });
-    server();
-    await opened();
-    fireEvent.click(fieldButton('introText'));
-    expect(screen.getByText(/This text has bold, italic or a list/)).toBeTruthy();
-    const box = screen.getByRole('textbox', { name: 'Intro text' });
-    fireEvent.change(box, { target: { value: 'Hallo Welt!' } });
-    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
-    await waitFor(() => expect(live()).toBe('Intro text saved.'));
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    await waitFor(() => expect(calls.filter((c) => c.method === 'PATCH').at(-1)!.body).toEqual({ introFormat: format, expectedVersion: 4 }));
   });
 
   it('undo sends the value before, redo the value after', async () => {
@@ -360,7 +355,7 @@ describe('the invoice page: review fixes', () => {
     await opened();
     fireEvent.click(fieldButton('introText'));
     const box = screen.getByRole('textbox', { name: 'Intro text' });
-    fireEvent.change(box, { target: { value: 'Hallo' } });
+    typeRich(box, '<p>Hallo</p>');
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
     await waitFor(() => expect(live()).toBe('Intro text saved.'));
     fireEvent.click(fieldButton('line.l1.quantity'));
@@ -425,7 +420,7 @@ describe('the invoice page: review fixes', () => {
     await waitFor(() => expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(fieldButton('introText'));
     const box = screen.getByRole('textbox', { name: 'Intro text' });
-    fireEvent.change(box, { target: { value: 'Hallo' } });
+    typeRich(box, '<p>Hallo</p>');
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
     await waitFor(() => expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true));
     expect(screen.getByRole('region', { name: 'Invoice page' })).toBeTruthy();
@@ -534,6 +529,114 @@ describe('the invoice page: resume after a reload', () => {
     } finally {
       vi.restoreAllMocks();
     }
+  });
+});
+
+describe('the invoice page: formatted intro and closing texts', () => {
+  const bold = { v: 1, blocks: [{ kind: 'paragraph', runs: [{ text: 'Hallo ' }, { text: 'Welt', bold: true }] }] };
+  let exec: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    // jsdom has no editing commands: record what the editor asks the browser to do.
+    exec = vi.fn(() => true);
+    (document as unknown as { execCommand: unknown }).execCommand = exec;
+  });
+  afterEach(() => {
+    delete (document as unknown as { execCommand?: unknown }).execCommand;
+  });
+
+  it('forward: a plain intro opens in the formatting editor; bold from the keyboard; the runs are saved', async () => {
+    current = detail({ document: { introText: 'Hallo Welt' } });
+    server();
+    await opened();
+    fireEvent.click(fieldButton('introText'));
+    const box = screen.getByRole('textbox', { name: 'Intro text' });
+    expect(box.getAttribute('aria-multiline')).toBe('true');
+    expect(box.innerHTML).toBe('<p>Hallo Welt</p>');
+    fireEvent.keyDown(box, { key: 'b', metaKey: true });
+    expect(exec).toHaveBeenCalledWith('bold', false, undefined);
+    typeRich(box, '<p>Hallo <b>Welt</b></p>');
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ introFormat: bold, expectedVersion: 3 }));
+  });
+
+  it('the toolbar: Bold, Italic and Bullet list buttons ask the browser, keep the text focused, and arrows move between them', async () => {
+    server();
+    await opened();
+    fireEvent.click(fieldButton('introText'));
+    const toolbar = screen.getByRole('toolbar', { name: 'Intro text, formatting' });
+    const [b, i, list] = within(toolbar).getAllByRole('button');
+    expect([b, i, list].map((x) => x.getAttribute('aria-label'))).toEqual(['Bold', 'Italic', 'Bullet list']);
+    expect(b.getAttribute('aria-pressed')).toBe('false');
+    expect(fireEvent.mouseDown(list)).toBe(false); // the default (moving focus out of the text) is prevented
+    fireEvent.click(list);
+    expect(exec).toHaveBeenCalledWith('insertUnorderedList', false, undefined);
+    b.focus();
+    fireEvent.keyDown(b, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(i);
+    // Moving from the text to its toolbar does not save.
+    fireEvent.blur(screen.getByRole('textbox', { name: 'Intro text' }), { relatedTarget: i });
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+  });
+
+  it('re-entry: a formatted text opens with its runs; an unchanged one, even split differently, sends nothing', async () => {
+    current = detail({ document: { introText: 'Hallo Welt', introFormat: bold } });
+    server();
+    await opened();
+    fireEvent.click(fieldButton('introText'));
+    const box = screen.getByRole('textbox', { name: 'Intro text' });
+    expect(box.innerHTML).toBe('<p>Hallo <strong>Welt</strong></p>');
+    typeRich(box, '<p>Hal<span>lo </span><b>Welt</b><br></p>');
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    expect(screen.queryByRole('textbox', { name: 'Intro text' })).toBeNull();
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+  });
+
+  it('backtrack: Escape leaves the format as it was; undo after a save sends the format before', async () => {
+    current = detail({ document: { introText: 'Hallo Welt', introFormat: bold } });
+    server();
+    await opened();
+    fireEvent.click(fieldButton('introText'));
+    let box = screen.getByRole('textbox', { name: 'Intro text' });
+    typeRich(box, '<p>weg</p>');
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+    fireEvent.click(fieldButton('introText'));
+    box = screen.getByRole('textbox', { name: 'Intro text' });
+    typeRich(box, '<ul><li>Punkt <i>eins</i></li></ul>');
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({
+        introFormat: { v: 1, blocks: [{ kind: 'bullet', runs: [{ text: 'Punkt ' }, { text: 'eins', italic: true }] }] },
+        expectedVersion: 3,
+      }),
+    );
+    await waitFor(() => expect(live()).toBe('Intro text saved.'));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PATCH').at(-1)!.body).toEqual({ introFormat: bold, expectedVersion: 4 }));
+  });
+
+  it('resume: the runs being typed survive a reload and come back unsent, formatted', async () => {
+    server();
+    await opened();
+    fireEvent.click(fieldButton('introText'));
+    typeRich(screen.getByRole('textbox', { name: 'Intro text' }), '<p>Neu <b>fett</b></p>');
+    expect(JSON.parse(window.sessionStorage.getItem('books-invoice-unsaved:doc-1')!).value).toBe(
+      JSON.stringify({ v: 1, blocks: [{ kind: 'paragraph', runs: [{ text: 'Neu ' }, { text: 'fett', bold: true }] }] }),
+    );
+    cleanup();
+    render(<DocumentEditor id="doc-1" />);
+    const box = await screen.findByRole('textbox', { name: 'Intro text' });
+    expect(box.innerHTML).toBe('<p>Neu <strong>fett</strong></p>');
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+  });
+
+  it('a paste comes in as plain text, whatever the clipboard holds', async () => {
+    server();
+    await opened();
+    fireEvent.click(fieldButton('introText'));
+    const box = screen.getByRole('textbox', { name: 'Intro text' });
+    fireEvent.paste(box, { clipboardData: { getData: (type: string) => (type === 'text/plain' ? 'eingefügt' : '<h1 style="color:red">eingefügt</h1>') } });
+    expect(exec).toHaveBeenCalledWith('insertText', false, 'eingefügt');
   });
 });
 

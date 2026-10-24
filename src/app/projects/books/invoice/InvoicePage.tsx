@@ -34,14 +34,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button';
 import { booksApi, type CustomerView, type DocumentDetail, type LineView, type ProductView } from '@/lib/books/api';
 import { lineFromProduct } from '@/lib/books/products';
-import { isStyled, type RichText } from '@/server/books/render/richText';
 import { money, parseMoney, parseQuantity } from '@/lib/books/units';
 import type { FieldRect, LayoutField } from '@/server/books/render/engine';
 
 import PdfCanvas from '../composer/PdfCanvas';
 import { errorText } from '../ui';
-import { TAX_CLASS_OPTIONS, applyLocal, editValue, fieldLabel, parseValue, readOnlyReason, type FieldRequest } from './fields';
-import { cssFontFamily, useDraftPage } from './useDraftPage';
+import { TAX_CLASS_OPTIONS, applyLocal, editValue, editorValue, fieldLabel, isRichField, parseValue, richOfValue, readOnlyReason, sameValue, type FieldRequest } from './fields';
+import RichTextEditor from './RichTextEditor';
+import { cssFontFamily, registerItalicFonts, useDraftPage } from './useDraftPage';
 
 export interface InvoicePageProps {
   id: string;
@@ -127,13 +127,6 @@ function readUnsaved(documentId: string): Unsaved | null {
   } catch {
     return null;
   }
-}
-
-/** The stored format of an intro or closing text field when it has bold, italic or a list; null otherwise. */
-function styledFormatOf(field: LayoutField, detail: DocumentDetail): RichText | null {
-  const doc = detail.document;
-  const format = field.documentField === 'introText' ? doc.introFormat : field.documentField === 'outroText' ? doc.outroFormat : null;
-  return isStyled(format) ? format : null;
 }
 
 /** The request a field change becomes, as a call. */
@@ -280,7 +273,9 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
 
   function open(field: LayoutField, rect: FieldRect, rectIndex = 0) {
     if (busy) return;
-    const value = editValue(field, detail);
+    const value = editorValue(field, detail);
+    // The formatting editor types in the invoice's real italic faces, loaded the first time one opens.
+    if (isRichField(field)) void registerItalicFonts(field.style.fontFamily);
     setMenuFor(null);
     setPicking(false);
     closing.current = false;
@@ -310,8 +305,8 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     const { field, value, rect, rectIndex } = active;
     const focusKey = by === 'key' ? field.id : null;
     // After a refusal the draft was read again: compare with what is saved now.
-    const initial = active.retry ? editValue(field, detailRef.current) : active.initial;
-    if (value === initial) return close(focusKey);
+    const initial = active.retry ? editorValue(field, detailRef.current) : active.initial;
+    if (sameValue(field, value, initial)) return close(focusKey);
     const parsed = parseValue(field, value);
     if (!parsed.ok) {
       setActive({ ...active, error: parsed.message });
@@ -324,15 +319,9 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     setActive(null);
     if (focusKey) focusAfter.current = focusKey;
     const forward = parsed.request;
-    // A formatted text saved here as plain words: undo sends its formatting back, not only its words.
-    const styledBefore = styledFormatOf(field, detailRef.current);
-    const back: FieldRequest | null = styledBefore
-      ? { kind: 'document', body: { [field.documentField === 'introText' ? 'introFormat' : 'outroFormat']: styledBefore } }
-      : before.ok
-        ? before.request
-        : null;
-    // A value that cannot be sent back (no customer before the first one was chosen) is not a step to undo.
-    const step: UndoStep | null = back ? { label, undo: (v) => send(back, v), redo: (v) => send(forward, v) } : null;
+    // A value that cannot be sent back (no customer before the first one was chosen) is not a step to undo. A
+    // formatted text's value is its runs, so undo sends its formatting back with its words.
+    const step: UndoStep | null = before.ok ? { label, undo: (v) => send(before.request, v), redo: (v) => send(forward, v) } : null;
     const ok = await run(step, (v) => send(forward, v), `${label} saved.`);
     if (ok) rememberUnsaved(id, null);
     else {
@@ -370,8 +359,8 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     const field: LayoutField = current ? { ...entry.field, rects: current.rects, style: current.style } : entry.field;
     const rectIndex = Math.min(entry.rectIndex, field.rects.length - 1);
     const rect = field.rects[rectIndex];
-    const saved = editValue(field, detailRef.current);
-    if (!rect || entry.value === saved) return rememberUnsaved(id, null);
+    const saved = editorValue(field, detailRef.current);
+    if (!rect || sameValue(field, entry.value, saved)) return rememberUnsaved(id, null);
     closing.current = false;
     setActive({
       field,
@@ -560,7 +549,6 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
           fontFamily={cssFontFamily(active.field.style.fontFamily)}
           customers={usable}
           label={fieldLabel(active.field, detail)}
-          styled={styledFormatOf(active.field, detail) !== null}
           onType={onType}
           onCommit={(by) => void commit(by)}
           onCancel={cancelEdit}
@@ -856,7 +844,6 @@ function InlineEditor({
   fontFamily,
   customers,
   label,
-  styled,
   onType,
   onCommit,
   onCancel,
@@ -867,8 +854,6 @@ function InlineEditor({
   fontFamily: string;
   customers: CustomerView[];
   label: string;
-  /** The text has bold, italic or a list, which saving plain words here removes. */
-  styled: boolean;
   onType: (value: string) => void;
   onCommit: (by: 'key' | 'blur') => void;
   onCancel: () => void;
@@ -940,6 +925,20 @@ function InlineEditor({
         <input aria-label={`${label}, last day`} aria-invalid={common['aria-invalid']} aria-describedby={common['aria-describedby']} type="date" className="text-sm" value={end} onChange={(e) => onType(`${start}/${e.target.value}`)} onKeyDown={(e) => keys(e, false)} />
       </span>
     );
+  } else if (isRichField(field)) {
+    control = (
+      <RichTextEditor
+        initial={richOfValue(value)}
+        label={label}
+        textStyle={text}
+        minHeight={Math.max(rect.height, s.lineHeightPt * 2) * scale}
+        invalid={Boolean(error)}
+        describedBy={error ? errorId : undefined}
+        onChange={(rich) => onType(JSON.stringify(rich))}
+        onCommit={onCommit}
+        onCancel={onCancel}
+      />
+    );
   } else if (field.kind === 'multiline') {
     control = (
       <textarea
@@ -968,11 +967,6 @@ function InlineEditor({
     <div style={box} className="z-20">
       {control}
       {field.kind === 'multiline' ? <span className="mt-0.5 block text-[10px] text-gray-600">Ctrl+Enter or Cmd+Enter saves, Escape leaves it as it was.</span> : null}
-      {styled ? (
-        <span className="mt-0.5 block rounded bg-amber-50 px-1 text-[10px] text-amber-900">
-          This text has bold, italic or a list. Saving it here keeps the words and line breaks and removes that formatting (Undo brings it back).
-        </span>
-      ) : null}
       {error ? (
         <span id={errorId} role="alert" className="mt-0.5 block rounded bg-red-50 px-1 text-xs text-red-800">
           {error}
