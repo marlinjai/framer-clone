@@ -172,6 +172,7 @@ beforeEach(() => {
   current = detail();
   renderInputs = 0;
   window.localStorage.clear();
+  window.sessionStorage.clear();
   wideWindow(true);
 });
 afterEach(() => {
@@ -433,6 +434,78 @@ describe('the invoice page: margin markers', () => {
     expect(marker.getAttribute('aria-label')).toBe('Add details (Line 1, details)');
     // The row starts at x 60 (the position number), the description at 80: the marker sits 34 px left of the row.
     expect(marker.style.left).toBe('26px');
+  });
+});
+
+describe('the invoice page: resume after a reload', () => {
+  async function typeAndReload(value: string) {
+    fireEvent.click(fieldButton('line.l1.quantity'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Line 1, quantity' }), { target: { value } });
+    // The tab reloads before the field was saved.
+    cleanup();
+    render(<DocumentEditor id="doc-1" />);
+    return (await screen.findByRole('textbox', { name: 'Line 1, quantity' })) as HTMLInputElement;
+  }
+
+  it('the typed value comes back in its field, unsent; Enter saves it against the draft as it is now', async () => {
+    server();
+    await opened();
+    const input = await typeAndReload('3');
+    expect(input.value).toBe('3');
+    expect(screen.getByText(/Restored what you were typing before the page reloaded/)).toBeTruthy();
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+    fireEvent.blur(input);
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ quantity: 3000, expectedVersion: 3 }));
+    expect(window.sessionStorage.getItem('books-invoice-unsaved:doc-1')).toBeNull();
+  });
+
+  it('Escape drops the restored value, and the next reload opens nothing', async () => {
+    server();
+    await opened();
+    const input = await typeAndReload('9');
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByRole('textbox', { name: 'Line 1, quantity' })).toBeNull();
+    expect(window.sessionStorage.getItem('books-invoice-unsaved:doc-1')).toBeNull();
+    cleanup();
+    render(<DocumentEditor id="doc-1" />);
+    await waitFor(() => expect(fieldButton('line.l1.quantity')).toBeTruthy());
+    expect(screen.queryByRole('textbox', { name: 'Line 1, quantity' })).toBeNull();
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+  });
+
+  it('a value equal to what is saved now is not restored', async () => {
+    server();
+    await opened();
+    fireEvent.click(fieldButton('line.l1.quantity'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Line 1, quantity' }), { target: { value: '2' } });
+    // Saved meanwhile in another tab.
+    current = detail({ document: { version: 4 }, lines: [line({ quantity: 2000 })] });
+    cleanup();
+    render(<DocumentEditor id="doc-1" />);
+    await waitFor(() => expect(fieldButton('line.l1.quantity')).toBeTruthy());
+    expect(screen.queryByRole('textbox', { name: 'Line 1, quantity' })).toBeNull();
+  });
+
+  it('a browser that refuses storage still edits and saves', async () => {
+    const refuse = () => {
+      throw new DOMException('denied', 'SecurityError');
+    };
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(refuse);
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(refuse);
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(refuse);
+    try {
+      server();
+      await opened();
+      fireEvent.click(fieldButton('line.l1.quantity'));
+      const input = screen.getByRole('textbox', { name: 'Line 1, quantity' });
+      fireEvent.change(input, { target: { value: '5' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ quantity: 5000, expectedVersion: 3 }));
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });
 
