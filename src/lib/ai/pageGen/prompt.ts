@@ -12,6 +12,7 @@ import { FORMS_PROMPT } from './promptSections/forms';
 import { BASE_KEY, type BreakpointKey } from './schema';
 import type { PageGenTarget } from './protocol';
 import { siteContextText, type SiteContext } from './promptSections/siteContext';
+import { legalLinksText } from './promptSections/legalLinks';
 
 export const EMIT_TOOL_NAME = 'emit_page';
 
@@ -218,6 +219,7 @@ export function requestContextText(input: RequestContextInput): string {
     );
   }
   if (input.siteContext) lines.push('', siteContextText(input.siteContext));
+  if (input.siteContext?.legalLinks?.length) lines.push('', legalLinksText(input.siteContext.legalLinks));
   return lines.join('\n');
 }
 
