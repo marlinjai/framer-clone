@@ -133,6 +133,10 @@ export default function CommerceIsland({ kind, node, scope }: CommerceIslandProp
           background: 'rgba(127, 127, 127, 0.12)',
         }}
       />,
+      // Without JavaScript the island never mounts: say so instead of "loading" forever.
+      <noscript key="noscript">
+        <span style={{ display: 'block', fontSize: '13px' }}>Turn on JavaScript to use the shop.</span>
+      </noscript>,
     );
   }
   return (

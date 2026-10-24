@@ -70,7 +70,9 @@ check. Each step ships on its own.
   change to that one file only.
 - **Language default.** Projects saved before this keep `en` (what every published page declared
   until now, so nothing changes for them); the project-create route starts new projects with `de`.
-  The site language wins over the brief's language in the generator.
+  In the generator the brief's language wins when it is clearly another one (otherwise every
+  existing project, all `en`, would switch a German brief to English copy); a short or neutral
+  brief is written in the site language.
 - **Site name** is an optional public override; blank uses the project title, which the dashboard
   rename flow keeps owning.
 - **Favicon and Open Graph image by https URL.** The only upload path today is the Books logo store

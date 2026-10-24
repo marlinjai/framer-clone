@@ -34,6 +34,9 @@ describe('siteContextText', () => {
   it('names the language and gives the real facts, without a missing-data line when complete', () => {
     const text = siteContextText(siteContextFromSettings(full, 'Bakery'));
     expect(text).toContain('Site language: German (de)');
+    // The brief's own language wins when clear (existing projects all read as en).
+    expect(text).toContain('in the language of the brief when the brief is clearly written in');
+    expect(text).toContain('too short or neutral to tell, write in the site language');
     expect(text).toContain('"phone":"+49 89 123456"');
     expect(text).toContain('"openingHours":["Monday, Saturday: 07:00 to 12:00"]');
     expect(text).toContain('NEVER invent contact data');
