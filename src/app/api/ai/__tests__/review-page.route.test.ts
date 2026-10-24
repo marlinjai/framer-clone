@@ -230,7 +230,7 @@ describe('POST /api/ai/review-page review', () => {
       { op: 'update_style', nodeId: 'hero', breakpoint: null, property: 'backgroundImage', value: `linear-gradient(rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.55)), url("${PHOTO}")`, reason: 'Scrim' },
       { op: 'update_style', nodeId: 'ghost', breakpoint: null, property: 'color', value: 'red', reason: 'x' },
       { op: 'update_style', nodeId: 'h1', breakpoint: null, property: 'onClick', value: 'x', reason: 'x' },
-      { op: 'update_text', nodeId: 'h1', text: 'Ride — further', reason: 'x' },
+      { op: 'update_text', nodeId: 'h1', text: 'Ride \u2014 further', reason: 'x' },
     ];
     anthropicState.turns = [toolTurn({ summary: 'Fixed the hero.', ops }, [JSON.stringify({ summary: 'Fixed the hero.', ops })])];
     const evs = await events(await POST(makeRequest(baseBody())));

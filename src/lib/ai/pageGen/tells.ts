@@ -596,6 +596,9 @@ export const NOT_X_ITS_Y_PATTERNS: readonly RegExp[] = [
   /\b(?:ist|sind)\s+nicht\s+[^.!?]{1,80}?[,.]\s*(?:es|das|sie|wir)\s+(?:ist|sind)\b/i,
   /\bmehr als nur\b/i,
   /\bkein(?:e|en|er)?\s+[^.!?,]{1,40},\s*sondern\b/i,
+  // The trailing contrast clause: "Back on the road in days, not weeks."
+  /\w,\s+not\s+[^.!?,;:]{2,30}[.!]?\s*$/i,
+  /\w,\s+nicht\s+[^.!?,;:]{2,30}[.!]?\s*$/i,
 ];
 
 function matchesNotXItsY(text: string): boolean {

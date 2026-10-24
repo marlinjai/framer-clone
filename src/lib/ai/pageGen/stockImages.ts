@@ -301,6 +301,32 @@ async function fetchSearch(
   return { ok: true, photos };
 }
 
+/**
+ * Broader forms of a query that found no photo, most specific first, at most
+ * two (each costs a search from the hourly budget): the first three words,
+ * then the first two, and finally the query without its orientation filter
+ * when there were no shorter forms.
+ */
+export function broaderSearches(
+  query: string,
+  orientation: ImageOrientation | undefined,
+): Array<{ query: string; orientation?: ImageOrientation }> {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  const out: Array<{ query: string; orientation?: ImageOrientation }> = [];
+  const seen = new Set([cacheKey(query, orientation)]);
+  const add = (q: string, o: ImageOrientation | undefined) => {
+    const k = cacheKey(q, o);
+    if (q && !seen.has(k)) {
+      seen.add(k);
+      out.push(o ? { query: q, orientation: o } : { query: q });
+    }
+  };
+  if (words.length > 3) add(words.slice(0, 3).join(' '), orientation);
+  if (words.length > 2) add(words.slice(0, 2).join(' '), orientation);
+  if (orientation) add(query.trim(), undefined);
+  return out.slice(0, 2);
+}
+
 function emptySummary(requested: number): StockImageSummary {
   return { requested, resolved: 0, fellBack: {}, credits: [] };
 }
@@ -355,6 +381,27 @@ export async function resolveStockImages(
       } catch (err) {
         logWarn('search threw', { error: err instanceof Error ? err.name : 'error' });
         outcome = { ok: false, reason: 'unavailable' };
+      }
+      // A specific query can find nothing ("mechanic truing a carbon wheel"):
+      // retry a couple of broader forms before the image keeps the placeholder.
+      if (outcome.ok && outcome.photos.length === 0) {
+        for (const wider of broaderSearches(item.query, item.orientation)) {
+          if (stopReason || deps.signal?.aborted) break;
+          let retry: SearchOutcome;
+          try {
+            retry = await search(wider.query, wider.orientation, accessKey, deps);
+          } catch {
+            break;
+          }
+          if (!retry.ok) {
+            stopReason ??= retry.reason;
+            break;
+          }
+          if (retry.photos.length > 0) {
+            outcome = retry;
+            break;
+          }
+        }
       }
       outcomes.set(item.key, outcome);
       if (!outcome.ok) stopReason ??= outcome.reason;
