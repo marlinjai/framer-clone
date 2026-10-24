@@ -98,6 +98,8 @@ export const documentMetaBlockSchema = z
   .strict();
 /** In the body: the full title (and a credit note's reference); in the following-page header: "Rechnung 62, Seite 2 von 3". */
 export const titleBlockSchema = z.object({ ...base, type: z.literal('title') }).strict();
+/** The document's subject line ("Betreff"), one line; prints nothing when the document has none. */
+export const subjectBlockSchema = z.object({ ...base, type: z.literal('subject') }).strict();
 export const introTextBlockSchema = z.object({ ...base, type: z.literal('introText') }).strict();
 export const outroTextBlockSchema = z.object({ ...base, type: z.literal('outroText') }).strict();
 export const lineTableBlockSchema = z
@@ -205,6 +207,7 @@ export const blockSchema = z.discriminatedUnion('type', [
   recipientBlockSchema,
   documentMetaBlockSchema,
   titleBlockSchema,
+  subjectBlockSchema,
   introTextBlockSchema,
   outroTextBlockSchema,
   lineTableBlockSchema,

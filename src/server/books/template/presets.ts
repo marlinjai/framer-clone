@@ -91,6 +91,7 @@ export function klassisch(opts: PresetOptions = {}): TemplateDocumentV2 {
       },
       body: [
         { id: 'title', type: 'title', style: { sizePt: 14, bold: true, color: 'accent', spaceAbovePt: 24, spaceBelowPt: 8 } },
+        { id: 'subject', type: 'subject', style: { bold: true, spaceBelowPt: 6 } },
         { id: 'introText', type: 'introText', style: { spaceBelowPt: 8 } },
         lineTable({ headerBand: false }),
         { id: 'totals', type: 'totals', style: { spaceAbovePt: 4, spaceBelowPt: 8 } },

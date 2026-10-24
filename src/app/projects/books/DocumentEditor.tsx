@@ -551,6 +551,8 @@ export default function DocumentEditor({ id }: { id: string }) {
         ) : null}
       </section>
 
+      <DocumentTexts id={id} doc={doc} draft={draft} busy={busy} change={change} />
+
       <section aria-label="Lines" className="mb-6">
         <table className="w-full text-sm">
           <thead>
@@ -749,5 +751,118 @@ function RelatedList({ related }: { related: DocumentDetail['related'] }) {
         ))}
       </ul>
     </section>
+  );
+}
+
+const TEXT_FIELDS = [
+  { key: 'subject', label: 'Subject', hint: 'One line, printed where the template places the subject.', max: 200, multiline: false },
+  { key: 'contractReference', label: 'Reference', hint: 'Printed in the document data, for example an order or contract number.', max: 200, multiline: false },
+  { key: 'introText', label: 'Intro text', hint: null, max: 4000, multiline: true },
+  { key: 'outroText', label: 'Closing text', hint: null, max: 4000, multiline: true },
+] as const;
+type TextKey = (typeof TEXT_FIELDS)[number]['key'];
+
+/**
+ * The document's texts in the form (narrow windows, imports, "Use the form"): the same fields the invoice page
+ * edits in place, each saved when it is left. Issued documents show what was printed.
+ */
+function DocumentTexts({
+  id,
+  doc,
+  draft,
+  busy,
+  change,
+}: {
+  id: string;
+  doc: DocumentDetail['document'];
+  draft: boolean;
+  busy: boolean;
+  change: (fn: () => Promise<DocumentDetail>) => Promise<boolean>;
+}) {
+  // Saves run one after another, each with the version the one before produced: tabbing from one text to the next
+  // saves both, never the second against a version the first has already moved on.
+  const latest = React.useRef(doc.version);
+  if (doc.version > latest.current) latest.current = doc.version;
+  const queue = React.useRef<Promise<unknown>>(Promise.resolve());
+  const save = (body: Partial<Record<TextKey, string | null>>) => {
+    queue.current = queue.current.then(() =>
+      change(async () => {
+        const d = await booksApi.updateDraft(id, { ...body, expectedVersion: latest.current });
+        latest.current = d.document.version;
+        return d;
+      }),
+    );
+  };
+  if (!draft) {
+    const shown = TEXT_FIELDS.filter((f) => doc[f.key]);
+    if (shown.length === 0) return null;
+    return (
+      <section aria-label="Texts" className="mb-6 grid grid-cols-1 gap-3 rounded-lg border p-4 text-sm">
+        {shown.map((f) => (
+          <div key={f.key}>
+            <div className="text-xs font-medium text-muted-foreground">{f.label}</div>
+            <p className="whitespace-pre-line">{doc[f.key]}</p>
+          </div>
+        ))}
+      </section>
+    );
+  }
+  return (
+    <section aria-label="Texts" className="mb-6 grid grid-cols-1 gap-4 rounded-lg border p-4 sm:grid-cols-2">
+      {TEXT_FIELDS.map((f) => (
+        <div key={f.key} className={f.multiline ? 'sm:col-span-2' : undefined}>
+          <Field label={f.label} htmlFor={`doc-${f.key}`} hint={f.hint ?? undefined}>
+            <SavedText
+              id={`doc-${f.key}`}
+              saved={doc[f.key] ?? ''}
+              multiline={f.multiline}
+              max={f.max}
+              busy={busy}
+              onLeave={(raw) => {
+                const v = f.multiline ? raw.trimEnd() : raw.trim();
+                const next = v === '' ? null : v;
+                if (next !== (doc[f.key] ?? null)) save({ [f.key]: next });
+              }}
+            />
+          </Field>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/**
+ * A text input that saves when it is left and shows what is saved: a change saved meanwhile (on the page, in another
+ * tab, after a conflict) replaces its value, but never while it has focus, so tabbing on after a save keeps typing.
+ */
+function SavedText({
+  id,
+  saved,
+  multiline,
+  max,
+  busy,
+  onLeave,
+}: {
+  id: string;
+  saved: string;
+  multiline: boolean;
+  max: number;
+  busy: boolean;
+  onLeave: (value: string) => void;
+}) {
+  const ref = React.useRef<HTMLInputElement & HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el && document.activeElement !== el) el.value = saved;
+  }, [saved]);
+  const common = { id, ref, maxLength: max, defaultValue: saved, onBlur: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => onLeave(e.target.value), 'aria-busy': busy || undefined };
+  if (multiline) return <textarea {...common} rows={3} className="w-full rounded-md border bg-transparent px-3 py-2 text-sm" />;
+  return (
+    <Input
+      {...common}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+      }}
+    />
   );
 }

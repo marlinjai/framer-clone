@@ -74,6 +74,7 @@ export interface SalesDocument {
   paymentTermsDays: number;
   paymentReference: string | null;
   contractReference: string | null;
+  subject: string | null;
   currencyCode: string;
   taxRegion: string;
   customerType: CustomerType | null;
@@ -205,6 +206,7 @@ export type DocumentRow = {
   payment_terms_days: number;
   payment_reference: string | null;
   contract_reference: string | null;
+  subject: string | null;
   currency_code: string;
   tax_region: string;
   customer_type: CustomerType | null;
@@ -257,6 +259,7 @@ export function mapDocument(row: DocumentRow): SalesDocument {
     paymentTermsDays: row.payment_terms_days,
     paymentReference: row.payment_reference,
     contractReference: row.contract_reference,
+    subject: row.subject,
     currencyCode: row.currency_code,
     taxRegion: row.tax_region,
     customerType: row.customer_type,

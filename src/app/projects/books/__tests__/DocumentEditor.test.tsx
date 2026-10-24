@@ -263,6 +263,60 @@ describe('DocumentEditor', () => {
   });
 });
 
+describe('DocumentEditor: the texts in the form', () => {
+  it('saves the subject and the reference in turn when tabbing on, each with the version the one before produced', async () => {
+    let doc = detail();
+    server({
+      ...base(() => doc),
+      'PATCH /api/books/documents/doc-1': (b) => {
+        const { expectedVersion, ...rest } = b!;
+        const current = doc.document as Json & { version: number };
+        if (expectedVersion !== current.version) return { status: 409, body: { error: { code: 'concurrent_edit', message: 'newer' } } };
+        doc = detail({ document: { ...current, ...rest, version: current.version + 1 } });
+        return { status: 200, body: doc };
+      },
+    });
+    render(<DocumentEditor id="doc-1" />);
+    const subject = (await screen.findByLabelText('Subject')) as HTMLInputElement;
+    fireEvent.change(subject, { target: { value: '  Website-Relaunch  ' } });
+    fireEvent.blur(subject);
+    const reference = screen.getByLabelText('Reference') as HTMLInputElement;
+    reference.focus();
+    fireEvent.change(reference, { target: { value: 'PO 4711' } });
+    fireEvent.blur(reference);
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(2));
+    await waitFor(() => expect((doc.document as { contractReference?: string }).contractReference).toBe('PO 4711'));
+    expect(calls.filter((c) => c.method === 'PATCH').map((c) => c.body)).toEqual([
+      { subject: 'Website-Relaunch', expectedVersion: 3 },
+      { contractReference: 'PO 4711', expectedVersion: 4 },
+    ]);
+    expect(subject.value).toBe('Website-Relaunch');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('an emptied text is saved as none, an unchanged one sends nothing', async () => {
+    const doc = detail({ document: { introText: 'Hallo' } });
+    server({ ...base(() => doc), 'PATCH /api/books/documents/doc-1': () => ({ status: 200, body: doc }) });
+    render(<DocumentEditor id="doc-1" />);
+    const intro = (await screen.findByLabelText('Intro text')) as HTMLTextAreaElement;
+    fireEvent.blur(intro);
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+    fireEvent.change(intro, { target: { value: '   ' } });
+    fireEvent.blur(intro);
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ introText: null, expectedVersion: 3 }));
+  });
+
+  it('an issued invoice shows the texts it printed, with nothing to edit', async () => {
+    const doc = detail({ document: { status: 'issued', documentNumber: '62', issueDate: '2026-10-20', subject: 'Website-Relaunch', outroText: 'Danke' } });
+    server(base(() => doc));
+    render(<DocumentEditor id="doc-1" />);
+    const texts = await screen.findByRole('region', { name: 'Texts' });
+    expect(texts.textContent).toContain('Website-Relaunch');
+    expect(texts.textContent).toContain('Danke');
+    expect(within(texts).queryByRole('textbox')).toBeNull();
+  });
+});
+
 describe('DocumentEditor: an imported invoice', () => {
   it('is marked, offers its original for download and nothing to edit or issue', async () => {
     const imported = detail({

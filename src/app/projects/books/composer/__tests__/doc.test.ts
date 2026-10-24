@@ -101,8 +101,8 @@ describe('composer document operations', () => {
 
   it('moves a block one step, across a region edge to the nearest region that allows it', () => {
     const doc = klassisch();
-    const up = change(doc, (d) => void moveByStep(d, 'introText', -1));
-    expect(ids(up, 'body').slice(0, 2)).toEqual(['introText', 'title']);
+    const up = change(doc, (d) => void moveByStep(d, 'subject', -1));
+    expect(ids(up, 'body').slice(0, 3)).toEqual(['subject', 'title', 'introText']);
     // The divider at the top of the footer moves up into the following-page header (it may stand there).
     const across = change(doc, (d) => void moveByStep(d, 'footerRule', -1));
     expect(ids(across, 'followingPageHeader')).toEqual(['continuation', 'footerRule']);
@@ -138,7 +138,7 @@ describe('composer document operations', () => {
 
   it('a move that changes nothing leaves the document untouched (no undo step, no preview request)', () => {
     const doc = klassisch();
-    expect(change(doc, (d) => { expect(moveBlock(d, 'introText', 'body', 1)).toBe(false); })).toBe(doc);
+    expect(change(doc, (d) => { expect(moveBlock(d, 'introText', 'body', 2)).toBe(false); })).toBe(doc);
     expect(change(doc, (d) => { expect(moveBlock(d, 'outroText', 'body', 99)).toBe(false); })).toBe(doc);
   });
 });

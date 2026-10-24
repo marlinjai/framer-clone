@@ -15,6 +15,7 @@ import { booksTemplateV2 } from './012_books_template_v2';
 import { booksAssets } from './013_books_assets';
 import { booksAssetDelete } from './014_books_asset_delete';
 import { booksProducts } from './015_books_products';
+import { booksSubject } from './016_books_subject';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -85,6 +86,9 @@ import { booksProducts } from './015_books_products';
  *                            (books_product, mutable, archived instead of
  *                            deleted, a name unique among the live items);
  *                            draft lines copy its values, never reference it
+ *   016_books_subject      : a document's subject line (sales_document.subject,
+ *                            nullable, at most 200 characters; frozen after
+ *                            issue by 007's guard like every column)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -103,4 +107,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   booksAssets,
   booksAssetDelete,
   booksProducts,
+  booksSubject,
 ];

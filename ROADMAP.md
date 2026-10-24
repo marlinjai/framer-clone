@@ -142,8 +142,9 @@ connections to the suite. The four lines below are in that order.
   server, proven in headless Chrome); phase 2 (every editable field's rectangle and style, the
   add-line and row anchors in the layout map) built 2026-10-23; phase 3 (the editor on the page,
   line actions, product picker, undo, the issued invoice as its stored PDF) live and proven on
-  Books Testfirma 2026-10-24 (TEST-4 written on the page and issued). Left: phase 4's subject line
-  and formatted intro and closing texts. See
+  Books Testfirma 2026-10-24 (TEST-4 written on the page and issued); the subject line (migration
+  016, a template block, on the page and in the form) built 2026-10-24. Left: formatted intro and
+  closing texts. See
   [plan](docs/plans/2026-10-23-books-wysiwyg-invoice-editor.md). (2026-10-23)
 - [ ] 8c. A discount on the whole invoice ("Gesamtrabatt", as sevdesk), split across the tax rates
   in proportion and printed so the tax per rate stays right (section 14 UStG): needs its own small

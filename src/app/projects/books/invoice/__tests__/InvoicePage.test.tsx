@@ -58,6 +58,7 @@ const LAYOUT = {
   issues: [],
   fields: [
     field({ id: 'recipient.line.1', kind: 'readonly', region: 'addressZone.left', recipientField: 'name', rects: rect(140) }),
+    field({ id: 'subject', kind: 'text', source: 'document', documentField: 'subject', empty: true, room: 20, rects: rect(285, 60, 480) }),
     field({ id: 'introText', kind: 'multiline', source: 'document', documentField: 'introText', empty: true, room: 30, rects: rect(300, 60, 480) }),
     field({ id: 'line.l1.title', kind: 'text', source: 'line', documentField: 'title', lineId: 'l1', rects: rect(340, 80) }),
     field({ id: 'line.l1.quantity', kind: 'number', source: 'line', documentField: 'quantity', valueUnit: 'thousandths', lineId: 'l1', rects: rect(340, 300, 50) }),
@@ -212,6 +213,18 @@ describe('the invoice page: forward', () => {
     fireEvent.change(box, { target: { value: 'Vielen Dank.\nHier die Leistungen.' } });
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
     await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ introText: 'Vielen Dank.\nHier die Leistungen.', expectedVersion: 3 }));
+  });
+
+  it('an empty subject offers "Add a subject" where it would print; the typed line is saved trimmed', async () => {
+    server();
+    await opened();
+    const slot = fieldButton('subject');
+    expect(slot.textContent).toContain('Add a subject');
+    fireEvent.click(slot);
+    const input = screen.getByRole('textbox', { name: 'Subject' });
+    fireEvent.change(input, { target: { value: ' Website-Relaunch, Phase 1 ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ subject: 'Website-Relaunch, Phase 1', expectedVersion: 3 }));
   });
 
   it('adds a line on the page; Enter in its price adds it and opens the next', async () => {

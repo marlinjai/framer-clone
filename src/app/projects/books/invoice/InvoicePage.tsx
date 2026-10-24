@@ -88,6 +88,8 @@ function placeholderText(f: LayoutField): string {
       return 'Add a closing text';
     case 'contractReference':
       return 'Add a reference';
+    case 'subject':
+      return 'Add a subject';
     default:
       return 'Add';
   }

@@ -12,8 +12,8 @@
 // or the issue persists them (Books plan P1.6).
 //
 // PATCH edits a draft's header: `templateId`, `netOrGross`, `serviceDate`,
-// `servicePeriod`, `paymentTermsDays`, `contractReference`, `introText`,
-// `outroText`, and `replacesDocumentId: null` (a replacement draft of the
+// `servicePeriod`, `paymentTermsDays`, `contractReference`, `subject` (one
+// line, at most 200 characters), `introText`, `outroText`, and `replacesDocumentId: null` (a replacement draft of the
 // Correct flow becomes an ordinary invoice: issuing it then cancels nothing).
 // Pass `expectedVersion` (the `document.version` the editor
 // shows); a stale one answers 409 `concurrent_edit` and changes nothing.
@@ -42,6 +42,7 @@ const patchBody = z
     servicePeriod: z.object({ start: z.string(), end: z.string() }).nullable().optional(),
     paymentTermsDays: z.number().int().optional(),
     contractReference: z.string().nullable().optional(),
+    subject: z.string().nullable().optional(),
     introText: z.string().nullable().optional(),
     outroText: z.string().nullable().optional(),
     replacesDocumentId: z.null().optional(),

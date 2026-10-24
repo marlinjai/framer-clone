@@ -109,6 +109,8 @@ export interface RenderModel {
   servicePeriod: boolean;
   meta: Array<{ label: string; value: string }>;
   reference: string | null;
+  /** The subject line, one line (printed by the template's `subject` block); null prints none. */
+  subject: string | null;
   intro: string | null;
   showRate: boolean;
   amountHeader: string;
@@ -429,6 +431,7 @@ export function buildRenderModel(input: RenderInput): RenderModel {
     servicePeriod: Boolean(doc.servicePeriodStart && doc.servicePeriodEnd),
     meta: meta.map((m) => ({ label: m.label, value: toPdfText(m.value) })),
     reference,
+    subject: present(doc.subject) ? toPdfText(doc.subject) : null,
     intro: present(doc.introText) ? toPdfText(doc.introText) : null,
     showRate: !doc.kleinunternehmer,
     amountHeader,

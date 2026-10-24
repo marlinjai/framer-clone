@@ -47,6 +47,7 @@ function printedFields(input: RenderInput): Array<[string, string | null | undef
     ['introText', d.introText],
     ['outroText', d.outroText],
     ['contractReference', d.contractReference],
+    ['subject', d.subject],
     ['taxNote', d.taxNote],
   );
   (input.template?.footerBlocks ?? []).forEach((b, i) => {

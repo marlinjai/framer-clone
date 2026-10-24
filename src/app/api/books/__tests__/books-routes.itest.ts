@@ -460,6 +460,44 @@ describe('Books routes: cancellation, rendering, templates', () => {
     ).toBe('BK001');
   });
 
+  it('the subject: saved as one line, refused with a line break or past 200 characters, frozen at issue', async () => {
+    const customer = await newCustomer({ customerType: 'b2b' });
+    const draft = await api.createDraft({ customerId: customer.id, subject: 'Website-Relaunch' });
+    const id = draft.json.document.id as string;
+    expect(draft.json.document.subject).toBe('Website-Relaunch');
+    const v = draft.json.document.version as number;
+
+    const broken = await api.patch(id, { subject: 'Zeile eins\nZeile zwei', expectedVersion: v });
+    expect(broken.status).toBe(400);
+    expect(broken.json.error.code).toBe('invalid_input');
+    const long = await api.patch(id, { subject: 'x'.repeat(201), expectedVersion: v });
+    expect(long.json.error.code).toBe('invalid_input');
+    // The column's CHECK holds for every writer, the owner included.
+    expect(
+      await rejectionCode(env.ownerDb.updateTable('sales_document').set({ subject: 'x'.repeat(201) }).where('id', '=', id).execute()),
+    ).toBe('23514');
+
+    const changed = await api.patch(id, { subject: 'Website-Relaunch, Phase 1', expectedVersion: v });
+    expect(changed.status).toBe(200);
+    expect(changed.json.document.subject).toBe('Website-Relaunch, Phase 1');
+    await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    expect((await api.issue(id)).status).toBe(200);
+    expect(
+      await rejectionCode(env.ownerDb.updateTable('sales_document').set({ subject: 'nachträglich' }).where('id', '=', id).execute()),
+    ).toBe('BK001');
+    expect((await api.get(id)).json.document.subject).toBe('Website-Relaunch, Phase 1');
+  });
+
+  it('a subject the document font cannot print is refused at issue, naming the subject', async () => {
+    const customer = await newCustomer({ customerType: 'b2b' });
+    const id = (await api.createDraft({ customerId: customer.id, subject: '中文 Betreff' })).json.document.id;
+    await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    const res = await api.issue(id);
+    expect(res.status).toBe(422);
+    expect(res.json.error.fields).toEqual(['subject']);
+    expect((await api.get(id)).json.document.status).toBe('draft');
+  });
+
   it('a draft preview is marked and never stored', async () => {
     const customer = await newCustomer({ customerType: 'b2b' });
     const id = (await api.createDraft({ customerId: customer.id })).json.document.id;
