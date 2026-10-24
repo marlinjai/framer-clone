@@ -541,6 +541,17 @@ describe('Books routes: cancellation, rendering, templates', () => {
     });
     v = typed.json.document.version;
 
+    // A pasted text of many lines, and a lone carriage return: stored in a shape that reads back, and the document
+    // list (which reads every row) still loads.
+    const pasted = Array.from({ length: 250 }, (_, i) => `Zeile ${i + 1}`).join('\n');
+    const long = await api.patch(id, { introText: pasted, expectedVersion: v });
+    expect(long.status).toBe(200);
+    expect((await api.get(id)).json.document.introText).toBe(pasted);
+    const cr = await api.patch(id, { introText: 'Eins\rZwei', expectedVersion: long.json.document.version });
+    expect(cr.json.document.introText).toBe('Eins\nZwei');
+    expect((await api.listDocuments()).status).toBe(200);
+    v = cr.json.document.version;
+
     // Never both, never a shape the engine cannot draw; the database refuses a stray shape from any writer.
     const both = await api.patch(id, { introText: 'x', introFormat: intro, expectedVersion: v });
     expect(both.status).toBe(400);

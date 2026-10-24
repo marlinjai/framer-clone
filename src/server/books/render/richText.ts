@@ -49,9 +49,11 @@ export const richTextSchema = z
   .object({
     v: z.literal(1),
     blocks: z
-      .array(z.object({ kind: z.enum(['paragraph', 'bullet']), runs: z.array(runSchema).max(200) }).strict())
+      // Bounded by the text, not by a count of its own: the 4000 characters below bound both the blocks (one line
+      // each) and the runs, so any text the plain columns accept fits.
+      .array(z.object({ kind: z.enum(['paragraph', 'bullet']), runs: z.array(runSchema).max(RICH_TEXT_MAX_PLAIN) }).strict())
       .min(1)
-      .max(200),
+      .max(RICH_TEXT_MAX_PLAIN + 1),
   })
   .strict()
   .refine((rt) => plainOf(rt as RichText).length <= RICH_TEXT_MAX_PLAIN, `at most ${RICH_TEXT_MAX_PLAIN} characters`);
@@ -81,9 +83,22 @@ export function normalizeRichText(rt: RichText): RichText {
   return { v: 1, blocks };
 }
 
-/** A plain text as paragraphs, one per line. */
+/** A plain text as paragraphs, one per line (a line break of any platform: \n, \r\n or a lone \r). */
 export function richFromPlain(text: string): RichText {
-  return { v: 1, blocks: text.split(/\r?\n/).map((line) => ({ kind: 'paragraph' as const, runs: line === '' ? [] : [{ text: line }] })) };
+  return { v: 1, blocks: text.split(/\r\n?|\n/).map((line) => ({ kind: 'paragraph' as const, runs: line === '' ? [] : [{ text: line }] })) };
+}
+
+/**
+ * The stored pair of a text, derived one way so the two can never disagree: its canonical format, its plain words
+ * from that format, and the format kept only when it is needed to print as written. Null text for a text with no
+ * words. The server stores exactly this for a sent format and for a sent plain text (as paragraphs), and the
+ * invoice page draws exactly this while typing.
+ */
+export function derivePair(rich: RichText): { text: string | null; format: RichText | null } {
+  const canonical = normalizeRichText(rich);
+  const plain = plainOf(canonical);
+  if (plain.trim() === '') return { text: null, format: null };
+  return { text: plain, format: needsFormat(canonical) ? canonical : null };
 }
 
 /**

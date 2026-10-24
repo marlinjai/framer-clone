@@ -17,7 +17,7 @@ import { BooksError, invalid, withDbErrors } from '../errors';
 import { isIsoDate } from '../numbering';
 import type { BooksScope } from '../scope';
 import { requireSettings } from '../settings';
-import { normalizeRichText, needsFormat, plainOf, richFromPlain, richTextSchema, type RichText } from '../render/richText';
+import { derivePair, richFromPlain, richTextSchema, type RichText } from '../render/richText';
 import { toJsonb } from '../snapshots';
 import { totalsExceedLimit } from '../totals';
 import { insertEvent } from './events';
@@ -33,9 +33,9 @@ const optionalText = (max: number) => z.string().max(max).nullable().optional();
 const optionalFormat = richTextSchema.optional();
 
 /**
- * The stored pair of an intro or closing text, derived one way so the two can never disagree: from a format, its
- * plain words (and the format only when it is needed to print as written); from a plain text, no format, except
- * paragraphs for a text with line breaks, so they print as typed. Undefined when neither was sent.
+ * The stored pair of an intro or closing text (`derivePair`): from a sent format, or from a sent plain text read as
+ * paragraphs, so a text typed with line breaks prints them. Both go through the same derivation, so whatever is
+ * stored reads back through the schema. Undefined when neither was sent.
  */
 function textPair(
   which: 'introText' | 'outroText',
@@ -45,15 +45,9 @@ function textPair(
   if (text !== undefined && format !== undefined) {
     throw invalid('INVALID_INPUT', [{ path: [which], message: 'send the text or its format, not both' }]);
   }
-  if (format !== undefined) {
-    const rich = normalizeRichText(format);
-    const plain = plainOf(rich);
-    if (plain.trim() === '') return { text: null, format: null };
-    return { text: plain, format: needsFormat(rich) ? toJsonb(rich) : null };
-  }
-  if (text === undefined) return undefined;
-  if (text === null || text.trim() === '') return { text: null, format: null };
-  return { text, format: /\r?\n/.test(text) ? toJsonb(normalizeRichText(richFromPlain(text))) : null };
+  if (format === undefined && text === undefined) return undefined;
+  const pair = derivePair(format ?? richFromPlain(text ?? ''));
+  return { text: pair.text, format: pair.format && toJsonb(pair.format) };
 }
 /** The subject prints as one line: no line breaks, at most 200 characters (the column's CHECK, 016). */
 const subjectText = z

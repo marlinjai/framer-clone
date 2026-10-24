@@ -110,6 +110,15 @@ describe('every printed glyph has an outline in the embedded font', () => {
     expect(EMBED_SUBSET[family]).toBe(family === 'dejavu-sans');
   });
 
+  it.each(FONT_FAMILIES)('%s: no blank glyph in formatted texts, all four faces embedded', async (family) => {
+    // The italic faces are where an embedding defect would hide: Noto's subset printed blanks before (fonts.ts).
+    const { bytes } = await renderTemplate(buildRenderModel(probeInput(probe('formattedTexts'))), documentIn(family), fontFiles(family));
+    const { fonts, checked, blanks } = await blankGlyphs(bytes);
+    expect(fonts).toBe(4); // regular, bold, italic and bold italic
+    expect(checked).toBeGreaterThan(40);
+    expect(blanks.map((b) => `${b.font} ${b.char}:${b.gid}`).join(' ')).toBe('');
+  });
+
   it.each(FONT_FAMILIES)('%s: the same document twice gives the same bytes', async (family) => {
     const render = () => renderTemplate(buildRenderModel(probeInput(probe('reverseCharge'))), documentIn(family), fontFiles(family));
     const [a, b] = [await render(), await render()];

@@ -659,3 +659,10 @@ reloaded, the text came back unsent, Enter saved it with one request.
 - **Probe.** A `formattedTexts` probe (bold, italic, bold italic, a list, a blank line, a style
   change inside a word) runs through every preset and family: field map, pinned bytes (18 new
   renders), browser and server byte-identical, the save gate, and the composer's sample list.
+- **Fresh review (2026-10-24), every finding fixed in the same pull request:**
+  - **The serious one:** a plain text with more than 200 lines, or with a lone carriage return, was stored in a shape the read schema refused. From then on the document and the company's whole document list failed to load. Now one derivation (`derivePair`) serves a sent format, a sent plain text (read as paragraphs, any line-break style) and the page's live redraw, so whatever is stored reads back. The schema's limits are bounded by the 4000 characters instead of a block count. Pinned by unit tests and an integration test that saves 250 lines and lists the documents.
+  - Editing a formatted text on the page as plain words says that it removes the formatting, and undo sends the format back.
+  - In a right-aligned or centred list, the bullet hangs in front of its aligned line.
+  - The font-embedding test covers all four faces of every family (no blank glyph).
+  - A misplaced comment was moved back to `paragraphs()`.
+- **Noted, not changed:** drafts saved before this change with line breaks keep a null format and still print as one paragraph, until their text is saved again. Building a format at render time would change the bytes of documents already rendered, so it is deliberately not done.

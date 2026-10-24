@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { hasItalic, needsFormat, normalizeRichText, plainOf, richFromPlain, richTextSchema, type RichText } from '../render/richText';
+import { derivePair, hasItalic, needsFormat, normalizeRichText, plainOf, richFromPlain, richTextSchema, type RichText } from '../render/richText';
 
 const sample: RichText = {
   v: 1,
@@ -70,5 +70,27 @@ describe('the schema', () => {
     expect(richTextSchema.safeParse(run({ text: 'x'.repeat(4001) })).success).toBe(false);
     const many = { v: 1, blocks: Array.from({ length: 100 }, () => ({ kind: 'paragraph', runs: [{ text: 'x'.repeat(41) }] })) };
     expect(richTextSchema.safeParse(many).success).toBe(false);
+  });
+});
+
+describe('the stored pair', () => {
+  it('derives the same pair from a sent format and from the same words typed as plain text', () => {
+    expect(derivePair(richFromPlain('Eine Zeile.'))).toEqual({ text: 'Eine Zeile.', format: null });
+    expect(derivePair(richFromPlain('A\n'))).toEqual({ text: 'A', format: null });
+    expect(derivePair(richFromPlain('  \n '))).toEqual({ text: null, format: null });
+    expect(derivePair(richFromPlain('Eins\r\nZwei\rDrei'))).toEqual({
+      text: 'Eins\nZwei\nDrei',
+      format: { v: 1, blocks: [{ kind: 'paragraph', runs: [{ text: 'Eins' }] }, { kind: 'paragraph', runs: [{ text: 'Zwei' }] }, { kind: 'paragraph', runs: [{ text: 'Drei' }] }] },
+    });
+  });
+
+  it('stores only what the schema reads back, however many lines a pasted text has', () => {
+    const pasted = Array.from({ length: 250 }, (_, i) => `Zeile ${i + 1}`).join('\n');
+    const pair = derivePair(richFromPlain(pasted));
+    expect(pair.text).toBe(pasted);
+    expect(richTextSchema.safeParse(pair.format).success).toBe(true);
+    // The most lines 4000 characters can hold: every line empty but one character.
+    const most = derivePair(richFromPlain(`${'\n'.repeat(3999)}x`));
+    expect(richTextSchema.safeParse(most.format).success).toBe(true);
   });
 });

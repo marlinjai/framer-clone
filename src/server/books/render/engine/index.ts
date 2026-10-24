@@ -425,7 +425,8 @@ class Binder {
           h: r2(lead(size) + (li === lines.length - 1 ? gap : 0)),
           draw: (dc, top) => {
             const y = r2(PAGE_HEIGHT - top - size);
-            if (bullet && li === 0) dc.page.drawText(BULLET, { x: r2(x), y, size, font: this.font(opts.bold), color: opts.color });
+            // The bullet hangs in front of the line it starts, wherever the alignment puts that line.
+            if (bullet && li === 0) dc.page.drawText(BULLET, { x: r2(start - indent), y, size, font: this.font(opts.bold), color: opts.color });
             let cx = start;
             for (const p of pieces) {
               dc.page.drawText(p.text, { x: r2(cx), y, size, font: this.styledFont(p.bold, p.italic), color: opts.color });
@@ -1123,7 +1124,6 @@ class Binder {
   }
 }
 
-/** A text's paragraphs (line breaks in template and document texts). */
 const BULLET = '\u2022';
 
 /**
@@ -1147,6 +1147,7 @@ export function italicFacesNeeded(model: RenderModel, doc: TemplateDocumentV2): 
   return need;
 }
 
+/** A text's paragraphs (line breaks in template and document texts). */
 function paragraphs(text: string): string[] {
   return text
     .split(/\n+/)
