@@ -202,7 +202,7 @@ const PhoneEditorChrome = observer(({ editorUI }: { editorUI: EditorUIType }) =>
         size="tall"
         data-testid="layers-sheet"
       >
-        <LeftSidebar variant="sheet" />
+        <LeftSidebar variant="sheet" onComponentInserted={() => setSheet(null)} />
       </BottomSheet>
 
       <BottomSheet

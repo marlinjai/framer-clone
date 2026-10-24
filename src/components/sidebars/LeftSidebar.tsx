@@ -25,6 +25,7 @@ import LayersPanel from './left/LayersPanel';
 import PagesPanel from './left/PagesPanel';
 import { PaneTabs, paneTabId, panePanelId, type PaneTab } from './left/PaneTabs';
 import ContentManagerPanel from '@/components/cms/ContentManagerPanel';
+import { tapInsertTarget } from '@/lib/layers/tapInsertTarget';
 import {
   LEFT_SIDEBAR_DEFAULT_WIDTH,
   LEFT_SIDEBAR_KEY_STEP,
@@ -52,11 +53,31 @@ const BOTTOM_TABS: readonly PaneTab<BottomTab>[] = [
 export interface LeftSidebarProps {
   /** 'docked' (default): the desktop side panel. 'sheet': fills a phone bottom sheet. */
   variant?: 'docked' | 'sheet';
+  /** Sheet only: a component was added with a tap (the sheet closes to show it). */
+  onComponentInserted?: () => void;
 }
 
-const LeftSidebar = observer(({ variant = 'docked' }: LeftSidebarProps) => {
+const LeftSidebar = observer(({ variant = 'docked', onComponentInserted }: LeftSidebarProps) => {
   const { editorUI } = useStore();
   const isSheet = variant === 'sheet';
+  // In the sheet the canvas is covered, so components are added with a tap,
+  // inside or after the selection, as one undo step, and the new one is selected.
+  const insertOnTap = useCallback(
+    (registryId: string) => {
+      const page = editorUI.currentPage;
+      if (!page) return;
+      const created = page.insertRegistryComponent(registryId, tapInsertTarget(editorUI.selectedComponent));
+      if (!created) return;
+      // Select it in the frame being edited; with none chosen yet, in the
+      // narrowest frame, which is the one the phone layout shows.
+      const narrowest = page.viewportNodes
+        .slice()
+        .sort((a, b) => (a.viewportWidth ?? Infinity) - (b.viewportWidth ?? Infinity))[0];
+      editorUI.selectComponent(created, editorUI.selectedViewportNode?.breakpointId ?? narrowest?.breakpointId);
+      onComponentInserted?.();
+    },
+    [editorUI, onComponentInserted],
+  );
   // A sheet is always expanded and never reads or writes the desktop state.
   const isCollapsed = isSheet ? false : editorUI.leftSidebarCollapsed;
   const [activeTab, setActiveTab] = useState<BottomTab>('layers');
@@ -265,7 +286,7 @@ const LeftSidebar = observer(({ variant = 'docked' }: LeftSidebarProps) => {
               aria-labelledby={paneTabId(tabsId, activeTab)}
               className="flex-1 overflow-y-auto p-3"
             >
-              {activeTab === 'components' && <ComponentsPanel />}
+              {activeTab === 'components' && <ComponentsPanel onTapInsert={isSheet ? insertOnTap : undefined} />}
               {activeTab === 'layers' && <LayersPanel />}
               {activeTab === 'content' && <ContentManagerPanel />}
             </div>

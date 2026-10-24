@@ -48,7 +48,8 @@ files beyond what layout strictly needs.
    pair; the history list (jump to any step) moves into the More menu as its own dialog.
 3. **Save and Publish status in the compact bar** shows as a small notice under the top bar
    (fixed, full width minus 16px margins) instead of the inline text that has no room: a success
-   message clears itself after 5 seconds, an error stays until dismissed. The Publish legal check
+   message clears itself after 5 seconds, except Publish's with its "live at" link (something to
+   tap), which stays like an error until dismissed. The Publish legal check
    notice already caps itself at the viewport width; it moves up to sit under the 48px phone bar.
 4. **Canvas first.** On a phone the canvas fills the screen between a 48px top bar and a docked
    bottom bar (56px plus `env(safe-area-inset-bottom)`, so it clears the iPhone home indicator).
@@ -101,10 +102,15 @@ files beyond what layout strictly needs.
     the widest breakpoint frame the preview opens on the widest frame that fits (the Mobile frame
     on a phone) instead of a 1280px desktop frame scrolled sideways; on desktop nothing changes.
 
-11. **Touch screens have no hover.** Controls that only appeared on hover are shown on touch
+11. **Adding components on a phone is a tap.** The Components list is drag only on desktop, and
+    in the sheet there is no canvas to drop on. In the sheet a tap (or Enter or Space) adds the
+    component, by the drop rules: inside the selection when it is a container, otherwise right
+    after it, and at the end of the page with nothing selected (`src/lib/layers/tapInsertTarget.ts`).
+    The new component is selected and the sheet closes so it is visible; one undo step.
+12. **Touch screens have no hover.** Controls that only appeared on hover are shown on touch
     screens (`@media (hover: none)`): the page row's settings and delete buttons, and the action
     cluster (hide, lock, more) of the selected layer row.
-12. **Dialog close buttons** get a 32px target on phones (same 16px icon).
+13. **Dialog close buttons** get a 32px target on phones (same 16px icon).
 
 ### Files (as built)
 

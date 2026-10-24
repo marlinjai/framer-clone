@@ -42,6 +42,19 @@ describe('TopBarStatus', () => {
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
+  it('compact bar: a success that carries a link (Publish) stays until dismissed', () => {
+    setCompact(true);
+    const onDismiss = vi.fn();
+    render(
+      <TopBarStatus kind="success" title="Published" onDismiss={onDismiss} persist>
+        Published <a href="https://example.com">live at example.com</a>
+      </TopBarStatus>,
+    );
+    act(() => vi.advanceTimersByTime(COMPACT_SUCCESS_MS * 3));
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(screen.getByRole('link', { name: 'live at example.com' })).toBeTruthy();
+  });
+
   it('wide bar: a success stays inline as before', () => {
     setCompact(false);
     const onDismiss = vi.fn();

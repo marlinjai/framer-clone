@@ -157,6 +157,7 @@ const PublishButton = observer(() => {
           onDismiss={() => setState({ kind: 'idle' })}
           inlineMaxWidth="lg:max-w-[280px]"
           toneClassName="text-brand"
+          persist={!!state.liveUrl}
         >
           <span className="lg:truncate">{state.message}</span>
           {state.liveLabel && (

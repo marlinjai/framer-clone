@@ -4,7 +4,8 @@
 // sits inline beside its button, as it always has. Under 1024px the compact
 // top bar has no room for it, so it becomes a notice under the bar, full width
 // minus 16px margins, with a dismiss button; a success there clears itself
-// after a few seconds, an error stays until dismissed (plan
+// after a few seconds (unless it holds something to tap, like Publish's live
+// link), an error stays until dismissed (plan
 // docs/plans/2026-10-24-editor-on-phones.md).
 'use client';
 
@@ -28,20 +29,22 @@ export interface TopBarStatusProps {
   inlineMaxWidth?: string;
   /** Extra classes for the text colour. */
   toneClassName?: string;
+  /** Keep a success until dismissed (it carries something to tap, such as the live link). */
+  persist?: boolean;
   children: React.ReactNode;
 }
 
-export function TopBarStatus({ kind, title, onDismiss, inlineMaxWidth = 'lg:max-w-[200px]', toneClassName, children }: TopBarStatusProps) {
+export function TopBarStatus({ kind, title, onDismiss, inlineMaxWidth = 'lg:max-w-[200px]', toneClassName, persist = false, children }: TopBarStatusProps) {
   // The callback is usually an inline arrow; keep the timer keyed to the message only.
   const dismissRef = React.useRef(onDismiss);
   React.useEffect(() => {
     dismissRef.current = onDismiss;
   });
   React.useEffect(() => {
-    if (kind !== 'success' || !isCompactTopBar()) return;
+    if (kind !== 'success' || persist || !isCompactTopBar()) return;
     const t = window.setTimeout(() => dismissRef.current(), COMPACT_SUCCESS_MS);
     return () => window.clearTimeout(t);
-  }, [kind, title]);
+  }, [kind, title, persist]);
 
   const tone = toneClassName ?? (kind === 'error' ? 'text-destructive' : 'text-muted-foreground');
   return (
