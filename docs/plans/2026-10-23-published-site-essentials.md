@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: completed
 date: 2026-10-23
 title: Published site essentials, the things that make a generated site real
 summary: Close the gaps between a generated page and a real business site, from the owner's 19-point checklist of 2026-10-23 (custom 404, call to action above the fold, meta title and description, Open Graph image, favicon set, robots.txt, sitemap.xml, alt text, mobile breakpoints, sticky mobile call to action, loading states, form error states, thank-you page, privacy policy, terms, cookie banner, analytics, real contact address), audited against the code the same day; built around one Site settings object, forms, legal page templates and consent.
@@ -186,3 +186,73 @@ section 25 TDDDG it needs consent. Decided while building, each reversible:
 - **Generator**: `promptSections/legalLinks.ts` tells it to end every footer with links to the legal
   pages that exist plus the cookie settings link, with exact hrefs and labels (sent as an optional
   `legalLinks` field of the site context). Links to pages that do not exist are never generated.
+
+## Generator essentials as built (decision 7, 2026-10-24)
+
+The loading part of decision 7 was built with the loading states above. The other three, decided
+while building, each reversible:
+
+- **Home: a page-essentials screen beside the tells screen, not the validator.**
+  `src/lib/ai/pageGen/essentials.ts` runs on the validated tree next to the design-tells screen
+  (`screenTells` in the generate-page route) and its findings join the same single repair round. A
+  validation error would reject the whole generation, so a page whose repair round also failed would
+  give the user nothing; a missing button or alt text must never cost the page. What the repair
+  round leaves is reported with the tells (the dialog now says "issues ... (tells of generated design
+  or missing page essentials)").
+- **Call to action above the fold** (`hero-cta`): only for a full new page. The hero is the section
+  holding the page's h1 (single main or div wrappers unwrapped), else the first section that is not
+  the navigation. It counts a button with a label, a form's submit button, an add-to-cart or
+  checkout component, or a link styled as a button (an href, a fill or a border, and padding). A
+  plain text link, a call to action in the navigation and the sticky bar do not count. Skipped for
+  section generations and for pages that are clearly not marketing pages: the brief or title names
+  a legal page (the German and English titles, labels and slugs of `src/lib/legal`, plus "privacy
+  policy", "terms of use" and similar), a 404 or a thank-you page; a title that is exactly a legal
+  page name also counts. A brief that only mentions privacy ("a privacy-first notes app") is checked.
+- **Alt text** (`alt-text`): the validator no longer fills a missing alt (neither from the label nor
+  with "Image", and the Image preset's "Image" default is removed when the model wrote none). A
+  missing, empty or generic alt ("image", "photo", "picture", "Bild", "Foto", "Image 2"), a file name
+  (an extension, a camera name such as DSC01234, or the src's own file name) or a generic layer name
+  repeated ("Header photo") is a finding with the image's layer path. **Decorative images**: the
+  model sends `decorative: true`, the validator writes `alt=""` plus `data-decorative="true"` (an
+  echoed `data-decorative` from replace context is kept), and neither the screen nor the editor flags
+  it. **Fallback** after the repair round: the image's stock-photo query, sentence-cased (it
+  describes the photo), else its layer name when that is not generic, else an empty alt without the
+  decorative flag so the editor warns; each fill is one line in the dialog's automatic fixes, and an
+  image left without alt text stays in the list of remaining issues.
+- **Editor signal**: the Image section of an img now has an Alt text field (there was no alt editor
+  at all), a Decorative switch and a warning with the same rule (`altProblem`), so a dropped Image
+  component (preset alt "Image") shows the warning until the owner describes it.
+- **Sticky mobile call to action** (`src/lib/stickyCta/stickyCta.ts`, registry id `stickyCta`, in
+  Basic): one node, a div marked `data-sticky-cta="bar"` styled through the normal sections, whose
+  link is drawn from props (`ctaLabel`, `ctaHref`, `buttonBackground`, `buttonTextColor`,
+  `buttonRadius`; a 48 px tall full-width link), edited in its own "Sticky call to action" section
+  (label, link checked as typed with a page picker, colours, radius). The `position: fixed` guard of
+  the validator stays as it was (it is the breakout-character guard that stops "red;position:fixed"
+  inside another value; a plain `position` value was never blocked).
+  - Canvas: a normal block where it sits, labelled "Sticky call to action · mobile only"; the link
+    is a span, so a click selects it and never navigates.
+  - Preview: the frame is the scroll container, so `fixed` would pin to the browser window; the
+    page's first bar is drawn once right after the page root, as a child of the frame, with
+    `position: sticky; bottom: 0` (so the root's own overflow cannot stop it), on the smallest
+    breakpoint only, and not at all on larger ones. On a page with a single breakpoint the preview
+    pins it at every width while the published page uses the 809.98 px fallback.
+  - Published: `hoistStickyCta` moves the first bar to the end of the page root (reading order) and
+    drops further ones; a stylesheet hides it above the smallest breakpoint (below the second
+    smallest breakpoint's min width, or 809.98 px for a page with one breakpoint) and below it fixes
+    it to the bottom with `env(safe-area-inset-bottom)` padding, pads the body by the bar's height
+    (measured into `--fc-sticky-cta-h` by a tiny inline ResizeObserver script, 72 px without
+    JavaScript), and lifts the consent banner above the bar so both stay usable (the bar sits one
+    z-index layer below the banner). The site layout declares no `viewport-fit=cover`, so on iOS the
+    safe-area inset is 0 and Safari keeps the bar above the home indicator itself; the padding takes
+    effect if the layout ever opts into cover. On phones the bar's bottom padding is fixed at 12 px
+    plus the safe area (the owner's own bottom padding applies only on the canvas).
+  - At most one per page: a second drop from the Components panel selects the existing bar, and
+    every drop lands at the end of the page wherever it was dropped. A bar duplicated by copy and
+    paste shows on the canvas, but the preview and the published page render only the first.
+  - Generator: `promptSections/stickyCta.ts` asks for one on a new page whose goal is a booking,
+    reservation, appointment or getting in touch, with the hero's call to action intent and href;
+    the validator accepts it only on a new page, at most one, moved to the end of the top-level
+    nodes, and drops a bar without a label or a safe link (the preset's placeholder link is never
+    used for a generated bar).
+
+Not built here: form notification emails (decision 4) stay open on their own roadmap line.

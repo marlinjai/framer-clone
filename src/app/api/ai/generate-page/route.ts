@@ -32,6 +32,12 @@
 // repair round validation errors use. If that round fails or leaves tells, the
 // best valid page is still applied and the tells are reported in the result.
 //
+// The page-essentials screen (src/lib/ai/pageGen/essentials.ts) runs beside it
+// and joins the same repair round: a new marketing page whose hero has no
+// primary call to action, and images without a meaningful alt text. An alt
+// text still missing after that round is filled from the photo description
+// (never "Image") and reported as an automatic fix.
+//
 // Budget per request: brief <= GENERATION_LIMITS.maxBriefChars, replace/insert
 // context <= MAX_CONTEXT_CHARS, max_tokens MAX_OUTPUT_TOKENS per attempt, at
 // most one repair attempt, node and depth caps enforced by the validator, and a
@@ -98,6 +104,7 @@ import {
   type StockImageResolution,
 } from '@/lib/ai/pageGen/stockImages';
 import { FOCAL_MODEL, detectFocalPoints } from '@/lib/ai/pageGen/focalPoints';
+import { detectEssentials, fillMissingAlt, type EssentialsOptions } from '@/lib/ai/pageGen/essentials';
 import { SiteContextSchema } from '@/lib/ai/pageGen/promptSections/siteContext';
 import type { AiEffort, AiModelKey } from '@/lib/ai/anthropicClient';
 
@@ -305,6 +312,13 @@ async function runGeneration(args: RunArgs): Promise<void> {
       },
     ];
 
+    // The page-essentials checks of this request (src/lib/ai/pageGen/essentials.ts).
+    const essentials: EssentialsOptions = {
+      newPage: body.target.kind === 'newPage',
+      brief: body.brief,
+      ...(body.target.kind === 'newPage' && body.target.title ? { pageTitle: body.target.title } : {}),
+    };
+
     let lastProblems: string[] = [];
     // A valid page that only failed the tells screen: applied if the repair
     // round cannot do better, never thrown away.
@@ -313,7 +327,14 @@ async function runGeneration(args: RunArgs): Promise<void> {
     let received = 0;
 
     const deliver = async (c: ScreenedGeneration, attempt: number, notes: string[]): Promise<void> => {
-      const { imageRequests, invalidImageQueries, ...result } = c.result;
+      const { imageRequests, invalidImageQueries, ...screenedResult } = c.result;
+      // The last resort for alt texts the repair round did not fix: the photo
+      // description (or a meaningful layer name), each one reported.
+      const alt = fillMissingAlt(screenedResult.nodes, imageRequests);
+      const result = { ...screenedResult, nodes: alt.nodes };
+      // Filled alt texts are automatic fixes; an image left without one stays a remaining issue.
+      const unfilledAlt = new Set(alt.unfilled);
+      const remaining = c.remaining.filter((f) => f.tell !== 'alt-text' || unfilledAlt.has(f.path));
       if (imageRequests.length > 0) {
         sse.send('gen:progress', { phase: 'images', receivedChars: received, attempt });
       }
@@ -330,17 +351,17 @@ async function runGeneration(args: RunArgs): Promise<void> {
       const repaired = best !== undefined && c !== best;
       const repairNote =
         repaired && tellsBefore > c.remaining.length
-          ? [`Design: a repair round removed ${tellsBefore - c.remaining.length} of ${tellsBefore} tells of generated design`]
+          ? [`Design: a repair round removed ${tellsBefore - c.remaining.length} of ${tellsBefore} issues (tells of generated design or missing page essentials)`]
           : [];
       // Counts only, never page content.
       console.info(
-        `[generate-page] tells fixed=${c.fixCount} remaining=${c.remaining.length} repaired=${repaired} attempts=${attempt}`,
+        `[generate-page] tells fixed=${c.fixCount} remaining=${c.remaining.length} repaired=${repaired} attempts=${attempt} altFilled=${alt.filled} altMissing=${alt.unfilled.length}`,
       );
       sse.send('gen:result', {
         generationId: requestId,
         ...result,
-        warnings: [...result.warnings, ...c.fixLines, ...repairNote, ...notes],
-        tells: c.remaining.map(describeFinding),
+        warnings: [...result.warnings, ...c.fixLines, ...alt.notes, ...repairNote, ...notes],
+        tells: remaining.map(describeFinding),
         nodes: applyStockPhotos(result.nodes, placed),
         model: modelId,
         images: withInvalidQueries(stock.summary, invalidImageQueries),
@@ -458,9 +479,12 @@ async function runGeneration(args: RunArgs): Promise<void> {
       } else if (malformedInput) {
         problems = [`the ${EMIT_TOOL_NAME} input was not valid JSON`];
       } else {
-        const outcome = validateGeneration(toolUse.input, { breakpoints });
+        const outcome = validateGeneration(toolUse.input, {
+          breakpoints,
+          allowStickyCta: body.target.kind === 'newPage',
+        });
         if (outcome.ok) {
-          const screened = screenTells(outcome.result, breakpoints);
+          const screened = screenTells(outcome.result, breakpoints, essentials);
           if (screened.remaining.length === 0 || attempts >= MAX_ATTEMPTS) {
             await deliver(screened, attempt, []);
             return;
@@ -556,16 +580,25 @@ interface ScreenedGeneration {
 
 /**
  * Run the tells screen (src/lib/ai/pageGen/tells.ts) over a validated result:
- * apply the safe fixes, then detect what is left. Nodes that will get a stock
- * photo are exempt from the rules that would misread their placeholder.
+ * apply the safe fixes, then detect what is left, plus the page essentials
+ * (src/lib/ai/pageGen/essentials.ts). Nodes that will get a stock photo are
+ * exempt from the rules that would misread their placeholder.
  */
-function screenTells(result: GenerationResult, breakpoints: BreakpointKey[]): ScreenedGeneration {
+function screenTells(
+  result: GenerationResult,
+  breakpoints: BreakpointKey[],
+  essentials: EssentialsOptions,
+): ScreenedGeneration {
   const opts = {
     photoNodeIds: new Set(result.imageRequests.map((r) => r.nodeId)),
     breakpointKeys: breakpoints.map((b) => b.key),
   };
   const fixed = autoFixTells({ title: result.title, description: result.description, nodes: result.nodes }, opts);
-  const remaining = [...fixed.findings, ...detectTells(fixed.tree, opts).filter((f) => !f.autoFixable)];
+  const remaining = [
+    ...fixed.findings,
+    ...detectTells(fixed.tree, opts).filter((f) => !f.autoFixable),
+    ...detectEssentials(fixed.tree, essentials),
+  ];
   const nodes = fixed.tree.nodes;
   return {
     result: {

@@ -146,7 +146,10 @@ describe('validateGeneration: repairs', () => {
     const [link, div, img] = result.nodes;
     expect(link.props).toEqual({ children: 'x' });
     expect(div.props).toEqual({});
-    expect(img.props).toMatchObject({ src: PLACEHOLDER_IMAGE_SRC, alt: 'Team photo', draggable: false });
+    expect(img.props).toMatchObject({ src: PLACEHOLDER_IMAGE_SRC, draggable: false });
+    // A missing alt is not filled here (never from the label, never "Image"):
+    // the page-essentials screen sends it to the repair round.
+    expect(img.props).not.toHaveProperty('alt');
   });
 
   it('drops forbidden tags with their subtree and renames unknown tags to div', () => {

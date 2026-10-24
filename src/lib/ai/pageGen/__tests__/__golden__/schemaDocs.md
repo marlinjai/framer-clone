@@ -9,7 +9,7 @@ component (a MobX-State-Tree ComponentSnapshotIn). Shape of one node:
   "label": "<short name shown in the layers panel, e.g. Hero, Pricing card>",
   "props": {
     "children": "<text content, only on non-void tags without child nodes>",
-    "src": "<img only>", "alt": "<img only>",
+    "src": "<img only>", "alt": "<img only>", "decorative": <img only: true for a purely decorative image>,
     "imageQuery": "<img or container: English stock-photo search>",
     "href": "<a only>", "target": "<a only: _blank or _self>",
     "style": { "<camelCase CSS property>": <value or responsive map> },
@@ -29,7 +29,9 @@ Rules:
 - Only the style keys listed below are kept; anything else is dropped. No class names, no CSS text,
   no event handlers, no HTML strings.
 - Links: href must start with https://, http://, mailto:, tel:, # or a single /. Images: src must be https://,
-  http:// or a site path starting with /. Always give images a meaningful alt in the page's language.
+  http:// or a site path starting with /. Always give images a meaningful alt in the page's language that
+  says what the image shows (never "image", "photo", a file name or the layer name). Only a purely
+  decorative image (a texture, a divider) gets "alt": "" with "decorative": true.
 - Stock photos: an img without src gets "imageQuery", 2 to 6 English words describing the photo
   (at most 80 characters, plain words only). The server resolves at most
   12 images per generation to photos; the rest keep a placeholder.
@@ -106,7 +108,7 @@ library default of its kind; a plain system stack (system-ui, Georgia, ...) is k
 - h5: may have children or text
 - h6: may have children or text
 - header: may have children or text; props: imageQuery
-- img: void (no children, no text); props: src, alt, imageQuery
+- img: void (no children, no text); props: src, alt, decorative, imageQuery
 - label: may have children or text
 - main: may have children or text; props: imageQuery
 - nav: may have children or text; props: imageQuery
@@ -202,6 +204,10 @@ library default of its kind; a plain system stack (system-ui, Georgia, ...) is k
 ### preset "stack" (Stack, category layout)
 - type: div
 - defaults: {"style":{"backgroundColor":"#f9fafb","border":"1px dashed #d1d5db","borderRadius":"8px","display":"flex","flexDirection":"column","gap":"12px","minHeight":"120px","padding":"16px","width":"240px"}}
+### preset "stickyCta" (Sticky call to action, category basic)
+- type: div
+- sticky call to action (see "Sticky call to action"): props ctaLabel, ctaHref, buttonBackground, buttonTextColor, buttonRadius; new pages only, no children
+- defaults: {"buttonBackground":"#111827","buttonRadius":"10px","buttonTextColor":"#ffffff","ctaHref":"#contact","ctaLabel":"Book now","data-sticky-cta":"bar","style":{"backgroundColor":"#ffffff","borderTop":"1px solid rgba(17, 24, 39, 0.08)","boxShadow":"0 -6px 20px rgba(17, 24, 39, 0.08)","fontFamily":"inherit","padding":"12px 16px"}}
 ### preset "tableView" (Table view, category data)
 - type: div
 - data component "table-view": renders a placeholder until the user binds it in the properties panel (bindable: collection, filter, limit, sort). Use it only when the brief clearly asks for this kind of content; never add children to it.

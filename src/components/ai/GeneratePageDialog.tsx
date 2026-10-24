@@ -278,8 +278,8 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
               {state.tells && state.tells.length > 0 && !state.undone && (
                 <details className="text-xs text-muted-foreground">
                   <summary>
-                    {state.tells.length} {state.tells.length === 1 ? 'design tell' : 'design tells'} of generated pages
-                    remain, worth a manual pass
+                    {state.tells.length} {state.tells.length === 1 ? 'issue remains' : 'issues remain'} (tells of
+                    generated design or missing page essentials), worth a manual pass
                   </summary>
                   <ul className="mt-1 max-h-32 list-disc overflow-y-auto pl-4">
                     {state.tells.slice(0, 50).map((t, i) => (

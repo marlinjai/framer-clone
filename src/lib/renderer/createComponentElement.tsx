@@ -28,6 +28,8 @@ import AddToCartButton from '@/lib/renderer/commerce/AddToCartButton';
 import CartView from '@/lib/renderer/commerce/CartView';
 import CheckoutButton from '@/lib/renderer/commerce/CheckoutButton';
 import { createEditorFormElement, formKindOfComponent } from '@/lib/renderer/forms/editorFormElement';
+import { isStickyCta } from '@/lib/stickyCta/stickyCta';
+import { createStickyCtaElement } from '@/lib/renderer/stickyCta/stickyCtaElement';
 
 // The six Track C commerce kinds. Disjoint from the CMS kinds, so the commerce
 // branch in createComponentElement can claim them without touching the CMS path.
@@ -108,6 +110,13 @@ export function createComponentElement(
     : finalProps;
 
   if (component.isHostElement) {
+    // The sticky call to action bar draws its own link (src/lib/stickyCta).
+    // On the canvas it is a labelled normal block; the preview pins it
+    // (HeadlessPageRenderer), the published page through its stylesheet.
+    if (isStickyCta(component.props)) {
+      return createStickyCtaElement(propsWithIdentity, options?.mode === 'editor' ? 'editor' : 'preview');
+    }
+
     // Form components (data-form-kind): static on the canvas and in the preview,
     // never submitting. The published page renders them as a client island.
     const formKind = formKindOfComponent(component);

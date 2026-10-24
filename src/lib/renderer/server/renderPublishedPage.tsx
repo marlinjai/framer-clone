@@ -30,6 +30,7 @@ import { publishedFontAssets } from './publishedFonts';
 import { applyImageLoading, HeroPreload } from './imageLoading';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import CommercePageProviders from './CommercePageProviders';
+import { hoistStickyCta, stickyCtaCss, stickyCtaMeasureScript } from '@/lib/stickyCta/stickyCta';
 
 /**
  * The resolved analytics binding for a published page. `ingestionKey` is the
@@ -140,7 +141,15 @@ export async function renderPublishedPage(
   const { root, pageParams, cmsRepo, commerceRepo, analytics, breakpoints = [], smoothScroll = false, consent } = input;
   const tracker = resolveTracker(analytics);
 
-  const hydrated = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo });
+  const hydratedTree = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo });
+  // The sticky call to action (src/lib/stickyCta): the page's first bar moves
+  // to the end of the page root (its pinned place in the reading order),
+  // further ones are dropped (at most one per page).
+  const sticky = hoistStickyCta(hydratedTree);
+  if (sticky.removed > 0) {
+    console.warn(`renderPublishedPage: ${sticky.removed} extra sticky call to action bar(s) not rendered (at most one per page)`);
+  }
+  const hydrated = sticky.root;
 
   // Responsive styles leave the inline style for a per-page stylesheet of
   // max-width media queries (desktop-first, the editor's cascade). Done on the
@@ -195,7 +204,16 @@ export async function renderPublishedPage(
           // without JavaScript) unless the visitor asks for reduced motion.
           <script data-fc-effects-boot="" dangerouslySetInnerHTML={{ __html: publishedEffectsBootScript() }} />
         ) : null}
+        {sticky.bar ? (
+          // Pins the bar on the smallest breakpoint, pads the page and lifts
+          // the consent banner above it. Constant text apart from numbers.
+          <style data-fc-sticky-cta-style="" dangerouslySetInnerHTML={{ __html: stickyCtaCss(breakpoints) }} />
+        ) : null}
         <CommercePageProviders>{tree}</CommercePageProviders>
+        {sticky.bar ? (
+          // Measures the bar for the page padding (a fallback height applies without it).
+          <script data-fc-sticky-cta-measure="" dangerouslySetInnerHTML={{ __html: stickyCtaMeasureScript() }} />
+        ) : null}
         {effects.needsRuntime || smoothScroll ? (
           <EffectsIsland effects={effects.needsRuntime} smoothScroll={smoothScroll} />
         ) : null}

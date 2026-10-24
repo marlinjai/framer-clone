@@ -21,6 +21,13 @@ import { createComponentElement } from './createComponentElement';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
 import { createScope, type BindingScope } from '@/lib/bindings/resolver/scope';
 import { effectDomForBreakpoint, resolveEffects, storedEffectsOf } from '@/lib/effects/effects';
+import { isStickyCta } from '@/lib/stickyCta/stickyCta';
+
+/**
+ * True inside HeadlessPageRenderer, which draws the page's sticky call to
+ * action itself (src/lib/stickyCta): every bar is then skipped where it sits.
+ */
+export const StickyCtaPreviewContext = React.createContext(false);
 
 export interface HeadlessComponentRendererProps {
   component: ComponentInstance;
@@ -30,6 +37,8 @@ export interface HeadlessComponentRendererProps {
   // descendants resolve `{{row.field}}` / `{{page.params.*}}` and so the
   // editor + headless paths produce identical output. Defaults to empty.
   scope?: BindingScope;
+  /** Set when HeadlessPageRenderer draws the hoisted sticky call to action (see StickyCtaPreviewContext). */
+  hoisted?: boolean;
 }
 
 const HeadlessComponentRenderer = observer(({
@@ -37,7 +46,12 @@ const HeadlessComponentRenderer = observer(({
   breakpointId,
   allBreakpoints,
   scope,
+  hoisted = false,
 }: HeadlessComponentRendererProps) => {
+  const pageDrawsStickyCta = React.useContext(StickyCtaPreviewContext);
+  // A sticky bar is drawn once, by the page renderer, after the page root.
+  if (isStickyCta(component.props) && !hoisted && pageDrawsStickyCta) return null;
+
   // The Layers panel's eye (canvasVisible) is NOT honoured here: it hides a
   // layer on the editor canvas only, as in Framer. Preview shows what the
   // published page shows (the server renderer ignores the flag too); hiding
