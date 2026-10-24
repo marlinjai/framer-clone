@@ -43,9 +43,9 @@ vi.mock('@/server/sites/cachedResolver', () => ({
 
 // The form submissions live in the company's tenant schema (another
 // connection): the route deletes them after the site commit.
-const deleteProjectSubmissions = vi.fn(async (..._a: unknown[]) => 0);
+const deleteProjectSubmissions = vi.fn<(tenantGroupId: string, siteId: string) => Promise<number>>(async () => 0);
 vi.mock('@/server/forms/projectDelete', () => ({
-  deleteProjectSubmissions: (...a: unknown[]) => deleteProjectSubmissions(...a),
+  deleteProjectSubmissions: (tenantGroupId: string, siteId: string) => deleteProjectSubmissions(tenantGroupId, siteId),
 }));
 
 // ---- in-memory database (sites, site_domains with ON DELETE CASCADE) ------

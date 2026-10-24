@@ -52,7 +52,7 @@ export function formPropKeysFor(defaultProps: Record<string, unknown> | undefine
 
 function cleanString(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string') return undefined;
-  // eslint-disable-next-line no-control-regex
+   
   const v = value.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
   return v ? v.slice(0, max) : undefined;
 }
