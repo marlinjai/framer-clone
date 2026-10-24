@@ -499,7 +499,6 @@ const CanvasInner = observer(() => {
       clientX: tap.x,
       clientY: tap.y,
       detail: 2,
-      view: window,
     });
     const handled = !target.dispatchEvent(dbl);
     const editing = rootStore.editorUI.editingComponent;
