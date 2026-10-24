@@ -54,6 +54,11 @@ import { ancestorIdsOf, canDeleteLayer, deleteLayer, duplicateLayer } from '@/li
 import { layerActionsWidth } from '@/lib/layers/sidebarWidth';
 import { ContextMenu, type MenuItem, type MenuCloseReason } from './ContextMenu';
 
+// Touch screens (no hover): the selected row keeps its action cluster visible
+// and its name makes room for it (plan docs/plans/2026-10-24-editor-on-phones.md).
+const TOUCH_SELECTED_REVEAL = '[@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto';
+const TOUCH_SELECTED_NAME_PAD = '[@media(hover:none)]:pr-[var(--layer-actions-w)] @max-[172px]:[@media(hover:none)]:pr-[26px]';
+
 // Map viewport label to device icon
 function ViewportIcon({ label }: { label: string }) {
   const lower = label.toLowerCase();
@@ -426,7 +431,7 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
         {/* Component name: 13px, truncate; selected gets text-brand + weight 500;
             hidden rows (and rows inside a hidden one) are dimmed */}
         <span
-          className={`flex-1 truncate group-hover:pr-[var(--layer-actions-w)] group-focus-within:pr-[var(--layer-actions-w)] @max-[172px]:group-hover:pr-[26px] @max-[172px]:group-focus-within:pr-[26px] ${isSelected ? 'text-brand' : 'text-foreground'} ${isDimmed ? 'opacity-50' : ''}`}
+          className={`flex-1 truncate group-hover:pr-[var(--layer-actions-w)] group-focus-within:pr-[var(--layer-actions-w)] @max-[172px]:group-hover:pr-[26px] @max-[172px]:group-focus-within:pr-[26px] ${isSelected ? `text-brand ${TOUCH_SELECTED_NAME_PAD}` : 'text-foreground'} ${isDimmed ? 'opacity-50' : ''}`}
           style={{ fontSize: '13px', fontWeight: isSelected ? 500 : 400 }}
         >
           {name}
@@ -441,9 +446,10 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
         )}
 
         {/* Action cluster: revealed on hover, and while a control inside has
-            keyboard focus (opacity, not display, so the buttons stay tabbable). */}
+            keyboard focus (opacity, not display, so the buttons stay tabbable).
+            A touch screen has no hover, so there the selected row shows it. */}
         <span
-          className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 rounded-[5px] bg-accent opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto"
+          className={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 rounded-[5px] bg-accent opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto ${isSelected ? TOUCH_SELECTED_REVEAL : ''}`}
         >
           {/* Hide and lock: dropped when the row is too narrow for them beside
               a readable name (deep rows, narrow sidebar). "More" and

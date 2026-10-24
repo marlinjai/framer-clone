@@ -29,8 +29,11 @@ files beyond what layout strictly needs.
 ### Decisions
 
 1. **Breakpoint: a phone is a viewport under 768px wide** (`(max-width: 767.98px)`, the same edge
-   as Tailwind's `md`, so CSS classes and the `useIsPhone` hook agree). Below it the editor uses
-   the phone layout. From 768px up the docked desktop layout stays: at 768x1024 (tablet portrait)
+   as Tailwind's `md`), **or a touch screen held sideways** (`(max-height: 500px) and (pointer:
+   coarse)`, so a phone in landscape at 844x390 does not get two docked sidebars in 390px of
+   height). One definition serves both CSS (a `phone:` Tailwind variant in `globals.css`) and
+   JavaScript (`useIsPhone` in `src/hooks/use-mobile.ts`); a test keeps the two identical. Below
+   it the editor uses the phone layout. From 768px up the docked desktop layout stays: at 768x1024 (tablet portrait)
    the two docked sidebars leave a narrow canvas, but both collapse to 48px strips with their own
    chevrons, which is the desktop behaviour a tablet user expects, and a tablet has room for a
    real sidebar.
@@ -50,8 +53,14 @@ files beyond what layout strictly needs.
 4. **Canvas first.** On a phone the canvas fills the screen between a 48px top bar and a docked
    bottom bar (56px plus `env(safe-area-inset-bottom)`, so it clears the iPhone home indicator).
    The bottom bar replaces the floating tool and zoom bar on phones and fits 390px: Layers, Undo,
-   Redo, Select, Hand, the zoom percentage (tap resets zoom and pan) and Properties. Zoom in and
-   out buttons are dropped on phones, pinch zoom replaces them (part B).
+   Redo, Select, Hand, Fit (showing the zoom percentage; a tap fits every breakpoint frame on
+   screen) and Properties. Zoom in and out buttons are dropped on phones, pinch zoom replaces them
+   (part B). When the phone layout opens, and when the page changes, the camera fits the
+   narrowest breakpoint frame (the phone frame in a default project) to the screen's width, top
+   aligned, so the page is readable at once instead of showing a corner of the 1280px frame.
+   The fit math lives in `src/lib/canvas/cameraControls.ts` as pure, tested functions
+   (`computeFitTransform`, `zoomAroundPoint`), applied separately, so part B's double-tap zoom
+   can reuse them.
 5. **Panels as bottom sheets.** Pages and Layers (the left sidebar) and the properties panel (the
    right sidebar) render inside a bottom sheet on phones, the same `LeftSidebar` and `RightSidebar`
    components with a `variant="sheet"` that drops only the desktop container (fixed width, collapse
@@ -60,22 +69,27 @@ files beyond what layout strictly needs.
    its close button, Escape, a tap on the backdrop, or a swipe down on its grab handle. Only one
    sheet is open at a time (one state value, opening one replaces the other).
 6. **Properties do not open by themselves on select.** Decided: selecting an element turns the
-   bottom bar's Properties button into a highlighted **Edit** button (with the element's name as
-   its accessible label) instead of opening the sheet. Reasons: an automatic sheet would cover the
+   bottom bar's Properties button into an **Edit** button (with the element's name as its
+   accessible label), highlighted while the selection is new, instead of opening the sheet. "New"
+   because opening a page selects its root element by itself: that selection, and any whose
+   properties were already opened, does not light the button up. Reasons: an automatic sheet would cover the
    element just tapped, and with touch a tap that selects is often the start of a drag that moves
    the element (part B); a sheet popping up mid-gesture would hijack it. The properties sheet is
    at most 60% of the screen high over a light backdrop, so the top of the canvas stays visible
-   and edits show live; the Layers sheet may use up to 85%.
+   and edits show live; the Layers sheet may use up to 85%. Tapping a layer in the Layers sheet
+   selects it and leaves the sheet open (renaming, hiding and locking happen there too).
 7. **The on-screen keyboard.** The sheet reads `window.visualViewport`: while the keyboard is up
    it sits on top of the keyboard (its bottom is lifted by the covered height) and its height is
-   capped to the visible area, and a focused field scrolls itself into view inside the sheet's own
+   capped to the visible area (a pixel `max-height` over the svh height class), and a focused field scrolls itself into view inside the sheet's own
    scroll area. Heights use `svh` (the small viewport height, the house rule for full-viewport
    sections), never `vh` or `dvh`.
 8. **Desktop state stays desktop.** The sheet variant never reads or writes
    `leftSidebarCollapsed`, `rightSidebarCollapsed` or the remembered sidebar width, and the width
    handle exists only in the docked variant, so nothing done on a phone leaks into the desktop
-   layout. Before hydration the docked sidebars are hidden by CSS below 768px, so a phone never
-   flashes the desktop panels.
+   layout. Before hydration the docked sidebars and floating toolbar are hidden by the `phone:`
+   CSS variant, so a phone never flashes the desktop panels; after it, EditorApp mounts either the
+   docked panels or the phone chrome, never both (two copies of the Layers panel would duplicate
+   its listeners).
 9. **Dialogs at 390px.** Every dialog already caps itself to the viewport (`dialog-fit.ts`: width
    100vw minus 2rem, height 100dvh minus 2rem, header and footer fixed, body scrolls). Each dialog
    reachable from the top bar is checked in the browser at 390x844: Generate, Polish, Site
@@ -83,18 +97,33 @@ files beyond what layout strictly needs.
    Publish legal notice; anything that overflows inside is fixed.
 10. **Preview toolbar.** Under 768px its button labels collapse to icons (the labels stay as
     accessible names), the page select shrinks, and the width and height inputs are hidden (the
-    breakpoint select stays, which is the useful control on a phone).
+    breakpoint select stays, which is the useful control on a phone). On a window narrower than
+    the widest breakpoint frame the preview opens on the widest frame that fits (the Mobile frame
+    on a phone) instead of a 1280px desktop frame scrolled sideways; on desktop nothing changes.
 
-### Files
+11. **Touch screens have no hover.** Controls that only appeared on hover are shown on touch
+    screens (`@media (hover: none)`): the page row's settings and delete buttons, and the action
+    cluster (hide, lock, more) of the selected layer row.
+12. **Dialog close buttons** get a 32px target on phones (same 16px icon).
 
-`src/hooks/useMediaQuery.ts` (new, `useMediaQuery`, `useIsPhone`, `useIsCompactTopBar`),
-`src/components/ui/bottom-sheet.tsx` (new), `src/components/PhoneEditorChrome.tsx` (new, bottom
-bar plus the two sheets), `src/components/EditorApp.tsx` (switch), `src/components/TopBar.tsx`
-(compact bar, More menu), `src/components/Toolbar.tsx` (shared camera reset),
-`src/components/sidebars/LeftSidebar.tsx`, `RightSidebar.tsx`, `right/RightSidebarHeader.tsx`
-(sheet variant), `src/components/SaveButton.tsx`, `PublishButton.tsx` (compact), the Domains and
-Form submissions buttons (their dialogs exported so the More menu can open them),
-`src/components/preview/PreviewToolbar.tsx`.
+### Files (as built)
+
+- New: `src/components/PhoneEditorChrome.tsx` (bottom bar plus the two sheets),
+  `src/components/ui/bottom-sheet.tsx`, `src/lib/canvas/cameraControls.ts` (camera math and the
+  `useCameraControls` hook, shared with `Toolbar.tsx`), `src/components/TopBarStatus.tsx`,
+  `src/hooks/useControllableOpen.ts`.
+- `src/hooks/use-mobile.ts` rewritten (it was unused): `useMediaQuery`, `useIsPhone`,
+  `PHONE_MEDIA_QUERY`; `src/app/globals.css` gains the `phone:` variant (block form: the short
+  form with a comma-separated media list compiles to broken rules in Tailwind 4).
+- `EditorApp.tsx` (switch, and one notice stack under the top bar for the editor notice and the
+  legal template notice, instead of two fixed boxes with hard-coded offsets that overlapped on
+  narrow screens), `TopBar.tsx` (compact bar, More menu, one instance of each dialog, history
+  dialog), `Toolbar.tsx` (camera code moved out).
+- `LeftSidebar.tsx`, `RightSidebar.tsx`, `right/RightSidebarHeader.tsx` (`variant="sheet"`).
+- `SaveButton.tsx`, `PublishButton.tsx` (status as `TopBarStatus`, Save icon-only under 640px),
+  the Generate, Polish, Domains, Site settings and Form submissions buttons (controllable open
+  state and a trigger class), `EditorNotice.tsx`, `site/LegalTemplateNotice.tsx`,
+  `preview/PreviewToolbar.tsx`, `ui/dialog.tsx`, `left/PagesPanel.tsx`, `left/LayersPanel.tsx`.
 
 ### Tests
 
@@ -120,6 +149,31 @@ The gesture spec, as the owner set it on 2026-10-24:
   `env(safe-area-inset-bottom)` padding benefits from). Part A adds no touch-action and leaves the
   viewport meta alone; panels and sheets scroll normally with one finger.
 
+## Verification (part A, 2026-10-24)
+
+`pnpm typecheck`, `pnpm lint`, `pnpm lint:guards`, `pnpm test` (295 files, 3774 tests) green.
+New tests: `src/hooks/__tests__/use-mobile.test.tsx` (hook with matchMedia mocked, the CSS
+variant using the same queries), `src/lib/canvas/__tests__/cameraControls.test.ts`,
+`src/components/__tests__/PhoneEditorChrome.test.tsx` (sheets open modal and labelled, close by
+button, Escape without clearing the selection, backdrop and swipe; one at a time; Edit cue;
+desktop state untouched), `TopBarMoreMenu.test.tsx` (every action reachable, same dialog
+instance), `TopBarStatus.test.tsx`, `ui/__tests__/bottomSheet.test.tsx` (keyboard inset).
+
+In the headless automation Chrome with touch emulation (CDP touch events): at 390x844 the page
+does not scroll sideways, the top bar is 48px with nothing past the right edge, the canvas opens
+fitted to the phone frame, the bottom bar shows all seven buttons; Layers opens a 717px sheet
+(focus on its close button, Escape and a swipe down close it); tapping an element highlights
+"Edit Main" without opening anything, and Edit opens the properties sheet over the lower 60%;
+a tap on the backdrop closes it; the More menu lists all six actions and each opens its dialog at
+358px wide (16px margins) with nothing overflowing: Generate, Polish, Domains, Site settings,
+Form submissions, History, plus Page settings and Save as a new project; the Publish error on the
+demo shows as a notice under the bar. The preview opened from the editor shows a compact toolbar
+(Editor, Reload, Fullscreen, page, breakpoint, nothing past the edge) and the Mobile frame. At 844x390 (landscape phone) the phone layout applies.
+At 768x1024 and 1024x768 the docked layout stays with no overflow (768 uses the compact top bar,
+1024 the full one). The preview's "Nothing to preview" state fits 390px. Not verifiable headless:
+the on-screen keyboard itself (covered by the unit test of the visualViewport handling).
+
 ## Status
 
-Part A in progress (2026-10-24).
+Part A built 2026-10-24 (branch of the phone layout agent). Part B (touch on the canvas) is built
+in parallel; when it lands, this plan is marked completed and the roadmap line ticked.
