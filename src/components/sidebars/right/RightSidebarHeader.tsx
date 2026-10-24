@@ -33,9 +33,11 @@ function ElementTypeIcon({ component }: { component: ComponentInstance }) {
  * MST wiring: reads editorUI.rightSidebarCollapsed, selectedComponent,
  * selectedViewportNode; calls editorUI.toggleRightSidebar().
  */
-const RightSidebarHeader = observer(() => {
+const RightSidebarHeader = observer(({ variant = 'docked' }: { variant?: 'docked' | 'sheet' }) => {
   const { editorUI } = useStore();
-  const isCollapsed = editorUI.rightSidebarCollapsed;
+  const isSheet = variant === 'sheet';
+  // In a phone sheet the panel is always expanded and the sheet has its own close button.
+  const isCollapsed = isSheet ? false : editorUI.rightSidebarCollapsed;
   const selectedComponent = editorUI.selectedComponent;
   const selectedViewportNode = editorUI.selectedViewportNode;
 
@@ -60,14 +62,16 @@ const RightSidebarHeader = observer(() => {
   // Expanded: 42px header with collapse chevron + type tile + name + settings.
   return (
     <div className="h-[42px] flex items-center gap-1.5 px-2 border-b border-border shrink-0 sticky top-0 bg-background z-10">
-      {/* Collapse toggle */}
-      <button
-        aria-label="Collapse properties"
-        onClick={() => editorUI.toggleRightSidebar()}
-        className="w-[28px] h-[28px] rounded-[6px] flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand flex-none"
-      >
-        <ChevronRight size={16} />
-      </button>
+      {/* Collapse toggle (docked only) */}
+      {!isSheet && (
+        <button
+          aria-label="Collapse properties"
+          onClick={() => editorUI.toggleRightSidebar()}
+          className="w-[28px] h-[28px] rounded-[6px] flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand flex-none"
+        >
+          <ChevronRight size={16} />
+        </button>
+      )}
 
       {/* Type tile + element name (min-w-0 so name can truncate) */}
       <div className="flex items-center gap-2 flex-1 min-w-0">

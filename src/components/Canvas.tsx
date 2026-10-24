@@ -23,6 +23,7 @@ import {
   DOUBLE_TAP_ZOOM_FACTOR,
   TAP_MAX_DURATION_MS,
   TouchGestureTracker,
+  clampZoom,
   dragThresholdFor,
   isDoubleTap,
   isTouchLike,
@@ -125,7 +126,7 @@ const CanvasInner = observer(() => {
       const scaleFactor = isLikelyPinch ? 1.01 : 1.05;
       const zoomDirection = e.deltaY > 0 ? -1 : 1;
       const factor = Math.pow(scaleFactor, zoomDirection);
-      const newZoom = Math.max(0.1, Math.min(5, transformState.current.zoom * factor));
+      const newZoom = clampZoom(transformState.current.zoom * factor);
 
       // Get current state
       const { zoom: currentZoom, panX: currentPanX, panY: currentPanY } = transformState.current;

@@ -92,7 +92,7 @@ const PageRow = observer(({
         }}
         aria-label={`Page settings for ${title}`}
         title="Page settings"
-        className="p-0.5 rounded text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground hover:bg-accent transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="p-0.5 rounded text-muted-foreground opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 [@media(hover:none)]:p-1.5 focus-visible:opacity-100 hover:text-foreground hover:bg-accent transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <Settings2 size={12} />
       </button>
@@ -105,7 +105,7 @@ const PageRow = observer(({
           }}
           aria-label={`Delete page ${title}`}
           title="Delete page"
-          className="p-0.5 rounded text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground hover:bg-accent transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="p-0.5 rounded text-muted-foreground opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 [@media(hover:none)]:p-1.5 focus-visible:opacity-100 hover:text-foreground hover:bg-accent transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <X size={12} />
         </button>

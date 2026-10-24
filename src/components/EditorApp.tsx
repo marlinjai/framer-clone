@@ -7,6 +7,8 @@ import LeftSidebar from "@/components/sidebars/LeftSidebar";
 import RightSidebar from "@/components/sidebars/RightSidebar";
 import Toolbar from "@/components/Toolbar";
 import TopBar from "@/components/TopBar";
+import PhoneEditorChrome from "@/components/PhoneEditorChrome";
+import { useIsPhone } from "@/hooks/use-mobile";
 import HudSurface from "@/components/HudSurface";
 import SpacingHandlesLayer from "@/components/SpacingHandlesLayer";
 import { TransformProvider, useTransformContext } from '@/contexts/TransformContext';
@@ -63,6 +65,9 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
   // Browser page zoom off inside the editor; the canvas has its own.
   useEditorGestureGuard();
   const initRef = React.useRef(false);
+  // Phones get the canvas-first layout: a bottom bar and the panels as sheets
+  // (plan docs/plans/2026-10-24-editor-on-phones.md).
+  const isPhone = useIsPhone();
   makeInspectable(rootStore);
   if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
     (window as unknown as { __rootStore?: typeof rootStore }).__rootStore = rootStore;
@@ -267,17 +272,30 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
       <DragGhostLayer />
 
       <TopBar />
-      <EditorNotice />
-      <LegalTemplateNotice />
-      <div data-editor-ui="true" className="fixed top-16 left-0 bottom-0 z-90">
-        <LeftSidebar />
+      {/* Notices stack under the top bar (48px on a phone, 64px otherwise),
+          centred, each at most 640px and never wider than the screen. */}
+      <div className="pointer-events-none fixed inset-x-0 top-16 z-90 mt-2 flex flex-col items-center gap-2 px-4 phone:top-12">
+        <EditorNotice />
+        <LegalTemplateNotice />
       </div>
-      <div data-editor-ui="true" className="fixed top-16 right-0 bottom-0 z-90">
-        <RightSidebar />
-      </div>
-      <div data-editor-ui="true" className="fixed bottom-0 left-0 right-0 z-30">
-        <Toolbar editorUI={rootStore.editorUI} />
-      </div>
+      {isPhone ? (
+        <PhoneEditorChrome editorUI={rootStore.editorUI} />
+      ) : (
+        <>
+          {/* Docked panels and the floating toolbar. `phone:hidden` keeps them
+              off a phone's screen during the server render and hydration,
+              before useIsPhone can report the real width. */}
+          <div data-editor-ui="true" className="fixed top-16 left-0 bottom-0 z-90 phone:hidden">
+            <LeftSidebar />
+          </div>
+          <div data-editor-ui="true" className="fixed top-16 right-0 bottom-0 z-90 phone:hidden">
+            <RightSidebar />
+          </div>
+          <div data-editor-ui="true" className="fixed bottom-0 left-0 right-0 z-30 phone:hidden">
+            <Toolbar editorUI={rootStore.editorUI} />
+          </div>
+        </>
+      )}
     </div>
     </TransformProvider>
     </EditorCommerceProvider>

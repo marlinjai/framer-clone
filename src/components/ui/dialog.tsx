@@ -49,7 +49,8 @@ function DialogContent({
         {...props}
       >
         {children}
-        <DialogPrimitive.Close className="ring-offset-background focus-visible:ring-ring absolute top-4 right-4 rounded-md p-0.5 text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:outline-none">
+        {/* On a phone the same 16px icon gets a 32px target for a finger. */}
+        <DialogPrimitive.Close className="ring-offset-background focus-visible:ring-ring absolute top-4 right-4 phone:top-2.5 phone:right-2.5 phone:p-2 rounded-md p-0.5 text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:outline-none">
           <XIcon className="size-4" />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>
