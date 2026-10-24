@@ -19,7 +19,7 @@ import {
   type CrossViewportSelection
 } from '@/utils/crossViewportHighlighting';
 import EffectBadge from './EffectBadge';
-import { lastPointerIsTouch } from '@/hooks/useEditorGestureGuard';
+import { lastPointerIsTouch, onPointerModalityChange } from '@/hooks/useEditorGestureGuard';
 
 type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 const HANDLE_DIRECTIONS: { dir: ResizeDirection; className: string; cursor: string }[] = [
@@ -472,6 +472,10 @@ const HudSurface = observer(() => {
     updateOverlayPosition();
     updateExtraOverlays();
   }, [updateOverlayPosition, updateExtraOverlays]);
+
+  // Touch and mouse size the radius handles differently: re-evaluate them the
+  // moment the input type flips, not on the next selection or transform.
+  useEffect(() => onPointerModalityChange(updateOverlayPosition), [updateOverlayPosition]);
 
   // Subscribe to transform updates (high-performance, no React re-renders)
   useEffect(() => {

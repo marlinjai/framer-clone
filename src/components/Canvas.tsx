@@ -601,6 +601,8 @@ const CanvasInner = observer(() => {
   // every later first finger into a second one. Forget them all.
   useEffect(() => {
     const forget = () => {
+      // Before the reset: it checks which pointers the tracker still holds.
+      cancelOneFingerGestures();
       touchListenersRef.current?.();
       touchListenersRef.current = null;
       if (pinchRafRef.current) cancelAnimationFrame(pinchRafRef.current);
@@ -619,7 +621,7 @@ const CanvasInner = observer(() => {
       window.removeEventListener('blur', forget);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, []);
+  }, [cancelOneFingerGestures]);
 
   /** A touch or pen press on the canvas (capture phase, before any node). */
   const handleTouchPointerDown = useCallback((e: React.PointerEvent) => {

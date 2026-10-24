@@ -32,6 +32,16 @@ function onCanvas(target: EventTarget | null): boolean {
   return target instanceof Element && !!target.closest('[data-ground]');
 }
 
+const pointerTypeListeners = new Set<() => void>();
+
+/** Subscribe to the touch/mouse modality flipping; returns the unsubscribe. */
+export function onPointerModalityChange(listener: () => void): () => void {
+  pointerTypeListeners.add(listener);
+  return () => {
+    pointerTypeListeners.delete(listener);
+  };
+}
+
 export function useEditorGestureGuard(): void {
   useEffect(() => {
     const root = document.documentElement;
@@ -49,7 +59,10 @@ export function useEditorGestureGuard(): void {
 
     const onPointerDown = (e: PointerEvent) => {
       const type = e.pointerType === 'touch' || e.pointerType === 'pen' ? e.pointerType : 'mouse';
-      if (root.getAttribute('data-pointer') !== type) root.setAttribute('data-pointer', type);
+      if (root.getAttribute('data-pointer') === type) return;
+      const wasTouch = lastPointerIsTouch();
+      root.setAttribute('data-pointer', type);
+      if (wasTouch !== lastPointerIsTouch()) pointerTypeListeners.forEach(l => l());
     };
     const preventGesture = (e: Event) => e.preventDefault();
     const onTouchMove = (e: TouchEvent) => {

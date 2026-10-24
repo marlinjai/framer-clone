@@ -3,7 +3,7 @@
 import React from 'react';
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/react';
-import { useEditorGestureGuard, lastPointerIsTouch } from '../useEditorGestureGuard';
+import { useEditorGestureGuard, lastPointerIsTouch, onPointerModalityChange } from '../useEditorGestureGuard';
 
 function Editor() {
   useEditorGestureGuard();
@@ -70,5 +70,22 @@ describe('useEditorGestureGuard', () => {
     expect(lastPointerIsTouch()).toBe(false);
     fireEvent.pointerDown(getByTestId('panel'), { pointerType: 'mouse' });
     expect(document.documentElement.getAttribute('data-pointer')).toBe('mouse');
+  });
+
+  it('tells subscribers when the touch/mouse modality flips, not on every press', () => {
+    const { getByTestId } = render(<Editor />);
+    fireEvent.pointerDown(getByTestId('panel'), { pointerType: 'mouse' });
+    let calls = 0;
+    const off = onPointerModalityChange(() => { calls += 1; });
+    fireEvent.pointerDown(getByTestId('panel'), { pointerType: 'mouse' });
+    expect(calls).toBe(0);
+    fireEvent.pointerDown(getByTestId('panel'), { pointerType: 'touch' });
+    fireEvent.pointerDown(getByTestId('panel'), { pointerType: 'touch' });
+    expect(calls).toBe(1);
+    fireEvent.pointerDown(getByTestId('panel'), { pointerType: 'mouse' });
+    expect(calls).toBe(2);
+    off();
+    fireEvent.pointerDown(getByTestId('panel'), { pointerType: 'touch' });
+    expect(calls).toBe(2);
   });
 });
