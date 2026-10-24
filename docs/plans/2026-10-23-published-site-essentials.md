@@ -134,3 +134,55 @@ Decided while building, each reversible:
   every other img is `loading="lazy" decoding="async"`; author values are kept. Commerce islands
   render a sized `aria-busy` placeholder until mounted, an error boundary with "Try again", and a
   plain visitor sentence (not the internal message) when a data read fails.
+
+## Legal and consent as built (decisions 5 and 6, 2026-10-24)
+
+The tracker check of decision 6 came out: the Lumitra Analytics tracker stores a session id and
+experiment variants in sessionStorage and a variants cookie (`lumitra_variants_pub`), so under
+section 25 TDDDG it needs consent. Decided while building, each reversible:
+
+- **The tracker is never in the HTML of a site with analytics.** `renderPublishedPage` renders
+  `ConsentBanner` (`src/lib/consent/`) instead of the old snippet: server-rendered markup, hidden
+  by default, and an inline runtime (hand-written ES5 in `consent.ts`) that runs before hydration.
+  A stored "yes" loads the tracker at once (the same `__AP_VARIANTS` and `__AP_CONFIG` globals and
+  loader the snippet used, `buildTrackerPayload` keeps the secret-key backstop); a stored "no" or
+  a decline loads nothing, not even the globals. Without JavaScript nothing shows and nothing loads.
+  A site with analytics off, or without a key or endpoint, gets no banner and no runtime.
+- **The choice** lives in localStorage `lumitra-consent` as `{v, analytics, at}`; bumping
+  `CONSENT_VERSION` asks every visitor again. Storage that throws keeps the choice for the page
+  view. Declining after an earlier yes removes the tracker's `ap_*` session entries and cookie and
+  reloads the page.
+- **Banner**: non-modal `role="dialog"` labelled by its heading, first in the reading order, takes
+  focus only when reopened; Accept and Decline share one style (no dark pattern), 44 px tall;
+  German for `de*`, English otherwise; font and colours from the home page (`siteLookFromPages`);
+  links the privacy page when one exists. Reopened by any link to `#cookie-settings` or
+  `window.__lumitraConsent.open()`; Escape closes a reopened banner. On a site where nothing needs
+  consent, `#cookie-settings` links are hidden by CSS.
+- **No banner setting.** Site settings shows the banner's status instead: "off" while analytics runs
+  would break the law, "off" otherwise changes nothing. The preview and the editor canvas never go
+  through `renderPublishedPage`, so the banner never appears there; no testing toggle was added.
+- **Loader contract, open on the analytics side.** No loader that reads `__AP_CONFIG` exists in the
+  analytics-platform repository (the npm tracker is ESM with `init()`), so after consent the
+  runtime also sets `__AP_CONFIG.consent = { analytics: true }`, dispatches `lumitra:consent`, and
+  calls `window.LumitraAnalytics.enableTracking()` when the loader exposes it. The loader at
+  `ANALYTICS_TRACKER_SCRIPT_URL` must honour one of these to enable clicks and scroll.
+- **Legal pages** (`src/lib/legal/`): Impressum (section 5 DDG, section 18 (2) MStV), privacy policy
+  (controller, Hetzner hosting in Germany, server logs, analytics with consent and what it stores,
+  forms without IP, Unsplash hotlinking with a third-country placeholder, self-hosted fonts,
+  rights, supervisory authority) and short neutral terms, German and English by site language.
+  Filled from the business data; anything missing, and anything only the owner can judge, is a
+  `[placeholder]`. The analytics, forms and Unsplash sections appear only when the project uses them
+  (read off its pages when the page is created).
+- **Created from Site settings** ("Create Impressum", "Open ..." once it exists) as ordinary pages at
+  stable slugs (`impressum`, `datenschutz`, `agb`; `imprint`, `privacy`, `terms`), never a second
+  copy, marked by page metadata `legalTemplate` (not a prop, so nothing leaks into the published
+  HTML). The draft settings are saved first so the page uses what the owner just typed. Creating a
+  page also links it from every footer; "Add legal links to footers" repeats that for pages made
+  later. The editor shows "Template, not legal advice: review before publishing" with the count of
+  placeholders above such a page (never published).
+- **Publish warning**: business data without an Impressum, or a template page that still holds
+  placeholders, opens an in-page notice before publishing with "Create Impressum" (or "Open ...")
+  and "Publish anyway".
+- **Generator**: `promptSections/legalLinks.ts` tells it to end every footer with links to the legal
+  pages that exist plus the cookie settings link, with exact hrefs and labels (sent as an optional
+  `legalLinks` field of the site context). Links to pages that do not exist are never generated.

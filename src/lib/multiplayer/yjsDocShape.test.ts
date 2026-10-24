@@ -373,7 +373,7 @@ describe('site settings and page noindex survive the round-trip', () => {
       business: { ...project.site.business, phone: '+49 89 123456' },
     });
     const page = project.pagesArray[0];
-    page.updateMetadata({ noIndex: true, ogImage: 'https://cdn.example.com/og.jpg' });
+    page.updateMetadata({ noIndex: true, ogImage: 'https://cdn.example.com/og.jpg', legalTemplate: 'privacy' });
 
     const doc = mstSnapshotToYDoc(getSnapshot(project) as any);
     const stored = doc.getMap(YJS_KEYS.project).get(YJS_PROJECT_KEYS.siteSettings) as any;
@@ -383,6 +383,7 @@ describe('site settings and page noindex survive the round-trip', () => {
     expect(rebuilt.site).toEqual(project.site);
     expect(rebuilt.pages.get(page.id)!.metadata.noIndex).toBe(true);
     expect(rebuilt.pages.get(page.id)!.metadata.ogImage).toBe('https://cdn.example.com/og.jpg');
+    expect(rebuilt.pages.get(page.id)!.metadata.legalTemplate).toBe('privacy');
   });
 
   it('a doc written before site settings existed loads with the defaults', () => {

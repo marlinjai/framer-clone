@@ -1,10 +1,10 @@
 // src/models/ProjectModel.ts
 // Domain model for projects - contains multiple pages and project-level settings
 import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
-import { types, Instance, SnapshotIn, SnapshotOut } from 'mobx-state-tree';
+import { types, Instance, SnapshotIn, SnapshotOut, getSnapshot } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 import PageModel, { PageModelType } from './PageModel';
-import { createIntrinsicComponent, createViewportNode, type ComponentInstance, type ComponentSnapshotIn } from './ComponentModel';
+import ComponentModel, { createIntrinsicComponent, createViewportNode, type ComponentInstance, type ComponentSnapshotIn } from './ComponentModel';
 import { suggestSlug, validateSlug, type SlugValidation } from '@/lib/pages/slug';
 import {
   isHttpsUrl,
@@ -14,6 +14,57 @@ import {
   type SiteSettingsErrors,
   type SiteSettingsInput,
 } from '@/lib/site/siteSettings';
+import { effectiveSiteName } from '@/lib/site/siteSettings';
+import {
+  COOKIE_SETTINGS_HASH,
+  COOKIE_SETTINGS_LABELS,
+  LEGAL_KINDS,
+  LEGAL_LINK_LABELS,
+  LEGAL_SLUGS,
+  findLegalPage,
+  legalLanguage,
+  type LegalKind,
+} from '@/lib/legal/legalPages';
+import { buildLegalTemplate, factsFromTrees } from '@/lib/legal/templates';
+import {
+  LEGAL_LINKS_MARKER,
+  footerLinkNode,
+  footerLinksNav,
+  legalPageRoot,
+  type FooterLink,
+  type LegalPageLook,
+} from '@/lib/legal/legalPageTree';
+
+/** A style value's base (responsive maps carry `base`), when it is a plain safe string. */
+function baseStyle(value: unknown): string | undefined {
+  const raw =
+    typeof value === 'string'
+      ? value
+      : value && typeof value === 'object' && typeof (value as Record<string, unknown>).base === 'string'
+        ? ((value as Record<string, unknown>).base as string)
+        : undefined;
+  if (!raw || /[<>;{}]|url\(|expression\(/i.test(raw)) return undefined;
+  return raw.trim() || undefined;
+}
+
+/** Every node of this type in a component tree, in document order. */
+function findByType(root: ComponentInstance, type: string): ComponentInstance[] {
+  const out: ComponentInstance[] = [];
+  const visit = (node: ComponentInstance) => {
+    if (node.type === type) out.push(node);
+    node.children.forEach((c: ComponentInstance) => visit(c));
+  };
+  visit(root);
+  return out;
+}
+
+/** Result of ProjectModel.addLegalLinksToFooters. */
+export interface LegalLinksResult {
+  /** Pages whose footer gained at least one link. */
+  pagesUpdated: number;
+  /** Pages (other than legal pages) with no footer to put links in. */
+  pagesWithoutFooter: number;
+}
 
 // ---- Lumitra Studio binding ---------------------------------------------
 //
@@ -234,6 +285,102 @@ export const ProjectModel = types
       root.addChildren([heading, text, back]);
       self.metadata.updatedAt = new Date();
       return page;
+    },
+
+    // Legal pages (published site essentials, decision 5): create the
+    // Impressum, privacy policy or terms from the template, filled from the
+    // Site settings business data, in the site language, at the kind's stable
+    // slug (/impressum, /datenschutz, /agb; /imprint, /privacy, /terms). When
+    // the project already has that page (created before, or the owner's own
+    // page at one of those slugs) it is returned unchanged: never a second
+    // copy at "impressum-2". The new page's link goes into every footer in
+    // the same action (one history entry).
+    createLegalPage(kind: LegalKind): { page: PageModelType; created: boolean } {
+      const existing = findLegalPage(self.pages.values(), kind);
+      if (existing) return { page: existing, created: false };
+
+      const settings = normalizeSiteSettings(self.siteSettings);
+      const lang = legalLanguage(settings.language);
+      const pages = Array.from(self.pages.values());
+      const trees = pages.map(p => getSnapshot(p.appComponentTree) as Parameters<typeof factsFromTrees>[0] extends Iterable<infer T> ? T : never);
+      const template = buildLegalTemplate({
+        kind,
+        language: settings.language,
+        business: settings.business,
+        siteName: effectiveSiteName(settings, self.metadata.title),
+        facts: factsFromTrees(trees, self.lumitra.enabled),
+      });
+
+      // The home page's font and colours, so the legal page looks like the site.
+      const home = pages.find(p => p.slug === '');
+      const homeStyle = (home ? (getSnapshot(home.appComponentTree) as { props?: { style?: Record<string, unknown> } }).props?.style : undefined) ?? {};
+      const look: LegalPageLook = {
+        fontFamily: baseStyle(homeStyle.fontFamily),
+        color: baseStyle(homeStyle.color),
+        backgroundColor: baseStyle(homeStyle.backgroundColor),
+      };
+
+      const pageId = uuidv4();
+      self.pages.set(pageId, PageModel.create({
+        id: pageId,
+        // Free: findLegalPage above returns any page at either language's slug.
+        slug: LEGAL_SLUGS[lang][kind],
+        metadata: { title: template.title, description: template.description, legalTemplate: kind },
+        appComponentTree: legalPageRoot(template, look) as unknown as ComponentSnapshotIn,
+        canvasNodes: defaultViewportSnapshots(),
+      }));
+      const page = self.pages.get(pageId) as PageModelType;
+      (self as unknown as { addLegalLinksToFooters(): LegalLinksResult }).addLegalLinksToFooters();
+      self.metadata.updatedAt = new Date();
+      return { page, created: true };
+    },
+
+    // Put links to the project's legal pages (and the "Cookie settings" link
+    // the consent banner reopens from) into the footer of every page that has
+    // one: a small nav at the end of the page's last <footer>. Links already
+    // in that footer (same href) are not added twice, and a second run adds
+    // to the same nav. Pages without a footer are counted, not changed.
+    addLegalLinksToFooters(): LegalLinksResult {
+      const settings = normalizeSiteSettings(self.siteSettings);
+      const lang = legalLanguage(settings.language);
+      const pages = Array.from(self.pages.values());
+      const links: FooterLink[] = [];
+      for (const kind of LEGAL_KINDS) {
+        const page = findLegalPage(pages, kind);
+        if (page) links.push({ href: `/${page.slug}`, label: LEGAL_LINK_LABELS[lang][kind] });
+      }
+      links.push({ href: COOKIE_SETTINGS_HASH, label: COOKIE_SETTINGS_LABELS[lang] });
+
+      const result: LegalLinksResult = { pagesUpdated: 0, pagesWithoutFooter: 0 };
+      for (const page of pages) {
+        const root = page.appComponentTree as unknown as ComponentInstance;
+        const footers = findByType(root, 'footer');
+        const footer = footers[footers.length - 1];
+        if (!footer) {
+          if (!page.metadata.legalTemplate) result.pagesWithoutFooter++;
+          continue;
+        }
+        const hrefs = new Set(
+          findByType(footer, 'a')
+            .map((a: ComponentInstance) => (a.props as Record<string, unknown>).href)
+            .filter((h): h is string => typeof h === 'string'),
+        );
+        const missing = links.filter(l => !hrefs.has(l.href));
+        if (missing.length === 0) continue;
+        const nav = footer.children.find(
+          (c: ComponentInstance) => (c.props as Record<string, unknown>)[LEGAL_LINKS_MARKER] !== undefined,
+        ) as ComponentInstance | undefined;
+        if (nav) {
+          for (const link of missing) nav.addChild(ComponentModel.create(footerLinkNode(link) as unknown as ComponentSnapshotIn));
+        } else {
+          footer.addChild(
+            ComponentModel.create(footerLinksNav(missing, lang === 'de' ? 'Rechtliches' : 'Legal') as unknown as ComponentSnapshotIn),
+          );
+        }
+        result.pagesUpdated++;
+      }
+      if (result.pagesUpdated > 0) self.metadata.updatedAt = new Date();
+      return result;
     },
 
     // AI page generation: create a page whose app tree root holds the

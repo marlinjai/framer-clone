@@ -182,8 +182,10 @@ describe('renderPublishedPage: responsive styles', () => {
     expect(html).toContain('<h1 class="fc-title">Hello</h1>');
     expect(html).toContain('<p style="margin:0">Plain</p>');
     // The style tag comes before the content it styles.
-    expect(html.indexOf('<style')).toBeLessThan(html.indexOf('<h1'));
-    expect(html.match(/<style/g)).toHaveLength(1);
+    expect(html.indexOf('<style data-fc-responsive')).toBeLessThan(html.indexOf('<h1'));
+    // One responsive stylesheet (the other style tag hides cookie-settings links on a
+    // site where nothing needs consent, src/lib/consent/consent.ts).
+    expect(html.match(/<style data-fc-responsive/g)).toHaveLength(1);
   });
 
   it('emits no style tag when the page has no responsive style', async () => {
@@ -195,7 +197,7 @@ describe('renderPublishedPage: responsive styles', () => {
       breakpoints: BPS,
     });
     const html = renderToStaticMarkup(<>{body}</>);
-    expect(html).not.toContain('<style');
+    expect(html).not.toContain('<style data-fc-responsive');
     expect(html).toContain('<div style="color:red"></div>');
   });
 });

@@ -19,6 +19,8 @@
 
 import { z } from 'zod';
 import { WEEKDAYS, type SiteSettings } from '@/lib/site/siteSettings';
+import type { LegalPageLike } from '@/lib/legal/legalPages';
+import { LegalLinksSchema, legalLinksFromPages, type LegalLink } from './legalLinks';
 
 export interface SiteContext {
   siteName: string;
@@ -33,6 +35,8 @@ export interface SiteContext {
   email: string;
   /** "Monday, Tuesday: 09:00 to 18:00" lines. */
   openingHours: string[];
+  /** Footer legal links (./legalLinks.ts): the existing legal pages and cookie settings. */
+  legalLinks?: LegalLink[];
 }
 
 const text = (max: number) => z.string().trim().max(max);
@@ -49,10 +53,15 @@ export const SiteContextSchema = z.strictObject({
   phone: text(40),
   email: text(200),
   openingHours: z.array(text(200)).max(14),
+  legalLinks: LegalLinksSchema.optional(),
 });
 
 /** The generator's view of the Site settings (only what it uses). */
-export function siteContextFromSettings(settings: SiteSettings, projectTitle: string): SiteContext {
+export function siteContextFromSettings(
+  settings: SiteSettings,
+  projectTitle: string,
+  pages?: Iterable<LegalPageLike>,
+): SiteContext {
   const b = settings.business;
   return {
     siteName: settings.siteName || projectTitle.trim(),
@@ -67,6 +76,7 @@ export function siteContextFromSettings(settings: SiteSettings, projectTitle: st
     openingHours: b.openingHours
       .filter((row) => row.days.length > 0 && row.opens && row.closes)
       .map((row) => `${WEEKDAYS.filter((d) => row.days.includes(d)).join(', ')}: ${row.opens} to ${row.closes}`),
+    ...(pages ? { legalLinks: legalLinksFromPages(pages, settings.language) } : {}),
   };
 }
 

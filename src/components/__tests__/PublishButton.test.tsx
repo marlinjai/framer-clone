@@ -169,3 +169,77 @@ describe('PublishButton', () => {
     );
   });
 });
+
+describe('PublishButton legal check', () => {
+  const ok = { ok: true, status: 200, json: async () => ({ publishedPages: [''] }) };
+
+  function businessProject() {
+    const p = makeProject();
+    const base = p.site;
+    p.updateSiteSettings({ ...base, language: 'de', business: { ...base.business, legalName: 'Bäckerei Müller GmbH' } });
+    return p;
+  }
+
+  it('warns in the page, not with a browser dialog, when business data has no Impressum', () => {
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    const project = businessProject();
+    const setCurrentPage = vi.fn();
+    currentStore = { editorUI: { currentProject: project, setCurrentPage } } as typeof currentStore;
+    render(<PublishButton />);
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(confirmSpy).not.toHaveBeenCalled();
+    const notice = screen.getByRole('dialog', { name: 'Your site has no Impressum yet' });
+    expect(document.activeElement).toBe(notice);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create Impressum' }));
+    const created = project.findPageBySlug('impressum');
+    expect(created?.metadata.legalTemplate).toBe('impressum');
+    expect(setCurrentPage).toHaveBeenCalledWith(created);
+    expect(screen.queryByTestId('publish-legal-notice')).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('publishes anyway on request', async () => {
+    fetchMock.mockResolvedValue(ok);
+    currentStore = { editorUI: { currentProject: businessProject(), setCurrentPage: vi.fn() } } as typeof currentStore;
+    render(<PublishButton />);
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish anyway' }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Published 1 page'));
+  });
+
+  it('Escape and Cancel close the notice without publishing', () => {
+    currentStore = { editorUI: { currentProject: businessProject(), setCurrentPage: vi.fn() } } as typeof currentStore;
+    render(<PublishButton />);
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+    fireEvent.keyDown(screen.getByTestId('publish-legal-notice'), { key: 'Escape' });
+    expect(screen.queryByTestId('publish-legal-notice')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByTestId('publish-legal-notice')).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('lists legal pages that still hold placeholders and opens them', () => {
+    const project = businessProject();
+    const { page } = project.createLegalPage('impressum');
+    const setCurrentPage = vi.fn();
+    currentStore = { editorUI: { currentProject: project, setCurrentPage } } as typeof currentStore;
+    render(<PublishButton />);
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+    expect(screen.getByRole('dialog', { name: 'Your legal pages still have placeholders' })).toBeTruthy();
+    expect(screen.getByTestId('publish-legal-notice').textContent).toMatch(/Impressum: \d+ parts in \[square brackets\]/);
+    fireEvent.click(screen.getByRole('button', { name: 'Open Impressum' }));
+    expect(setCurrentPage).toHaveBeenCalledWith(page);
+  });
+
+  it('publishes straight away for a site without business data', () => {
+    fetchMock.mockResolvedValue(ok);
+    render(<PublishButton />);
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('publish-legal-notice')).toBeNull();
+  });
+});

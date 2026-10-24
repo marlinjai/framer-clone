@@ -145,7 +145,7 @@ export function buildRequest(input: {
     model: input.model,
     breakpoints,
     projectName: project.metadata.title,
-    siteContext: siteContextFromSettings(project.site, project.metadata.title),
+    siteContext: siteContextFromSettings(project.site, project.metadata.title, project.pagesArray),
   };
   if (target.kind === 'newPage') {
     return {
