@@ -6,6 +6,14 @@ import { v4 as uuidv4 } from 'uuid';
 import PageModel, { PageModelType } from './PageModel';
 import { createIntrinsicComponent, createViewportNode, type ComponentSnapshotIn } from './ComponentModel';
 import { suggestSlug, validateSlug, type SlugValidation } from '@/lib/pages/slug';
+import {
+  isHttpsUrl,
+  normalizeSiteSettings,
+  validateSiteSettings,
+  type SiteSettings,
+  type SiteSettingsErrors,
+  type SiteSettingsInput,
+} from '@/lib/site/siteSettings';
 
 // ---- Lumitra Studio binding ---------------------------------------------
 //
@@ -46,14 +54,23 @@ export type LumitraBindingType = Instance<typeof LumitraBindingModel>;
 /** The outcome of ProjectModel.updatePageSettings: per-field problems, if any. */
 export type PageSettingsResult =
   | { ok: true }
-  | { ok: false; errors: { title?: string; slug?: string } };
+  | { ok: false; errors: { title?: string; slug?: string; ogImage?: string; notFoundPage?: string } };
 
 /** What the page settings panel can change in one go. */
 export interface PageSettingsInput {
   title: string;
   slug: string;
   description: string;
+  /** https URL of the page's Open Graph image; blank uses the site default. Omitted: unchanged. */
+  ogImage?: string;
+  /** Keep the page out of search engines (robots noindex, left out of the sitemap). Omitted: unchanged. */
+  noIndex?: boolean;
+  /** Make this the site's 404 page (true) or stop being it (false). Omitted: unchanged. */
+  notFoundPage?: boolean;
 }
+
+/** The outcome of ProjectModel.updateSiteSettings. */
+export type SiteSettingsResult = { ok: true } | { ok: false; errors: SiteSettingsErrors };
 
 // Project metadata model
 const ProjectMetadataModel = types.model('ProjectMetadata', {
@@ -93,6 +110,20 @@ export const ProjectModel = types
     // empty block (`enabled: false`, other fields undefined). No backcompat
     // guards needed at call sites — read `project.lumitra` directly.
     lumitra: types.optional(LumitraBindingModel, () => ({})),
+
+    // Site settings (src/lib/site/siteSettings.ts): site name, language,
+    // favicon, Open Graph defaults, title template, 404 page and the business
+    // data. A frozen value, replaced as a whole by updateSiteSettings, so a
+    // dialog save is one undo step and the shape lives in one pure module.
+    // Normalized on the way in (older snapshots omit fields or the whole
+    // object; `{}` is "all defaults", including language `en`), so the stored
+    // value is always complete and a snapshot round-trips unchanged.
+    siteSettings: types.optional(
+      types.snapshotProcessor(types.frozen<SiteSettings>(), {
+        preProcessor: (raw: SiteSettingsInput | undefined) => normalizeSiteSettings(raw),
+      }),
+      {},
+    ),
 
   })
   .actions(self => {
@@ -222,6 +253,11 @@ export const ProjectModel = types
     // Remove a page from the project
     removePage(pageId: string) {
       self.pages.delete(pageId);
+      // The 404 page is gone: the site falls back to the default 404.
+      const settings = normalizeSiteSettings(self.siteSettings);
+      if (settings.notFoundPageId === pageId) {
+        self.siteSettings = { ...settings, notFoundPageId: '' };
+      }
       self.metadata.updatedAt = new Date();
     },
 
@@ -267,7 +303,7 @@ export const ProjectModel = types
     updatePageSettings(pageId: string, input: PageSettingsInput): PageSettingsResult {
       const page = self.pages.get(pageId);
       if (!page) return { ok: false, errors: { title: 'This page no longer exists.' } };
-      const errors: { title?: string; slug?: string } = {};
+      const errors: { title?: string; slug?: string; ogImage?: string; notFoundPage?: string } = {};
       const title = input.title.trim();
       if (!title) errors.title = 'Enter a page name.';
       const slugChanged = input.slug !== page.slug;
@@ -282,19 +318,56 @@ export const ProjectModel = types
           if (!result.ok) errors.slug = result.message;
         }
       }
-      if (errors.title || errors.slug) return { ok: false, errors };
+      const ogImage = input.ogImage === undefined ? page.metadata.ogImage : input.ogImage.trim();
+      if (ogImage && !isHttpsUrl(ogImage)) errors.ogImage = 'Enter a full https:// address of an image.';
+      // The page that ends up at the site root can never be the 404 page.
+      const endsAsHome = slugChanged ? input.slug === '' : page.slug === '';
+      if (input.notFoundPage && endsAsHome) {
+        errors.notFoundPage = 'The home page cannot be the 404 page.';
+      }
+      if (errors.title || errors.slug || errors.ogImage || errors.notFoundPage) return { ok: false, errors };
 
       const description = input.description.trim();
+      const noIndex = input.noIndex === undefined ? page.metadata.noIndex : input.noIndex;
       const metadataChanged =
-        title !== page.metadata.title || description !== page.metadata.description;
+        title !== page.metadata.title ||
+        description !== page.metadata.description ||
+        ogImage !== page.metadata.ogImage ||
+        noIndex !== page.metadata.noIndex;
+      const settings = normalizeSiteSettings(self.siteSettings);
+      const isNotFound = settings.notFoundPageId === pageId;
+      const notFoundChanged = input.notFoundPage !== undefined && input.notFoundPage !== isNotFound;
       // Nothing changed: no mutation, so no empty undo step.
-      if (!metadataChanged && !slugChanged) return { ok: true };
-      if (metadataChanged) page.updateMetadata({ title, description });
+      if (!metadataChanged && !slugChanged && !notFoundChanged) return { ok: true };
+      if (metadataChanged) page.updateMetadata({ title, description, ogImage, noIndex });
       if (slugChanged) page.setSlug(input.slug);
+      if (notFoundChanged) {
+        // One pointer, so there is exactly one 404 page per site.
+        self.siteSettings = { ...settings, notFoundPageId: input.notFoundPage ? pageId : '' };
+      }
       self.metadata.updatedAt = new Date();
       return { ok: true };
     },
-    
+
+    // The Site settings dialog's save: the whole object in ONE action (one
+    // undo step). Normalized, then validated; on any problem nothing changes.
+    // The 404 pointer must name an existing page that is not the home page.
+    updateSiteSettings(input: SiteSettingsInput): SiteSettingsResult {
+      const next: SiteSettings = normalizeSiteSettings(input);
+      const errors = validateSiteSettings(next);
+      if (next.notFoundPageId) {
+        const target = self.pages.get(next.notFoundPageId);
+        if (!target) errors.notFoundPageId = 'That page no longer exists.';
+        else if (target.slug === '') errors.notFoundPageId = 'The home page cannot be the 404 page.';
+      }
+      if (Object.keys(errors).length > 0) return { ok: false, errors };
+      const current = normalizeSiteSettings(self.siteSettings);
+      if (JSON.stringify(current) === JSON.stringify(next)) return { ok: true };
+      self.siteSettings = next;
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
     // Give a project that has NO home page one: the chosen page takes the
     // empty slug and is served at the site root. Only for projects without a
     // home page (older projects could delete theirs); with a home page this is
@@ -305,6 +378,11 @@ export const ProjectModel = types
       if (!page) return false;
       if (Array.from(self.pages.values()).some(p => p.slug === '')) return false;
       page.setSlug('');
+      // The home page can never be the 404 page.
+      const settings = normalizeSiteSettings(self.siteSettings);
+      if (settings.notFoundPageId === pageId) {
+        self.siteSettings = { ...settings, notFoundPageId: '' };
+      }
       self.metadata.updatedAt = new Date();
       return true;
     },
@@ -317,6 +395,11 @@ export const ProjectModel = types
   };
   })
   .views(self => ({
+    // The Site settings, normalized: always complete, whatever the snapshot held.
+    get site(): SiteSettings {
+      return normalizeSiteSettings(self.siteSettings);
+    },
+
     // True when the page's slug cannot change: it is the project's only home
     // page (see isSlugLocked in the actions above).
     isSlugLocked(pageId: string): boolean {

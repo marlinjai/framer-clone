@@ -19,6 +19,12 @@
 //
 // The page name doubles as the browser tab and search result title
 // (pageSeoToMetadata uses metadata.title), so there is no separate SEO title.
+//
+// Search and sharing: the page's own sharing image (Open Graph, an https URL;
+// empty uses the site's default from Site settings), "Hide from search
+// engines" (robots noindex, left out of sitemap.xml), and "Use as 404 page"
+// (the page shown with status 404 for unknown addresses; one per site, never
+// the home page).
 
 import React from 'react';
 import { observer } from 'mobx-react-lite';
@@ -37,6 +43,7 @@ import type { PageModelType } from '@/models/PageModel';
 import type { ProjectModelType } from '@/models/ProjectModel';
 import { useSiteAddress } from '@/contexts/SiteAddressContext';
 import { suggestSlug, tidySlugInput, validateSlug, SLUG_MAX_LENGTH } from '@/lib/pages/slug';
+import { isHttpsUrl } from '@/lib/site/siteSettings';
 
 /** Search engines show roughly this many characters of a description. */
 const DESCRIPTION_HINT_LENGTH = 155;
@@ -88,8 +95,12 @@ const PageSettingsForm = observer(({
   const [description, setDescription] = React.useState(page.metadata.description ?? '');
   // Errors show once a field was left or a save was attempted, never while the
   // person is still typing their first characters.
-  const [showErrors, setShowErrors] = React.useState({ name: false, slug: false });
-  const [saveErrors, setSaveErrors] = React.useState<{ title?: string; slug?: string }>({});
+  const [showErrors, setShowErrors] = React.useState({ name: false, slug: false, ogImage: false });
+  const [saveErrors, setSaveErrors] = React.useState<{ title?: string; slug?: string; ogImage?: string; notFoundPage?: string }>({});
+  const [ogImage, setOgImage] = React.useState(page.metadata.ogImage ?? '');
+  const [noIndex, setNoIndex] = React.useState(page.metadata.noIndex);
+  const [notFoundPage, setNotFoundPage] = React.useState(project.site.notFoundPageId === page.id);
+  const ogImageRef = React.useRef<HTMLInputElement>(null);
 
   const otherPages = project.pagesArray.map((p) => ({ id: p.id, slug: p.slug }));
   const cleanSlug = isHome ? '' : slugTouched ? tidySlugInput(slug) : page.slug;
@@ -101,6 +112,12 @@ const PageSettingsForm = observer(({
     : validateSlug(cleanSlug, { pageId: page.id, pages: otherPages });
   const slugError = saveErrors.slug ?? (slugResult.ok ? undefined : slugResult.message);
   const titleError = saveErrors.title ?? nameError;
+  const cleanOgImage = ogImage.trim();
+  const ogImageError =
+    saveErrors.ogImage ?? (cleanOgImage && !isHttpsUrl(cleanOgImage) ? 'Enter a full https:// address of an image.' : undefined);
+  const visibleOgImageError = showErrors.ogImage || saveErrors.ogImage ? ogImageError : undefined;
+  // A 404 page is never indexed, whatever its own switch says.
+  const effectiveNoIndex = noIndex || notFoundPage;
 
   const visibleNameError = showErrors.name ? titleError : undefined;
   const visibleSlugError = showErrors.slug || saveErrors.slug ? slugError : undefined;
@@ -110,24 +127,27 @@ const PageSettingsForm = observer(({
 
   // A failed save puts focus on the first field to fix and announces what is
   // wrong, so keyboard and screen reader users are not left guessing.
-  const reportProblems = (problems: { title?: string; slug?: string }) => {
+  const reportProblems = (problems: { title?: string; slug?: string; ogImage?: string; notFoundPage?: string }) => {
     setAnnouncement(
-      ['Not saved.', problems.title, problems.slug].filter(Boolean).join(' '),
+      ['Not saved.', problems.title, problems.slug, problems.ogImage, problems.notFoundPage].filter(Boolean).join(' '),
     );
-    (problems.title ? nameRef : slugRef).current?.focus();
+    (problems.title ? nameRef : problems.slug ? slugRef : ogImageRef).current?.focus();
   };
 
   const submit = (event?: React.FormEvent) => {
     event?.preventDefault();
-    setShowErrors({ name: true, slug: true });
-    if (titleError || slugError) {
-      reportProblems({ title: titleError, slug: slugError });
+    setShowErrors({ name: true, slug: true, ogImage: true });
+    if (titleError || slugError || ogImageError) {
+      reportProblems({ title: titleError, slug: slugError, ogImage: ogImageError });
       return;
     }
     const result = project.updatePageSettings(page.id, {
       title: name,
       slug: isHome ? page.slug : cleanSlug,
       description,
+      ogImage: cleanOgImage,
+      noIndex,
+      notFoundPage: isHome ? false : notFoundPage,
     });
     if (!result.ok) {
       setSaveErrors(result.errors);
@@ -299,6 +319,87 @@ const PageSettingsForm = observer(({
             Shown by search engines under the title. About {DESCRIPTION_HINT_LENGTH} characters fit
             ({description.trim().length} now).
           </p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="page-settings-og-image" className={fieldLabel}>
+            Sharing image
+          </label>
+          <input
+            id="page-settings-og-image"
+            ref={ogImageRef}
+            value={ogImage}
+            placeholder="https://"
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => {
+              setOgImage(e.target.value);
+              setAnnouncement('');
+              setSaveErrors((s) => ({ ...s, ogImage: undefined }));
+            }}
+            onBlur={() => setShowErrors((s) => ({ ...s, ogImage: true }))}
+            aria-invalid={visibleOgImageError ? true : undefined}
+            aria-describedby={visibleOgImageError ? 'page-settings-og-image-error' : 'page-settings-og-image-hint'}
+            className={`${inputBase} ${visibleOgImageError ? inputBad : inputOk}`}
+          />
+          {visibleOgImageError ? (
+            <p id="page-settings-og-image-error" className="text-[11px] text-destructive" aria-live="polite">
+              {visibleOgImageError}
+            </p>
+          ) : (
+            <p id="page-settings-og-image-hint" className="text-[11px] text-muted-foreground">
+              Shown when this page is shared. Leave empty to use the sharing image from Site settings.
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={effectiveNoIndex}
+              disabled={notFoundPage}
+              onChange={(e) => setNoIndex(e.target.checked)}
+              aria-describedby="page-settings-noindex-hint"
+              className="mt-0.5"
+              data-testid="page-settings-noindex"
+            />
+            <span>
+              Hide from search engines
+              <span id="page-settings-noindex-hint" className="block text-[11px] text-muted-foreground">
+                {notFoundPage
+                  ? 'A 404 page is always hidden from search engines.'
+                  : 'The page stays reachable by its address but is left out of search results and the sitemap.'}
+              </span>
+            </span>
+          </label>
+          {!isHome && (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={notFoundPage}
+                onChange={(e) => {
+                  setNotFoundPage(e.target.checked);
+                  setSaveErrors((s) => ({ ...s, notFoundPage: undefined }));
+                }}
+                aria-describedby="page-settings-404-hint"
+                className="mt-0.5"
+                data-testid="page-settings-404"
+              />
+              <span>
+                Use as 404 page
+                <span id="page-settings-404-hint" className="block text-[11px] text-muted-foreground">
+                  Shown, with the status 404, when a visitor opens an address that does not exist on your site.
+                  {project.site.notFoundPageId && project.site.notFoundPageId !== page.id && notFoundPage
+                    ? ` It replaces "${project.getPage(project.site.notFoundPageId)?.metadata.title ?? 'the current 404 page'}".`
+                    : ''}
+                </span>
+              </span>
+            </label>
+          )}
+          {saveErrors.notFoundPage && (
+            <p className="text-[11px] text-destructive" aria-live="polite">{saveErrors.notFoundPage}</p>
+          )}
         </div>
       </DialogBody>
 

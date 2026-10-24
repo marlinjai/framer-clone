@@ -24,6 +24,7 @@ import { useStore } from '@/hooks/useStore';
 import { getHistoryStore } from '@/stores/RootStore';
 import PublishButton from '@/components/PublishButton';
 import DomainsButton from '@/components/domains/DomainsButton';
+import SiteSettingsButton from '@/components/site/SiteSettingsDialog';
 import SaveButton from '@/components/SaveButton';
 import GeneratePageButton from '@/components/ai/GeneratePageDialog';
 import { PolishPageButton } from '@/components/ai/VisualReview';
@@ -220,6 +221,9 @@ const TopBar = observer(() => {
 
       {/* Domains: connect a custom domain to this project (its own dialog). */}
       <DomainsButton />
+
+      {/* Site settings: name, language, favicon, sharing image, business data. */}
+      <SiteSettingsButton />
 
       {/* Preview entry — sits just before the undo/redo cluster so it's
           visually grouped with the other rightward actions. */}

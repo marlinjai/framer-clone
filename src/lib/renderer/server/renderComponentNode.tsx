@@ -42,8 +42,9 @@ const INTERACTIVE_COMMERCE_KINDS: ReadonlySet<string> = new Set([
 // Props that are internal to the snapshot/binding model and must NOT reach the
 // DOM (React would render them as stray attributes). `children` is consumed via
 // the children argument; `query` is the structured data-component query object;
-// `bindings` never lives in props but is denied defensively.
-const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings']);
+// `bindings` never lives in props but is denied defensively; `effects` is
+// turned into attributes by applyEffects and denied here defensively too.
+const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects']);
 
 /**
  * Resolve a node's HTML tag. Editor primitives store `type` as the intrinsic
