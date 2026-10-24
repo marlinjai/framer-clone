@@ -10,6 +10,7 @@ import HistoryStore from '@/stores/HistoryStore';
 import SiteSettingsButton from '../SiteSettingsDialog';
 
 let project: ProjectModelType | undefined;
+const setCurrentPage = vi.fn();
 
 vi.mock('@/hooks/useStore', () => ({
   useStore: () => ({
@@ -17,6 +18,7 @@ vi.mock('@/hooks/useStore', () => ({
       get currentProject() {
         return project;
       },
+      setCurrentPage: (page: unknown) => setCurrentPage(page),
     },
   }),
 }));
@@ -167,5 +169,43 @@ describe('cancel and reopen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Site settings' }));
     dialog = screen.getByTestId('site-settings-dialog');
     expect(field(dialog, 'Site name').value).toBe('');
+  });
+});
+
+describe('legal pages and privacy', () => {
+  it('creates the Impressum from the saved business data and opens it', () => {
+    const dialog = open();
+    fireEvent.change(field(dialog, 'Legal name'), { target: { value: 'Bäckerei Müller GmbH' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create Impressum' }));
+    const page = project!.pagesArray.find((p) => p.metadata.legalTemplate === 'impressum')!;
+    // Site language is en for an older project: English slug, saved draft used.
+    expect(page.slug).toBe('imprint');
+    expect(project!.site.business.legalName).toBe('Bäckerei Müller GmbH');
+    expect(setCurrentPage).toHaveBeenCalledWith(page);
+    expect(screen.queryByTestId('site-settings-dialog')).toBeNull();
+  });
+
+  it('offers Open once the page exists, and creates nothing on an invalid draft', () => {
+    project!.createLegalPage('privacy');
+    const dialog = open();
+    expect(within(dialog).getByRole('button', { name: /Open privacy policy/ })).toBeTruthy();
+    fireEvent.change(field(dialog, 'Email'), { target: { value: 'not-an-email' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create Impressum' }));
+    expect(project!.pagesArray.some((p) => p.metadata.legalTemplate === 'impressum')).toBe(false);
+  });
+
+  it('adds legal links to footers and reports pages without one', () => {
+    const dialog = open();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add legal links to footers' }));
+    expect(within(dialog).getByTestId('legal-links-status').textContent).toContain('1 page has no footer.');
+  });
+
+  it('states the consent banner status from the analytics setting', () => {
+    let dialog = open();
+    expect(within(dialog).getByTestId('consent-status').textContent).toContain('Not shown');
+    cleanup();
+    project!.setLumitraEnabled(true);
+    dialog = open();
+    expect(within(dialog).getByTestId('consent-status').textContent).toContain('Shown to visitors, because analytics is on');
   });
 });

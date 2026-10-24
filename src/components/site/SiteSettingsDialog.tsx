@@ -15,6 +15,13 @@
 //   rows, VAT ID, register entry, managing directors. Shown in search engine
 //   data (JSON-LD) and handed to the AI generator so it never invents contact
 //   details.
+// - Legal pages and privacy: create the Impressum, privacy policy and terms
+//   from templates filled with the business data (src/lib/legal/templates.ts),
+//   or open them once they exist; put their links into every footer; and the
+//   consent banner's status. The banner is not a setting: it is shown exactly
+//   when something needs consent (analytics on), because turning it off while
+//   analytics runs would break the law and turning it off otherwise changes
+//   nothing (src/lib/consent/consent.ts).
 //
 // The form edits a draft; Save runs ProjectModel.updateSiteSettings, ONE MST
 // action (one undo step), which validates again and changes nothing on a
@@ -23,7 +30,7 @@
 
 import React from 'react';
 import { observer } from 'mobx-react-lite';
-import { Plus, Settings, Trash2 } from 'lucide-react';
+import { ExternalLink, Plus, Settings, Trash2 } from 'lucide-react';
 import {
   Dialog,
   DialogBody,
@@ -50,6 +57,7 @@ import {
   type SiteSettingsErrors,
   type Weekday,
 } from '@/lib/site/siteSettings';
+import { LEGAL_KINDS, LEGAL_TITLES, findLegalPage, legalLanguage, type LegalKind } from '@/lib/legal/legalPages';
 
 const fieldLabel = 'text-[11px] font-semibold uppercase tracking-wide text-muted-foreground';
 const inputBase =
@@ -153,7 +161,16 @@ function ImagePreview({ url, label, square }: { url: string; label: string; squa
   );
 }
 
+/** Button labels per legal page kind (editor chrome is English). */
+const LEGAL_ACTION_NAMES: Record<LegalKind, string> = {
+  impressum: 'Impressum',
+  privacy: 'privacy policy',
+  terms: 'terms',
+};
+
 const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModelType; onClose: () => void }) => {
+  const { editorUI } = useStore();
+  const [legalStatus, setLegalStatus] = React.useState('');
   const [draft, setDraft] = React.useState<SiteSettings>(() => project.site);
   // Managing directors are typed one per line; split on save.
   const [directorsText, setDirectorsText] = React.useState(() => project.site.business.managingDirectors.join('\n'));
@@ -196,8 +213,8 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
   const titlePreview = applyTitleTemplate(effectiveTitleTemplate(candidate, siteName), 'About us');
   const notFoundCandidates = project.pagesArray.filter((p) => p.slug !== '');
 
-  const submit = (event?: React.FormEvent) => {
-    event?.preventDefault();
+  /** Validate and save the draft; on a problem, show it and return false. */
+  const save = (): boolean => {
     setSubmitted(true);
     const problems = validateSiteSettings(candidate);
     const result = Object.keys(problems).length > 0 ? { ok: false as const, errors: problems } : project.updateSiteSettings(candidate);
@@ -206,10 +223,42 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
       const keys = Object.keys(result.errors);
       setAnnouncement(`Not saved. ${keys.length === 1 ? 'One field needs' : `${keys.length} fields need`} attention: ${result.errors[keys[0]]}`);
       document.getElementById(fieldId(keys[0]))?.focus();
-      return;
+      return false;
     }
+    return true;
+  };
+
+  const submit = (event?: React.FormEvent) => {
+    event?.preventDefault();
+    if (save()) onClose();
+  };
+
+  // A legal page is filled from the SAVED business data, so the draft is
+  // saved first (one undo step for the settings, one for the page); with a
+  // problem in the draft nothing is created and the problem shows.
+  const openOrCreateLegal = (kind: LegalKind) => {
+    if (!save()) return;
+    const { page } = project.createLegalPage(kind);
+    editorUI.setCurrentPage(page);
     onClose();
   };
+
+  const addFooterLinks = () => {
+    const result = project.addLegalLinksToFooters();
+    const parts = [
+      result.pagesUpdated === 0
+        ? 'Every footer already has the links.'
+        : `Links added to ${result.pagesUpdated} ${result.pagesUpdated === 1 ? 'page' : 'pages'}.`,
+    ];
+    if (result.pagesWithoutFooter > 0) {
+      parts.push(`${result.pagesWithoutFooter} ${result.pagesWithoutFooter === 1 ? 'page has' : 'pages have'} no footer.`);
+    }
+    setLegalStatus(parts.join(' '));
+  };
+
+  const legalLang = legalLanguage(candidate.language);
+  const legalPages = LEGAL_KINDS.map((kind) => ({ kind, page: findLegalPage(project.pagesArray, kind) }));
+  const analyticsOn = project.lumitra.enabled;
 
   const languageSelectValue = customLanguage ? 'other' : draft.language;
 
@@ -474,6 +523,51 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
               className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none transition-shadow focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
             />
             <p id={`${fieldId('business.managingDirectors')}-hint`} className={hint}>One name per line.</p>
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-4" aria-labelledby="site-settings-legal">
+          <div className="flex flex-col gap-1">
+            <h3 id="site-settings-legal" className={sectionTitle}>Legal pages and privacy</h3>
+            <p className={hint}>
+              Templates filled from your business details, in your site language. They are templates, not legal advice:
+              review every page before you publish it, and fill in or delete each part in [square brackets].
+            </p>
+          </div>
+          <ul className="flex flex-col gap-2" data-testid="legal-pages">
+            {legalPages.map(({ kind, page }) => (
+              <li key={kind} className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
+                <div className="flex min-w-0 flex-col">
+                  <span className="text-sm text-foreground">{LEGAL_TITLES[legalLang][kind]}</span>
+                  <span className={hint}>{page ? `/${page.slug}` : 'Not created yet'}</span>
+                </div>
+                <Button type="button" variant={page ? 'outline' : 'brand'} size="sm" onClick={() => openOrCreateLegal(kind)}>
+                  {page ? (
+                    <>
+                      <ExternalLink size={14} aria-hidden="true" /> Open {LEGAL_ACTION_NAMES[kind]}
+                    </>
+                  ) : (
+                    <>Create {LEGAL_ACTION_NAMES[kind]}</>
+                  )}
+                </Button>
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="button" variant="outline" size="sm" onClick={addFooterLinks}>
+              Add legal links to footers
+            </Button>
+            <p className={hint} role="status" aria-live="polite" data-testid="legal-links-status">
+              {legalStatus || 'Adds the legal pages and the cookie settings link to the footer of every page.'}
+            </p>
+          </div>
+          <div className="flex flex-col gap-1 rounded-md bg-muted px-3 py-2" data-testid="consent-status">
+            <span className={fieldLabel}>Consent banner</span>
+            <p className="text-[12px] text-foreground">
+              {analyticsOn
+                ? 'Shown to visitors, because analytics is on. The analytics script loads only after a visitor accepts; declining loads nothing. Visitors can change their choice from the cookie settings link in the footer.'
+                : 'Not shown: nothing on your site stores data on visitors\' devices that needs consent (analytics is off).'}
+            </p>
           </div>
         </section>
       </DialogBody>
