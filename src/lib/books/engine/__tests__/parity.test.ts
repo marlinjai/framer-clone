@@ -109,7 +109,17 @@ describe('the browser draft render equals the server draft PDF route', () => {
       const browser = await renderDraftPayload(fetcher, wire(input, template));
       expect(sha(browser.bytes), `${presetName}/${family}/${name}`).toBe(sha(await serverDraft(input, template)));
     }
-    // Each file fetched once for the whole family (kept by the worker), only the family in use.
+    // Each file fetched once for the whole family (kept by the worker), only the family in use; the italic faces
+    // too, because the formatted probe has italic runs.
+    const faces = FONT_FILES[family];
+    expect(fetcher.calls.sort()).toEqual([faces.regular, faces.bold, faces.italic, faces.boldItalic].map((f) => `/api/books/fonts/${f.sha256}`).sort());
+  }, 120_000);
+
+  it.each(FONT_FAMILIES)('a draft without italic never fetches the italic faces (%s)', async (family) => {
+    const fetcher = filesFetcher();
+    for (const name of PROBE_NAMES.filter((n) => n !== 'formattedTexts')) {
+      await renderDraftPayload(fetcher, wire(probeInput(probe(name as ProbeName), true), withFamily(preset('klassisch'), family)));
+    }
     expect(fetcher.calls.sort()).toEqual([FONT_FILES[family].bold.sha256, FONT_FILES[family].regular.sha256].map((s) => `/api/books/fonts/${s}`).sort());
   }, 120_000);
 

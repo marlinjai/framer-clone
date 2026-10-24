@@ -13,6 +13,7 @@
 import type { RenderInput, RenderRecipient } from '../render/model';
 import type { CompletenessContext } from '../render/completeness';
 import type { SalesDocumentLine, SalesDocumentWithSnapshots } from '../repository/read';
+import { plainOf, type RichText } from '../render/richText';
 import type { CustomerSnapshotV1, SenderSnapshotV1 } from '../snapshots';
 
 export const PROBE_NAMES = [
@@ -23,6 +24,7 @@ export const PROBE_NAMES = [
   'longInvoice',
   'longRecipient',
   'longDescription',
+  'formattedTexts',
 ] as const;
 export type ProbeName = (typeof PROBE_NAMES)[number];
 
@@ -160,6 +162,8 @@ function baseDocument(overrides: Partial<SalesDocumentWithSnapshots> = {}): Sale
     taxSummary: [],
     introText: 'Vielen Dank für Ihren Auftrag. Wir berechnen Ihnen die folgenden Leistungen.',
     outroText: 'Mit freundlichen Grüßen',
+    introFormat: null,
+    outroFormat: null,
     renderedPdfFileId: null,
     issuedAt: ISSUED_AT,
     createdAt: ISSUED_AT,
@@ -297,6 +301,46 @@ function longDescription(): Probe {
   return { name: 'longDescription', lines, document: withTotals(baseDocument(), lines), context: {} };
 }
 
+/**
+ * Formatted intro and closing texts: bold, italic, bold italic, a bullet list, a blank line and a sentence long
+ * enough to wrap with a style change inside a word, so every face and the run-aware line breaker are on the page.
+ */
+export const FORMATTED_INTRO: RichText = {
+  v: 1,
+  blocks: [
+    { kind: 'paragraph', runs: [{ text: 'Vielen Dank für Ihren ' }, { text: 'Auftrag', bold: true }, { text: '. Wir berechnen Ihnen die folgenden ' }, { text: 'Leistungen', italic: true }, { text: ' für das Projekt ' }, { text: 'Website-Relaunch', bold: true, italic: true }, { text: ', wie im Angebot vom 1. Oktober vereinbart und im Auftrag be' }, { text: 'stätigt', bold: true }, { text: '.' }] },
+    { kind: 'bullet', runs: [{ text: 'Konzeption und ' }, { text: 'Abstimmung', italic: true }] },
+    { kind: 'bullet', runs: [{ text: 'Umsetzung', bold: true }, { text: ' in zwei Phasen' }] },
+    { kind: 'paragraph', runs: [] },
+    { kind: 'paragraph', runs: [{ text: 'Bitte prüfen Sie die Positionen.' }] },
+  ],
+};
+export const FORMATTED_OUTRO: RichText = {
+  v: 1,
+  blocks: [
+    { kind: 'paragraph', runs: [{ text: 'Mit freundlichen Grüßen' }] },
+    { kind: 'paragraph', runs: [{ text: 'Ihr Team von Musterwerk', italic: true }] },
+  ],
+};
+
+function formattedTexts(): Probe {
+  const lines = [line(1), line(2, { title: 'Umsetzung' })];
+  return {
+    name: 'formattedTexts',
+    lines,
+    document: withTotals(
+      baseDocument({
+        introText: plainOf(FORMATTED_INTRO),
+        introFormat: FORMATTED_INTRO,
+        outroText: plainOf(FORMATTED_OUTRO),
+        outroFormat: FORMATTED_OUTRO,
+      }),
+      lines,
+    ),
+    context: {},
+  };
+}
+
 const BUILDERS: Record<ProbeName, () => Probe> = {
   smallBusiness,
   regular,
@@ -305,6 +349,7 @@ const BUILDERS: Record<ProbeName, () => Probe> = {
   longInvoice,
   longRecipient,
   longDescription,
+  formattedTexts,
 };
 
 /** A fresh probe by name. */

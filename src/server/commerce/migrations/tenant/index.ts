@@ -17,6 +17,7 @@ import { booksAssetDelete } from './014_books_asset_delete';
 import { booksProducts } from './015_books_products';
 import { booksSubject } from './016_books_subject';
 import { formSubmissions } from './017_form_submissions';
+import { booksTextFormat } from './018_books_text_format';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -94,6 +95,9 @@ import { formSubmissions } from './017_form_submissions';
  *                            site (form_submission, mutable only in read_at,
  *                            deleted for real by the owner, the project delete
  *                            and company erasure; no IP address stored)
+ *   018_books_text_format  : the formatting of the intro and closing texts
+ *                            (intro_format / outro_format, nullable JSONB of
+ *                            version 1; the plain text is derived from it)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -114,4 +118,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   booksProducts,
   booksSubject,
   formSubmissions,
+  booksTextFormat,
 ];

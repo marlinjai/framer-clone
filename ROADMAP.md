@@ -180,8 +180,9 @@ connections to the suite. The four lines below are in that order.
   add-line and row anchors in the layout map) built 2026-10-23; phase 3 (the editor on the page,
   line actions, product picker, undo, the issued invoice as its stored PDF) live and proven on
   Books Testfirma 2026-10-24 (TEST-4 written on the page and issued); the subject line (migration
-  016, a template block, on the page and in the form) built 2026-10-24. Left: formatted intro and
-  closing texts. See
+  016, a template block, on the page and in the form) live and proven 2026-10-24 (TEST-5); formatted
+  intro and closing texts part 1 (italic faces, migration 017, the engine) built 2026-10-24. Left:
+  part 2, the bold, italic and list buttons on the page. See
   [plan](docs/plans/2026-10-23-books-wysiwyg-invoice-editor.md). (2026-10-23)
 - [ ] 8c. A discount on the whole invoice ("Gesamtrabatt", as sevdesk), split across the tax rates
   in proportion and printed so the tax per rate stays right (section 14 UStG): needs its own small

@@ -24,6 +24,7 @@ import { label } from '../template/labels';
 import type { MetaItem, SenderColumn } from '../template/schema';
 import { looksLikeIban } from './epcQr';
 import { formatDate, formatMoney, formatQuantity, formatRate, postalCity, toPdfText } from './format';
+import { normalizeRichText, type RichText } from './richText';
 
 /** A small-print block of a version 1 template (heading and text). */
 export interface FooterBlockV1 {
@@ -119,6 +120,12 @@ export interface RenderModel {
   notes: string[];
   payment: string[];
   outro: string | null;
+  /**
+   * The formatted intro and closing texts (bold, italic, bullets, paragraphs), drawn instead of `intro` / `outro`
+   * when present; null prints the plain text as before (every document written before formats existed).
+   */
+  introRich: RichText | null;
+  outroRich: RichText | null;
   smallPrint: Array<{ heading: string | null; text: string }>;
   footer: string[][];
   pdfTitle: string;
@@ -299,6 +306,23 @@ export function titleOf(docType: string): string {
         : label('title.other');
 }
 
+/**
+ * A formatted text as it is printed: in each run the control characters a PDF cannot show become spaces and the
+ * invisible joiners go, as `toPdfText` does for plain text, but nothing is trimmed (the space between two runs is
+ * part of the text). Null when nothing printable is left.
+ */
+function printableRich(rich: RichText | null | undefined): RichText | null {
+  if (!rich) return null;
+  const clean = normalizeRichText({
+    v: 1,
+    blocks: rich.blocks.map((b) => ({
+      kind: b.kind,
+      runs: b.runs.map((r) => ({ ...r, text: r.text.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/[\u200d\ufe0e\ufe0f]/g, '') })),
+    })),
+  });
+  return clean.blocks.some((b) => b.runs.some((r) => r.text.trim() !== '')) ? clean : null;
+}
+
 /** The service date line (section 14 (4) no. 6 UStG); a missing date means the issue date. */
 export function serviceDateValue(doc: SalesDocumentWithSnapshots): { label: string; value: string } {
   if (doc.servicePeriodStart && doc.servicePeriodEnd) {
@@ -440,6 +464,8 @@ export function buildRenderModel(input: RenderInput): RenderModel {
     notes,
     payment,
     outro: present(doc.outroText) ? toPdfText(doc.outroText) : null,
+    introRich: printableRich(doc.introFormat),
+    outroRich: printableRich(doc.outroFormat),
     smallPrint: (input.template?.footerBlocks ?? []).map((b) => ({
       heading: present(b.heading) ? toPdfText(b.heading) : null,
       text: toPdfText(b.text),

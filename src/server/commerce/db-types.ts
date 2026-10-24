@@ -48,6 +48,7 @@ import type {
   TemplateDocumentV2,
   TemplateSnapshot,
 } from '../books/snapshots';
+import type { RichText } from '../books/render/richText';
 
 // --- scalar aliases ------------------------------------------------------------
 
@@ -514,6 +515,9 @@ export interface SalesDocumentTable {
   replaces_document_id: string | null;
   print_replaces_reference: Generated<boolean>;
   subject: string | null;
+  // The intro text's formatting (017; the run model of render/richText.ts); null prints the plain text.
+  intro_format: JsonColumn<RichText> | null;
+  outro_format: JsonColumn<RichText> | null;
 }
 
 /**

@@ -80,7 +80,7 @@ describe('stored template documents', () => {
 describe('the save gate', () => {
   it.each(PRESETS)('passes the %s preset against every probe document', async (name) => {
     expect(await templateProblems(preset(name))).toEqual([]);
-    expect(PROBE_NAMES).toHaveLength(7);
+    expect(PROBE_NAMES).toHaveLength(8);
   });
 
   it.each(['recipient', 'documentMeta', 'title', 'lineTable', 'totals', 'taxNote', 'senderColumns'] as const)(

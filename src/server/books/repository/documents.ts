@@ -17,6 +17,7 @@ import { BooksError, invalid, withDbErrors } from '../errors';
 import { isIsoDate } from '../numbering';
 import type { BooksScope } from '../scope';
 import { requireSettings } from '../settings';
+import { derivePair, richFromPlain, richTextSchema, type RichText } from '../render/richText';
 import { toJsonb } from '../snapshots';
 import { totalsExceedLimit } from '../totals';
 import { insertEvent } from './events';
@@ -28,6 +29,26 @@ const servicePeriod = z
   .object({ start: isoDate, end: isoDate })
   .refine((p) => p.start <= p.end, { message: 'start must not be after end', path: ['end'] });
 const optionalText = (max: number) => z.string().max(max).nullable().optional();
+/** A formatted intro or closing text (render/richText.ts); the plain text is derived from it, never sent with it. */
+const optionalFormat = richTextSchema.optional();
+
+/**
+ * The stored pair of an intro or closing text (`derivePair`): from a sent format, or from a sent plain text read as
+ * paragraphs, so a text typed with line breaks prints them. Both go through the same derivation, so whatever is
+ * stored reads back through the schema. Undefined when neither was sent.
+ */
+function textPair(
+  which: 'introText' | 'outroText',
+  text: string | null | undefined,
+  format: RichText | undefined,
+): { text: string | null; format: ReturnType<typeof toJsonb> | null } | undefined {
+  if (text !== undefined && format !== undefined) {
+    throw invalid('INVALID_INPUT', [{ path: [which], message: 'send the text or its format, not both' }]);
+  }
+  if (format === undefined && text === undefined) return undefined;
+  const pair = derivePair(format ?? richFromPlain(text ?? ''));
+  return { text: pair.text, format: pair.format && toJsonb(pair.format) };
+}
 /** The subject prints as one line: no line breaks, at most 200 characters (the column's CHECK, 016). */
 const subjectText = z
   .string()
@@ -96,6 +117,8 @@ export interface DraftPatch {
   contract_reference?: string | null;
   subject?: string | null;
   intro_text?: string | null;
+  intro_format?: ReturnType<typeof toJsonb> | null;
+  outro_format?: ReturnType<typeof toJsonb> | null;
   outro_text?: string | null;
   /** Only ever set to null: a replacement draft becomes an ordinary invoice (the Correct flow). */
   replaces_document_id?: null;
@@ -166,6 +189,16 @@ async function assertTemplate(trx: Transaction<CommerceDB>, scope: BooksScope, t
   if (!t) throw invalid('INVALID_INPUT', [{ path: ['templateId'], message: 'no such template for this company' }]);
 }
 
+/** The intro and closing columns of a create or an update: only the texts that were sent. */
+function texts(args: { introText?: string | null; outroText?: string | null; introFormat?: RichText; outroFormat?: RichText }): DraftPatch {
+  const out: DraftPatch = {};
+  const intro = textPair('introText', args.introText, args.introFormat);
+  if (intro) Object.assign(out, { intro_text: intro.text, intro_format: intro.format });
+  const outro = textPair('outroText', args.outroText, args.outroFormat);
+  if (outro) Object.assign(out, { outro_text: outro.text, outro_format: outro.format });
+  return out;
+}
+
 // --- createDraft -------------------------------------------------------------------
 
 const createInput = z.object({
@@ -180,6 +213,8 @@ const createInput = z.object({
   subject: subjectText,
   introText: optionalText(4000),
   outroText: optionalText(4000),
+  introFormat: optionalFormat,
+  outroFormat: optionalFormat,
 });
 export type CreateDraftInput = z.input<typeof createInput>;
 
@@ -221,8 +256,7 @@ export async function createDraft(scope: BooksScope, input: CreateDraftInput): P
         payment_terms_days: settings.defaultPaymentTermsDays,
         contract_reference: args.contractReference ?? null,
         subject: args.subject ?? null,
-        intro_text: args.introText ?? null,
-        outro_text: args.outroText ?? null,
+        ...texts(args),
         customer_type: customer?.customer_type ?? null,
         vat_id: customer?.vat_id ?? null,
         reverse_charge: profile.reverseCharge,
@@ -269,6 +303,8 @@ const updateInput = z
     subject: subjectText,
     introText: optionalText(4000),
     outroText: optionalText(4000),
+    introFormat: optionalFormat,
+    outroFormat: optionalFormat,
     // The Correct flow: null turns a replacement draft into an ordinary
     // invoice (the link is never set through this route, only by
     // startCorrection).
@@ -299,8 +335,7 @@ export async function updateDraft(scope: BooksScope, id: string, input: UpdateDr
     if (args.paymentTermsDays !== undefined) patch.payment_terms_days = args.paymentTermsDays;
     if (args.contractReference !== undefined) patch.contract_reference = args.contractReference;
     if (args.subject !== undefined) patch.subject = args.subject;
-    if (args.introText !== undefined) patch.intro_text = args.introText;
-    if (args.outroText !== undefined) patch.outro_text = args.outroText;
+    Object.assign(patch, texts(args));
     if (args.printReplacesReference !== undefined) {
       if (args.printReplacesReference && (args.replacesDocumentId === null || !row.replaces_document_id)) {
         throw invalid('INVALID_INPUT', [{ path: ['printReplacesReference'], message: 'only a replacement draft prints the replaced invoice' }]);

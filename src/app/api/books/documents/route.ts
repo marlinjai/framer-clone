@@ -22,6 +22,8 @@
 
 import { z } from 'zod';
 
+import { richTextSchema } from '@/server/books/render/richText';
+
 import { jsonError } from '@/lib/api/respond';
 import { booksRoute, readObject } from '@/server/books/http/route';
 import { documentDetail, documentListItems } from '@/server/books/http/views';
@@ -47,6 +49,9 @@ const createBody = z
     subject: z.string().nullable().optional(),
     introText: z.string().nullable().optional(),
     outroText: z.string().nullable().optional(),
+    // A formatted text (bold, italic, bullets); the repository derives its plain text.
+    introFormat: richTextSchema.optional(),
+    outroFormat: richTextSchema.optional(),
   })
   .strict();
 

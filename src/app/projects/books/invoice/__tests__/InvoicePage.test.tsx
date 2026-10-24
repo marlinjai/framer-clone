@@ -278,6 +278,21 @@ describe('the invoice page: backtrack and revise', () => {
     expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
   });
 
+  it('a formatted intro edited as plain words says so, and undo sends its formatting back', async () => {
+    const format = { v: 1, blocks: [{ kind: 'paragraph', runs: [{ text: 'Hallo ' }, { text: 'Welt', bold: true }] }] };
+    current = detail({ document: { introText: 'Hallo Welt', introFormat: format } });
+    server();
+    await opened();
+    fireEvent.click(fieldButton('introText'));
+    expect(screen.getByText(/This text has bold, italic or a list/)).toBeTruthy();
+    const box = screen.getByRole('textbox', { name: 'Intro text' });
+    fireEvent.change(box, { target: { value: 'Hallo Welt!' } });
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(live()).toBe('Intro text saved.'));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PATCH').at(-1)!.body).toEqual({ introFormat: format, expectedVersion: 4 }));
+  });
+
   it('undo sends the value before, redo the value after', async () => {
     server();
     await opened();

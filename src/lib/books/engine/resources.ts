@@ -29,6 +29,7 @@ import type { EngineFonts, EngineImage } from '@/server/books/render/engine';
 import type { DraftResources } from '@/server/books/render/draftRender';
 import { FONT_FILES, type FontFace } from '@/server/books/render/fontPins';
 import type { CanDraw } from '@/server/books/render/previewSafe';
+import { hasItalic } from '@/server/books/render/richText';
 import type { FontFamily } from '@/server/books/template/schema';
 
 import { BrowserRenderError } from './errors';
@@ -38,12 +39,15 @@ import type { LogoRef, RenderInputPayload } from './payload';
 export type Fetcher = (path: string) => Promise<Response>;
 
 const fonts = new Map<FontFamily, Promise<EngineFonts>>();
-const coverage = new Map<FontFamily, CanDraw>();
+/** The italic faces, fetched only for a draft with an italic run (most never have one). */
+const italicFonts = new Map<FontFamily, Promise<{ italic: Uint8Array; boldItalic: Uint8Array }>>();
+const coverage = new Map<string, CanDraw>();
 const logos = new Map<string, Promise<EngineImage>>();
 
 /** Forget every loaded file (a test seam: the next render fetches again). */
 export function clearLoadedResources(): void {
   fonts.clear();
+  italicFonts.clear();
   coverage.clear();
   logos.clear();
 }
@@ -102,16 +106,33 @@ export function loadFontFamily(fetcher: Fetcher, family: FontFamily): Promise<En
   });
 }
 
+/** The two italic faces of a family, fetched and checked against their pins. */
+export function loadItalicFaces(fetcher: Fetcher, family: FontFamily): Promise<{ italic: Uint8Array; boldItalic: Uint8Array }> {
+  if (!Object.hasOwn(FONT_FILES, family)) {
+    return Promise.reject(new BrowserRenderError('invalid_input', `Unknown font family ${JSON.stringify(family)}.`, { family }));
+  }
+  return remember(italicFonts, family, async () => {
+    const [italic, boldItalic] = await Promise.all([fetchFace(fetcher, family, 'italic'), fetchFace(fetcher, family, 'boldItalic')]);
+    return { italic, boldItalic };
+  });
+}
+
 interface Face {
   hasGlyphForCodePoint(cp: number): boolean;
 }
 
-/** True when BOTH faces draw the code point: the server's rule (fonts.ts canDraw), over the fetched bytes. */
-export function coverageOf(family: FontFamily, files: EngineFonts): CanDraw {
-  let can = coverage.get(family);
+/**
+ * True when BOTH faces of a pair draw the code point: the server's rule (fonts.ts canDraw, canDrawItalic), over the
+ * fetched bytes. The upright pair by default; `italic` for the italic pair.
+ */
+export function coverageOf(family: FontFamily, files: EngineFonts, italic = false): CanDraw {
+  const key = `${family}|${italic ? 'italic' : 'upright'}`;
+  let can = coverage.get(key);
   if (!can) {
+    const pair = italic ? [files.italic, files.boldItalic] : [files.regular, files.bold];
+    if (!pair[0] || !pair[1]) throw new BrowserRenderError('invalid_input', 'The italic faces were not loaded.', { family });
     // fontkit reads a Uint8Array; the server's `as Buffer` cast is a type cast only.
-    const faces = [fontkit.create(files.regular as unknown as Buffer), fontkit.create(files.bold as unknown as Buffer)] as unknown as Face[];
+    const faces = pair.map((bytes) => fontkit.create(bytes as unknown as Buffer)) as unknown as Face[];
     const memo = new Map<number, boolean>();
     can = (cp) => {
       let v = memo.get(cp);
@@ -121,7 +142,7 @@ export function coverageOf(family: FontFamily, files: EngineFonts): CanDraw {
       }
       return v;
     };
-    coverage.set(family, can);
+    coverage.set(key, can);
   }
   return can;
 }
@@ -161,9 +182,18 @@ export function loadLogo(fetcher: Fetcher, logo: LogoRef): Promise<EngineImage> 
 
 /** Everything a draft render draws with, loaded (or taken from what this worker already loaded). */
 export async function loadDraftResources(fetcher: Fetcher, payload: RenderInputPayload): Promise<DraftResources> {
-  const [files, images] = await Promise.all([
+  const doc = payload.input.document;
+  const italic = hasItalic(doc.introFormat) || hasItalic(doc.outroFormat);
+  const [upright, italicFaces, images] = await Promise.all([
     loadFontFamily(fetcher, payload.fontFamily),
+    italic ? loadItalicFaces(fetcher, payload.fontFamily) : Promise.resolve(null),
     Promise.all(payload.logos.map(async (l) => [l.sha256, await loadLogo(fetcher, l)] as const)),
   ]);
-  return { fonts: files, canDraw: coverageOf(payload.fontFamily, files), assets: new Map(images) };
+  const files: EngineFonts = italicFaces ? { ...upright, ...italicFaces } : upright;
+  return {
+    fonts: files,
+    canDraw: coverageOf(payload.fontFamily, files),
+    canDrawItalic: italicFaces ? coverageOf(payload.fontFamily, files, true) : undefined,
+    assets: new Map(images),
+  };
 }

@@ -13,7 +13,7 @@
 import { BooksError } from '../errors';
 import { printsSubject, templateTexts } from '../template/rules';
 import type { FontFamily, TemplateDocumentV2 } from '../template/schema';
-import { canDraw, undrawable } from './fonts';
+import { canDraw, canDrawItalic, undrawable, undrawableItalic } from './fonts';
 import type { RenderInput, RenderModel } from './model';
 import { previewSafeTemplateWith, previewSafeWith } from './previewSafe';
 
@@ -66,9 +66,17 @@ export function familyOf(template: TemplateDocumentV2 | null): FontFamily {
 export function undrawableFields(input: RenderInput, template: TemplateDocumentV2 | null): string[] {
   const family = familyOf(template);
   const own: Array<[string, string]> = template ? templateTexts(template).map((t) => [`template.${t.blockId}.${t.field}`, t.text]) : [];
-  return [...printedFields(input, template), ...own]
+  const upright = [...printedFields(input, template), ...own]
     .filter(([, v]) => typeof v === 'string' && undrawable(v, family).length > 0)
     .map(([f]) => f);
+  // An italic run is drawn by an italic face, which covers less than the upright ones (DejaVu's oblique faces lack
+  // about 900 glyphs): it is checked against them, under the name of its text's field.
+  const d = input.document;
+  const italic = (['introText', 'outroText'] as const).filter((field) => {
+    const format = field === 'introText' ? d.introFormat : d.outroFormat;
+    return Boolean(format?.blocks.some((b) => b.runs.some((r) => r.italic && undrawableItalic(r.text, family).length > 0)));
+  });
+  return [...upright, ...italic.filter((f) => !upright.includes(f))];
 }
 
 /** Refuse a document of record that would not print as written. */
@@ -85,7 +93,7 @@ export function assertDrawable(input: RenderInput, template: TemplateDocumentV2 
 
 /** A draft preview's model with the characters `family` cannot draw shown as "?" (never for a document of record). */
 export function previewSafe(model: RenderModel, family: FontFamily): RenderModel {
-  return previewSafeWith(model, (cp) => canDraw(cp, family));
+  return previewSafeWith(model, (cp) => canDraw(cp, family), (cp) => canDrawItalic(cp, family));
 }
 
 /** A preview's template with undrawable characters in its own texts (in its own family) shown as "?" (never for a document of record). */

@@ -14,6 +14,12 @@ document always re-renders with the bytes it was issued with.
 | `noto-sans` | `NotoSans-Bold.ttf` | `87cb2d84472a7d66da659ee47b6cdb9552326e8c128245231f191b6ac72529d9` | the same archive, `NotoSans/unhinted/ttf/NotoSans-Bold.ttf` | `Noto-OFL.txt` |
 | `noto-serif` | `NotoSerif-Regular.ttf` | `a15cfbbc1539d707115111d672d590a3d70d4f74b4c0a315956da20ae19a14e1` | [NotoSerif-v2.015.zip](https://github.com/notofonts/latin-greek-cyrillic/releases/download/NotoSerif-v2.015/NotoSerif-v2.015.zip), `NotoSerif/unhinted/ttf/NotoSerif-Regular.ttf` | `Noto-OFL.txt` |
 | `noto-serif` | `NotoSerif-Bold.ttf` | `24ad531e6b05ddad8c3d89572d2c93eb86a6b74e652ce7ee3c3e171de68e84c3` | the same archive, `NotoSerif/unhinted/ttf/NotoSerif-Bold.ttf` | `Noto-OFL.txt` |
+| `dejavu-sans` | `DejaVuSans-Oblique.ttf` | `4af75fa16ee6d3ad43e1ecec41862c24954af26a55c6bb1ebb27bd486a50f5f4` | [dejavu-fonts-ttf-2.37.zip](https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.zip), `dejavu-fonts-ttf-2.37/ttf/DejaVuSans-Oblique.ttf` | `DejaVu-LICENSE.txt` |
+| `dejavu-sans` | `DejaVuSans-BoldOblique.ttf` | `eb436dca0c2594b73d8b603b892e374fdfd8d885d25ffb4f18df4c4c0b49e50f` | the same archive, `dejavu-fonts-ttf-2.37/ttf/DejaVuSans-BoldOblique.ttf` | `DejaVu-LICENSE.txt` |
+| `noto-sans` | `NotoSans-Italic.ttf` | `678288f868807d4d64a6f3b51466871d117d915780381ce9d0ed4b3bcbd06d37` | NotoSans-v2.015.zip (above), `NotoSans/unhinted/ttf/NotoSans-Italic.ttf` | `Noto-OFL.txt` |
+| `noto-sans` | `NotoSans-BoldItalic.ttf` | `3d367743f371f28671d2764e911a53d7c20ec9b6aa8791d059e7090389fc52a5` | the same archive, `NotoSans/unhinted/ttf/NotoSans-BoldItalic.ttf` | `Noto-OFL.txt` |
+| `noto-serif` | `NotoSerif-Italic.ttf` | `c4b3c971741ecdb40f5a443bce754e8fe91efe761b6ea10c92be7c3597cdadc4` | NotoSerif-v2.015.zip (above), `NotoSerif/unhinted/ttf/NotoSerif-Italic.ttf` | `Noto-OFL.txt` |
+| `noto-serif` | `NotoSerif-BoldItalic.ttf` | `1bc4f86502eaa368718f6192bee022ea9a703d5af1c18b7d291212657b63074a` | the same archive, `NotoSerif/unhinted/ttf/NotoSerif-BoldItalic.ttf` | `Noto-OFL.txt` |
 
 The Noto files come from the official releases of the Noto project
 (`notofonts/latin-greek-cyrillic` on GitHub, version 2.015, released 2024-11-20).
@@ -35,6 +41,17 @@ Why these files (2026-10-23):
 
 Each file was downloaded into an empty directory, opened with fontkit (family name,
 subfamily Regular or Bold, version 2.015, no `fvar`) and only then copied here.
+
+**The italic faces (added 2026-10-24, formatted intro and closing texts).** They came from
+the same three archives as the upright files: each archive's regular file was checked
+first against its pin above (identical), so the italic files are of the same release.
+fontkit read each one as its family with the subfamily Oblique, Bold Oblique, Italic or
+Bold Italic, version 2.37 or 2.015, no `fvar`. They were added to the existing family ids
+instead of new ones, which the rule above would otherwise ask for: no document had ever
+used italic, and a document embeds the italic faces only when one of its runs is italic,
+so no stored render can change. The DejaVu oblique faces have fewer glyphs than the
+upright ones (5355 against 6253), so italic text is checked for characters it cannot
+print against the italic faces themselves.
 
 The production image gets these files through `outputFileTracingIncludes` in
 `next.config.ts` (`./assets/fonts/**/*` for every Books route); the standalone output

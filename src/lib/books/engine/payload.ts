@@ -14,6 +14,7 @@
 
 import type { RenderInput } from '@/server/books/render/model';
 import { FONT_FILES } from '@/server/books/render/fontPins';
+import { richTextSchema, type RichText } from '@/server/books/render/richText';
 import type { FontFamily, TemplateDocumentV2 } from '@/server/books/template/schema';
 
 import { BrowserRenderError } from './errors';
@@ -82,8 +83,19 @@ export function parseRenderInputPayload(json: unknown): RenderInputPayload {
     if (l.contentType !== 'image/png' && l.contentType !== 'image/jpeg') invalid(`logos.${i}.contentType`);
     return { sha256: l.sha256 as string, contentType: l.contentType as LogoRef['contentType'] };
   });
+  // The formatted texts the worker draws from: absent or null prints the plain text; anything else must be the
+  // run model, checked by the same schema the server writes it with.
+  const format = (key: 'introFormat' | 'outroFormat') => {
+    const v = doc[key];
+    if (v === undefined || v === null) return null;
+    const parsed = richTextSchema.safeParse(v);
+    if (!parsed.success) invalid(`input.document.${key}`);
+    return parsed.data as RichText;
+  };
   const document = {
     ...doc,
+    introFormat: format('introFormat'),
+    outroFormat: format('outroFormat'),
     issuedAt: reviveDate(doc.issuedAt, 'input.document.issuedAt', true),
     createdAt: reviveDate(doc.createdAt, 'input.document.createdAt', false),
     updatedAt: reviveDate(doc.updatedAt, 'input.document.updatedAt', false),

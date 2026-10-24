@@ -25,6 +25,8 @@ export interface DrawnText {
   y: number;
   /** The font size the text was drawn at. */
   size: number;
+  /** The drawing font's name (its BaseFont without a subset tag), such as "DejaVuSans-Oblique". */
+  font: string;
 }
 
 function streamBytes(stream: unknown): Uint8Array {
@@ -71,18 +73,20 @@ export async function extractDrawnText(pdf: Uint8Array): Promise<DrawnText[]> {
   const doc = await PDFDocument.load(pdf, { updateMetadata: false });
   const out: DrawnText[] = [];
   doc.getPages().forEach((page, pageIndex) => {
-    const fonts = new Map<string, Map<string, string>>();
+    const fonts = new Map<string, { map: Map<string, string>; name: string }>();
     const fontDict = page.node.Resources()?.lookupMaybe(PDFName.of('Font'), PDFDict);
     for (const [name, ref] of fontDict?.entries() ?? []) {
       const font = doc.context.lookup(ref as PDFRef, PDFDict);
       const toUnicode = font.get(PDFName.of('ToUnicode'));
       const cmap = toUnicode ? latin1(streamBytes(doc.context.lookup(toUnicode))) : '';
-      fonts.set(name.decodeText(), parseToUnicode(cmap));
+      const base = font.lookupMaybe(PDFName.of('BaseFont'), PDFName)?.decodeText() ?? '';
+      // A subset font's name starts with a six-letter tag ("ABCDEF+DejaVuSans").
+      fonts.set(name.decodeText(), { map: parseToUnicode(cmap), name: base.replace(/^[A-Z]{6}\+/, '') });
     }
 
     const contents = page.node.Contents();
     const streams = contents instanceof PDFArray ? contents.asArray().map((r) => doc.context.lookup(r)) : [contents];
-    let font = new Map<string, string>();
+    let font = { map: new Map<string, string>(), name: '' };
     let size = 0;
     let x = 0;
     let y = 0;
@@ -92,7 +96,7 @@ export async function extractDrawnText(pdf: Uint8Array): Promise<DrawnText[]> {
       let m: RegExpExecArray | null;
       while ((m = ops.exec(body)) !== null) {
         if (m[1] !== undefined) {
-          font = fonts.get(m[1]) ?? new Map();
+          font = fonts.get(m[1]) ?? { map: new Map(), name: '' };
           size = Number(m[2]);
         } else if (m[3] !== undefined) {
           x = Number(m[7]);
@@ -100,8 +104,8 @@ export async function extractDrawnText(pdf: Uint8Array): Promise<DrawnText[]> {
         } else {
           const hex = m[9].toUpperCase();
           let text = '';
-          for (let i = 0; i + 3 < hex.length; i += 4) text += font.get(hex.slice(i, i + 4)) ?? '�';
-          out.push({ text, page: pageIndex + 1, x, y, size });
+          for (let i = 0; i + 3 < hex.length; i += 4) text += font.map.get(hex.slice(i, i + 4)) ?? '�';
+          out.push({ text, page: pageIndex + 1, x, y, size, font: font.name });
         }
       }
     }

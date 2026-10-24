@@ -53,6 +53,8 @@ export function documentColumns(eb: DocEb) {
     'sales_document.tax_summary',
     'sales_document.intro_text',
     'sales_document.outro_text',
+    'sales_document.intro_format',
+    'sales_document.outro_format',
     'sales_document.rendered_pdf_file_id',
     'sales_document.issued_at',
     'sales_document.created_at',

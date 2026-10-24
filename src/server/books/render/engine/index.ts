@@ -100,7 +100,8 @@ import {
 } from './style';
 import { EMBED_SUBSET } from './fontEmbedding';
 import { embedAsset, type EngineImage } from './images';
-import { wrapText } from './text';
+import type { RichText } from '../richText';
+import { wrapStyled, wrapText, type MeasureStyled } from './text';
 
 export type { EngineImage };
 
@@ -110,6 +111,9 @@ export const RENDERER_ID = 'books-pdf-lib-3';
 export interface EngineFonts {
   regular: Uint8Array;
   bold: Uint8Array;
+  /** Needed only when a formatted text has an italic run (embedded only then; a render without one never reads them). */
+  italic?: Uint8Array;
+  boldItalic?: Uint8Array;
 }
 
 export interface EngineOptions {
@@ -276,6 +280,9 @@ export interface EngineResult {
 interface Fonts {
   regular: PDFFont;
   bold: PDFFont;
+  /** Embedded only when a formatted text has a run in that face (italicFacesNeeded). */
+  italic?: PDFFont;
+  boldItalic?: PDFFont;
 }
 
 interface DrawContext {
@@ -373,6 +380,65 @@ class Binder {
 
   font(bold: boolean): PDFFont {
     return bold ? this.fonts.bold : this.fonts.regular;
+  }
+
+  /** The face of a formatted run; an italic face that was not embedded is a loud failure, never an upright stand-in. */
+  styledFont(bold: boolean, italic: boolean): PDFFont {
+    if (!italic) return this.font(bold);
+    const face = bold ? this.fonts.boldItalic : this.fonts.italic;
+    if (!face) throw new Error(`renderTemplate: a ${bold ? 'bold ' : ''}italic run needs its face, which was not embedded`);
+    return face;
+  }
+
+  /**
+   * One chunk per line of a formatted text (render/richText.ts): each block wrapped by `wrapStyled` and drawn piece
+   * by piece in its own face, a bullet item with a hanging indent behind its bullet, an empty paragraph as a blank
+   * line. Every line is marked with the text's field, as `lines` marks a plain text.
+   */
+  richLines(
+    blockId: string,
+    x: number,
+    width: number,
+    rich: RichText,
+    opts: { size: number; bold: boolean; color: RGB; align?: 'left' | 'center' | 'right'; gapAfter?: number; field: FieldSpec },
+  ): Chunk[] {
+    const { size } = opts;
+    const measure: MeasureStyled = (t, bold, italic) => this.styledFont(bold, italic).widthOfTextAtSize(t, size);
+    const indent = r2(measure(BULLET, opts.bold, false) + size * 0.6);
+    const out: Chunk[] = [];
+    rich.blocks.forEach((block, bi) => {
+      const bullet = block.kind === 'bullet';
+      const left = bullet ? x + indent : x;
+      const room = Math.max(bullet ? width - indent : width, 1);
+      const runs = block.runs.map((r) => ({ text: r.text, bold: opts.bold || Boolean(r.bold), italic: Boolean(r.italic) }));
+      const lines = runs.length === 0 ? [[]] : wrapStyled(runs, room, measure);
+      const next = rich.blocks[bi + 1];
+      // Paragraphs keep the plain text's gap between them; bullet items of one list sit closer.
+      const gap = !next ? 0 : bullet && next.kind === 'bullet' ? 2 : (opts.gapAfter ?? 0);
+      lines.forEach((pieces, li) => {
+        const lineWidth = pieces.reduce((sum, p) => sum + measure(p.text, p.bold, p.italic), 0);
+        const start = opts.align === 'right' ? left + room - lineWidth : opts.align === 'center' ? left + (room - lineWidth) / 2 : left;
+        const chunk: Chunk = {
+          blockId,
+          x,
+          width,
+          h: r2(lead(size) + (li === lines.length - 1 ? gap : 0)),
+          draw: (dc, top) => {
+            const y = r2(PAGE_HEIGHT - top - size);
+            // The bullet hangs in front of the line it starts, wherever the alignment puts that line.
+            if (bullet && li === 0) dc.page.drawText(BULLET, { x: r2(start - indent), y, size, font: this.font(opts.bold), color: opts.color });
+            let cx = start;
+            for (const p of pieces) {
+              dc.page.drawText(p.text, { x: r2(cx), y, size, font: this.styledFont(p.bold, p.italic), color: opts.color });
+              cx += measure(p.text, p.bold, p.italic);
+            }
+          },
+        };
+        mark(chunk, { of: { type: 'field', spec: opts.field }, x, dy: 0, width, height: lead(size) });
+        out.push(chunk);
+      });
+    });
+    return out;
   }
 
   wrap(text: string, size: number, bold: boolean, width: number): string[] {
@@ -508,7 +574,10 @@ class Binder {
       case 'introText':
       case 'outroText': {
         const text = block.type === 'introText' ? m.intro : m.outro;
+        const rich = block.type === 'introText' ? m.introRich : m.outroRich;
         const spec = this.field(block.id, block.type, 'multiline', { source: 'document', documentField: block.type }, style);
+        // A formatted text draws its runs; without a format the plain text prints as it always has.
+        if (rich) return flow(this.richLines(block.id, x, width, rich, { size, bold, color, align, gapAfter: 4, field: spec }));
         return flow(text ? this.lines(block.id, x, width, paragraphs(text), { size, bold, color, align, gapAfter: 4, field: () => spec }) : []);
       }
       case 'lineTable':
@@ -1055,6 +1124,29 @@ class Binder {
   }
 }
 
+const BULLET = '\u2022';
+
+/**
+ * Which italic faces a render draws with: an italic run in a formatted text the template prints, upright bold or
+ * not by its own style or its block's. Only those are embedded.
+ */
+export function italicFacesNeeded(model: RenderModel, doc: TemplateDocumentV2): { italic: boolean; boldItalic: boolean } {
+  const need = { italic: false, boldItalic: false };
+  // The intro and closing texts stand in the body only (rules.ts ALLOWED_REGIONS).
+  for (const [type, rich] of [['introText', model.introRich], ['outroText', model.outroRich]] as const) {
+    if (!rich) continue;
+    for (const block of doc.regions.body.filter((b) => b.type === type)) {
+      const blockIsBold = blockBold(block);
+      for (const run of rich.blocks.flatMap((b) => b.runs)) {
+        if (!run.italic) continue;
+        if (blockIsBold || run.bold) need.boldItalic = true;
+        else need.italic = true;
+      }
+    }
+  }
+  return need;
+}
+
 /** A text's paragraphs (line breaks in template and document texts). */
 function paragraphs(text: string): string[] {
   return text
@@ -1202,11 +1294,23 @@ export async function renderTemplate(
   assertRenderableTemplate(doc);
   const pdf = await PDFDocument.create({ updateMetadata: false });
   pdf.registerFontkit(fontkit);
+  const subset = EMBED_SUBSET[doc.theme.fontFamily];
   const fonts: Fonts = {
     // Subset where the subsetter is proven to keep every glyph's outline (fonts.ts EMBED_SUBSET).
-    regular: await pdf.embedFont(fontBytes.regular, { subset: EMBED_SUBSET[doc.theme.fontFamily] }),
-    bold: await pdf.embedFont(fontBytes.bold, { subset: EMBED_SUBSET[doc.theme.fontFamily] }),
+    regular: await pdf.embedFont(fontBytes.regular, { subset }),
+    bold: await pdf.embedFont(fontBytes.bold, { subset }),
   };
+  // The italic faces only when a formatted text prints a run in them, after the upright ones: a document without
+  // italic keeps exactly the bytes it had before italic existed.
+  const need = italicFacesNeeded(model, doc);
+  if (need.italic) {
+    if (!fontBytes.italic) throw new Error('renderTemplate: the text has an italic run but no italic face was given');
+    fonts.italic = await pdf.embedFont(fontBytes.italic, { subset });
+  }
+  if (need.boldItalic) {
+    if (!fontBytes.boldItalic) throw new Error('renderTemplate: the text has a bold italic run but no bold italic face was given');
+    fonts.boldItalic = await pdf.embedFont(fontBytes.boldItalic, { subset });
+  }
   // Every asset the logos name, embedded once, in a fixed order (the bytes do not depend on the map's order).
   const images = new Map<string, PDFImage>();
   const shas = [...new Set(logoBlocks(doc).map((l) => l.block.assetSha256).filter((s): s is string => s !== null))].sort();

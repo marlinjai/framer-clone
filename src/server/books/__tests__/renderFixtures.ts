@@ -91,6 +91,8 @@ export function smallBusinessInvoice(): { document: SalesDocumentWithSnapshots; 
     source: 'editor',
     version: 4,
     subject: null,
+    introFormat: null,
+    outroFormat: null,
     customerId: 'cust-1',
     templateId: null,
     correctsDocumentId: null,

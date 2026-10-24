@@ -24,8 +24,10 @@ import { previewSafeTemplateWith, previewSafeWith, type CanDraw } from './previe
 export interface DraftResources {
   /** The two faces of the template's font family. */
   fonts: EngineFonts;
-  /** The coverage of those two faces. */
+  /** The coverage of the two upright faces. */
   canDraw: CanDraw;
+  /** The coverage of the two italic faces; needed only when a formatted text has an italic run. */
+  canDrawItalic?: CanDraw;
   /** The company's logos the template names, by SHA-256 (a missing one draws nothing and is a layout issue). */
   assets: ReadonlyMap<string, EngineImage>;
 }
@@ -34,7 +36,7 @@ export interface DraftResources {
 export async function renderDraft(input: RenderInput, template: TemplateDocumentV2, resources: DraftResources): Promise<EngineResult> {
   if (input.draft !== true) throw new Error('renderDraft: the render input is not a draft');
   return renderTemplate(
-    previewSafeWith(buildRenderModel(input), resources.canDraw),
+    previewSafeWith(buildRenderModel(input), resources.canDraw, resources.canDrawItalic),
     previewSafeTemplateWith(template, resources.canDraw),
     resources.fonts,
     { assets: resources.assets },

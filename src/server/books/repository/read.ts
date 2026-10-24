@@ -10,6 +10,7 @@
 // Every query filters `tenant_id = scope.tenantId`: a row of another company in
 // the same schema reads as NOT_FOUND.
 
+import { richTextSchema, type RichText } from '../render/richText';
 import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kysely';
 import { z } from 'zod';
 
@@ -89,6 +90,9 @@ export interface SalesDocument {
   total: number;
   taxSummary: TaxSummary;
   introText: string | null;
+  /** Its formatting (bold, italic, bullets, paragraphs); null prints `introText` as plain text. */
+  introFormat: RichText | null;
+  outroFormat: RichText | null;
   outroText: string | null;
   renderedPdfFileId: string | null;
   issuedAt: Date | null;
@@ -221,6 +225,8 @@ export type DocumentRow = {
   total: number;
   tax_summary: TaxSummary;
   intro_text: string | null;
+  intro_format: RichText | null;
+  outro_format: RichText | null;
   outro_text: string | null;
   rendered_pdf_file_id: string | null;
   issued_at: Date | null;
@@ -274,6 +280,8 @@ export function mapDocument(row: DocumentRow): SalesDocument {
     total: row.total,
     taxSummary: taxSummarySchema.parse(row.tax_summary),
     introText: row.intro_text,
+    introFormat: row.intro_format === null ? null : (richTextSchema.parse(row.intro_format) as RichText),
+    outroFormat: row.outro_format === null ? null : (richTextSchema.parse(row.outro_format) as RichText),
     outroText: row.outro_text,
     renderedPdfFileId: row.rendered_pdf_file_id,
     issuedAt: row.issued_at,

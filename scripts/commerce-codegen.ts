@@ -92,6 +92,9 @@ const JSON_COLUMNS: Record<string, string> = {
   'sales_document.customer_snapshot': 'CustomerSnapshotV1',
   'sales_document.sender_snapshot': 'SenderSnapshotV1',
   'sales_document.template_snapshot': 'TemplateSnapshot',
+  // 018_books_text_format: the run model of render/richText.ts.
+  'sales_document.intro_format': 'RichText',
+  'sales_document.outro_format': 'RichText',
   'sales_document_event.payload': 'EventPayload',
   // 010_books_upload_import: parsed with zod on read (src/server/books/upload/staging.ts).
   'historical_import_item.extracted': 'Record<string, unknown>',
@@ -102,7 +105,7 @@ const JSON_COLUMNS: Record<string, string> = {
 };
 
 /** The type-only imports the JSON shapes need. */
-const JSON_IMPORTS = "import type {\n  CustomerSnapshotV1,\n  EventPayload,\n  SenderBlockV1,\n  SenderSnapshotV1,\n  TaxSummary,\n  TemplateDocumentV2,\n  TemplateSnapshot,\n} from '../books/snapshots';";
+const JSON_IMPORTS = "import type {\n  CustomerSnapshotV1,\n  EventPayload,\n  SenderBlockV1,\n  SenderSnapshotV1,\n  TaxSummary,\n  TemplateDocumentV2,\n  TemplateSnapshot,\n} from '../books/snapshots';\nimport type { RichText } from '../books/render/richText';";
 
 /** One doc comment per table (a table without one fails the run). */
 const TABLE_DOCS: Record<string, string> = {
@@ -169,6 +172,7 @@ const COLUMN_NOTES: Record<string, string> = {
   'product_variant.tax_class': 'Added in 004_pricing_and_tax (per-variant override of product.tax_class).',
   'product_variant.manage_inventory': 'Added in 006_inventory_policy (default TRUE).',
   'product_variant.allow_backorder': 'Added in 006_inventory_policy (default FALSE).',
+  'sales_document.intro_format': "The intro text's formatting (017; the run model of render/richText.ts); null prints the plain text.",
   'credit_note.order_id': 'Added in 005_minimal_orders (hard FK to "order").',
 };
 

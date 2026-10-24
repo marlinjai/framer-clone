@@ -21,7 +21,7 @@ import { describe, expect, it } from 'vitest';
 
 import { familyOf, previewSafe, previewSafeTemplate, undrawableFields } from '../render/drawable';
 import { renderTemplate } from '../render/engine';
-import { canDraw, FONT_FILES, fontFiles, fontkit, undrawable } from '../render/fonts';
+import { canDraw, FONT_FILES, fontFiles, fontkit, undrawable, undrawableItalic } from '../render/fonts';
 import { buildRenderModel } from '../render/model';
 import { templateProblems } from '../template/gate';
 import { preset } from '../template/presets';
@@ -82,6 +82,8 @@ describe('the drawable check per family', () => {
     expect(undrawable('A → B ∞', 'noto-serif')).toEqual(['→', '∞']);
     expect(undrawable('₿', 'dejavu-sans')).toEqual(['₿']);
     expect(undrawable('₿', 'noto-sans')).toEqual([]);
+    // Line breaks and tabs are layout, not characters to draw: a text typed with them is printable.
+    for (const family of FONT_FAMILIES) expect(undrawable('Erste Zeile\nzweite\r\n\tdritte', family)).toEqual([]);
     // No family draws Chinese, Japanese or Korean.
     for (const family of FONT_FAMILIES) expect(undrawable('中', family)).toEqual(['中']);
   });
@@ -152,12 +154,63 @@ describe('every family on every preset', () => {
   });
 });
 
+describe('the italic faces', () => {
+  it('are embedded only for the italic runs a document has, and only the faces those runs use', async () => {
+    const names: Record<FontFamily, { italic: RegExp; boldItalic: RegExp }> = {
+      'dejavu-sans': { italic: /^DejaVuSans-Oblique-\d+$/, boldItalic: /^DejaVuSans-BoldOblique-\d+$/ },
+      'noto-sans': { italic: /^NotoSans-Italic-\d+$/, boldItalic: /^NotoSans-BoldItalic-\d+$/ },
+      'noto-serif': { italic: /^NotoSerif-Italic-\d+$/, boldItalic: /^NotoSerif-BoldItalic-\d+$/ },
+    };
+    for (const family of FONT_FAMILIES) {
+      const doc = withFamily(preset('klassisch'), family);
+      const formatted = await baseFonts((await renderTemplate(buildRenderModel(probeInput(probe('formattedTexts'))), doc, fontFiles(family))).bytes);
+      expect(formatted.some((f) => names[family].italic.test(f)), `${family}: ${formatted.join(', ')}`).toBe(true);
+      expect(formatted.some((f) => names[family].boldItalic.test(f)), `${family}: ${formatted.join(', ')}`).toBe(true);
+      // Only plain italic: the bold italic face stays out.
+      const p = probe('formattedTexts');
+      const onlyItalic = { v: 1 as const, blocks: [{ kind: 'paragraph' as const, runs: [{ text: 'nur ' }, { text: 'kursiv', italic: true as const }] }] };
+      p.document = { ...p.document, introFormat: onlyItalic, introText: 'nur kursiv', outroFormat: null };
+      const some = await baseFonts((await renderTemplate(buildRenderModel(probeInput(p)), doc, fontFiles(family))).bytes);
+      expect(some.some((f) => names[family].italic.test(f))).toBe(true);
+      expect(some.some((f) => names[family].boldItalic.test(f))).toBe(false);
+      // No italic run: neither, and the faces are not even needed.
+      const plain = await baseFonts(
+        (await renderTemplate(buildRenderModel(probeInput(probe('regular'))), doc, { regular: fontFiles(family).regular, bold: fontFiles(family).bold })).bytes,
+      );
+      expect(plain.some((f) => /Oblique|Italic/.test(f))).toBe(false);
+    }
+  }, 60_000);
+
+  it('refuse to draw an italic run as upright when the italic face was not given', async () => {
+    const f = fontFiles('noto-sans');
+    await expect(
+      renderTemplate(buildRenderModel(probeInput(probe('formattedTexts'))), withFamily(preset('klassisch'), 'noto-sans'), { regular: f.regular, bold: f.bold }),
+    ).rejects.toThrow(/italic/);
+  });
+
+  it('are checked for what they can print: an italic run names its text, the same character upright does not', () => {
+    // A character DejaVu's upright faces draw and its oblique faces do not.
+    const sample = [...Array(0x2fff).keys()].map((i) => String.fromCodePoint(i + 0x100)).find((ch) => undrawable(ch, 'dejavu-sans').length === 0 && undrawableItalic(ch, 'dejavu-sans').length > 0)!;
+    expect(sample).toBeDefined();
+    const fixture = regularInvoice();
+    const input = issuedInput(fixture);
+    input.document = { ...input.document, introText: `Text ${sample}`, introFormat: { v: 1, blocks: [{ kind: 'paragraph', runs: [{ text: 'Text ' }, { text: sample, italic: true }] }] } };
+    expect(undrawableFields(input, preset('klassisch'))).toEqual(['introText']);
+    input.document = { ...input.document, introFormat: { v: 1, blocks: [{ kind: 'paragraph', runs: [{ text: `Text ${sample}`, bold: true }] }] } };
+    expect(undrawableFields(input, preset('klassisch'))).toEqual([]);
+    // The preview shows it as "?" in the italic run only.
+    const model = buildRenderModel({ ...input, document: { ...input.document, introFormat: { v: 1, blocks: [{ kind: 'paragraph', runs: [{ text: sample }, { text: sample, italic: true }] }] } } });
+    expect(previewSafe(model, 'dejavu-sans').introRich!.blocks[0].runs.map((r) => r.text)).toEqual([sample, '?']);
+  });
+});
+
 describe('documents issued under DejaVu Sans before phase 5', () => {
   it('re-render to their recorded bytes', async () => {
     const docs = golden.documents as unknown as Record<string, TemplateDocumentV2>;
     const got: Record<string, string> = {};
     for (const name of Object.keys(docs)) {
-      for (const p of PROBE_NAMES) {
+      // The probes recorded then; formatted texts came later and have their own pinned renders (engineFields).
+      for (const p of PROBE_NAMES.filter((n) => n !== 'formattedTexts')) {
         const { bytes } = await renderTemplate(buildRenderModel(probeInput(probe(p))), docs[name], fontFiles('dejavu-sans'));
         got[`${name}/${p}`] = sha(bytes);
       }
