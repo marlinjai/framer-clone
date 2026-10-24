@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: completed
 date: 2026-10-23
 title: Motion and effects, appear on scroll, restrained hover, image parallax and optional smooth scrolling
 summary: An Effects section in the properties panel (appear on scroll with distance, duration, delay and stagger; a restrained hover; a small parallax for images), stored as props.effects and cascaded per breakpoint like a style, shown on the canvas as a badge with a Play control, played by the preview and the published page through a tiny IntersectionObserver plus Web Animations runtime that never hides content without JavaScript, plus an optional per-site Lenis smooth-scroll toggle and sparing appear effects in the AI page generator. Decided by the owner on 2026-10-23.
@@ -105,7 +105,19 @@ high-frequency actions, only `transform` and `opacity` move, and everything is o
 - [x] Generator: Motion docs section, validator, golden docs.
 - [x] Tests: model and cascade, panel, runtime (reduced motion, once, stagger, scrolled past, no
   hidden content without JavaScript), published output, preview output, Lenis wiring, generator.
-- [ ] Verified in the browser on the demo editor and its preview.
+- [x] Verified in the browser on the demo editor and its preview (2026-10-24, `dev-browser-auto`
+  on `PORT=3470 pnpm dev`): Slide up set on Main shows the badge, the canvas element stays at
+  opacity 1 with no effect attributes, Play runs one Web Animation that is gone after 500ms;
+  parallax on the image shows the badge; the preview gates the start state on its frame, reveals
+  Main (opacity 1, shown) and moves the image with `translate` only; with reduced motion emulated
+  nothing is gated and Lenis stays off; the Site settings switch saves `smoothScroll` and the
+  preview frame then runs Lenis.
+
+## Follow-ups noticed
+
+- `snapshotToComponentNode.test.ts` fails on this branch only because the merged site settings
+  foundation (d9353c2) adds `noIndex` to the page metadata; the site essentials branch fixes the
+  test in 67df770, so it is green once both land.
 
 ## Out of scope
 

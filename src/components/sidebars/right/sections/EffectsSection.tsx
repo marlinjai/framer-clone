@@ -98,7 +98,9 @@ export const EffectsSection = observer(({ component, breakpointId }: EffectsSect
       title="Effects"
       icon={<Sparkles size={14} />}
       defaultOpen={component.hasEffects}
-      badge={active ? (appear.kind !== 'none' ? APPEAR_LABELS[appear.kind] : 'On') : undefined}
+      badge={active
+        ? appear.kind !== 'none' ? APPEAR_LABELS[appear.kind] : scroll.kind === 'parallax' ? 'Parallax' : `Hover ${hover}`
+        : undefined}
     >
       <PropertyRow label="Appear" source={effectSource(component, breakpointId, 'appear')} hint="Plays once when the element scrolls into view">
         <PropertySelect
@@ -127,12 +129,11 @@ export const EffectsSection = observer(({ component, breakpointId }: EffectsSect
           <PropertyRow label="Duration" hint={`In milliseconds, ${duration.min} to ${duration.max}. Keep reveals short.`}>
             <DimensionInput
               label=""
-              value={appear.duration}
-              units={['']}
+              value={`${appear.duration}ms`}
+              units={['ms']}
               min={duration.min}
               max={duration.max}
               step={10}
-              prefix="ms"
               placeholder={String(duration.default)}
               onChange={(v) => setAppear({ duration: parseMs(v) ?? duration.default })}
             />
@@ -140,12 +141,11 @@ export const EffectsSection = observer(({ component, breakpointId }: EffectsSect
           <PropertyRow label="Delay" hint={`Wait after it comes into view, in milliseconds, up to ${delay.max}`}>
             <DimensionInput
               label=""
-              value={appear.delay}
-              units={['']}
+              value={`${appear.delay}ms`}
+              units={['ms']}
               min={delay.min}
               max={delay.max}
               step={10}
-              prefix="ms"
               placeholder="0"
               onChange={(v) => setAppear({ delay: parseMs(v) ?? 0 })}
             />
@@ -162,12 +162,11 @@ export const EffectsSection = observer(({ component, breakpointId }: EffectsSect
             <PropertyRow label="Step" hint={`Time between two children, ${stagger.min} to ${stagger.max}ms`}>
               <DimensionInput
                 label=""
-                value={appear.stagger}
-                units={['']}
+                value={`${appear.stagger}ms`}
+                units={['ms']}
                 min={stagger.min}
                 max={stagger.max}
                 step={5}
-                prefix="ms"
                 placeholder={String(stagger.default)}
                 onChange={(v) => setAppear({ stagger: parseMs(v) ?? stagger.default })}
               />

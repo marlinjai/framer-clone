@@ -34,7 +34,7 @@ const EffectBadge = observer(() => {
     <div
       data-testid="effect-badge"
       title={`Effects: ${text}. The canvas shows the final state; use Play in the Effects section to preview.`}
-      className="absolute -top-6 right-0 flex max-w-[220px] items-center gap-1 truncate rounded bg-brand px-1.5 py-0.5 text-[10px] font-medium text-white shadow-sm"
+      className="absolute -top-6 left-0 flex max-w-[220px] items-center gap-1 truncate rounded bg-brand px-1.5 py-0.5 text-[10px] font-medium text-white shadow-sm"
     >
       <Sparkles size={10} aria-hidden className="flex-none" />
       <span className="truncate">{text}</span>

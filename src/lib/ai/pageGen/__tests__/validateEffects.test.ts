@@ -53,8 +53,9 @@ describe('generated effects', () => {
       { type: 'div', props: { effects: { appear: { kind: 'fade', stagger: 500 } } }, children: [p('a'), p('b'), p('c')] },
       { type: 'div', props: { effects: { appear: { kind: 'fade', stagger: 60 } } }, children: [p('only')] },
     ]);
-    expect(nodes[0].props.effects.appear.stagger).toBe(80);
-    expect(nodes[1].props.effects.appear.stagger).toBe(0);
+    const staggerOf = (i: number) => (nodes[i].props.effects as { appear: { stagger: number } }).appear.stagger;
+    expect(staggerOf(0)).toBe(80);
+    expect(staggerOf(1)).toBe(0);
     expect(warnings.some(w => w.includes('at least two children'))).toBe(true);
   });
 

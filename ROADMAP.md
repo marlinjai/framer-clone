@@ -23,14 +23,16 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   pass), and the properties panel has an Image section for fit, focal point and photo backgrounds
   (done, recorded in the 2026-10-23 design quality plan linked from the plan below). Phase 4's style references
   and screenshot loop stay open. See [plan](docs/plans/ai-driven-page-generation.md). (2026-10-23)
-- [ ] Motion and effects: an Effects section in the properties panel (appear on scroll, restrained
+- [x] Motion and effects: an Effects section in the properties panel (appear on scroll, restrained
   hover states, light scroll-linked transforms such as a small image parallax), stored per
   breakpoint like any style, undoable and generatable by the AI, rendered on published pages with
   CSS plus an IntersectionObserver or Motion (MIT). The canvas shows the final state with an effect
   badge and a play control, the preview plays everything. Follows the motion rules: entrances
   under 300ms, ease-out, nothing perpetual, off under prefers-reduced-motion. Plus an optional
   per-site Lenis (MIT) smooth-scroll toggle, off by default and off under reduced motion. Decided
-  by Marlin on 2026-10-23. See [plan](docs/plans/2026-10-23-motion-effects.md). (2026-10-23)
+  by Marlin on 2026-10-23; built 2026-10-24 (Effects section, canvas badge and Play, preview and
+  published runtime, Lenis switch in Site settings, sparing appear effects in the generator). See
+  [plan](docs/plans/2026-10-23-motion-effects.md). (2026-10-24)
 - [ ] Scroll-driven page type (later): an opt-in page type for scrollytelling pages, the only place
   GSAP ScrollTrigger pinning and scrubbing is used, because there the scroll is the requested
   interaction (the sanctioned exception to the scroll-jacking rule, as the scroll-craft skill
