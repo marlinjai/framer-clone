@@ -37,6 +37,7 @@ import { STOCK_CREDIT_ATTRS, stockCreditAttrs, stockCreditProps } from './stockC
 import { parseAspectRatio, photoUrlOf, withPhotoUrl } from '@/lib/images/imageStyle';
 import ComponentModel, { ComponentTypeEnum, CSS_PROP_SET } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag/voidTags';
+import { formPropKeysFor, presetFormKind, sanitizeGeneratedFormProps } from '@/lib/forms/generation';
 import {
   BASE_KEY,
   FORBIDDEN_TAGS,
@@ -470,6 +471,9 @@ class Validator {
     if (!isPlainObject(rawProps)) this.warn(path, 'props must be an object, ignored');
     const modelProps = isPlainObject(rawProps) ? rawProps : {};
     const allowed = new Set(allowedPropKeysFor(type));
+    // Form presets (src/lib/forms/generation.ts) accept their own props on top.
+    const formKeys = new Set(formPropKeysFor(preset?.defaultProps as Record<string, unknown> | undefined));
+    const formProps: Record<string, unknown> = {};
     const props: Record<string, unknown> = {};
     let text: string | undefined;
     let imageQuery: string | undefined;
@@ -484,6 +488,10 @@ class Validator {
     );
     for (const [key, value] of Object.entries(modelProps)) {
       if (key === 'style' || creditKeys.has(key)) continue;
+      if (formKeys.has(key)) {
+        formProps[key] = value;
+        continue;
+      }
       if (!allowed.has(key)) {
         this.warn(path, `prop "${key}" is not allowed on <${type}>, dropped`);
         continue;
@@ -529,7 +537,11 @@ class Validator {
       // The shape comes from the aspect ratio: a preset's fixed height would override it.
       style.height = 'auto';
     }
-    const merged: Record<string, unknown> = { ...presetDefaults, ...props };
+    const merged: Record<string, unknown> = {
+      ...presetDefaults,
+      ...props,
+      ...sanitizeGeneratedFormProps(presetDefaults, formProps, (m) => this.warn(path, m)),
+    };
     delete merged.style;
     const hasBackgroundPhoto = isPhotoContainer && this.photoBackground(path, style, modelProps, merged);
     if (Object.keys(style).length > 0) merged.style = style;
@@ -587,6 +599,8 @@ class Validator {
       if (rawChildren.length > 0) this.warn(path, `<${type}> cannot have children, ${rawChildren.length} dropped`);
       if (text !== undefined) this.warn(path, `<${type}> cannot have text, dropped`);
       text = undefined;
+    } else if (rawChildren.length > 0 && ['form-field', 'form-submit'].includes(presetFormKind(presetDefaults) ?? '')) {
+      this.warn(path, `form component "${preset?.id}" renders its own content, children dropped`);
     } else if (preset?.dataComponentKind && rawChildren.length > 0) {
       this.warn(path, `data component "${preset.id}" renders its own content, children dropped`);
     } else {

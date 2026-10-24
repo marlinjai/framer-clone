@@ -110,6 +110,42 @@ desktop value would not fit a phone.
 ### preset "flex" (Flex, category layout)
 - type: div
 - defaults: {"style":{"alignItems":"center","backgroundColor":"#f9fafb","border":"1px dashed #d1d5db","borderRadius":"8px","display":"flex","flexDirection":"row","gap":"12px","minHeight":"80px","padding":"16px","width":"360px"}}
+### preset "form" (Form, category form)
+- type: div
+- form component (see "Forms"): props formName, successMessage
+- defaults: {"data-form-kind":"form","formName":"Contact form","style":{"backgroundColor":"#ffffff","border":"1px solid #e5e7eb","borderRadius":"12px","color":"#111827","display":"flex","flexDirection":"column","fontFamily":"Inter, sans-serif","gap":"16px","maxWidth":"560px","padding":"24px","width":"100%"},"successBehavior":"message","successMessage":"Thank you. Your message has been sent."}
+### preset "formCheckbox" (Checkbox, category form)
+- type: div
+- form component (see "Forms"): props label, name, placeholder, required, minLength, maxLength, options, inputBackground, inputBorderColor, inputTextColor, inputRadius
+- defaults: {"data-form-kind":"form-field","fieldType":"checkbox","label":"Send me the newsletter","name":"newsletter","required":false,"style":{"color":"#111827","display":"block","fontFamily":"Inter, sans-serif","fontSize":"15px","width":"100%"}}
+### preset "formConsent" (Consent checkbox, category form)
+- type: div
+- form component (see "Forms"): props label, name, placeholder, required, minLength, maxLength, options, inputBackground, inputBorderColor, inputTextColor, inputRadius
+- defaults: {"data-form-kind":"form-field","fieldType":"consent","label":"I agree that my details are stored and used to answer my request.","name":"consent","required":true,"style":{"color":"#111827","display":"block","fontFamily":"Inter, sans-serif","fontSize":"15px","width":"100%"}}
+### preset "formEmail" (Email input, category form)
+- type: div
+- form component (see "Forms"): props label, name, placeholder, required, minLength, maxLength, options, inputBackground, inputBorderColor, inputTextColor, inputRadius
+- defaults: {"data-form-kind":"form-field","fieldType":"email","label":"Email","name":"email","placeholder":"you@example.com","required":true,"style":{"color":"#111827","display":"block","fontFamily":"Inter, sans-serif","fontSize":"15px","width":"100%"}}
+### preset "formPhone" (Phone input, category form)
+- type: div
+- form component (see "Forms"): props label, name, placeholder, required, minLength, maxLength, options, inputBackground, inputBorderColor, inputTextColor, inputRadius
+- defaults: {"data-form-kind":"form-field","fieldType":"tel","label":"Phone","name":"phone","placeholder":"+49 30 1234567","required":false,"style":{"color":"#111827","display":"block","fontFamily":"Inter, sans-serif","fontSize":"15px","width":"100%"}}
+### preset "formSelect" (Select, category form)
+- type: div
+- form component (see "Forms"): props label, name, placeholder, required, minLength, maxLength, options, inputBackground, inputBorderColor, inputTextColor, inputRadius
+- defaults: {"data-form-kind":"form-field","fieldType":"select","label":"Topic","name":"topic","options":["General question","Booking","Feedback"],"placeholder":"Please choose","required":false,"style":{"color":"#111827","display":"block","fontFamily":"Inter, sans-serif","fontSize":"15px","width":"100%"}}
+### preset "formSubmit" (Submit button, category form)
+- type: button
+- form component (see "Forms"): props loadingLabel
+- defaults: {"children":"Send","data-form-kind":"form-submit","loadingLabel":"Sending...","style":{"alignItems":"center","alignSelf":"flex-start","backgroundColor":"#111827","border":"none","borderRadius":"8px","color":"#ffffff","cursor":"pointer","display":"inline-flex","fontFamily":"Inter, sans-serif","fontSize":"15px","fontWeight":600,"justifyContent":"center","padding":"12px 20px"}}
+### preset "formText" (Text input, category form)
+- type: div
+- form component (see "Forms"): props label, name, placeholder, required, minLength, maxLength, options, inputBackground, inputBorderColor, inputTextColor, inputRadius
+- defaults: {"data-form-kind":"form-field","fieldType":"text","label":"Name","name":"name","placeholder":"Your name","required":true,"style":{"color":"#111827","display":"block","fontFamily":"Inter, sans-serif","fontSize":"15px","width":"100%"}}
+### preset "formTextarea" (Textarea, category form)
+- type: div
+- form component (see "Forms"): props label, name, placeholder, required, minLength, maxLength, options, inputBackground, inputBorderColor, inputTextColor, inputRadius
+- defaults: {"data-form-kind":"form-field","fieldType":"textarea","label":"Message","name":"message","placeholder":"How can we help?","required":true,"style":{"color":"#111827","display":"block","fontFamily":"Inter, sans-serif","fontSize":"15px","width":"100%"}}
 ### preset "grid" (Grid, category layout)
 - type: div
 - defaults: {"style":{"backgroundColor":"#f9fafb","border":"1px dashed #d1d5db","borderRadius":"8px","display":"grid","gap":"12px","gridTemplateColumns":"repeat(3, minmax(0, 1fr))","minHeight":"160px","padding":"16px","width":"360px"}}

@@ -20,6 +20,7 @@ import {
   listGenerationTags,
 } from './schema';
 import { isVoidTag } from '@/lib/drag/voidTags';
+import { formPropKeysFor } from '@/lib/forms/generation';
 
 export function buildSchemaDocs(): string {
   const presets = listGenerationPresets();
@@ -48,6 +49,8 @@ export function buildSchemaDocs(): string {
           '. Use it only when the brief clearly asks for this kind of content; never add children to it.',
       );
     }
+    const formKeys = formPropKeysFor(p.defaultProps as Record<string, unknown>);
+    if (formKeys.length > 0) header.push(`- form component (see "Forms"): props ${formKeys.join(', ')}`);
     header.push(`- defaults: ${stableStringify(p.defaultProps)}`);
     return header.join('\n');
   });
