@@ -162,13 +162,22 @@ function AddToCartButton({
   delete (wrapperProps as any).children;
 
   // An availability fetch error surfaces: an editor chip with the real message,
-  // nothing in preview/headless. It NEVER becomes a silent "available".
+  // a plain sentence for the visitor in preview / published (never the
+  // internal message). It NEVER becomes a silent "available".
   const errorNode: React.ReactNode =
-    directive.kind === 'error' && directive.message ? (
+    directive.kind !== 'error' ? null : directive.message ? (
       <span data-add-to-cart-error style={ERROR_CHIP_STYLE}>
         Availability check failed: {directive.message}
       </span>
-    ) : null;
+    ) : (
+      <span
+        data-add-to-cart-error
+        role="status"
+        style={{ display: 'block', marginTop: '4px', color: '#b91c1c', fontFamily: 'inherit', fontSize: '13px' }}
+      >
+        Availability could not be checked right now. Please try again later.
+      </span>
+    );
 
   return React.createElement(
     hostType as any,

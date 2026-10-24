@@ -6,6 +6,7 @@
 import type { GeneratedNodeSnapshot } from './validate';
 import type { BreakpointInput } from './schema';
 import { MODEL_CHOICES, type ModelChoice } from '@/lib/ai/modelChoice';
+import type { SiteContext } from './promptSections/siteContext';
 
 /**
  * Models the page generator may run on: the slider's three steps (Fast =
@@ -34,6 +35,8 @@ export interface PageGenRequest {
   projectName?: string;
   /** Existing page titles, so a new page does not duplicate one. */
   existingPageTitles?: string[];
+  /** Site language and real contact data from Site settings (promptSections/siteContext.ts). */
+  siteContext?: SiteContext;
 }
 
 /** SSE `gen:progress`: the model is writing (or the server is checking / repairing). */

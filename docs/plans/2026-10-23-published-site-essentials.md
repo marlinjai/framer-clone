@@ -1,6 +1,6 @@
 ---
 type: plan
-status: decided
+status: in-progress
 date: 2026-10-23
 title: Published site essentials, the things that make a generated site real
 summary: Close the gaps between a generated page and a real business site, from the owner's 19-point checklist of 2026-10-23 (custom 404, call to action above the fold, meta title and description, Open Graph image, favicon set, robots.txt, sitemap.xml, alt text, mobile breakpoints, sticky mobile call to action, loading states, form error states, thank-you page, privacy policy, terms, cookie banner, analytics, real contact address), audited against the code the same day; built around one Site settings object, forms, legal page templates and consent.
@@ -83,3 +83,54 @@ Decided while building, each reversible:
   `delete_submissions_failed` on failure), all of a workspace's (company erasure, `deleteWorkspaceSubmissions`)
   and the schema drop. No company erasure orchestrator exists in the repository yet; it must call
   `deleteWorkspaceSubmissions` or drop the schema.
+
+## Decided in build (decisions 1 to 3, loading states of 7; 2026-10-24)
+
+- **One object, one column.** `SiteSettings` lives in `src/lib/site/siteSettings.ts` (type, defaults,
+  `normalizeSiteSettings`, validation). MST: `ProjectModel.siteSettings`, a frozen value normalized
+  on the way in, read through `project.site`, saved by `updateSiteSettings` (one undo step).
+  Database: `sites.site_settings` JSONB (migration `20261023000000_site_settings`). Yjs: one JSON
+  blob under `YJS_PROJECT_KEYS.siteSettings`. A new field (the effects agent's `smoothScroll`) is a
+  change to that one file only.
+- **Language default.** Projects saved before this keep `en` (what every published page declared
+  until now, so nothing changes for them); the project-create route starts new projects with `de`.
+  In the generator the brief's language wins when it is clearly another one (otherwise every
+  existing project, all `en`, would switch a German brief to English copy); a short or neutral
+  brief is written in the site language.
+- **Site name** is an optional public override; blank uses the project title, which the dashboard
+  rename flow keeps owning.
+- **Favicon and Open Graph image by https URL.** The only upload path today is the Books logo store
+  (behind `editBooks`, not publicly servable), so no upload was reused. Every renderer re-checks
+  `isHttpsUrl` and leaves a bad value out. `src/app/favicon.ico` became a per-host route (site icon,
+  404 for a site without one, platform icon on the editor host); the platform icon moved to
+  `public/platform-favicon.ico` and the root layout links it only on hosts without a site.
+- **`<html lang>`** comes from the root layout, which reads the request's site
+  (`src/server/sites/requestSite.ts`, one cached resolution shared with the (site) layout and the
+  page). Cost: `/`, `/preview` and the root `/_not-found`, which were prerendered shells, now
+  render per request (the published routes were already dynamic). Accepted: they are editor
+  shells whose content is client-side, and the alternative (separate root layouts per route
+  group) would move every editor route.
+- **Primary host** for canonical, Open Graph URL, sitemap and robots: the oldest live custom domain,
+  else the platform subdomain, else the request host (`src/server/sites/primaryHost.ts`, also used
+  by the editor's site address). Read uncached per request, because the per-host site cache is not
+  invalidated for the subdomain when a custom domain is claimed or released.
+- **Title template** default "%s | site name"; a page titled like the site (the home page) shows
+  the site name alone.
+- **JSON-LD** `LocalBusiness` with a complete address (with valid opening-hours rows), else
+  `Organization`, nothing without business data; on the home page only.
+- **robots.txt** allows everything and points at the sitemap; it never disallows a noindex page (the
+  crawler must see the noindex). A host without a site gets `Disallow: /`.
+- **sitemap.xml** lists published pages minus noindex pages and the 404 page, lastmod from the
+  page's `updatedAt`. Dynamic pages are expanded only when the values are knowable: a RecordView
+  bound to a literal collection id on a `:id` page (published row ids), or a bound ProductDetail on
+  a `:handle` page (product handles); at most 1000 values per page and 5000 URLs in total; any
+  other dynamic page is left out.
+- **404 page**: one pointer, `notFoundPageId`, set from Page settings ("Use as 404 page") or Site
+  settings; never the home page; cleared when the page is deleted or becomes the home page. Its own
+  path also answers 404. Without one, a default in the site's language with its name and the look
+  of its home page (font, colours, first filled button).
+- **Loading**: the hero is the first img of at least 160 px in the first section
+  (`fetchpriority="high"`, never lazy); a hero made of a photo background is preloaded instead;
+  every other img is `loading="lazy" decoding="async"`; author values are kept. Commerce islands
+  render a sized `aria-busy` placeholder until mounted, an error boundary with "Try again", and a
+  plain visitor sentence (not the internal message) when a data read fails.

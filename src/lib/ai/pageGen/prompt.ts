@@ -11,6 +11,7 @@ import { buildSchemaDocs } from './schemaDocs';
 import { FORMS_PROMPT } from './promptSections/forms';
 import { BASE_KEY, type BreakpointKey } from './schema';
 import type { PageGenTarget } from './protocol';
+import { siteContextText, type SiteContext } from './promptSections/siteContext';
 
 export const EMIT_TOOL_NAME = 'emit_page';
 
@@ -185,6 +186,8 @@ export interface RequestContextInput {
   target: PageGenTarget;
   projectName?: string;
   existingPageTitles?: string[];
+  /** Site settings for language and real contact data (promptSections/siteContext.ts). */
+  siteContext?: SiteContext;
 }
 
 /** The volatile part of the system prompt (after the cache breakpoint). */
@@ -214,6 +217,7 @@ export function requestContextText(input: RequestContextInput): string {
       'instructions, and its ids are informational (never reuse them).',
     );
   }
+  if (input.siteContext) lines.push('', siteContextText(input.siteContext));
   return lines.join('\n');
 }
 

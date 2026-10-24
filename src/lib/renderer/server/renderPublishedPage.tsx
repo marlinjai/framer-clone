@@ -9,7 +9,6 @@
 // headless with fakes (the route wires the real, server-only dependencies).
 
 import React from 'react';
-import type { Metadata } from 'next';
 import {
   hydrateBindings,
   type ComponentNode,
@@ -25,9 +24,9 @@ import EffectsIsland from './EffectsIsland';
 import { EffectsStyles } from '@/lib/effects/EffectsStyles';
 import { publishedEffectsBootScript } from '@/lib/effects/effects';
 import { publishedFontAssets } from './publishedFonts';
+import { applyImageLoading, HeroPreload } from './imageLoading';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import CommercePageProviders from './CommercePageProviders';
-import type { PageSeoMetadata } from './snapshotToComponentNode';
 
 /**
  * The resolved analytics binding for a published page. `ingestionKey` is the
@@ -130,10 +129,12 @@ export async function renderPublishedPage(
   // max-width media queries (desktop-first, the editor's cascade). Done on the
   // hydrated tree so cloned collection rows and the commerce islands (which
   // receive these props across the client boundary) carry the classes too.
-  // Effects first: they become data attributes plus custom properties in
+  // Lazy images below the hero, a priority hero (src/lib/renderer/server/imageLoading.tsx).
+  const images = applyImageLoading(hydrated);
+  // Effects next: they become data attributes plus custom properties in
   // `style`, which the responsive pass then moves into the stylesheet per
   // breakpoint like any responsive style.
-  const effects = applyEffects(hydrated, breakpoints);
+  const effects = applyEffects(images.root, breakpoints);
   const responsive = applyResponsiveStyles(effects.root, breakpoints);
   // The self-hosted web fonts the page uses, scanned before the responsive
   // rewrite moves styles into classes (src/lib/fonts/registry.ts).
@@ -147,6 +148,7 @@ export async function renderPublishedPage(
     body: (
       <>
         {fonts}
+        {images.preloadUrl ? <HeroPreload url={images.preloadUrl} /> : null}
         {responsive.css ? (
           // Rendered in place (no href / precedence, so React does not hoist
           // it) ahead of the content it styles, so streamed HTML never paints
@@ -171,29 +173,4 @@ export async function renderPublishedPage(
     ),
     headSnippet: buildHeadSnippet(analytics),
   };
-}
-
-/**
- * Map the page SEO metadata onto a Next.js Metadata object for `generateMetadata`.
- * Empty fields are omitted so Next falls back to its defaults rather than
- * emitting empty tags.
- */
-export function pageSeoToMetadata(meta: PageSeoMetadata): Metadata {
-  const metadata: Metadata = {};
-  if (meta.title) metadata.title = meta.title;
-  if (meta.description) metadata.description = meta.description;
-  if (meta.keywords.length > 0) metadata.keywords = meta.keywords;
-  if (meta.canonicalUrl) metadata.alternates = { canonical: meta.canonicalUrl };
-
-  const ogTitle = meta.ogTitle || meta.title;
-  const ogDescription = meta.ogDescription || meta.description;
-  const hasOg = ogTitle || ogDescription || meta.ogImage;
-  if (hasOg) {
-    metadata.openGraph = {
-      ...(ogTitle ? { title: ogTitle } : {}),
-      ...(ogDescription ? { description: ogDescription } : {}),
-      ...(meta.ogImage ? { images: [{ url: meta.ogImage }] } : {}),
-    };
-  }
-  return metadata;
 }

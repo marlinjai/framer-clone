@@ -98,6 +98,7 @@ import {
   type StockImageResolution,
 } from '@/lib/ai/pageGen/stockImages';
 import { FOCAL_MODEL, detectFocalPoints } from '@/lib/ai/pageGen/focalPoints';
+import { SiteContextSchema } from '@/lib/ai/pageGen/promptSections/siteContext';
 import type { AiEffort, AiModelKey } from '@/lib/ai/anthropicClient';
 
 export const dynamic = 'force-dynamic';
@@ -154,6 +155,7 @@ const BodySchema = z.strictObject({
   target: TargetSchema,
   projectName: z.string().max(120).optional(),
   existingPageTitles: z.array(z.string().max(120)).max(100).optional(),
+  siteContext: SiteContextSchema.optional(),
 });
 
 type Body = z.infer<typeof BodySchema>;
@@ -290,6 +292,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
           target: body.target as PageGenTarget,
           projectName: body.projectName,
           existingPageTitles: body.existingPageTitles,
+          siteContext: body.siteContext,
         }),
         cache: false,
       },
