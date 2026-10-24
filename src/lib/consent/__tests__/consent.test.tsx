@@ -19,14 +19,15 @@ import { DEFAULT_LOOK } from '@/lib/site/notFoundDefault';
 const tracker: TrackerPayload = {
   variants: {},
   config: { key: 'ap_live_abc', endpoint: 'https://ingest.lumitra.co', projectId: 'proj_x' },
-  src: 'https://cdn.lumitra.co/tracker.js',
+  src: 'https://analytics.lumitra.co/sdk/tracker.js',
 };
 
 type Win = Window & {
   __AP_CONFIG?: Record<string, unknown>;
   __AP_VARIANTS?: Record<string, string>;
   __lumitraConsent?: { open(): void; accept(): void; decline(): void; get(): string | null; version: number };
-  LumitraAnalytics?: { enableTracking(): void };
+  LumitraAnalytics?: unknown;
+  __fcImportTracker?: (url: string) => Promise<unknown>;
 };
 const win = window as Win;
 
@@ -35,7 +36,15 @@ const win = window as Win;
 const added: Array<[string, EventListenerOrEventListenerObject]> = [];
 const realAdd = document.addEventListener.bind(document);
 
+// The tracker is an ES module the runtime imports; the test seam replaces the
+// import with a fake module so jsdom can run it.
+let trackerModule: { init: ReturnType<typeof vi.fn>; enableTracking: ReturnType<typeof vi.fn> };
+let importTracker: ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
+  trackerModule = { init: vi.fn(), enableTracking: vi.fn() };
+  importTracker = vi.fn(() => Promise.resolve(trackerModule));
+  win.__fcImportTracker = importTracker as unknown as (url: string) => Promise<unknown>;
   vi.spyOn(document, 'addEventListener').mockImplementation(((type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) => {
     added.push([type, listener]);
     realAdd(type, listener, options);
@@ -48,7 +57,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   window.localStorage.clear();
   window.sessionStorage.clear();
-  document.head.querySelectorAll('script[data-fc-tracker]').forEach((s) => s.remove());
+  delete win.__fcImportTracker;
   delete win.__AP_CONFIG;
   delete win.__AP_VARIANTS;
   delete win.__lumitraConsent;
@@ -70,14 +79,15 @@ function load(language = 'de', footer = true) {
 }
 
 const banner = () => document.getElementById(CONSENT_BANNER_ID) as HTMLElement;
-const trackerScripts = () => document.head.querySelectorAll('script[data-fc-tracker]');
+const trackerLoads = () => importTracker.mock.calls;
+const settle = () => new Promise((r) => setTimeout(r, 0));
 const stored = () => JSON.parse(window.localStorage.getItem(CONSENT_STORAGE_KEY) ?? 'null');
 
 describe('consent banner', () => {
   it('shows on a first visit and loads nothing before a choice', () => {
     load();
     expect(banner().hidden).toBe(false);
-    expect(trackerScripts()).toHaveLength(0);
+    expect(trackerLoads()).toHaveLength(0);
     expect(win.__AP_CONFIG).toBeUndefined();
     // Not modal and takes no focus on its own.
     expect(banner().getAttribute('role')).toBe('dialog');
@@ -95,26 +105,34 @@ describe('consent banner', () => {
     expect(screen.getByRole('link', { name: 'Datenschutzerklärung' }).getAttribute('href')).toBe('/datenschutz');
   });
 
-  it('accepting stores a versioned choice and loads the tracker', () => {
+  it('accepting stores a versioned choice and imports the tracker module', () => {
     load();
     fireEvent.click(screen.getByRole('button', { name: 'Akzeptieren' }));
     expect(banner().hidden).toBe(true);
     expect(stored()).toMatchObject({ v: CONSENT_VERSION, analytics: true });
     expect(typeof stored().at).toBe('string');
-    const scripts = trackerScripts();
-    expect(scripts).toHaveLength(1);
-    expect((scripts[0] as HTMLScriptElement).src).toBe('https://cdn.lumitra.co/tracker.js');
+    expect(trackerLoads()).toEqual([['https://analytics.lumitra.co/sdk/tracker.js']]);
     expect(win.__AP_CONFIG).toMatchObject({ key: 'ap_live_abc', projectId: 'proj_x', consent: { analytics: true } });
     expect(win.__AP_VARIANTS).toEqual({});
   });
 
-  it('calls the loader enableTracking once it has loaded', () => {
+  it('starts the imported tracker with the site config and turns on post-consent tracking', async () => {
     load();
-    const enableTracking = vi.fn();
-    win.LumitraAnalytics = { enableTracking };
     win.__lumitraConsent!.accept();
-    trackerScripts()[0].dispatchEvent(new Event('load'));
-    expect(enableTracking).toHaveBeenCalledTimes(1);
+    await settle();
+    expect(trackerModule.init).toHaveBeenCalledWith({ projectId: 'proj_x', apiKey: 'ap_live_abc', endpoint: 'https://ingest.lumitra.co' });
+    expect(trackerModule.enableTracking).toHaveBeenCalledTimes(1);
+    expect(win.LumitraAnalytics).toBe(trackerModule);
+  });
+
+  it('reports a tracker that fails to load instead of failing silently', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    importTracker.mockImplementationOnce(() => Promise.reject(new Error('offline')));
+    load();
+    win.__lumitraConsent!.accept();
+    await settle();
+    expect(warn).toHaveBeenCalledWith('[consent] analytics tracker failed to load', expect.any(Error));
+    expect(trackerModule.init).not.toHaveBeenCalled();
   });
 
   it('declining stores the choice and loads nothing at all', () => {
@@ -122,7 +140,7 @@ describe('consent banner', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Ablehnen' }));
     expect(banner().hidden).toBe(true);
     expect(stored()).toMatchObject({ v: CONSENT_VERSION, analytics: false });
-    expect(trackerScripts()).toHaveLength(0);
+    expect(trackerLoads()).toHaveLength(0);
     expect(win.__AP_CONFIG).toBeUndefined();
     expect(win.__AP_VARIANTS).toBeUndefined();
   });
@@ -131,14 +149,14 @@ describe('consent banner', () => {
     window.localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify({ v: CONSENT_VERSION, analytics: true, at: 'x' }));
     load();
     expect(banner().hidden).toBe(true);
-    expect(trackerScripts()).toHaveLength(1);
+    expect(trackerLoads()).toHaveLength(1);
   });
 
   it('remembers a no on the next page: nothing loads, no banner', () => {
     window.localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify({ v: CONSENT_VERSION, analytics: false, at: 'x' }));
     load();
     expect(banner().hidden).toBe(true);
-    expect(trackerScripts()).toHaveLength(0);
+    expect(trackerLoads()).toHaveLength(0);
     expect(win.__AP_CONFIG).toBeUndefined();
   });
 
@@ -146,7 +164,7 @@ describe('consent banner', () => {
     window.localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify({ v: CONSENT_VERSION - 1, analytics: true, at: 'x' }));
     load();
     expect(banner().hidden).toBe(false);
-    expect(trackerScripts()).toHaveLength(0);
+    expect(trackerLoads()).toHaveLength(0);
   });
 
   it('reopens from the footer link with focus, and Escape closes it back to the link', () => {
@@ -210,7 +228,7 @@ describe('consent banner', () => {
     load();
     expect(banner().hidden).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Akzeptieren' }));
-    expect(trackerScripts()).toHaveLength(1);
+    expect(trackerLoads()).toHaveLength(1);
     expect(win.__lumitraConsent!.get()).toBe('granted');
   });
 

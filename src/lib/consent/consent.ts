@@ -143,14 +143,22 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     "if(!r||r.v!==C.v||typeof r.analytics!=='boolean')return null;return r.analytics?'granted':'denied';}catch(e){return null;}}" +
     'function current(){var r=read();return r!==null?r:mem;}' +
     "function write(yes){mem=yes?'granted':'denied';try{w.localStorage.setItem(C.key,JSON.stringify({v:C.v,analytics:yes,at:new Date().toISOString()}));}catch(e){}}" +
-    // Load the tracker: the same globals and loader the ungated snippet used.
-    'function enable(){var t=w.LumitraAnalytics;if(t&&typeof t.enableTracking===\'function\'){try{t.enableTracking();}catch(e){}}}' +
+    // Load the tracker. It is an ES module that only exports init() and
+    // enableTracking() (analytics-platform packages/tracker), so a classic
+    // <script src> cannot run it: import it, init it with the site's public
+    // config, then turn on the post-consent behavioural tracking. The globals
+    // stay for anything that reads them. A failure is logged, never silent.
+    'function start(m){if(!m||typeof m.init!==\'function\'){console.warn(\'[consent] analytics tracker has no init()\');return;}' +
+    'var c=C.tracker.config;if(!c.projectId){console.warn(\'[consent] analytics project id missing, tracker not started\');return;}' +
+    'try{m.init({projectId:c.projectId,apiKey:c.key,endpoint:c.endpoint});if(typeof m.enableTracking===\'function\')m.enableTracking();w.LumitraAnalytics=m;}' +
+    "catch(e){console.warn('[consent] analytics tracker failed to start',e);}}" +
     'function load(){if(loaded||!C.tracker)return;loaded=true;var cfg={},k;' +
     'for(k in C.tracker.config){if(Object.prototype.hasOwnProperty.call(C.tracker.config,k))cfg[k]=C.tracker.config[k];}' +
     'cfg.consent={analytics:true};w.__AP_VARIANTS=C.tracker.variants;w.__AP_CONFIG=cfg;' +
     "try{w.dispatchEvent(new CustomEvent('lumitra:consent',{detail:{analytics:true}}));}catch(e){}" +
-    "if(C.tracker.src){var s=d.createElement('script');s.async=true;s.src=C.tracker.src;s.setAttribute('data-fc-tracker','');" +
-    's.onload=enable;(d.head||d.documentElement).appendChild(s);}else{enable();}}' +
+    // __fcImportTracker is the test seam for the module import (jsdom cannot run import()).
+    "if(C.tracker.src){var imp=w.__fcImportTracker||function(u){return import(u);};" +
+    "imp(C.tracker.src).then(start,function(e){console.warn('[consent] analytics tracker failed to load',e);});}}" +
     // Remove what the tracker stored (revoking an earlier yes).
     'function forget(){try{var ss=w.sessionStorage;for(var i=ss.length-1;i>=0;i--){var n=ss.key(i);if(n&&n.indexOf(C.prefix)===0)ss.removeItem(n);}}catch(e){}' +
     "try{d.cookie=C.cookie+'=; path=/; max-age=0';}catch(e){}}" +
