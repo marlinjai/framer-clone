@@ -172,7 +172,7 @@ export default function RichTextEditor({
         suppressContentEditableWarning
         spellCheck
         className="w-full bg-white p-0 outline-2 outline-blue-600 [&_li]:ml-4 [&_li]:list-disc [&_p]:m-0 [&_ul]:m-0 [&_ul]:p-0"
-        style={{ ...textStyle, minHeight, whiteSpace: 'pre-wrap' }}
+        style={{ ...textStyle, minHeight }}
         onFocus={prepare}
         onInput={changed}
         onPaste={(e) => {

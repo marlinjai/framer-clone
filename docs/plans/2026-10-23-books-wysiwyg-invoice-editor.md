@@ -690,3 +690,8 @@ reloaded, the text came back unsent, Enter saved it with one request.
   - the four stateful-flow paths: forward (bold from the keyboard, the runs saved); backtrack (Escape leaves the format, undo sends the format before); resume (the runs survive a reload and come back unsent, formatted); re-entry (a formatted text opens with its runs, an unchanged one sends nothing);
   - the toolbar;
   - a paste.
+- **Chrome's own shapes, checked a second time** (Shift+Enter, Enter, Backspace across lines, a list
+  on and off, select all and delete): with `white-space: pre-wrap` Chrome typed Shift+Enter as a line
+  break character, so the editor showed two lines while the runs held one. The box no longer keeps
+  white space (Chrome then inserts a `<br>`), and a line break character reads as a line break
+  anyway. All five shapes now read as Chrome shows them.

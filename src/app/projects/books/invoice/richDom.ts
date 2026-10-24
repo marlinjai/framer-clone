@@ -10,8 +10,9 @@
 // behind and keeps only what the run model has:
 // - blocks: `p` and `div` are paragraphs, `li` (in `ul` or `ol`) bullet items,
 //   text outside a block a paragraph of its own;
-// - a `br` inside a block starts a new block of the same kind (the run model
-//   has no soft line break: a line is a block, as the plain text's lines are);
+// - a `br` (or a line break character) inside a block starts a new block of
+//   the same kind (the run model has no soft line break: a line is a block, as
+//   the plain text's lines are);
 // - styles: `b`, `strong` and a span with a font weight of 600 or more are
 //   bold; `i`, `em` and a span with an italic font style are italic;
 // - every other element is unwrapped (its text kept, its tag dropped), and a
@@ -78,8 +79,13 @@ export function richFromDom(root: HTMLElement): RichText {
 
   const walkInline = (node: Node, style: Style, kind: TextBlock['kind']) => {
     if (node.nodeType === 3) {
-      const text = (node.textContent ?? '').replace(/ /g, ' ').replace(/[\r\n]+/g, ' ');
-      if (text !== '') ensure(kind).runs.push({ text, ...(style.bold ? { bold: true as const } : {}), ...(style.italic ? { italic: true as const } : {}) });
+      // A line break typed as a character (Chrome does so where white space is preserved) is a line break, as a
+      // <br> is: what the editor shows on two lines is saved on two lines.
+      const parts = (node.textContent ?? '').replace(/\u00a0/g, ' ').split(/\r\n?|\n/);
+      parts.forEach((text, i) => {
+        if (i > 0) open(kind);
+        if (text !== '') ensure(kind).runs.push({ text, ...(style.bold ? { bold: true as const } : {}), ...(style.italic ? { italic: true as const } : {}) });
+      });
       return;
     }
     if (node.nodeType !== 1) return;

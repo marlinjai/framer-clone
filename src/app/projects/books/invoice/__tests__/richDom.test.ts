@@ -54,6 +54,10 @@ describe('what the browser leaves behind', () => {
     expect(read('<p><b><i>beides</i></b></p>')).toEqual({ v: 1, blocks: [para({ text: 'beides', bold: true, italic: true })] });
   });
 
+  it('reads a line break typed as a character as a line break, as Chrome types Shift+Enter where white space is kept', () => {
+    expect(read('<p>erste\nzweite</p><p>dritte</p>')).toEqual({ v: 1, blocks: [para({ text: 'erste' }), para({ text: 'zweite' }), para({ text: 'dritte' })] });
+  });
+
   it('turns non-breaking spaces into spaces', () => {
     expect(read('<p>zwei Wörter </p>')).toEqual({ v: 1, blocks: [para({ text: 'zwei Wörter ' })] });
   });
