@@ -3,8 +3,8 @@ import 'server-only';
 // src/server/sites/renderSitePage.tsx
 //
 // The server wiring that turns one matched published page into its body:
-// analytics binding, per-site CMS and commerce tenancy, the render, the
-// analytics snippet. Shared by the page route (`(site)/[...slug]/page.tsx`) and
+// analytics binding, per-site CMS and commerce tenancy, the render, and the
+// consent banner that gates the analytics tracker. Shared by the page route (`(site)/[...slug]/page.tsx`) and
 // the site's designed 404 page (`(site)/not-found.tsx`), so both render a page
 // exactly the same way.
 
@@ -26,6 +26,20 @@ import {
   type ResolvedAnalytics,
 } from '@/lib/renderer/server/renderPublishedPage';
 import { jsonLdScriptText } from '@/lib/site/publishedHead';
+import { siteLookFromPages } from '@/lib/site/notFoundDefault';
+import { findLegalPage } from '@/lib/legal/legalPages';
+
+/** Path of the site's privacy policy page, or null when it has none. */
+export function privacyPolicyHref(site: PublishedSite): string | null {
+  const page = findLegalPage(
+    site.pages.map((p) => ({
+      slug: p.slug,
+      metadata: (p.snapshot as { metadata?: { legalTemplate?: string } } | undefined)?.metadata ?? null,
+    })),
+    'privacy',
+  );
+  return page ? `/${page.slug}` : null;
+}
 
 /** True when `pageId` is the site's designed 404 page. */
 export function isNotFoundPage(site: PublishedSite, pageId: string): boolean {
@@ -53,9 +67,9 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
   // tracker loader URL server-side. The key comes from the server-side apiKeyRef
   // (the ref literal never reaches the artifact); the endpoint/project fall back
   // to the deploy env so the single demo site is env-configurable; the loader URL
-  // is a platform constant from the env. Injection is gated on lumitraEnabled +
-  // a public key + an endpoint inside renderPublishedPage. The loader is what
-  // actually makes the page EMIT events (config alone does nothing).
+  // is a platform constant from the env. With lumitraEnabled + a public key + an
+  // endpoint, renderPublishedPage renders the consent banner, which loads the
+  // tracker only after the visitor accepts (src/lib/consent/consent.ts).
   const analytics: ResolvedAnalytics = {
     enabled: site.lumitraEnabled,
     ingestionKey: resolvePublicIngestionKey(site.apiKeyRef),
@@ -82,7 +96,7 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
   //     A page with NO bound commerce source never touches the commerce
   //     connection at all; one that has them runs the startup backstop first and
   //     fails loudly on a misconfigured COMMERCE_APP_DATABASE_URL.
-  const { body, headSnippet } = await renderPublishedPage({
+  const { body } = await renderPublishedPage({
     root: adapted.root,
     pageParams: matched.params,
     cmsRepo: getPublishedCmsRepository(site.workspaceId),
@@ -92,20 +106,17 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
     // Lenis smooth scrolling, the site's setting (off by default; off for
     // visitors who ask for reduced motion, decided in the browser).
     smoothScroll: site.siteSettings.smoothScroll === true,
+    // The consent banner (shown only when analytics needs consent) speaks the
+    // site language, looks like the home page and links the privacy policy.
+    consent: {
+      language: site.siteSettings.language,
+      look: siteLookFromPages(site.pages),
+      privacyHref: privacyPolicyHref(site),
+    },
   });
 
   return (
     <>
-      {headSnippet ? (
-        // SSR-emitted inline script: present in the server HTML, so it executes
-        // on initial load (publishes window.__AP_CONFIG / __AP_VARIANTS, then the
-        // tracker loader). Only the PUBLIC ap_live_ key is ever embedded.
-        <div
-          data-analytics-tracker
-          style={{ display: 'none' }}
-          dangerouslySetInnerHTML={{ __html: headSnippet }}
-        />
-      ) : null}
       {jsonLd ? (
         // schema.org data for search engines; `<` is escaped (jsonLdScriptText).
         <script

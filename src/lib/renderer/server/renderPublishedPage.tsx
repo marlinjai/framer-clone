@@ -16,7 +16,10 @@ import {
 } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
 import { createScope, pushPageFrame } from '@/lib/bindings/resolver/scope';
-import { buildTrackerSnippet } from '@/lib/renderer/publish/trackerSnippet';
+import { buildTrackerPayload, type TrackerPayload } from '@/lib/renderer/publish/trackerSnippet';
+import { ConsentBanner } from '@/lib/consent/ConsentBanner';
+import { HIDE_COOKIE_LINKS_CSS } from '@/lib/consent/consent';
+import { DEFAULT_LOOK, type SiteLook } from '@/lib/site/notFoundDefault';
 import { renderComponentNode } from './renderComponentNode';
 import { applyResponsiveStyles } from './applyResponsiveStyles';
 import { applyEffects } from './applyEffects';
@@ -72,6 +75,15 @@ export interface RenderPublishedPageInput {
    * visitors who ask for reduced motion.
    */
   smoothScroll?: boolean;
+  /**
+   * How the consent banner speaks and looks: the site language, the site's
+   * look and its privacy policy path. Only used when analytics needs consent.
+   */
+  consent?: {
+    language: string;
+    look?: SiteLook;
+    privacyHref?: string | null;
+  };
 }
 
 export interface RenderedPage {
@@ -80,27 +92,31 @@ export interface RenderedPage {
    * preceded by the page's responsive stylesheet when it has one.
    */
   body: React.ReactNode;
-  /** The analytics `<head>` snippet HTML, or null when disabled / unresolved. */
-  headSnippet: string | null;
+  /**
+   * True when the page carries the consent banner because analytics is enabled
+   * and resolved: the tracker then loads only after the visitor accepts, and is
+   * never part of the HTML.
+   */
+  analyticsGated: boolean;
 }
 
 /**
- * Build the analytics tracker snippet when the binding is enabled and a public
+ * The tracker to load after consent, when the binding is enabled and a public
  * key + endpoint are resolved. A misconfigured key (e.g. a secret-shaped value
- * the backstop refuses) is logged LOUDLY and injects nothing, rather than taking
+ * the backstop refuses) is logged LOUDLY and loads nothing, rather than taking
  * the whole storefront down: analytics is additive, the page must still serve.
  * A/B is deferred for the demo, so `variants` is the control baseline ({}).
  */
-function buildHeadSnippet(analytics: ResolvedAnalytics | undefined): string | null {
+function resolveTracker(analytics: ResolvedAnalytics | undefined): TrackerPayload | null {
   if (!analytics || !analytics.enabled) return null;
   if (!analytics.ingestionKey || !analytics.ingestionEndpoint) return null;
   try {
-    return buildTrackerSnippet({
+    return buildTrackerPayload({
       ingestionKey: analytics.ingestionKey,
       ingestionEndpoint: analytics.ingestionEndpoint,
       ...(analytics.projectId ? { projectId: analytics.projectId } : {}),
       // The loader script is what actually emits events; pass it through when the
-      // deploy configured it, else the snippet is config-only (no emission).
+      // deploy configured it, else only the config globals are set (no emission).
       ...(analytics.trackerScriptSrc ? { trackerScriptSrc: analytics.trackerScriptSrc } : {}),
       variants: {},
     });
@@ -121,7 +137,8 @@ function buildHeadSnippet(analytics: ResolvedAnalytics | undefined): string | nu
 export async function renderPublishedPage(
   input: RenderPublishedPageInput,
 ): Promise<RenderedPage> {
-  const { root, pageParams, cmsRepo, commerceRepo, analytics, breakpoints = [], smoothScroll = false } = input;
+  const { root, pageParams, cmsRepo, commerceRepo, analytics, breakpoints = [], smoothScroll = false, consent } = input;
+  const tracker = resolveTracker(analytics);
 
   const hydrated = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo });
 
@@ -147,6 +164,19 @@ export async function renderPublishedPage(
   return {
     body: (
       <>
+        {tracker ? (
+          // Consent first in the reading order; the tracker loads only after
+          // the visitor accepts (decision 6). Nothing of it is in the HTML.
+          <ConsentBanner
+            tracker={tracker}
+            language={consent?.language ?? 'en'}
+            look={consent?.look ?? DEFAULT_LOOK}
+            privacyHref={consent?.privacyHref ?? null}
+          />
+        ) : (
+          // Nothing needs consent: a footer "Cookie settings" link would do nothing.
+          <style data-fc-consent-none="" dangerouslySetInnerHTML={{ __html: HIDE_COOKIE_LINKS_CSS }} />
+        )}
         {fonts}
         {images.preloadUrl ? <HeroPreload url={images.preloadUrl} /> : null}
         {responsive.css ? (
@@ -171,6 +201,6 @@ export async function renderPublishedPage(
         ) : null}
       </>
     ),
-    headSnippet: buildHeadSnippet(analytics),
+    analyticsGated: tracker !== null,
   };
 }

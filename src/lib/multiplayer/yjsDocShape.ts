@@ -520,6 +520,10 @@ function normalisePageMetadata(
     canonicalUrl:
       typeof m.canonicalUrl === 'string' ? m.canonicalUrl : '',
     noIndex: m.noIndex === true,
+    legalTemplate:
+      m.legalTemplate === 'impressum' || m.legalTemplate === 'privacy' || m.legalTemplate === 'terms'
+        ? m.legalTemplate
+        : '',
   };
 }
 

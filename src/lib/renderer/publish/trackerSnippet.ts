@@ -48,10 +48,19 @@ const LINE_SEP = new RegExp(' ', 'g');
 const PARA_SEP = new RegExp(' ', 'g');
 
 /**
- * Build the tracker `<head>` snippet HTML. Throws when `ingestionKey` is missing
- * or looks non-public (the secret backstop).
+ * The validated data a tracker load needs: the variants, the PUBLIC config and
+ * the loader URL. Throws when `ingestionKey` is missing or looks non-public
+ * (the secret backstop). Used directly by the consent gate
+ * (src/lib/consent/consent.ts), which loads the tracker only after the visitor
+ * accepts, and by buildTrackerSnippet.
  */
-export function buildTrackerSnippet(input: TrackerSnippetInput): string {
+export interface TrackerPayload {
+  variants: Record<string, string>;
+  config: { key: string; endpoint: string; projectId?: string };
+  src: string | null;
+}
+
+export function buildTrackerPayload(input: TrackerSnippetInput): TrackerPayload {
   if (!input.ingestionKey) {
     throw new Error('buildTrackerSnippet: ingestionKey is required');
   }
@@ -60,20 +69,30 @@ export function buildTrackerSnippet(input: TrackerSnippetInput): string {
       'buildTrackerSnippet: refusing to embed a non-public ingestion key in published HTML',
     );
   }
-
-  const config = {
-    key: input.ingestionKey,
-    endpoint: input.ingestionEndpoint,
-    ...(input.projectId ? { projectId: input.projectId } : {}),
+  return {
+    variants: input.variants ?? {},
+    config: {
+      key: input.ingestionKey,
+      endpoint: input.ingestionEndpoint,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+    },
+    src: input.trackerScriptSrc || null,
   };
-  const variants = input.variants ?? {};
+}
 
+/**
+ * Build the tracker `<head>` snippet HTML. Throws when `ingestionKey` is missing
+ * or looks non-public (the secret backstop). Published pages no longer emit it
+ * directly: the consent gate injects the same globals and loader after consent.
+ */
+export function buildTrackerSnippet(input: TrackerSnippetInput): string {
+  const payload = buildTrackerPayload(input);
   const parts: string[] = [
-    `<script>window.__AP_VARIANTS=${safeJson(variants)};` +
-      `window.__AP_CONFIG=${safeJson(config)};</script>`,
+    `<script>window.__AP_VARIANTS=${safeJson(payload.variants)};` +
+      `window.__AP_CONFIG=${safeJson(payload.config)};</script>`,
   ];
-  if (input.trackerScriptSrc) {
-    parts.push(`<script async src="${escapeAttr(input.trackerScriptSrc)}"></script>`);
+  if (payload.src) {
+    parts.push(`<script async src="${escapeAttr(payload.src)}"></script>`);
   }
   return parts.join('');
 }
@@ -82,7 +101,7 @@ export function buildTrackerSnippet(input: TrackerSnippetInput): string {
  * JSON for safe inline-`<script>` embedding: escapes the characters that could
  * break out of the script element or terminate it early.
  */
-function safeJson(value: unknown): string {
+export function safeJson(value: unknown): string {
   return JSON.stringify(value)
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')

@@ -88,6 +88,12 @@ const PageMetadataModel = types.model('PageMetadata', {
   // Keep this page out of search engines: a robots noindex meta tag on the
   // published page, and left out of the site's sitemap.xml.
   noIndex: types.optional(types.boolean, false),
+  // Set when the page was created from a legal page template
+  // (src/lib/legal/templates.ts): 'impressum', 'privacy' or 'terms'. The
+  // editor then shows a "template, not legal advice" banner above it (never
+  // published), and the Site settings, the publish warning and the consent
+  // banner find the page by it. Empty for every other page.
+  legalTemplate: types.optional(types.enumeration('LegalTemplate', ['', 'impressum', 'privacy', 'terms']), ''),
 });
 
 // Stage 1 (base) – fields without circular references
