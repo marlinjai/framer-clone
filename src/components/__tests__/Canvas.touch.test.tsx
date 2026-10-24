@@ -26,7 +26,7 @@ let breakpointId: string;
 beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   // jsdom has no elementsFromPoint; the drag manager's drop-target lookup needs it.
-  (document as any).elementsFromPoint = () => [];
+  (document as { elementsFromPoint?: Document['elementsFromPoint'] }).elementsFromPoint = () => [];
   store = createRootStore();
   const { projectStore, editorUI } = store;
   projectStore.createProject('Canvas touch');
@@ -53,7 +53,7 @@ afterEach(() => {
   getDragManager()?.cancel();
   cleanup();
   vi.restoreAllMocks();
-  delete (document as any).elementsFromPoint;
+  delete (document as { elementsFromPoint?: Document['elementsFromPoint'] }).elementsFromPoint;
 });
 
 function renderCanvas() {
