@@ -37,6 +37,11 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   GSAP ScrollTrigger pinning and scrubbing is used, because there the scroll is the requested
   interaction (the sanctioned exception to the scroll-jacking rule, as the scroll-craft skill
   defines it). Not a general editor feature. Needs a plan. (2026-10-23)
+- [ ] The editor on phones: a phone layout (top bar, sidebars as bottom sheets, toolbar sizing) and
+  canvas touch input. Touch input built 2026-10-24: two fingers pan and pinch-zoom on the canvas
+  only, one finger taps, moves the selection, draws the selection rectangle and double-taps to edit
+  text, finger-sized handle hit areas, no browser page zoom inside the editor (published sites keep
+  it). See [plan](docs/plans/2026-10-24-editor-on-phones.md). (2026-10-24)
 - [x] Published site essentials, the rest of the owner's 19-point checklist of 2026-10-23. Built by
   2026-10-24 (plan sections "as built"): Site settings, lang, favicon set, Open Graph defaults, title
   template, robots.txt, sitemap.xml, canonical, noindex, JSON-LD, the designable 404 page, loading
