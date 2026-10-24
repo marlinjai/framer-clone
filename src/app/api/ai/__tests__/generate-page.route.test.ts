@@ -159,7 +159,11 @@ const VALID_PAGE = {
       type: 'section',
       label: 'Hero',
       props: { style: { padding: { base: '64px', mobile: '24px' } } },
-      children: [{ type: 'h1', props: { children: 'Fresh bread' } }],
+      children: [
+        { type: 'h1', props: { children: 'Fresh bread' } },
+        // A primary call to action, so the page-essentials screen is satisfied.
+        { type: 'button', props: { children: 'Order now' } },
+      ],
     },
   ],
 };
@@ -797,6 +801,8 @@ describe('POST /api/ai/generate-page stock photos', () => {
 
 // --- Design tells (src/lib/ai/pageGen/tells.ts) ------------------------------
 const EM_DASH = '\u2014';
+/** A link styled as a button: the hero's primary call to action. */
+const CTA_STYLE = { backgroundColor: '#1f2937', color: '#ffffff', padding: '14px 24px', borderRadius: '8px' };
 
 const TELL_PAGE = {
   title: 'Bakery',
@@ -806,7 +812,7 @@ const TELL_PAGE = {
       label: 'Hero',
       children: [
         { type: 'h1', label: 'Headline', props: { children: "It's not a bakery, it's a ritual." } },
-        { type: 'a', label: 'CTA', props: { href: '#order', children: 'Order now ->' } },
+        { type: 'a', label: 'CTA', props: { href: '#order', children: 'Order now ->', style: CTA_STYLE } },
       ],
     },
     {
@@ -839,7 +845,7 @@ const CLEAN_PAGE = {
       label: 'Hero',
       children: [
         { type: 'h1', label: 'Headline', props: { children: 'Bread the slow way' } },
-        { type: 'a', label: 'CTA', props: { href: '#order', children: 'Order now' } },
+        { type: 'a', label: 'CTA', props: { href: '#order', children: 'Order now', style: CTA_STYLE } },
       ],
     },
   ],
@@ -898,7 +904,7 @@ describe('POST /api/ai/generate-page design tells', () => {
     expect(repairTurn).not.toContain('arrow glyph');
     const result = evs.find((e) => e.event === 'gen:result')!.data as { tells: string[]; warnings: string[] };
     expect(result.tells).toEqual([]);
-    expect(result.warnings.join('\n')).toMatch(/repair round removed 2 of 2 tells/);
+    expect(result.warnings.join('\n')).toMatch(/repair round removed 2 of 2 issues/);
     expect(evs.at(-1)!.data).toMatchObject({ attempts: 2 });
   });
 

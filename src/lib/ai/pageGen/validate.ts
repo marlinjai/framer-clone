@@ -11,7 +11,16 @@
 //       type disagrees with `type` wins, an unknown tag becomes a `div`,
 //     - forbidden tags (script, iframe, form, ...) dropped with their subtree,
 //     - text AND children on one node: the text becomes a leading text child,
-//     - children on a void tag dropped, missing labels and alt text filled,
+//     - children on a void tag dropped, missing labels filled,
+//     - an img's alt text kept as the model wrote it: a missing or generic
+//       one is NOT filled here (the preset's "Image" default is removed too),
+//       the page-essentials screen (./essentials.ts) sends it to the repair
+//       round and the route fills a last-resort alt from the photo
+//       description; `decorative: true` becomes alt "" plus data-decorative,
+//     - the sticky call to action (preset stickyCta, src/lib/stickyCta) kept
+//       only on a new page, at most one, moved to the end of the top-level
+//       nodes; its link props cleaned, a bar without a label or a safe link
+//       dropped,
 //     - an img with an aspectRatio but no height of its own gets height
 //       "auto" (the Image preset's fixed height would otherwise win),
 //     - an images.unsplash.com photo (img src or a container's background
@@ -44,6 +53,7 @@ import { isVoidTag } from '@/lib/drag/voidTags';
 import { formPropKeysFor, presetFormKind, sanitizeGeneratedFormProps } from '@/lib/forms/generation';
 import {
   BASE_KEY,
+  DECORATIVE_ATTR,
   FORBIDDEN_TAGS,
   GENERATION_LIMITS,
   IMAGE_QUERY_PROP,
@@ -58,6 +68,13 @@ import {
   type GenerationPreset,
 } from './schema';
 import { EFFECTS_PROP, cleanGeneratedEffects } from './promptSections/effects';
+import {
+  STICKY_CTA_PROP_KEYS,
+  cleanStickyCtaProp,
+  isStickyCta,
+  type StickyCtaPropKey,
+} from '@/lib/stickyCta/stickyCta';
+
 
 /** One validated node, ready for ComponentModel.create (responsive keys are still breakpoint KEYS). */
 export interface GeneratedNodeSnapshot {
@@ -114,6 +131,12 @@ export interface ValidateContext {
   breakpoints: BreakpointKey[];
   /** Id factory; defaults to uuid v4. Injectable for deterministic tests. */
   newId?: () => string;
+  /**
+   * Whether a sticky call to action may be generated: only on a full new
+   * page, where "at most one per page" can be checked. Section generations
+   * (replace / insert) never get one. Defaults to false.
+   */
+  allowStickyCta?: boolean;
 }
 
 /** Keys the model may send that we silently ignore because the editor owns them. */
@@ -491,6 +514,10 @@ class Validator {
     // Form presets (src/lib/forms/generation.ts) accept their own props on top.
     const formKeys = new Set(formPropKeysFor(preset?.defaultProps as Record<string, unknown> | undefined));
     const formProps: Record<string, unknown> = {};
+    // The sticky call to action's link props (src/lib/stickyCta/stickyCta.ts).
+    const stickyKeys = new Set<string>(isStickyCta(preset?.defaultProps) ? STICKY_CTA_PROP_KEYS : []);
+    const stickyProps: Record<string, unknown> = {};
+    let decorative = false;
     const props: Record<string, unknown> = {};
     let text: string | undefined;
     let imageQuery: string | undefined;
@@ -513,6 +540,17 @@ class Validator {
       }
       if (formKeys.has(key)) {
         formProps[key] = value;
+        continue;
+      }
+      if (stickyKeys.has(key)) {
+        const cleaned = cleanStickyCtaProp(key as StickyCtaPropKey, value);
+        if (cleaned === undefined) this.warn(path, `${key} of the sticky call to action is not usable, dropped`);
+        else stickyProps[key] = cleaned;
+        continue;
+      }
+      if (type === 'img' && key === DECORATIVE_ATTR) {
+        // An existing decorative image echoed back in replace / insert context.
+        if (value === 'true') decorative = true;
         continue;
       }
       if (!allowed.has(key)) {
@@ -541,6 +579,9 @@ class Validator {
       } else if (key === 'alt') {
         const alt = cleanText(value, 300);
         if (alt !== undefined) props.alt = alt;
+      } else if (key === 'decorative') {
+        if (value === true) decorative = true;
+        else if (value !== false) this.warn(path, 'decorative must be true or false, dropped');
       } else if (key === IMAGE_QUERY_PROP) {
         // Kept out of the props: the route resolves it to a stock photo.
         imageQuery = cleanImageQuery(value);
@@ -564,6 +605,7 @@ class Validator {
       ...presetDefaults,
       ...props,
       ...sanitizeGeneratedFormProps(presetDefaults, formProps, (m) => this.warn(path, m)),
+      ...stickyProps,
     };
     delete merged.style;
     const hasBackgroundPhoto = isPhotoContainer && this.photoBackground(path, style, modelProps, merged);
@@ -600,8 +642,14 @@ class Validator {
         // swaps in a real image); only a broken src was already warned about.
         merged.src = PLACEHOLDER_IMAGE_SRC;
       }
-      if (typeof merged.alt !== 'string' || merged.alt.trim() === '') {
-        merged.alt = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : 'Image';
+      if (decorative) {
+        // Decorative on purpose: an empty alt, so screen readers skip it.
+        merged.alt = '';
+        merged[DECORATIVE_ATTR] = 'true';
+      } else if (typeof props.alt !== 'string' || props.alt.trim() === '') {
+        // Judged on what the model wrote, never on the preset's "Image"
+        // default: a missing alt goes to the repair round (./essentials.ts).
+        delete merged.alt;
       }
       merged.draggable = false;
     }
@@ -637,6 +685,8 @@ class Validator {
       if (rawChildren.length > 0) this.warn(path, `<${type}> cannot have children, ${rawChildren.length} dropped`);
       if (text !== undefined) this.warn(path, `<${type}> cannot have text, dropped`);
       text = undefined;
+    } else if (rawChildren.length > 0 && isStickyCta(presetDefaults)) {
+      this.warn(path, 'the sticky call to action renders its own link (ctaLabel, ctaHref), children dropped');
     } else if (rawChildren.length > 0 && ['form-field', 'form-submit'].includes(presetFormKind(presetDefaults) ?? '')) {
       this.warn(path, `form component "${preset?.id}" renders its own content, children dropped`);
     } else if (preset?.dataComponentKind && rawChildren.length > 0) {
@@ -652,6 +702,14 @@ class Validator {
         children.push(...this.node(child, `${path}.children[${i}]`, depth + 1, id));
       });
     }
+    if (isStickyCta(presetDefaults)) {
+      // The bar draws its link from ctaLabel; text on the bar is that label.
+      if (text !== undefined && merged.ctaLabel === undefined) {
+        const label = cleanStickyCtaProp('ctaLabel', text);
+        if (label !== undefined) merged.ctaLabel = label;
+      }
+      text = undefined;
+    }
     if (text !== undefined) merged.children = text;
     else delete merged.children;
 
@@ -666,6 +724,44 @@ class Validator {
     if (parentId) snapshot.parentId = parentId;
     return [snapshot];
   }
+}
+
+/** Count a subtree's nodes. */
+function countNodes(node: GeneratedNodeSnapshot): number {
+  return 1 + node.children.reduce((n, c) => n + countNodes(c), 0);
+}
+
+/**
+ * The sticky call to action's rules: only on a new page, at most one, with a
+ * label and a safe link, as the last top-level node (it is a page-level bar,
+ * never part of a section). Extra or unusable bars are dropped with a warning.
+ */
+function placeStickyCta(nodes: GeneratedNodeSnapshot[], v: Validator, allowed: boolean): GeneratedNodeSnapshot[] {
+  let kept: GeneratedNodeSnapshot | undefined;
+  const drop = (node: GeneratedNodeSnapshot, reason: string) => {
+    v.warnings.push(`${node.label}: ${reason}`);
+    v.nodeCount -= countNodes(node);
+  };
+  const strip = (list: GeneratedNodeSnapshot[]): GeneratedNodeSnapshot[] => {
+    const out: GeneratedNodeSnapshot[] = [];
+    for (const node of list) {
+      if (!isStickyCta(node.props)) {
+        out.push(node.children.length > 0 ? { ...node, children: strip(node.children) } : node);
+        continue;
+      }
+      if (!allowed) drop(node, 'a sticky call to action belongs to a whole page, not a section: dropped');
+      else if (typeof node.props.ctaLabel !== 'string' || typeof node.props.ctaHref !== 'string') {
+        drop(node, 'the sticky call to action needs a ctaLabel and a ctaHref (https, mailto, tel, # or a site path): dropped');
+      } else if (kept) drop(node, 'at most one sticky call to action per page: this one was dropped');
+      else kept = node;
+    }
+    return out;
+  };
+  const rest = strip(nodes);
+  if (!kept) return rest;
+  const bar: GeneratedNodeSnapshot = { ...kept };
+  delete bar.parentId;
+  return [...rest, bar];
 }
 
 /**
@@ -684,8 +780,9 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
     return { ok: false, errors: ['"nodes" is empty: produce at least one node'], warnings: [] };
   }
 
-  const nodes: GeneratedNodeSnapshot[] = [];
-  raw.nodes.forEach((n, i) => nodes.push(...v.node(n, `nodes[${i}]`, 1)));
+  const parsed: GeneratedNodeSnapshot[] = [];
+  raw.nodes.forEach((n, i) => parsed.push(...v.node(n, `nodes[${i}]`, 1)));
+  const nodes = placeStickyCta(parsed, v, ctx.allowStickyCta === true);
 
   if (v.nodeCount > GENERATION_LIMITS.maxNodes) {
     v.errors.push(`${v.nodeCount} nodes exceed the limit of ${GENERATION_LIMITS.maxNodes}: produce a smaller page`);

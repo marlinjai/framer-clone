@@ -22,6 +22,7 @@ import {
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { effectsDocs } from './promptSections/effects';
 import { formPropKeysFor } from '@/lib/forms/generation';
+import { STICKY_CTA_PROP_KEYS, isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { FONT_CATEGORIES, FONT_LIBRARY, fontStack } from '@/lib/fonts/registry';
 
 export function buildSchemaDocs(): string {
@@ -53,6 +54,9 @@ export function buildSchemaDocs(): string {
     }
     const formKeys = formPropKeysFor(p.defaultProps as Record<string, unknown>);
     if (formKeys.length > 0) header.push(`- form component (see "Forms"): props ${formKeys.join(', ')}`);
+    if (isStickyCta(p.defaultProps)) {
+      header.push(`- sticky call to action (see "Sticky call to action"): props ${STICKY_CTA_PROP_KEYS.join(', ')}; new pages only, no children`);
+    }
     header.push(`- defaults: ${stableStringify(p.defaultProps)}`);
     return header.join('\n');
   });
@@ -69,7 +73,7 @@ export function buildSchemaDocs(): string {
     '  "label": "<short name shown in the layers panel, e.g. Hero, Pricing card>",',
     '  "props": {',
     '    "children": "<text content, only on non-void tags without child nodes>",',
-    '    "src": "<img only>", "alt": "<img only>",',
+    '    "src": "<img only>", "alt": "<img only>", "decorative": <img only: true for a purely decorative image>,',
     '    "imageQuery": "<img or container: English stock-photo search>",',
     '    "href": "<a only>", "target": "<a only: _blank or _self>",',
     '    "style": { "<camelCase CSS property>": <value or responsive map> },',
@@ -89,7 +93,9 @@ export function buildSchemaDocs(): string {
     '- Only the style keys listed below are kept; anything else is dropped. No class names, no CSS text,',
     '  no event handlers, no HTML strings.',
     '- Links: href must start with https://, http://, mailto:, tel:, # or a single /. Images: src must be https://,',
-    '  http:// or a site path starting with /. Always give images a meaningful alt in the page\'s language.',
+    '  http:// or a site path starting with /. Always give images a meaningful alt in the page\'s language that',
+    '  says what the image shows (never "image", "photo", a file name or the layer name). Only a purely',
+    '  decorative image (a texture, a divider) gets "alt": "" with "decorative": true.',
     `- Stock photos: an img without src gets "imageQuery", 2 to 6 English words describing the photo`,
     `  (at most ${GENERATION_LIMITS.maxImageQueryChars} characters, plain words only). The server resolves at most`,
     `  ${GENERATION_LIMITS.maxStockImages} images per generation to photos; the rest keep a placeholder.`,

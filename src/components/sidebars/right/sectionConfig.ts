@@ -1,8 +1,9 @@
 import { ComponentInstance } from '@/models/ComponentModel';
 import { formKindOf } from '@/lib/forms/definition';
+import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 
-export type ComponentCategory = 'viewport' | 'container' | 'text' | 'image' | 'generic' | 'form' | 'formField' | 'formSubmit';
-export type SectionId = 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles' | 'effects' | 'form';
+export type ComponentCategory = 'viewport' | 'container' | 'text' | 'image' | 'generic' | 'form' | 'formField' | 'formSubmit' | 'stickyCta';
+export type SectionId = 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles' | 'effects' | 'form' | 'stickyCta';
 
 // Exported so the AI page generator's schema docs (src/lib/ai/pageGen/schema.ts)
 // offer exactly the tags this properties panel knows how to edit.
@@ -16,6 +17,8 @@ export function getComponentCategory(component: ComponentInstance): ComponentCat
   if (formKind === 'form') return 'form';
   if (formKind === 'form-field') return 'formField';
   if (formKind === 'form-submit') return 'formSubmit';
+  // The sticky call to action bar is a div, but not a layout container.
+  if (isStickyCta(component.props)) return 'stickyCta';
   if (component.type === 'img') return 'image';
   if (TEXT_TYPES.has(component.type)) return 'text';
   if (CONTAINER_TYPES.has(component.type)) return 'container';
@@ -35,4 +38,7 @@ export const SECTION_MAP: Record<ComponentCategory, SectionId[]> = {
   form:       ['form', 'size', 'position', 'layout', 'styles', 'effects'],
   formField:  ['form', 'size', 'position', 'typography', 'styles'],
   formSubmit: ['form', 'size', 'position', 'typography', 'styles'],
+  // Pinned by the published page, so no size, position or effects; the bar's
+  // look is the Styles section, the font of its label Typography.
+  stickyCta:  ['stickyCta', 'typography', 'styles'],
 };

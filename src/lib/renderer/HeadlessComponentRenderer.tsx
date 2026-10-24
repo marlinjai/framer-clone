@@ -21,6 +21,23 @@ import { createComponentElement } from './createComponentElement';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
 import { createScope, type BindingScope } from '@/lib/bindings/resolver/scope';
 import { effectDomForBreakpoint, resolveEffects, storedEffectsOf } from '@/lib/effects/effects';
+import { isStickyCta, STICKY_CTA_Z_INDEX } from '@/lib/stickyCta/stickyCta';
+
+/**
+ * The page's sticky call to action in the preview (src/lib/stickyCta): every
+ * bar is skipped where it sits, and the page's first one is appended to the
+ * end of the page root, sticky at the bottom of the preview frame, on the
+ * smallest breakpoint only (the published page pins it there too, and hides
+ * it on larger ones). Provided by HeadlessPageRenderer.
+ */
+export interface StickyCtaPreview {
+  rootId: string;
+  bar: ComponentInstance | null;
+  /** True on the page's smallest breakpoint. */
+  pinned: boolean;
+}
+
+export const StickyCtaPreviewContext = React.createContext<StickyCtaPreview | null>(null);
 
 export interface HeadlessComponentRendererProps {
   component: ComponentInstance;
@@ -30,6 +47,8 @@ export interface HeadlessComponentRendererProps {
   // descendants resolve `{{row.field}}` / `{{page.params.*}}` and so the
   // editor + headless paths produce identical output. Defaults to empty.
   scope?: BindingScope;
+  /** Set when rendering the hoisted sticky call to action (see StickyCtaPreviewContext). */
+  hoisted?: boolean;
 }
 
 const HeadlessComponentRenderer = observer(({
@@ -37,7 +56,12 @@ const HeadlessComponentRenderer = observer(({
   breakpointId,
   allBreakpoints,
   scope,
+  hoisted = false,
 }: HeadlessComponentRendererProps) => {
+  const stickyPreview = React.useContext(StickyCtaPreviewContext);
+  // A sticky bar is drawn once, at the end of the page root (below).
+  if (isStickyCta(component.props) && !hoisted && stickyPreview) return null;
+
   // The Layers panel's eye (canvasVisible) is NOT honoured here: it hides a
   // layer on the editor canvas only, as in Framer. Preview shows what the
   // published page shows (the server renderer ignores the flag too); hiding
@@ -82,6 +106,25 @@ const HeadlessComponentRenderer = observer(({
   const children = component.children.map((ch: ComponentInstance) => (
     <React.Fragment key={ch.id}>{renderNode(ch, activeScope)}</React.Fragment>
   ));
+  if (stickyPreview && stickyPreview.rootId === component.id && stickyPreview.bar && stickyPreview.pinned) {
+    // The frame is the scroll container, so sticky (not fixed, which would
+    // pin to the browser window) keeps the bar at the bottom of the frame.
+    children.push(
+      <div
+        key="fc-sticky-cta"
+        data-fc-sticky-cta-preview=""
+        style={{ position: 'sticky', bottom: 0, zIndex: STICKY_CTA_Z_INDEX }}
+      >
+        <HeadlessComponentRenderer
+          component={stickyPreview.bar}
+          breakpointId={breakpointId}
+          allBreakpoints={allBreakpoints}
+          scope={activeScope}
+          hoisted
+        />
+      </div>,
+    );
+  }
 
   return createComponentElement(component, finalProps, children, (resolvedAttributes as any).children, {
     identity: { breakpointId, componentId: component.id },

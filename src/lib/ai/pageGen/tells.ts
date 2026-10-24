@@ -133,7 +133,11 @@ export type TellId =
   | 'sparkle'
   | 'hover-everywhere'
   | 'icon-set'
-  | 'placeholder-demo';
+  | 'placeholder-demo'
+  // Page essentials (./essentials.ts): not design tells, but they share the
+  // finding shape and the single repair round.
+  | 'hero-cta'
+  | 'alt-text';
 
 export interface TellFinding {
   tell: TellId;
@@ -188,16 +192,16 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
-function styleOf(node: TellNode): Style {
+export function styleOf(node: TellNode): Style {
   return isRecord(node.props.style) ? (node.props.style as Style) : {};
 }
 
-function textOf(node: TellNode): string | undefined {
+export function textOf(node: TellNode): string | undefined {
   return typeof node.props.children === 'string' ? node.props.children : undefined;
 }
 
 /** Every value of a style key: the scalar, or each entry of a responsive map. */
-function allValues(style: Style, key: string): string[] {
+export function allValues(style: Style, key: string): string[] {
   const v = style[key];
   if (v === undefined || v === null) return [];
   if (isRecord(v)) return Object.values(v).filter((x) => x !== undefined && x !== null).map(String);
@@ -225,7 +229,7 @@ function pxValue(value: string | undefined): number | undefined {
 const HEADING_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
 const CALL_TO_ACTION_TAGS = new Set(['a', 'button', 'ul', 'ol']);
 
-function walk(nodes: TellNode[], visit: (node: TellNode, path: string, ancestors: TellNode[]) => void): void {
+export function walk(nodes: TellNode[], visit: (node: TellNode, path: string, ancestors: TellNode[]) => void): void {
   const go = (list: TellNode[], parentPath: string, ancestors: TellNode[]) => {
     const labelCount = new Map<string, number>();
     for (const n of list) labelCount.set(n.label, (labelCount.get(n.label) ?? 0) + 1);
@@ -242,7 +246,7 @@ function walk(nodes: TellNode[], visit: (node: TellNode, path: string, ancestors
   go(nodes, '', []);
 }
 
-function subtree(node: TellNode): TellNode[] {
+export function subtree(node: TellNode): TellNode[] {
   const out: TellNode[] = [];
   const go = (n: TellNode) => {
     out.push(n);
@@ -252,7 +256,7 @@ function subtree(node: TellNode): TellNode[] {
   return out;
 }
 
-function hasText(node: TellNode): boolean {
+export function hasText(node: TellNode): boolean {
   return subtree(node).some((n) => (textOf(n) ?? '').trim().length > 0);
 }
 

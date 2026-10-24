@@ -31,6 +31,8 @@ import { createScope } from '@/lib/bindings/resolver/scope';
 import CommerceIsland, { type CommerceIslandProps } from './CommerceIsland';
 import FormIsland, { FormFieldIsland, FormSubmitIsland } from '../forms/FormIsland';
 import { formKindOf } from '@/lib/forms/definition';
+import { isStickyCta } from '@/lib/stickyCta/stickyCta';
+import { createStickyCtaElement } from '../stickyCta/stickyCtaElement';
 
 /** The four interactive commerce kinds emitted as client islands (never baked
  *  server-side). Mirrors INTERACTIVE_COMMERCE_KINDS in hydrateBindings. */
@@ -145,6 +147,12 @@ export function renderComponentNode(
   }
   if (formKind === 'form-field') return <FormFieldIsland key={key} node={node} />;
   if (formKind === 'form-submit') return <FormSubmitIsland key={key} node={node} />;
+
+  // The sticky call to action bar draws its own link; renderPublishedPage
+  // moved it to the end of the page and its stylesheet pins it on phones.
+  if (isStickyCta(node.props)) {
+    return createStickyCtaElement(nodeDomProps(node), 'published', key);
+  }
 
   const dataKind = (node.props as any)?.['data-component-kind'];
 

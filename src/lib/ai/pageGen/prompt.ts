@@ -9,6 +9,7 @@ import type { BetaTool } from '@anthropic-ai/sdk/resources/beta/messages/message
 import { stableStringify } from '@/lib/ai/serializers/normalize';
 import { buildSchemaDocs } from './schemaDocs';
 import { FORMS_PROMPT } from './promptSections/forms';
+import { STICKY_CTA_PROMPT } from './promptSections/stickyCta';
 import { BASE_KEY, type BreakpointKey } from './schema';
 import type { PageGenTarget } from './protocol';
 import { siteContextText, type SiteContext } from './promptSections/siteContext';
@@ -179,7 +180,7 @@ export function emitPageTool(): BetaTool {
 
 /** The cached system prefix: instructions plus the registry-generated docs. */
 export function stableSystemText(): string {
-  return `${INSTRUCTIONS}\n\n${buildSchemaDocs()}\n\n${FORMS_PROMPT}`;
+  return `${INSTRUCTIONS}\n\n${buildSchemaDocs()}\n\n${FORMS_PROMPT}\n\n${STICKY_CTA_PROMPT}`;
 }
 
 export interface RequestContextInput {
@@ -260,12 +261,14 @@ export function repairMessage(problems: string[]): string {
 
 /**
  * The follow-up turn when the output was usable but still shows tells of
- * generated design that the server cannot fix by itself (./tells.ts). Each
- * problem names the layer path and what to do instead.
+ * generated design that the server cannot fix by itself (./tells.ts) or
+ * misses a page essential (./essentials.ts). Each problem names the layer
+ * path and what to do instead.
  */
 export function tellRepairMessage(problems: string[]): string {
   return [
-    'Your page is valid, but it shows tells of generated design (see "Never" in the design brief):',
+    'Your page is valid, but it shows tells of generated design (see "Never" in the design brief) or misses',
+    'page essentials (a primary call to action in the hero, meaningful alt texts):',
     ...problems.slice(0, 40).map((p) => `- ${p}`),
     '',
     `Call ${EMIT_TOOL_NAME} again with the complete page, changed so that none of these remain. Keep everything`,

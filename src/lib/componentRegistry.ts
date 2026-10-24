@@ -39,10 +39,12 @@ import {
   SquareCheck as CheckboxIcon,
   ShieldCheck as ConsentIcon,
   Send as SubmitIcon,
+  PanelBottom as StickyCtaIcon,
 } from 'lucide-react';
 import type { IntrinsicElementType, PropsRecord } from '@/models/ComponentModel';
 import type { BindableSlotMeta } from '@/lib/bindings/types';
 import { FORM_KIND_ATTR, DEFAULT_FORM_NAME, DEFAULT_SUCCESS_MESSAGE, type FieldType } from '@/lib/forms/definition';
+import { DEFAULT_STICKY_CTA, STICKY_CTA_ATTR, STICKY_CTA_MARKER } from '@/lib/stickyCta/stickyCta';
 
 export type ComponentCategory = 'basic' | 'layout' | 'data' | 'commerce' | 'form';
 
@@ -288,6 +290,32 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
     bindableSlots: {
       children: { label: 'Label', allowedModes: ['read'], scopeHint: 'any' },
     },
+  },
+  // The sticky mobile call to action (published site essentials, decision 7,
+  // src/lib/stickyCta/stickyCta.ts): a bar with one link, pinned to the bottom
+  // of the screen on the smallest breakpoint of the published page and the
+  // preview, a normal block on the canvas. The bar is the node (styled like
+  // any div); its link is drawn from the cta* and button* props. At most one
+  // per page (PageModel.insertRegistryComponent).
+  stickyCta: {
+    id: 'stickyCta',
+    label: 'Sticky call to action',
+    category: 'basic',
+    icon: StickyCtaIcon,
+    iconClassName: 'bg-green-100 text-green-600',
+    htmlType: 'div',
+    defaultProps: {
+      [STICKY_CTA_ATTR]: STICKY_CTA_MARKER,
+      ...DEFAULT_STICKY_CTA,
+      style: {
+        padding: '12px 16px',
+        backgroundColor: '#ffffff',
+        borderTop: '1px solid rgba(17, 24, 39, 0.08)',
+        boxShadow: '0 -6px 20px rgba(17, 24, 39, 0.08)',
+        fontFamily: 'inherit',
+      },
+    },
+    defaultSize: { width: 390, height: 72 },
   },
   image: {
     id: 'image',
