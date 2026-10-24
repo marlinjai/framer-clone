@@ -5,20 +5,19 @@
 // screen when it opens and from its zoom button; touch double-tap may reuse it).
 //
 // The camera is the transform in TransformContext ({ zoom, panX, panY }, pan in
-// pixels relative to the canvas ground, `[data-ground]`). The math is pure and
-// tested (computeFitTransform, zoomAroundPoint); applying a transform writes the
+// pixels relative to the canvas ground, `[data-ground]`). The zoom math (limits,
+// clamping, zooming around a point) has one home, src/lib/canvas/touchGestures.ts,
+// shared with the canvas's pinch and wheel; the fit math here is pure and tested
+// (computeFitTransform), and applying a transform writes the
 // camera element's style and notifies subscribers, exactly as Canvas does on a
 // wheel zoom, so nothing re-renders during camera moves.
 'use client';
 
 import React from 'react';
 import { useTransformContext, useTransformNotifier } from '@/contexts/TransformContext';
+import { clampZoom, zoomAround, type CameraTransform } from './touchGestures';
 
-export interface CameraTransform {
-  zoom: number;
-  panX: number;
-  panY: number;
-}
+export type { CameraTransform };
 
 /** An axis-aligned rectangle. World rects are in canvas units, screen rects in ground pixels. */
 export interface Rect {
@@ -26,22 +25,6 @@ export interface Rect {
   y: number;
   width: number;
   height: number;
-}
-
-export const MIN_ZOOM = 0.1;
-export const MAX_ZOOM = 5;
-
-export function clampZoom(zoom: number): number {
-  if (!Number.isFinite(zoom)) return 1;
-  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
-}
-
-/** The transform that keeps the world point under `point` (ground pixels) fixed while zooming to `zoom`. */
-export function zoomAroundPoint(t: CameraTransform, point: { x: number; y: number }, zoom: number): CameraTransform {
-  const next = clampZoom(zoom);
-  const worldX = (point.x - t.panX) / t.zoom;
-  const worldY = (point.y - t.panY) / t.zoom;
-  return { zoom: next, panX: point.x - worldX * next, panY: point.y - worldY * next };
 }
 
 export interface FitOptions {
@@ -179,7 +162,9 @@ export function useCameraControls() {
       if (!ground) return;
       const rect = ground.getBoundingClientRect();
       const current = { ...transformState.current };
-      apply(zoomAroundPoint(current, { x: rect.width / 2, y: rect.height / 2 }, current.zoom + (direction === 'in' ? 0.05 : -0.05)));
+      // A 5% step of the zoom level (as the toolbar always did), as a factor for zoomAround.
+      const target = current.zoom + (direction === 'in' ? 0.05 : -0.05);
+      apply(zoomAround(current, { x: rect.width / 2, y: rect.height / 2 }, target / current.zoom));
     },
     [transformState, apply],
   );

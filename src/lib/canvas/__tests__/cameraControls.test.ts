@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { clampZoom, computeFitTransform, unionRects, zoomAroundPoint, MAX_ZOOM, MIN_ZOOM } from '../cameraControls';
+import { computeFitTransform, unionRects } from '../cameraControls';
+import { ZOOM_MIN } from '../touchGestures';
 
 describe('computeFitTransform', () => {
   const visible = { x: 0, y: 48, width: 390, height: 740 };
@@ -27,28 +28,12 @@ describe('computeFitTransform', () => {
     const t = computeFitTransform({ x: 0, y: 0, width: 10, height: 10 }, visible);
     expect(t.zoom).toBe(1);
     const huge = computeFitTransform({ x: 0, y: 0, width: 1e7, height: 10 }, visible);
-    expect(huge.zoom).toBe(MIN_ZOOM);
+    expect(huge.zoom).toBe(ZOOM_MIN);
   });
 
   it('survives empty content and a tiny visible area', () => {
     const t = computeFitTransform({ x: 0, y: 0, width: 0, height: 0 }, { x: 0, y: 0, width: 1, height: 1 });
     expect(Number.isFinite(t.zoom) && Number.isFinite(t.panX) && Number.isFinite(t.panY)).toBe(true);
-  });
-});
-
-describe('zoomAroundPoint', () => {
-  it('keeps the world point under the given screen point fixed', () => {
-    const t = { zoom: 1, panX: 10, panY: 20 };
-    const p = { x: 200, y: 300 };
-    const next = zoomAroundPoint(t, p, 2);
-    const worldBefore = { x: (p.x - t.panX) / t.zoom, y: (p.y - t.panY) / t.zoom };
-    expect(worldBefore.x * next.zoom + next.panX).toBeCloseTo(p.x);
-    expect(worldBefore.y * next.zoom + next.panY).toBeCloseTo(p.y);
-  });
-
-  it('clamps the zoom', () => {
-    expect(zoomAroundPoint({ zoom: 1, panX: 0, panY: 0 }, { x: 0, y: 0 }, 99).zoom).toBe(MAX_ZOOM);
-    expect(clampZoom(Number.NaN)).toBe(1);
   });
 });
 

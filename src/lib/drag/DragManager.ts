@@ -40,6 +40,7 @@ import { EditorTool, type EditorUIType } from '@/stores/EditorUIStore';
 import type { HistoryStoreInstance } from '@/stores/HistoryStore';
 import type { DragSource, DragMode, IndicatorSpec } from './types';
 import { resolveDropTarget } from './resolveDropTarget';
+import { dragThresholdFor } from '@/lib/canvas/touchGestures';
 
 export interface DragManagerDeps {
   getTransform: () => { panX: number; panY: number; zoom: number };
@@ -50,8 +51,8 @@ export interface DragManagerDeps {
 
 // Pixels the pointer must move before a pointerdown becomes a drag gesture.
 // Below this, the pointerdown+up sequence is treated as a click (which fires
-// naturally via the compat mouse event pipeline).
-const THRESHOLD_PX = 4;
+// naturally via the compat mouse event pipeline). 4px for mouse and pen, more
+// for a finger, which wobbles while tapping (dragThresholdFor).
 
 function batchName(source: DragSource, sourceNode?: ComponentInstance): string {
   if (source.kind === 'create') return 'Create component';
@@ -81,10 +82,12 @@ const DragManagerModel = types
     startClient: null as { x: number; y: number } | null,
     startCanvasPos: null as { x: number; y: number } | null,
     pointerId: null as number | null,
+    // Travel before the press engages, set per press from its pointer type.
+    threshold: 4,
     mode: null as DragMode | null,
     ghostLabel: null as string | null,
 
-    // False while armed, true once the pointer has moved past THRESHOLD_PX.
+    // False while armed, true once the pointer has moved past the threshold.
     engaged: false,
 
     // Updated every frame while engaged.
@@ -128,6 +131,7 @@ const DragManagerModel = types
       mode: DragMode;
       pointerId: number;
       ghostLabel: string;
+      threshold: number;
     }) {
       self.source = args.source;
       self.sourceNode = args.sourceNode ?? null;
@@ -135,6 +139,7 @@ const DragManagerModel = types
       self.startCanvasPos = args.startCanvasPos ?? null;
       self.mode = args.mode;
       self.pointerId = args.pointerId;
+      self.threshold = args.threshold;
       self.currentPointer = args.startClient;
       self.ghostLabel = args.ghostLabel;
       self.engaged = false;
@@ -192,7 +197,7 @@ const DragManagerModel = types
       if (!self.startClient) return false;
       const dx = e.clientX - self.startClient.x;
       const dy = e.clientY - self.startClient.y;
-      if (Math.abs(dx) < THRESHOLD_PX && Math.abs(dy) < THRESHOLD_PX) return false;
+      if (Math.abs(dx) < self.threshold && Math.abs(dy) < self.threshold) return false;
       // Cross the threshold: start the history batch, mark engaged, apply body
       // style. From here on the drag visuals paint and live mode updates
       // canvasX/Y.
@@ -348,11 +353,17 @@ const DragManagerModel = types
        *   - Source is `moveNode` but the node is the app tree root.
        *   - Source is `moveNode` but the node is currently being inline-edited.
        *   - Dependencies haven't been wired yet (shouldn't happen at runtime).
+       *
+       * `captureTarget` is the element the pointer is captured to; it defaults
+       * to the element whose handler calls begin. The canvas passes what a
+       * finger pressed when it starts a move from its own capture-phase
+       * handler, so the click of a plain tap still reaches that element.
        */
       begin(
         source: DragSource,
         event: React.PointerEvent,
         sourceNode?: ComponentInstance,
+        captureTarget?: Element,
       ): boolean {
         if (self.isActive || self.source !== null) return false;
         const deps = self.deps;
@@ -379,7 +390,7 @@ const DragManagerModel = types
           : undefined;
 
         const mode = modeFor(source, sourceNode);
-        const el = event.currentTarget as HTMLElement;
+        const el = (captureTarget ?? event.currentTarget) as HTMLElement;
         const pointerId = event.pointerId;
 
         // Prevent the gesture from bubbling to an ancestor (viewport / ground)
@@ -445,6 +456,7 @@ const DragManagerModel = types
           mode,
           pointerId,
           ghostLabel: labelFor(source, sourceNode),
+          threshold: dragThresholdFor(event.pointerType),
         });
         self._setCleanup(cleanup);
         return true;

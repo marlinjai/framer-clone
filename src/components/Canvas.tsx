@@ -19,6 +19,18 @@ import {
   type MarqueeCandidate,
   type ScreenBox,
 } from '@/lib/canvas/marquee';
+import {
+  DOUBLE_TAP_ZOOM_FACTOR,
+  TAP_MAX_DURATION_MS,
+  TouchGestureTracker,
+  clampZoom,
+  dragThresholdFor,
+  isDoubleTap,
+  isTouchLike,
+  zoomAround,
+  type CameraTransform,
+  type Tap,
+} from '@/lib/canvas/touchGestures';
 
 /** Where a marquee started: empty canvas, or one breakpoint frame. */
 type MarqueeScope =
@@ -114,7 +126,7 @@ const CanvasInner = observer(() => {
       const scaleFactor = isLikelyPinch ? 1.01 : 1.05;
       const zoomDirection = e.deltaY > 0 ? -1 : 1;
       const factor = Math.pow(scaleFactor, zoomDirection);
-      const newZoom = Math.max(0.1, Math.min(5, transformState.current.zoom * factor));
+      const newZoom = clampZoom(transformState.current.zoom * factor);
 
       // Get current state
       const { zoom: currentZoom, panX: currentPanX, panY: currentPanY } = transformState.current;
@@ -314,6 +326,7 @@ const CanvasInner = observer(() => {
     const pointerId = e.pointerId;
     const start = { x: e.clientX, y: e.clientY };
     const additive = e.shiftKey;
+    const threshold = dragThresholdFor(e.pointerType);
     let engaged = false;
     let box: ScreenBox = boxFromPoints(start, start);
 
@@ -321,7 +334,7 @@ const CanvasInner = observer(() => {
       if (ev.pointerId !== pointerId) return;
       const current = { x: ev.clientX, y: ev.clientY };
       if (!engaged) {
-        if (!pastThreshold(start, current)) return;
+        if (!pastThreshold(start, current, threshold)) return;
         engaged = true;
       }
       box = boxFromPoints(start, current);
@@ -370,9 +383,327 @@ const CanvasInner = observer(() => {
   // End a marquee left running when the canvas unmounts (page switch).
   useEffect(() => () => marqueeCleanupRef.current?.(), []);
 
+  // ===== Touch and pen =====
+  //
+  // The gesture model (src/lib/canvas/touchGestures.ts, decided with the
+  // owner on 2026-10-24): two fingers pan and pinch-zoom the camera at the
+  // same time; one finger never pans (except with the Grab tool). One finger
+  // taps to select, drags the selected element (or the selected element it is
+  // inside) through the drag manager, draws the selection rectangle when the
+  // drag starts anywhere else, and double-taps to edit text (or to zoom in a
+  // step on empty canvas). A long-press does nothing. The mouse path below is
+  // untouched: every branch here is gated on a touch or pen pointer.
+  const touchRef = useRef<TouchGestureTracker | null>(null);
+  if (!touchRef.current) touchRef.current = new TouchGestureTracker();
+  const touchListenersRef = useRef<(() => void) | null>(null);
+  const pinchRafRef = useRef(0);
+  const lastTapRef = useRef<Tap | null>(null);
+  // Clicks are swallowed from the moment a second finger lands until shortly
+  // after the last finger lifts: neither finger of a pinch may select or clear.
+  const blockTouchClicksUntilRef = useRef(0);
+  // When the last touch or pen press happened, for the native dblclick and
+  // contextmenu a touch can produce (the canvas handles both itself).
+  const lastTouchPressAtRef = useRef(-Infinity);
+  // What each finger on the canvas pressed, for its tap.
+  const pressTargetsRef = useRef(new Map<number, EventTarget | null>());
+
+  const groundPoint = useCallback((clientX: number, clientY: number) => {
+    const rect = groundRef.current?.getBoundingClientRect();
+    return { x: clientX - (rect?.left ?? 0), y: clientY - (rect?.top ?? 0) };
+  }, []);
+
+  const currentCamera = useCallback((): CameraTransform => {
+    const { zoom, panX, panY } = transformState.current;
+    return { zoom, panX, panY };
+  }, [transformState]);
+
+  const applyCamera = useCallback((camera: CameraTransform) => {
+    transformState.current.zoom = camera.zoom;
+    transformState.current.panX = camera.panX;
+    transformState.current.panY = camera.panY;
+    applyTransform();
+  }, [applyTransform, transformState]);
+
+  /** Apply the pinch for the fingers' latest positions now (rAF or flush). */
+  const flushPinch = useCallback(() => {
+    if (pinchRafRef.current) {
+      cancelAnimationFrame(pinchRafRef.current);
+      pinchRafRef.current = 0;
+    }
+    const camera = touchRef.current?.currentPinchCamera();
+    if (camera) applyCamera(camera);
+  }, [applyCamera]);
+
+  const schedulePinch = useCallback(() => {
+    if (pinchRafRef.current) return;
+    pinchRafRef.current = requestAnimationFrame(() => {
+      pinchRafRef.current = 0;
+      flushPinch();
+    });
+  }, [flushPinch]);
+
+  /** A second finger landed: whatever the first finger started stops. */
+  const cancelOneFingerGestures = useCallback(() => {
+    marqueeCleanupRef.current?.();
+    const dm = getDragManager();
+    // An engaged move is reverted, an armed one simply dropped. Only a drag
+    // the canvas fingers own: a drag from a panel with another finger stays.
+    if (dm && dm.pointerId !== null && touchRef.current?.has(dm.pointerId)) dm.cancel();
+    if (panRef.current && touchRef.current?.has(panRef.current.pointerId)) endPan(panRef.current.pointerId);
+  }, [endPan]);
+
+  /** The selected node the press is on or inside (and its element), if it may move. */
+  const selectedNodeUnder = useCallback((target: Element): { node: ComponentInstance; el: HTMLElement } | null => {
+    const ui = rootStore.editorUI;
+    const page = ui.currentPage;
+    const ground = groundRef.current;
+    if (!page || !ground) return null;
+    const selector = '[data-inner-component-id],[data-ground-wrapper-id]';
+    let el: Element | null = target.closest(selector);
+    while (el && ground.contains(el)) {
+      const id = el.getAttribute('data-inner-component-id') ?? el.getAttribute('data-ground-wrapper-id');
+      if (id && ui.isSelected(id)) {
+        const node = page.findComponent(id);
+        if (!node || node.isViewportNode || !(el instanceof HTMLElement)) return null;
+        if (isLockedOnCanvas(node, nid => page.findComponent(nid))) return null;
+        return { node, el };
+      }
+      el = el.parentElement?.closest(selector) ?? null;
+    }
+    return null;
+  }, [rootStore.editorUI]);
+
+  /**
+   * Where a one-finger drag that is neither on the selection nor on a
+   * desktop marquee spot draws its rectangle: inside an unselected component
+   * of a frame (that frame), or on an unselected floating element (the
+   * canvas). On a phone the page fills the screen, so this is where most
+   * drags start, and a stray drag selects instead of moving something.
+   * Frame labels keep moving their frame.
+   */
+  const touchMarqueeScopeFor = useCallback((target: Element): MarqueeScope | null => {
+    const content = target.closest('[data-viewport-content-id]');
+    if (content && target.closest('[data-inner-component-id]')) {
+      const breakpointId = content.closest('[data-breakpoint-id]')?.getAttribute('data-breakpoint-id') ?? undefined;
+      return { kind: 'frame', content, breakpointId };
+    }
+    const wrapperId = target.closest('[data-ground-wrapper-id]')?.getAttribute('data-ground-wrapper-id');
+    const node = wrapperId ? rootStore.editorUI.currentPage?.findComponent(wrapperId) : undefined;
+    if (node?.isFloatingElement) return { kind: 'canvas' };
+    return null;
+  }, [rootStore.editorUI]);
+
+  const handleDoubleTap = useCallback((target: Element, tap: Tap) => {
+    if (target instanceof HTMLElement && target.isContentEditable) return;
+    // The same double-click handlers the mouse uses decide (text editing).
+    const dbl = new MouseEvent('dblclick', {
+      bubbles: true,
+      cancelable: true,
+      clientX: tap.x,
+      clientY: tap.y,
+      detail: 2,
+    });
+    const handled = !target.dispatchEvent(dbl);
+    const editing = rootStore.editorUI.editingComponent;
+    if (handled && editing) {
+      // Focus inside this tap, not in the effect after the re-render: iOS only
+      // opens the keyboard for a focus that happens during the user gesture.
+      let el: Element | null = target.closest('[data-inner-component-id]');
+      while (el && el.getAttribute('data-inner-component-id') !== editing.id) {
+        el = el.parentElement?.closest('[data-inner-component-id]') ?? null;
+      }
+      if (el instanceof HTMLElement) {
+        el.contentEditable = 'true';
+        el.focus();
+      }
+      return;
+    }
+    if (handled) return;
+    // Empty canvas: zoom in one step around the tap.
+    if (marqueeScopeFor(target)?.kind === 'canvas') {
+      applyCamera(zoomAround(currentCamera(), groundPoint(tap.x, tap.y), DOUBLE_TAP_ZOOM_FACTOR));
+    }
+  }, [applyCamera, currentCamera, groundPoint, marqueeScopeFor, rootStore.editorUI]);
+
+  const stopTouchListeners = useCallback(() => {
+    touchListenersRef.current?.();
+    touchListenersRef.current = null;
+  }, []);
+
+  /**
+   * Window listeners for the fingers on the canvas, from the first finger
+   * down to the last finger up. Window, not the ground: a finger's events go
+   * to the element it pressed (implicit capture), which may be a component
+   * whose drag source has captured it.
+   */
+  const ensureTouchListeners = useCallback(() => {
+    if (touchListenersRef.current) return;
+    const tracker = touchRef.current!;
+    const onMove = (ev: PointerEvent) => {
+      if (!tracker.has(ev.pointerId)) return;
+      const camera = tracker.move(ev.pointerId, groundPoint(ev.clientX, ev.clientY), ev.pointerType);
+      if (camera) schedulePinch();
+    };
+    const onEnd = (ev: PointerEvent) => {
+      if (!tracker.has(ev.pointerId)) return;
+      const wasPhase = tracker.phase;
+      // Land the camera on the fingers' final positions before re-anchoring.
+      if (wasPhase === 'pinch') flushPinch();
+      const { phase, tracked } = tracker.up(ev.pointerId, currentCamera());
+      const pressedTarget = pressTargetsRef.current.get(ev.pointerId);
+      pressTargetsRef.current.delete(ev.pointerId);
+      if (phase === 'idle') {
+        stopTouchListeners();
+        if (tracker.multiTouch) blockTouchClicksUntilRef.current = performance.now() + 400;
+      }
+      if (
+        ev.type === 'pointerup' &&
+        wasPhase === 'single' &&
+        tracked &&
+        !tracked.moved &&
+        !tracker.multiTouch &&
+        performance.now() - tracked.startTime <= TAP_MAX_DURATION_MS &&
+        rootStore.editorUI.selectedTool === EditorTool.SELECT
+      ) {
+        const tap = { x: ev.clientX, y: ev.clientY, time: performance.now() };
+        // The element the finger pressed, not the pointerup target: a drag
+        // source may have captured the pointer to itself or the ground.
+        const pressed = pressedTarget ?? ev.target;
+        if (isDoubleTap(lastTapRef.current, tap) && pressed instanceof Element && pressed.isConnected) {
+          lastTapRef.current = null;
+          handleDoubleTap(pressed, tap);
+        } else {
+          lastTapRef.current = tap;
+        }
+      }
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+    touchListenersRef.current = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onEnd);
+      window.removeEventListener('pointercancel', onEnd);
+    };
+  }, [currentCamera, flushPinch, groundPoint, handleDoubleTap, rootStore.editorUI, schedulePinch, stopTouchListeners]);
+
+  // Unmount: drop the fingers and any pending frame.
+  useEffect(() => () => {
+    touchListenersRef.current?.();
+    touchListenersRef.current = null;
+    if (pinchRafRef.current) cancelAnimationFrame(pinchRafRef.current);
+    touchRef.current?.reset();
+    pressTargetsRef.current.clear();
+  }, []);
+
+  // The window or tab lost focus mid-touch (app switch, notification sheet):
+  // a finger's pointerup may never arrive, and a phantom finger would turn
+  // every later first finger into a second one. Forget them all.
+  useEffect(() => {
+    const forget = () => {
+      touchListenersRef.current?.();
+      touchListenersRef.current = null;
+      if (pinchRafRef.current) cancelAnimationFrame(pinchRafRef.current);
+      pinchRafRef.current = 0;
+      touchRef.current?.reset();
+      pressTargetsRef.current.clear();
+      blockTouchClicksUntilRef.current = 0;
+      lastTapRef.current = null;
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') forget();
+    };
+    window.addEventListener('blur', forget);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('blur', forget);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+
+  /** A touch or pen press on the canvas (capture phase, before any node). */
+  const handleTouchPointerDown = useCallback((e: React.PointerEvent) => {
+    const tracker = touchRef.current!;
+    lastTouchPressAtRef.current = performance.now();
+    pressTargetsRef.current.set(e.pointerId, e.target);
+    ensureTouchListeners();
+    const result = tracker.down(
+      e.pointerId,
+      groundPoint(e.clientX, e.clientY),
+      performance.now(),
+      currentCamera(),
+    );
+    if (result !== 'single') {
+      // Second (or later) finger: it belongs to the pinch, nothing below may
+      // select, move or start a rectangle with it.
+      e.stopPropagation();
+      blockTouchClicksUntilRef.current = Infinity;
+      lastTapRef.current = null;
+      if (result === 'pinch-start') cancelOneFingerGestures();
+      return;
+    }
+    blockTouchClicksUntilRef.current = 0;
+    // Pen barrel button or eraser: nothing.
+    if (e.button !== 0) return;
+    const tool = rootStore.editorUI.selectedTool;
+    if (tool === EditorTool.GRAB) {
+      startPan(e);
+      return;
+    }
+    if (tool !== EditorTool.SELECT) return;
+    if (getDragManager()?.isActive) return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    // Editing text: the finger places the caret.
+    if (target instanceof HTMLElement && target.isContentEditable) return;
+    const selected = selectedNodeUnder(target);
+    if (selected) {
+      // Move the selected node, even when the finger is on one of its
+      // children. Below the threshold this stays a tap: the pointer is
+      // captured to what the finger pressed (not the ground, whose handler
+      // is running), so the click still lands there and selects it.
+      getDragManager()?.begin({ kind: 'moveNode', nodeId: selected.node.id }, e, selected.node, target);
+      e.stopPropagation();
+      return;
+    }
+    const scope = marqueeScopeFor(target) ?? touchMarqueeScopeFor(target);
+    if (scope) startMarquee(e, scope);
+  }, [
+    cancelOneFingerGestures,
+    currentCamera,
+    ensureTouchListeners,
+    groundPoint,
+    marqueeScopeFor,
+    rootStore.editorUI,
+    selectedNodeUnder,
+    startMarquee,
+    startPan,
+    touchMarqueeScopeFor,
+  ]);
+
+  // A touch can make the browser send its own dblclick (some engines do on a
+  // double-tap) and, on a long-press, a contextmenu. The canvas runs its own
+  // double-tap and gives a long-press no meaning, so both are dropped when
+  // they follow a touch or pen press. Synthetic events (ours) are untrusted.
+  const handleDoubleClickCapture = useCallback((e: React.MouseEvent) => {
+    if (!e.nativeEvent.isTrusted) return;
+    if (performance.now() - lastTouchPressAtRef.current > 1000) return;
+    e.stopPropagation();
+    e.preventDefault();
+  }, []);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    if (performance.now() - lastTouchPressAtRef.current > 1500) return;
+    e.preventDefault();
+  }, []);
+
   // ===== Ground pointer handlers =====
   const handlePointerDownCapture = useCallback((e: React.PointerEvent) => {
     suppressClickRef.current = false;
+    if (isTouchLike(e.pointerType)) {
+      handleTouchPointerDown(e);
+      return;
+    }
     if (panRef.current) {
       // Another button pressed during a pan: keep panning, select nothing.
       e.stopPropagation();
@@ -392,7 +723,7 @@ const CanvasInner = observer(() => {
     if (getDragManager()?.isActive) return;
     const scope = marqueeScopeFor(e.target);
     if (scope) startMarquee(e, scope);
-  }, [marqueeScopeFor, rootStore.editorUI, startMarquee, startPan]);
+  }, [handleTouchPointerDown, marqueeScopeFor, rootStore.editorUI, startMarquee, startPan]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const pan = panRef.current;
@@ -419,6 +750,11 @@ const CanvasInner = observer(() => {
   }, []);
 
   const handleClickCapture = useCallback((e: React.MouseEvent) => {
+    if (performance.now() < blockTouchClicksUntilRef.current) {
+      e.stopPropagation();
+      e.preventDefault();
+      return;
+    }
     if (!suppressClickRef.current) return;
     suppressClickRef.current = false;
     e.stopPropagation();
@@ -489,7 +825,12 @@ const CanvasInner = observer(() => {
         <div
           ref={groundRef}
           data-ground="true"
-          className={`w-full h-full select-none ${selectedTool === EditorTool.GRAB ? 'cursor-grab' : 'cursor-default'} relative overflow-hidden`}
+          // touch-action: none hands every finger on the canvas to the
+          // gestures above (no browser scroll, pinch or double-tap zoom here);
+          // the rest of the editor keeps native panel scrolling. No iOS
+          // long-press callout on images in the page.
+          className={`w-full h-full select-none touch-none ${selectedTool === EditorTool.GRAB ? 'cursor-grab' : 'cursor-default'} relative overflow-hidden`}
+          style={{ WebkitTouchCallout: 'none' }}
           onPointerDownCapture={handlePointerDownCapture}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerEnd}
@@ -500,6 +841,8 @@ const CanvasInner = observer(() => {
           onAuxClickCapture={preventMiddleDefault}
           onClickCapture={handleClickCapture}
           onClick={handleCanvasClick}
+          onDoubleClickCapture={handleDoubleClickCapture}
+          onContextMenu={handleContextMenu}
           // The editor uses pointer gestures only; a native drag of a link or
           // image in the page would hijack the pointer mid-pan or mid-marquee.
           onDragStartCapture={preventNativeDrag}

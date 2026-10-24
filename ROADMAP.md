@@ -33,11 +33,14 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   by Marlin on 2026-10-23; built 2026-10-24 (Effects section, canvas badge and Play, preview and
   published runtime, Lenis switch in Site settings, sparing appear effects in the generator). See
   [plan](docs/plans/2026-10-23-motion-effects.md). (2026-10-24)
-- [ ] The editor on phones: below 768px wide the canvas fills the screen between a compact top bar
-  and a bottom bar, Pages and Layers and the properties panel open as bottom sheets, every top-bar
-  action stays reachable through a More menu, and the canvas works by touch (two fingers pan and
-  pinch zoom on the canvas only, one finger selects and moves). Asked by Marlin on 2026-10-24
-  after the editor proved unusable at 390px. See [plan](docs/plans/2026-10-24-editor-on-phones.md). (2026-10-24)
+- [x] The editor on phones: below 768px wide (or a phone held sideways) the canvas fills the screen
+  between a compact top bar and a bottom bar, Pages and Layers and the properties panel open as
+  bottom sheets, every top-bar action stays reachable through a More menu, dialogs and the preview
+  fit 390px, components are added with a tap; and the canvas works by touch (two fingers pan and
+  pinch-zoom on the canvas only, one finger taps, moves the selection, draws the selection
+  rectangle and double-taps to edit text, finger-sized handles, no browser page zoom inside the
+  editor, published sites keep it). Asked by Marlin on 2026-10-24 after the editor proved unusable
+  at 390px; both parts built 2026-10-24. See [plan](docs/plans/2026-10-24-editor-on-phones.md). (2026-10-24)
 - [ ] Scroll-driven page type (later): an opt-in page type for scrollytelling pages, the only place
   GSAP ScrollTrigger pinning and scrubbing is used, because there the scroll is the requested
   interaction (the sanctioned exception to the scroll-jacking rule, as the scroll-craft skill
