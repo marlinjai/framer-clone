@@ -17,13 +17,16 @@
 //
 // PATCH edits a draft's header: `templateId`, `netOrGross`, `serviceDate`,
 // `servicePeriod`, `paymentTermsDays`, `contractReference`, `subject` (one
-// line, at most 200 characters), `introText`, `outroText`, and `replacesDocumentId: null` (a replacement draft of the
+// line, at most 200 characters), `introText`, `outroText` (or `introFormat`,
+// `outroFormat`: the formatted text, whose plain words the server derives), and `replacesDocumentId: null` (a replacement draft of the
 // Correct flow becomes an ordinary invoice: issuing it then cancels nothing).
 // Pass `expectedVersion` (the `document.version` the editor
 // shows); a stale one answers 409 `concurrent_edit` and changes nothing.
 // The customer is set through PUT .../customer (it re-derives the tax).
 
 import { z } from 'zod';
+
+import { richTextSchema } from '@/server/books/render/richText';
 
 import { jsonError } from '@/lib/api/respond';
 import { booksRoute, readObject } from '@/server/books/http/route';
@@ -50,6 +53,9 @@ const patchBody = z
     subject: z.string().nullable().optional(),
     introText: z.string().nullable().optional(),
     outroText: z.string().nullable().optional(),
+    // A formatted text (bold, italic, bullets); the repository derives its plain text.
+    introFormat: richTextSchema.optional(),
+    outroFormat: richTextSchema.optional(),
     replacesDocumentId: z.null().optional(),
   })
   .strict();

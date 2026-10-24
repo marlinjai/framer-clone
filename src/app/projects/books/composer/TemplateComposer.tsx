@@ -80,6 +80,7 @@ export const SAMPLES: Array<{ variant: string; label: string }> = [
   { variant: 'longInvoice', label: 'Sample: 40 lines over three pages' },
   { variant: 'longRecipient', label: 'Sample: long foreign address' },
   { variant: 'longDescription', label: 'Sample: very long line description' },
+  { variant: 'formattedTexts', label: 'Sample: formatted intro and closing texts' },
 ];
 
 const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5];

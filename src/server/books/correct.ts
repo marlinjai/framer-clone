@@ -37,6 +37,7 @@ import { insertEvent } from './repository/events';
 import { readPersistedView, selectDocumentRow, selectLineRows, type DocumentView } from './repository/read';
 import type { BooksScope } from './scope';
 import { requireSettings } from './settings';
+import { toJsonb } from './snapshots';
 
 const correctInput = z.object({
   actorUserId: z.string().trim().min(1).max(200),
@@ -137,6 +138,8 @@ export async function startCorrection(
         subject: invoice.subject,
         intro_text: invoice.intro_text,
         outro_text: invoice.outro_text,
+        intro_format: invoice.intro_format === null ? null : toJsonb(invoice.intro_format),
+        outro_format: invoice.outro_format === null ? null : toJsonb(invoice.outro_format),
         currency_code: invoice.currency_code,
         updated_at: now,
       })

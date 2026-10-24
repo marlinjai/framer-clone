@@ -11,6 +11,7 @@
 
 import type { Block, CellBlock, TemplateDocumentV2 } from '../template/schema';
 import type { RenderModel } from './model';
+import { hasItalic, type RichText } from './richText';
 
 /** True when BOTH faces of the family can draw the code point (a field may be set in either). */
 export type CanDraw = (codePoint: number) => boolean;
@@ -22,6 +23,9 @@ export function undrawableWith(text: string, canDraw: CanDraw): string[] {
     const cp = ch.codePointAt(0)!;
     // Variation selectors and joiners are invisible modifiers; they draw nothing.
     if (cp === 0xfe0f || cp === 0xfe0e || cp === 0x200d) continue;
+    // Control characters (a line break, a tab) are layout, never drawn: the model turns them into paragraph breaks
+    // or spaces before anything is drawn. Counting them refused every text typed with a line break at issue.
+    if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)) continue;
     if (!canDraw(cp) && !out.includes(ch)) out.push(ch);
   }
   return out;
@@ -33,9 +37,24 @@ function replaceUndrawable(text: string, canDraw: CanDraw): string {
   return [...text].map((ch) => (bad.has(ch) ? '?' : ch)).join('');
 }
 
-/** A draft preview's model with the characters the coverage cannot draw shown as "?" (never for a document of record). */
-export function previewSafeWith(model: RenderModel, canDraw: CanDraw): RenderModel {
+/**
+ * A draft preview's model with the characters the coverage cannot draw shown as "?" (never for a document of
+ * record). Italic runs of a formatted text are measured against the italic faces (`canDrawItalic`), which cover
+ * less; a model with italic and no italic coverage is a loud failure, never measured against the upright faces.
+ */
+export function previewSafeWith(model: RenderModel, canDraw: CanDraw, canDrawItalic?: CanDraw): RenderModel {
   const t = (text: string) => replaceUndrawable(text, canDraw);
+  if ((hasItalic(model.introRich) || hasItalic(model.outroRich)) && !canDrawItalic) {
+    throw new Error('previewSafeWith: the model has italic text but no italic coverage was given');
+  }
+  const rich = (r: RichText | null): RichText | null =>
+    r && {
+      v: 1,
+      blocks: r.blocks.map((b) => ({
+        kind: b.kind,
+        runs: b.runs.map((run) => ({ ...run, text: replaceUndrawable(run.text, run.italic ? canDrawItalic! : canDraw) })),
+      })),
+    };
   return {
     ...model,
     senderLine: t(model.senderLine),
@@ -48,6 +67,8 @@ export function previewSafeWith(model: RenderModel, canDraw: CanDraw): RenderMod
     notes: model.notes.map(t),
     payment: model.payment.map(t),
     outro: model.outro && t(model.outro),
+    introRich: rich(model.introRich),
+    outroRich: rich(model.outroRich),
     smallPrint: model.smallPrint.map((b) => ({ heading: b.heading && t(b.heading), text: t(b.text) })),
     footer: model.footer.map((col) => col.map(t)),
     shortTitle: t(model.shortTitle),

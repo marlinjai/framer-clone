@@ -75,7 +75,7 @@ import { assertDrawable } from './drawable';
 import { renderDraft } from './draftRender';
 import { assertRenderableTemplate, renderTemplate, RENDERER_ID, type EngineImage } from './engine';
 import { extractPdfText } from './extractText';
-import { canDraw, fontFiles } from './fonts';
+import { canDraw, canDrawItalic, fontFiles } from './fonts';
 import { fileNamePart } from './format';
 import { LEGACY_V1_RENDERER_ID, renderLegacyV1 } from './legacyV1';
 import { buildRenderModel, type RenderInput, type RenderModel, type RenderRecipient } from './model';
@@ -463,7 +463,12 @@ export async function documentPdf(scope: BooksScope, documentId: string): Promis
     const assets = await templateAssets(scope.db, scope, document);
     const family = document.theme.fontFamily;
     // The one draft path the browser's worker shares (draftRender.ts), with the files from disk.
-    const { bytes } = await renderDraft(input, document, { fonts: fontFiles(family), canDraw: (cp) => canDraw(cp, family), assets });
+    const { bytes } = await renderDraft(input, document, {
+      fonts: fontFiles(family),
+      canDraw: (cp) => canDraw(cp, family),
+      canDrawItalic: (cp) => canDrawItalic(cp, family),
+      assets,
+    });
     return { bytes, fileName: fileNameFor(view, true), ofRecord: false, fileId: null, sha256: sha256(bytes) };
   }
   const stored = await storeRenderedDocument(scope, documentId);

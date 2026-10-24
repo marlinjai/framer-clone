@@ -615,3 +615,47 @@ reloaded, the text came back unsent, Enter saved it with one request.
   - The document's GET and PATCH answer `printsSubject`, so the form offers the subject only where the template prints it, and otherwise points to the template composer.
   - The issue-time check tests the subject only when a block prints it.
   - Migration 016 waits at most 5 s for its lock, as 014 does.
+- **Production proof (2026-10-24, Books Testfirma):** the "Subject" block added once in the template
+  composer (Testvorlage Modern mit QR, version 4), a draft written on the page with the subject in
+  its slot, issued as TEST-5 (214,20 €). The stored PDF, rendered with sips, shows the subject in
+  bold under "Rechnung" with the same line, figures and service date as the page.
+
+## Phase 4 build notes (2026-10-24): formatted intro and closing texts, part 1 (data and engine)
+
+- **Fonts.** The italic and bold italic faces of all three families (DejaVu Sans 2.37 Oblique and
+  BoldOblique, Noto Sans and Noto Serif 2.015 Italic and BoldItalic) are pinned like the others,
+  from the same release archives (each archive's regular file matched its pin first). **Decided
+  (the owner's open question 2):** they were added to the existing family ids rather than new ones.
+  No document had ever used italic, and a document embeds an italic face only when one of its runs
+  uses that face, so no stored render can change. The 126 pinned renders are unchanged.
+- **Data.** Migration `017_books_text_format` adds `intro_format` / `outro_format` (nullable JSONB,
+  a version 1 object by a CHECK, 5 s lock wait). The run model (`render/richText.ts`): paragraphs
+  and bullet items of runs that are bold, italic, both or neither. **The server derives the plain
+  text, never trusts a pair:** a sent format becomes its plain words in `intro_text` (the format is
+  kept only when it is needed to print as written); a sent plain text clears the format, except
+  that line breaks become paragraphs; sending both is `invalid_input`. So the legal checks, the
+  search and the check for unprintable characters read words, as before.
+- **Paragraphs, an old bug.** The model always turned the line breaks of a plain intro or closing
+  text into spaces, so paragraphs typed on the page or in the form printed as one. Now a text saved
+  with line breaks stores them as paragraphs and prints them. Documents saved before keep a null
+  format and print exactly as they did (issued ones included).
+- **Unprintable characters, an old bug.** The check at issue counted line breaks and tabs as
+  characters the font cannot print. Every intro, closing text or line description typed with a
+  line break was refused with "undrawable_text". Control characters are layout, never drawn, and
+  are no longer counted.
+- **Engine.** A formatted text is broken into lines by `wrapStyled` (the plain rule: break at
+  spaces, split only a word wider than a line, a word may change style in its middle) and drawn
+  piece by piece in its own face. Bullet items have a hanging indent behind U+2022 (present in all
+  six faces). The field rectangles cover every line. An italic face is embedded only when a run
+  uses it, after the upright faces, and an italic run without its face is a loud failure.
+- **Checks.** Italic runs are checked at issue against the italic faces (DejaVu's oblique faces
+  have about 900 fewer glyphs than the upright ones), under the name of their text's field. The
+  draft preview shows them as "?" by the same rule. The browser fetches the italic faces only for
+  a draft with an italic run, and checks them against their pins.
+- **Editing in this part.** The form shows the plain words and, when the text has bold, italic or
+  a list, says that saving it there keeps the words and line breaks and removes that formatting.
+  The page's live redraw of a typed intro replaces the stored format too. The bold, italic and list
+  buttons on the page are part 2.
+- **Probe.** A `formattedTexts` probe (bold, italic, bold italic, a list, a blank line, a style
+  change inside a word) runs through every preset and family: field map, pinned bytes (18 new
+  renders), browser and server byte-identical, the save gate, and the composer's sample list.

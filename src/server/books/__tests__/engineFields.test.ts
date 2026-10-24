@@ -42,13 +42,18 @@ const squash = (s: string) => s.replace(/\s+/g, '');
 
 const withFamily = (doc: TemplateDocumentV2, fontFamily: FontFamily): TemplateDocumentV2 => ({ ...doc, theme: { ...doc.theme, fontFamily } });
 
-const faces = new Map<FontFamily, { regular: PDFFont; bold: PDFFont }>();
+const faces = new Map<FontFamily, { regular: PDFFont; bold: PDFFont; italic: PDFFont; boldItalic: PDFFont }>();
 beforeAll(async () => {
   for (const family of FONT_FAMILIES) {
     const pdf = await PDFDocument.create();
     pdf.registerFontkit(fontkit);
     const files = fontFiles(family);
-    faces.set(family, { regular: await pdf.embedFont(files.regular), bold: await pdf.embedFont(files.bold) });
+    faces.set(family, {
+      regular: await pdf.embedFont(files.regular),
+      bold: await pdf.embedFont(files.bold),
+      italic: await pdf.embedFont(files.italic),
+      boldItalic: await pdf.embedFont(files.boldItalic),
+    });
   }
 });
 
@@ -65,8 +70,10 @@ function expectedText(model: RenderModel, id: string): string | null {
   if (id.startsWith('meta.')) return model.metaItems[id.slice(5) as keyof RenderModel['metaItems']]?.value ?? null;
   if (id.startsWith('totals.')) return model.totals[n('totals.')]?.value ?? null;
   if (id === 'subject') return model.subject;
-  if (id === 'introText') return model.intro;
-  if (id === 'outroText') return model.outro;
+  // A formatted text draws its runs and a bullet before each list item.
+  const rich = (r: RenderModel['introRich']) => r && r.blocks.map((b) => (b.kind === 'bullet' ? '\u2022' : '') + b.runs.map((x) => x.text).join('')).join(' ');
+  if (id === 'introText') return rich(model.introRich) ?? model.intro;
+  if (id === 'outroText') return rich(model.outroRich) ?? model.outro;
   if (id === 'taxNote') return model.notes.join(' ');
   if (id === 'payment.terms') return model.payment.find((p) => p.startsWith(label('payment.termsPrefix')) || p.startsWith(label('payment.dueBy'))) ?? null;
   if (id === 'payment.reference') return model.payment.find((p) => p.startsWith(label('payment.reference'))) ?? null;
@@ -79,9 +86,16 @@ function expectedText(model: RenderModel, id: string): string | null {
   return l[part as 'title' | 'quantity' | 'unit' | 'unitPrice' | 'rate' | 'amount'];
 }
 
+/** The face that drew a piece, by its font's name (a formatted text mixes faces inside one field). */
+function faceOf(d: DrawnText): 'regular' | 'bold' | 'italic' | 'boldItalic' {
+  const italic = /Oblique|Italic/.test(d.font);
+  const bold = /Bold/.test(d.font);
+  return italic ? (bold ? 'boldItalic' : 'italic') : bold ? 'bold' : 'regular';
+}
+
 /** A drawn piece's box, from its baseline (bottom-up) to the engine's top-down coordinates. */
 function box(d: DrawnText, field: LayoutField, height: number) {
-  const face = faces.get(field.style.fontFamily)![field.style.bold ? 'bold' : 'regular'];
+  const face = faces.get(field.style.fontFamily)![faceOf(d)];
   const top = height - d.y - d.size;
   return { left: d.x, right: d.x + face.widthOfTextAtSize(d.text, d.size), top, bottom: top + d.size };
 }

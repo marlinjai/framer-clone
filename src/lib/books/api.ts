@@ -5,6 +5,8 @@
 // a BooksApiError carrying the server's code and a sentence a person can act
 // on, so no screen ever shows a bare status number or swallows a failure.
 
+import type { RichText } from '@/server/books/render/richText';
+
 export interface ContactLabel {
   id: string;
   kind: string;
@@ -125,6 +127,9 @@ export interface DocumentView {
   taxSummary: Array<{ taxRate: number; taxTreatment: string; net: number; tax: number }>;
   introText: string | null;
   outroText: string | null;
+  /** The formatting of the texts (bold, italic, bullets, paragraphs); null prints the plain text. */
+  introFormat: RichText | null;
+  outroFormat: RichText | null;
   renderedPdfFileId: string | null;
   customerSnapshot: { name: string; addressLine1: string; postalCode: string; city: string; country: string } | null;
 }

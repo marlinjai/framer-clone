@@ -24,6 +24,7 @@
 // All data is synthetic.
 
 import { createHash, randomUUID } from 'node:crypto';
+import { sql } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
@@ -56,7 +57,7 @@ import { importHistoricalInvoice } from '@/server/books/importInvoices';
 import { renderPdf } from '@/server/books/render/pdf';
 import { issue as issueDocument } from '@/server/books/issue';
 import * as contactsRoute from '../contacts/route';
-import { extractPdfText } from '@/server/books/render/extractText';
+import { extractDrawnText, extractPdfText } from '@/server/books/render/extractText';
 import { missingFields } from '@/server/books/render/completeness';
 import { REVERSE_CHARGE_NOTICE } from '@/server/tax/germanVat';
 import {
@@ -498,6 +499,69 @@ describe('Books routes: cancellation, rendering, templates', () => {
     expect(res.status).toBe(422);
     expect(res.json.error.fields).toEqual(['subject']);
     expect((await api.get(id)).json.document.status).toBe('draft');
+  });
+
+  it('formatted texts: the server derives the plain words, keeps a format only when it is needed, and freezes it at issue', async () => {
+    const customer = await newCustomer({ customerType: 'b2b' });
+    const id = (await api.createDraft({ customerId: customer.id })).json.document.id as string;
+    let v = (await api.get(id)).json.document.version as number;
+    const intro = {
+      v: 1,
+      blocks: [
+        { kind: 'paragraph', runs: [{ text: 'Vielen ' }, { text: 'Dank', bold: true }, { text: ' für' }, { text: ' Ihren ' }, { text: 'Auftrag', italic: true }] },
+        { kind: 'bullet', runs: [{ text: 'Konzeption' }] },
+        { kind: 'paragraph', runs: [] },
+      ],
+    };
+    const formatted = await api.patch(id, { introFormat: intro, expectedVersion: v });
+    expect(formatted.status).toBe(200);
+    // Plain words from the runs, one line per block; the format normalised (runs of one style merged, the trailing
+    // blank line gone).
+    expect(formatted.json.document.introText).toBe('Vielen Dank für Ihren Auftrag\nKonzeption');
+    expect(formatted.json.document.introFormat).toEqual({
+      v: 1,
+      blocks: [
+        { kind: 'paragraph', runs: [{ text: 'Vielen ' }, { text: 'Dank', bold: true }, { text: ' für Ihren ' }, { text: 'Auftrag', italic: true }] },
+        { kind: 'bullet', runs: [{ text: 'Konzeption' }] },
+      ],
+    });
+    v = formatted.json.document.version;
+
+    // One unformatted line needs no format; a plain text with line breaks keeps them as paragraphs.
+    const oneLine = await api.patch(id, { introFormat: { v: 1, blocks: [{ kind: 'paragraph', runs: [{ text: 'Nur eine Zeile.' }] }] }, expectedVersion: v });
+    expect(oneLine.json.document).toMatchObject({ introText: 'Nur eine Zeile.', introFormat: null });
+    v = oneLine.json.document.version;
+    const typed = await api.patch(id, { outroText: 'Mit freundlichen Grüßen\nIhr Team', expectedVersion: v });
+    expect(typed.json.document.outroFormat).toEqual({
+      v: 1,
+      blocks: [
+        { kind: 'paragraph', runs: [{ text: 'Mit freundlichen Grüßen' }] },
+        { kind: 'paragraph', runs: [{ text: 'Ihr Team' }] },
+      ],
+    });
+    v = typed.json.document.version;
+
+    // Never both, never a shape the engine cannot draw; the database refuses a stray shape from any writer.
+    const both = await api.patch(id, { introText: 'x', introFormat: intro, expectedVersion: v });
+    expect(both.status).toBe(400);
+    expect(both.json.error.code).toBe('invalid_input');
+    const broken = await api.patch(id, { introFormat: { v: 1, blocks: [{ kind: 'paragraph', runs: [{ text: 'a\nb' }] }] }, expectedVersion: v });
+    expect(broken.status).toBe(400);
+    expect(
+      await rejectionCode(env.ownerDb.updateTable('sales_document').set({ intro_format: sql`'"x"'::jsonb` as never }).where('id', '=', id).execute()),
+    ).toBe('23514');
+
+    // Issued with an italic run: the stored PDF embeds an italic face, and the format is frozen.
+    const italic = await api.patch(id, { introFormat: intro, expectedVersion: v });
+    await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    expect(italic.status).toBe(200);
+    const issuedRes = await api.issue(id);
+    expect(issuedRes.status, JSON.stringify(issuedRes.json)).toBe(200);
+    const bytes = new Uint8Array(await (await pdf(id)).arrayBuffer());
+    expect((await extractDrawnText(bytes)).some((d) => /Oblique|Italic/.test(d.font) && d.text.includes('Auftrag'))).toBe(true);
+    expect(
+      await rejectionCode(env.ownerDb.updateTable('sales_document').set({ intro_format: null }).where('id', '=', id).execute()),
+    ).toBe('BK001');
   });
 
   it('a draft preview is marked and never stored', async () => {

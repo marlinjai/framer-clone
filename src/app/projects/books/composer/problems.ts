@@ -21,6 +21,7 @@ const PROBE_LABELS: Record<string, string> = {
   longInvoice: 'a 40-line invoice over three pages',
   longRecipient: 'an invoice to a long foreign address',
   longDescription: 'a line with a very long description',
+  formattedTexts: 'an invoice with formatted intro and closing texts',
 };
 
 const LAYOUT_ISSUES: Record<string, string> = {

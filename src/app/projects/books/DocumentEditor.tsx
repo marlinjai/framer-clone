@@ -48,6 +48,7 @@ import {
   type SettingsView,
 } from '@/lib/books/api';
 import { browserRenderSupported } from '@/lib/books/engine';
+import { isStyled } from '@/server/books/render/richText';
 import { date, money, moneyInput, parseMoney, parseQuantity, quantity, quantityInput, rate } from '@/lib/books/units';
 
 import InvoicePage from './invoice/InvoicePage';
@@ -838,10 +839,13 @@ function DocumentTexts({
     <section aria-label="Texts" className="mb-6 grid grid-cols-1 gap-4 rounded-lg border p-4 sm:grid-cols-2">
       {fields.map((f) => {
         const fieldId = `doc-${f.key}`;
+        const styled = (f.key === 'introText' && isStyled(doc.introFormat)) || (f.key === 'outroText' && isStyled(doc.outroFormat));
         const note =
           f.key === 'subject' && printsSubject === false
             ? 'Your template has no subject block, so this subject is not printed. Add “Subject” to the template in the template composer.'
-            : f.hint;
+            : styled
+              ? 'Formatted on the invoice page (bold, italic or a list). Saving it here keeps the words and the line breaks, and removes that formatting.'
+              : f.hint;
         return (
           <div key={f.key} className={f.multiline ? 'sm:col-span-2' : undefined}>
             <Field label={f.label} htmlFor={fieldId} hint={note ?? undefined} error={problems[f.key] ?? null}>

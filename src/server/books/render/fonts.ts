@@ -46,6 +46,9 @@ import { undrawableWith } from './previewSafe';
 export interface FontFiles {
   regular: Uint8Array;
   bold: Uint8Array;
+  /** The italic faces, read with the others; the engine embeds them only when a run is italic. */
+  italic: Uint8Array;
+  boldItalic: Uint8Array;
 }
 
 // The pins live in fontPins.ts (no Node imports), so the browser checks the files it fetches against the same digests.
@@ -54,7 +57,7 @@ export { FONT_FILES };
 const FONT_DIR = path.join(process.cwd(), 'assets', 'fonts');
 
 const files = new Map<FontFamily, FontFiles>();
-const coverage = new Map<FontFamily, Array<{ hasGlyphForCodePoint(cp: number): boolean }>>();
+const coverage = new Map<string, Array<{ hasGlyphForCodePoint(cp: number): boolean }>>();
 
 /** A family id of the template model, or a loud failure (a stored document naming an unknown family is malformed). */
 function known(family: string): FontFamily {
@@ -73,27 +76,44 @@ function readPinned(pin: PinnedFile): Uint8Array {
   return bytes;
 }
 
-/** The two font files of a family (read and checked against their pins once per process). */
+/** The font files of a family, its four faces (read and checked against their pins once per process). */
 export function fontFiles(family: FontFamily): FontFiles {
   const id = known(family);
   let f = files.get(id);
   if (!f) {
-    f = { regular: readPinned(FONT_FILES[id].regular), bold: readPinned(FONT_FILES[id].bold) };
+    const pins = FONT_FILES[id];
+    f = { regular: readPinned(pins.regular), bold: readPinned(pins.bold), italic: readPinned(pins.italic), boldItalic: readPinned(pins.boldItalic) };
     files.set(id, f);
   }
   return f;
 }
 
-/** True when BOTH faces of the family can draw the code point (a field may be set in either). */
-export function canDraw(cp: number, family: FontFamily): boolean {
+function covers(family: FontFamily, italic: boolean, cp: number): boolean {
   const id = known(family);
-  let faces = coverage.get(id);
+  const key = `${id}|${italic ? 'italic' : 'upright'}`;
+  let faces = coverage.get(key);
   if (!faces) {
     const f = fontFiles(id);
-    faces = [fontkit.create(f.regular as unknown as Buffer), fontkit.create(f.bold as unknown as Buffer)];
-    coverage.set(id, faces);
+    const pair = italic ? [f.italic, f.boldItalic] : [f.regular, f.bold];
+    faces = pair.map((bytes) => fontkit.create(bytes as unknown as Buffer));
+    coverage.set(key, faces);
   }
   return faces.every((face) => face.hasGlyphForCodePoint(cp));
+}
+
+/** True when BOTH upright faces of the family can draw the code point (a field may be set in either). */
+export function canDraw(cp: number, family: FontFamily): boolean {
+  return covers(family, false, cp);
+}
+
+/** True when BOTH italic faces can draw the code point (an italic run may be bold too); they cover less than the upright ones. */
+export function canDrawItalic(cp: number, family: FontFamily): boolean {
+  return covers(family, true, cp);
+}
+
+/** The characters of `text` the family's italic faces cannot draw (each once, in order). */
+export function undrawableItalic(text: string, family: FontFamily): string[] {
+  return undrawableWith(text, (cp) => canDrawItalic(cp, family));
 }
 
 /** The characters of `text` the family cannot draw (each once, in order). */
@@ -104,7 +124,7 @@ export function undrawable(text: string, family: FontFamily): string[] {
 /** The bytes of the pinned font file with this digest (read and checked once per process), or null for any other digest. */
 export function fontFileByDigest(sha256: string): Uint8Array | null {
   for (const family of FONT_FAMILIES) {
-    for (const face of ['regular', 'bold'] as const) {
+    for (const face of ['regular', 'bold', 'italic', 'boldItalic'] as const) {
       if (FONT_FILES[family][face].sha256 === sha256) return fontFiles(family)[face];
     }
   }

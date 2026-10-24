@@ -16,6 +16,7 @@ import type { DocumentDetail, LineView } from '@/lib/books/api';
 import type { RenderInputPayload } from '@/lib/books/engine';
 import { moneyInput, parseMoney, parsePercent, parseQuantity, quantityInput } from '@/lib/books/units';
 import type { LayoutField } from '@/server/books/render/engine';
+import { normalizeRichText, richFromPlain } from '@/server/books/render/richText';
 
 /** The tax classes a line may choose, as the page offers them. */
 export const TAX_CLASS_OPTIONS = [
@@ -226,7 +227,14 @@ export function applyLocal(payload: RenderInputPayload, field: LayoutField, loca
       input: { ...payload.input, lines: payload.input.lines.map((l) => (l.id === field.lineId ? { ...l, [key]: value } : l)) },
     };
   }
-  if (key === 'introText' || key === 'outroText' || key === 'contractReference' || key === 'subject') {
+  if (key === 'introText' || key === 'outroText') {
+    // The typed plain text replaces the stored format too (the engine draws a format before the plain text), with
+    // paragraphs for its line breaks, as the server stores it.
+    const formatKey = key === 'introText' ? 'introFormat' : 'outroFormat';
+    const format = /\r?\n/.test(local) ? normalizeRichText(richFromPlain(local)) : null;
+    return { ...payload, input: { ...payload.input, document: { ...payload.input.document, [key]: local === '' ? null : local, [formatKey]: format } } };
+  }
+  if (key === 'contractReference' || key === 'subject') {
     return { ...payload, input: { ...payload.input, document: { ...payload.input.document, [key]: local === '' ? null : local } } };
   }
   return payload;
