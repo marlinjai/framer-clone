@@ -489,8 +489,6 @@ export interface SalesDocumentTable {
   payment_terms_days: number;
   payment_reference: string | null;
   contract_reference: string | null;
-  /** The subject line (016), printed where the template places its `subject` block; null prints none. */
-  subject: string | null;
   currency_code: Generated<string>;
   tax_region: Generated<string>;
   customer_type: CustomerType | null;
@@ -515,6 +513,7 @@ export interface SalesDocumentTable {
   template_snapshot: JsonColumn<TemplateSnapshot> | null;
   replaces_document_id: string | null;
   print_replaces_reference: Generated<boolean>;
+  subject: string | null;
 }
 
 /**
