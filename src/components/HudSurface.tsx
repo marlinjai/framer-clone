@@ -19,6 +19,7 @@ import {
   type CrossViewportSelection
 } from '@/utils/crossViewportHighlighting';
 import EffectBadge from './EffectBadge';
+import { lastPointerIsTouch } from '@/hooks/useEditorGestureGuard';
 
 type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 const HANDLE_DIRECTIONS: { dir: ResizeDirection; className: string; cursor: string }[] = [
@@ -61,6 +62,53 @@ const CORNER_INWARD: Record<RadiusCorner, { x: 1 | -1; y: 1 | -1 }> = {
   br: { x: -1, y: -1 },
 };
 const RADIUS_MIN_OVERLAY_PX = 40; // hide dots if overlay is smaller than this
+// Under a finger the radius dots get 44px hit areas (globals.css); on a
+// smaller selection they would cover the element and its resize handles.
+const RADIUS_MIN_OVERLAY_TOUCH_PX = 120;
+
+/**
+ * Follow a handle press until it ends. A mouse press keeps the document
+ * mouse listeners it always had. A finger or pen press follows its own
+ * pointer: the compat mouse events of a touch only arrive after the finger
+ * lifts, so a mousemove loop would never run. The press handler calls
+ * preventDefault on the pointerdown, which also stops those compat mouse
+ * events, so a touch never starts the gesture twice. Returns the detach.
+ */
+function trackPress(
+  event: React.MouseEvent,
+  onMove: (ev: MouseEvent) => void,
+  onEnd: () => void,
+): () => void {
+  const native = event.nativeEvent;
+  if (typeof PointerEvent !== 'undefined' && native instanceof PointerEvent && native.pointerType !== 'mouse') {
+    const id = native.pointerId;
+    const move = (ev: PointerEvent) => { if (ev.pointerId === id) onMove(ev); };
+    const end = (ev: PointerEvent) => { if (ev.pointerId === id) onEnd(); };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', end);
+    document.addEventListener('pointercancel', end);
+    return () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', end);
+      document.removeEventListener('pointercancel', end);
+    };
+  }
+  const up = () => onEnd();
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', up);
+  return () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', up);
+  };
+}
+
+/** Pointer-event entry for handles: only fingers and pens (the mouse keeps onMouseDown). */
+function touchPress(handler: (e: React.MouseEvent<HTMLDivElement>) => void) {
+  return (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'mouse' || !e.isPrimary) return;
+    handler(e);
+  };
+}
 
 function parseRadiusToPx(value: unknown, refDim: number): number {
   if (value == null) return 0;
@@ -163,7 +211,8 @@ const HudSurface = observer(() => {
       // overlayWidth/height include the 4px padding; subtract to compare to the
       // target's actual rendered size.
       const inner = Math.min(overlayWidth, overlayHeight) - 4;
-      radiusHandles.style.display = inner >= RADIUS_MIN_OVERLAY_PX ? 'block' : 'none';
+      const min = lastPointerIsTouch() ? RADIUS_MIN_OVERLAY_TOUCH_PX : RADIUS_MIN_OVERLAY_PX;
+      radiusHandles.style.display = inner >= min ? 'block' : 'none';
     };
     const hideRadiusHandles = () => {
       if (radiusHandles) radiusHandles.style.display = 'none';
@@ -647,9 +696,9 @@ const HudSurface = observer(() => {
       updateOverlayPosition();
     };
 
+    let stopTracking = () => {};
     const cleanup = (committed: boolean) => {
-      document.removeEventListener('mousemove', handleMove);
-      document.removeEventListener('mouseup', handleUp);
+      stopTracking();
       document.removeEventListener('keydown', handleKey);
       document.body.style.cursor = prevCursor;
       editorUI.endResize();
@@ -674,8 +723,7 @@ const HudSurface = observer(() => {
       }
     };
 
-    document.addEventListener('mousemove', handleMove);
-    document.addEventListener('mouseup', handleUp);
+    stopTracking = trackPress(event, handleMove, handleUp);
     document.addEventListener('keydown', handleKey);
   }, [editorUI, transformState, updateOverlayPosition]);
 
@@ -825,9 +873,9 @@ const HudSurface = observer(() => {
       updateOverlayPosition();
     };
 
+    let stopTracking = () => {};
     const cleanup = (committed: boolean) => {
-      document.removeEventListener('mousemove', handleMove);
-      document.removeEventListener('mouseup', handleUp);
+      stopTracking();
       document.removeEventListener('keydown', handleKey);
       document.body.style.cursor = prevCursor;
       const history = getHistoryStore();
@@ -849,8 +897,7 @@ const HudSurface = observer(() => {
       }
     };
 
-    document.addEventListener('mousemove', handleMove);
-    document.addEventListener('mouseup', handleUp);
+    stopTracking = trackPress(event, handleMove, handleUp);
     document.addEventListener('keydown', handleKey);
   }, [editorUI, transformState, updateOverlayPosition]);
 
@@ -872,6 +919,7 @@ const HudSurface = observer(() => {
               data-resize-direction={dir}
               data-testid={`resize-handle-${dir}`}
               onMouseDown={onHandleMouseDown}
+              onPointerDown={touchPress(onHandleMouseDown)}
               className={`absolute w-2 h-2 bg-brand rounded-full ${className}`}
               style={{ cursor, pointerEvents: 'auto' }}
             />
@@ -895,6 +943,7 @@ const HudSurface = observer(() => {
               data-radius-corner={id}
               data-testid={`radius-handle-${id}`}
               onMouseDown={onRadiusHandleMouseDown}
+              onPointerDown={touchPress(onRadiusHandleMouseDown)}
               title="Drag to round corners. Hold Alt to round just this corner."
               className={`absolute w-2 h-2 bg-white border border-brand rounded-full opacity-70 hover:opacity-100 transition-opacity ${className}`}
               style={{ cursor, pointerEvents: 'auto' }}

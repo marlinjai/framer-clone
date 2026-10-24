@@ -26,6 +26,7 @@ import EditorCommerceProvider from '@/components/EditorCommerceProvider';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 
 import { useStore } from "@/hooks/useStore";
+import { useEditorGestureGuard } from '@/hooks/useEditorGestureGuard';
 
 // Wires the DragManager with runtime dependencies. Must mount inside
 // TransformProvider to reach the transform ref. Returns null to stay out of
@@ -59,6 +60,8 @@ function syncPageParam(pageId: string | undefined) {
 
 export default function EditorApp({ projectSnapshot }: { projectSnapshot?: ProjectSnapshotOut } = {}) {
   const rootStore = useStore();
+  // Browser page zoom off inside the editor; the canvas has its own.
+  useEditorGestureGuard();
   const initRef = React.useRef(false);
   makeInspectable(rootStore);
   if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {

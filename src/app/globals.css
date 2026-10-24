@@ -167,3 +167,27 @@
 [data-ground][data-pan-cursor="grabbing"] * {
   cursor: grabbing !important;
 }
+
+/* Canvas handles under a finger (docs/plans/2026-10-24-editor-on-phones.md).
+   Every handle claims its touch for itself (no browser pan stealing it with a
+   pointercancel). While the last input was a finger (data-pointer, set by
+   useEditorGestureGuard), each handle grows an invisible hit area of at least
+   44x44 css px around its small visible dot or bar; a pen or mouse keeps the
+   precise small target. */
+[data-resize-direction],
+[data-radius-corner],
+[data-spacing-handle] {
+  touch-action: none;
+}
+html[data-pointer="touch"] [data-resize-direction]::before,
+html[data-pointer="touch"] [data-radius-corner]::before,
+html[data-pointer="touch"] [data-spacing-handle]::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
+  border-radius: 9999px;
+}
