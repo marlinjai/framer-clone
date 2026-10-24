@@ -118,6 +118,8 @@ function readUnsaved(documentId: string): Unsaved | null {
     if (!raw) return null;
     const entry = JSON.parse(raw) as Partial<Unsaved>;
     if (!entry.field || typeof entry.field.id !== 'string' || typeof entry.value !== 'string') return null;
+    const rects: unknown = entry.field.rects;
+    if (!Array.isArray(rects) || rects.length === 0 || rects.some((r) => !r || typeof r !== 'object')) return null;
     return { field: entry.field, rectIndex: typeof entry.rectIndex === 'number' ? entry.rectIndex : 0, value: entry.value };
   } catch {
     return null;
@@ -307,7 +309,9 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     }
     const before = parseValue(field, initial);
     const label = fieldLabel(field, detail);
-    close(null);
+    // The stored copy stays while the save is pending: a reload mid-request must still bring the typed value back.
+    closing.current = true;
+    setActive(null);
     if (focusKey) focusAfter.current = focusKey;
     const forward = parsed.request;
     // A value that cannot be sent back (no customer before the first one was chosen) is not a step to undo.
@@ -315,7 +319,8 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
       ? { label, undo: (v) => send(before.request, v), redo: (v) => send(forward, v) }
       : null;
     const ok = await run(step, (v) => send(forward, v), `${label} saved.`);
-    if (!ok) {
+    if (ok) rememberUnsaved(id, null);
+    else {
       // Refused: the field reopens with what was typed, so nothing is lost and nothing overwrites a newer change.
       closing.current = false;
       rememberUnsaved(id, { field, rectIndex, value });
