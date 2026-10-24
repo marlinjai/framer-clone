@@ -43,7 +43,7 @@ import {
 const NOTE_STYLE: React.CSSProperties = {
   color: '#9ca3af',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
 };
 
 const WARNING_STYLE: React.CSSProperties = {
@@ -53,7 +53,7 @@ const WARNING_STYLE: React.CSSProperties = {
   borderRadius: '4px',
   padding: '2px 6px',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
 };
 
 const ERROR_CHIP_STYLE: React.CSSProperties = {
@@ -64,7 +64,7 @@ const ERROR_CHIP_STYLE: React.CSSProperties = {
   borderRadius: '4px',
   padding: '2px 6px',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
 };
 
 const LINE_STYLE: React.CSSProperties = {
@@ -73,7 +73,7 @@ const LINE_STYLE: React.CSSProperties = {
   gap: '8px',
   alignItems: 'center',
   padding: '6px 0',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
   fontSize: '14px',
 };
 
@@ -373,7 +373,7 @@ const CartView = observer(
       <div
         data-cart-subtotal
         data-cart-subtotal-cents={subtotalCents}
-        style={{ fontFamily: 'Inter, sans-serif', fontSize: '14px', fontWeight: 600 }}
+        style={{ fontFamily: 'inherit', fontSize: '14px', fontWeight: 600 }}
       >
         Estimated subtotal: {subtotalLabel}
       </div>,

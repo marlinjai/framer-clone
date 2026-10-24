@@ -21,6 +21,10 @@
 # production
 /build
 
+# self-hosted web fonts, copied from the pinned @fontsource packages by
+# scripts/sync-fonts.ts on every dev and build
+/public/fonts/
+
 # misc
 .DS_Store
 *.pem

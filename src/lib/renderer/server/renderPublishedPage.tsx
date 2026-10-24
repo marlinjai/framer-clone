@@ -19,6 +19,7 @@ import { createScope, pushPageFrame } from '@/lib/bindings/resolver/scope';
 import { buildTrackerSnippet } from '@/lib/renderer/publish/trackerSnippet';
 import { renderComponentNode } from './renderComponentNode';
 import { applyResponsiveStyles } from './applyResponsiveStyles';
+import { publishedFontAssets } from './publishedFonts';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import CommercePageProviders from './CommercePageProviders';
 
@@ -119,6 +120,9 @@ export async function renderPublishedPage(
   // hydrated tree so cloned collection rows and the commerce islands (which
   // receive these props across the client boundary) carry the classes too.
   const responsive = applyResponsiveStyles(hydrated, breakpoints);
+  // The self-hosted web fonts the page uses, scanned before the responsive
+  // rewrite moves styles into classes (src/lib/fonts/registry.ts).
+  const fonts = publishedFontAssets(hydrated);
 
   // The page frame drives any island re-resolution of {{page.params.*}}.
   const scope = pushPageFrame(createScope(), pageParams);
@@ -127,6 +131,7 @@ export async function renderPublishedPage(
   return {
     body: (
       <>
+        {fonts}
         {responsive.css ? (
           // Rendered in place (no href / precedence, so React does not hoist
           // it) ahead of the content it styles, so streamed HTML never paints

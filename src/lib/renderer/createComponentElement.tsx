@@ -59,7 +59,7 @@ function commerceKindLabel(kind: DataComponentKind): string {
 const COMMERCE_PLACEHOLDER_STYLE: React.CSSProperties = {
   color: '#9ca3af',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'system-ui, sans-serif',
   pointerEvents: 'none',
   userSelect: 'none',
 };
@@ -278,7 +278,7 @@ export function createComponentElement(
           style: {
             color: '#9ca3af',
             fontSize: '12px',
-            fontFamily: 'Inter, sans-serif',
+            fontFamily: 'system-ui, sans-serif',
             pointerEvents: 'none',
             userSelect: 'none',
           },

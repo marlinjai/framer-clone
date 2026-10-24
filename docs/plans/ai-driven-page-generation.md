@@ -168,6 +168,10 @@ The user loads AI-generated JSON into the editor. Implementation options (simple
 - Visual feedback loop: screenshot the canvas and feed it back to the AI for iteration
 - Built 2026-10-23: the design brief in the prompt, photo backgrounds with text over them and
   subject-aware crops, see [the design quality plan](2026-10-23-ai-design-quality-and-image-focus.md).
+- Built 2026-10-24: the eighteen tells of generated design as a "Never" list in the prompt and a
+  deterministic screen (`src/lib/ai/pageGen/tells.ts`, each rule and threshold documented in its
+  header) that fixes dashes, emoji, banned fonts and button arrows, and sends the rest into the
+  single repair round, see [round 2](2026-10-23-ai-design-quality-round-2.md), decisions 1 and 2.
 
 ## Competitive Advantage Over Sleek Design and Similar Tools
 

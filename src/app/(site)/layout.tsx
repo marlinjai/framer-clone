@@ -21,6 +21,7 @@ import type { Metadata } from 'next';
 import { getPrimaryHostForRequest, resolveSiteForRequest } from '@/server/sites/requestSite';
 import { effectiveSiteName } from '@/lib/site/siteSettings';
 import { siteLayoutMetadata } from '@/lib/site/publishedHead';
+import { SYSTEM_FONT_STACK } from '@/lib/fonts/registry';
 
 /** The neutral default for a host with no published site (never editor scaffolding). */
 const NEUTRAL_METADATA: Metadata = {
@@ -44,5 +45,14 @@ export default function SiteLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  return <>{children}</>;
+  return (
+    <>
+      {/* The root layout puts the editor's Geist on <html> (Tailwind preflight).
+          A published page that sets no font family of its own falls back to the
+          system stack instead, never to a face the editor chrome happens to use.
+          Constant text from the font registry, never site data. */}
+      <style data-fc-site-base="" dangerouslySetInnerHTML={{ __html: `body{font-family:${SYSTEM_FONT_STACK}}` }} />
+      {children}
+    </>
+  );
 }
