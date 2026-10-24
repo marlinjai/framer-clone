@@ -138,7 +138,7 @@ describe('typography', () => {
     for (const kind of ['impressum', 'privacy', 'terms'] as const) {
       for (const language of ['de', 'en']) {
         const body = text(buildLegalTemplate({ kind, language, business: EMPTY_BUSINESS, siteName: 'X', facts: all, date }).blocks);
-        expect(body).not.toMatch(/[–—]/);
+        expect(body).not.toMatch(/[\u2013\u2014]/);
       }
     }
   });
