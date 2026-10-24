@@ -347,6 +347,42 @@ describe('POST /api/ai/generate-page generation', () => {
     expect(evs.at(-1)!.data).toMatchObject({ inputTokens: 100, outputTokens: 50, attempts: 1 });
   });
 
+  it('hands the site language and real contact data to the model, as data, after the cache breakpoint', async () => {
+    anthropicState.turns = [toolTurn(VALID_PAGE)];
+    const siteContext = {
+      siteName: 'Bäckerei Müller',
+      language: 'de',
+      legalName: '',
+      street: 'Hauptstr. 1',
+      postalCode: '80331',
+      city: 'München',
+      country: 'DE',
+      phone: '',
+      email: 'hallo@mueller.de',
+      openingHours: ['Monday, Tuesday: 07:00 to 18:00'],
+    };
+    const res = await POST(makeRequest(baseBody({ siteContext })));
+    expect(res.status).toBe(200);
+    await events(res);
+    const system = anthropicState.calls[0].params.system as Array<{ text: string }>;
+    expect(system[0].text).not.toContain('Hauptstr');
+    expect(system[1].text).toContain('Site language: German (de)');
+    expect(system[1].text).toContain('"address":"Hauptstr. 1, 80331 München, DE"');
+    expect(system[1].text).toContain('NEVER invent contact data');
+    expect(system[1].text).toContain('Missing: phone number');
+  });
+
+  it('400 bad_body on a malformed site context', async () => {
+    for (const siteContext of [
+      { language: 'German' },
+      { siteName: 'x', language: 'de', legalName: '', street: '', postalCode: '', city: '', country: 'DEU', phone: '', email: '', openingHours: [] },
+    ]) {
+      const res = await POST(makeRequest(baseBody({ siteContext })));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.code).toBe('bad_body');
+    }
+  });
+
   it('honours the HAIKU model choice, without fallbacks (Haiku 5.5 has none)', async () => {
     const res = await POST(makeRequest(baseBody({ model: 'HAIKU' })));
     await res.text();

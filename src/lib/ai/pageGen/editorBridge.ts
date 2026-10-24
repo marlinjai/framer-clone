@@ -23,6 +23,7 @@ import {
   type PageBreakpoint,
 } from './apply';
 import type { PageGenModel, PageGenRequest, PageGenResultPayload } from './protocol';
+import { siteContextFromSettings } from './promptSections/siteContext';
 
 export type TargetKind = 'newPage' | 'replace' | 'insert';
 
@@ -144,6 +145,7 @@ export function buildRequest(input: {
     model: input.model,
     breakpoints,
     projectName: project.metadata.title,
+    siteContext: siteContextFromSettings(project.site, project.metadata.title),
   };
   if (target.kind === 'newPage') {
     return {
