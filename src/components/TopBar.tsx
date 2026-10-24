@@ -2,7 +2,7 @@
 // Editor top bar: project title (left), reserved space (middle, intended for
 // future tool-category tabs like Insert / Layout / Text), the site actions,
 // and undo / redo + history dropdown (right). Page navigation lives in the
-// left sidebar's Pages pane, not here — see LeftSidebar.tsx.
+// left sidebar's Pages pane, not here (see LeftSidebar.tsx).
 //
 // Under 1024px wide the bar is compact (plan
 // docs/plans/2026-10-24-editor-on-phones.md): back link, the project name
@@ -345,7 +345,7 @@ const TopBar = observer(() => {
       {/* Form submissions: what visitors sent through this site's forms. */}
       <FormSubmissionsButton {...control('forms')} triggerClassName={wideOnly} />
 
-      {/* Preview entry — sits just before the undo/redo cluster so it's
+      {/* Preview entry: sits just before the undo/redo cluster so it's
           visually grouped with the other rightward actions. */}
       <button
         type="button"
