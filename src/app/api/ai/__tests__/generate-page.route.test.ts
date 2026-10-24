@@ -684,6 +684,7 @@ const PAGE_WITH_IMAGES = {
           props: { imageQuery: 'sourdough bread loaves', alt: 'Sauerteigbrote', style: { width: '640px', height: '400px' } },
         },
         { type: 'img', props: { imageQuery: 'Sourdough  bread loaves', alt: 'Noch mehr Brot', style: { width: '320px', height: '200px' } } },
+        { type: 'button', props: { children: 'Brot bestellen' } },
       ],
     },
   ],
@@ -937,5 +938,122 @@ describe('POST /api/ai/generate-page design tells', () => {
     const evs = await events(await POST(makeRequest(baseBody())));
     expect(evs.some((e) => e.event === 'gen:error')).toBe(false);
     expect((evs.find((e) => e.event === 'gen:result')!.data as { tells: string[] }).tells).toHaveLength(2);
+  });
+});
+
+// --- Page essentials (src/lib/ai/pageGen/essentials.ts) ----------------------
+const CTA_LINK = { type: 'a', label: 'CTA', props: { href: '#order', children: 'Order bread', style: { backgroundColor: '#1f2937', color: '#fff', padding: '14px 24px' } } };
+const NO_CTA_PAGE = {
+  title: 'Bakery',
+  nodes: [{ type: 'section', label: 'Hero', children: [{ type: 'h1', label: 'Headline', props: { children: 'Bread the slow way' } }] }],
+};
+const WITH_CTA_PAGE = {
+  title: 'Bakery',
+  nodes: [{ type: 'section', label: 'Hero', children: [{ type: 'h1', label: 'Headline', props: { children: 'Bread the slow way' } }, CTA_LINK] }],
+};
+const NO_ALT_PAGE = {
+  title: 'Bakery',
+  nodes: [
+    {
+      type: 'section',
+      label: 'Hero',
+      children: [
+        { type: 'h1', label: 'Headline', props: { children: 'Bread the slow way' } },
+        CTA_LINK,
+        { type: 'img', preset: 'image', label: 'Photo', props: { imageQuery: 'sourdough loaves on a wooden table' } },
+      ],
+    },
+  ],
+};
+
+describe('POST /api/ai/generate-page page essentials', () => {
+  beforeEach(() => {
+    vi.stubEnv('UNSPLASH_ACCESS_KEY', '');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('sends a new page without a hero call to action into the repair round with a precise message', async () => {
+    anthropicState.turns = [toolTurn(NO_CTA_PAGE), toolTurn(WITH_CTA_PAGE)];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(2);
+    const repairTurn = JSON.stringify((anthropicState.calls[1].params.messages as Array<{ content: unknown }>).at(-1)!.content);
+    expect(repairTurn).toContain('misses');
+    expect(repairTurn).toContain('Hero: Page essentials: the hero (the first screen) has no primary call to action');
+    const result = evs.find((e) => e.event === 'gen:result')!.data as { tells: string[] };
+    expect(result.tells).toEqual([]);
+  });
+
+  it('reports a call to action still missing after the repair round, and applies the page', async () => {
+    anthropicState.turns = [toolTurn(NO_CTA_PAGE), toolTurn(NO_CTA_PAGE)];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(2);
+    const result = evs.find((e) => e.event === 'gen:result')!.data as { tells: string[]; nodes: unknown[] };
+    expect(result.nodes).toHaveLength(1);
+    expect(result.tells).toEqual([expect.stringMatching(/^Hero: Page essentials: the hero/)]);
+  });
+
+  it('never asks for a hero call to action on a section generation or a legal page', async () => {
+    anthropicState.turns = [toolTurn(NO_CTA_PAGE)];
+    await events(
+      await POST(makeRequest(baseBody({ target: { kind: 'replace', context: { id: 'hero-1', type: 'section', label: 'Old hero' } } }))),
+    );
+    expect(anthropicState.calls).toHaveLength(1);
+
+    anthropicState.calls = [];
+    anthropicState.turns = [toolTurn(NO_CTA_PAGE)];
+    await events(await POST(makeRequest(baseBody({ brief: 'Das Impressum für unsere Bäckerei' }))));
+    expect(anthropicState.calls).toHaveLength(1);
+  });
+
+  it('sends a missing alt text into the repair round, then fills it from the photo description', async () => {
+    anthropicState.turns = [toolTurn(NO_ALT_PAGE), toolTurn(NO_ALT_PAGE)];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(2);
+    const repairTurn = JSON.stringify((anthropicState.calls[1].params.messages as Array<{ content: unknown }>).at(-1)!.content);
+    expect(repairTurn).toContain('Hero > Photo: Page essentials: this image has no alt text');
+    const result = evs.find((e) => e.event === 'gen:result')!.data as {
+      tells: string[];
+      warnings: string[];
+      nodes: Array<{ children: Array<{ type: string; props: Record<string, unknown> }> }>;
+    };
+    const img = result.nodes[0].children.find((c) => c.type === 'img')!;
+    expect(img.props.alt).toBe('Sourdough loaves on a wooden table');
+    expect(result.warnings).toContain(
+      'Hero > Photo: alt text filled from the photo description ("Sourdough loaves on a wooden table"); check it describes the photo',
+    );
+    // Filled, so not reported as a remaining issue.
+    expect(result.tells).toEqual([]);
+  });
+
+  it('accepts a decorative image without a repair round', async () => {
+    const page = structuredClone(WITH_CTA_PAGE) as typeof WITH_CTA_PAGE & { nodes: Array<{ children: unknown[] }> };
+    page.nodes[0].children.push({ type: 'img', props: { decorative: true, imageQuery: 'linen texture' } });
+    anthropicState.turns = [toolTurn(page)];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(1);
+    const result = evs.find((e) => e.event === 'gen:result')!.data as {
+      nodes: Array<{ children: Array<{ type: string; props: Record<string, unknown> }> }>;
+    };
+    const img = result.nodes[0].children.find((c) => c.type === 'img')!;
+    expect(img.props).toMatchObject({ alt: '', 'data-decorative': 'true' });
+  });
+
+  it('keeps a sticky call to action on a new page only', async () => {
+    const sticky = { type: 'div', preset: 'stickyCta', label: 'Sticky call to action', props: { ctaLabel: 'Order bread', ctaHref: '#order' } };
+    anthropicState.turns = [toolTurn({ ...WITH_CTA_PAGE, nodes: [sticky, ...WITH_CTA_PAGE.nodes] })];
+    let evs = await events(await POST(makeRequest(baseBody())));
+    let result = evs.find((e) => e.event === 'gen:result')!.data as { nodes: Array<{ label: string; props: Record<string, unknown> }> };
+    expect(result.nodes.map((n) => n.label)).toEqual(['Hero', 'Sticky call to action']);
+    expect(result.nodes[1].props).toMatchObject({ 'data-sticky-cta': 'bar', ctaLabel: 'Order bread', ctaHref: '#order' });
+
+    anthropicState.calls = [];
+    anthropicState.turns = [toolTurn({ nodes: [...WITH_CTA_PAGE.nodes, sticky] })];
+    evs = await events(
+      await POST(makeRequest(baseBody({ target: { kind: 'insert', context: { id: 'main-1', type: 'main', label: 'Main' } } }))),
+    );
+    result = evs.find((e) => e.event === 'gen:result')!.data as { nodes: Array<{ label: string; props: Record<string, unknown> }> };
+    expect(result.nodes.map((n) => n.label)).toEqual(['Hero']);
   });
 });

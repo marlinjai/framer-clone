@@ -307,7 +307,8 @@ export function fillMissingAlt(nodes: GeneratedNodeSnapshot[], imageRequests: re
   const paths = new Map<string, string>();
   walk(nodes as TellNode[], (n, path) => paths.set(n.id, path));
   const visit = (node: GeneratedNodeSnapshot): GeneratedNodeSnapshot => {
-    const children = node.children.map(visit);
+    const mapped = node.children.map(visit);
+    const children = mapped.every((c, i) => c === node.children[i]) ? node.children : mapped;
     const problem = altProblem(node);
     if (!problem) return children === node.children ? node : { ...node, children };
     const path = paths.get(node.id) ?? node.label;

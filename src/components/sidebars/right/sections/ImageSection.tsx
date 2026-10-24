@@ -11,6 +11,12 @@
 //     the photo readable): the image URL, Size (background-size), the focal
 //     point (background-position) and the overlay strength.
 //
+// An img also gets its alt text here, with a Decorative switch (alt "" on
+// purpose) and a warning when the alt is missing or generic ("Image", a file
+// name): the same rule the page generator's essentials screen applies
+// (src/lib/ai/pageGen/essentials.ts), so an owner sees what a screen reader
+// would announce.
+//
 // The AI page generator writes the same keys (src/lib/ai/pageGen/stockImages.ts),
 // so a generated crop can be corrected here. Every value is responsive-aware
 // like the other sections (getResponsiveStyleValue / updateResponsiveStyle).
@@ -22,7 +28,9 @@ import { observer } from 'mobx-react-lite';
 import { Crop } from 'lucide-react';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { CONTAINER_TYPES } from '../sectionConfig';
-import { CollapsibleSection, DimensionInput, FieldPair, PropertyRow, PropertySelect, PropertySlider } from '../primitives';
+import { CollapsibleSection, DimensionInput, FieldPair, PropertyRow, PropertySelect, PropertySlider, PropertySwitch, TextInput } from '../primitives';
+import { altProblem, isDecorativeImage, type AltProblem } from '@/lib/ai/pageGen/essentials';
+import { DECORATIVE_ATTR } from '@/lib/ai/pageGen/schema';
 import {
   formatFocalPosition,
   parseFocalPosition,
@@ -220,6 +228,50 @@ function FocalControls({ src, value, onChange, source }: FocalControlsProps) {
   );
 }
 
+const ALT_WARNINGS: Record<AltProblem, string> = {
+  missing: 'No alt text: screen readers cannot describe this image. Say what it shows, or mark it decorative.',
+  generic: 'A generic alt text tells screen readers nothing. Say what the image shows.',
+  'file name': 'The alt text is a file name. Say what the image shows.',
+  'layer name': 'The alt text repeats the layer name. Say what the image shows.',
+};
+
+/** The img's alt text, the Decorative switch, and the warning when the alt says nothing. */
+export const AltTextControls = observer(({ component }: { component: ComponentInstance }) => {
+  const props = component.props as Record<string, unknown>;
+  const decorative = isDecorativeImage({ props });
+  const alt = typeof props.alt === 'string' ? props.alt : '';
+  const problem = altProblem({ type: component.type, label: component.label ?? '', props });
+  return (
+    <>
+      <PropertyRow label="Decorative" hint="Purely decorative images are skipped by screen readers (empty alt text)">
+        <PropertySwitch
+          checked={decorative}
+          onCheckedChange={(on) =>
+            component.setProps(on ? { alt: '', [DECORATIVE_ATTR]: 'true' } : { [DECORATIVE_ATTR]: undefined })
+          }
+        />
+      </PropertyRow>
+      {!decorative && (
+        <PropertyRow label="Alt text" hint="What the image shows, for screen readers and search engines">
+          <TextInput
+            value={alt}
+            maxLength={300}
+            placeholder="Two baristas pouring latte art"
+            aria-invalid={problem ? true : undefined}
+            onChange={(e) => component.setProps({ alt: e.target.value })}
+          />
+        </PropertyRow>
+      )}
+      {problem && (
+        <p role="status" data-testid="alt-warning" className="text-[11px] leading-snug text-amber-600 dark:text-amber-400">
+          {ALT_WARNINGS[problem]}
+        </p>
+      )}
+    </>
+  );
+});
+AltTextControls.displayName = 'AltTextControls';
+
 export const ImageSection = observer(({ component, breakpointId }: ImageSectionProps) => {
   const getStyleValue = (prop: string) => component.getResponsiveStyleValue(prop, breakpointId);
   const setStyleValue = (prop: string, value: string | number) => component.updateResponsiveStyle(prop, value, breakpointId);
@@ -245,6 +297,7 @@ export const ImageSection = observer(({ component, breakpointId }: ImageSectionP
           onChange={(v) => setStyleValue('objectPosition', v)}
           source={src('objectPosition')}
         />
+        <AltTextControls component={component} />
       </CollapsibleSection>
     );
   }

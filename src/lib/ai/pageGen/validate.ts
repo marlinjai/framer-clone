@@ -607,6 +607,12 @@ class Validator {
       ...sanitizeGeneratedFormProps(presetDefaults, formProps, (m) => this.warn(path, m)),
       ...stickyProps,
     };
+    if (isStickyCta(presetDefaults)) {
+      // The label and the link must come from the model: the preset's
+      // placeholders ("Book now" to "#contact") would publish a dead button.
+      if (stickyProps.ctaLabel === undefined) delete merged.ctaLabel;
+      if (stickyProps.ctaHref === undefined) delete merged.ctaHref;
+    }
     delete merged.style;
     const hasBackgroundPhoto = isPhotoContainer && this.photoBackground(path, style, modelProps, merged);
     if (Object.keys(style).length > 0) merged.style = style;
