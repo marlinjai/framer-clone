@@ -24,7 +24,10 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      `sales_document_outro_format_check`): a JSON object of version 1, so a
  *      stray scalar or a later shape written by an older reader is refused by
  *      the database itself. The full shape is checked by the application's
- *      schema, which the row cannot express.
+ *      schema, which the row cannot express. Added NOT VALID: the columns are
+ *      brand new and NULL in every existing row, so there is nothing to
+ *      validate, and the database never rescans the table under the lock.
+ *      The check still binds every later insert and update.
  *   4. A bounded lock wait (5 s), as 014 and 016: the ALTER never makes every
  *      query on sales_document queue behind a long transaction.
  */
@@ -43,7 +46,7 @@ export const booksTextFormat: Migration = {
         ) THEN
           ALTER TABLE "sales_document"
             ADD CONSTRAINT "sales_document_intro_format_check"
-            CHECK ("intro_format" IS NULL OR (jsonb_typeof("intro_format") = 'object' AND "intro_format" ->> 'v' = '1'));
+            CHECK ("intro_format" IS NULL OR (jsonb_typeof("intro_format") = 'object' AND "intro_format" ->> 'v' = '1')) NOT VALID;
         END IF;
         IF NOT EXISTS (
           SELECT 1 FROM pg_constraint
@@ -51,7 +54,7 @@ export const booksTextFormat: Migration = {
         ) THEN
           ALTER TABLE "sales_document"
             ADD CONSTRAINT "sales_document_outro_format_check"
-            CHECK ("outro_format" IS NULL OR (jsonb_typeof("outro_format") = 'object' AND "outro_format" ->> 'v' = '1'));
+            CHECK ("outro_format" IS NULL OR (jsonb_typeof("outro_format") = 'object' AND "outro_format" ->> 'v' = '1')) NOT VALID;
         END IF;
       END
       $$
