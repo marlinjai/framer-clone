@@ -46,7 +46,7 @@ import type { DataStateMode } from '@/lib/renderer/data/resolveDataState';
 const NOTE_STYLE: React.CSSProperties = {
   color: '#9ca3af',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
 };
 
 // Editor-only error chip carrying the REAL error message (the contract: errors
@@ -60,7 +60,7 @@ const ERROR_CHIP_STYLE: React.CSSProperties = {
   borderRadius: '4px',
   padding: '2px 6px',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
 };
 
 const OPTION_GROUP_STYLE: React.CSSProperties = {
@@ -254,9 +254,11 @@ const VariantSelector = observer(
             Availability check failed: {availability.message}
           </span>
         ) : (
-          // Preview/headless: do NOT render a fake availability. Surface nothing
-          // for the slot rather than a silent "looks available" claim.
-          <span data-variant-availability="error" style={{ display: 'none' }} />
+          // Preview / published: never a fake availability, and never silence:
+          // the visitor reads a plain sentence (not the internal message).
+          <span data-variant-availability="error" role="status" style={{ ...NOTE_STYLE, color: '#b91c1c' }}>
+            Availability could not be checked right now. Please try again later.
+          </span>
         );
     } else if (availability.status === 'ready') {
       availabilityNode = (

@@ -16,7 +16,18 @@
 // through `renderNode` and therefore sits inside that provider.
 //
 // Surface is 'preview' (the published-site behavior): an errored data slot
-// renders nothing rather than an editor error chip.
+// shows the visitor a plain sentence rather than an editor error chip.
+//
+// Loading and error states (plan docs/plans/2026-10-23-published-site-essentials.md,
+// decision 7):
+//   - PENDING: until the island has mounted in the browser (the cart lives in
+//     localStorage and every read is client-side), it renders a sized,
+//     aria-busy placeholder in the node's own host element and classes, so the
+//     layout does not jump and nothing claims "your cart is empty" before the
+//     cart was read. Sizes per kind: ISLAND_PENDING_SIZE.
+//   - ERROR: a render failure inside an island is caught by IslandErrorBoundary,
+//     which shows a visible message with a "Try again" control instead of
+//     blanking the page section (and logs the error).
 'use client';
 
 import React from 'react';
@@ -38,9 +49,110 @@ export interface CommerceIslandProps {
   scope: BindingScope;
 }
 
+/** The placeholder's minimum size per island kind, so the page does not jump on mount. */
+export const ISLAND_PENDING_SIZE: Record<CommerceIslandProps['kind'], { minHeight: number; minWidth?: number }> = {
+  'variant-selector': { minHeight: 72 },
+  'add-to-cart': { minHeight: 38, minWidth: 128 },
+  'cart-view': { minHeight: 120 },
+  'checkout-button': { minHeight: 38, minWidth: 128 },
+};
+
+const PENDING_LABEL: Record<CommerceIslandProps['kind'], string> = {
+  'variant-selector': 'Loading product options',
+  'add-to-cart': 'Loading',
+  'cart-view': 'Loading your cart',
+  'checkout-button': 'Loading',
+};
+
+/** True once mounted in the browser (false on the server and in the first client render). */
+function useMounted(): boolean {
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
+  return mounted;
+}
+
+interface IslandErrorBoundaryProps {
+  kind: CommerceIslandProps['kind'];
+  hostType: string;
+  hostProps: Record<string, unknown>;
+  children: React.ReactNode;
+}
+
+/** Catches a crash inside one island and shows a visible, recoverable message. */
+export class IslandErrorBoundary extends React.Component<IslandErrorBoundaryProps, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error(`CommerceIsland: the ${this.props.kind} island failed to render.`, error);
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    const wrapperProps = { ...this.props.hostProps };
+    delete (wrapperProps as any).children;
+    return React.createElement(
+      this.props.hostType as any,
+      { ...wrapperProps, 'data-island-error': this.props.kind },
+      <span role="alert" style={{ display: 'block', color: '#b91c1c', fontFamily: 'inherit', fontSize: '13px' }}>
+        This part of the shop could not be loaded.{' '}
+        <button
+          type="button"
+          onClick={() => this.setState({ failed: false })}
+          style={{ font: 'inherit', textDecoration: 'underline', background: 'none', border: 0, padding: 0, color: 'inherit', cursor: 'pointer' }}
+        >
+          Try again
+        </button>
+      </span>,
+    );
+  }
+}
+
 export default function CommerceIsland({ kind, node, scope }: CommerceIslandProps) {
   const hostType = nodeHostTag(node);
   const hostProps = nodeDomProps(node);
+  const mounted = useMounted();
+  if (!mounted && kind in ISLAND_PENDING_SIZE) {
+    const size = ISLAND_PENDING_SIZE[kind];
+    const wrapperProps = { ...hostProps } as Record<string, unknown>;
+    delete wrapperProps.children;
+    return React.createElement(
+      hostType as any,
+      { ...wrapperProps, 'data-island-pending': kind, 'aria-busy': true },
+      <span
+        role="status"
+        aria-label={PENDING_LABEL[kind]}
+        style={{
+          display: 'block',
+          minHeight: `${size.minHeight}px`,
+          ...(size.minWidth ? { minWidth: `${size.minWidth}px` } : {}),
+          borderRadius: '6px',
+          background: 'rgba(127, 127, 127, 0.12)',
+        }}
+      />,
+      // Without JavaScript the island never mounts: say so instead of "loading" forever.
+      <noscript key="noscript">
+        <span style={{ display: 'block', fontSize: '13px' }}>Turn on JavaScript to use the shop.</span>
+      </noscript>,
+    );
+  }
+  return (
+    <IslandErrorBoundary kind={kind} hostType={hostType} hostProps={hostProps}>
+      <IslandBody kind={kind} node={node} scope={scope} hostType={hostType} hostProps={hostProps} />
+    </IslandErrorBoundary>
+  );
+}
+
+function IslandBody({
+  kind,
+  node,
+  scope,
+  hostType,
+  hostProps,
+}: CommerceIslandProps & { hostType: string; hostProps: Record<string, unknown> }) {
   // The island components index into `node.children`; normalize to an array so a
   // verbatim node with no children does not crash VariantSelector's map.
   const islandNode = {

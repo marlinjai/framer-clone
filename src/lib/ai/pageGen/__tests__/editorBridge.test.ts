@@ -124,6 +124,12 @@ describe('captureTarget / buildRequest', () => {
     expect(JSON.stringify(req)).not.toContain(target.breakpoints[0].id); // ids never leave the client
   });
 
+  it('sends the site language and contact data from Site settings', () => {
+    project.updateSiteSettings({ ...project.site, language: 'de', business: { ...project.site.business, phone: '+49 89 1' } });
+    const req = buildRequest({ brief: 'x', model: 'SONNET', target: captureTarget('newPage', page, undefined), project });
+    expect(req.siteContext).toMatchObject({ language: 'de', phone: '+49 89 1', siteName: project.metadata.title });
+  });
+
   it('sends the selected subtree as context for replace', () => {
     const container = tree().children[0] as ComponentInstance;
     const req = buildRequest({ brief: 'x', model: 'HAIKU', target: captureTarget('replace', page, container), project });

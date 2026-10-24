@@ -16,6 +16,9 @@
 //       "auto" (the Image preset's fixed height would otherwise win),
 //     - an images.unsplash.com photo (img src or a container's background
 //       url() layer) without its complete credit dropped,
+//     - a fontFamily outside the self-hosted font library (Inter, Geist, an
+//       unhosted font) replaced by the library default of its category; a
+//       library family gets its canonical fallback stack (src/lib/fonts),
 //     - responsive-map keys matched to the request's breakpoint keys
 //       (case-insensitive, label match), unknown keys dropped,
 //     - ids assigned fresh and `parentId` set on every nested node (a whole
@@ -35,8 +38,10 @@
 import { v4 as uuidv4 } from 'uuid';
 import { STOCK_CREDIT_ATTRS, stockCreditAttrs, stockCreditProps } from './stockCredit';
 import { parseAspectRatio, photoUrlOf, withPhotoUrl } from '@/lib/images/imageStyle';
+import { normalizeFontFamily } from '@/lib/fonts/registry';
 import ComponentModel, { ComponentTypeEnum, CSS_PROP_SET } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag/voidTags';
+import { formPropKeysFor, presetFormKind, sanitizeGeneratedFormProps } from '@/lib/forms/generation';
 import {
   BASE_KEY,
   FORBIDDEN_TAGS,
@@ -52,6 +57,7 @@ import {
   type BreakpointKey,
   type GenerationPreset,
 } from './schema';
+import { EFFECTS_PROP, cleanGeneratedEffects } from './promptSections/effects';
 
 /** One validated node, ready for ComponentModel.create (responsive keys are still breakpoint KEYS). */
 export interface GeneratedNodeSnapshot {
@@ -114,7 +120,7 @@ export interface ValidateContext {
 const OWNED_KEYS = new Set(['id', 'componentType', 'canvasNodeType', 'parentId']);
 const NODE_KEYS = new Set(['type', 'preset', 'label', 'props', 'children']);
 
-const UNSAFE_STYLE_VALUE = /javascript:|vbscript:|expression\s*\(|<\s*\/?\s*script|@import|behavior\s*:|-moz-binding/i;
+export const UNSAFE_STYLE_VALUE = /javascript:|vbscript:|expression\s*\(|<\s*\/?\s*script|@import|behavior\s*:|-moz-binding/i;
 /**
  * Characters that let one style value escape into more CSS when a renderer or
  * the publish path serializes styles to text: `;` ends the declaration (and
@@ -123,7 +129,7 @@ const UNSAFE_STYLE_VALUE = /javascript:|vbscript:|expression\s*\(|<\s*\/?\s*scri
  * control characters (newlines included) can break out of a declaration or
  * hide content. No legitimate generated value needs any of them.
  */
-const STYLE_BREAKOUT_CHARS = /[;{}\\\u0000-\u001f\u007f]/;
+export const STYLE_BREAKOUT_CHARS = /[;{}\\\u0000-\u001f\u007f]/;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
@@ -210,6 +216,8 @@ class Validator {
   readonly imageRequests: ImageRequest[] = [];
   invalidImageQueries = 0;
   nodeCount = 0;
+  /** Appear effects accepted so far (capped: motion is used sparingly). */
+  appearCount = 0;
   maxDepth = 0;
   private readonly tags = new Set(listGenerationTags());
   private readonly bpKeys: Map<string, string>;
@@ -384,6 +392,16 @@ class Validator {
       this.warn(path, `style.${key}: url() to a disallowed location dropped`);
       return undefined;
     }
+    // Font families: library families keep their canonical stack, system
+    // stacks stay, anything else (Inter, Geist, a font this app does not host)
+    // becomes the library default of its category (src/lib/fonts/registry.ts).
+    if (key === 'fontFamily' || key.startsWith('fontFamily.')) {
+      const font = normalizeFontFamily(v);
+      if (font.reason) {
+        this.warn(path, `style.${key}: ${font.reason}`);
+      }
+      return font.value;
+    }
     return v;
   }
 
@@ -470,10 +488,14 @@ class Validator {
     if (!isPlainObject(rawProps)) this.warn(path, 'props must be an object, ignored');
     const modelProps = isPlainObject(rawProps) ? rawProps : {};
     const allowed = new Set(allowedPropKeysFor(type));
+    // Form presets (src/lib/forms/generation.ts) accept their own props on top.
+    const formKeys = new Set(formPropKeysFor(preset?.defaultProps as Record<string, unknown> | undefined));
+    const formProps: Record<string, unknown> = {};
     const props: Record<string, unknown> = {};
     let text: string | undefined;
     let imageQuery: string | undefined;
     let invalidQuery = false;
+    let rawEffects: unknown;
 
     // An Unsplash photo's credit (an earlier generation's image or background,
     // sent back in replace / insert context) is read separately below, never
@@ -484,6 +506,15 @@ class Validator {
     );
     for (const [key, value] of Object.entries(modelProps)) {
       if (key === 'style' || creditKeys.has(key)) continue;
+      if (key === EFFECTS_PROP) {
+        // Cleaned after the children are known (stagger needs two of them).
+        rawEffects = value;
+        continue;
+      }
+      if (formKeys.has(key)) {
+        formProps[key] = value;
+        continue;
+      }
       if (!allowed.has(key)) {
         this.warn(path, `prop "${key}" is not allowed on <${type}>, dropped`);
         continue;
@@ -529,7 +560,11 @@ class Validator {
       // The shape comes from the aspect ratio: a preset's fixed height would override it.
       style.height = 'auto';
     }
-    const merged: Record<string, unknown> = { ...presetDefaults, ...props };
+    const merged: Record<string, unknown> = {
+      ...presetDefaults,
+      ...props,
+      ...sanitizeGeneratedFormProps(presetDefaults, formProps, (m) => this.warn(path, m)),
+    };
     delete merged.style;
     const hasBackgroundPhoto = isPhotoContainer && this.photoBackground(path, style, modelProps, merged);
     if (Object.keys(style).length > 0) merged.style = style;
@@ -582,11 +617,28 @@ class Validator {
       if (Array.isArray(raw.children)) rawChildren = raw.children;
       else this.warn(path, 'children must be an array, ignored');
     }
+
+    // ---- effects (appear only, clamped, capped per generation) ----
+    // Decided before the children, so the cap keeps the outer reveals (a
+    // section) over inner ones. Stagger needs two children to make sense.
+    delete merged[EFFECTS_PROP];
+    if (rawEffects !== undefined) {
+      const childCount = isVoidTag(type) || preset?.dataComponentKind ? 0 : rawChildren.length;
+      const cleaned = cleanGeneratedEffects(rawEffects, childCount, this.appearCount);
+      for (const w of cleaned.warnings) this.warn(path, w);
+      if (cleaned.effects) {
+        merged[EFFECTS_PROP] = cleaned.effects;
+        this.appearCount += 1;
+      }
+    }
+
     const children: GeneratedNodeSnapshot[] = [];
     if (isVoidTag(type)) {
       if (rawChildren.length > 0) this.warn(path, `<${type}> cannot have children, ${rawChildren.length} dropped`);
       if (text !== undefined) this.warn(path, `<${type}> cannot have text, dropped`);
       text = undefined;
+    } else if (rawChildren.length > 0 && ['form-field', 'form-submit'].includes(presetFormKind(presetDefaults) ?? '')) {
+      this.warn(path, `form component "${preset?.id}" renders its own content, children dropped`);
     } else if (preset?.dataComponentKind && rawChildren.length > 0) {
       this.warn(path, `data component "${preset.id}" renders its own content, children dropped`);
     } else {

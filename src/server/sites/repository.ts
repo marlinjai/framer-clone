@@ -41,6 +41,7 @@ import {
   SubdomainAllocationError,
 } from './errors';
 import { findProjectSlugProblem } from '@/lib/pages/slug';
+import { pickPrimaryHost } from './primaryHost';
 import { nextSiteRedirects, parseSiteRedirects } from '@/lib/pages/redirects';
 import { generateSubdomain } from './subdomain';
 
@@ -188,6 +189,7 @@ export class SiteRepository {
         ingestionEndpoint: true,
         apiKeyRef: true,
         lumitraEnabled: true,
+        siteSettings: true,
         projectCreatedAt: true,
         projectUpdatedAt: true,
         pages: {
@@ -205,6 +207,7 @@ export class SiteRepository {
       ingestionEndpoint: row.ingestionEndpoint,
       apiKeyRef: row.apiKeyRef,
       lumitraEnabled: row.lumitraEnabled,
+      siteSettings: row.siteSettings,
       projectCreatedAt: row.projectCreatedAt,
       projectUpdatedAt: row.projectUpdatedAt,
       pages: row.pages.map((p) => ({ pageId: p.pageId, snapshot: p.snapshot })),
@@ -300,6 +303,7 @@ export class SiteRepository {
         ingestionEndpoint: persisted.ingestionEndpoint,
         apiKeyRef: persisted.apiKeyRef,
         lumitraEnabled: persisted.lumitraEnabled,
+        siteSettings: persisted.siteSettings as unknown as Prisma.InputJsonValue,
         // projectCreatedAt is immutable (set on create); only the
         // application "last edited" time advances on update.
         projectUpdatedAt: new Date(persisted.projectUpdatedAt),
@@ -331,6 +335,7 @@ export class SiteRepository {
             ingestionEndpoint: persisted.ingestionEndpoint,
             apiKeyRef: persisted.apiKeyRef,
             lumitraEnabled: persisted.lumitraEnabled,
+            siteSettings: persisted.siteSettings as unknown as Prisma.InputJsonValue,
             projectCreatedAt: new Date(persisted.projectCreatedAt),
             projectUpdatedAt: new Date(persisted.projectUpdatedAt),
             redirects: redirects as unknown as Prisma.InputJsonValue,
@@ -568,20 +573,8 @@ export class SiteRepository {
     if (!site) throw new SiteNotFoundError(siteId);
 
     const platform = site.domains.find((d) => d.subdomain);
-    const custom = site.domains
-      .filter(
-        (d) =>
-          d.customHostname &&
-          (d.verificationStatus === 'verified' || d.verificationStatus === 'active'),
-      )
-      .sort(
-        (a, b) =>
-          (a.activatedAt ?? a.createdAt).getTime() - (b.activatedAt ?? b.createdAt).getTime(),
-      )[0];
-    const base = baseHost?.trim().toLowerCase().replace(/\.$/, '');
-    const host =
-      custom?.customHostname ??
-      (platform?.subdomain && base ? `${platform.subdomain}.${base}` : null);
+    // The same rule the published head uses for canonical URLs (primaryHost.ts).
+    const host = pickPrimaryHost(site.domains, baseHost);
     return { host, everPublished: Boolean(platform) };
   }
 

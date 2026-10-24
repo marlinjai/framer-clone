@@ -117,6 +117,21 @@ describe('CartView display', () => {
     // NOT auto-removed: the line is still present.
     expect(container.querySelector('[data-cart-line="var_s_blue"]')).not.toBeNull();
   });
+
+  it('tells the visitor when a line could not load (preview), without the internal message', async () => {
+    seedCart([{ variantId: 'var_s_red', quantity: 1 }]);
+    const ds = new InMemoryCommerceDataSource();
+    vi.spyOn(ds, 'getVariant').mockRejectedValue(new Error('upstream 502 at db-7'));
+    const { container } = renderCart(ds);
+
+    await waitFor(() => {
+      const err = container.querySelector('[data-cart-line-error]');
+      expect(err?.textContent).toBe('This item could not be loaded right now.');
+    });
+    expect(container.textContent).not.toContain('db-7');
+    // The visitor is not stuck: the line can still be removed.
+    expect(container.querySelector('button[data-cart-remove="var_s_red"]')).not.toBeNull();
+  });
 });
 
 describe('CartView authors no money client-side and writes nothing to the server', () => {

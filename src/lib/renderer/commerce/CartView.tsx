@@ -43,7 +43,7 @@ import {
 const NOTE_STYLE: React.CSSProperties = {
   color: '#9ca3af',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
 };
 
 const WARNING_STYLE: React.CSSProperties = {
@@ -53,7 +53,7 @@ const WARNING_STYLE: React.CSSProperties = {
   borderRadius: '4px',
   padding: '2px 6px',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
 };
 
 const ERROR_CHIP_STYLE: React.CSSProperties = {
@@ -64,7 +64,7 @@ const ERROR_CHIP_STYLE: React.CSSProperties = {
   borderRadius: '4px',
   padding: '2px 6px',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
 };
 
 const LINE_STYLE: React.CSSProperties = {
@@ -73,7 +73,7 @@ const LINE_STYLE: React.CSSProperties = {
   gap: '8px',
   alignItems: 'center',
   padding: '6px 0',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
   fontSize: '14px',
 };
 
@@ -279,16 +279,20 @@ const CartView = observer(
       }
 
       if (directive.kind === 'error') {
-        // Editor: a chip with the real message. Preview/headless: surface
-        // nothing for the slot (never a silent success), but keep the remove
-        // control so the visitor is not stuck with an unrenderable line.
+        // Editor: a chip with the real message. Preview / published: a plain
+        // sentence for the visitor (never the internal message, never a
+        // silent success), and the remove control so they are not stuck.
         return (
           <div key={line.variantId} data-cart-line={line.variantId} style={LINE_STYLE}>
             {directive.message ? (
               <span data-cart-line-error style={ERROR_CHIP_STYLE}>
                 Failed to load item: {directive.message}
               </span>
-            ) : null}
+            ) : (
+              <span data-cart-line-error role="status" style={{ ...WARNING_STYLE, color: '#b91c1c' }}>
+                This item could not be loaded right now.
+              </span>
+            )}
             {removeButton}
           </div>
         );
@@ -373,7 +377,7 @@ const CartView = observer(
       <div
         data-cart-subtotal
         data-cart-subtotal-cents={subtotalCents}
-        style={{ fontFamily: 'Inter, sans-serif', fontSize: '14px', fontWeight: 600 }}
+        style={{ fontFamily: 'inherit', fontSize: '14px', fontWeight: 600 }}
       >
         Estimated subtotal: {subtotalLabel}
       </div>,

@@ -6,8 +6,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 import type { ComponentNode, CommerceServerRepository } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
-import { renderPublishedPage, pageSeoToMetadata } from '../renderPublishedPage';
-import type { PageSeoMetadata } from '../snapshotToComponentNode';
+import { renderPublishedPage } from '../renderPublishedPage';
 
 afterEach(() => {
   cleanup();
@@ -165,45 +164,5 @@ describe('renderPublishedPage', () => {
     });
     expect(headSnippet).toBeNull();
     expect(spy).toHaveBeenCalled();
-  });
-});
-
-describe('pageSeoToMetadata', () => {
-  const base: PageSeoMetadata = {
-    title: 'My Page',
-    description: 'A description',
-    keywords: ['k1', 'k2'],
-    ogTitle: '',
-    ogDescription: '',
-    ogImage: 'https://x/og.png',
-    canonicalUrl: 'https://x/p',
-  };
-
-  it('maps title/description/keywords/canonical and falls back OG to title/description', () => {
-    const meta = pageSeoToMetadata(base);
-    expect(meta.title).toBe('My Page');
-    expect(meta.description).toBe('A description');
-    expect(meta.keywords).toEqual(['k1', 'k2']);
-    expect(meta.alternates).toEqual({ canonical: 'https://x/p' });
-    expect(meta.openGraph).toMatchObject({
-      title: 'My Page',
-      description: 'A description',
-      images: [{ url: 'https://x/og.png' }],
-    });
-  });
-
-  it('omits empty fields', () => {
-    const meta = pageSeoToMetadata({
-      title: '',
-      description: '',
-      keywords: [],
-      ogTitle: '',
-      ogDescription: '',
-      ogImage: '',
-      canonicalUrl: '',
-    });
-    expect(meta.title).toBeUndefined();
-    expect(meta.openGraph).toBeUndefined();
-    expect(meta.keywords).toBeUndefined();
   });
 });

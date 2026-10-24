@@ -263,6 +263,7 @@ const PreviewShell = observer(({ missingPageId }: PreviewShellProps = {}) => {
             width={windowWidth}
             height={0}
             fill
+            smoothScroll={project?.site.smoothScroll ?? false}
           />
         </div>
       ) : (
@@ -276,7 +277,13 @@ const PreviewShell = observer(({ missingPageId }: PreviewShellProps = {}) => {
                 onResize={setWidth}
                 getStartWidth={() => widthRef.current}
               />
-              <PreviewFrame key={reloadKey} page={page} width={width} height={height} />
+              <PreviewFrame
+                key={reloadKey}
+                page={page}
+                width={width}
+                height={height}
+                smoothScroll={project?.site.smoothScroll ?? false}
+              />
               <ResizeGutter
                 side="right"
                 onResize={setWidth}

@@ -9,7 +9,6 @@
 // headless with fakes (the route wires the real, server-only dependencies).
 
 import React from 'react';
-import type { Metadata } from 'next';
 import {
   hydrateBindings,
   type ComponentNode,
@@ -20,9 +19,14 @@ import { createScope, pushPageFrame } from '@/lib/bindings/resolver/scope';
 import { buildTrackerSnippet } from '@/lib/renderer/publish/trackerSnippet';
 import { renderComponentNode } from './renderComponentNode';
 import { applyResponsiveStyles } from './applyResponsiveStyles';
+import { applyEffects } from './applyEffects';
+import EffectsIsland from './EffectsIsland';
+import { EffectsStyles } from '@/lib/effects/EffectsStyles';
+import { publishedEffectsBootScript } from '@/lib/effects/effects';
+import { publishedFontAssets } from './publishedFonts';
+import { applyImageLoading, HeroPreload } from './imageLoading';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import CommercePageProviders from './CommercePageProviders';
-import type { PageSeoMetadata } from './snapshotToComponentNode';
 
 /**
  * The resolved analytics binding for a published page. `ingestionKey` is the
@@ -63,6 +67,11 @@ export interface RenderPublishedPageInput {
    * style's base value applies at every width.
    */
   breakpoints?: readonly BreakpointRef[];
+  /**
+   * The site's smooth scrolling setting (Lenis): off by default, and off for
+   * visitors who ask for reduced motion.
+   */
+  smoothScroll?: boolean;
 }
 
 export interface RenderedPage {
@@ -112,7 +121,7 @@ function buildHeadSnippet(analytics: ResolvedAnalytics | undefined): string | nu
 export async function renderPublishedPage(
   input: RenderPublishedPageInput,
 ): Promise<RenderedPage> {
-  const { root, pageParams, cmsRepo, commerceRepo, analytics, breakpoints = [] } = input;
+  const { root, pageParams, cmsRepo, commerceRepo, analytics, breakpoints = [], smoothScroll = false } = input;
 
   const hydrated = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo });
 
@@ -120,7 +129,16 @@ export async function renderPublishedPage(
   // max-width media queries (desktop-first, the editor's cascade). Done on the
   // hydrated tree so cloned collection rows and the commerce islands (which
   // receive these props across the client boundary) carry the classes too.
-  const responsive = applyResponsiveStyles(hydrated, breakpoints);
+  // Lazy images below the hero, a priority hero (src/lib/renderer/server/imageLoading.tsx).
+  const images = applyImageLoading(hydrated);
+  // Effects next: they become data attributes plus custom properties in
+  // `style`, which the responsive pass then moves into the stylesheet per
+  // breakpoint like any responsive style.
+  const effects = applyEffects(images.root, breakpoints);
+  const responsive = applyResponsiveStyles(effects.root, breakpoints);
+  // The self-hosted web fonts the page uses, scanned before the responsive
+  // rewrite moves styles into classes (src/lib/fonts/registry.ts).
+  const fonts = publishedFontAssets(hydrated);
 
   // The page frame drives any island re-resolution of {{page.params.*}}.
   const scope = pushPageFrame(createScope(), pageParams);
@@ -129,6 +147,8 @@ export async function renderPublishedPage(
   return {
     body: (
       <>
+        {fonts}
+        {images.preloadUrl ? <HeroPreload url={images.preloadUrl} /> : null}
         {responsive.css ? (
           // Rendered in place (no href / precedence, so React does not hoist
           // it) ahead of the content it styles, so streamed HTML never paints
@@ -136,34 +156,21 @@ export async function renderPublishedPage(
           // any value containing `<`.
           <style data-fc-responsive="" dangerouslySetInnerHTML={{ __html: responsive.css }} />
         ) : null}
+        {effects.hasEffects || smoothScroll ? (
+          <EffectsStyles smoothScroll={smoothScroll} />
+        ) : null}
+        {effects.needsRuntime ? (
+          // Parsed and run before the content it gates: it injects the
+          // start-state rules (never part of the HTML, so nothing is hidden
+          // without JavaScript) unless the visitor asks for reduced motion.
+          <script data-fc-effects-boot="" dangerouslySetInnerHTML={{ __html: publishedEffectsBootScript() }} />
+        ) : null}
         <CommercePageProviders>{tree}</CommercePageProviders>
+        {effects.needsRuntime || smoothScroll ? (
+          <EffectsIsland effects={effects.needsRuntime} smoothScroll={smoothScroll} />
+        ) : null}
       </>
     ),
     headSnippet: buildHeadSnippet(analytics),
   };
-}
-
-/**
- * Map the page SEO metadata onto a Next.js Metadata object for `generateMetadata`.
- * Empty fields are omitted so Next falls back to its defaults rather than
- * emitting empty tags.
- */
-export function pageSeoToMetadata(meta: PageSeoMetadata): Metadata {
-  const metadata: Metadata = {};
-  if (meta.title) metadata.title = meta.title;
-  if (meta.description) metadata.description = meta.description;
-  if (meta.keywords.length > 0) metadata.keywords = meta.keywords;
-  if (meta.canonicalUrl) metadata.alternates = { canonical: meta.canonicalUrl };
-
-  const ogTitle = meta.ogTitle || meta.title;
-  const ogDescription = meta.ogDescription || meta.description;
-  const hasOg = ogTitle || ogDescription || meta.ogImage;
-  if (hasOg) {
-    metadata.openGraph = {
-      ...(ogTitle ? { title: ogTitle } : {}),
-      ...(ogDescription ? { description: ogDescription } : {}),
-      ...(meta.ogImage ? { images: [{ url: meta.ogImage }] } : {}),
-    };
-  }
-  return metadata;
 }

@@ -51,6 +51,20 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     '/api/books/**/*': ['./assets/fonts/**/*'],
   },
+  // The self-hosted web fonts (src/lib/fonts/registry.ts, copied into
+  // public/fonts by scripts/sync-fonts.ts) live under a versioned path
+  // (/fonts/<family>/<version>/<file>), so they can be cached for a year and
+  // never revalidated. Next serves public files with max-age=0 otherwise.
+  // No Content-Security-Policy is set app-wide; the fonts are same-origin on
+  // the editor host and on every published host alike.
+  async headers() {
+    return [
+      {
+        source: '/fonts/:path*',
+        headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }],
+      },
+    ];
+  },
   images: {
     // Allow all external domains (for design tool flexibility)
     remotePatterns: [

@@ -30,11 +30,21 @@ import {
   CirclePlus as CirclePlusIcon,
   ShoppingCart as ShoppingCartIcon,
   CreditCard as CreditCardIcon,
+  ClipboardList as FormIcon,
+  TextCursorInput as TextInputIcon,
+  Mail as MailIcon,
+  Phone as PhoneIcon,
+  AlignLeft as TextareaIcon,
+  ListChecks as SelectIcon,
+  SquareCheck as CheckboxIcon,
+  ShieldCheck as ConsentIcon,
+  Send as SubmitIcon,
 } from 'lucide-react';
 import type { IntrinsicElementType, PropsRecord } from '@/models/ComponentModel';
 import type { BindableSlotMeta } from '@/lib/bindings/types';
+import { FORM_KIND_ATTR, DEFAULT_FORM_NAME, DEFAULT_SUCCESS_MESSAGE, type FieldType } from '@/lib/forms/definition';
 
-export type ComponentCategory = 'basic' | 'layout' | 'data' | 'commerce';
+export type ComponentCategory = 'basic' | 'layout' | 'data' | 'commerce' | 'form';
 
 /**
  * Data-component variants. The renderer dispatches on this field to the right
@@ -77,7 +87,155 @@ export interface ComponentRegistryEntry {
    * category. Omitted for non-data components.
    */
   dataComponentKind?: DataComponentKind;
+  /**
+   * Registry ids inserted as children when this entry is dropped (in order),
+   * so a component that is only useful with content arrives with it: the Form
+   * comes with name, email, message, consent and a submit button.
+   */
+  defaultChildren?: string[];
 }
+
+// ---------- form components (published site essentials, decision 4) ----------
+// Marked with `data-form-kind` (src/lib/forms/definition.ts), never with
+// `data-component-kind`: the CMS and commerce renderers would turn an unbound
+// marked node into a "(no binding)" placeholder. The container and the fields
+// are divs in the editor (so they get the layout and spacing controls); the
+// published page renders the container as a real <form> island
+// (src/lib/renderer/forms/FormIsland.tsx).
+
+const FIELD_STYLE = {
+  display: 'block',
+  width: '100%',
+  fontFamily: 'inherit',
+  fontSize: '15px',
+  color: '#111827',
+} as const;
+
+function formField(
+  id: string,
+  label: string,
+  icon: LucideIcon,
+  fieldType: FieldType,
+  props: Record<string, unknown>,
+): ComponentRegistryEntry {
+  return {
+    id,
+    label,
+    category: 'form',
+    icon,
+    iconClassName: 'bg-teal-100 text-teal-700',
+    htmlType: 'div',
+    defaultProps: {
+      [FORM_KIND_ATTR]: 'form-field',
+      fieldType,
+      ...props,
+      style: { ...FIELD_STYLE },
+    },
+    defaultSize: { width: 320, height: fieldType === 'textarea' ? 170 : 72 },
+  };
+}
+
+export const FORM_COMPONENTS: Record<string, ComponentRegistryEntry> = {
+  form: {
+    id: 'form',
+    label: 'Form',
+    category: 'form',
+    icon: FormIcon,
+    iconClassName: 'bg-teal-100 text-teal-700',
+    htmlType: 'div',
+    defaultProps: {
+      [FORM_KIND_ATTR]: 'form',
+      formName: DEFAULT_FORM_NAME,
+      successBehavior: 'message',
+      successMessage: DEFAULT_SUCCESS_MESSAGE,
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '16px',
+        width: '100%',
+        maxWidth: '560px',
+        padding: '24px',
+        backgroundColor: '#ffffff',
+        border: '1px solid #e5e7eb',
+        borderRadius: '12px',
+        fontFamily: 'inherit',
+        color: '#111827',
+      },
+    },
+    defaultSize: { width: 480, height: 520 },
+    defaultChildren: ['formText', 'formEmail', 'formTextarea', 'formConsent', 'formSubmit'],
+  },
+  formText: formField('formText', 'Text input', TextInputIcon, 'text', {
+    label: 'Name',
+    name: 'name',
+    placeholder: 'Your name',
+    required: true,
+  }),
+  formEmail: formField('formEmail', 'Email input', MailIcon, 'email', {
+    label: 'Email',
+    name: 'email',
+    placeholder: 'you@example.com',
+    required: true,
+  }),
+  formPhone: formField('formPhone', 'Phone input', PhoneIcon, 'tel', {
+    label: 'Phone',
+    name: 'phone',
+    placeholder: '+49 30 1234567',
+    required: false,
+  }),
+  formTextarea: formField('formTextarea', 'Textarea', TextareaIcon, 'textarea', {
+    label: 'Message',
+    name: 'message',
+    placeholder: 'How can we help?',
+    required: true,
+  }),
+  formSelect: formField('formSelect', 'Select', SelectIcon, 'select', {
+    label: 'Topic',
+    name: 'topic',
+    placeholder: 'Please choose',
+    options: ['General question', 'Booking', 'Feedback'],
+    required: false,
+  }),
+  formCheckbox: formField('formCheckbox', 'Checkbox', CheckboxIcon, 'checkbox', {
+    label: 'Send me the newsletter',
+    name: 'newsletter',
+    required: false,
+  }),
+  formConsent: formField('formConsent', 'Consent checkbox', ConsentIcon, 'consent', {
+    label: 'I agree that my details are stored and used to answer my request.',
+    name: 'consent',
+    required: true,
+  }),
+  formSubmit: {
+    id: 'formSubmit',
+    label: 'Submit button',
+    category: 'form',
+    icon: SubmitIcon,
+    iconClassName: 'bg-teal-100 text-teal-700',
+    htmlType: 'button',
+    defaultProps: {
+      [FORM_KIND_ATTR]: 'form-submit',
+      children: 'Send',
+      loadingLabel: 'Sending...',
+      style: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        alignSelf: 'flex-start',
+        padding: '12px 20px',
+        backgroundColor: '#111827',
+        color: '#ffffff',
+        fontFamily: 'inherit',
+        fontSize: '15px',
+        fontWeight: 600,
+        border: 'none',
+        borderRadius: '8px',
+        cursor: 'pointer',
+      },
+    },
+    defaultSize: { width: 120, height: 44 },
+  },
+};
 
 export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
   text: {
@@ -91,7 +249,7 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
       children: 'Text',
       style: {
         fontSize: '16px',
-        fontFamily: 'Inter, sans-serif',
+        fontFamily: 'inherit',
         color: '#111827',
         margin: 0,
         padding: '8px',
@@ -118,7 +276,7 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
         padding: '8px 16px',
         backgroundColor: '#111827',
         color: 'white',
-        fontFamily: 'Inter, sans-serif',
+        fontFamily: 'inherit',
         fontSize: '14px',
         fontWeight: 500,
         border: 'none',
@@ -558,6 +716,8 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
       label: { label: 'Label', allowedModes: ['read'], scopeHint: 'any' },
     },
   },
+
+  ...FORM_COMPONENTS,
 };
 
 export const listComponentsByCategory = (
