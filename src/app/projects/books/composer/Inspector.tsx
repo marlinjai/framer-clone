@@ -61,7 +61,7 @@ const FONT_LABELS: Record<string, string> = {
 /** The font families the schema accepts (phase 5 widens the list; the select follows it). */
 const FONT_FAMILIES: readonly string[] = templateDocumentV2Schema.shape.theme.shape.fontFamily.options;
 
-const ALIGNABLE = new Set<BlockType>(['logo', 'senderLine', 'recipient', 'title', 'introText', 'outroText', 'taxNote', 'paymentDetails', 'freeText']);
+const ALIGNABLE = new Set<BlockType>(['logo', 'senderLine', 'recipient', 'title', 'subject', 'introText', 'outroText', 'taxNote', 'paymentDetails', 'freeText']);
 const UNTEXTED = new Set<BlockType>(['logo', 'spacer', 'divider', 'columns']);
 
 const sizeOptions = [{ value: '', label: 'Default' }, ...SIZE_SCALE.map((s) => ({ value: String(s), label: `${String(s).replace('.', ',')} pt` }))];

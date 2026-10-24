@@ -13,7 +13,7 @@
 // POST starts a NEW draft invoice, always a fresh row with a new id: no number,
 // no snapshots, only its own `draft_created` event (the re-entry path of the
 // stateful-flow standard). Optional starting values: `customerId`, `templateId`,
-// `netOrGross`, `serviceDate`, `servicePeriod`, `contractReference`,
+// `netOrGross`, `serviceDate`, `servicePeriod`, `contractReference`, `subject`,
 // `introText`, `outroText`. Without a template the company's default template
 // (if any) is put on the draft, and its default intro and outro texts fill
 // whatever the request leaves out. A draft that is never issued consumes nothing:
@@ -44,6 +44,7 @@ const createBody = z
     serviceDate: z.string().optional(),
     servicePeriod: z.object({ start: z.string(), end: z.string() }).optional(),
     contractReference: z.string().nullable().optional(),
+    subject: z.string().nullable().optional(),
     introText: z.string().nullable().optional(),
     outroText: z.string().nullable().optional(),
   })

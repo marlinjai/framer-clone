@@ -109,6 +109,19 @@ describe('the drawable check per family', () => {
     expect(previewSafeTemplate(withFamily(doc, 'dejavu-sans')).regions.body.at(-1)).toMatchObject({ text: 'Weiter → Seite 2' });
   });
 
+  it('checks the subject only where the template prints it, and shows it as ? in a preview', () => {
+    const f = regularInvoice();
+    const input = issuedInput(f);
+    input.document = { ...input.document, subject: 'Relaunch 中文' };
+    const withBlock = preset('klassisch');
+    const without: TemplateDocumentV2 = { ...withBlock, regions: { ...withBlock.regions, body: withBlock.regions.body.filter((b) => b.type !== 'subject') } };
+    expect(undrawableFields(input, withBlock)).toEqual(['subject']);
+    // No block draws it, so it cannot hold up an issue; a version 1 layout never prints a subject.
+    expect(undrawableFields(input, without)).toEqual([]);
+    expect(undrawableFields(input, null)).toEqual([]);
+    expect(previewSafe(buildRenderModel(input), 'dejavu-sans').subject).toBe('Relaunch ??');
+  });
+
   it("refuses a template text its family cannot draw at save, naming the block", async () => {
     const doc = withFamily(preset('klassisch'), 'noto-sans');
     doc.regions.body.push({ id: 'note', type: 'freeText', style: {}, heading: null, text: 'Weiter → Seite 2', variant: 'normal' });

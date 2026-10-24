@@ -44,7 +44,7 @@ import 'server-only';
 //     query threaded through the published renderer.
 //
 // Storage: one row in the company's `form_submission` table, no IP address
-// (src/server/commerce/migrations/tenant/016_form_submissions.ts). No email is
+// (src/server/commerce/migrations/tenant/017_form_submissions.ts). No email is
 // sent: the app has no mail transport yet (no Lumitra Mail client, Resend or
 // SMTP module exists in this repository), so the owner reads submissions in the
 // editor's "Form submissions" view.

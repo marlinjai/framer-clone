@@ -11,14 +11,14 @@
 // shares), and says so by being a draft.
 
 import { BooksError } from '../errors';
-import { templateTexts } from '../template/rules';
+import { printsSubject, templateTexts } from '../template/rules';
 import type { FontFamily, TemplateDocumentV2 } from '../template/schema';
 import { canDraw, undrawable } from './fonts';
 import type { RenderInput, RenderModel } from './model';
 import { previewSafeTemplateWith, previewSafeWith } from './previewSafe';
 
 /** Every printed text of a render input, by field name. */
-function printedFields(input: RenderInput): Array<[string, string | null | undefined]> {
+function printedFields(input: RenderInput, template: TemplateDocumentV2 | null): Array<[string, string | null | undefined]> {
   const s = input.sender;
   const r = input.recipient;
   const d = input.document;
@@ -47,6 +47,8 @@ function printedFields(input: RenderInput): Array<[string, string | null | undef
     ['introText', d.introText],
     ['outroText', d.outroText],
     ['contractReference', d.contractReference],
+    // Only where the template prints it: a subject no block draws cannot hold up an issue.
+    ...(printsSubject(template) ? [['subject', d.subject] as [string, string | null]] : []),
     ['taxNote', d.taxNote],
   );
   (input.template?.footerBlocks ?? []).forEach((b, i) => {
@@ -64,7 +66,7 @@ export function familyOf(template: TemplateDocumentV2 | null): FontFamily {
 export function undrawableFields(input: RenderInput, template: TemplateDocumentV2 | null): string[] {
   const family = familyOf(template);
   const own: Array<[string, string]> = template ? templateTexts(template).map((t) => [`template.${t.blockId}.${t.field}`, t.text]) : [];
-  return [...printedFields(input), ...own]
+  return [...printedFields(input, template), ...own]
     .filter(([, v]) => typeof v === 'string' && undrawable(v, family).length > 0)
     .map(([f]) => f);
 }

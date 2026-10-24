@@ -144,6 +144,7 @@ function baseDocument(overrides: Partial<SalesDocumentWithSnapshots> = {}): Sale
     paymentTermsDays: 14,
     paymentReference: 'Rechnung 2026-0042',
     contractReference: 'Rahmenvertrag 7',
+    subject: 'Website-Relaunch, Phase 1',
     currencyCode: 'EUR',
     taxRegion: 'DE',
     customerType: 'b2b',

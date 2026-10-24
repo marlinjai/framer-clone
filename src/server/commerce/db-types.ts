@@ -513,6 +513,7 @@ export interface SalesDocumentTable {
   template_snapshot: JsonColumn<TemplateSnapshot> | null;
   replaces_document_id: string | null;
   print_replaces_reference: Generated<boolean>;
+  subject: string | null;
 }
 
 /**
@@ -675,7 +676,7 @@ export interface BooksProductTable {
 }
 
 /**
- * 016_form_submissions: one accepted submission of a form on a published site.
+ * 017_form_submissions: one accepted submission of a form on a published site.
  * Deleted for real (owner, project delete, company erasure); `read_at` is the only
  * column that changes. No IP address is stored.
  */

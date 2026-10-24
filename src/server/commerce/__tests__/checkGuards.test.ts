@@ -38,7 +38,7 @@ describe('KNOWN_TENANT_TABLES (read from the per-tenant migration set)', () => {
         'sales_document_event',
         'sales_document_file',
         'sales_document_line',
-        // Forms (016_form_submissions)
+        // Forms (017_form_submissions)
         'form_submission',
         // Commerce (001 to 006)
         'credit_note',

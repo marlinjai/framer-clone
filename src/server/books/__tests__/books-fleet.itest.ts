@@ -132,7 +132,8 @@ async function fleetMigrate(schema: string) {
     '013_books_assets',
     '014_books_asset_delete',
     '015_books_products',
-    '016_form_submissions',
+    '016_books_subject',
+    '017_form_submissions',
   ]);
 }
 
@@ -198,7 +199,8 @@ describe('007_books through the fleet runner', () => {
       '013_books_assets',
       '014_books_asset_delete',
       '015_books_products',
-      '016_form_submissions',
+      '016_books_subject',
+      '017_form_submissions',
     ]);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     expect(await readCommerceTenantState(owner, tgId, schema)).toBe('ready');
@@ -230,10 +232,11 @@ describe('009_books_import over a schema already holding issued documents (as pr
                        customer_snapshot = '{"v":1}'::jsonb, sender_snapshot = '{"v":1}'::jsonb, template_snapshot = '{"v":1}'::jsonb
                  WHERE id = ${docId}`;
     const snapshot = async () =>
-      // 011 adds the nullable column replaces_document_id and 012 the column
-      // print_replaces_reference: compared without them (they did not exist
-      // before), and asserted NULL and false below.
-      owner`SELECT to_jsonb(d) - 'replaces_document_id' - 'print_replaces_reference' AS doc, (SELECT jsonb_agg(to_jsonb(l)) FROM ${s}.sales_document_line l WHERE l.document_id = d.id) AS lines
+      // 011 adds the nullable column replaces_document_id, 012 the column
+      // print_replaces_reference and 016 the nullable subject: compared
+      // without them (they did not exist before), and asserted NULL, false
+      // and NULL below.
+      owner`SELECT to_jsonb(d) - 'replaces_document_id' - 'print_replaces_reference' - 'subject' AS doc, (SELECT jsonb_agg(to_jsonb(l)) FROM ${s}.sales_document_line l WHERE l.document_id = d.id) AS lines
               FROM ${s}.sales_document d WHERE d.id = ${docId}`;
     const before = await snapshot();
 
@@ -246,13 +249,14 @@ describe('009_books_import over a schema already holding issued documents (as pr
       '013_books_assets',
       '014_books_asset_delete',
       '015_books_products',
-      '016_form_submissions',
+      '016_books_subject',
+      '017_form_submissions',
     ]);
 
     expect(await snapshot()).toEqual(before);
-    const [link] = await owner<{ replaces_document_id: string | null; print_replaces_reference: boolean }[]>`
-      SELECT replaces_document_id, print_replaces_reference FROM ${s}.sales_document WHERE id = ${docId}`;
-    expect(link).toEqual({ replaces_document_id: null, print_replaces_reference: false });
+    const [link] = await owner<{ replaces_document_id: string | null; print_replaces_reference: boolean; subject: string | null }[]>`
+      SELECT replaces_document_id, print_replaces_reference, subject FROM ${s}.sales_document WHERE id = ${docId}`;
+    expect(link).toEqual({ replaces_document_id: null, print_replaces_reference: false, subject: null });
     const [fk] = await owner<{ condeferrable: boolean; condeferred: boolean }[]>`
       SELECT c.condeferrable, c.condeferred FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
        WHERE n.nspname = ${schema} AND c.conname = 'sales_document_line_document_fkey'`;
@@ -302,7 +306,7 @@ describe('012_books_template_v2 through the fleet runner', () => {
                 VALUES (${plain}, ${tenantId}, 'Plain', NULL, ${owner.json([{ unexpected: 1 }])}, now())`;
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2', '013_books_assets', '014_books_asset_delete', '015_books_products', '016_form_submissions']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2', '013_books_assets', '014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions']);
 
     const columns = await owner<{ column_name: string }[]>`
       SELECT column_name FROM information_schema.columns WHERE table_schema = ${schema} AND table_name = 'document_template' ORDER BY column_name`;
@@ -388,7 +392,7 @@ describe('013_books_assets (and 014 after it) through the fleet runner', () => {
     // The fleet runner applies the whole set: 013, then 014 (which lets an unused logo be deleted,
     // tested on its own below).
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets', '014_books_asset_delete', '015_books_products', '016_form_submissions']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets', '014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions']);
     expect(await owner`SELECT * FROM ${s}.document_template_version ORDER BY id`).toEqual(before);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
 
@@ -488,7 +492,7 @@ describe('014_books_asset_delete through the fleet runner', () => {
     });
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['014_books_asset_delete', '015_books_products', '016_form_submissions']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions']);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     // The frozen logo of a document is found through its own index.
     const [index] = await owner<{ n: number }[]>`

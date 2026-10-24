@@ -1,5 +1,5 @@
 // Form submissions against a real Postgres (pnpm test:integration): the
-// 016_form_submissions table in a provisioned tenant schema, the public submit
+// 017_form_submissions table in a provisioned tenant schema, the public submit
 // route end to end (host -> published site -> tg_<id>, as the low-privilege
 // commerce_app role), the repository the editor view uses (newest first,
 // filter, read marks, real deletes), tenant isolation, and every delete path
@@ -99,7 +99,7 @@ beforeEach(async () => {
   await fx.owner`DELETE FROM ${fx.owner(schema)}.form_submission`;
 });
 
-describe('016_form_submissions', () => {
+describe('017_form_submissions', () => {
   it('lives in the tenant schema with no IP column, and refuses rows outside its bounds', async () => {
     const cols = await fx.owner<{ column_name: string }[]>`
       SELECT column_name FROM information_schema.columns WHERE table_schema = ${schema} AND table_name = 'form_submission' ORDER BY ordinal_position`;

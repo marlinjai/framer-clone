@@ -105,8 +105,8 @@ describe('every block type in every region it may stand in', () => {
     expect(layout.issues).toEqual([]);
   });
 
-  it('covers all 17 block types and every region', () => {
-    expect(Object.keys(ALLOWED_REGIONS)).toHaveLength(17);
+  it('covers all 18 block types and every region', () => {
+    expect(Object.keys(ALLOWED_REGIONS)).toHaveLength(18);
     const regions = new Set(Object.values(ALLOWED_REGIONS).flat());
     for (const r of REGIONS) expect(regions.has(r)).toBe(true);
   });

@@ -112,6 +112,8 @@ export interface DocumentView {
   paymentTermsDays: number;
   /** The reference printed in the document data ("Vertrag"), editable on a draft. */
   contractReference: string | null;
+  /** The subject line ("Betreff"), printed where the template places its subject block. */
+  subject: string | null;
   netOrGross: 'net' | 'gross';
   kleinunternehmer: boolean;
   reverseCharge: boolean;
@@ -137,6 +139,8 @@ export interface DocumentRef {
 }
 
 export interface DocumentDetail {
+  /** Whether the template prints the subject; only the document's own GET and PATCH answer it (absent elsewhere). */
+  printsSubject?: boolean;
   document: DocumentView;
   lines: LineView[];
   events: Array<{ id: string; eventType: string; createdAt: string }>;

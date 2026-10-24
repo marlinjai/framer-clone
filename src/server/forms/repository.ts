@@ -2,7 +2,7 @@ import 'server-only';
 
 // src/server/forms/repository.ts
 //
-// The form submissions of a site (migration 016_form_submissions). Every query
+// The form submissions of a site (migration 017_form_submissions). Every query
 // runs on the SCOPED handle of one tenant group's schema (`commerceTenantDb`)
 // and filters on the tenant group AND the site, so a row of another site in the
 // same schema answers "not found", exactly like an unknown id.

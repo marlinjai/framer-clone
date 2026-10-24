@@ -97,7 +97,7 @@ const JSON_COLUMNS: Record<string, string> = {
   'historical_import_item.extracted': 'Record<string, unknown>',
   'historical_import_item.corrected': 'Record<string, unknown>',
   'historical_import_item.problems': 'Array<Record<string, unknown>>',
-  // 016_form_submissions: parsed with zod on read (src/server/forms/repository.ts).
+  // 017_form_submissions: parsed with zod on read (src/server/forms/repository.ts).
   'form_submission.fields': 'Array<Record<string, unknown>>',
 };
 
@@ -156,7 +156,7 @@ const TABLE_DOCS: Record<string, string> = {
   books_asset:
     '013_books_assets: an uploaded logo (PNG or JPEG bytes), one per company and\nSHA-256, append-only (no updated_at).',
   form_submission:
-    '016_form_submissions: one accepted submission of a form on a published site.\nDeleted for real (owner, project delete, company erasure); `read_at` is the only\ncolumn that changes. No IP address is stored.',
+    '017_form_submissions: one accepted submission of a form on a published site.\nDeleted for real (owner, project delete, company erasure); `read_at` is the only\ncolumn that changes. No IP address is stored.',
   books_product:
     '015_books_products: an item of the company\'s product and service list. Mutable,\narchived instead of deleted; draft lines copy its values and never reference it.\n`name_key` and `search_text` are folded by the repository (src/lib/books/searchKey.ts).',
 };

@@ -134,6 +134,7 @@ export async function startCorrection(
         service_period_end: invoice.service_period_end,
         payment_terms_days: invoice.payment_terms_days,
         contract_reference: invoice.contract_reference,
+        subject: invoice.subject,
         intro_text: invoice.intro_text,
         outro_text: invoice.outro_text,
         currency_code: invoice.currency_code,

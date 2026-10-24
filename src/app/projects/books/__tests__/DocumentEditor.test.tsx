@@ -263,6 +263,154 @@ describe('DocumentEditor', () => {
   });
 });
 
+describe('DocumentEditor: the texts in the form', () => {
+  it('saves the subject and the reference in turn when tabbing on, each with the version the one before produced', async () => {
+    let doc = detail();
+    server({
+      ...base(() => doc),
+      'PATCH /api/books/documents/doc-1': (b) => {
+        const { expectedVersion, ...rest } = b!;
+        const current = doc.document as Json & { version: number };
+        if (expectedVersion !== current.version) return { status: 409, body: { error: { code: 'concurrent_edit', message: 'newer' } } };
+        doc = detail({ document: { ...current, ...rest, version: current.version + 1 } });
+        return { status: 200, body: doc };
+      },
+    });
+    render(<DocumentEditor id="doc-1" />);
+    const subject = (await screen.findByLabelText('Subject')) as HTMLInputElement;
+    fireEvent.change(subject, { target: { value: '  Website-Relaunch  ' } });
+    fireEvent.blur(subject);
+    const reference = screen.getByLabelText('Reference') as HTMLInputElement;
+    reference.focus();
+    fireEvent.change(reference, { target: { value: 'PO 4711' } });
+    fireEvent.blur(reference);
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(2));
+    await waitFor(() => expect((doc.document as { contractReference?: string }).contractReference).toBe('PO 4711'));
+    expect(calls.filter((c) => c.method === 'PATCH').map((c) => c.body)).toEqual([
+      { subject: 'Website-Relaunch', expectedVersion: 3 },
+      { contractReference: 'PO 4711', expectedVersion: 4 },
+    ]);
+    expect(subject.value).toBe('Website-Relaunch');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('an emptied text is saved as none, an unchanged one sends nothing', async () => {
+    const doc = detail({ document: { introText: 'Hallo' } });
+    server({ ...base(() => doc), 'PATCH /api/books/documents/doc-1': () => ({ status: 200, body: doc }) });
+    render(<DocumentEditor id="doc-1" />);
+    const intro = (await screen.findByLabelText('Intro text')) as HTMLTextAreaElement;
+    fireEvent.blur(intro);
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+    fireEvent.change(intro, { target: { value: '   ' } });
+    fireEvent.blur(intro);
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ introText: null, expectedVersion: 3 }));
+  });
+
+  it('a failed save stays marked on its field after the next change clears the banner', async () => {
+    let doc = detail();
+    let fail = true;
+    server({
+      ...base(() => doc),
+      'PATCH /api/books/documents/doc-1': (b) => {
+        const { expectedVersion, ...rest } = b!;
+        void expectedVersion;
+        if (fail && 'subject' in rest) return { status: 503, body: { error: { code: 'unavailable', message: 'Try again later.' } } };
+        doc = detail({ document: { ...(doc.document as Json), ...rest, version: (doc.document as { version: number }).version + 1 } });
+        return { status: 200, body: doc };
+      },
+    });
+    render(<DocumentEditor id="doc-1" />);
+    const subject = (await screen.findByLabelText('Subject')) as HTMLInputElement;
+    fireEvent.change(subject, { target: { value: 'Relaunch' } });
+    fireEvent.blur(subject);
+    await waitFor(() => expect(subject.getAttribute('aria-invalid')).toBe('true'));
+    const reference = screen.getByLabelText('Reference') as HTMLInputElement;
+    fireEvent.change(reference, { target: { value: 'PO 1' } });
+    fireEvent.blur(reference);
+    await waitFor(() => expect((doc.document as Json).contractReference).toBe('PO 1'));
+    // The banner is gone with the reference's save; the subject still says it was not saved.
+    expect(subject.getAttribute('aria-invalid')).toBe('true');
+    expect(subject.value).toBe('Relaunch');
+    expect(document.getElementById(subject.getAttribute('aria-describedby')!.split(' ').at(-1)!)?.textContent).toMatch(/Not saved/);
+    fail = false;
+    fireEvent.change(subject, { target: { value: 'Relaunch!' } });
+    fireEvent.blur(subject);
+    await waitFor(() => expect(subject.getAttribute('aria-invalid')).toBeNull());
+    expect((doc.document as Json).subject).toBe('Relaunch!');
+  });
+
+  it('a field left without a change sends nothing and shows what another window saved meanwhile', async () => {
+    let doc = detail({ document: { contractReference: 'alt' } });
+    server({
+      ...base(() => doc),
+      'PATCH /api/books/documents/doc-1': (b) => {
+        const { expectedVersion, ...rest } = b!;
+        // The subject save conflicts: another window saved the reference meanwhile.
+        if ('subject' in rest && expectedVersion === 3) {
+          doc = detail({ document: { ...(doc.document as Json), contractReference: 'PO 4711', version: 4 } });
+          return { status: 409, body: { error: { code: 'concurrent_edit', message: 'newer' } } };
+        }
+        doc = detail({ document: { ...(doc.document as Json), ...rest, version: (doc.document as { version: number }).version + 1 } });
+        return { status: 200, body: doc };
+      },
+    });
+    render(<DocumentEditor id="doc-1" />);
+    const subject = (await screen.findByLabelText('Subject')) as HTMLInputElement;
+    const reference = screen.getByLabelText('Reference') as HTMLInputElement;
+    fireEvent.change(subject, { target: { value: 'Relaunch' } });
+    fireEvent.blur(subject);
+    reference.focus();
+    fireEvent.focus(reference);
+    await waitFor(() => expect(calls.filter((c) => c.url === '/api/books/documents/doc-1' && c.method === 'GET').length).toBeGreaterThanOrEqual(2));
+    fireEvent.blur(reference);
+    // The old "alt" is never sent back over "PO 4711".
+    expect(calls.filter((c) => c.method === 'PATCH').map((c) => c.body)).toEqual([{ subject: 'Relaunch', expectedVersion: 3 }]);
+    await waitFor(() => expect(reference.value).toBe('PO 4711'));
+    // The retried subject goes with the reloaded version.
+    fireEvent.change(subject, { target: { value: 'Relaunch 2' } });
+    fireEvent.blur(subject);
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PATCH').at(-1)!.body).toEqual({ subject: 'Relaunch 2', expectedVersion: 4 }));
+  });
+
+  it('a text over its limit is refused with a message, never cut', async () => {
+    const doc = detail();
+    server({ ...base(() => doc), 'PATCH /api/books/documents/doc-1': () => ({ status: 200, body: doc }) });
+    render(<DocumentEditor id="doc-1" />);
+    const subject = (await screen.findByLabelText('Subject')) as HTMLInputElement;
+    fireEvent.change(subject, { target: { value: 'x'.repeat(250) } });
+    fireEvent.keyDown(subject, { key: 'Enter' });
+    expect(subject.value).toHaveLength(250);
+    expect(subject.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByText(/Subject is at most 200 characters \(now 250\)/)).toBeTruthy();
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+  });
+
+  it('a template without a subject block: no subject field, a pointer to the composer; a subject already typed says it is not printed', async () => {
+    const plain = detail();
+    server({ ...base(() => ({ ...plain, printsSubject: false })) });
+    render(<DocumentEditor id="doc-1" />);
+    await screen.findByLabelText('Reference');
+    expect(screen.queryByLabelText('Subject')).toBeNull();
+    expect(screen.getByRole('link', { name: 'template composer' }).getAttribute('href')).toBe('/projects/books?tab=templates');
+    cleanup();
+    const typed = detail({ document: { subject: 'Alt' } });
+    server({ ...base(() => ({ ...typed, printsSubject: false })) });
+    render(<DocumentEditor id="doc-1" />);
+    const subject = await screen.findByLabelText('Subject');
+    expect(document.getElementById(subject.getAttribute('aria-describedby')!)?.textContent).toMatch(/no subject block, so this subject is not printed/);
+  });
+
+  it('an issued invoice shows the texts it printed, with nothing to edit', async () => {
+    const doc = detail({ document: { status: 'issued', documentNumber: '62', issueDate: '2026-10-20', subject: 'Website-Relaunch', outroText: 'Danke' } });
+    server(base(() => doc));
+    render(<DocumentEditor id="doc-1" />);
+    const texts = await screen.findByRole('region', { name: 'Texts' });
+    expect(texts.textContent).toContain('Website-Relaunch');
+    expect(texts.textContent).toContain('Danke');
+    expect(within(texts).queryByRole('textbox')).toBeNull();
+  });
+});
+
 describe('DocumentEditor: an imported invoice', () => {
   it('is marked, offers its original for download and nothing to edit or issue', async () => {
     const imported = detail({

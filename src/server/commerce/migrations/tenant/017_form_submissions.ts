@@ -1,7 +1,7 @@
 import type { Migration } from '@marlinjai/tenant-db';
 
 /**
- * Published site essentials, decision 4, `016_form_submissions`: what a visitor
+ * Published site essentials, decision 4, `017_form_submissions`: what a visitor
  * sends through a form on a published site
  * (docs/plans/2026-10-23-published-site-essentials.md). Purely additive: one new
  * table, nothing existing changes.
@@ -42,7 +42,7 @@ import type { Migration } from '@marlinjai/tenant-db';
  */
 
 export const formSubmissions: Migration = {
-  id: '016_form_submissions',
+  id: '017_form_submissions',
   up: async (tx) => {
     await tx`
       CREATE TABLE IF NOT EXISTS "form_submission" (

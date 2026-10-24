@@ -576,3 +576,42 @@ leaving it sends nothing, Enter saves it against the draft as it is now, Escape 
 equal to what is saved now is not restored. Storage refused by the browser (a private window, a
 sandboxed frame) changes nothing but the recovery. Proven in Chrome: typed an intro text,
 reloaded, the text came back unsent, Enter saved it with one request.
+
+## Phase 4 build notes (2026-10-24): the subject line
+
+- **Data.** Migration `016_books_subject` adds `sales_document.subject` (nullable TEXT, at most 200
+  characters by a CHECK, no default, no backfill). Existing documents read NULL and print no
+  subject, so issued invoices re-render unchanged. 007's freeze guard compares whole rows, so the
+  subject is frozen at issue with no new trigger code. The API takes `subject` on create and on
+  the draft PATCH (one line: a line break or more than 200 characters is `invalid_input`). It is
+  part of the undrawable-character check at issue.
+- **Decided while building:** a correction's replacement draft copies the subject, like the other
+  texts. A cancellation's credit note does not, like the intro and closing texts today: its own
+  title says what it is.
+- **Template.** A new optional `subject` block, body only, at most once, between the title and
+  the intro text in the presets, bold at the base size, no "Betreff:" label (the sevdesk look).
+  It prints nothing for a document without a subject, and a template with the block renders
+  byte-identical to one without it then (pinned by a test, and checked over every preset, font
+  and probe before the goldens were renewed). **Existing companies add the block once in the
+  composer** ("Subject" in the palette): that is the constraint "prints where the layout says",
+  not a gap. The probe documents carry a subject, so the composer previews show it.
+- **Editing.** On the page the subject is a one-line field; an empty one is a slot "Add a subject"
+  under the title. The form gained a texts section (subject, reference, intro text, closing text),
+  which it never had: narrow windows can now reach every text the page edits. Its saves run one
+  after another, each with the version the one before produced, so tabbing through the texts
+  never sends a stale version, and a value saved elsewhere replaces an input only while it is
+  not focused.
+- **Golden bytes.** `engineFields.test.ts` gained `UPDATE_ENGINE_GOLDEN=1` to pin a deliberate
+  change of what the presets or probes print; all 126 renders changed because every probe now has
+  a subject.
+- **Fresh review (2026-10-24), every finding fixed in the same pull request:**
+  - The form's text fields mark a failed save on the field itself (`aria-invalid`, the reason named) until it saves. The banner alone is cleared by the next change, and the typed text looked saved.
+  - A field left without a change sends nothing and takes the saved value, so it never writes an old value back over an edit made in another window.
+  - The queue reads the version of the latest answer, kept by the editor on every answer, reloads included. It was a ref written during render, and stale after a conflict.
+  - A text over its limit is refused with a message instead of being cut by `maxLength`.
+  - Hints and errors are linked to their inputs, and Enter keeps the focus.
+  - The issued view is a description list.
+  - The draft preview replaces characters the font cannot print in the subject too (`previewSafe` had missed it).
+  - The document's GET and PATCH answer `printsSubject`, so the form offers the subject only where the template prints it, and otherwise points to the template composer.
+  - The issue-time check tests the subject only when a block prints it.
+  - Migration 016 waits at most 5 s for its lock, as 014 does.

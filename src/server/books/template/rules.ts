@@ -82,6 +82,7 @@ export const ALLOWED_REGIONS: Record<BlockType, readonly RegionName[]> = {
   recipient: ['addressZone.left'],
   documentMeta: ['addressZone.right', 'body'],
   title: ['body', 'followingPageHeader'],
+  subject: ['body'],
   introText: ['body'],
   outroText: ['body'],
   lineTable: ['body'],
@@ -113,6 +114,7 @@ export const SINGLETONS: ReadonlySet<BlockType> = new Set<BlockType>([
   'senderLine',
   'recipient',
   'documentMeta',
+  'subject',
   'introText',
   'outroText',
   'lineTable',
@@ -343,6 +345,11 @@ function contrastProblems(doc: TemplateDocumentV2): TemplateProblem[] {
     }
   }
   return out;
+}
+
+/** Whether a template prints the document's subject (a `subject` block, body only); a version 1 template never does. */
+export function printsSubject(doc: TemplateDocumentV2 | null): boolean {
+  return Boolean(doc?.regions.body.some((b) => b.type === 'subject'));
 }
 
 /** Every text the template itself prints (free texts, headings, captions), for the drawable check. */
