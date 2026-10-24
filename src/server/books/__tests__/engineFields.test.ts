@@ -9,7 +9,10 @@
 // read-only fields are marked read-only, and every PDF has the bytes it had
 // before the map existed (engineBytesGolden.json, rendered on the commit
 // before it). Then the empty-field slots, a field inside a `columns` cell, the
-// API keys the fields name, read from the route sources. With
+// API keys the fields name, read from the route sources. A deliberate change
+// of what the presets or probes print is pinned again with
+// UPDATE_ENGINE_GOLDEN=1, which rewrites engineBytesGolden.json from this run
+// (check first that the change is the intended one). With
 // FIELD_OVERLAY_DIR set, the last test writes the pages with the rectangles
 // outlined (fieldOverlay.ts) to look at.
 
@@ -19,7 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PDFDocument, type PDFFont } from 'pdf-lib';
-import { beforeAll, describe, expect, expectTypeOf, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from 'vitest';
 
 import { lineFieldsBody } from '../http/bodies';
 import { renderTemplate, type DocumentFieldKey, type LayoutField, type LayoutMap, type LineFieldKey } from '../render/engine';
@@ -61,6 +64,7 @@ function expectedText(model: RenderModel, id: string): string | null {
   if (id.startsWith('recipient.line.')) return model.recipientBlock[n('recipient.line.')] ?? null;
   if (id.startsWith('meta.')) return model.metaItems[id.slice(5) as keyof RenderModel['metaItems']]?.value ?? null;
   if (id.startsWith('totals.')) return model.totals[n('totals.')]?.value ?? null;
+  if (id === 'subject') return model.subject;
   if (id === 'introText') return model.intro;
   if (id === 'outroText') return model.outro;
   if (id === 'taxNote') return model.notes.join(' ');
@@ -206,8 +210,17 @@ function checkMap(model: RenderModel, layout: LayoutMap, drawn: DrawnText[], whe
   }
 }
 
+const UPDATE_GOLDEN = process.env.UPDATE_ENGINE_GOLDEN === '1';
+const renewed: Record<string, string> = {};
+
 describe('every preset, every probe, every font family', () => {
   const cases = PRESETS.flatMap((p) => FONT_FAMILIES.map((f) => [p, f] as const));
+  afterAll(() => {
+    if (!UPDATE_GOLDEN) return;
+    const file = path.join(path.dirname(fileURLToPath(import.meta.url)), 'engineBytesGolden.json');
+    const sorted = Object.fromEntries(Object.entries({ ...(golden as Record<string, string>), ...renewed }).sort(([a], [b]) => a.localeCompare(b)));
+    writeFileSync(file, `${JSON.stringify(sorted, null, 1)}\n`);
+  });
   it('has a pinned hash for every rendering', () => {
     expect(Object.keys(golden)).toHaveLength(PRESETS.length * FONT_FAMILIES.length * PROBE_NAMES.length * 2);
   });
@@ -218,7 +231,8 @@ describe('every preset, every probe, every font family', () => {
         const doc = withFamily(preset(presetName), family);
         const { model, bytes, layout } = await render(doc, probeInput(probe(name), draft));
         const key = `${presetName}|${family}|${name}|${draft ? 'draft' : 'issued'}`;
-        expect(sha(bytes), `${key}: the PDF changed`).toBe((golden as Record<string, string>)[key]);
+        if (UPDATE_GOLDEN) renewed[key] = sha(bytes);
+        else expect(sha(bytes), `${key}: the PDF changed`).toBe((golden as Record<string, string>)[key]);
         checkMap(model, layout, await extractDrawnText(bytes), key);
       }
     }
@@ -250,6 +264,29 @@ describe('fields that break across pages', () => {
 });
 
 describe('empty fields', () => {
+  it('gives an empty subject on a draft a one-line slot under the title, and prints nothing for it', async () => {
+    const p = probe('regular');
+    p.document = { ...p.document, subject: null };
+    const { layout, bytes } = await render(preset('klassisch'), probeInput(p, true));
+    const slot = layout.fields.find((f) => f.id === 'subject')!;
+    expect(slot).toMatchObject({ kind: 'text', source: 'document', documentField: 'subject', empty: true });
+    expect(slot.rects).toHaveLength(1);
+    const title = layout.blocks.find((b) => b.blockId === 'title' && b.region === 'body')!;
+    expect(slot.rects[0].y).toBeGreaterThanOrEqual(title.y + title.height - EPS);
+    expect((await extractDrawnText(bytes)).some((d) => d.text.includes('Website'))).toBe(false);
+  });
+
+  it('a subject block prints exactly the bytes of a template without it when the document has no subject', async () => {
+    const p = probe('regular');
+    p.document = { ...p.document, subject: null };
+    const withBlock = preset('modern');
+    const without: TemplateDocumentV2 = { ...withBlock, regions: { ...withBlock.regions, body: withBlock.regions.body.filter((b) => b.type !== 'subject') } };
+    expect(withBlock.regions.body.some((b) => b.type === 'subject')).toBe(true);
+    const a = await render(withBlock, probeInput(p));
+    const b = await render(without, probeInput(p));
+    expect(sha(a.bytes)).toBe(sha(b.bytes));
+  });
+
   it('marks the slot where an empty optional field would print, without drawing anything', async () => {
     const p = probe('regular');
     p.document = { ...p.document, introText: null, outroText: null, contractReference: null };
@@ -313,7 +350,7 @@ describe('empty fields', () => {
     for (let n = 1; n <= 13; n += 1) {
       const p = probe('longInvoice');
       p.lines = p.lines.slice(0, 10);
-      p.document = { ...p.document, outroText: null, introText: Array.from({ length: n }, () => 'Absatz.').join('\n') };
+      p.document = { ...p.document, subject: null, outroText: null, introText: Array.from({ length: n }, () => 'Absatz.').join('\n') };
       const { layout } = await render(preset('klassisch'), probeInput(p));
       const slot = layout.fields.find((f) => f.id === 'outroText')!.rects[0];
       const room = layout.fields.find((f) => f.id === 'outroText')!.room!;

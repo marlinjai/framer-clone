@@ -170,7 +170,7 @@ export type FieldKind = 'text' | 'multiline' | 'date' | 'number' | 'money' | 'se
 export type FieldSource = 'document' | 'line';
 
 /** The draft's request keys a field can edit (PATCH /api/books/documents/<id>, and `customerId` through PUT .../customer). */
-export type DocumentFieldKey = 'serviceDate' | 'servicePeriod' | 'paymentTermsDays' | 'contractReference' | 'introText' | 'outroText' | 'customerId';
+export type DocumentFieldKey = 'serviceDate' | 'servicePeriod' | 'paymentTermsDays' | 'contractReference' | 'subject' | 'introText' | 'outroText' | 'customerId';
 /** A line's request keys a field can edit (PATCH .../lines/<lineId>, `lineFieldsBody`). */
 export type LineFieldKey = 'title' | 'description' | 'quantity' | 'unitLabel' | 'unitPrice' | 'discountBp' | 'taxClass';
 
@@ -501,6 +501,10 @@ class Binder {
         return keep(this.meta(block, x, width, size, color));
       case 'title':
         return keep(region === 'followingPageHeader' ? this.continuationTitle(block.id, x, width, size, bold, color, align) : this.title(block.id, x, width, size, bold, color, align));
+      case 'subject': {
+        const spec = this.field(block.id, 'subject', 'text', { source: 'document', documentField: 'subject' }, style);
+        return keep(m.subject ? this.lines(block.id, x, width, [m.subject], { size, bold, color, align, field: () => spec }) : []);
+      }
       case 'introText':
       case 'outroText': {
         const text = block.type === 'introText' ? m.intro : m.outro;
@@ -572,6 +576,8 @@ class Binder {
     switch (block.type) {
       case 'recipient':
         return at(this.field(block.id, 'recipient.customer', 'select', { source: 'document', documentField: 'customerId' }, style, { empty: true }));
+      case 'subject':
+        return at(this.field(block.id, 'subject', 'text', { source: 'document', documentField: 'subject' }, style, { empty: true }));
       case 'introText':
       case 'outroText':
         return at(this.field(block.id, block.type, 'multiline', { source: 'document', documentField: block.type }, style, { empty: true }));
@@ -1110,7 +1116,7 @@ function stack(
 }
 
 const BLOCK_TYPES = new Set([
-  'logo', 'senderLine', 'recipient', 'documentMeta', 'title', 'introText', 'outroText', 'lineTable', 'totals', 'taxNote',
+  'logo', 'senderLine', 'recipient', 'documentMeta', 'title', 'subject', 'introText', 'outroText', 'lineTable', 'totals', 'taxNote',
   'paymentDetails', 'paymentQr', 'senderColumns', 'freeText', 'spacer', 'divider', 'columns',
 ]);
 const THEME_COLORS = new Set(['ink', 'accent', 'muted']);

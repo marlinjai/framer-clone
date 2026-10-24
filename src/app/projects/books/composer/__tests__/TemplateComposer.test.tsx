@@ -395,12 +395,12 @@ describe('the template composer: keyboard', () => {
     server(baseRoutes());
     render(<TemplateComposer id="tpl1" />);
     await opened();
-    const row = selectInOutline('introText');
+    const row = selectInOutline('subject');
     row.focus();
     fireEvent.keyDown(row, { key: 'ArrowUp', altKey: true });
-    expect(order().indexOf('introText')).toBeLessThan(order().indexOf('title'));
-    await waitFor(() => expect(document.activeElement?.getAttribute('data-outline-select')).toBe('introText'));
-    await waitFor(() => expect(live()).toBe('Intro text, body, position 1.'));
+    expect(order().indexOf('subject')).toBeLessThan(order().indexOf('title'));
+    await waitFor(() => expect(document.activeElement?.getAttribute('data-outline-select')).toBe('subject'));
+    await waitFor(() => expect(live()).toBe('Subject, body, position 1.'));
   });
 
   it('a refused Alt+Up says so and never pulls focus away later', async () => {

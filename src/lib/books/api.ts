@@ -112,6 +112,8 @@ export interface DocumentView {
   paymentTermsDays: number;
   /** The reference printed in the document data ("Vertrag"), editable on a draft. */
   contractReference: string | null;
+  /** The subject line ("Betreff"), printed where the template places its subject block. */
+  subject: string | null;
   netOrGross: 'net' | 'gross';
   kleinunternehmer: boolean;
   reverseCharge: boolean;

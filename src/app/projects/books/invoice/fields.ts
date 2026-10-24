@@ -77,6 +77,8 @@ export function editValue(field: LayoutField, detail: DocumentDetail): string {
       return String(doc.paymentTermsDays);
     case 'contractReference':
       return doc.contractReference ?? '';
+    case 'subject':
+      return doc.subject ?? '';
     case 'introText':
       return doc.introText ?? '';
     case 'outroText':
@@ -103,6 +105,7 @@ const DOCUMENT_PARTS: Record<string, string> = {
   servicePeriod: 'Service period',
   paymentTermsDays: 'Payment terms in days',
   contractReference: 'Reference',
+  subject: 'Subject',
   introText: 'Intro text',
   outroText: 'Closing text',
   customerId: 'Customer',
@@ -197,6 +200,9 @@ export function parseValue(field: LayoutField, raw: string): ParsedValue {
     }
     case 'contractReference':
       return docReq({ contractReference: trimmed === '' ? null : trimmed }, trimmed);
+    case 'subject':
+      if (trimmed.length > 200) return { ok: false, message: 'Keep the subject to one line of at most 200 characters.' };
+      return docReq({ subject: trimmed === '' ? null : trimmed }, trimmed);
     case 'introText':
     case 'outroText':
       return docReq({ [key]: trimmed === '' ? null : text.trimEnd() }, text.trimEnd());
@@ -220,7 +226,7 @@ export function applyLocal(payload: RenderInputPayload, field: LayoutField, loca
       input: { ...payload.input, lines: payload.input.lines.map((l) => (l.id === field.lineId ? { ...l, [key]: value } : l)) },
     };
   }
-  if (key === 'introText' || key === 'outroText' || key === 'contractReference') {
+  if (key === 'introText' || key === 'outroText' || key === 'contractReference' || key === 'subject') {
     return { ...payload, input: { ...payload.input, document: { ...payload.input.document, [key]: local === '' ? null : local } } };
   }
   return payload;

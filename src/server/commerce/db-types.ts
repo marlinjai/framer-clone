@@ -513,6 +513,7 @@ export interface SalesDocumentTable {
   template_snapshot: JsonColumn<TemplateSnapshot> | null;
   replaces_document_id: string | null;
   print_replaces_reference: Generated<boolean>;
+  subject: string | null;
 }
 
 /**

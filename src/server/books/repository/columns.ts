@@ -37,6 +37,7 @@ export function documentColumns(eb: DocEb) {
     'sales_document.payment_terms_days',
     'sales_document.payment_reference',
     'sales_document.contract_reference',
+    'sales_document.subject',
     'sales_document.currency_code',
     'sales_document.tax_region',
     'sales_document.customer_type',

@@ -28,6 +28,13 @@ const servicePeriod = z
   .object({ start: isoDate, end: isoDate })
   .refine((p) => p.start <= p.end, { message: 'start must not be after end', path: ['end'] });
 const optionalText = (max: number) => z.string().max(max).nullable().optional();
+/** The subject prints as one line: no line breaks, at most 200 characters (the column's CHECK, 016). */
+const subjectText = z
+  .string()
+  .max(200)
+  .refine((s) => !/[\r\n]/.test(s), 'the subject is one line')
+  .nullable()
+  .optional();
 const actorUserId = z.string().trim().min(1).max(200);
 const expectedVersion = z.number().int().min(0).optional();
 
@@ -87,6 +94,7 @@ export interface DraftPatch {
   service_period_end?: string | null;
   payment_terms_days?: number;
   contract_reference?: string | null;
+  subject?: string | null;
   intro_text?: string | null;
   outro_text?: string | null;
   /** Only ever set to null: a replacement draft becomes an ordinary invoice (the Correct flow). */
@@ -169,6 +177,7 @@ const createInput = z.object({
   serviceDate: isoDate.optional(),
   servicePeriod: servicePeriod.optional(),
   contractReference: optionalText(200),
+  subject: subjectText,
   introText: optionalText(4000),
   outroText: optionalText(4000),
 });
@@ -211,6 +220,7 @@ export async function createDraft(scope: BooksScope, input: CreateDraftInput): P
         service_period_end: args.servicePeriod?.end ?? null,
         payment_terms_days: settings.defaultPaymentTermsDays,
         contract_reference: args.contractReference ?? null,
+        subject: args.subject ?? null,
         intro_text: args.introText ?? null,
         outro_text: args.outroText ?? null,
         customer_type: customer?.customer_type ?? null,
@@ -256,6 +266,7 @@ const updateInput = z
     servicePeriod: servicePeriod.nullable().optional(),
     paymentTermsDays: z.number().int().min(0).max(365).optional(),
     contractReference: optionalText(200),
+    subject: subjectText,
     introText: optionalText(4000),
     outroText: optionalText(4000),
     // The Correct flow: null turns a replacement draft into an ordinary
@@ -287,6 +298,7 @@ export async function updateDraft(scope: BooksScope, id: string, input: UpdateDr
     }
     if (args.paymentTermsDays !== undefined) patch.payment_terms_days = args.paymentTermsDays;
     if (args.contractReference !== undefined) patch.contract_reference = args.contractReference;
+    if (args.subject !== undefined) patch.subject = args.subject;
     if (args.introText !== undefined) patch.intro_text = args.introText;
     if (args.outroText !== undefined) patch.outro_text = args.outroText;
     if (args.printReplacesReference !== undefined) {
