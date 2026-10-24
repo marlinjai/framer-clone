@@ -279,16 +279,20 @@ const CartView = observer(
       }
 
       if (directive.kind === 'error') {
-        // Editor: a chip with the real message. Preview/headless: surface
-        // nothing for the slot (never a silent success), but keep the remove
-        // control so the visitor is not stuck with an unrenderable line.
+        // Editor: a chip with the real message. Preview / published: a plain
+        // sentence for the visitor (never the internal message, never a
+        // silent success), and the remove control so they are not stuck.
         return (
           <div key={line.variantId} data-cart-line={line.variantId} style={LINE_STYLE}>
             {directive.message ? (
               <span data-cart-line-error style={ERROR_CHIP_STYLE}>
                 Failed to load item: {directive.message}
               </span>
-            ) : null}
+            ) : (
+              <span data-cart-line-error role="status" style={{ ...WARNING_STYLE, color: '#b91c1c' }}>
+                This item could not be loaded right now.
+              </span>
+            )}
             {removeButton}
           </div>
         );

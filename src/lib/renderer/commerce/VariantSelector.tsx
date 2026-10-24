@@ -254,9 +254,11 @@ const VariantSelector = observer(
             Availability check failed: {availability.message}
           </span>
         ) : (
-          // Preview/headless: do NOT render a fake availability. Surface nothing
-          // for the slot rather than a silent "looks available" claim.
-          <span data-variant-availability="error" style={{ display: 'none' }} />
+          // Preview / published: never a fake availability, and never silence:
+          // the visitor reads a plain sentence (not the internal message).
+          <span data-variant-availability="error" role="status" style={{ ...NOTE_STYLE, color: '#b91c1c' }}>
+            Availability could not be checked right now. Please try again later.
+          </span>
         );
     } else if (availability.status === 'ready') {
       availabilityNode = (

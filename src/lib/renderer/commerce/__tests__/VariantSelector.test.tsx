@@ -342,6 +342,29 @@ describe('VariantSelector rendering', () => {
     });
   });
 
+  it('tells the visitor in plain words when the availability check fails (preview)', async () => {
+    const { product, variants } = twoByFourProduct();
+    const ds = makeFakeDS(variants, { v_s_blue: 9, v_m_red: 9, v_m_blue: 9 });
+    const { container } = renderSelector({ product, ds, mode: 'preview' });
+
+    await waitFor(() => {
+      const small = container.querySelector('button[data-variant-value="s"]') as HTMLButtonElement;
+      expect(small?.disabled).toBe(false);
+    });
+    act(() => {
+      fireEvent.click(container.querySelector('button[data-variant-value="s"]')!);
+    });
+    act(() => {
+      fireEvent.click(container.querySelector('button[data-variant-value="red"]')!);
+    });
+    await waitFor(() => {
+      const err = container.querySelector('[data-variant-availability="error"]') as HTMLElement | null;
+      expect(err?.textContent).toBe('Availability could not be checked right now. Please try again later.');
+      expect(err?.style.display).not.toBe('none');
+    });
+    expect(container.textContent).not.toContain('Availability check failed');
+  });
+
   it('exposes the selection through useSelectedVariant() for the add-to-cart spec', async () => {
     const { product, variants } = twoByFourProduct();
     const ds = makeFakeDS(variants, { v_s_red: 9, v_s_blue: 9, v_m_red: 9, v_m_blue: 9 });

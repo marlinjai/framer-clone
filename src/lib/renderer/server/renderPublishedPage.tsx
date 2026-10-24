@@ -20,6 +20,7 @@ import { buildTrackerSnippet } from '@/lib/renderer/publish/trackerSnippet';
 import { renderComponentNode } from './renderComponentNode';
 import { applyResponsiveStyles } from './applyResponsiveStyles';
 import { publishedFontAssets } from './publishedFonts';
+import { applyImageLoading, HeroPreload } from './imageLoading';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import CommercePageProviders from './CommercePageProviders';
 
@@ -119,7 +120,9 @@ export async function renderPublishedPage(
   // max-width media queries (desktop-first, the editor's cascade). Done on the
   // hydrated tree so cloned collection rows and the commerce islands (which
   // receive these props across the client boundary) carry the classes too.
-  const responsive = applyResponsiveStyles(hydrated, breakpoints);
+  // Lazy images below the hero, a priority hero (src/lib/renderer/server/imageLoading.tsx).
+  const images = applyImageLoading(hydrated);
+  const responsive = applyResponsiveStyles(images.root, breakpoints);
   // The self-hosted web fonts the page uses, scanned before the responsive
   // rewrite moves styles into classes (src/lib/fonts/registry.ts).
   const fonts = publishedFontAssets(hydrated);
@@ -132,6 +135,7 @@ export async function renderPublishedPage(
     body: (
       <>
         {fonts}
+        {images.preloadUrl ? <HeroPreload url={images.preloadUrl} /> : null}
         {responsive.css ? (
           // Rendered in place (no href / precedence, so React does not hoist
           // it) ahead of the content it styles, so streamed HTML never paints
