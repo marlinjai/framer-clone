@@ -156,6 +156,21 @@ describe('two fingers', () => {
     expect(store.editorUI.selectedComponent).toBeUndefined();
   });
 
+  it('a finger whose lift never arrived is forgotten when the window loses focus', () => {
+    renderCanvas();
+    const g = ground();
+    down(g, 1, { x: 100, y: 100 }); // its pointerup is lost (app switch)
+    fireEvent.blur(window);
+    primaryOf.clear();
+    // The next finger is a first finger again: one finger never moves the camera,
+    // and a pinch needs two real fingers.
+    down(g, 2, { x: 100, y: 100 });
+    move(g, 2, { x: 300, y: 300 });
+    up(g, 2, { x: 300, y: 300 });
+    expect(camera()).toEqual({ panX: 0, panY: 0, zoom: 1 });
+    expect(marquee().style.display).toBe('none');
+  });
+
   it('a second finger cancels a one-finger rectangle and an armed move', () => {
     store.editorUI.selectComponent(main, breakpointId);
     renderCanvas();

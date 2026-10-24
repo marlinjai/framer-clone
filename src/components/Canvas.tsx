@@ -595,6 +595,31 @@ const CanvasInner = observer(() => {
     pressTargetsRef.current.clear();
   }, []);
 
+  // The window or tab lost focus mid-touch (app switch, notification sheet):
+  // a finger's pointerup may never arrive, and a phantom finger would turn
+  // every later first finger into a second one. Forget them all.
+  useEffect(() => {
+    const forget = () => {
+      touchListenersRef.current?.();
+      touchListenersRef.current = null;
+      if (pinchRafRef.current) cancelAnimationFrame(pinchRafRef.current);
+      pinchRafRef.current = 0;
+      touchRef.current?.reset();
+      pressTargetsRef.current.clear();
+      blockTouchClicksUntilRef.current = 0;
+      lastTapRef.current = null;
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') forget();
+    };
+    window.addEventListener('blur', forget);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('blur', forget);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+
   /** A touch or pen press on the canvas (capture phase, before any node). */
   const handleTouchPointerDown = useCallback((e: React.PointerEvent) => {
     const tracker = touchRef.current!;
