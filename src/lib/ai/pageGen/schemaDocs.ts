@@ -20,6 +20,10 @@ import {
   listGenerationTags,
 } from './schema';
 import { isVoidTag } from '@/lib/drag/voidTags';
+import { effectsDocs } from './promptSections/effects';
+import { formPropKeysFor } from '@/lib/forms/generation';
+import { STICKY_CTA_PROP_KEYS, isStickyCta } from '@/lib/stickyCta/stickyCta';
+import { FONT_CATEGORIES, FONT_LIBRARY, fontStack } from '@/lib/fonts/registry';
 
 export function buildSchemaDocs(): string {
   const presets = listGenerationPresets();
@@ -48,6 +52,11 @@ export function buildSchemaDocs(): string {
           '. Use it only when the brief clearly asks for this kind of content; never add children to it.',
       );
     }
+    const formKeys = formPropKeysFor(p.defaultProps as Record<string, unknown>);
+    if (formKeys.length > 0) header.push(`- form component (see "Forms"): props ${formKeys.join(', ')}`);
+    if (isStickyCta(p.defaultProps)) {
+      header.push(`- sticky call to action (see "Sticky call to action"): props ${STICKY_CTA_PROP_KEYS.join(', ')}; new pages only, no children`);
+    }
     header.push(`- defaults: ${stableStringify(p.defaultProps)}`);
     return header.join('\n');
   });
@@ -64,10 +73,11 @@ export function buildSchemaDocs(): string {
     '  "label": "<short name shown in the layers panel, e.g. Hero, Pricing card>",',
     '  "props": {',
     '    "children": "<text content, only on non-void tags without child nodes>",',
-    '    "src": "<img only>", "alt": "<img only>",',
+    '    "src": "<img only>", "alt": "<img only>", "decorative": <img only: true for a purely decorative image>,',
     '    "imageQuery": "<img or container: English stock-photo search>",',
     '    "href": "<a only>", "target": "<a only: _blank or _self>",',
-    '    "style": { "<camelCase CSS property>": <value or responsive map> }',
+    '    "style": { "<camelCase CSS property>": <value or responsive map> },',
+    '    "effects": { "appear": { ... } }  (optional, see Motion)',
     '  },',
     '  "children": [ <nodes> ]',
     '}',
@@ -83,7 +93,9 @@ export function buildSchemaDocs(): string {
     '- Only the style keys listed below are kept; anything else is dropped. No class names, no CSS text,',
     '  no event handlers, no HTML strings.',
     '- Links: href must start with https://, http://, mailto:, tel:, # or a single /. Images: src must be https://,',
-    '  http:// or a site path starting with /. Always give images a meaningful alt in the page\'s language.',
+    '  http:// or a site path starting with /. Always give images a meaningful alt in the page\'s language that',
+    '  says what the image shows (never "image", "photo", a file name or the layer name). Only a purely',
+    '  decorative image (a texture, a divider) gets "alt": "" with "decorative": true.',
     `- Stock photos: an img without src gets "imageQuery", 2 to 6 English words describing the photo`,
     `  (at most ${GENERATION_LIMITS.maxImageQueryChars} characters, plain words only). The server resolves at most`,
     `  ${GENERATION_LIMITS.maxStockImages} images per generation to photos; the rest keep a placeholder.`,
@@ -110,6 +122,15 @@ export function buildSchemaDocs(): string {
     'layout-relevant property (padding, fontSize, gridTemplateColumns, flexDirection) a mobile value when the',
     'desktop value would not fit a phone.',
     '',
+    effectsDocs(),
+    '',
+    '## Fonts',
+    '',
+    'The self-hosted font library (no other web font is available). Write fontFamily exactly as quoted, the',
+    'family name followed by its fallback stack. A fontFamily naming any other family is replaced by the',
+    'library default of its kind; a plain system stack (system-ui, Georgia, ...) is kept but looks generic.',
+    ...fontLines(),
+    '',
     '## Tags',
     '',
     ...tagLines,
@@ -122,4 +143,18 @@ export function buildSchemaDocs(): string {
     '',
     styleKeys.join(', '),
   ].join('\n');
+}
+
+/** One line per library family, grouped by category (src/lib/fonts/registry.ts). */
+function fontLines(): string[] {
+  const lines: string[] = [];
+  for (const cat of FONT_CATEGORIES) {
+    for (const f of FONT_LIBRARY.filter((x) => x.category === cat.id)) {
+      const [min, max] = f.weight;
+      const weights = min === max ? `weight ${min} only` : `weights ${min} to ${max}`;
+      const italic = f.faces.some((face) => face.style === 'italic') ? ', italic' : '';
+      lines.push(`- ${cat.label}: "${fontStack(f)}" (${weights}${italic}): ${f.character}`);
+    }
+  }
+  return lines;
 }

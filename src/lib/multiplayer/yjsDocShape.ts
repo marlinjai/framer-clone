@@ -54,6 +54,7 @@ import {
   CanvasNodeType,
 } from '@/models/ComponentModel';
 import type { PageSnapshotIn } from '@/models/PageModel';
+import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 
 // ---------------------------------------------------------------------------
 // Schema constants
@@ -80,6 +81,8 @@ export const YJS_PROJECT_KEYS = {
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
   primaryBreakpointId: 'primaryBreakpointId',
+  /** Site settings (src/lib/site/siteSettings.ts) as one plain JSON blob. */
+  siteSettings: 'siteSettings',
 } as const;
 
 export const YJS_PAGE_KEYS = {
@@ -119,6 +122,12 @@ export const YJS_NODE_KEYS = {
 export const YJS_PROPS_KEYS = {
   /** Nested Y.Map of style properties (per-property LWW). */
   style: 'style',
+  /**
+   * Nested Y.Map of effect groups (appear / hover / scroll), each a plain JSON
+   * value (an effect or a responsive map of effects): two users editing the
+   * appear and the hover of one node do not overwrite each other.
+   */
+  effects: 'effects',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -223,6 +232,12 @@ function encodePropsToYMap(props: PropsRecord | undefined): Y.Map<any> {
     if (value === undefined) continue;
     if (key === YJS_PROPS_KEYS.style && isPlainObject(value)) {
       propsMap.set(key, encodeStyleToYMap(value));
+    } else if (key === YJS_PROPS_KEYS.effects && isPlainObject(value)) {
+      const effectsMap = new Y.Map<any>();
+      for (const [group, groupValue] of Object.entries(value)) {
+        if (groupValue !== undefined) effectsMap.set(group, groupValue);
+      }
+      propsMap.set(key, effectsMap);
     } else {
       propsMap.set(key, value);
     }
@@ -382,6 +397,13 @@ export function mstSnapshotToYDoc(snapshot: ProjectSnapshotIn): Y.Doc {
     project.set(YJS_PROJECT_KEYS.description, projectDescription);
     project.set(YJS_PROJECT_KEYS.createdAt, projectCreatedAt);
     project.set(YJS_PROJECT_KEYS.updatedAt, projectUpdatedAt);
+    // Site settings: one plain JSON blob (atomic LWW, like page metadata; the
+    // dialog saves the whole object at once). Normalized so the doc never
+    // stores a partial or malformed shape.
+    project.set(
+      YJS_PROJECT_KEYS.siteSettings,
+      normalizeSiteSettings(snapshot.siteSettings ?? {}),
+    );
 
     for (const [pageId, page] of pagesEntries) {
       const pageMap = new Y.Map<any>();
@@ -497,6 +519,11 @@ function normalisePageMetadata(
     ogImage: typeof m.ogImage === 'string' ? m.ogImage : '',
     canonicalUrl:
       typeof m.canonicalUrl === 'string' ? m.canonicalUrl : '',
+    noIndex: m.noIndex === true,
+    legalTemplate:
+      m.legalTemplate === 'impressum' || m.legalTemplate === 'privacy' || m.legalTemplate === 'terms'
+        ? m.legalTemplate
+        : '',
   };
 }
 
@@ -525,6 +552,8 @@ function decodePropsFromYMap(propsMap: Y.Map<any>): PropsRecord {
   propsMap.forEach((value, key) => {
     if (key === YJS_PROPS_KEYS.style && value instanceof Y.Map) {
       out[key] = decodeStyleFromYMap(value);
+    } else if (key === YJS_PROPS_KEYS.effects && value instanceof Y.Map) {
+      out[key] = (value as Y.Map<any>).toJSON();
     } else {
       out[key] = value;
     }
@@ -626,6 +655,8 @@ export function yDocToMstSnapshot(doc: Y.Doc): ProjectSnapshotIn {
     | number
     | undefined;
 
+  const siteSettings = project.get(YJS_PROJECT_KEYS.siteSettings) as unknown;
+
   const pagesSnapshot: Record<string, PageSnapshotIn> = {};
   for (const pageId of pageOrder.toArray()) {
     const pageMap = pagesById.get(pageId);
@@ -683,6 +714,7 @@ export function yDocToMstSnapshot(doc: Y.Doc): ProjectSnapshotIn {
     },
     pages: pagesSnapshot,
   };
+  if (siteSettings !== undefined) snapshot.siteSettings = normalizeSiteSettings(siteSettings);
 
   return snapshot as ProjectSnapshotIn;
 }

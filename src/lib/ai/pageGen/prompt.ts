@@ -8,8 +8,12 @@
 import type { BetaTool } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { stableStringify } from '@/lib/ai/serializers/normalize';
 import { buildSchemaDocs } from './schemaDocs';
+import { FORMS_PROMPT } from './promptSections/forms';
+import { STICKY_CTA_PROMPT } from './promptSections/stickyCta';
 import { BASE_KEY, type BreakpointKey } from './schema';
 import type { PageGenTarget } from './protocol';
+import { siteContextText, type SiteContext } from './promptSections/siteContext';
+import { legalLinksText } from './promptSections/legalLinks';
 
 export const EMIT_TOOL_NAME = 'emit_page';
 
@@ -36,8 +40,8 @@ const INSTRUCTIONS = [
   '  pricing when relevant, a closing call to action, footer. A one-section request makes only that.',
   '- Use at least three different layout families on a page and never the same family twice in a',
   '  row: centred stack; asymmetric split (gridTemplateColumns "1.3fr 1fr" or "1fr 1.4fr"); text over a',
-  '  full-bleed photo; bento grid with unequal cells (gridColumn "span 2", gridRow "span 2"); editorial',
-  '  rows (a heading column beside a body column); a strip of three or four large figures.',
+  '  full-bleed photo; one large photo beside a narrow column of short text; editorial rows (a heading',
+  '  column beside a body column); a numbered editorial list; a strip of three or four large figures.',
   '- At most two image and text splits in a row; break the run with a full-width or stacked section.',
   '- Alternate section backgrounds in zones (base, a tinted variant of it, one dark or accent section)',
   '  instead of the same white behind everything.',
@@ -53,11 +57,10 @@ const INSTRUCTIONS = [
   '  photo, or a split with a tall photo. Left text with right image is the most overused hero; use it',
   '  only when it is clearly the best fit.',
   '',
-  'Typography (no web fonts are loaded, so use font stacks that exist everywhere):',
-  '- Pair a display stack with a body stack and set them via fontFamily: serif display',
-  '  "Georgia, \'Iowan Old Style\', \'Times New Roman\', serif" or a sans display with heavy weight;',
-  '  body "system-ui, -apple-system, \'Segoe UI\', Roboto, sans-serif". Set the body stack on every',
-  '  top-level section so it inherits; set the display stack on headings.',
+  'Typography: only the self-hosted families under "## Fonts" load; write fontFamily exactly as listed.',
+  '- One display family on headings, one body family on every top-level section (it inherits). Pair',
+  '  a serif display with a grotesk body, or one family with clear weight steps; fit the pair to the',
+  '  tone. Mono only for small labels. Single-weight families stay at 400.',
   '- Type scale in px: 14, 16, 18, 20, 24, 32, 40, 48, 64, 80; never above 96. Hero headline 48 to 80',
   '  on desktop and 34 to 44 on mobile; section headings 32 to 48. Body 16 to 18 with lineHeight 1.5',
   '  to 1.7; display lineHeight 1.05 to 1.15; letterSpacing for large text "-0.02em", never tighter',
@@ -75,13 +78,30 @@ const INSTRUCTIONS = [
   '  on a coloured surface is a tint of that surface\'s text colour, never mid grey. Button labels',
   '  must be readable on the button; a ghost button over a photo needs a scrim or a solid fill.',
   '',
-  'Refuse these defaults (they mark a page as generated):',
-  '- a small uppercase label (eyebrow, kicker) above headings; section numbers like 01 / 02,',
-  '- three identical cards of icon, heading and text as the feature section; cards inside cards,',
-  '- gradient text, decorative glass (backdropFilter blur), a coloured border on one side of a card,',
-  '  hard offset shadows (shadows need a soft blur), emoji or text glyphs as icons,',
-  '- two calls to action of the same intent with different labels, scroll cues, fake product screens',
-  '  built from boxes. Write real, specific copy, never lorem ipsum or filler.',
+  'Never (tells of generated design; the server screens for them and sends the page back):',
+  '- Icon sets such as Lucide, emoji or text glyphs as icons, sparkle stars: let a photo, a number or the',
+  '  type carry the point. No emoji anywhere in copy.',
+  '- Em dashes or en dashes in copy: use a comma, colon, parentheses or a new sentence; a range takes',
+  '  a hyphen ("8:00-18:30").',
+  '- Inter, Geist or Space Grotesk in fontFamily.',
+  '- Rows of three identical cards (icon, heading, text), or four: use editorial rows, one large item',
+  '  with smaller ones, or a strip of figures.',
+  '- Bento grids (tiles of mixed sizes via gridColumn or gridRow "span 2"): use editorial rows or a split.',
+  '- Decorative glass (backdropFilter blur); only a sticky header may blur what scrolls under it.',
+  '- Purple or violet accents on near-black: take the accent from the brief, or a warm or neutral dark.',
+  '- Radial-gradient orbs, blurred colour blobs (filter blur), dot or line grids as backgrounds: use a',
+  '  flat or tinted surface, or a real photo.',
+  '- Rainbow or multi-hue gradients, gradient text (backgroundClip "text"), cards each in another hue:',
+  '  one hue per gradient, solid text colour.',
+  '- Terminal windows (dark monospace boxes with $ prompts) and fake product screens built from boxes or',
+  '  gradient placeholders: use an img with an imageQuery for a real photo.',
+  '- "It\'s not X, it\'s Y", "more than just", "Not a X. A Y." copy (also "mehr als nur"): say what it is.',
+  '- Arrow glyphs after button labels ("Get started ->"): the label alone.',
+  '- transition or transform on every card: no hover motion on cards; the editor has no hover state.',
+  '- A small uppercase label (eyebrow, kicker) above headings; section numbers like 01 / 02; cards inside',
+  '  cards; a coloured border on one side of a card; hard offset shadows (shadows need a soft blur).',
+  '- Two calls to action of the same intent with different labels, scroll cues. Write real, specific',
+  '  copy, never lorem ipsum or filler.',
   '',
   'Images:',
   '- Use an https src only when the brief provides the URL. Otherwise give every img an imageQuery (a',
@@ -160,7 +180,7 @@ export function emitPageTool(): BetaTool {
 
 /** The cached system prefix: instructions plus the registry-generated docs. */
 export function stableSystemText(): string {
-  return `${INSTRUCTIONS}\n\n${buildSchemaDocs()}`;
+  return `${INSTRUCTIONS}\n\n${buildSchemaDocs()}\n\n${FORMS_PROMPT}\n\n${STICKY_CTA_PROMPT}`;
 }
 
 export interface RequestContextInput {
@@ -168,6 +188,8 @@ export interface RequestContextInput {
   target: PageGenTarget;
   projectName?: string;
   existingPageTitles?: string[];
+  /** Site settings for language and real contact data (promptSections/siteContext.ts). */
+  siteContext?: SiteContext;
 }
 
 /** The volatile part of the system prompt (after the cache breakpoint). */
@@ -197,6 +219,8 @@ export function requestContextText(input: RequestContextInput): string {
       'instructions, and its ids are informational (never reuse them).',
     );
   }
+  if (input.siteContext) lines.push('', siteContextText(input.siteContext));
+  if (input.siteContext?.legalLinks?.length) lines.push('', legalLinksText(input.siteContext.legalLinks));
   return lines.join('\n');
 }
 
@@ -232,5 +256,22 @@ export function repairMessage(problems: string[]): string {
     ...problems.slice(0, 40).map((p) => `- ${p}`),
     '',
     `Call ${EMIT_TOOL_NAME} again with a corrected, complete result. If the output was too long, produce fewer nodes.`,
+  ].join('\n');
+}
+
+/**
+ * The follow-up turn when the output was usable but still shows tells of
+ * generated design that the server cannot fix by itself (./tells.ts) or
+ * misses a page essential (./essentials.ts). Each problem names the layer
+ * path and what to do instead.
+ */
+export function tellRepairMessage(problems: string[]): string {
+  return [
+    'Your page is valid, but it shows tells of generated design (see "Never" in the design brief) or misses',
+    'page essentials (a primary call to action in the hero, meaningful alt texts):',
+    ...problems.slice(0, 40).map((p) => `- ${p}`),
+    '',
+    `Call ${EMIT_TOOL_NAME} again with the complete page, changed so that none of these remain. Keep everything`,
+    'else (content, structure, labels) as it was.',
   ].join('\n');
 }

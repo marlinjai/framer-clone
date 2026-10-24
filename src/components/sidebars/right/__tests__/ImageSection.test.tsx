@@ -124,3 +124,41 @@ describe('ImageSection on a container', () => {
     expect(container.innerHTML).toBe('');
   });
 });
+
+describe('ImageSection alt text', () => {
+  const withAlt = (props: Record<string, unknown>) =>
+    ComponentModel.create({
+      id: 'img-2',
+      type: 'img',
+      componentType: ComponentTypeEnum.HOST,
+      label: 'Photo',
+      props: { src: 'https://example.com/team-dinner.jpg', style: {}, ...props },
+    });
+
+  it('warns about a missing or generic alt text and clears the warning once it describes the image', () => {
+    const c = withAlt({ alt: 'Image' });
+    render(<ImageSection component={c} />);
+    expect(screen.getByTestId('alt-warning').textContent).toMatch(/generic alt text/);
+    const field = screen.getByPlaceholderText('Two baristas pouring latte art');
+    fireEvent.change(field, { target: { value: '' } });
+    expect(screen.getByTestId('alt-warning').textContent).toMatch(/No alt text/);
+    fireEvent.change(field, { target: { value: 'team-dinner' } });
+    expect(screen.getByTestId('alt-warning').textContent).toMatch(/file name/);
+    fireEvent.change(field, { target: { value: 'Our team at the summer dinner' } });
+    expect(c.props.alt).toBe('Our team at the summer dinner');
+    expect(screen.queryByTestId('alt-warning')).toBeNull();
+  });
+
+  it('marks an image decorative (empty alt, no warning) and back', () => {
+    const c = withAlt({});
+    render(<ImageSection component={c} />);
+    expect(screen.getByTestId('alt-warning')).toBeTruthy();
+    fireEvent.click(screen.getByRole('switch', { name: /Decorative/ }));
+    expect(c.props).toMatchObject({ alt: '', 'data-decorative': 'true' });
+    expect(screen.queryByTestId('alt-warning')).toBeNull();
+    expect(screen.queryByPlaceholderText('Two baristas pouring latte art')).toBeNull();
+    fireEvent.click(screen.getByRole('switch', { name: /Decorative/ }));
+    expect(c.props['data-decorative']).toBeUndefined();
+    expect(screen.getByTestId('alt-warning').textContent).toMatch(/No alt text/);
+  });
+});

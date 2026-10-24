@@ -18,6 +18,15 @@ import {
   writeCascade,
   type Resolved,
 } from '@/lib/responsive/cascade';
+import {
+  compactEffects,
+  isResponsiveGroup,
+  resolveEffectGroup,
+  storedEffectsOf,
+  type EffectGroup,
+  type ResolvedEffects,
+  type StoredEffects,
+} from '@/lib/effects/effects';
 
 export type PropsRecord = Record<string, any>;
 
@@ -309,6 +318,45 @@ const ComponentModel: any = ComponentBase
       if (changed) self.props = { ...currentProps, style };
     },
 
+    // Motion and effects (src/lib/effects/effects.ts), stored as
+    // `props.effects`. Appear and scroll cascade desktop-first like a
+    // responsive style (a smaller breakpoint writes its own override, the
+    // largest writes `base`); hover is one value everywhere. Groups that end up
+    // as none are dropped, so an element without effects stores nothing. One
+    // action, so one undo step.
+    setEffect<G extends EffectGroup>(group: G, value: ResolvedEffects[G] | undefined, breakpointId?: string) {
+      const currentProps = self.props || {};
+      const effects: StoredEffects = { ...(storedEffectsOf(currentProps) ?? {}) };
+      const next = isResponsiveGroup(group)
+        ? writeCascade(effects[group], value, breakpointId, self.cascadeBreakpoints(breakpointId))
+        : value;
+      if (next === undefined) delete effects[group];
+      else effects[group] = next;
+      const compact = compactEffects(effects);
+      const props: Record<string, any> = { ...currentProps };
+      if (compact) props.effects = compact;
+      else delete props.effects;
+      self.props = props;
+    },
+
+    // Remove a breakpoint's own appear or scroll override, so it inherits
+    // from the next larger breakpoint again. No-op on the largest breakpoint.
+    resetEffect(group: 'appear' | 'scroll', breakpointId: string) {
+      const currentProps = self.props || {};
+      const effects = storedEffectsOf(currentProps);
+      if (!effects || effects[group] === undefined) return;
+      const next = resetCascade(effects[group], breakpointId, self.cascadeBreakpoints(breakpointId));
+      if (JSON.stringify(next) === JSON.stringify(effects[group])) return;
+      const updated: StoredEffects = { ...effects };
+      if (next === undefined) delete updated[group];
+      else updated[group] = next;
+      const compact = compactEffects(updated);
+      const props: Record<string, any> = { ...currentProps };
+      if (compact) props.effects = compact;
+      else delete props.effects;
+      self.props = props;
+    },
+
     // Remove a stock photo's credit (data-credit-* and the hover title), when
     // the photo it describes was replaced by another picture. An action, so it
     // works on the protected tree and is one undoable step.
@@ -320,6 +368,19 @@ const ComponentModel: any = ComponentBase
     // editing of text / button / heading nodes. Leaves other props untouched.
     setTextContent(value: string) {
       self.props = { ...self.props, children: value };
+    },
+
+    // Merge non-style props (a form field's label, name, required flag...).
+    // An `undefined` value removes the key. `style` is never touched here:
+    // styles go through updateResponsiveStyle.
+    setProps(patch: Record<string, unknown>) {
+      const next: Record<string, unknown> = { ...(self.props as Record<string, unknown>) };
+      for (const [key, value] of Object.entries(patch)) {
+        if (key === 'style') continue;
+        if (value === undefined) delete next[key];
+        else next[key] = value;
+      }
+      self.props = next;
     },
 
     // Canvas-level actions
@@ -413,6 +474,34 @@ const ComponentModel: any = ComponentBase
     getOwnResponsiveStyleValue(property: string, breakpointId?: string): any {
       const resolved = this.getResponsiveStyleSource(property, breakpointId);
       return resolved.source.kind === 'own' ? resolved.value : undefined;
+    },
+
+    /** One effect group as it applies on `breakpointId`, normalized (src/lib/effects/effects.ts). */
+    getEffect<G extends EffectGroup>(group: G, breakpointId?: string): ResolvedEffects[G] {
+      return resolveEffectGroup(storedEffectsOf(self.props), group, breakpointId, self.cascadeBreakpoints(breakpointId));
+    },
+
+    /**
+     * Where an appear or scroll value on `breakpointId` comes from, with the
+     * same meaning as getResponsiveStyleSource (own, inherited, none).
+     */
+    getEffectSource(group: 'appear' | 'scroll', breakpointId?: string): Resolved {
+      const stored = storedEffectsOf(self.props)?.[group];
+      const breakpoints = self.cascadeBreakpoints(breakpointId);
+      const resolved = resolveCascade(stored, breakpointId, breakpoints);
+      if (resolved.source.kind !== 'base') return resolved;
+      const primaryId = breakpoints[0]?.id;
+      return {
+        value: resolved.value,
+        source: self.isLargestBreakpoint(breakpointId) || !primaryId
+          ? { kind: 'own' }
+          : { kind: 'inherited', breakpointId: primaryId },
+      };
+    },
+
+    /** True when the component has any effect stored, on any breakpoint. */
+    get hasEffects(): boolean {
+      return storedEffectsOf(self.props) !== undefined;
     },
 
     get isHostElement() { return self.componentType === ComponentTypeEnum.HOST; },
@@ -565,7 +654,9 @@ const ComponentModel: any = ComponentBase
 
       // resolve top-level props
       for (const [key, raw] of Object.entries(self.props)) {
-        if (key === 'style') continue;
+        // `effects` is data for the effects runtime, never a DOM attribute:
+        // the canvas shows the final state, the preview reads it itself.
+        if (key === 'style' || key === 'effects') continue;
         assign(CSS_PROP_SET.has(key) ? style : attributes, key, raw);
       }
 

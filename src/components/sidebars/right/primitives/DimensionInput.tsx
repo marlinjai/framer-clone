@@ -26,7 +26,7 @@ export function parseStyleValue(raw: string | number | undefined, bareUnit = 'px
   if (str === 'auto') return { value: undefined, unit: 'auto' };
   if (str === 'none') return { value: undefined, unit: 'none' };
 
-  const match = str.match(/^(-?\d*\.?\d+)\s*(px|%|em|rem|vw|vh|auto)?$/);
+  const match = str.match(/^(-?\d*\.?\d+)\s*(px|%|em|rem|vw|vh|ms|auto)?$/);
   if (match) {
     return { value: parseFloat(match[1]), unit: match[2] || bareUnit };
   }

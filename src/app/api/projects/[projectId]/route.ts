@@ -31,7 +31,11 @@
 // deletes the site row, and the database cascade removes its pages, its domain
 // rows (the subdomain, so it answers 404 from then on, and every custom domain,
 // whose live claim is released so the proxy host sync drops its route) and its
-// experiment references. Company-wide data stays: CMS collections, the commerce
+// experiment references. The project's form submissions live in the company's
+// tenant schema, out of the cascade's reach, so they are deleted right after the
+// commit (src/server/forms/projectDelete.ts); if that fails the answer is 500
+// `delete_submissions_failed` (the project is gone, its submissions are not),
+// never a quiet success. Company-wide data stays: CMS collections, the commerce
 // catalog and orders, Books, the analytics project. A PUBLISHED project needs
 // `confirmName` equal to its current name (409 `confirmation_mismatch`
 // otherwise). After the commit the published-site caches of the captured
@@ -61,6 +65,7 @@ import { jsonError, parseBody } from '@/lib/api/respond';
 import { projectNameSchema } from '@/lib/projectName';
 import { z } from 'zod';
 import { revalidateCustomHostCache, revalidateSiteCache } from '@/server/sites/cachedResolver';
+import { deleteProjectSubmissions } from '@/server/forms/projectDelete';
 import {
   getSiteRepository,
   activeScopeDenial,
@@ -221,6 +226,26 @@ async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
     const late = invalidateDeletedHosts(deleted);
     if (late.length > 0) console.error(`[projects] late cache invalidation after deleting ${projectId} failed for: ${late.join(', ')}`);
   }, LATE_INVALIDATION_MS).unref?.();
+
+  // Then the form submissions the cascade cannot reach (another schema, another
+  // connection): after the caches, so the site stops answering first, and
+  // before answering, so a failure is loud. The submit endpoint reads the site
+  // uncached, so no submission can land after the commit.
+  let submissionsFailed = false;
+  let submissionsDeleted = 0;
+  try {
+    submissionsDeleted = await deleteProjectSubmissions(scope.tenantGroupId, projectId);
+  } catch (err) {
+    submissionsFailed = true;
+    console.error(`[projects] deleting the form submissions of ${projectId} failed:`, err);
+  }
+  if (submissionsFailed) {
+    return jsonError(
+      'delete_submissions_failed',
+      'The project was deleted, but its form submissions could not be deleted. Contact support to have them removed.',
+      500,
+    );
+  }
   if (failed.length > 0) {
     return jsonError(
       'delete_cache_failed',
@@ -230,7 +255,7 @@ async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
   }
 
   console.info(
-    `[projects] deleted ${projectId} ("${deleted.name}", ${deleted.wasPublished ? 'published' : 'unpublished'}; released ${deleted.hostnames.length} custom hostname(s))`,
+    `[projects] deleted ${projectId} ("${deleted.name}", ${deleted.wasPublished ? 'published' : 'unpublished'}; released ${deleted.hostnames.length} custom hostname(s); deleted ${submissionsDeleted} form submission(s))`,
   );
   return Response.json(
     {

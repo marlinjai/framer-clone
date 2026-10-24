@@ -29,6 +29,10 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { createScope } from '@/lib/bindings/resolver/scope';
 import CommerceIsland, { type CommerceIslandProps } from './CommerceIsland';
+import FormIsland, { FormFieldIsland, FormSubmitIsland } from '../forms/FormIsland';
+import { formKindOf } from '@/lib/forms/definition';
+import { isStickyCta } from '@/lib/stickyCta/stickyCta';
+import { createStickyCtaElement } from '../stickyCta/stickyCtaElement';
 
 /** The four interactive commerce kinds emitted as client islands (never baked
  *  server-side). Mirrors INTERACTIVE_COMMERCE_KINDS in hydrateBindings. */
@@ -42,8 +46,9 @@ const INTERACTIVE_COMMERCE_KINDS: ReadonlySet<string> = new Set([
 // Props that are internal to the snapshot/binding model and must NOT reach the
 // DOM (React would render them as stray attributes). `children` is consumed via
 // the children argument; `query` is the structured data-component query object;
-// `bindings` never lives in props but is denied defensively.
-const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings']);
+// `bindings` never lives in props but is denied defensively; `effects` is
+// turned into attributes by applyEffects and denied here defensively too.
+const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects']);
 
 /**
  * Resolve a node's HTML tag. Editor primitives store `type` as the intrinsic
@@ -132,6 +137,23 @@ export function renderComponentNode(
   scope: BindingScope = createScope(),
   key: React.Key = node.id ?? 0,
 ): React.ReactNode {
+  // Forms (published site essentials, decision 4): the form container is a
+  // client island that owns its fields' state; fields and the submit button
+  // read it from context (src/lib/renderer/forms/FormIsland.tsx). The render
+  // time feeds the no-JavaScript fill-time check of the submit endpoint.
+  const formKind = formKindOf(node.props as Record<string, unknown> | undefined);
+  if (formKind === 'form') {
+    return <FormIsland key={key} node={node} scope={scope} renderedAt={Date.now()} />;
+  }
+  if (formKind === 'form-field') return <FormFieldIsland key={key} node={node} />;
+  if (formKind === 'form-submit') return <FormSubmitIsland key={key} node={node} />;
+
+  // The sticky call to action bar draws its own link; renderPublishedPage
+  // moved it to the end of the page and its stylesheet pins it on phones.
+  if (isStickyCta(node.props)) {
+    return createStickyCtaElement(nodeDomProps(node), 'published', key);
+  }
+
   const dataKind = (node.props as any)?.['data-component-kind'];
 
   // Interactive commerce kinds -> a client island boundary. The whole node

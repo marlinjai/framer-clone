@@ -4,10 +4,10 @@
 import React from 'react';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import type { ComponentNode, CommerceServerRepository } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
-import { renderPublishedPage, pageSeoToMetadata } from '../renderPublishedPage';
-import type { PageSeoMetadata } from '../snapshotToComponentNode';
+import { renderPublishedPage } from '../renderPublishedPage';
 
 afterEach(() => {
   cleanup();
@@ -82,128 +82,66 @@ describe('renderPublishedPage', () => {
     expect(container.textContent).toContain('Beta');
   });
 
-  it('injects the analytics snippet with the PUBLIC key when enabled', async () => {
-    const { headSnippet } = await renderPublishedPage({
-      root: { type: 'div', id: 'r' },
-      pageParams: {},
-      cmsRepo: fakeCmsRepo(),
-      commerceRepo: fakeCommerceRepo(),
-      analytics: {
-        enabled: true,
-        ingestionKey: 'ap_live_abc',
-        ingestionEndpoint: 'https://ingest.lumitra.co',
-        projectId: 'proj_x',
-      },
-    });
-    expect(headSnippet).toContain('window.__AP_CONFIG');
-    expect(headSnippet).toContain('ap_live_abc');
-    expect(headSnippet).toContain('proj_x');
-    // A/B deferred: control baseline ships an empty variants object.
-    expect(headSnippet).toContain('window.__AP_VARIANTS={}');
-  });
-
-  it('injects the tracker LOADER script when a tracker URL is configured (so the page EMITS)', async () => {
-    const { headSnippet } = await renderPublishedPage({
-      root: { type: 'div', id: 'r' },
-      pageParams: {},
-      cmsRepo: fakeCmsRepo(),
-      commerceRepo: fakeCommerceRepo(),
-      analytics: {
-        enabled: true,
-        ingestionKey: 'ap_live_abc',
-        ingestionEndpoint: 'https://ingest.lumitra.co',
-        trackerScriptSrc: 'https://cdn.lumitra.co/tracker.js',
-      },
-    });
-    expect(headSnippet).toContain('<script async src="https://cdn.lumitra.co/tracker.js">');
-  });
-
-  it('emits config-only (no loader script) when the tracker URL is not configured', async () => {
-    const { headSnippet } = await renderPublishedPage({
-      root: { type: 'div', id: 'r' },
-      pageParams: {},
-      cmsRepo: fakeCmsRepo(),
-      commerceRepo: fakeCommerceRepo(),
-      analytics: {
-        enabled: true,
-        ingestionKey: 'ap_live_abc',
-        ingestionEndpoint: 'https://ingest.lumitra.co',
-        // no trackerScriptSrc
-      },
-    });
-    expect(headSnippet).toContain('window.__AP_CONFIG');
-    expect(headSnippet).not.toContain('<script async src');
-  });
-
-  it('injects nothing when analytics is disabled', async () => {
-    const { headSnippet } = await renderPublishedPage({
-      root: { type: 'div', id: 'r' },
-      pageParams: {},
-      cmsRepo: fakeCmsRepo(),
-      commerceRepo: fakeCommerceRepo(),
-      analytics: {
-        enabled: false,
-        ingestionKey: 'ap_live_abc',
-        ingestionEndpoint: 'https://ingest.lumitra.co',
-      },
-    });
-    expect(headSnippet).toBeNull();
-  });
-
-  it('refuses a secret-shaped key (backstop) and injects nothing rather than failing', async () => {
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { headSnippet } = await renderPublishedPage({
-      root: { type: 'div', id: 'r' },
-      pageParams: {},
-      cmsRepo: fakeCmsRepo(),
-      commerceRepo: fakeCommerceRepo(),
-      analytics: {
-        enabled: true,
-        ingestionKey: 'ap_secret_xyz',
-        ingestionEndpoint: 'https://ingest.lumitra.co',
-      },
-    });
-    expect(headSnippet).toBeNull();
-    expect(spy).toHaveBeenCalled();
-  });
-});
-
-describe('pageSeoToMetadata', () => {
-  const base: PageSeoMetadata = {
-    title: 'My Page',
-    description: 'A description',
-    keywords: ['k1', 'k2'],
-    ogTitle: '',
-    ogDescription: '',
-    ogImage: 'https://x/og.png',
-    canonicalUrl: 'https://x/p',
+  const enabled = {
+    enabled: true,
+    ingestionKey: 'ap_live_abc',
+    ingestionEndpoint: 'https://ingest.lumitra.co',
+    projectId: 'proj_x',
+    trackerScriptSrc: 'https://cdn.lumitra.co/tracker.js',
   };
 
-  it('maps title/description/keywords/canonical and falls back OG to title/description', () => {
-    const meta = pageSeoToMetadata(base);
-    expect(meta.title).toBe('My Page');
-    expect(meta.description).toBe('A description');
-    expect(meta.keywords).toEqual(['k1', 'k2']);
-    expect(meta.alternates).toEqual({ canonical: 'https://x/p' });
-    expect(meta.openGraph).toMatchObject({
-      title: 'My Page',
-      description: 'A description',
-      images: [{ url: 'https://x/og.png' }],
+  async function html(analytics: Parameters<typeof renderPublishedPage>[0]['analytics'], language = 'de') {
+    const page = await renderPublishedPage({
+      root: { type: 'div', id: 'r' },
+      pageParams: {},
+      cmsRepo: fakeCmsRepo(),
+      commerceRepo: fakeCommerceRepo(),
+      analytics,
+      consent: { language, privacyHref: '/datenschutz' },
     });
+    return { ...page, markup: renderToStaticMarkup(<>{page.body}</>) };
+  }
+
+  it('gates analytics behind the consent banner: the tracker is never in the initial HTML', async () => {
+    const { markup, analyticsGated } = await html(enabled);
+    expect(analyticsGated).toBe(true);
+    expect(markup).toContain('role="dialog"');
+    expect(markup).toContain('data-fc-consent-runtime');
+    // Only the loader stub: no executable tracker globals, no loader <script src>.
+    expect(markup).not.toContain('window.__AP_CONFIG=');
+    expect(markup).not.toContain('window.__AP_VARIANTS=');
+    expect(markup).not.toMatch(/<script[^>]*src=/);
+    // The public config travels as data inside the runtime, for after consent.
+    expect(markup).toContain('ap_live_abc');
+    expect(markup).toContain('proj_x');
+    expect(markup).toContain('Akzeptieren');
+    expect(markup).toContain('href="/datenschutz"');
   });
 
-  it('omits empty fields', () => {
-    const meta = pageSeoToMetadata({
-      title: '',
-      description: '',
-      keywords: [],
-      ogTitle: '',
-      ogDescription: '',
-      ogImage: '',
-      canonicalUrl: '',
-    });
-    expect(meta.title).toBeUndefined();
-    expect(meta.openGraph).toBeUndefined();
-    expect(meta.keywords).toBeUndefined();
+  it('speaks English on an English site', async () => {
+    const { markup } = await html(enabled, 'en-GB');
+    expect(markup).toContain('Accept');
+    expect(markup).toContain('Decline');
+  });
+
+  it('renders no banner and hides cookie-settings links when analytics is disabled', async () => {
+    const { markup, analyticsGated } = await html({ ...enabled, enabled: false });
+    expect(analyticsGated).toBe(false);
+    expect(markup).not.toContain('role="dialog"');
+    expect(markup).not.toContain('ap_live_abc');
+    expect(markup).toContain('a[href$="#cookie-settings"]{display:none!important}');
+  });
+
+  it('renders no banner without a resolved endpoint', async () => {
+    const { analyticsGated } = await html({ ...enabled, ingestionEndpoint: null });
+    expect(analyticsGated).toBe(false);
+  });
+
+  it('refuses a secret-shaped key (backstop) and loads nothing rather than failing', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { markup, analyticsGated } = await html({ ...enabled, ingestionKey: 'ap_secret_xyz' });
+    expect(analyticsGated).toBe(false);
+    expect(markup).not.toContain('ap_secret_xyz');
+    expect(spy).toHaveBeenCalled();
   });
 });

@@ -41,6 +41,13 @@ vi.mock('@/server/sites/cachedResolver', () => ({
   revalidateCustomHostCache: (...a: unknown[]) => revalidateCustomHostCache(...a),
 }));
 
+// The form submissions live in the company's tenant schema (another
+// connection): the route deletes them after the site commit.
+const deleteProjectSubmissions = vi.fn<(tenantGroupId: string, siteId: string) => Promise<number>>(async () => 0);
+vi.mock('@/server/forms/projectDelete', () => ({
+  deleteProjectSubmissions: (tenantGroupId: string, siteId: string) => deleteProjectSubmissions(tenantGroupId, siteId),
+}));
+
 // ---- in-memory database (sites, site_domains with ON DELETE CASCADE) ------
 type Site = { id: string; workspaceId: string; tenantGroupId: string; name: string; status: string };
 type Domain = {
@@ -168,6 +175,7 @@ beforeEach(() => {
   ];
   mockVerifySession.mockResolvedValue(makeSession());
   mockCan.mockResolvedValue(true);
+  deleteProjectSubmissions.mockImplementation(async () => 0);
 });
 
 afterEach(() => {
@@ -247,6 +255,8 @@ describe('DELETE /api/projects/<id> confirmation', () => {
     }
     expect(sites.find((s) => s.id === 'site_pub')).toBeTruthy();
     expect(revalidateSiteCache).not.toHaveBeenCalled();
+    // A refused delete keeps the form submissions too.
+    expect(deleteProjectSubmissions).not.toHaveBeenCalled();
   });
 
   it('an unpublished project is deleted without a typed name', async () => {
@@ -288,6 +298,32 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
     expect(db.site.deleteMany).toHaveBeenCalledTimes(1);
     expect(db.site.upsert).not.toHaveBeenCalled();
     expect(sites.map((s) => s.id).sort()).toEqual(['site_draft', 'site_foreign']);
+  });
+
+  it("deletes the project's form submissions in its tenant schema after the site commit", async () => {
+    deleteProjectSubmissions.mockImplementation(async () => {
+      // The site row is already gone when the submissions are deleted.
+      expect(sites.find((s) => s.id === 'site_pub')).toBeUndefined();
+      return 3;
+    });
+    const res = await del('site_pub', { confirmName: 'Bakery' });
+    expect(res.status).toBe(200);
+    expect(deleteProjectSubmissions).toHaveBeenCalledTimes(1);
+    expect(deleteProjectSubmissions).toHaveBeenCalledWith('tg_lumitra', 'site_pub');
+  });
+
+  it('a failure deleting the form submissions is loud (500), the caches are still invalidated', async () => {
+    deleteProjectSubmissions.mockImplementation(async () => {
+      throw new Error('tenant schema unreachable');
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await del('site_pub', { confirmName: 'Bakery' });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error.code).toBe('delete_submissions_failed');
+    expect(sites.find((s) => s.id === 'site_pub')).toBeUndefined();
+    expect(revalidateSiteCache).toHaveBeenCalledWith('bakery0label');
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it('a cache invalidation failure is loud (500), and every other host is still invalidated', async () => {

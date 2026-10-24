@@ -18,6 +18,7 @@ import ComponentModel, {
   createIntrinsicComponent,
   createFloatingCanvasComponent,
 } from './ComponentModel';
+import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { getComponentEntry } from '@/lib/componentRegistry';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
@@ -85,6 +86,15 @@ const PageMetadataModel = types.model('PageMetadata', {
   ogDescription: types.optional(types.string, ''),
   ogImage: types.optional(types.string, ''),
   canonicalUrl: types.optional(types.string, ''),
+  // Keep this page out of search engines: a robots noindex meta tag on the
+  // published page, and left out of the site's sitemap.xml.
+  noIndex: types.optional(types.boolean, false),
+  // Set when the page was created from a legal page template
+  // (src/lib/legal/templates.ts): 'impressum', 'privacy' or 'terms'. The
+  // editor then shows a "template, not legal advice" banner above it (never
+  // published), and the Site settings, the publish warning and the consent
+  // banner find the page by it. Empty for every other page.
+  legalTemplate: types.optional(types.enumeration('LegalTemplate', ['', 'impressum', 'privacy', 'terms']), ''),
 });
 
 // Stage 1 (base) – fields without circular references
@@ -111,6 +121,34 @@ const PageWithComponents = PageBase.props({
   // Includes viewport nodes, floating elements, etc.
   canvasNodes: types.optional(types.map(ComponentModel), {}),
 });
+
+
+/**
+ * The registry entry's default children (a Form arrives with its fields and
+ * submit button), created fresh with their own ids, one level deep per entry
+ * and recursively for entries that declare their own.
+ */
+function addRegistryDefaultChildren(parent: ComponentInstance, ids: readonly string[] | undefined, depth = 0): void {
+  if (!ids || depth > 4) return;
+  for (const childId of ids) {
+    const childEntry = getComponentEntry(childId);
+    if (!childEntry) continue;
+    const child = createIntrinsicComponent(`${childEntry.id}-${uuidv4()}`, childEntry.htmlType, childEntry.defaultProps);
+    child.setLabel(childEntry.label);
+    addRegistryDefaultChildren(child, childEntry.defaultChildren, depth + 1);
+    parent.addChild(child);
+  }
+}
+
+/** The page's sticky call to action bar, if it has one (depth first). */
+function findStickyCta(node: ComponentInstance): ComponentInstance | undefined {
+  if (isStickyCta(node.props)) return node;
+  for (const child of node.children as ComponentInstance[]) {
+    const found = findStickyCta(child);
+    if (found) return found;
+  }
+  return undefined;
+}
 
 const PageModel = PageWithComponents
   .actions(self => ({
@@ -177,6 +215,21 @@ const PageModel = PageWithComponents
       return undefined;
     }
 
+    // The sticky call to action is a page-level bar (src/lib/stickyCta): at
+    // most one per page, always at the end of the page, wherever it was
+    // dropped. A second drop selects the existing bar instead.
+    if (isStickyCta(entry.defaultProps)) {
+      const appTree = self.appComponentTree as ComponentInstance | undefined;
+      if (!appTree) return undefined;
+      const existing = findStickyCta(appTree);
+      if (existing) return existing;
+      const bar = createIntrinsicComponent(`${entry.id}-${uuidv4()}`, entry.htmlType, entry.defaultProps);
+      bar.setLabel(entry.label);
+      appTree.addChild(bar);
+      self.updatedAt = new Date();
+      return bar;
+    }
+
     if (target.kind === 'floating') {
       const floating = createFloatingCanvasComponent(
         `${entry.id}-${uuidv4()}`,
@@ -186,6 +239,7 @@ const PageModel = PageWithComponents
         Math.round(target.y),
       );
       floating.setLabel(entry.label);
+      addRegistryDefaultChildren(floating, entry.defaultChildren);
       self.canvasNodes.set(floating.id, floating);
       self.updatedAt = new Date();
       return self.canvasNodes.get(floating.id);
@@ -197,6 +251,7 @@ const PageModel = PageWithComponents
       entry.defaultProps,
     );
     child.setLabel(entry.label);
+    addRegistryDefaultChildren(child, entry.defaultChildren);
 
     let parent: ComponentInstance | undefined;
     let insertIndex: number | undefined;

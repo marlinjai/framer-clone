@@ -35,6 +35,7 @@
 // Runs on the Node runtime because the repository reaches Postgres through
 // adapter-prisma.
 
+import { NEW_PROJECT_SITE_SETTINGS } from '@/lib/site/siteSettings';
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { readCompanySelectors } from '@/lib/activeCompanyCookie';
 import { getSnapshot } from 'mobx-state-tree';
@@ -207,6 +208,9 @@ function buildSnapshotFromPages(
   const project = ProjectModel.create({
     id: siteId,
     metadata: { title: name, description: '', createdAt: now, updatedAt: now },
+    // A new project starts in German (src/lib/site/siteSettings.ts); projects
+    // saved before Site settings existed keep `en`.
+    siteSettings: NEW_PROJECT_SITE_SETTINGS,
     pages: repaired as never,
   });
   return getSnapshot(project) as ProjectSnapshotOut;
@@ -231,6 +235,9 @@ function buildEmptyDraftSnapshot(
   const project = ProjectModel.create({
     id: siteId,
     metadata: { title: name, description: '', createdAt: now, updatedAt: now },
+    // A new project starts in German (src/lib/site/siteSettings.ts); projects
+    // saved before Site settings existed keep `en`.
+    siteSettings: NEW_PROJECT_SITE_SETTINGS,
     pages: {
       [pageId]: {
         id: pageId,

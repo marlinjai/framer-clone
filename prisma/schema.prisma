@@ -257,6 +257,12 @@ model Site {
   // answers `from` with a 308 to the page's current path. Capped, never chained.
   redirects Json @default("[]")
 
+  // Site settings (src/lib/site/siteSettings.ts): site name, language,
+  // favicon, Open Graph defaults, title template, 404 page, business data. One
+  // JSON object mirroring ProjectModel.siteSettings; always read through
+  // normalizeSiteSettings, so a new field needs no migration.
+  siteSettings Json @default("{}") @map("site_settings")
+
   // Persistence-layer timestamps (when the ROW was written), set by the DB.
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

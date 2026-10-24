@@ -51,7 +51,7 @@ import { resolveCollectionId } from './CollectionRenderer';
 const NOTE_STYLE: React.CSSProperties = {
   color: '#9ca3af',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
   pointerEvents: 'none',
   userSelect: 'none',
 };

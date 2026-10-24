@@ -111,9 +111,15 @@ function baseRoutes(version = 1): Record<string, Handler> {
 
 const live = () => document.querySelector('p[aria-live]')!.textContent ?? '';
 const header = () => document.querySelector('header')!.textContent ?? '';
+// The first mount loads the template and renders the whole composer, which
+// takes over a second on a busy machine; Testing Library's default 1000ms
+// find budget made every test that starts here flaky under load. The per-test
+// limit is raised to match, so a slow mount is never cut off mid-test.
+const MOUNT_WAIT = { timeout: 5000 };
+vi.setConfig({ testTimeout: 15_000 });
 async function opened() {
-  await screen.findByDisplayValue('Hausvorlage');
-  await screen.findByRole('button', { name: 'Select Title' });
+  await screen.findByDisplayValue('Hausvorlage', {}, MOUNT_WAIT);
+  await screen.findByRole('button', { name: 'Select Title' }, MOUNT_WAIT);
 }
 function selectInOutline(id: string) {
   const row = document.querySelector<HTMLButtonElement>(`[data-outline-select="${id}"]`)!;

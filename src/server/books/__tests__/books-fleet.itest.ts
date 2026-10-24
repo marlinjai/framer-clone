@@ -133,6 +133,7 @@ async function fleetMigrate(schema: string) {
     '014_books_asset_delete',
     '015_books_products',
     '016_books_subject',
+    '017_form_submissions',
   ]);
 }
 
@@ -199,6 +200,7 @@ describe('007_books through the fleet runner', () => {
       '014_books_asset_delete',
       '015_books_products',
       '016_books_subject',
+      '017_form_submissions',
     ]);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     expect(await readCommerceTenantState(owner, tgId, schema)).toBe('ready');
@@ -248,6 +250,7 @@ describe('009_books_import over a schema already holding issued documents (as pr
       '014_books_asset_delete',
       '015_books_products',
       '016_books_subject',
+      '017_form_submissions',
     ]);
 
     expect(await snapshot()).toEqual(before);
@@ -303,7 +306,7 @@ describe('012_books_template_v2 through the fleet runner', () => {
                 VALUES (${plain}, ${tenantId}, 'Plain', NULL, ${owner.json([{ unexpected: 1 }])}, now())`;
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2', '013_books_assets', '014_books_asset_delete', '015_books_products', '016_books_subject']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2', '013_books_assets', '014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions']);
 
     const columns = await owner<{ column_name: string }[]>`
       SELECT column_name FROM information_schema.columns WHERE table_schema = ${schema} AND table_name = 'document_template' ORDER BY column_name`;
@@ -389,7 +392,7 @@ describe('013_books_assets (and 014 after it) through the fleet runner', () => {
     // The fleet runner applies the whole set: 013, then 014 (which lets an unused logo be deleted,
     // tested on its own below).
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets', '014_books_asset_delete', '015_books_products', '016_books_subject']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets', '014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions']);
     expect(await owner`SELECT * FROM ${s}.document_template_version ORDER BY id`).toEqual(before);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
 
@@ -489,7 +492,7 @@ describe('014_books_asset_delete through the fleet runner', () => {
     });
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['014_books_asset_delete', '015_books_products', '016_books_subject']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions']);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     // The frozen logo of a document is found through its own index.
     const [index] = await owner<{ n: number }[]>`

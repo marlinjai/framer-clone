@@ -184,10 +184,14 @@ describe('published-site render smoke (real Postgres, real seeded data)', () => 
       expect(html).toContain('data-component-kind="add-to-cart"');
       expect(html).toContain('data-component-kind="cart-view"');
       expect(html).toContain('data-component-kind="checkout-button"');
-      // ...and each island also emits its own stable server-side marker.
-      expect(html).toContain('data-add-to-cart');
-      expect(html).toContain('data-checkout');
-      expect(html).toContain('data-cart-empty');
+      // ...and the server markup of each is its sized, aria-busy pending
+      // placeholder (CommerceIsland): the island itself renders after mount,
+      // so nothing claims "your cart is empty" before the cart was read.
+      for (const kind of ['variant-selector', 'add-to-cart', 'cart-view', 'checkout-button']) {
+        expect(html).toContain(`data-island-pending="${kind}"`);
+      }
+      expect(html).toContain('aria-busy="true"');
+      expect(html).not.toContain('data-cart-empty');
     });
 
     it('degrades gracefully for unbound / empty data slots (no throw)', () => {

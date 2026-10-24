@@ -1,70 +1,64 @@
-// Storefront 404 for the published `(site)` route group (MT-15).
+// Storefront 404 for the published `(site)` route group (MT-15, plan
+// docs/plans/2026-10-23-published-site-essentials.md decision 3).
 //
 // Next resolves `notFound()` thrown from `(site)/[...slug]/page.tsx` (an
-// unknown host or an unmatched slug) to the NEAREST `not-found.tsx`. Before this
-// file existed, that was the app-root `not-found` rendered inside the editor's
-// root layout — shipping editor metadata/chrome to a public storefront miss.
-// This is a clean, self-contained storefront 404 with no editor chrome and no
-// data-table CSS (styles are inline so it never depends on editor stylesheets).
+// unknown host, an unmatched slug, or a visit to the site's 404 page itself)
+// to this file, rendered with the status 404 and the (site) layout's metadata
+// (Next adds robots noindex to every not-found render). Three cases:
+//
+//   1. The site has a designed 404 page (Site settings / Page settings, "Use as
+//      404 page"): it renders exactly like any published page.
+//   2. A known site without one: the default 404 in the site's language, with
+//      its name and the look of its home page (src/lib/site/notFoundDefault.ts).
+//   3. A host that names no published site: the same default in English.
+//
+// No editor chrome and no data-table CSS; styles are inline. A failure while
+// rendering the designed page falls back to the default, so a broken 404 page
+// can never turn a miss into a 500.
 
 import React from 'react';
-import Link from 'next/link';
+import { unstable_rethrow } from 'next/navigation';
+import { DefaultNotFound } from '@/components/site/DefaultNotFound';
+import { resolveSiteForRequest } from '@/server/sites/requestSite';
+import { findNotFoundPage, renderSitePage } from '@/server/sites/renderSitePage';
+import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToComponentNode';
+import { effectiveSiteName, DEFAULT_LANGUAGE } from '@/lib/site/siteSettings';
+import { DEFAULT_LOOK, siteLookFromPages } from '@/lib/site/notFoundDefault';
 
-export default function SiteNotFound() {
+export default async function SiteNotFound() {
+  let site = null;
+  try {
+    site = await resolveSiteForRequest();
+  } catch (err) {
+    unstable_rethrow(err);
+    console.error('(site)/not-found: could not resolve the site; serving the generic 404.', err);
+  }
+  if (!site) {
+    return <DefaultNotFound siteName="" language={DEFAULT_LANGUAGE} look={DEFAULT_LOOK} />;
+  }
+
+  const designed = findNotFoundPage(site);
+  if (designed) {
+    const adapted = snapshotToComponentNode(designed.snapshot);
+    if (adapted.root) {
+      try {
+        return await renderSitePage({
+          site,
+          matched: { page: designed, params: {} },
+          adapted: { ...adapted, root: adapted.root },
+        });
+      } catch (err) {
+        unstable_rethrow(err);
+        console.error('(site)/not-found: the designed 404 page failed to render; serving the default.', err);
+      }
+    }
+  }
+
   return (
-    <main
-      data-testid="storefront-404"
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '1rem',
-        padding: '2rem',
-        textAlign: 'center',
-        fontFamily:
-          'var(--font-geist-sans), system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
-        color: '#111827',
-        background: '#ffffff',
-      }}
-    >
-      <p
-        style={{
-          margin: 0,
-          fontSize: '0.875rem',
-          fontWeight: 600,
-          letterSpacing: '0.08em',
-          textTransform: 'uppercase',
-          color: '#6b7280',
-        }}
-      >
-        404
-      </p>
-      <h1 style={{ margin: 0, fontSize: '1.875rem', fontWeight: 700 }}>
-        Page not found
-      </h1>
-      <p style={{ margin: 0, maxWidth: '32rem', color: '#6b7280' }}>
-        The page you&rsquo;re looking for doesn&rsquo;t exist or may have been
-        moved.
-      </p>
-      <Link
-        href="/"
-        style={{
-          marginTop: '0.5rem',
-          display: 'inline-flex',
-          alignItems: 'center',
-          borderRadius: '8px',
-          background: '#5b5bd6',
-          padding: '0.625rem 1.25rem',
-          fontSize: '0.875rem',
-          fontWeight: 600,
-          color: '#ffffff',
-          textDecoration: 'none',
-        }}
-      >
-        Go to homepage
-      </Link>
-    </main>
+    <DefaultNotFound
+      siteName={effectiveSiteName(site.siteSettings, site.name)}
+      language={site.siteSettings.language}
+      look={siteLookFromPages(site.pages)}
+    />
   );
 }

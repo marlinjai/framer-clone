@@ -122,14 +122,14 @@ const DEMO_BANNER_STYLE: React.CSSProperties = {
   background: '#fffbeb',
   border: '1px solid #fde68a',
   color: '#92400e',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
   fontSize: '12px',
   fontWeight: 600,
 };
 
 const PANEL_STYLE: React.CSSProperties = {
   marginTop: '8px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
   fontSize: '13px',
   color: '#111827',
 };
@@ -319,7 +319,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
           background: idleDisabled ? '#9ca3af' : '#111827',
           color: '#ffffff',
           cursor: idleDisabled ? 'not-allowed' : 'pointer',
-          fontFamily: 'Inter, sans-serif',
+          fontFamily: 'inherit',
           fontSize: '14px',
         }}
       >
@@ -396,7 +396,7 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
               background: paying ? '#9ca3af' : '#065f46',
               color: '#ffffff',
               cursor: paying ? 'not-allowed' : 'pointer',
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'inherit',
               fontSize: '14px',
             }}
           >
@@ -414,7 +414,7 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
               background: '#ffffff',
               color: '#111827',
               cursor: paying ? 'not-allowed' : 'pointer',
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'inherit',
               fontSize: '14px',
             }}
           >
@@ -429,7 +429,7 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
     return (
       <div
         data-checkout-confirmation
-        style={{ marginTop: '8px', color: '#065f46', fontFamily: 'Inter, sans-serif', fontSize: '13px' }}
+        style={{ marginTop: '8px', color: '#065f46', fontFamily: 'inherit', fontSize: '13px' }}
       >
         <div>
           Order {state.order.orderId} confirmed. Total: {formatCents(state.order.totalCents, state.order.currency)}.
@@ -445,7 +445,7 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
     return (
       <div
         data-checkout-shortage
-        style={{ marginTop: '8px', color: '#b45309', fontFamily: 'Inter, sans-serif', fontSize: '13px' }}
+        style={{ marginTop: '8px', color: '#b45309', fontFamily: 'inherit', fontSize: '13px' }}
       >
         <div>Some items are no longer fully available:</div>
         <ul style={{ margin: '4px 0', paddingLeft: '18px' }}>
@@ -466,7 +466,7 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
     return (
       <div
         data-checkout-error
-        style={{ marginTop: '8px', color: '#b91c1c', fontFamily: 'Inter, sans-serif', fontSize: '13px' }}
+        style={{ marginTop: '8px', color: '#b91c1c', fontFamily: 'inherit', fontSize: '13px' }}
       >
         Checkout failed: {state.message}
       </div>

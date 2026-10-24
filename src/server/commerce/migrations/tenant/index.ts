@@ -16,6 +16,7 @@ import { booksAssets } from './013_books_assets';
 import { booksAssetDelete } from './014_books_asset_delete';
 import { booksProducts } from './015_books_products';
 import { booksSubject } from './016_books_subject';
+import { formSubmissions } from './017_form_submissions';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -89,6 +90,10 @@ import { booksSubject } from './016_books_subject';
  *   016_books_subject      : a document's subject line (sales_document.subject,
  *                            nullable, at most 200 characters; frozen after
  *                            issue by 007's guard like every column)
+ *   017_form_submissions   : what visitors send through a form on a published
+ *                            site (form_submission, mutable only in read_at,
+ *                            deleted for real by the owner, the project delete
+ *                            and company erasure; no IP address stored)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -108,4 +113,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   booksAssetDelete,
   booksProducts,
   booksSubject,
+  formSubmissions,
 ];

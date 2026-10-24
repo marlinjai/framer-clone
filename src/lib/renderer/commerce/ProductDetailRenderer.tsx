@@ -49,7 +49,7 @@ import {
 const NOTE_STYLE: React.CSSProperties = {
   color: '#9ca3af',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
   pointerEvents: 'none',
   userSelect: 'none',
 };
@@ -64,7 +64,7 @@ const ERROR_CHIP_STYLE: React.CSSProperties = {
   borderRadius: '4px',
   padding: '2px 6px',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
   pointerEvents: 'none',
   userSelect: 'none',
 };

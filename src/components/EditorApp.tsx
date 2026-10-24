@@ -16,6 +16,7 @@ import { EditorTool } from '@/stores/EditorUIStore';
 import { getUndoManager, getHistoryStore, getDragManager } from '@/stores/RootStore';
 import { openProject, pageIdFromLocation, pickPage, restoreStashedDemo } from '@/stores/openProject';
 import EditorNotice from './EditorNotice';
+import LegalTemplateNotice from './site/LegalTemplateNotice';
 import { isEditableTarget, resolveAction } from '@/lib/keyBindings';
 import { deleteSelection } from '@/lib/canvas/deleteSelection';
 import { duplicateLayer } from '@/lib/layers/layerActions';
@@ -264,6 +265,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
 
       <TopBar />
       <EditorNotice />
+      <LegalTemplateNotice />
       <div data-editor-ui="true" className="fixed top-16 left-0 bottom-0 z-90">
         <LeftSidebar />
       </div>

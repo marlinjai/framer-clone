@@ -171,4 +171,29 @@ describe('persistedToProjectSnapshot -> ProjectModel round-trip', () => {
     expect(rebuilt.lumitra.projectId).toBe('proj_xyz');
     expect(rebuilt.lumitra.enabled).toBe(true);
   });
+
+  it('preserves the site settings across a full round-trip, and old rows load with the defaults', () => {
+    const original = makeProjectWithPages();
+    original.updateSiteSettings({ ...original.site, siteName: 'Müller', language: 'de' });
+
+    const persisted = projectToPersisted(original);
+    expect(persisted.siteSettings.siteName).toBe('Müller');
+    const rowData: SiteRowData = {
+      id: persisted.siteId,
+      name: persisted.name,
+      description: persisted.description,
+      analyticsProjectId: null,
+      ingestionEndpoint: null,
+      apiKeyRef: null,
+      lumitraEnabled: false,
+      siteSettings: JSON.parse(JSON.stringify(persisted.siteSettings)),
+      projectCreatedAt: new Date(persisted.projectCreatedAt),
+      projectUpdatedAt: new Date(persisted.projectUpdatedAt),
+      pages: persisted.pages.map((p) => ({ pageId: p.pageId, snapshot: p.snapshot })),
+    };
+    expect(ProjectModel.create(persistedToProjectSnapshot(rowData)).site).toEqual(original.site);
+
+    const oldRow: SiteRowData = { ...rowData, siteSettings: {} };
+    expect(ProjectModel.create(persistedToProjectSnapshot(oldRow)).site.language).toBe('en');
+  });
 });
