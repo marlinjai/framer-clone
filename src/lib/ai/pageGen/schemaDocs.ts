@@ -20,6 +20,7 @@ import {
   listGenerationTags,
 } from './schema';
 import { isVoidTag } from '@/lib/drag/voidTags';
+import { effectsDocs } from './promptSections/effects';
 import { FONT_CATEGORIES, FONT_LIBRARY, fontStack } from '@/lib/fonts/registry';
 
 export function buildSchemaDocs(): string {
@@ -68,7 +69,8 @@ export function buildSchemaDocs(): string {
     '    "src": "<img only>", "alt": "<img only>",',
     '    "imageQuery": "<img or container: English stock-photo search>",',
     '    "href": "<a only>", "target": "<a only: _blank or _self>",',
-    '    "style": { "<camelCase CSS property>": <value or responsive map> }',
+    '    "style": { "<camelCase CSS property>": <value or responsive map> },',
+    '    "effects": { "appear": { ... } }  (optional, see Motion)',
     '  },',
     '  "children": [ <nodes> ]',
     '}',
@@ -110,6 +112,8 @@ export function buildSchemaDocs(): string {
     `every breakpoint without its own key; always include "${BASE_KEY}" in a responsive map. Give every`,
     'layout-relevant property (padding, fontSize, gridTemplateColumns, flexDirection) a mobile value when the',
     'desktop value would not fit a phone.',
+    '',
+    effectsDocs(),
     '',
     '## Fonts',
     '',

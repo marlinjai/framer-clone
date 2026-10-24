@@ -89,6 +89,9 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
     commerceRepo: await commerceRepoForSite(site, adapted.root),
     analytics,
     breakpoints: adapted.breakpoints,
+    // Lenis smooth scrolling, the site's setting (off by default; off for
+    // visitors who ask for reduced motion, decided in the browser).
+    smoothScroll: site.siteSettings.smoothScroll === true,
   });
 
   return (

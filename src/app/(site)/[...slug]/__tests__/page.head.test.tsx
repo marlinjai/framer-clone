@@ -42,6 +42,7 @@ vi.mock('@/server/cms', () => ({
 }));
 
 import SitePage, { generateMetadata } from '../page';
+import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
 
 function page(pageId: string, slug: string, metadata: Record<string, unknown> = {}) {
   return {
@@ -157,5 +158,11 @@ describe('the page body', () => {
     const about = render(await visit(['about']));
     expect(about.container.querySelector('script[type="application/ld+json"]')).toBeNull();
     expect(about.getByTestId('body')).toBeTruthy();
+  });
+
+  it("passes the site's smooth scrolling setting to the render", async () => {
+    setSite({ smoothScroll: true }, [page('About us', 'about')]);
+    await visit(['about']);
+    expect(vi.mocked(renderPublishedPage).mock.calls.at(-1)?.[0]).toMatchObject({ smoothScroll: true });
   });
 });

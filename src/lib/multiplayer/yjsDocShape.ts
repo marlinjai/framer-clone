@@ -122,6 +122,12 @@ export const YJS_NODE_KEYS = {
 export const YJS_PROPS_KEYS = {
   /** Nested Y.Map of style properties (per-property LWW). */
   style: 'style',
+  /**
+   * Nested Y.Map of effect groups (appear / hover / scroll), each a plain JSON
+   * value (an effect or a responsive map of effects): two users editing the
+   * appear and the hover of one node do not overwrite each other.
+   */
+  effects: 'effects',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -226,6 +232,12 @@ function encodePropsToYMap(props: PropsRecord | undefined): Y.Map<any> {
     if (value === undefined) continue;
     if (key === YJS_PROPS_KEYS.style && isPlainObject(value)) {
       propsMap.set(key, encodeStyleToYMap(value));
+    } else if (key === YJS_PROPS_KEYS.effects && isPlainObject(value)) {
+      const effectsMap = new Y.Map<any>();
+      for (const [group, groupValue] of Object.entries(value)) {
+        if (groupValue !== undefined) effectsMap.set(group, groupValue);
+      }
+      propsMap.set(key, effectsMap);
     } else {
       propsMap.set(key, value);
     }
@@ -536,6 +548,8 @@ function decodePropsFromYMap(propsMap: Y.Map<any>): PropsRecord {
   propsMap.forEach((value, key) => {
     if (key === YJS_PROPS_KEYS.style && value instanceof Y.Map) {
       out[key] = decodeStyleFromYMap(value);
+    } else if (key === YJS_PROPS_KEYS.effects && value instanceof Y.Map) {
+      out[key] = (value as Y.Map<any>).toJSON();
     } else {
       out[key] = value;
     }

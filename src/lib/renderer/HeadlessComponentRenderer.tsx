@@ -20,6 +20,7 @@ import { ComponentInstance } from '@/models/ComponentModel';
 import { createComponentElement } from './createComponentElement';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
 import { createScope, type BindingScope } from '@/lib/bindings/resolver/scope';
+import { effectDomForBreakpoint, resolveEffects, storedEffectsOf } from '@/lib/effects/effects';
 
 export interface HeadlessComponentRendererProps {
   component: ComponentInstance;
@@ -56,9 +57,17 @@ const HeadlessComponentRenderer = observer(({
   const { style: boundStyle, ...resolvedAttributes } = resolvedProps as Record<string, unknown>;
   const effectiveStyle = (boundStyle ?? {}) as Record<string, unknown>;
 
+  // Effects play here as on the published page (src/lib/effects): this
+  // surface renders one breakpoint, so the values resolve for it directly into
+  // attributes and custom properties the runtime and its stylesheet read.
+  const stored = storedEffectsOf(component.props);
+  const fx = stored ? effectDomForBreakpoint(resolveEffects(stored, breakpointId, allBreakpoints)) : undefined;
+  const styleWithFx = fx ? { ...effectiveStyle, ...fx.style } : effectiveStyle;
+
   const finalProps: Record<string, unknown> = {
     ...resolvedAttributes,
-    style: Object.keys(effectiveStyle).length ? effectiveStyle : undefined,
+    ...(fx?.attributes ?? {}),
+    style: Object.keys(styleWithFx).length ? styleWithFx : undefined,
   };
 
   const renderNode = (node: ComponentInstance, childScope: BindingScope) => (
