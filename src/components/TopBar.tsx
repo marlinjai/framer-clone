@@ -27,6 +27,7 @@ import DomainsButton from '@/components/domains/DomainsButton';
 import SiteSettingsButton from '@/components/site/SiteSettingsDialog';
 import SaveButton from '@/components/SaveButton';
 import GeneratePageButton from '@/components/ai/GeneratePageDialog';
+import { PolishPageButton } from '@/components/ai/VisualReview';
 import EditableProjectTitle from './EditableProjectTitle';
 
 function relativeTime(ts: number, now: number): string {
@@ -204,6 +205,11 @@ const TopBar = observer(() => {
       {/* Generate: AI page / section generation (plan ai-driven-page-generation).
           Applies as one undoable action; Save persists it like any other edit. */}
       <GeneratePageButton />
+
+      {/* Polish with AI: measure the open page's layout and let a vision model
+          fix clipped text, overflow and contrast, as one undo step (plan
+          2026-10-23-ai-design-quality-round-2, decision 4). */}
+      <PolishPageButton />
 
       {/* Save: persist the working copy WITHOUT publishing (MT-10). Sits just
           before Publish so the non-destructive action reads first. */}

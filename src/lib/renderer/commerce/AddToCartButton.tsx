@@ -41,7 +41,7 @@ const ERROR_CHIP_STYLE: React.CSSProperties = {
   borderRadius: '4px',
   padding: '2px 6px',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
 };
 
 type AvailabilityState =
@@ -186,7 +186,7 @@ function AddToCartButton({
         background: disabled ? '#9ca3af' : '#111827',
         color: '#ffffff',
         cursor: disabled ? 'not-allowed' : 'pointer',
-        fontFamily: 'Inter, sans-serif',
+        fontFamily: 'inherit',
         fontSize: '14px',
       }}
     >

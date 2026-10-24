@@ -11,15 +11,7 @@ import {
   ToggleIconGroup,
 } from '../primitives';
 import { styleSource } from '../breakpointSource';
-
-const FONT_FAMILY_OPTIONS = [
-  { value: 'inherit', label: 'Inherit' },
-  { value: 'Inter, sans-serif', label: 'Inter' },
-  { value: 'Arial, sans-serif', label: 'Arial' },
-  { value: 'Georgia, serif', label: 'Georgia' },
-  { value: "'Courier New', monospace", label: 'Courier New' },
-  { value: 'system-ui, sans-serif', label: 'System UI' },
-];
+import { FontFamilySelect } from '../primitives/FontFamilySelect';
 
 const FONT_WEIGHT_OPTIONS = [
   { value: '100', label: 'Thin (100)' },
@@ -50,11 +42,10 @@ export const TypographySection = observer(({ component, breakpointId }: Typograp
       icon={<Type size={14} />}
     >
       <PropertyRow label="Font" source={src('fontFamily')}>
-        <PropertySelect
-          label=""
-          value={getStyleValue('fontFamily') || 'inherit'}
+        {/* The self-hosted font library (src/lib/fonts/registry.ts), grouped by category. */}
+        <FontFamilySelect
+          value={getStyleValue('fontFamily')}
           onChange={(v) => setStyleValue('fontFamily', v)}
-          options={FONT_FAMILY_OPTIONS}
         />
       </PropertyRow>
 

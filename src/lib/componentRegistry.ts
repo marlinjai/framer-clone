@@ -91,7 +91,7 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
       children: 'Text',
       style: {
         fontSize: '16px',
-        fontFamily: 'Inter, sans-serif',
+        fontFamily: 'inherit',
         color: '#111827',
         margin: 0,
         padding: '8px',
@@ -118,7 +118,7 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
         padding: '8px 16px',
         backgroundColor: '#111827',
         color: 'white',
-        fontFamily: 'Inter, sans-serif',
+        fontFamily: 'inherit',
         fontSize: '14px',
         fontWeight: 500,
         border: 'none',

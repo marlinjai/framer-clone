@@ -24,6 +24,7 @@ import { applyEffects } from './applyEffects';
 import EffectsIsland from './EffectsIsland';
 import { EffectsStyles } from '@/lib/effects/EffectsStyles';
 import { publishedEffectsBootScript } from '@/lib/effects/effects';
+import { publishedFontAssets } from './publishedFonts';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
 import CommercePageProviders from './CommercePageProviders';
 import type { PageSeoMetadata } from './snapshotToComponentNode';
@@ -134,6 +135,9 @@ export async function renderPublishedPage(
   // breakpoint like any responsive style.
   const effects = applyEffects(hydrated, breakpoints);
   const responsive = applyResponsiveStyles(effects.root, breakpoints);
+  // The self-hosted web fonts the page uses, scanned before the responsive
+  // rewrite moves styles into classes (src/lib/fonts/registry.ts).
+  const fonts = publishedFontAssets(hydrated);
 
   // The page frame drives any island re-resolution of {{page.params.*}}.
   const scope = pushPageFrame(createScope(), pageParams);
@@ -142,6 +146,7 @@ export async function renderPublishedPage(
   return {
     body: (
       <>
+        {fonts}
         {responsive.css ? (
           // Rendered in place (no href / precedence, so React does not hoist
           // it) ahead of the content it styles, so streamed HTML never paints
