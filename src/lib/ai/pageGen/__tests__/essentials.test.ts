@@ -162,11 +162,10 @@ describe('fillMissingAlt', () => {
     expect(fok).toBe(nodes[0].children[3]);
     expect(fdeco).toBe(nodes[0].children[4]);
     expect(out.filled).toBe(2);
-    expect(out.unfilled).toBe(1);
+    expect(out.unfilled).toEqual(['Hero > Image']);
     expect(out.notes).toEqual([
       'Hero > Photo: alt text filled from the photo description ("Fresh sourdough loaves on a wooden table"); check it describes the photo',
       'Hero > Owner at the counter: alt text filled from the layer name ("Owner at the counter"); check it describes the image',
-      'Hero > Image: no alt text; add one in the Image section, or mark the image decorative',
     ]);
     // The input is not mutated.
     expect(nodes[0].children[0].props.alt).toBeUndefined();

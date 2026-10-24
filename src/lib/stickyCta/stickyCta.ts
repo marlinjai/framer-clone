@@ -16,10 +16,10 @@
 //
 //   - Editor canvas: a normal block where the node sits, with a label saying
 //     what it does (createComponentElement, mode 'editor').
-//   - Preview: hoisted to the end of the page root, `position: sticky` at the
-//     bottom of the preview frame (the frame is the scroll container, so a
+//   - Preview: drawn once right after the page root, `position: sticky` at
+//     the bottom of the preview frame (the frame is the scroll container, so a
 //     fixed element would stick to the browser window instead), on the
-//     smallest breakpoint only.
+//     smallest breakpoint only (HeadlessPageRenderer).
 //   - Published page: hoisted to the end of the page root (hoistStickyCta),
 //     `position: fixed` at the bottom below the smallest breakpoint's max
 //     width (stickyCtaCss), hidden above it.

@@ -1027,6 +1027,21 @@ describe('POST /api/ai/generate-page page essentials', () => {
     expect(result.tells).toEqual([]);
   });
 
+  it('reports an image it cannot describe as a remaining issue, not as a fix', async () => {
+    const page = structuredClone(WITH_CTA_PAGE) as typeof WITH_CTA_PAGE & { nodes: Array<{ children: unknown[] }> };
+    page.nodes[0].children.push({ type: 'img', label: 'Image', props: { src: 'https://example.com/shop.jpg' } });
+    anthropicState.turns = [toolTurn(page), toolTurn(page)];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    const result = evs.find((e) => e.event === 'gen:result')!.data as {
+      tells: string[];
+      warnings: string[];
+      nodes: Array<{ children: Array<{ type: string; props: Record<string, unknown> }> }>;
+    };
+    expect(result.nodes[0].children.find((c) => c.type === 'img')!.props.alt).toBe('');
+    expect(result.tells).toEqual([expect.stringMatching(/^Hero > Image: Page essentials: this image has no alt text/)]);
+    expect(result.warnings.join('\n')).not.toMatch(/alt text filled/);
+  });
+
   it('accepts a decorative image without a repair round', async () => {
     const page = structuredClone(WITH_CTA_PAGE) as typeof WITH_CTA_PAGE & { nodes: Array<{ children: unknown[] }> };
     page.nodes[0].children.push({ type: 'img', props: { decorative: true, imageQuery: 'linen texture' } });

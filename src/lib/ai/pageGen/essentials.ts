@@ -278,12 +278,16 @@ export function detectEssentials(tree: TellTree, opts: EssentialsOptions): TellF
 
 export interface AltFillResult {
   nodes: GeneratedNodeSnapshot[];
-  /** One line per image, for the dialog's list of automatic fixes. */
+  /** One line per filled image, for the dialog's list of automatic fixes. */
   notes: string[];
   /** How many images were filled from the photo description or their layer name. */
   filled: number;
-  /** Images left without alt text (no photo description, no usable layer name). */
-  unfilled: number;
+  /**
+   * Layer paths of the images left without alt text (no photo description, no
+   * usable layer name): a remaining issue, not a fix, so the route reports
+   * their findings with the remaining tells.
+   */
+  unfilled: string[];
 }
 
 function sentenceCase(s: string): string {
@@ -296,14 +300,15 @@ function sentenceCase(s: string): string {
  * meaningful alt text: the image's stock-photo query (it describes the photo,
  * which "Image" never did), else its layer name when that is not generic. With
  * neither, the alt stays empty (not decorative), so the editor's Image
- * section shows its "no alt text" warning, and the line here says so. Never
+ * section shows its "no alt text" warning, and the path is returned as
+ * unfilled. Never
  * touches a decorative image or an image whose alt is fine.
  */
 export function fillMissingAlt(nodes: GeneratedNodeSnapshot[], imageRequests: readonly ImageRequest[]): AltFillResult {
   const queries = new Map(imageRequests.filter((r) => r.kind === 'img').map((r) => [r.nodeId, r.query]));
   const notes: string[] = [];
   let filled = 0;
-  let unfilled = 0;
+  const unfilled: string[] = [];
   const paths = new Map<string, string>();
   walk(nodes as TellNode[], (n, path) => paths.set(n.id, path));
   const visit = (node: GeneratedNodeSnapshot): GeneratedNodeSnapshot => {
@@ -321,11 +326,9 @@ export function fillMissingAlt(nodes: GeneratedNodeSnapshot[], imageRequests: re
     } else if (label && !GENERIC_WORD.test(label) && !GENERIC_ALT_WORDS.has(label.toLowerCase())) {
       alt = label;
       notes.push(`${path}: alt text filled from the layer name ("${alt}"); check it describes the image`);
-    } else {
-      notes.push(`${path}: no alt text; add one in the Image section, or mark the image decorative`);
     }
     if (alt) filled += 1;
-    else unfilled += 1;
+    else unfilled.push(path);
     return { ...node, props: { ...node.props, alt }, children };
   };
   return { nodes: nodes.map(visit), notes, filled, unfilled };

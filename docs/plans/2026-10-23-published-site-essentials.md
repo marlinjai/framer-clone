@@ -217,7 +217,8 @@ while building, each reversible:
   echoed `data-decorative` from replace context is kept), and neither the screen nor the editor flags
   it. **Fallback** after the repair round: the image's stock-photo query, sentence-cased (it
   describes the photo), else its layer name when that is not generic, else an empty alt without the
-  decorative flag so the editor warns; each fill is one line in the dialog's automatic fixes.
+  decorative flag so the editor warns; each fill is one line in the dialog's automatic fixes, and an
+  image left without alt text stays in the list of remaining issues.
 - **Editor signal**: the Image section of an img now has an Alt text field (there was no alt editor
   at all), a Decorative switch and a warning with the same rule (`altProblem`), so a dropped Image
   component (preset alt "Image") shows the warning until the owner describes it.
@@ -231,8 +232,10 @@ while building, each reversible:
   - Canvas: a normal block where it sits, labelled "Sticky call to action · mobile only"; the link
     is a span, so a click selects it and never navigates.
   - Preview: the frame is the scroll container, so `fixed` would pin to the browser window; the
-    page's first bar is drawn once at the end of the page root with `position: sticky; bottom: 0`, on
-    the smallest breakpoint only, and not at all on larger ones.
+    page's first bar is drawn once right after the page root, as a child of the frame, with
+    `position: sticky; bottom: 0` (so the root's own overflow cannot stop it), on the smallest
+    breakpoint only, and not at all on larger ones. On a page with a single breakpoint the preview
+    pins it at every width while the published page uses the 809.98 px fallback.
   - Published: `hoistStickyCta` moves the first bar to the end of the page root (reading order) and
     drops further ones; a stylesheet hides it above the smallest breakpoint (below the second
     smallest breakpoint's min width, or 809.98 px for a page with one breakpoint) and below it fixes
@@ -241,9 +244,11 @@ while building, each reversible:
     JavaScript), and lifts the consent banner above the bar so both stay usable (the bar sits one
     z-index layer below the banner). The site layout declares no `viewport-fit=cover`, so on iOS the
     safe-area inset is 0 and Safari keeps the bar above the home indicator itself; the padding takes
-    effect if the layout ever opts into cover.
+    effect if the layout ever opts into cover. On phones the bar's bottom padding is fixed at 12 px
+    plus the safe area (the owner's own bottom padding applies only on the canvas).
   - At most one per page: a second drop from the Components panel selects the existing bar, and
-    every drop lands at the end of the page wherever it was dropped.
+    every drop lands at the end of the page wherever it was dropped. A bar duplicated by copy and
+    paste shows on the canvas, but the preview and the published page render only the first.
   - Generator: `promptSections/stickyCta.ts` asks for one on a new page whose goal is a booking,
     reservation, appointment or getting in touch, with the hero's call to action intent and href;
     the validator accepts it only on a new page, at most one, moved to the end of the top-level

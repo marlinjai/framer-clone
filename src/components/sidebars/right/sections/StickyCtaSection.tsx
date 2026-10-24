@@ -52,7 +52,8 @@ export const StickyCtaSection = observer(({ component }: StickyCtaSectionProps) 
     <CollapsibleSection title="Sticky call to action" icon={<PanelBottom size={14} />}>
       <p className={HINT}>
         Pinned to the bottom of the screen on the smallest breakpoint of the published page and the preview,
-        hidden on larger ones. At most one per page.
+        hidden on larger ones (its bottom padding there is 12px plus the phone&apos;s safe area). At most one
+        per page.
       </p>
       <PropertyRow label="Label">
         <TextInput

@@ -65,11 +65,13 @@ afterEach(() => {
 });
 
 describe('the preview', () => {
-  it('pins the first bar at the end of the page root on the smallest breakpoint', () => {
+  it('pins the first bar right after the page root on the smallest breakpoint', () => {
     const page = makePage([hero, second]);
     const { container } = render(<HeadlessPageRenderer page={page} breakpointId="bp-mobile" />);
     const root = container.querySelector('[data-inner-component-id="root"]')!;
-    const wrapper = root.lastElementChild as HTMLElement;
+    // A sibling of the root inside the frame (the scroll container), so the
+    // root's own overflow can never stop it from sticking.
+    const wrapper = root.nextElementSibling as HTMLElement;
     expect(wrapper.hasAttribute('data-fc-sticky-cta-preview')).toBe(true);
     expect(wrapper.style.position).toBe('sticky');
     expect(wrapper.style.bottom).toBe('0px');

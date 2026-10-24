@@ -332,7 +332,9 @@ async function runGeneration(args: RunArgs): Promise<void> {
       // description (or a meaningful layer name), each one reported.
       const alt = fillMissingAlt(screenedResult.nodes, imageRequests);
       const result = { ...screenedResult, nodes: alt.nodes };
-      const remaining = c.remaining.filter((f) => f.tell !== 'alt-text');
+      // Filled alt texts are automatic fixes; an image left without one stays a remaining issue.
+      const unfilledAlt = new Set(alt.unfilled);
+      const remaining = c.remaining.filter((f) => f.tell !== 'alt-text' || unfilledAlt.has(f.path));
       if (imageRequests.length > 0) {
         sse.send('gen:progress', { phase: 'images', receivedChars: received, attempt });
       }
@@ -353,7 +355,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
           : [];
       // Counts only, never page content.
       console.info(
-        `[generate-page] tells fixed=${c.fixCount} remaining=${c.remaining.length} repaired=${repaired} attempts=${attempt} altFilled=${alt.filled} altMissing=${alt.unfilled}`,
+        `[generate-page] tells fixed=${c.fixCount} remaining=${c.remaining.length} repaired=${repaired} attempts=${attempt} altFilled=${alt.filled} altMissing=${alt.unfilled.length}`,
       );
       sse.send('gen:result', {
         generationId: requestId,
