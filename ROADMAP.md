@@ -44,6 +44,13 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   templates, and consent after checking whether the analytics tracker needs it. Audited the same
   day: most are missing today, and every published site is marked `lang="en"`. See
   [plan](docs/plans/2026-10-23-published-site-essentials.md). (2026-10-23)
+- [ ] Form notification emails: forms (built 2026-10-24, see the site essentials plan, decision 4)
+  store submissions per company and show them in the editor's inbox, but framer-clone has no mail
+  path, so the owner is not emailed about a new submission. Wire Lumitra Mail (the suite's mail
+  service) as the sender: a notification address per form defaulting to the site's contact email,
+  sent after the submission is stored, a failure logged and shown in the inbox, never losing the
+  submission. Also: when a company erasure routine is written, it must call
+  `deleteWorkspaceSubmissions` (src/lib/forms) or drop the tenant schema. (2026-10-24)
 - [ ] Animated components, a few chosen ones: React Bits was checked on 2026-10-23 and is MIT plus
   Commons Clause, which forbids redistributing its components "alone, in a bundle, or as a ported
   version", so a builder that offers them to its customers cannot ship them. Instead build the
