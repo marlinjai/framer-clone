@@ -31,6 +31,7 @@ import { getPrismaClient } from '@/server/db';
 import type { PageSnapshotOut } from '@/models/PageModel';
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
 import { parseSiteRedirects, type SiteRedirect } from '@/lib/pages/redirects';
+import { normalizeSiteSettings, type SiteSettings } from '@/lib/site/siteSettings';
 import { RFC1035_LABEL } from '@/server/sites/subdomain';
 import {
   isClaimableHostname,
@@ -65,6 +66,8 @@ export interface PublishedSite {
   pages: PublishedPageRow[];
   /** Old-slug redirects (src/lib/pages/redirects.ts), applied when no page matches. */
   redirects: SiteRedirect[];
+  /** Site settings (src/lib/site/siteSettings.ts), always normalized. */
+  siteSettings: SiteSettings;
 }
 
 /**
@@ -208,6 +211,7 @@ export async function resolvePublishedSiteByKey(
       apiKeyRef: true,
       lumitraEnabled: true,
       redirects: true,
+      siteSettings: true,
       pages: { select: { pageId: true, slug: true, snapshot: true } },
     },
   });
@@ -228,6 +232,7 @@ export async function resolvePublishedSiteByKey(
       snapshot: p.snapshot as unknown as PageSnapshotOut,
     })),
     redirects: parseSiteRedirects(site.redirects),
+    siteSettings: normalizeSiteSettings(site.siteSettings),
   };
 }
 

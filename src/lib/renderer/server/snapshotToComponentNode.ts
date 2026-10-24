@@ -38,6 +38,8 @@ export interface PageSeoMetadata {
   ogDescription: string;
   ogImage: string;
   canonicalUrl: string;
+  /** Keep the page out of search engines (robots noindex, no sitemap entry). */
+  noIndex: boolean;
 }
 
 /**
@@ -127,6 +129,7 @@ const EMPTY_METADATA: PageSeoMetadata = {
   ogDescription: '',
   ogImage: '',
   canonicalUrl: '',
+  noIndex: false,
 };
 
 /** Lift the SEO metadata off the page snapshot, defaulting every field. */
@@ -141,6 +144,7 @@ function extractMetadata(snapshot: PageSnapshotOut): PageSeoMetadata {
     ogDescription: meta.ogDescription ?? '',
     ogImage: meta.ogImage ?? '',
     canonicalUrl: meta.canonicalUrl ?? '',
+    noIndex: meta.noIndex === true,
   };
 }
 

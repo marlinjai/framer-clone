@@ -60,6 +60,13 @@ export const GENERATION_LIMITS = {
  */
 export const IMAGE_QUERY_PROP = 'imageQuery';
 
+/**
+ * The attribute a decorative image carries (the model's `decorative: true`
+ * becomes alt "" plus this, so the page-essentials screen and the editor's
+ * Image section treat the empty alt as intended).
+ */
+export const DECORATIVE_ATTR = 'data-decorative';
+
 /** Tags that may carry a photo background (imageQuery on a container). */
 export const PHOTO_BACKGROUND_TAGS: ReadonlySet<string> = CONTAINER_TYPES;
 
@@ -121,7 +128,7 @@ export function listGenerationStyleKeys(): string[] {
 export function allowedPropKeysFor(tag: string): string[] {
   const keys: string[] = [];
   if (!isVoidTag(tag)) keys.push('children');
-  if (tag === 'img') keys.push('src', 'alt', IMAGE_QUERY_PROP);
+  if (tag === 'img') keys.push('src', 'alt', 'decorative', IMAGE_QUERY_PROP);
   if (PHOTO_BACKGROUND_TAGS.has(tag)) keys.push(IMAGE_QUERY_PROP);
   if (tag === 'a') keys.push('href', 'target');
   return keys;

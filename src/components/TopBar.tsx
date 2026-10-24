@@ -24,8 +24,11 @@ import { useStore } from '@/hooks/useStore';
 import { getHistoryStore } from '@/stores/RootStore';
 import PublishButton from '@/components/PublishButton';
 import DomainsButton from '@/components/domains/DomainsButton';
+import SiteSettingsButton from '@/components/site/SiteSettingsDialog';
+import FormSubmissionsButton from '@/components/forms/FormSubmissionsButton';
 import SaveButton from '@/components/SaveButton';
 import GeneratePageButton from '@/components/ai/GeneratePageDialog';
+import { PolishPageButton } from '@/components/ai/VisualReview';
 import EditableProjectTitle from './EditableProjectTitle';
 
 function relativeTime(ts: number, now: number): string {
@@ -204,6 +207,11 @@ const TopBar = observer(() => {
           Applies as one undoable action; Save persists it like any other edit. */}
       <GeneratePageButton />
 
+      {/* Polish with AI: measure the open page's layout and let a vision model
+          fix clipped text, overflow and contrast, as one undo step (plan
+          2026-10-23-ai-design-quality-round-2, decision 4). */}
+      <PolishPageButton />
+
       {/* Save: persist the working copy WITHOUT publishing (MT-10). Sits just
           before Publish so the non-destructive action reads first. */}
       <SaveButton />
@@ -214,6 +222,11 @@ const TopBar = observer(() => {
 
       {/* Domains: connect a custom domain to this project (its own dialog). */}
       <DomainsButton />
+
+      {/* Site settings: name, language, favicon, sharing image, business data. */}
+      <SiteSettingsButton />
+      {/* Form submissions: what visitors sent through this site's forms. */}
+      <FormSubmissionsButton />
 
       {/* Preview entry — sits just before the undo/redo cluster so it's
           visually grouped with the other rightward actions. */}

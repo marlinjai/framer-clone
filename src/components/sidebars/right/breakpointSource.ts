@@ -72,3 +72,38 @@ export function styleSource(
   if (inherited && inherited.kind === 'inherited') return { kind: 'inherited', fromLabel: labelOf(inherited.breakpointId) };
   return undefined;
 }
+
+/**
+ * The source of an appear or scroll effect on `breakpointId`, for the Effects
+ * section's rows: the same indicator as a style row. The whole group cascades
+ * at once (src/lib/effects/effects.ts), so the reset removes the breakpoint's
+ * override of the group and it inherits from the next larger breakpoint.
+ */
+export function effectSource(
+  component: ComponentInstance,
+  breakpointId: string | undefined,
+  group: 'appear' | 'scroll',
+): BreakpointSourceInfo | undefined {
+  if (!breakpointId || component.isLargestBreakpoint(breakpointId)) return undefined;
+  const breakpoints = component.pageBreakpoints as { id: string; label: string }[];
+  const labelOf = (id: string) => breakpoints.find(b => b.id === id)?.label ?? 'Breakpoint';
+  const source = component.getEffectSource(group, breakpointId).source;
+  if (source.kind === 'own') {
+    const index = breakpoints.findIndex(b => b.id === breakpointId);
+    let resetTo = breakpoints[0];
+    for (let i = index - 1; i >= 0; i--) {
+      if (component.getEffectSource(group, breakpoints[i].id).source.kind === 'own') {
+        resetTo = breakpoints[i];
+        break;
+      }
+    }
+    return {
+      kind: 'own',
+      breakpointLabel: labelOf(breakpointId),
+      resetToLabel: resetTo?.label ?? 'Breakpoint',
+      onReset: () => component.resetEffect(group, breakpointId),
+    };
+  }
+  if (source.kind === 'inherited') return { kind: 'inherited', fromLabel: labelOf(source.breakpointId) };
+  return undefined;
+}

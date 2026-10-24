@@ -473,3 +473,52 @@ describe('context menu near the window edge', () => {
   });
 });
 
+describe('search and sharing fields', () => {
+  it('saves a sharing image, the noindex switch and the 404 choice with the rest', () => {
+    renderPanel();
+    const dialog = openSettingsFor('About');
+    fireEvent.change(within(dialog).getByLabelText('Sharing image'), {
+      target: { value: 'https://cdn.example.com/about.jpg' },
+    });
+    fireEvent.click(within(dialog).getByTestId('page-settings-noindex'));
+    fireEvent.click(within(dialog).getByTestId('page-settings-404'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(about.metadata.ogImage).toBe('https://cdn.example.com/about.jpg');
+    expect(about.metadata.noIndex).toBe(true);
+    expect(project.site.notFoundPageId).toBe(about.id);
+  });
+
+  it('refuses a sharing image that is not an https address and focuses it', () => {
+    renderPanel();
+    const dialog = openSettingsFor('About');
+    const input = within(dialog).getByLabelText('Sharing image');
+    fireEvent.change(input, { target: { value: 'http://insecure.test/a.jpg' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(screen.getByTestId('page-settings-dialog')).toBeTruthy();
+    expect(document.activeElement).toBe(input);
+    expect(about.metadata.ogImage).toBe('');
+  });
+
+  it('a 404 page is always hidden from search engines, and the home page offers no 404 choice', () => {
+    renderPanel();
+    let dialog = openSettingsFor('About');
+    fireEvent.click(within(dialog).getByTestId('page-settings-404'));
+    const noindex = within(dialog).getByTestId('page-settings-noindex') as HTMLInputElement;
+    expect(noindex.checked).toBe(true);
+    expect(noindex.disabled).toBe(true);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    dialog = openSettingsFor('Hearth & Crumb Bakery');
+    expect(within(dialog).queryByTestId('page-settings-404')).toBeNull();
+  });
+
+  it('says which page it replaces when another page is the 404 page', () => {
+    const contact = project.pagesArray.find((p) => p.metadata.title === 'Contact')!;
+    project.updatePageSettings(contact.id, { title: 'Contact', slug: contact.slug, description: '', notFoundPage: true });
+    renderPanel();
+    const dialog = openSettingsFor('About');
+    fireEvent.click(within(dialog).getByTestId('page-settings-404'));
+    expect(within(dialog).getByText(/It replaces "Contact"/)).toBeTruthy();
+  });
+});
+

@@ -27,6 +27,9 @@ import VariantSelector from '@/lib/renderer/commerce/VariantSelector';
 import AddToCartButton from '@/lib/renderer/commerce/AddToCartButton';
 import CartView from '@/lib/renderer/commerce/CartView';
 import CheckoutButton from '@/lib/renderer/commerce/CheckoutButton';
+import { createEditorFormElement, formKindOfComponent } from '@/lib/renderer/forms/editorFormElement';
+import { isStickyCta } from '@/lib/stickyCta/stickyCta';
+import { createStickyCtaElement } from '@/lib/renderer/stickyCta/stickyCtaElement';
 
 // The six Track C commerce kinds. Disjoint from the CMS kinds, so the commerce
 // branch in createComponentElement can claim them without touching the CMS path.
@@ -59,7 +62,7 @@ function commerceKindLabel(kind: DataComponentKind): string {
 const COMMERCE_PLACEHOLDER_STYLE: React.CSSProperties = {
   color: '#9ca3af',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'system-ui, sans-serif',
   pointerEvents: 'none',
   userSelect: 'none',
 };
@@ -107,6 +110,20 @@ export function createComponentElement(
     : finalProps;
 
   if (component.isHostElement) {
+    // The sticky call to action bar draws its own link (src/lib/stickyCta).
+    // On the canvas it is a labelled normal block; the preview pins it
+    // (HeadlessPageRenderer), the published page through its stylesheet.
+    if (isStickyCta(component.props)) {
+      return createStickyCtaElement(propsWithIdentity, options?.mode === 'editor' ? 'editor' : 'preview');
+    }
+
+    // Form components (data-form-kind): static on the canvas and in the preview,
+    // never submitting. The published page renders them as a client island.
+    const formKind = formKindOfComponent(component);
+    if (formKind) {
+      return createEditorFormElement(formKind, component, propsWithIdentity, children.length ? children : rawTextChildren);
+    }
+
     if (isVoidTag(component.type as string)) {
       const props = { ...propsWithIdentity };
       if ('children' in props) delete (props as any).children;
@@ -278,7 +295,7 @@ export function createComponentElement(
           style: {
             color: '#9ca3af',
             fontSize: '12px',
-            fontFamily: 'Inter, sans-serif',
+            fontFamily: 'system-ui, sans-serif',
             pointerEvents: 'none',
             userSelect: 'none',
           },

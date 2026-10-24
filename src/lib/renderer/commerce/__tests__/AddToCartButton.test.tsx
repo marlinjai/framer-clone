@@ -117,6 +117,16 @@ describe('AddToCartButton disable (UX hint, NOT the authority)', () => {
     const button = container.querySelector('button[data-add-to-cart]') as HTMLButtonElement;
     expect(button.disabled).toBe(true);
   });
+
+  it('stays disabled and tells the visitor in plain words when the check fails (preview)', async () => {
+    const { container } = renderButton({ variant: VARIANT, ds: makeDS({}), mode: 'preview' });
+    await waitFor(() => {
+      const err = container.querySelector('[data-add-to-cart-error]');
+      expect(err?.textContent).toBe('Availability could not be checked right now. Please try again later.');
+    });
+    expect(container.textContent).not.toContain('Availability check failed');
+    expect((container.querySelector('button[data-add-to-cart]') as HTMLButtonElement).disabled).toBe(true);
+  });
 });
 
 describe('AddToCartButton add (client cart, no server write)', () => {

@@ -25,31 +25,21 @@
 // `HOME_REWRITE_SENTINEL` segment, which reaches THIS route as
 // `params.slug = ['__home']` and `matchPageBySlug` resolves as the home request.
 
-import React, { cache } from 'react';
 import type { Metadata } from 'next';
-import { headers } from 'next/headers';
 import { notFound, permanentRedirect } from 'next/navigation';
 import { findRedirectTarget } from '@/lib/pages/redirects';
 import { isDynamicSegment } from '@/lib/pages/slug';
 
 import {
   matchPageBySlug,
-  resolvePublicIngestionKey,
-  resolveTrackerScriptSrc,
-  resolveIngestionEndpoint,
-  resolveAnalyticsProjectId,
   type PublishedSite,
   type MatchedPage,
 } from '@/server/sites/publicResolver';
-import { getCachedPublishedSite } from '@/server/sites/cachedResolver';
-import { getPublishedCmsRepository } from '@/server/cms';
-import { commerceRepoForSite } from '@/server/commerce/storefrontTenant';
+import { getPrimaryHostForRequest, resolveSiteForRequest } from '@/server/sites/requestSite';
+import { isNotFoundPage, renderSitePage } from '@/server/sites/renderSitePage';
 import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToComponentNode';
-import {
-  renderPublishedPage,
-  pageSeoToMetadata,
-  type ResolvedAnalytics,
-} from '@/lib/renderer/server/renderPublishedPage';
+import { effectiveSiteName } from '@/lib/site/siteSettings';
+import { buildBusinessJsonLd, pageMetadata, pagePath } from '@/lib/site/publishedHead';
 
 // SSR-on-request: never statically cached, always hydrated fresh. Node runtime
 // (Prisma is server-only and not edge-safe).
@@ -88,20 +78,10 @@ async function queryStringOf(
   return text ? `?${text}` : '';
 }
 
-/**
- * Resolve the published site for the current request Host. Two layers of
- * caching, complementary:
- *   - React `cache()` dedupes within ONE request so `generateMetadata` and the
- *     page body share a single resolution call.
- *   - `getCachedPublishedSite` (MT-17) caches CROSS-request, keyed by the host's
- *     subdomain and tagged `site:<subdomain>`, so the O(pages) DB read happens
- *     once per publish instead of on every storefront hit. Publish/unpublish
- *     invalidate that tag.
- */
-const resolveSiteForRequest = cache(async (): Promise<PublishedSite | null> => {
-  const host = (await headers()).get('host');
-  return getCachedPublishedSite(host);
-});
+// The site of the request comes from src/server/sites/requestSite.ts: React
+// `cache()` per request (generateMetadata, the page body and the layouts share
+// one resolution) over getCachedPublishedSite (MT-17, cross-request, tagged
+// per host, invalidated on publish/unpublish).
 
 /** Match the published site + the requested slug to a single page (with params). */
 function resolvePage(
@@ -116,9 +96,18 @@ export async function generateMetadata({ params }: SitePageProps): Promise<Metad
   const { slug } = await params;
   const site = await resolveSiteForRequest();
   const matched = resolvePage(site, slug);
-  if (!matched) return {};
+  if (!site || !matched) return {};
+  // The designed 404 page answers its own path with the 404 (see below); its
+  // metadata then comes from the (site) layout like every 404.
+  if (isNotFoundPage(site, matched.page.pageId)) return {};
   const adapted = snapshotToComponentNode(matched.page.snapshot);
-  return pageSeoToMetadata(adapted.metadata);
+  return pageMetadata({
+    page: adapted.metadata,
+    settings: site.siteSettings,
+    siteName: effectiveSiteName(site.siteSettings, site.name),
+    primaryHost: await getPrimaryHostForRequest(),
+    path: pagePath(matched.page.slug, matched.params),
+  });
 }
 
 export default async function SitePage({ params, searchParams }: SitePageProps) {
@@ -138,65 +127,25 @@ export default async function SitePage({ params, searchParams }: SitePageProps) 
   // A missing site OR no matching page -> 404 (never a blank 200).
   if (!site || !matched) notFound();
 
+  // The site's designed 404 page is never served as a normal page: its own
+  // path answers with the 404 status too, rendered by (site)/not-found.tsx.
+  if (isNotFoundPage(site, matched.page.pageId)) notFound();
+
   const adapted = snapshotToComponentNode(matched.page.snapshot);
   // A published page with no app component tree is malformed -> 404.
   if (!adapted.root) notFound();
 
-  // Analytics: resolve the PUBLIC ingestion key + endpoint + project + the
-  // tracker loader URL server-side. The key comes from the server-side apiKeyRef
-  // (the ref literal never reaches the artifact); the endpoint/project fall back
-  // to the deploy env so the single demo site is env-configurable; the loader URL
-  // is a platform constant from the env. Injection is gated on lumitraEnabled +
-  // a public key + an endpoint inside renderPublishedPage. The loader is what
-  // actually makes the page EMIT events (config alone does nothing).
-  const analytics: ResolvedAnalytics = {
-    enabled: site.lumitraEnabled,
-    ingestionKey: resolvePublicIngestionKey(site.apiKeyRef),
-    ingestionEndpoint: resolveIngestionEndpoint(site.ingestionEndpoint),
-    projectId: resolveAnalyticsProjectId(site.analyticsProjectId),
-    trackerScriptSrc: resolveTrackerScriptSrc(),
-  };
+  // The business data as schema.org JSON-LD, on the home page only: that is
+  // where search engines look for the organization behind a site, and one
+  // place keeps it from repeating on every page.
+  const isHome = matched.page.slug.split('/').filter(Boolean).length === 0;
+  const jsonLd = isHome
+    ? buildBusinessJsonLd({
+        settings: site.siteSettings,
+        siteName: effectiveSiteName(site.siteSettings, site.name),
+        primaryHost: await getPrimaryHostForRequest(),
+      })
+    : null;
 
-  // Per-site tenancy: BOTH engines must isolate by the RESOLVED site (resolved
-  // from the request HOST, never a session), never a module constant. The two
-  // engines use DIFFERENT mechanisms, so each carries its own value off the one
-  // Site row:
-  //   - CMS isolates by a `workspace_id` COLUMN -> pass `site.workspaceId` so
-  //     `listCollections`/reads see ONLY this site's workspace, and through the
-  //     PUBLISHED repository so only published, non-archived rows render (the
-  //     same rule as the published-site /api/cms reads,
-  //     src/server/cms/publishedVisibility.ts).
-  //   - Commerce isolates by a Postgres SCHEMA per tenant group (CM-10): the
-  //     scoped Kysely handle `commerceTenantDb(resolveTenantGroupForSite(site))`
-  //     reaches only this site's `tg_<id>` schema. A site with no valid tenant
-  //     group fails CLOSED: `commerceRepoForSite` returns undefined, so the page
-  //     still renders its CMS content and every commerce slot renders the
-  //     unbound placeholder (no shared-schema fallback, no foreign catalog).
-  //     A page with NO bound commerce source never touches the commerce
-  //     connection at all; one that has them runs the startup backstop first and
-  //     fails loudly on a misconfigured COMMERCE_APP_DATABASE_URL.
-  const { body, headSnippet } = await renderPublishedPage({
-    root: adapted.root,
-    pageParams: matched.params,
-    cmsRepo: getPublishedCmsRepository(site.workspaceId),
-    commerceRepo: await commerceRepoForSite(site, adapted.root),
-    analytics,
-    breakpoints: adapted.breakpoints,
-  });
-
-  return (
-    <>
-      {headSnippet ? (
-        // SSR-emitted inline script: present in the server HTML, so it executes
-        // on initial load (publishes window.__AP_CONFIG / __AP_VARIANTS, then the
-        // tracker loader). Only the PUBLIC ap_live_ key is ever embedded.
-        <div
-          data-analytics-tracker
-          style={{ display: 'none' }}
-          dangerouslySetInnerHTML={{ __html: headSnippet }}
-        />
-      ) : null}
-      {body}
-    </>
-  );
+  return renderSitePage({ site, matched, adapted: { ...adapted, root: adapted.root }, jsonLd });
 }

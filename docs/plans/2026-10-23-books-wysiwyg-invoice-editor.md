@@ -628,7 +628,7 @@ reloaded, the text came back unsent, Enter saved it with one request.
   (the owner's open question 2):** they were added to the existing family ids rather than new ones.
   No document had ever used italic, and a document embeds an italic face only when one of its runs
   uses that face, so no stored render can change. The 126 pinned renders are unchanged.
-- **Data.** Migration `017_books_text_format` adds `intro_format` / `outro_format` (nullable JSONB,
+- **Data.** Migration `018_books_text_format` adds `intro_format` / `outro_format` (nullable JSONB,
   a version 1 object by a CHECK, 5 s lock wait). The run model (`render/richText.ts`): paragraphs
   and bullet items of runs that are bold, italic, both or neither. **The server derives the plain
   text, never trusts a pair:** a sent format becomes its plain words in `intro_text` (the format is

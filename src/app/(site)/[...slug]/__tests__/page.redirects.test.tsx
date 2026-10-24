@@ -34,6 +34,12 @@ let site: {
   pages: Page[];
   redirects: Array<{ from: string; pageId: string; createdAt: string }>;
 };
+import { normalizeSiteSettings } from '@/lib/site/siteSettings';
+
+vi.mock('@/server/sites/primaryHost', () => ({
+  loadSitePrimaryHost: vi.fn(async () => 'abc123.sites.lumitra.co'),
+}));
+
 vi.mock('@/server/sites/cachedResolver', () => ({
   getCachedPublishedSite: vi.fn(async () => ({
     siteId: 'site_1',
@@ -44,6 +50,7 @@ vi.mock('@/server/sites/cachedResolver', () => ({
     ingestionEndpoint: null,
     apiKeyRef: null,
     lumitraEnabled: false,
+    siteSettings: normalizeSiteSettings({}),
     ...site,
   })),
 }));

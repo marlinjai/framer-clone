@@ -18,6 +18,7 @@ import {
   HIGHLIGHT_STYLES,
   type CrossViewportSelection
 } from '@/utils/crossViewportHighlighting';
+import EffectBadge from './EffectBadge';
 
 type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 const HANDLE_DIRECTIONS: { dir: ResizeDirection; className: string; cursor: string }[] = [
@@ -876,6 +877,9 @@ const HudSurface = observer(() => {
             />
           ))}
         </div>
+
+        {/* Effect badge: the canvas shows the final state, this says an effect is set. */}
+        <EffectBadge />
 
         {/* Border-radius corner dots. Hidden by default; updateOverlayPosition
             toggles the wrapper's display based on selection kind and overlay size. */}

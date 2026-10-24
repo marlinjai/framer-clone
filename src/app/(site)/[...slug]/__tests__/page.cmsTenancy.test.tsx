@@ -22,6 +22,12 @@ const SITES: Record<string, { siteId: string; workspaceId: string }> = {
   'alpha.sites.lumitra.co': { siteId: 'site_alpha', workspaceId: 'ws_alpha' },
   'beta.sites.lumitra.co': { siteId: 'site_beta', workspaceId: 'ws_beta' },
 };
+import { normalizeSiteSettings } from '@/lib/site/siteSettings';
+
+vi.mock('@/server/sites/primaryHost', () => ({
+  loadSitePrimaryHost: vi.fn(async () => 'abc123.sites.lumitra.co'),
+}));
+
 vi.mock('@/server/sites/cachedResolver', () => ({
   getCachedPublishedSite: vi.fn(async (host: string) => {
     const site = SITES[host];
@@ -35,6 +41,7 @@ vi.mock('@/server/sites/cachedResolver', () => ({
           apiKeyRef: null,
           lumitraEnabled: false,
           pages: [],
+          siteSettings: normalizeSiteSettings({}),
         }
       : null;
   }),

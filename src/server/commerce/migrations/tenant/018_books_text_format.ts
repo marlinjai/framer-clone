@@ -1,7 +1,7 @@
 import type { Migration } from '@marlinjai/tenant-db';
 
 /**
- * Books invoice editor, phase 4, `017_books_text_format`: the formatting of a
+ * Books invoice editor, phase 4, `018_books_text_format`: the formatting of a
  * document's intro and closing texts (bold, italic, bullet items, paragraphs),
  * decided by the owner on 2026-10-23 (docs/plans/2026-10-23-books-wysiwyg-
  * invoice-editor.md, "Decided by the owner", item 2). Purely additive: two
@@ -29,7 +29,7 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      query on sales_document queue behind a long transaction.
  */
 export const booksTextFormat: Migration = {
-  id: '017_books_text_format',
+  id: '018_books_text_format',
   up: async (tx) => {
     await tx`SET LOCAL lock_timeout = '5000ms'`;
     await tx`ALTER TABLE "sales_document" ADD COLUMN IF NOT EXISTS "intro_format" JSONB`;

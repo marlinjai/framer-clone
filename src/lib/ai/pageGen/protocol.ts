@@ -6,6 +6,7 @@
 import type { GeneratedNodeSnapshot } from './validate';
 import type { BreakpointInput } from './schema';
 import { MODEL_CHOICES, type ModelChoice } from '@/lib/ai/modelChoice';
+import type { SiteContext } from './promptSections/siteContext';
 
 /**
  * Models the page generator may run on: the slider's three steps (Fast =
@@ -34,6 +35,8 @@ export interface PageGenRequest {
   projectName?: string;
   /** Existing page titles, so a new page does not duplicate one. */
   existingPageTitles?: string[];
+  /** Site language and real contact data from Site settings (promptSections/siteContext.ts). */
+  siteContext?: SiteContext;
 }
 
 /** SSE `gen:progress`: the model is writing (or the server is checking / repairing). */
@@ -50,7 +53,13 @@ export interface PageGenResultPayload {
   title?: string;
   description?: string;
   nodes: GeneratedNodeSnapshot[];
+  /** Automatic fixes: the validator's repairs plus the design tells fixed (./tells.ts). */
   warnings: string[];
+  /**
+   * Tells of generated design still in the applied page (the repair round did
+   * not remove them, or there was none left). Empty or absent when clean.
+   */
+  tells?: string[];
   stats: { nodeCount: number; maxDepth: number };
   model: string;
   /** What happened to the images the model asked stock photos for. */

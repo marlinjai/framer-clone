@@ -159,7 +159,11 @@ const VALID_PAGE = {
       type: 'section',
       label: 'Hero',
       props: { style: { padding: { base: '64px', mobile: '24px' } } },
-      children: [{ type: 'h1', props: { children: 'Fresh bread' } }],
+      children: [
+        { type: 'h1', props: { children: 'Fresh bread' } },
+        // A primary call to action, so the page-essentials screen is satisfied.
+        { type: 'button', props: { children: 'Order now' } },
+      ],
     },
   ],
 };
@@ -345,6 +349,42 @@ describe('POST /api/ai/generate-page generation', () => {
     expect((params.tools as Array<{ eager_input_streaming?: boolean }>)[0].eager_input_streaming).toBe(true);
     expect((options as { signal: unknown }).signal).toBeDefined();
     expect(evs.at(-1)!.data).toMatchObject({ inputTokens: 100, outputTokens: 50, attempts: 1 });
+  });
+
+  it('hands the site language and real contact data to the model, as data, after the cache breakpoint', async () => {
+    anthropicState.turns = [toolTurn(VALID_PAGE)];
+    const siteContext = {
+      siteName: 'Bäckerei Müller',
+      language: 'de',
+      legalName: '',
+      street: 'Hauptstr. 1',
+      postalCode: '80331',
+      city: 'München',
+      country: 'DE',
+      phone: '',
+      email: 'hallo@mueller.de',
+      openingHours: ['Monday, Tuesday: 07:00 to 18:00'],
+    };
+    const res = await POST(makeRequest(baseBody({ siteContext })));
+    expect(res.status).toBe(200);
+    await events(res);
+    const system = anthropicState.calls[0].params.system as Array<{ text: string }>;
+    expect(system[0].text).not.toContain('Hauptstr');
+    expect(system[1].text).toContain('Site language: German (de)');
+    expect(system[1].text).toContain('"address":"Hauptstr. 1, 80331 München, DE"');
+    expect(system[1].text).toContain('NEVER invent contact data');
+    expect(system[1].text).toContain('Missing: phone number');
+  });
+
+  it('400 bad_body on a malformed site context', async () => {
+    for (const siteContext of [
+      { language: 'German' },
+      { siteName: 'x', language: 'de', legalName: '', street: '', postalCode: '', city: '', country: 'DEU', phone: '', email: '', openingHours: [] },
+    ]) {
+      const res = await POST(makeRequest(baseBody({ siteContext })));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.code).toBe('bad_body');
+    }
   });
 
   it('honours the HAIKU model choice, without fallbacks (Haiku 5.5 has none)', async () => {
@@ -644,6 +684,7 @@ const PAGE_WITH_IMAGES = {
           props: { imageQuery: 'sourdough bread loaves', alt: 'Sauerteigbrote', style: { width: '640px', height: '400px' } },
         },
         { type: 'img', props: { imageQuery: 'Sourdough  bread loaves', alt: 'Noch mehr Brot', style: { width: '320px', height: '200px' } } },
+        { type: 'button', props: { children: 'Brot bestellen' } },
       ],
     },
   ],
@@ -756,5 +797,278 @@ describe('POST /api/ai/generate-page stock photos', () => {
   it('never sends the key to the browser', async () => {
     const res = await POST(makeRequest(baseBody()));
     expect(await res.text()).not.toContain('test-unsplash-key');
+  });
+});
+
+// --- Design tells (src/lib/ai/pageGen/tells.ts) ------------------------------
+const EM_DASH = '\u2014';
+/** A link styled as a button: the hero's primary call to action. */
+const CTA_STYLE = { backgroundColor: '#1f2937', color: '#ffffff', padding: '14px 24px', borderRadius: '8px' };
+
+const TELL_PAGE = {
+  title: 'Bakery',
+  nodes: [
+    {
+      type: 'section',
+      label: 'Hero',
+      children: [
+        { type: 'h1', label: 'Headline', props: { children: "It's not a bakery, it's a ritual." } },
+        { type: 'a', label: 'CTA', props: { href: '#order', children: 'Order now ->', style: CTA_STYLE } },
+      ],
+    },
+    {
+      type: 'section',
+      label: 'How it works',
+      children: [
+        {
+          type: 'div',
+          label: 'Bento',
+          props: { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' } },
+          children: [1, 2, 3, 4].map((i) => ({
+            type: 'div',
+            label: 'Tile',
+            props: {
+              style: { backgroundColor: '#f4f1ea', padding: '24px', ...(i === 1 ? { gridColumn: 'span 2' } : {}) },
+            },
+            children: [{ type: 'p', props: { children: `Step ${i}` } }],
+          })),
+        },
+      ],
+    },
+  ],
+};
+
+const CLEAN_PAGE = {
+  title: 'Bakery',
+  nodes: [
+    {
+      type: 'section',
+      label: 'Hero',
+      children: [
+        { type: 'h1', label: 'Headline', props: { children: 'Bread the slow way' } },
+        { type: 'a', label: 'CTA', props: { href: '#order', children: 'Order now', style: CTA_STYLE } },
+      ],
+    },
+  ],
+};
+
+describe('POST /api/ai/generate-page design tells', () => {
+  it('applies the safe fixes without a repair round and lists them as automatic fixes', async () => {
+    anthropicState.turns = [
+      toolTurn({
+        title: `Bakery ${EM_DASH} fresh`,
+        nodes: [
+          {
+            type: 'section',
+            label: 'Hero',
+            children: [
+              { type: 'h1', props: { children: `Fresh bread ${EM_DASH} baked daily \u{1F35E}` } },
+              { type: 'p', props: { children: 'Open 8:00 \u2013 18:30' } },
+              { type: 'button', props: { children: 'Order →' } },
+            ],
+          },
+        ],
+      }),
+    ];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(1);
+    const result = evs.find((e) => e.event === 'gen:result')!.data as {
+      title: string;
+      warnings: string[];
+      tells: string[];
+      nodes: Array<{ children: Array<{ props: Record<string, unknown> }> }>;
+    };
+    expect(result.title).toBe('Bakery: fresh');
+    const [h1, p, button] = result.nodes[0].children;
+    expect(h1.props.children).toBe('Fresh bread: baked daily');
+    expect(p.props.children).toBe('Open 8:00-18:30');
+    expect(button.props.children).toBe('Order');
+    expect(result.warnings.join('\n')).toMatch(/dashes/);
+    expect(result.warnings.join('\n')).toMatch(/emoji/);
+    expect(result.warnings.join('\n')).toMatch(/arrow/);
+    expect(result.tells).toEqual([]);
+    expect(JSON.stringify(result)).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  it('sends the unfixable tells into the repair round and applies the clean second page', async () => {
+    anthropicState.turns = [toolTurn(TELL_PAGE), toolTurn(CLEAN_PAGE)];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(2);
+    expect(evs.some((e) => e.event === 'gen:progress' && e.data.phase === 'repairing')).toBe(true);
+    const repairTurn = JSON.stringify((anthropicState.calls[1].params.messages as Array<{ content: unknown }>).at(-1)!.content);
+    expect(repairTurn).toContain('tool_result');
+    expect(repairTurn).toContain('tells of generated design');
+    expect(repairTurn).toContain('How it works > Bento: a bento grid');
+    expect(repairTurn).toContain('Hero > Headline:');
+    expect(repairTurn).toContain("not X, it's Y");
+    // The arrow was fixed automatically, so it is not sent back as a problem.
+    expect(repairTurn).not.toContain('arrow glyph');
+    const result = evs.find((e) => e.event === 'gen:result')!.data as { tells: string[]; warnings: string[] };
+    expect(result.tells).toEqual([]);
+    expect(result.warnings.join('\n')).toMatch(/repair round removed 2 of 2 issues/);
+    expect(evs.at(-1)!.data).toMatchObject({ attempts: 2 });
+  });
+
+  it('applies the second page with its remaining tells reported, and never loops a third time', async () => {
+    anthropicState.turns = [toolTurn(TELL_PAGE), toolTurn(TELL_PAGE), toolTurn(CLEAN_PAGE)];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(2);
+    const result = evs.find((e) => e.event === 'gen:result')!.data as { tells: string[] };
+    expect(result.tells).toHaveLength(2);
+    expect(result.tells.join('\n')).toMatch(/bento grid/);
+  });
+
+  it('keeps the valid first page when the repair round fails validation', async () => {
+    anthropicState.turns = [toolTurn(TELL_PAGE), toolTurn({ nodes: [] })];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(evs.some((e) => e.event === 'gen:error')).toBe(false);
+    const result = evs.find((e) => e.event === 'gen:result')!.data as {
+      tells: string[];
+      warnings: string[];
+      nodes: Array<{ label: string; children: Array<{ props: Record<string, unknown> }> }>;
+    };
+    expect(result.nodes.map((n) => n.label)).toEqual(['Hero', 'How it works']);
+    expect(result.nodes[0].children[1].props.children).toBe('Order now');
+    expect(result.tells).toHaveLength(2);
+    expect(result.warnings.join('\n')).toMatch(/design repair round failed/);
+  });
+
+  it('keeps the valid first page when the provider fails during the repair round', async () => {
+    anthropicState.turns = [toolTurn(TELL_PAGE), { throws: Object.assign(new Error('overloaded'), { status: 529 }) }];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(evs.some((e) => e.event === 'gen:error')).toBe(false);
+    expect((evs.find((e) => e.event === 'gen:result')!.data as { tells: string[] }).tells).toHaveLength(2);
+  });
+});
+
+// --- Page essentials (src/lib/ai/pageGen/essentials.ts) ----------------------
+const CTA_LINK = { type: 'a', label: 'CTA', props: { href: '#order', children: 'Order bread', style: { backgroundColor: '#1f2937', color: '#fff', padding: '14px 24px' } } };
+const NO_CTA_PAGE = {
+  title: 'Bakery',
+  nodes: [{ type: 'section', label: 'Hero', children: [{ type: 'h1', label: 'Headline', props: { children: 'Bread the slow way' } }] }],
+};
+const WITH_CTA_PAGE = {
+  title: 'Bakery',
+  nodes: [{ type: 'section', label: 'Hero', children: [{ type: 'h1', label: 'Headline', props: { children: 'Bread the slow way' } }, CTA_LINK] }],
+};
+const NO_ALT_PAGE = {
+  title: 'Bakery',
+  nodes: [
+    {
+      type: 'section',
+      label: 'Hero',
+      children: [
+        { type: 'h1', label: 'Headline', props: { children: 'Bread the slow way' } },
+        CTA_LINK,
+        { type: 'img', preset: 'image', label: 'Photo', props: { imageQuery: 'sourdough loaves on a wooden table' } },
+      ],
+    },
+  ],
+};
+
+describe('POST /api/ai/generate-page page essentials', () => {
+  beforeEach(() => {
+    vi.stubEnv('UNSPLASH_ACCESS_KEY', '');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('sends a new page without a hero call to action into the repair round with a precise message', async () => {
+    anthropicState.turns = [toolTurn(NO_CTA_PAGE), toolTurn(WITH_CTA_PAGE)];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(2);
+    const repairTurn = JSON.stringify((anthropicState.calls[1].params.messages as Array<{ content: unknown }>).at(-1)!.content);
+    expect(repairTurn).toContain('misses');
+    expect(repairTurn).toContain('Hero: Page essentials: the hero (the first screen) has no primary call to action');
+    const result = evs.find((e) => e.event === 'gen:result')!.data as { tells: string[] };
+    expect(result.tells).toEqual([]);
+  });
+
+  it('reports a call to action still missing after the repair round, and applies the page', async () => {
+    anthropicState.turns = [toolTurn(NO_CTA_PAGE), toolTurn(NO_CTA_PAGE)];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(2);
+    const result = evs.find((e) => e.event === 'gen:result')!.data as { tells: string[]; nodes: unknown[] };
+    expect(result.nodes).toHaveLength(1);
+    expect(result.tells).toEqual([expect.stringMatching(/^Hero: Page essentials: the hero/)]);
+  });
+
+  it('never asks for a hero call to action on a section generation or a legal page', async () => {
+    anthropicState.turns = [toolTurn(NO_CTA_PAGE)];
+    await events(
+      await POST(makeRequest(baseBody({ target: { kind: 'replace', context: { id: 'hero-1', type: 'section', label: 'Old hero' } } }))),
+    );
+    expect(anthropicState.calls).toHaveLength(1);
+
+    anthropicState.calls = [];
+    anthropicState.turns = [toolTurn(NO_CTA_PAGE)];
+    await events(await POST(makeRequest(baseBody({ brief: 'Das Impressum für unsere Bäckerei' }))));
+    expect(anthropicState.calls).toHaveLength(1);
+  });
+
+  it('sends a missing alt text into the repair round, then fills it from the photo description', async () => {
+    anthropicState.turns = [toolTurn(NO_ALT_PAGE), toolTurn(NO_ALT_PAGE)];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(2);
+    const repairTurn = JSON.stringify((anthropicState.calls[1].params.messages as Array<{ content: unknown }>).at(-1)!.content);
+    expect(repairTurn).toContain('Hero > Photo: Page essentials: this image has no alt text');
+    const result = evs.find((e) => e.event === 'gen:result')!.data as {
+      tells: string[];
+      warnings: string[];
+      nodes: Array<{ children: Array<{ type: string; props: Record<string, unknown> }> }>;
+    };
+    const img = result.nodes[0].children.find((c) => c.type === 'img')!;
+    expect(img.props.alt).toBe('Sourdough loaves on a wooden table');
+    expect(result.warnings).toContain(
+      'Hero > Photo: alt text filled from the photo description ("Sourdough loaves on a wooden table"); check it describes the photo',
+    );
+    // Filled, so not reported as a remaining issue.
+    expect(result.tells).toEqual([]);
+  });
+
+  it('reports an image it cannot describe as a remaining issue, not as a fix', async () => {
+    const page = structuredClone(WITH_CTA_PAGE) as typeof WITH_CTA_PAGE & { nodes: Array<{ children: unknown[] }> };
+    page.nodes[0].children.push({ type: 'img', label: 'Image', props: { src: 'https://example.com/shop.jpg' } });
+    anthropicState.turns = [toolTurn(page), toolTurn(page)];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    const result = evs.find((e) => e.event === 'gen:result')!.data as {
+      tells: string[];
+      warnings: string[];
+      nodes: Array<{ children: Array<{ type: string; props: Record<string, unknown> }> }>;
+    };
+    expect(result.nodes[0].children.find((c) => c.type === 'img')!.props.alt).toBe('');
+    expect(result.tells).toEqual([expect.stringMatching(/^Hero > Image: Page essentials: this image has no alt text/)]);
+    expect(result.warnings.join('\n')).not.toMatch(/alt text filled/);
+  });
+
+  it('accepts a decorative image without a repair round', async () => {
+    const page = structuredClone(WITH_CTA_PAGE) as typeof WITH_CTA_PAGE & { nodes: Array<{ children: unknown[] }> };
+    page.nodes[0].children.push({ type: 'img', props: { decorative: true, imageQuery: 'linen texture' } });
+    anthropicState.turns = [toolTurn(page)];
+    const evs = await events(await POST(makeRequest(baseBody())));
+    expect(anthropicState.calls).toHaveLength(1);
+    const result = evs.find((e) => e.event === 'gen:result')!.data as {
+      nodes: Array<{ children: Array<{ type: string; props: Record<string, unknown> }> }>;
+    };
+    const img = result.nodes[0].children.find((c) => c.type === 'img')!;
+    expect(img.props).toMatchObject({ alt: '', 'data-decorative': 'true' });
+  });
+
+  it('keeps a sticky call to action on a new page only', async () => {
+    const sticky = { type: 'div', preset: 'stickyCta', label: 'Sticky call to action', props: { ctaLabel: 'Order bread', ctaHref: '#order' } };
+    anthropicState.turns = [toolTurn({ ...WITH_CTA_PAGE, nodes: [sticky, ...WITH_CTA_PAGE.nodes] })];
+    let evs = await events(await POST(makeRequest(baseBody())));
+    let result = evs.find((e) => e.event === 'gen:result')!.data as { nodes: Array<{ label: string; props: Record<string, unknown> }> };
+    expect(result.nodes.map((n) => n.label)).toEqual(['Hero', 'Sticky call to action']);
+    expect(result.nodes[1].props).toMatchObject({ 'data-sticky-cta': 'bar', ctaLabel: 'Order bread', ctaHref: '#order' });
+
+    anthropicState.calls = [];
+    anthropicState.turns = [toolTurn({ nodes: [...WITH_CTA_PAGE.nodes, sticky] })];
+    evs = await events(
+      await POST(makeRequest(baseBody({ target: { kind: 'insert', context: { id: 'main-1', type: 'main', label: 'Main' } } }))),
+    );
+    result = evs.find((e) => e.event === 'gen:result')!.data as { nodes: Array<{ label: string; props: Record<string, unknown> }> };
+    expect(result.nodes.map((n) => n.label)).toEqual(['Hero']);
   });
 });

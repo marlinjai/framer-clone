@@ -92,7 +92,7 @@ const JSON_COLUMNS: Record<string, string> = {
   'sales_document.customer_snapshot': 'CustomerSnapshotV1',
   'sales_document.sender_snapshot': 'SenderSnapshotV1',
   'sales_document.template_snapshot': 'TemplateSnapshot',
-  // 017_books_text_format: the run model of render/richText.ts.
+  // 018_books_text_format: the run model of render/richText.ts.
   'sales_document.intro_format': 'RichText',
   'sales_document.outro_format': 'RichText',
   'sales_document_event.payload': 'EventPayload',
@@ -100,6 +100,8 @@ const JSON_COLUMNS: Record<string, string> = {
   'historical_import_item.extracted': 'Record<string, unknown>',
   'historical_import_item.corrected': 'Record<string, unknown>',
   'historical_import_item.problems': 'Array<Record<string, unknown>>',
+  // 017_form_submissions: parsed with zod on read (src/server/forms/repository.ts).
+  'form_submission.fields': 'Array<Record<string, unknown>>',
 };
 
 /** The type-only imports the JSON shapes need. */
@@ -156,6 +158,8 @@ const TABLE_DOCS: Record<string, string> = {
     '010_books_upload_import: one model call of the upload import (the daily ceiling counts these).',
   books_asset:
     '013_books_assets: an uploaded logo (PNG or JPEG bytes), one per company and\nSHA-256, append-only (no updated_at).',
+  form_submission:
+    '017_form_submissions: one accepted submission of a form on a published site.\nDeleted for real (owner, project delete, company erasure); `read_at` is the only\ncolumn that changes. No IP address is stored.',
   books_product:
     '015_books_products: an item of the company\'s product and service list. Mutable,\narchived instead of deleted; draft lines copy its values and never reference it.\n`name_key` and `search_text` are folded by the repository (src/lib/books/searchKey.ts).',
 };

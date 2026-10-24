@@ -23,6 +23,43 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   pass), and the properties panel has an Image section for fit, focal point and photo backgrounds
   (done, recorded in the 2026-10-23 design quality plan linked from the plan below). Phase 4's style references
   and screenshot loop stay open. See [plan](docs/plans/ai-driven-page-generation.md). (2026-10-23)
+- [x] Motion and effects: an Effects section in the properties panel (appear on scroll, restrained
+  hover states, light scroll-linked transforms such as a small image parallax), stored per
+  breakpoint like any style, undoable and generatable by the AI, rendered on published pages with
+  CSS plus an IntersectionObserver or Motion (MIT). The canvas shows the final state with an effect
+  badge and a play control, the preview plays everything. Follows the motion rules: entrances
+  under 300ms, ease-out, nothing perpetual, off under prefers-reduced-motion. Plus an optional
+  per-site Lenis (MIT) smooth-scroll toggle, off by default and off under reduced motion. Decided
+  by Marlin on 2026-10-23; built 2026-10-24 (Effects section, canvas badge and Play, preview and
+  published runtime, Lenis switch in Site settings, sparing appear effects in the generator). See
+  [plan](docs/plans/2026-10-23-motion-effects.md). (2026-10-24)
+- [ ] Scroll-driven page type (later): an opt-in page type for scrollytelling pages, the only place
+  GSAP ScrollTrigger pinning and scrubbing is used, because there the scroll is the requested
+  interaction (the sanctioned exception to the scroll-jacking rule, as the scroll-craft skill
+  defines it). Not a general editor feature. Needs a plan. (2026-10-23)
+- [x] Published site essentials, the rest of the owner's 19-point checklist of 2026-10-23. Built by
+  2026-10-24 (plan sections "as built"): Site settings, lang, favicon set, Open Graph defaults, title
+  template, robots.txt, sitemap.xml, canonical, noindex, JSON-LD, the designable 404 page, loading
+  states, forms with a thank-you page, Impressum, privacy and terms templates, the publish warning
+  for a missing Impressum, the first-party consent banner that loads analytics only after consent,
+  and decision 7 of the generator: a primary call to action in the hero of every new marketing page
+  and meaningful alt texts as repair findings (no silent "Image" fallback; an alt field with a
+  Decorative switch and a warning in the Image section), plus the sticky mobile call to action
+  component. Form notification emails stay open on their own line below. See
+  [plan](docs/plans/2026-10-23-published-site-essentials.md). (2026-10-24)
+- [ ] Form notification emails: forms (built 2026-10-24, see the site essentials plan, decision 4)
+  store submissions per company and show them in the editor's inbox, but framer-clone has no mail
+  path, so the owner is not emailed about a new submission. Wire Lumitra Mail (the suite's mail
+  service) as the sender: a notification address per form defaulting to the site's contact email,
+  sent after the submission is stored, a failure logged and shown in the inbox, never losing the
+  submission. Also: when a company erasure routine is written, it must call
+  `deleteWorkspaceSubmissions` (src/lib/forms) or drop the tenant schema. (2026-10-24)
+- [ ] Animated components, a few chosen ones: React Bits was checked on 2026-10-23 and is MIT plus
+  Commons Clause, which forbids redistributing its components "alone, in a bundle, or as a ported
+  version", so a builder that offers them to its customers cannot ship them. Instead build the
+  few worth having ourselves (a text reveal, a marquee, a logo loop) or take them from MIT sources
+  (Magic UI, Motion), avoiding the vibe-coded tells in the round 2 plan
+  (docs/plans/2026-10-23-ai-design-quality-round-2.md). (2026-10-23)
 - [x] Custom domains (Option B): a site owner connects their own domain to a published site
   (TXT ownership check, per-domain Let's Encrypt certificates through Traefik's file provider,
   a Domains panel in the editor; code in #103). Live since 2026-10-20: `domains.lumitra.co`

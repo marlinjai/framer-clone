@@ -679,6 +679,25 @@ export interface BooksProductTable {
   updated_at: Timestamp;
 }
 
+/**
+ * 017_form_submissions: one accepted submission of a form on a published site.
+ * Deleted for real (owner, project delete, company erasure); `read_at` is the only
+ * column that changes. No IP address is stored.
+ */
+export interface FormSubmissionTable {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  site_id: string;
+  page_id: string;
+  page_path: string;
+  form_id: string;
+  form_name: string;
+  fields: JsonColumn<Array<Record<string, unknown>>>;
+  read_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+}
+
 // =============================================================================
 // The Database interface. GLOBAL keys are `public.`-qualified; tenant tables
 // are BARE. The two namespaces are disjoint by construction.
@@ -721,6 +740,7 @@ export interface CommerceDB {
   document_template_version: DocumentTemplateVersionTable;
   books_asset: BooksAssetTable;
   books_product: BooksProductTable;
+  form_submission: FormSubmissionTable;
 }
 
 // --- compile-time discipline guards (the package's brand types) --------------
