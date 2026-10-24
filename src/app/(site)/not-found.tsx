@@ -17,6 +17,7 @@
 // can never turn a miss into a 500.
 
 import React from 'react';
+import { unstable_rethrow } from 'next/navigation';
 import { DefaultNotFound } from '@/components/site/DefaultNotFound';
 import { resolveSiteForRequest } from '@/server/sites/requestSite';
 import { findNotFoundPage, renderSitePage } from '@/server/sites/renderSitePage';
@@ -29,6 +30,7 @@ export default async function SiteNotFound() {
   try {
     site = await resolveSiteForRequest();
   } catch (err) {
+    unstable_rethrow(err);
     console.error('(site)/not-found: could not resolve the site; serving the generic 404.', err);
   }
   if (!site) {
@@ -46,6 +48,7 @@ export default async function SiteNotFound() {
           adapted: { ...adapted, root: adapted.root },
         });
       } catch (err) {
+        unstable_rethrow(err);
         console.error('(site)/not-found: the designed 404 page failed to render; serving the default.', err);
       }
     }

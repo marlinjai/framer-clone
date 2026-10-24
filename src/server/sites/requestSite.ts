@@ -19,6 +19,7 @@ import 'server-only';
 
 import { cache } from 'react';
 import { headers } from 'next/headers';
+import { unstable_rethrow } from 'next/navigation';
 import { getPrismaClient } from '@/server/db';
 import { normalizeRequestHost } from '@/server/domains/hostname';
 import { DEFAULT_LANGUAGE } from '@/lib/site/siteSettings';
@@ -57,6 +58,8 @@ export async function getRequestLanguage(): Promise<string> {
     const site = await resolveSiteForRequest();
     return site?.siteSettings.language ?? DEFAULT_LANGUAGE;
   } catch (err) {
+    // Next's own control flow (the dynamic-rendering bailout) must pass through.
+    unstable_rethrow(err);
     console.error('requestSite: could not resolve the site for <html lang>; using the default.', err);
     return DEFAULT_LANGUAGE;
   }

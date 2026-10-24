@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { unstable_rethrow } from "next/navigation";
 import { getRequestLanguage, resolveSiteForRequest } from "@/server/sites/requestSite";
 // NOTE (MT-15): the data-table-react CMS-grid stylesheets + cms-grid-theme.css
 // used to be imported HERE, in the root layout, which ships them to EVERY route
@@ -33,6 +34,7 @@ export async function generateMetadata(): Promise<Metadata> {
   try {
     if (await resolveSiteForRequest()) return {};
   } catch (err) {
+    unstable_rethrow(err);
     console.error("root layout: could not resolve the site for the icon links.", err);
     return {};
   }
