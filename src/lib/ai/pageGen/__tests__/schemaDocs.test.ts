@@ -10,6 +10,7 @@ import { CSS_PROP_SET } from '@/models/ComponentModel';
 import { CONTAINER_TYPES, TEXT_TYPES } from '@/components/sidebars/right/sectionConfig';
 import { stableStringify } from '@/lib/ai/serializers/normalize';
 import { buildSchemaDocs } from '../schemaDocs';
+import { BANNED_FONT_FAMILIES, FONT_LIBRARY, fontStack } from '@/lib/fonts/registry';
 import { deriveBreakpointKeys, listGenerationTags } from '../schema';
 
 describe('buildSchemaDocs', () => {
@@ -37,6 +38,11 @@ describe('buildSchemaDocs', () => {
     for (const t of [...CONTAINER_TYPES, ...TEXT_TYPES]) expect(tags).toContain(t);
     for (const e of Object.values(COMPONENT_REGISTRY)) expect(tags).toContain(e.htmlType);
     for (const t of tags) expect(docs).toContain(`- ${t}: `);
+  });
+
+  it('lists every library font by its exact stack, and no banned typeface', () => {
+    for (const f of FONT_LIBRARY) expect(docs).toContain(`"${fontStack(f)}"`);
+    for (const banned of BANNED_FONT_FAMILIES) expect(docs).not.toContain(banned);
   });
 
   it('is deterministic (prompt-cache stable)', () => {

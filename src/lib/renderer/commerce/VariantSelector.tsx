@@ -46,7 +46,7 @@ import type { DataStateMode } from '@/lib/renderer/data/resolveDataState';
 const NOTE_STYLE: React.CSSProperties = {
   color: '#9ca3af',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
 };
 
 // Editor-only error chip carrying the REAL error message (the contract: errors
@@ -60,7 +60,7 @@ const ERROR_CHIP_STYLE: React.CSSProperties = {
   borderRadius: '4px',
   padding: '2px 6px',
   fontSize: '12px',
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: 'inherit',
 };
 
 const OPTION_GROUP_STYLE: React.CSSProperties = {

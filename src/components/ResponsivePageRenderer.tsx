@@ -19,6 +19,7 @@ import { observer } from 'mobx-react-lite';
 import { isAlive } from 'mobx-state-tree';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import ComponentRenderer from './ComponentRenderer';
+import PageFontFaces from '@/lib/fonts/PageFontFaces';
 import GroundWrapper from './GroundWrapper';
 import { useStore } from '@/hooks/useStore';
 import { useDragSource } from '@/lib/drag';
@@ -78,6 +79,8 @@ const ResponsivePageRenderer = observer(() => {
 
   return (
     <>
+      {/* The self-hosted web fonts the page uses (src/lib/fonts/registry.ts). */}
+      <PageFontFaces roots={[appComponentTree, ...page.floatingElements]} />
       {/* 1. Viewport frames */}
       {viewportNodes.map(viewport => (
         <ViewportFrame

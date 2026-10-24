@@ -10,6 +10,7 @@ import { observer } from 'mobx-react-lite';
 import type { PageModelType } from '@/models/PageModel';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import HeadlessComponentRenderer from './HeadlessComponentRenderer';
+import PageFontFaces from '@/lib/fonts/PageFontFaces';
 
 export interface HeadlessPageRendererProps {
   page: PageModelType;
@@ -30,11 +31,15 @@ const HeadlessPageRenderer = observer(({ page, breakpointId }: HeadlessPageRende
   }));
 
   return (
-    <HeadlessComponentRenderer
-      component={appComponentTree}
-      breakpointId={breakpointId}
-      allBreakpoints={allBreakpoints}
-    />
+    <>
+      {/* The self-hosted web fonts the page uses (src/lib/fonts/registry.ts). */}
+      <PageFontFaces roots={[appComponentTree]} />
+      <HeadlessComponentRenderer
+        component={appComponentTree}
+        breakpointId={breakpointId}
+        allBreakpoints={allBreakpoints}
+      />
+    </>
   );
 });
 

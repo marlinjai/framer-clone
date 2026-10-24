@@ -50,7 +50,13 @@ export interface PageGenResultPayload {
   title?: string;
   description?: string;
   nodes: GeneratedNodeSnapshot[];
+  /** Automatic fixes: the validator's repairs plus the design tells fixed (./tells.ts). */
   warnings: string[];
+  /**
+   * Tells of generated design still in the applied page (the repair round did
+   * not remove them, or there was none left). Empty or absent when clean.
+   */
+  tells?: string[];
   stats: { nodeCount: number; maxDepth: number };
   model: string;
   /** What happened to the images the model asked stock photos for. */
