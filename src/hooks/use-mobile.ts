@@ -13,7 +13,9 @@
 // (desktop): `useSyncExternalStore` then re-renders with the real value.
 import * as React from 'react';
 
-export const PHONE_MEDIA_QUERY = '(max-width: 767.98px), (max-height: 500px) and (pointer: coarse)';
+/** The two halves of the phone query, each also an `@media` block of the `phone:` variant. */
+export const PHONE_MEDIA_QUERIES = ['(max-width: 767.98px)', '(max-height: 500px) and (pointer: coarse)'] as const;
+export const PHONE_MEDIA_QUERY = PHONE_MEDIA_QUERIES.join(', ');
 
 function getMediaQueryList(query: string): MediaQueryList | null {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return null;

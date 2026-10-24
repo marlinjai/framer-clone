@@ -124,7 +124,8 @@ export function BottomSheet({
   const style: React.CSSProperties = {};
   if (inset > 0 && visibleHeight) {
     style.bottom = inset;
-    style.height = `min(${size === 'tall' ? '85svh' : '60svh'}, ${Math.max(160, visibleHeight - 16)}px)`;
+    // max-height beats the svh height class whenever the visible area is smaller.
+    style.maxHeight = `${Math.max(160, visibleHeight - 16)}px`;
   }
   if (dragOffset > 0) style.transform = `translateY(${dragOffset}px)`;
 
@@ -145,6 +146,9 @@ export function BottomSheet({
           data-testid={testId}
           // No description element: the title says what the sheet holds.
           aria-describedby={undefined}
+          // Radix hides the rest of the page from assistive technology but
+          // does not say so on the dialog itself.
+          aria-modal="true"
           onFocusCapture={onFocusCapture}
           className={cn(
             'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom fixed inset-x-0 bottom-0 z-[1010] flex flex-col overflow-hidden rounded-t-2xl border-t border-border bg-background shadow-2xl duration-200 ease-out outline-none',

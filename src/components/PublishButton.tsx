@@ -158,7 +158,7 @@ const PublishButton = observer(() => {
           inlineMaxWidth="lg:max-w-[280px]"
           toneClassName="text-brand"
         >
-          <span className="truncate">{state.message}</span>
+          <span className="lg:truncate">{state.message}</span>
           {state.liveLabel && (
             <>
               <span className="text-muted-foreground">·</span>
@@ -167,13 +167,13 @@ const PublishButton = observer(() => {
                   href={state.liveUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="underline truncate hover:text-brand/80"
+                  className="underline lg:truncate hover:text-brand/80"
                   title={`live at ${state.liveLabel}`}
                 >
                   live at {state.liveLabel}
                 </a>
               ) : (
-                <span className="truncate" title={`live at ${state.liveLabel}`}>
+                <span className="lg:truncate" title={`live at ${state.liveLabel}`}>
                   live at {state.liveLabel}
                 </span>
               )}
@@ -183,7 +183,7 @@ const PublishButton = observer(() => {
       )}
       {state.kind === 'error' && (
         <TopBarStatus kind="error" title={state.message} onDismiss={() => setState({ kind: 'idle' })}>
-          <span className="truncate">{state.message}</span>
+          <span className="lg:truncate">{state.message}</span>
         </TopBarStatus>
       )}
       {state.kind === 'confirm' && (

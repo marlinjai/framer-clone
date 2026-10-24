@@ -10,8 +10,9 @@
 // - One sheet at a time: a single state value, opening one replaces the other.
 // - Selecting an element does NOT open the properties sheet (it would cover
 //   what was just tapped, and a touch that selects often goes on to drag the
-//   element). Instead the Properties button turns into a highlighted "Edit"
-//   button named after the selection.
+//   element). Instead the Properties button becomes an "Edit" button named
+//   after the selection, highlighted while the selection is new (not yet
+//   opened, and not the root element a page selects by itself when it opens).
 // - When it mounts, and when the page changes, the camera fits the narrowest
 //   breakpoint frame (the phone frame, normally) to the screen's width; the
 //   Fit button fits every frame (an overview).
@@ -78,10 +79,13 @@ function BarButton({ label, ariaLabel, onClick, disabled, pressed, emphasis, exp
   );
 }
 
-function measureInsets(bar: HTMLElement | null): CanvasInsets {
+/** Room above a breakpoint frame for its name label (ResponsivePageRenderer puts it 32px above). */
+const FRAME_LABEL_SPACE = 28;
+
+function measureInsets(bar: HTMLElement | null, extraTop = 0): CanvasInsets {
   const top = document.querySelector<HTMLElement>('[data-editor-topbar]')?.getBoundingClientRect().bottom ?? 0;
   const bottom = bar ? Math.max(0, window.innerHeight - bar.getBoundingClientRect().top) : 0;
-  return { top, bottom };
+  return { top: top + extraTop, bottom };
 }
 
 const PhoneEditorChrome = observer(({ editorUI }: { editorUI: EditorUIType }) => {
@@ -90,8 +94,26 @@ const PhoneEditorChrome = observer(({ editorUI }: { editorUI: EditorUIType }) =>
   const { zoomPercentage, fit } = useCameraControls();
 
   const undoManager = getUndoManager();
-  const target = editorUI.selectedComponent ?? editorUI.selectedViewportNode;
+  // An element on the page, not a breakpoint frame.
+  const target = editorUI.selectedComponent;
   const hasSelection = !!target;
+  // The Edit button is highlighted for a NEW selection only: opening a page
+  // selects its root element by itself, and a highlight that is always on
+  // tells nothing. The selection present when the layout opens, and each one
+  // whose properties were opened, counts as seen.
+  const [seenSelectionId, setSeenSelectionId] = React.useState<string | undefined>(() => editorUI.selectedComponent?.id);
+  React.useEffect(
+    () =>
+      reaction(
+        () => editorUI.currentPage?.id,
+        () => setSeenSelectionId(editorUI.selectedComponent?.id),
+      ),
+    [editorUI],
+  );
+  React.useEffect(() => {
+    if (sheet === 'properties') setSeenSelectionId(target?.id);
+  }, [sheet, target?.id]);
+  const isNewSelection = !!target && target.id !== seenSelectionId;
 
   // Fit the phone frame to the screen when the layout opens and when the page
   // changes. The frames render a frame or two after the page is set, so the
@@ -101,7 +123,12 @@ const PhoneEditorChrome = observer(({ editorUI }: { editorUI: EditorUIType }) =>
     const fitWhenReady = (triesLeft: number) => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        const done = fit({ mode: 'width', pick: narrowestFrame, padding: 16, insets: measureInsets(barRef.current) });
+        const done = fit({
+          mode: 'width',
+          pick: narrowestFrame,
+          padding: 16,
+          insets: measureInsets(barRef.current, FRAME_LABEL_SPACE),
+        });
         if (!done && triesLeft > 0) fitWhenReady(triesLeft - 1);
       });
     };
@@ -152,7 +179,7 @@ const PhoneEditorChrome = observer(({ editorUI }: { editorUI: EditorUIType }) =>
           <BarButton
             label={`${zoomPercentage}%`}
             ariaLabel={`Fit all frames to the screen (zoom ${zoomPercentage}%)`}
-            onClick={() => fit({ mode: 'contain', insets: measureInsets(barRef.current) })}
+            onClick={() => fit({ mode: 'contain', insets: measureInsets(barRef.current, FRAME_LABEL_SPACE) })}
           >
             <span className="text-[13px] font-semibold leading-none">Fit</span>
           </BarButton>
@@ -160,7 +187,7 @@ const PhoneEditorChrome = observer(({ editorUI }: { editorUI: EditorUIType }) =>
             label={hasSelection ? 'Edit' : 'Properties'}
             ariaLabel={target ? `Edit ${target.displayName}` : 'Properties'}
             onClick={() => open('properties')}
-            emphasis={hasSelection && sheet !== 'properties'}
+            emphasis={isNewSelection && sheet !== 'properties'}
             expanded={sheet === 'properties'}
           >
             {hasSelection ? <PencilLine size={20} /> : <SlidersHorizontal size={20} />}

@@ -90,7 +90,7 @@ const SaveButton = observer(() => {
     <div className="flex items-center gap-2 mr-1 lg:mr-2">
       {(state.kind === 'success' || state.kind === 'error') && (
         <TopBarStatus kind={state.kind} title={state.message} onDismiss={() => setState({ kind: 'idle' })}>
-          <span className="truncate">{state.message}</span>
+          <span className="lg:truncate">{state.message}</span>
         </TopBarStatus>
       )}
       <Button
