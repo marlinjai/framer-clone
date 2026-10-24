@@ -9,6 +9,12 @@
 //   - success: a brief confirmation (how many pages went live),
 //   - failure: the structured server error message (or a network-error
 //     message), shown until the next attempt.
+//
+// Before publishing it checks the legal pages (src/lib/legal/publishCheck.ts):
+// a site with business data but no Impressum, or a legal page that still
+// holds [placeholders], gets an in-page notice first (never a browser
+// dialog) with a one-click "Create Impressum" (or "Open <page>") and
+// "Publish anyway". A warning, not a gate.
 'use client';
 
 import React from 'react';
@@ -19,6 +25,7 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
 import { markServerVersion } from '@/stores/openProject';
 import { useSiteAddress } from '@/contexts/SiteAddressContext';
+import { checkBeforePublish, hasPublishIssues, type PublishCheck } from '@/lib/legal/publishCheck';
 
 type PublishState =
   | { kind: 'idle' }
@@ -33,7 +40,8 @@ type PublishState =
       liveUrl: string | null;
       liveLabel: string | null;
     }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; message: string }
+  | { kind: 'confirm'; check: PublishCheck };
 
 const PublishButton = observer(() => {
   const rootStore = useStore();
@@ -42,7 +50,7 @@ const PublishButton = observer(() => {
   const isUnsavedDemo = rootStore.editorUI.isUnsavedDemo === true;
   const [state, setState] = React.useState<PublishState>({ kind: 'idle' });
 
-  const publish = React.useCallback(async () => {
+  const publish = React.useCallback(async (skipChecks = false) => {
     if (!project) {
       setState({ kind: 'error', message: 'No project to publish.' });
       return;
@@ -55,6 +63,21 @@ const PublishButton = observer(() => {
         message: 'This demo project exists only in this browser. Save it as a project first (Save), then publish it from there.',
       });
       return;
+    }
+    if (!skipChecks) {
+      const check = checkBeforePublish(
+        project.site.business,
+        project.pagesArray.map((p) => ({
+          id: p.id,
+          slug: p.slug,
+          metadata: { title: p.metadata.title, legalTemplate: p.metadata.legalTemplate },
+          tree: getSnapshot(p.appComponentTree) as Parameters<typeof checkBeforePublish>[1][number]['tree'],
+        })),
+      );
+      if (hasPublishIssues(check)) {
+        setState({ kind: 'confirm', check });
+        return;
+      }
     }
     setState({ kind: 'publishing' });
     try {
@@ -112,6 +135,18 @@ const PublishButton = observer(() => {
 
   const publishing = state.kind === 'publishing';
 
+  const createImpressum = () => {
+    if (!project) return;
+    const { page } = project.createLegalPage('impressum');
+    rootStore.editorUI.setCurrentPage(page);
+    setState({ kind: 'idle' });
+  };
+  const openPage = (pageId: string) => {
+    const page = project?.getPage(pageId);
+    if (page) rootStore.editorUI.setCurrentPage(page);
+    setState({ kind: 'idle' });
+  };
+
   return (
     <div className="flex items-center gap-2 mr-2">
       {state.kind === 'success' && (
@@ -153,11 +188,20 @@ const PublishButton = observer(() => {
           {state.message}
         </span>
       )}
+      {state.kind === 'confirm' && (
+        <PublishLegalNotice
+          check={state.check}
+          onCreateImpressum={createImpressum}
+          onOpenPage={openPage}
+          onPublishAnyway={() => void publish(true)}
+          onCancel={() => setState({ kind: 'idle' })}
+        />
+      )}
       <Button
         type="button"
         variant="brand"
         size="sm"
-        onClick={publish}
+        onClick={() => void publish()}
         disabled={publishing}
         title="Publish this site"
       >
@@ -169,4 +213,82 @@ const PublishButton = observer(() => {
 });
 
 PublishButton.displayName = 'PublishButton';
+
+interface PublishLegalNoticeProps {
+  check: PublishCheck;
+  onCreateImpressum: () => void;
+  onOpenPage: (pageId: string) => void;
+  onPublishAnyway: () => void;
+  onCancel: () => void;
+}
+
+/**
+ * The in-page notice before publishing: what is missing, the one-click fix,
+ * and "Publish anyway". Takes focus when it appears (the owner just clicked
+ * Publish and must read it) and closes on Escape.
+ */
+function PublishLegalNotice({ check, onCreateImpressum, onOpenPage, onPublishAnyway, onCancel }: PublishLegalNoticeProps) {
+  const ref = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    ref.current?.focus();
+  }, []);
+  const first = check.placeholders[0];
+  return (
+    <div
+      ref={ref}
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="publish-legal-title"
+      aria-describedby="publish-legal-text"
+      tabIndex={-1}
+      data-editor-ui="true"
+      data-testid="publish-legal-notice"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          onCancel();
+        }
+      }}
+      className="fixed right-4 top-16 z-100 mt-2 flex w-[360px] max-w-[calc(100vw-32px)] flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950 shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+    >
+      <p id="publish-legal-title" className="text-[13px] font-semibold">
+        {check.missingImpressum ? 'Your site has no Impressum yet' : 'Your legal pages still have placeholders'}
+      </p>
+      <div id="publish-legal-text" className="flex flex-col gap-1.5">
+        {check.missingImpressum && (
+          <p>
+            German law requires an Impressum on a business website. Create one from your business details in one click,
+            then review it.
+          </p>
+        )}
+        {check.placeholders.length > 0 && (
+          <ul className="list-disc pl-4">
+            {check.placeholders.map((p) => (
+              <li key={p.pageId}>
+                {p.title}: {p.count} {p.count === 1 ? 'part' : 'parts'} in [square brackets] to fill in or delete
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={onPublishAnyway}>
+          Publish anyway
+        </Button>
+        {check.missingImpressum ? (
+          <Button type="button" variant="brand" size="sm" onClick={onCreateImpressum}>
+            Create Impressum
+          </Button>
+        ) : first ? (
+          <Button type="button" variant="brand" size="sm" onClick={() => onOpenPage(first.pageId)}>
+            Open {first.title}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 export default PublishButton;
