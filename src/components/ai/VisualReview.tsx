@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useStore } from '@/hooks/useStore';
+import { useControllableOpen, type ControllableOpenProps } from '@/hooks/useControllableOpen';
 import type { PageModelType } from '@/models/PageModel';
 import { MODEL_CHOICE_INFO } from '@/lib/ai/modelChoice';
 import {
@@ -433,16 +434,25 @@ export const PolishPageDialog = observer(function PolishPageDialog({ open, onOpe
 });
 
 /** The top-bar entry point. */
-export const PolishPageButton = observer(function PolishPageButton(props: ReviewRunnerOptions) {
+export const PolishPageButton = observer(function PolishPageButton({
+  open: openProp,
+  onOpenChange,
+  triggerClassName = '',
+  ...props
+}: ReviewRunnerOptions &
+  ControllableOpenProps & {
+    /** Extra classes for the trigger (the compact top bar hides it and opens the dialog from its More menu). */
+    triggerClassName?: string;
+  }) {
   const { editorUI } = useStore();
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = useControllableOpen({ open: openProp, onOpenChange });
   return (
     <>
       <Button
         type="button"
         variant="outline"
         size="sm"
-        className="mr-2"
+        className={`mr-2 ${triggerClassName}`}
         onClick={() => setOpen(true)}
         disabled={!editorUI.currentPage}
         title="Measure the page layout and let AI fix clipped text, overflow and contrast"

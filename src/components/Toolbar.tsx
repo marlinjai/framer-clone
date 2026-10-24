@@ -1,12 +1,13 @@
 // src/components/Toolbar.tsx
-// Simple bottom toolbar for tool selection and zoom controls
+// Floating bottom toolbar for tool selection and zoom controls (tablet and
+// desktop; phones get PhoneEditorChrome's docked bottom bar instead).
 'use client';
-import React, { useCallback, useState, useEffect } from 'react';
+import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { PiCursorLight, PiHandGrabbingBold, PiPlus, PiMinus, PiHouse, PiArrowUUpLeft, PiArrowUUpRight } from "react-icons/pi";
 import { EditorTool, EditorUIType } from '../stores/EditorUIStore';
 import { getUndoManager } from '@/stores/RootStore';
-import { useTransformContext, useTransformNotifier } from '@/contexts/TransformContext';
+import { useCameraControls } from '@/lib/canvas/cameraControls';
 
 // Tool configuration with React Icons
 const TOOLS = {
@@ -27,100 +28,9 @@ interface ToolbarProps {
 }
 
 const Toolbar = observer(({ editorUI }: ToolbarProps) => {
-  // Get transform state and notifier from context
-  const { state: transformState, subscribe } = useTransformContext();
-  const notifySubscribers = useTransformNotifier();
-  
-  // Local state for zoom percentage display (needed because transformState is a ref)
-  const [zoomPercentage, setZoomPercentage] = useState(() => 
-    Math.round(transformState.current.zoom * 100)
-  );
-  
-  // Subscribe to transform changes to update zoom display
-  useEffect(() => {
-    const unsubscribe = subscribe(() => {
-      setZoomPercentage(Math.round(transformState.current.zoom * 100));
-    });
-    return unsubscribe;
-  }, [subscribe, transformState]);
-
-  /**
-   * Apply transform to camera element and notify subscribers
-   * This mirrors the applyTransform function from Canvas.tsx
-   */
-  const applyTransform = useCallback(() => {
-    // Find camera element by data attribute
-    const cameraElement = document.querySelector('[data-camera-transform]') as HTMLElement;
-    if (!cameraElement) return;
-
-    const { zoom, panX, panY } = transformState.current;
-    
-    // Apply CSS transform directly to DOM (bypassing React for performance)
-    const transformString = `translate(${panX}px, ${panY}px) scale(${zoom})`;
-    cameraElement.style.transform = transformString;
-    
-    // Update data attribute for debugging and HudSurface compatibility
-    cameraElement.setAttribute('data-camera-transform', `${panX},${panY},${zoom}`);
-    
-    // Notify all subscribers (HudSurface, etc.) to update overlay positions
-    notifySubscribers();
-  }, [transformState, notifySubscribers]);
-
-  /**
-   * Zoom function - increments or decrements zoom by 5% (0.05)
-   * Uses viewport center as zoom point (similar to cursor-centered zoom)
-   */
-  const handleZoom = useCallback((direction: 'in' | 'out') => {
-    // The canvas ground (Canvas.tsx marks it data-ground) gives the visible
-    // canvas size; without it (no page open) there is nothing to zoom.
-    const groundElement = document.querySelector<HTMLElement>('[data-ground]');
-    if (!groundElement) return;
-
-    const rect = groundElement.getBoundingClientRect();
-    
-    // Use viewport center as zoom point
-    const viewportCenterX = rect.width / 2;
-    const viewportCenterY = rect.height / 2;
-    
-    // Calculate zoom increment (5% = 0.05)
-    const zoomIncrement = 0.05;
-    const zoomDirection = direction === 'in' ? 1 : -1;
-    const currentZoom = transformState.current.zoom;
-    const newZoom = Math.max(0.1, Math.min(5, currentZoom + (zoomIncrement * zoomDirection)));
-    
-    // Get current transform state
-    const { zoom: oldZoom, panX: currentPanX, panY: currentPanY } = transformState.current;
-    
-    // Apply cursor-centered zoom algorithm (from Canvas.tsx lines 97-110)
-    // Step 1: Convert viewport center position to world coordinates
-    const worldX = (viewportCenterX - currentPanX) / oldZoom;
-    const worldY = (viewportCenterY - currentPanY) / oldZoom;
-    
-    // Step 2: Apply zoom transformation around the world point
-    const newPanX = viewportCenterX - worldX * newZoom;
-    const newPanY = viewportCenterY - worldY * newZoom;
-    
-    // Update transform state
-    transformState.current.zoom = newZoom;
-    transformState.current.panX = newPanX;
-    transformState.current.panY = newPanY;
-    
-    // Apply transform and notify subscribers
-    applyTransform();
-  }, [transformState, applyTransform]);
-
-  /**
-   * Reset function - resets zoom to 100% and pan to origin (0, 0)
-   */
-  const handleReset = useCallback(() => {
-    // Reset to default state
-    transformState.current.zoom = 1.0;
-    transformState.current.panX = 0;
-    transformState.current.panY = 0;
-    
-    // Apply transform and notify subscribers
-    applyTransform();
-  }, [transformState, applyTransform]);
+  // Zoom display, step zoom and reset share their camera code with the phone
+  // bottom bar (src/lib/canvas/cameraControls.ts).
+  const { zoomPercentage, zoomStep: handleZoom, reset: handleReset } = useCameraControls();
 
   const undoManager = getUndoManager();
   const canUndo = !!undoManager?.canUndo;

@@ -29,6 +29,24 @@ const MAX_HEIGHT = 8000;
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
+/**
+ * The breakpoint frame to open the preview with on a window narrower than the
+ * widest frame (a phone): the widest frame that fits the window, else the
+ * narrowest one. Null when the widest already fits (keep it, as before).
+ */
+export function viewportForWindow(
+  viewports: ReadonlyArray<{ viewportWidth?: number; viewportHeight?: number }>,
+  windowWidth: number,
+): { width: number; height: number } | null {
+  const sized = viewports
+    .filter((v): v is { viewportWidth: number; viewportHeight?: number } => typeof v.viewportWidth === 'number')
+    .slice()
+    .sort((a, b) => b.viewportWidth - a.viewportWidth);
+  if (sized.length === 0 || sized[0].viewportWidth <= windowWidth) return null;
+  const pick = sized.find((v) => v.viewportWidth <= windowWidth) ?? sized[sized.length - 1];
+  return { width: pick.viewportWidth, height: pick.viewportHeight ?? 800 };
+}
+
 export interface PreviewShellProps {
   /**
    * A `?page=` id the project does not have (typically a page that was never
@@ -68,6 +86,19 @@ const PreviewShell = observer(({ missingPageId }: PreviewShellProps = {}) => {
   );
   const widthRef = useRef(width);
   widthRef.current = width;
+
+  // On a window narrower than the widest frame (a phone), open on the frame
+  // that fits instead (plan docs/plans/2026-10-24-editor-on-phones.md). After
+  // mount, so the server render and hydration agree.
+  useEffect(() => {
+    if (!page) return;
+    const fit = viewportForWindow(page.sortedViewportNodes, window.innerWidth);
+    if (!fit) return;
+    setWidthRaw(fit.width);
+    setHeightRaw(fit.height);
+    // Only the first size: later choices are the person's.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setWidth = useCallback((next: number) => {
     setWidthRaw(clamp(Math.round(next), MIN_WIDTH, MAX_WIDTH));

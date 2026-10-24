@@ -164,7 +164,7 @@ export function resolveDropTarget(input: ResolveDropTargetInput): ResolveDropTar
 // Grid, Flex, Card) plus the semantic block containers the seeded app tree
 // uses. Text-leaf tags (p, h1-h6, button, span, a, ...) are deliberately
 // excluded so dropping into them doesn't clobber their string children.
-const CONTAINER_TAGS = new Set([
+export const CONTAINER_TAGS: ReadonlySet<string> = new Set([
   'div',
   'section',
   'article',

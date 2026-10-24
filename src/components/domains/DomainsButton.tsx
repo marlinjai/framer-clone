@@ -19,10 +19,16 @@ import {
 } from '@/components/ui/dialog';
 import { useStore } from '@/hooks/useStore';
 import DomainsPanel from './DomainsPanel';
+import { useControllableOpen, type ControllableOpenProps } from '@/hooks/useControllableOpen';
 
-const DomainsButton = observer(() => {
+export interface DomainsButtonProps extends ControllableOpenProps {
+  /** Extra classes for the trigger (the compact top bar hides it and opens the dialog from its More menu). */
+  triggerClassName?: string;
+}
+
+const DomainsButton = observer(({ open: openProp, onOpenChange, triggerClassName = '' }: DomainsButtonProps) => {
   const project = useStore().editorUI.currentProject;
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = useControllableOpen({ open: openProp, onOpenChange });
   if (!project) return null;
 
   return (
@@ -32,7 +38,7 @@ const DomainsButton = observer(() => {
         onClick={() => setOpen(true)}
         title="Domains"
         aria-label="Domains"
-        className="mr-2 flex h-8 w-8 items-center justify-center rounded text-foreground hover:bg-accent"
+        className={`mr-2 flex h-8 w-8 items-center justify-center rounded text-foreground hover:bg-accent ${triggerClassName}`}
       >
         <Globe size={16} />
       </button>

@@ -29,9 +29,19 @@ const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: Com
  * - Each section is a collapsible panel with responsive-aware controls
  * - Sections adapt based on what's selected (viewport, container, text, image, etc.)
  */
-const RightSidebar = observer(() => {
+export interface RightSidebarProps {
+  /**
+   * 'docked' (default): the desktop side panel. 'sheet': fills a phone bottom
+   * sheet (plan docs/plans/2026-10-24-editor-on-phones.md), always expanded,
+   * never reading or writing the desktop collapse state.
+   */
+  variant?: 'docked' | 'sheet';
+}
+
+const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
   const { editorUI } = useStore();
-  const isCollapsed = editorUI.rightSidebarCollapsed;
+  const isSheet = variant === 'sheet';
+  const isCollapsed = isSheet ? false : editorUI.rightSidebarCollapsed;
   const selectedComponent = editorUI.selectedComponent;
   const selectedViewportNode = editorUI.selectedViewportNode;
 
@@ -45,12 +55,12 @@ const RightSidebar = observer(() => {
   const sections = category ? SECTION_MAP[category] : [];
 
   return (
-    <div className={`
+    <div className={isSheet ? 'bg-background flex flex-col h-full w-full' : `
       bg-background border-l border-border flex flex-col transition-all duration-300 ease-in-out h-[calc(100vh-4rem)]
       ${isCollapsed ? 'w-12' : 'w-[272px]'}
     `}>
-      {/* Header with collapse toggle and dynamic title */}
-      <RightSidebarHeader />
+      {/* Header with collapse toggle (docked only) and dynamic title */}
+      <RightSidebarHeader variant={variant} />
 
       {/* Content - only show when not collapsed */}
       {!isCollapsed && (

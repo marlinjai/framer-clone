@@ -18,10 +18,16 @@ import {
 } from '@/components/ui/dialog';
 import { useStore } from '@/hooks/useStore';
 import FormSubmissionsPanel from './FormSubmissionsPanel';
+import { useControllableOpen, type ControllableOpenProps } from '@/hooks/useControllableOpen';
 
-const FormSubmissionsButton = observer(() => {
+export interface FormSubmissionsButtonProps extends ControllableOpenProps {
+  /** Extra classes for the trigger (the compact top bar hides it and opens the dialog from its More menu). */
+  triggerClassName?: string;
+}
+
+const FormSubmissionsButton = observer(({ open: openProp, onOpenChange, triggerClassName = '' }: FormSubmissionsButtonProps) => {
   const project = useStore().editorUI.currentProject;
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = useControllableOpen({ open: openProp, onOpenChange });
   if (!project) return null;
 
   return (
@@ -31,7 +37,7 @@ const FormSubmissionsButton = observer(() => {
         onClick={() => setOpen(true)}
         title="Form submissions"
         aria-label="Form submissions"
-        className="mr-2 flex h-8 w-8 items-center justify-center rounded text-foreground hover:bg-accent"
+        className={`mr-2 flex h-8 w-8 items-center justify-center rounded text-foreground hover:bg-accent ${triggerClassName}`}
       >
         <Inbox size={16} />
       </button>

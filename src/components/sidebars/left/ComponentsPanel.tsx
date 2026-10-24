@@ -3,6 +3,10 @@
 // the DragManager with a `create` source; the manager paints the ghost,
 // resolves the drop target under the cursor, and on release calls
 // page.insertRegistryComponent.
+//
+// In the phone layout's sheet (`onTapInsert`), where the canvas is covered and
+// there is nowhere to drag to, a tap (or Enter / Space) adds the component
+// instead, next to or inside the selection (src/lib/layers/tapInsertTarget.ts).
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
@@ -14,9 +18,25 @@ import {
 } from '@/lib/componentRegistry';
 import { useDragSource } from '@/lib/drag';
 
-const ComponentItem = ({ entry }: { entry: ComponentRegistryEntry }) => {
+const ComponentItem = ({ entry, onTapInsert }: { entry: ComponentRegistryEntry; onTapInsert?: (registryId: string) => void }) => {
   const IconComponent = entry.icon;
   const { onPointerDown } = useDragSource({ kind: 'create', registryId: entry.id });
+
+  if (onTapInsert) {
+    return (
+      <button
+        type="button"
+        onClick={() => onTapInsert(entry.id)}
+        className="flex w-full items-center space-x-3 p-2 rounded text-left hover:bg-accent transition-colors select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        aria-label={`Add ${entry.label}`}
+      >
+        <div className={`p-1.5 rounded ${entry.iconClassName}`}>
+          <IconComponent size={14} />
+        </div>
+        <span className="text-sm text-foreground">{entry.label}</span>
+      </button>
+    );
+  }
 
   return (
     <div
@@ -32,7 +52,12 @@ const ComponentItem = ({ entry }: { entry: ComponentRegistryEntry }) => {
   );
 };
 
-const ComponentsPanel = observer(() => {
+export interface ComponentsPanelProps {
+  /** Add on tap instead of drag (the phone sheet). */
+  onTapInsert?: (registryId: string) => void;
+}
+
+const ComponentsPanel = observer(({ onTapInsert }: ComponentsPanelProps = {}) => {
   const basicComponents = listComponentsByCategory('basic');
   const layoutComponents = listComponentsByCategory('layout');
   const dataComponents = listComponentsByCategory('data');
@@ -41,6 +66,9 @@ const ComponentsPanel = observer(() => {
 
   return (
     <div className="space-y-4">
+      {onTapInsert && (
+        <p className="text-xs text-muted-foreground">Tap a component to add it inside or after the selected element.</p>
+      )}
       <div>
         <div className="flex items-center space-x-2 mb-3">
           <h3 className="text-sm font-medium text-foreground">Basic</h3>
@@ -48,7 +76,7 @@ const ComponentsPanel = observer(() => {
         </div>
         <div className="space-y-1">
           {basicComponents.map((entry) => (
-            <ComponentItem key={entry.id} entry={entry} />
+            <ComponentItem key={entry.id} entry={entry} onTapInsert={onTapInsert} />
           ))}
         </div>
       </div>
@@ -60,7 +88,7 @@ const ComponentsPanel = observer(() => {
         </div>
         <div className="space-y-1">
           {layoutComponents.map((entry) => (
-            <ComponentItem key={entry.id} entry={entry} />
+            <ComponentItem key={entry.id} entry={entry} onTapInsert={onTapInsert} />
           ))}
         </div>
       </div>
@@ -73,7 +101,7 @@ const ComponentsPanel = observer(() => {
           </div>
           <div className="space-y-1">
             {dataComponents.map((entry) => (
-              <ComponentItem key={entry.id} entry={entry} />
+              <ComponentItem key={entry.id} entry={entry} onTapInsert={onTapInsert} />
             ))}
           </div>
         </div>
@@ -87,7 +115,7 @@ const ComponentsPanel = observer(() => {
           </div>
           <div className="space-y-1">
             {formComponents.map((entry) => (
-              <ComponentItem key={entry.id} entry={entry} />
+              <ComponentItem key={entry.id} entry={entry} onTapInsert={onTapInsert} />
             ))}
           </div>
         </div>
@@ -101,7 +129,7 @@ const ComponentsPanel = observer(() => {
           </div>
           <div className="space-y-1">
             {commerceComponents.map((entry) => (
-              <ComponentItem key={entry.id} entry={entry} />
+              <ComponentItem key={entry.id} entry={entry} onTapInsert={onTapInsert} />
             ))}
           </div>
         </div>

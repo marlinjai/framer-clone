@@ -34,6 +34,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useStore } from '@/hooks/useStore';
+import { useControllableOpen, type ControllableOpenProps } from '@/hooks/useControllableOpen';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { PageModelType } from '@/models/PageModel';
 import { fetchPageGenTransport, type PageGenTransport } from '@/lib/ai/pageGen/client';
@@ -498,18 +499,23 @@ function StockImageNote({ images }: { images?: StockImageSummary }) {
 /** The top-bar entry point. */
 export const GeneratePageButton = observer(function GeneratePageButton({
   transport,
+  open: openProp,
+  onOpenChange,
+  triggerClassName = '',
 }: {
   transport?: PageGenTransport;
-}) {
+  /** Extra classes for the trigger (the compact top bar hides it and opens the dialog from its More menu). */
+  triggerClassName?: string;
+} & ControllableOpenProps) {
   const { editorUI } = useStore();
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = useControllableOpen({ open: openProp, onOpenChange });
   return (
     <>
       <Button
         type="button"
         variant="outline"
         size="sm"
-        className="mr-2"
+        className={`mr-2 ${triggerClassName}`}
         onClick={() => setOpen(true)}
         disabled={!editorUI.currentProject}
         title="Generate a page or section with AI"

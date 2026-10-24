@@ -29,7 +29,16 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
 
   // Autofocus + select-all when entering edit mode so the user can immediately
   // type to replace the placeholder text.
-  const editingId = editorUI.editingComponent?.id;
+  //
+  // Only the copy in the frame where editing began becomes the text box. Every
+  // breakpoint frame renders the same node; if each copy turned editable and
+  // took focus, the second focus would blur the first, whose blur ends the
+  // edit, so a double-click (or double-tap) never entered editing on a page
+  // with more than one frame. A floating element has one copy and no frame.
+  const editFrame = editorUI.selectedViewportNode?.breakpointId;
+  const isEditingCopy =
+    editorUI.editingComponent?.id === component.id && (!editFrame || !breakpointId || editFrame === breakpointId);
+  const editingId = isEditingCopy ? component.id : undefined;
   React.useEffect(() => {
     if (editingId !== component.id) return;
     const el = editRef.current;
@@ -45,7 +54,7 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
   // Only non-root tree components can be moved. The root of the app tree must
   // stay put. Text-editing suppresses drag until the user exits edit mode.
   const canMove = component.hasParent;
-  const isEditing = editorUI.editingComponent?.id === component.id;
+  const isEditing = isEditingCopy;
   // Locked in the Layers panel (itself or an ancestor): not selectable or
   // draggable on the canvas. Pointer events pass through to the nearest
   // unlocked ancestor, which takes the click (src/lib/layers/layerActions.ts).
