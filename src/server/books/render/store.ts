@@ -68,6 +68,7 @@ import { templateSnapshotFor } from '../repository/templates';
 import type { BooksScope } from '../scope';
 import { readSettings } from '../settings';
 import type { TemplateSnapshotV1 } from '../snapshots';
+import { printsSubject } from '../template/rules';
 import { logoBlocks, withOnlyLogo, type TemplateDocumentV2 } from '../template/schema';
 import { missingFields } from './completeness';
 import { assertDrawable } from './drawable';
@@ -251,6 +252,18 @@ export async function documentRenderInput(scope: BooksScope, documentId: string)
   }
   if (view.document.status === 'draft') return (await draftInput(scope, view)).input;
   return issuedInput(scope.db, scope, view);
+}
+
+/**
+ * Whether the document's template prints its subject: a draft's current template (it can still change), an issued
+ * document's frozen one. An imported document prints nothing of this system's.
+ */
+export async function documentPrintsSubject(scope: BooksScope, view: DocumentView): Promise<boolean> {
+  const doc = view.document;
+  if (doc.source === 'import') return false;
+  if (doc.status === 'draft') return printsSubject((await templateSnapshotFor(scope.db, scope, doc.templateId)).document);
+  const layout = frozenLayout(doc);
+  return layout.kind === 'engine' && printsSubject(layout.document);
 }
 
 /** What the browser needs to draw a draft exactly as the draft PDF route draws it (WYSIWYG invoice editor plan, phase 1). */

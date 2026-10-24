@@ -347,6 +347,11 @@ function contrastProblems(doc: TemplateDocumentV2): TemplateProblem[] {
   return out;
 }
 
+/** Whether a template prints the document's subject (a `subject` block, body only); a version 1 template never does. */
+export function printsSubject(doc: TemplateDocumentV2 | null): boolean {
+  return Boolean(doc?.regions.body.some((b) => b.type === 'subject'));
+}
+
 /** Every text the template itself prints (free texts, headings, captions), for the drawable check. */
 export function templateTexts(doc: TemplateDocumentV2): Array<{ blockId: string; field: string; text: string }> {
   const out: Array<{ blockId: string; field: string; text: string }> = [];

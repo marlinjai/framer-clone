@@ -139,6 +139,8 @@ export interface DocumentRef {
 }
 
 export interface DocumentDetail {
+  /** Whether the template prints the subject; only the document's own GET and PATCH answer it (absent elsewhere). */
+  printsSubject?: boolean;
   document: DocumentView;
   lines: LineView[];
   events: Array<{ id: string; eventType: string; createdAt: string }>;

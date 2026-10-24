@@ -15,13 +15,20 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      with `to_jsonb`) never sees a change, and from now on it freezes the
  *      subject of an issued document like every other column, with no new
  *      trigger code.
- *   2. At most 200 characters (`sales_document_subject_length_check`), the
+ *   2. A bounded lock wait: the ALTER waits at most 5 s for its lock, so a
+ *      long transaction never makes every query on sales_document queue
+ *      behind the migration.
+ *   3. At most 200 characters (`sales_document_subject_length_check`), the
  *      same bound the application enforces: one printed line, never a
  *      paragraph smuggled into the heading.
  */
 export const booksSubject: Migration = {
   id: '016_books_subject',
   up: async (tx) => {
+    // The ALTER takes an exclusive lock on sales_document for a moment. Behind a long transaction it would wait,
+    // and every query on the table would queue behind it: give up after 5 s instead (the boot's migration run fails
+    // loudly and the next run retries), as 014 bounds its waiting delete.
+    await tx`SET LOCAL lock_timeout = '5000ms'`;
     await tx`ALTER TABLE "sales_document" ADD COLUMN IF NOT EXISTS "subject" TEXT`;
     await tx`
       DO $$

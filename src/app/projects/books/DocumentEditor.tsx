@@ -31,7 +31,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,7 +52,7 @@ import { date, money, moneyInput, parseMoney, parseQuantity, quantity, quantityI
 
 import InvoicePage from './invoice/InvoicePage';
 import StoredPdf from './invoice/StoredPdf';
-import { ErrorAlert, Field, ImportedBadge, StatusBadge, errorText } from './ui';
+import { ErrorAlert, Field, ImportedBadge, StatusBadge, errorText, fieldA11y } from './ui';
 
 /** The invoice page needs room for an A4 page and its margin controls. */
 const PAGE_MIN_WIDTH = '(min-width: 1024px)';
@@ -179,7 +179,17 @@ function LineForm({
 }
 
 export default function DocumentEditor({ id }: { id: string }) {
-  const [detail, setDetail] = useState<DocumentDetail | null>(null);
+  const [detail, setDetailState] = useState<DocumentDetail | null>(null);
+  // Whether the template prints the subject: answered by the document's own GET and PATCH, kept between them.
+  const [printsSubject, setPrintsSubject] = useState<boolean | null>(null);
+  // The version of the latest answer, set with every answer, so a save queued behind another (the form's texts)
+  // sends the version that answer produced, not the one of the last render.
+  const versionRef = useRef(0);
+  const setDetail = useCallback((d: DocumentDetail) => {
+    versionRef.current = d.document.version;
+    if (d.printsSubject !== undefined) setPrintsSubject(d.printsSubject);
+    setDetailState(d);
+  }, []);
   const [customers, setCustomers] = useState<CustomerView[]>([]);
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -222,7 +232,7 @@ export default function DocumentEditor({ id }: { id: string }) {
       if (err instanceof BooksApiError && err.status !== 409 && err.status !== 503) setFatal(errorText(err));
       else setError(errorText(err));
     }
-  }, [id]);
+  }, [id, setDetail]);
 
   useEffect(() => {
     void load();
@@ -551,7 +561,7 @@ export default function DocumentEditor({ id }: { id: string }) {
         ) : null}
       </section>
 
-      <DocumentTexts id={id} doc={doc} draft={draft} busy={busy} change={change} />
+      <DocumentTexts id={id} doc={doc} draft={draft} printsSubject={printsSubject} change={change} versionRef={versionRef} />
 
       <section aria-label="Lines" className="mb-6">
         <table className="w-full text-sm">
@@ -755,7 +765,7 @@ function RelatedList({ related }: { related: DocumentDetail['related'] }) {
 }
 
 const TEXT_FIELDS = [
-  { key: 'subject', label: 'Subject', hint: 'One line, printed where the template places the subject.', max: 200, multiline: false },
+  { key: 'subject', label: 'Subject', hint: 'One line, printed under the title.', max: 200, multiline: false },
   { key: 'contractReference', label: 'Reference', hint: 'Printed in the document data, for example an order or contract number.', max: 200, multiline: false },
   { key: 'introText', label: 'Intro text', hint: null, max: 4000, multiline: true },
   { key: 'outroText', label: 'Closing text', hint: null, max: 4000, multiline: true },
@@ -764,104 +774,171 @@ type TextKey = (typeof TEXT_FIELDS)[number]['key'];
 
 /**
  * The document's texts in the form (narrow windows, imports, "Use the form"): the same fields the invoice page
- * edits in place, each saved when it is left. Issued documents show what was printed.
+ * edits in place, each saved when it is left. Issued documents show what was printed. The subject is offered only
+ * where the template prints it; otherwise the form says how to add it, so nothing is typed that never prints.
  */
 function DocumentTexts({
   id,
   doc,
   draft,
-  busy,
+  printsSubject,
   change,
+  versionRef,
 }: {
   id: string;
   doc: DocumentDetail['document'];
   draft: boolean;
-  busy: boolean;
+  /** Null until the document's own answer said it. */
+  printsSubject: boolean | null;
   change: (fn: () => Promise<DocumentDetail>) => Promise<boolean>;
+  /** The version of the latest answer, kept by the editor on every answer (a save, a reload after a conflict). */
+  versionRef: React.MutableRefObject<number>;
 }) {
-  // Saves run one after another, each with the version the one before produced: tabbing from one text to the next
+  // A field whose save failed (or whose text is too long) stays marked, with the reason, until it saves: the
+  // banner alone is cleared by the next change and would leave a typed value that looks saved.
+  const [problems, setProblems] = useState<Partial<Record<TextKey, string>>>({});
+  const mark = (key: TextKey, problem: string | null) =>
+    setProblems((p) => {
+      const next = { ...p };
+      if (problem) next[key] = problem;
+      else delete next[key];
+      return next;
+    });
+  // Saves run one after another, each with the version of the latest answer: tabbing from one text to the next
   // saves both, never the second against a version the first has already moved on.
-  const latest = React.useRef(doc.version);
-  if (doc.version > latest.current) latest.current = doc.version;
   const queue = React.useRef<Promise<unknown>>(Promise.resolve());
-  const save = (body: Partial<Record<TextKey, string | null>>) => {
-    queue.current = queue.current.then(() =>
-      change(async () => {
-        const d = await booksApi.updateDraft(id, { ...body, expectedVersion: latest.current });
-        latest.current = d.document.version;
-        return d;
-      }),
-    );
+  const save = (key: TextKey, value: string | null) => {
+    queue.current = queue.current.then(async () => {
+      const ok = await change(() => booksApi.updateDraft(id, { [key]: value, expectedVersion: versionRef.current }));
+      mark(key, ok ? null : 'Not saved: the message above says why. Change the text again to retry.');
+    });
   };
+
+  // The subject only where the template prints it (an issued document: where it was printed). A draft whose
+  // template has no subject block shows how to add one; a subject typed before the block was removed stays editable.
+  const subjectHidden = printsSubject === false && (!draft || !doc.subject);
+  const fields = TEXT_FIELDS.filter((f) => !(f.key === 'subject' && subjectHidden));
   if (!draft) {
-    const shown = TEXT_FIELDS.filter((f) => doc[f.key]);
+    const shown = fields.filter((f) => doc[f.key]);
     if (shown.length === 0) return null;
     return (
-      <section aria-label="Texts" className="mb-6 grid grid-cols-1 gap-3 rounded-lg border p-4 text-sm">
-        {shown.map((f) => (
-          <div key={f.key}>
-            <div className="text-xs font-medium text-muted-foreground">{f.label}</div>
-            <p className="whitespace-pre-line">{doc[f.key]}</p>
-          </div>
-        ))}
+      <section aria-label="Texts" className="mb-6 rounded-lg border p-4 text-sm">
+        <dl className="grid grid-cols-1 gap-3">
+          {shown.map((f) => (
+            <div key={f.key}>
+              <dt className="text-xs font-medium text-muted-foreground">{f.label}</dt>
+              <dd className="whitespace-pre-line">{doc[f.key]}</dd>
+            </div>
+          ))}
+        </dl>
       </section>
     );
   }
   return (
     <section aria-label="Texts" className="mb-6 grid grid-cols-1 gap-4 rounded-lg border p-4 sm:grid-cols-2">
-      {TEXT_FIELDS.map((f) => (
-        <div key={f.key} className={f.multiline ? 'sm:col-span-2' : undefined}>
-          <Field label={f.label} htmlFor={`doc-${f.key}`} hint={f.hint ?? undefined}>
-            <SavedText
-              id={`doc-${f.key}`}
-              saved={doc[f.key] ?? ''}
-              multiline={f.multiline}
-              max={f.max}
-              busy={busy}
-              onLeave={(raw) => {
-                const v = f.multiline ? raw.trimEnd() : raw.trim();
-                const next = v === '' ? null : v;
-                if (next !== (doc[f.key] ?? null)) save({ [f.key]: next });
-              }}
-            />
-          </Field>
-        </div>
-      ))}
+      {fields.map((f) => {
+        const fieldId = `doc-${f.key}`;
+        const note =
+          f.key === 'subject' && printsSubject === false
+            ? 'Your template has no subject block, so this subject is not printed. Add “Subject” to the template in the template composer.'
+            : f.hint;
+        return (
+          <div key={f.key} className={f.multiline ? 'sm:col-span-2' : undefined}>
+            <Field label={f.label} htmlFor={fieldId} hint={note ?? undefined} error={problems[f.key] ?? null}>
+              <SavedText
+                id={fieldId}
+                saved={doc[f.key] ?? ''}
+                multiline={f.multiline}
+                hint={Boolean(note)}
+                error={problems[f.key] ?? null}
+                onSave={(raw) => {
+                  const v = f.multiline ? raw.trimEnd() : raw.trim();
+                  if (v.length > f.max) {
+                    mark(f.key, `${f.label} is at most ${f.max} characters (now ${v.length}). Shorten it to save.`);
+                    return false;
+                  }
+                  const next = v === '' ? null : v;
+                  if (next !== (doc[f.key] ?? null)) save(f.key, next);
+                  else mark(f.key, null);
+                  return true;
+                }}
+              />
+            </Field>
+          </div>
+        );
+      })}
+      {subjectHidden ? (
+        <p className="text-xs text-muted-foreground sm:col-span-2">
+          To print a subject line, add “Subject” to your template in the{' '}
+          <Link href="/projects/books?tab=templates" className="underline underline-offset-4">
+            template composer
+          </Link>
+          .
+        </p>
+      ) : null}
     </section>
   );
 }
 
 /**
- * A text input that saves when it is left and shows what is saved: a change saved meanwhile (on the page, in another
- * tab, after a conflict) replaces its value, but never while it has focus, so tabbing on after a save keeps typing.
+ * A text input that saves what the user changed when it is left (or on Enter in a one-line field, keeping the
+ * focus). It shows what is saved: a change saved meanwhile (on the page, in another tab, after a conflict) replaces
+ * its value while it is not focused, and a field left without a change takes the saved value instead of sending
+ * the old one back, so it never overwrites an edit made elsewhere.
  */
 function SavedText({
   id,
   saved,
   multiline,
-  max,
-  busy,
-  onLeave,
+  hint,
+  error,
+  onSave,
 }: {
   id: string;
   saved: string;
   multiline: boolean;
-  max: number;
-  busy: boolean;
-  onLeave: (value: string) => void;
+  hint: boolean;
+  error: string | null;
+  /** False when the value was refused (too long): it stays as typed, to be shortened. */
+  onSave: (value: string) => boolean;
 }) {
   const ref = React.useRef<HTMLInputElement & HTMLTextAreaElement>(null);
+  // What the field held when the user started on it (or last saved it): only a change from it is theirs to save.
+  const since = React.useRef<string | null>(null);
   useEffect(() => {
     const el = ref.current;
     if (el && document.activeElement !== el) el.value = saved;
   }, [saved]);
-  const common = { id, ref, maxLength: max, defaultValue: saved, onBlur: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => onLeave(e.target.value), 'aria-busy': busy || undefined };
+  const commit = (el: HTMLInputElement | HTMLTextAreaElement) => {
+    if (since.current !== null && el.value === since.current) {
+      // Nothing typed: show what is saved now (it may have changed meanwhile) and send nothing.
+      if (!error) el.value = saved;
+      return;
+    }
+    if (onSave(el.value)) since.current = el.value;
+  };
+  const common = {
+    ...fieldA11y(id, { error, hint }),
+    ref,
+    defaultValue: saved,
+    onFocus: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      since.current = e.target.value;
+    },
+    onBlur: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      commit(e.target);
+      since.current = null;
+    },
+  };
   if (multiline) return <textarea {...common} rows={3} className="w-full rounded-md border bg-transparent px-3 py-2 text-sm" />;
   return (
     <Input
       {...common}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+        // Enter saves a one-line text and keeps the focus where it is.
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commit(e.currentTarget);
+        }
       }}
     />
   );
