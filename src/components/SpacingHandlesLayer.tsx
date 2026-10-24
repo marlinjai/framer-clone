@@ -27,6 +27,7 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
+import { lastPointerIsTouch } from '@/hooks/useEditorGestureGuard';
 import { useTransformContext } from '@/contexts/TransformContext';
 import { EditorTool } from '@/stores/EditorUIStore';
 import { getDragManager, getHistoryStore } from '@/stores/RootStore';
@@ -218,8 +219,10 @@ const SpacingHandlesLayer = observer(() => {
     const drag = state.drag;
     const p = state.pointer;
 
+    // A finger has no hover: under touch the handles show whenever something
+    // is selected (and hide while a finger presses elsewhere, as for a mouse).
     const visible = !!m && !state.pressedElsewhere && (
-      !!drag || (!!p && rectContains(m.hoverArea, p.x, p.y, HOVER_SLOP))
+      !!drag || lastPointerIsTouch() || (!!p && rectContains(m.hoverArea, p.x, p.y, HOVER_SLOP))
     );
     layer.style.opacity = visible ? '1' : '0';
 
