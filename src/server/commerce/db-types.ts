@@ -33,7 +33,6 @@
 // Pure type module (no runtime), so it needs no `server-only` and adds nothing
 // to the build.
 
-import type { RichText } from '../books/render/richText';
 import type { ColumnType } from 'kysely';
 // The package's brand types for the two key namespaces: GlobalKey forces
 // `public.<name>` keys, TenantKey forbids a `public.` prefix on a bare key.
@@ -49,6 +48,7 @@ import type {
   TemplateDocumentV2,
   TemplateSnapshot,
 } from '../books/snapshots';
+import type { RichText } from '../books/render/richText';
 
 // --- scalar aliases ------------------------------------------------------------
 
@@ -507,9 +507,6 @@ export interface SalesDocumentTable {
   sender_snapshot: JsonColumn<SenderSnapshotV1> | null;
   intro_text: string | null;
   outro_text: string | null;
-  /** The intro text's formatting (017; the run model of render/richText.ts); null prints the plain text. */
-  intro_format: JsonColumn<RichText> | null;
-  outro_format: JsonColumn<RichText> | null;
   rendered_pdf_file_id: string | null;
   issued_at: Timestamp | null;
   created_at: Generated<Timestamp>;
@@ -518,6 +515,9 @@ export interface SalesDocumentTable {
   replaces_document_id: string | null;
   print_replaces_reference: Generated<boolean>;
   subject: string | null;
+  // The intro text's formatting (017; the run model of render/richText.ts); null prints the plain text.
+  intro_format: JsonColumn<RichText> | null;
+  outro_format: JsonColumn<RichText> | null;
 }
 
 /**
