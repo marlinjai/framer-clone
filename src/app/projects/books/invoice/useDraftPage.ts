@@ -51,22 +51,46 @@ export function cssFontFamily(family: FontFamily): string {
 const registered = new Set<string>();
 
 /** Register a family's two faces as CSS font faces (once per page load); a failure leaves the system font. */
-async function registerFonts(family: FontFamily): Promise<void> {
-  if (registered.has(family) || typeof FontFace === 'undefined' || typeof document === 'undefined') return;
-  registered.add(family);
+const FACE_STYLE = {
+  regular: { weight: '400', style: 'normal' },
+  bold: { weight: '700', style: 'normal' },
+  italic: { weight: '400', style: 'italic' },
+  boldItalic: { weight: '700', style: 'italic' },
+} as const;
+
+/**
+ * The invoice's own faces as CSS fonts (`books-<family>`), so an editor on the page types in the face the PDF
+ * prints, the italic ones as real italics rather than a slanted upright. Each face is fetched once.
+ */
+async function registerFaces(family: FontFamily, faces: ReadonlyArray<keyof typeof FACE_STYLE>): Promise<void> {
+  if (typeof FontFace === 'undefined' || typeof document === 'undefined') return;
   const pins = FONT_FILES[family];
   await Promise.all(
-    (['regular', 'bold'] as const).map(async (face) => {
-      const res = await fetch(`/api/books/fonts/${pins[face].sha256}`);
-      if (!res.ok) throw new Error(`font ${res.status}`);
-      const font = new FontFace(cssFontFamily(family), await res.arrayBuffer(), { weight: face === 'bold' ? '700' : '400' });
-      await font.load();
-      document.fonts.add(font);
+    faces.map(async (face) => {
+      const key = `${family}|${face}`;
+      if (registered.has(key)) return;
+      registered.add(key);
+      try {
+        const res = await fetch(`/api/books/fonts/${pins[face].sha256}`);
+        if (!res.ok) throw new Error(`font ${res.status}`);
+        const font = new FontFace(cssFontFamily(family), await res.arrayBuffer(), FACE_STYLE[face]);
+        await font.load();
+        document.fonts.add(font);
+      } catch {
+        // The editors fall back to the system font; the page itself is the engine's and unaffected.
+        registered.delete(key);
+      }
     }),
-  ).catch(() => {
-    // The editors fall back to the system font; the page itself is the engine's and unaffected.
-    registered.delete(family);
-  });
+  );
+}
+
+async function registerFonts(family: FontFamily): Promise<void> {
+  await registerFaces(family, ['regular', 'bold']);
+}
+
+/** The italic faces, for the formatting editor (only a page that formats text needs them). */
+export function registerItalicFonts(family: FontFamily): Promise<void> {
+  return registerFaces(family, ['italic', 'boldItalic']);
 }
 
 function messageOf(err: unknown): string {
