@@ -77,7 +77,30 @@ export function legalPageRoot(template: LegalTemplate, look: LegalPageLook = {})
     },
     template.blocks.map(blockNode),
   );
-  const main = host('main', 'Content', { style: { padding: '72px 24px 96px', display: 'flex', flexDirection: 'column' } }, [article]);
+  const main = host('main', 'Content', { style: { padding: '72px 24px 64px', display: 'flex', flexDirection: 'column' } }, [article]);
+  // A visitor who lands on a legal page must be able to leave it: a footer
+  // with a link home. ProjectModel.addLegalLinksToFooters adds the legal
+  // links (and cookie settings) to it like to any footer.
+  const footer = host(
+    'footer',
+    'Footer',
+    {
+      style: {
+        width: '100%',
+        maxWidth: '760px',
+        margin: '0 auto',
+        padding: '24px 24px 48px',
+        boxSizing: 'border-box',
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '12px 24px',
+        alignItems: 'center',
+        borderTop: '1px solid rgba(127, 127, 127, 0.3)',
+        fontSize: '14px',
+      },
+    },
+    [footerLinkNode({ href: '/', label: template.language === 'de' ? 'Zur Startseite' : 'Home' })],
+  );
   return host(
     'div',
     'Page',
@@ -93,7 +116,7 @@ export function legalPageRoot(template: LegalTemplate, look: LegalPageLook = {})
         ...(look.backgroundColor ? { backgroundColor: look.backgroundColor } : {}),
       },
     },
-    [main],
+    [main, footer],
   );
 }
 

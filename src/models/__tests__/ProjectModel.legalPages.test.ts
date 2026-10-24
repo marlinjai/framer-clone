@@ -88,6 +88,22 @@ describe('createLegalPage', () => {
   });
 });
 
+describe('legal page footer', () => {
+  it('links home and every legal page, so a visitor can leave the page', () => {
+    const p = project();
+    const { page } = p.createLegalPage('impressum');
+    p.createLegalPage('privacy');
+    const hrefs: string[] = [];
+    const walk = (n: { type?: string; props?: { href?: string }; children?: unknown[] }, inFooter = false) => {
+      const footer = inFooter || n.type === 'footer';
+      if (footer && n.props?.href) hrefs.push(n.props.href);
+      (n.children as (typeof n)[] | undefined)?.forEach((c) => walk(c, footer));
+    };
+    walk(getSnapshot(page.appComponentTree) as never);
+    expect(hrefs).toEqual(['/', '/impressum', '#cookie-settings', '/datenschutz']);
+  });
+});
+
 describe('addLegalLinksToFooters', () => {
   it('adds only missing links and reports pages without a footer', () => {
     const p = project();

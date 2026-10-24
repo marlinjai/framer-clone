@@ -565,7 +565,7 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
             <span className={fieldLabel}>Consent banner</span>
             <p className="text-[12px] text-foreground">
               {analyticsOn
-                ? 'Shown to visitors, because analytics is on. The analytics script loads only after a visitor accepts; declining loads nothing. Visitors can change their choice from the cookie settings link in the footer.'
+                ? 'Shown to visitors, because analytics is on (once the deploy has an analytics key configured). The analytics script loads only after a visitor accepts; declining loads nothing. Visitors can change their choice from the cookie settings link in the footer.'
                 : 'Not shown: nothing on your site stores data on visitors\' devices that needs consent (analytics is off).'}
             </p>
           </div>
