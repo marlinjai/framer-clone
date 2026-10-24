@@ -333,7 +333,7 @@ describe('single-value rules (what a review patch may write)', () => {
     expect(styleValueTell('backdropFilter', 'blur(12px)')).toMatch(/glass/);
     expect(styleValueTell('backgroundImage', 'radial-gradient(circle, #7c3aed 0%, transparent 70%)')).toMatch(/orb/);
     expect(styleValueTell('backgroundImage', 'linear-gradient(90deg, #ff0000, #00ff00, #0000ff)')).toMatch(/rainbow/);
-    expect(styleValueTell('content', 'a — b')).toMatch(/long dashes/);
+    expect(styleValueTell('content', 'a \u2014 b')).toMatch(/long dashes/);
   });
 
   it('lets ordinary values through, a dark scrim over a photo included', () => {
@@ -344,10 +344,18 @@ describe('single-value rules (what a review patch may write)', () => {
   });
 
   it('flags tells in copy and lets plain copy through', () => {
-    expect(textTell('Fast — and honest')).toMatch(/long dashes/);
+    expect(textTell('Fast \u2014 and honest')).toMatch(/long dashes/);
     expect(textTell('Ready to ride \u{1F6B2}')).toMatch(/emoji/);
     expect(textTell("It's not a repair shop, it's a community.")).toMatch(/not X/);
     expect(textTell('Most repairs are ready within three working days.')).toBeNull();
     expect(textTell('Open 8:00-18:30')).toBeNull();
+  });
+
+  it('flags the trailing contrast clause, in English and German, and leaves ordinary uses of not alone', () => {
+    expect(textTell('Back on the road in days, not weeks.')).toMatch(/not X/);
+    expect(textTell('Zurück auf der Straße in Tagen, nicht Wochen.')).toMatch(/not X/);
+    expect(textTell('We do not sell bikes, only repair them, so ask about parts.')).toBeNull();
+    expect(textTell('Closed on Sundays.')).toBeNull();
+    expect(textTell('If the part is not in stock, we order it the same day.')).toBeNull();
   });
 });

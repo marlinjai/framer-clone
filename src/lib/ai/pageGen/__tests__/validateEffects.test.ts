@@ -78,6 +78,6 @@ describe('generated effects', () => {
     expect(docs).toContain('## Motion');
     expect(docs).toContain('"stagger"');
     expect(docs).toContain('No hover or scroll');
-    expect(docs).not.toMatch(/[–—]/);
+    expect(docs).not.toMatch(/[\u2013\u2014]/);
   });
 });

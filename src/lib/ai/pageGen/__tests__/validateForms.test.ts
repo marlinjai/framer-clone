@@ -84,6 +84,6 @@ describe('form presets in a generation', () => {
     expect(text).toContain('a real visible label');
     expect(text).toContain('required formConsent');
     expect(text).toContain('never');
-    expect(text).not.toMatch(/[–—]/);
+    expect(text).not.toMatch(/[\u2013\u2014]/);
   });
 });

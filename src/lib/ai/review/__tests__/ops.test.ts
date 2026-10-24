@@ -119,7 +119,7 @@ describe('validateReviewOps', () => {
       [
         { op: 'update_text', nodeId: 'h1', text: '  Ride   further, longer ', reason: 'shorter' },
         { op: 'update_text', nodeId: 'card', text: 'x', reason: 'r' },
-        { op: 'update_text', nodeId: 'h1', text: 'Ride — further', reason: 'r' },
+        { op: 'update_text', nodeId: 'h1', text: 'Ride \u2014 further', reason: 'r' },
         { op: 'update_text', nodeId: 'h1', text: 'Ride \u{1F6B2}', reason: 'r' },
         { op: 'update_text', nodeId: 'h1', text: '<b>Ride</b>', reason: 'r' },
         { op: 'update_text', nodeId: 'h1', text: '   ', reason: 'r' },

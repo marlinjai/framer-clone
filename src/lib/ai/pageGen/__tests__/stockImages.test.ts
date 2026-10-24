@@ -126,6 +126,37 @@ describe('resolveStockImages', () => {
     expect(out.summary.fellBack).toEqual({ no_results: 1 });
   });
 
+  it('a specific query that finds nothing retries a broader form before falling back', async () => {
+    const queries: string[] = [];
+    const fetchMock = vi.fn(async (url: string) => {
+      const q = new URL(url).searchParams.get('query') ?? '';
+      queries.push(q);
+      return q === 'bicycle repair workshop' ? json({ results: [photo('w')] }) : json({ results: [] });
+    });
+    const out = await resolveStockImages([req('hero', 'bicycle repair workshop mechanic truing carbon wheel', { orientation: 'landscape' })], {
+      accessKey: KEY,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    expect(queries).toEqual(['bicycle repair workshop mechanic truing carbon wheel', 'bicycle repair workshop']);
+    expect(out.placed.map((p) => p.credit.photoId)).toEqual(['w']);
+    expect(out.summary.fellBack).toEqual({});
+  });
+
+  it('retries without the orientation filter when there is no shorter form, and spends at most two extra searches', async () => {
+    const calls: Array<[string, string | null]> = [];
+    const fetchMock = vi.fn(async (url: string) => {
+      const u = new URL(url);
+      calls.push([u.searchParams.get('query') ?? '', u.searchParams.get('orientation')]);
+      return json({ results: [] });
+    });
+    await resolveStockImages([req('a', 'harbour cranes', { orientation: 'portrait' })], { accessKey: KEY, fetch: fetchMock as unknown as typeof fetch });
+    expect(calls).toEqual([['harbour cranes', 'portrait'], ['harbour cranes', null]]);
+
+    calls.length = 0;
+    await resolveStockImages([req('b', 'one two three four five', { orientation: 'landscape' })], { accessKey: KEY, fetch: fetchMock as unknown as typeof fetch });
+    expect(calls).toHaveLength(3);
+  });
+
   it('skips results it cannot hotlink or attribute', async () => {
     const fetchMock = vi.fn(async () =>
       json({
