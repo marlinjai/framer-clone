@@ -28,6 +28,9 @@ export function fontOptionValue(stored: string | undefined): string {
   if (!value || value === INHERIT_FONT) return INHERIT_FONT;
   if (value === SYSTEM_FONT_STACK) return SYSTEM_FONT_STACK;
   const first = parseFontFamilyList(value)[0];
+  // Any stack that leads with the platform UI font is the System UI option
+  // (older pages and the demo store a bare `system-ui`).
+  if (first && /^(system-ui|-apple-system|ui-sans-serif)$/i.test(first)) return SYSTEM_FONT_STACK;
   const lib = first ? findLibraryFamily(first) : undefined;
   return lib ? fontStack(lib) : value;
 }

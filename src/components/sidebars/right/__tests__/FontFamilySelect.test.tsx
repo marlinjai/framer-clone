@@ -43,6 +43,9 @@ describe('FontFamilySelect', () => {
   it('selects a library family stored without its canonical stack, and keeps an unknown one as Custom', () => {
     expect(fontOptionValue('Fraunces, serif')).toBe(fontStack(getFontFamily('fraunces')!));
     expect(fontOptionValue(SYSTEM_FONT_STACK)).toBe(SYSTEM_FONT_STACK);
+    // A bare or differently ordered system stack is the System UI option, not a "Custom" one.
+    expect(fontOptionValue('system-ui')).toBe(SYSTEM_FONT_STACK);
+    expect(fontOptionValue('-apple-system, BlinkMacSystemFont, sans-serif')).toBe(SYSTEM_FONT_STACK);
     render(<FontFamilySelect value="Inter, sans-serif" onChange={() => {}} aria-label="Font" />);
     const select = screen.getByLabelText('Font') as HTMLSelectElement;
     expect(select.value).toBe('Inter, sans-serif');
