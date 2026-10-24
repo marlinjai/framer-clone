@@ -27,6 +27,7 @@ import VariantSelector from '@/lib/renderer/commerce/VariantSelector';
 import AddToCartButton from '@/lib/renderer/commerce/AddToCartButton';
 import CartView from '@/lib/renderer/commerce/CartView';
 import CheckoutButton from '@/lib/renderer/commerce/CheckoutButton';
+import { createEditorFormElement, formKindOfComponent } from '@/lib/renderer/forms/editorFormElement';
 
 // The six Track C commerce kinds. Disjoint from the CMS kinds, so the commerce
 // branch in createComponentElement can claim them without touching the CMS path.
@@ -107,6 +108,13 @@ export function createComponentElement(
     : finalProps;
 
   if (component.isHostElement) {
+    // Form components (data-form-kind): static on the canvas and in the preview,
+    // never submitting. The published page renders them as a client island.
+    const formKind = formKindOfComponent(component);
+    if (formKind) {
+      return createEditorFormElement(formKind, component, propsWithIdentity, children.length ? children : rawTextChildren);
+    }
+
     if (isVoidTag(component.type as string)) {
       const props = { ...propsWithIdentity };
       if ('children' in props) delete (props as any).children;

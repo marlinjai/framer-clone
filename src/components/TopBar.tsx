@@ -25,6 +25,7 @@ import { getHistoryStore } from '@/stores/RootStore';
 import PublishButton from '@/components/PublishButton';
 import DomainsButton from '@/components/domains/DomainsButton';
 import SiteSettingsButton from '@/components/site/SiteSettingsDialog';
+import FormSubmissionsButton from '@/components/forms/FormSubmissionsButton';
 import SaveButton from '@/components/SaveButton';
 import GeneratePageButton from '@/components/ai/GeneratePageDialog';
 import { PolishPageButton } from '@/components/ai/VisualReview';
@@ -224,6 +225,8 @@ const TopBar = observer(() => {
 
       {/* Site settings: name, language, favicon, sharing image, business data. */}
       <SiteSettingsButton />
+      {/* Form submissions: what visitors sent through this site's forms. */}
+      <FormSubmissionsButton />
 
       {/* Preview entry — sits just before the undo/redo cluster so it's
           visually grouped with the other rightward actions. */}

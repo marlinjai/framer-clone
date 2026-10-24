@@ -8,6 +8,7 @@
 import type { BetaTool } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { stableStringify } from '@/lib/ai/serializers/normalize';
 import { buildSchemaDocs } from './schemaDocs';
+import { FORMS_PROMPT } from './promptSections/forms';
 import { BASE_KEY, type BreakpointKey } from './schema';
 import type { PageGenTarget } from './protocol';
 
@@ -176,7 +177,7 @@ export function emitPageTool(): BetaTool {
 
 /** The cached system prefix: instructions plus the registry-generated docs. */
 export function stableSystemText(): string {
-  return `${INSTRUCTIONS}\n\n${buildSchemaDocs()}`;
+  return `${INSTRUCTIONS}\n\n${buildSchemaDocs()}\n\n${FORMS_PROMPT}`;
 }
 
 export interface RequestContextInput {

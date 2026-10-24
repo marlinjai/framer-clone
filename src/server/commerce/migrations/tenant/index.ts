@@ -15,6 +15,7 @@ import { booksTemplateV2 } from './012_books_template_v2';
 import { booksAssets } from './013_books_assets';
 import { booksAssetDelete } from './014_books_asset_delete';
 import { booksProducts } from './015_books_products';
+import { formSubmissions } from './016_form_submissions';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -85,6 +86,10 @@ import { booksProducts } from './015_books_products';
  *                            (books_product, mutable, archived instead of
  *                            deleted, a name unique among the live items);
  *                            draft lines copy its values, never reference it
+ *   016_form_submissions   : what visitors send through a form on a published
+ *                            site (form_submission, mutable only in read_at,
+ *                            deleted for real by the owner, the project delete
+ *                            and company erasure; no IP address stored)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -103,4 +108,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   booksAssets,
   booksAssetDelete,
   booksProducts,
+  formSubmissions,
 ];
