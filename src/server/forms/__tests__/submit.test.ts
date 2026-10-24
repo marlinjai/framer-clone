@@ -275,10 +275,9 @@ describe('a plain HTML form post (no JavaScript)', () => {
 });
 
 describe('helpers', () => {
-  it('locateForm prefers the named page, else any page', () => {
-    expect(locateForm(site(), 'form-1', null)?.pageId).toBe('p-contact');
-    expect(locateForm(site(), 'form-1', 'p-home')?.pageId).toBe('p-contact');
-    expect(locateForm(site(), 'missing', null)).toBeNull();
+  it('locateForm finds the form on whichever page holds it', () => {
+    expect(locateForm(site(), 'form-1')?.pageId).toBe('p-contact');
+    expect(locateForm(site(), 'missing')).toBeNull();
   });
 
   it('clientIpOf takes the proxy headers in order', () => {

@@ -12,9 +12,9 @@ import 'server-only';
 // PUBLISHED site (403 otherwise) with a provisioned commerce schema (404
 // otherwise). A session cookie is never read.
 //
-// The form is never described by the request. The body names the form's
-// component id (and the page it sits on); the server finds that form in the
-// PUBLISHED snapshot and collects its fields with the same code the island
+// The form is never described by the request. The body names only the form's
+// component id (the island cannot name the page: the published tree carries no
+// page id); the server searches the site's PUBLISHED pages for that form and collects its fields with the same code the island
 // rendered them with (src/lib/forms/definition.ts), then validates every value
 // with the same rules (src/lib/forms/validation.ts). A field the published form
 // does not have is ignored, never stored.
@@ -96,7 +96,6 @@ export interface SubmitDeps {
 const jsonBodySchema = z
   .object({
     formId: z.string().min(1).max(200),
-    pageId: z.string().min(1).max(200).optional(),
     values: z.record(z.string().max(200), z.union([z.string().max(20_000), z.boolean()])),
     website: z.string().max(2000).optional(),
     elapsedMs: z.number().finite().nonnegative().optional(),
@@ -107,7 +106,6 @@ const jsonBodySchema = z
 
 interface ParsedSubmission {
   formId: string;
-  pageId: string | null;
   values: Record<string, unknown>;
   honeypot: string;
   /** Milliseconds between render and send, or null when the request carried no timing. */
@@ -138,7 +136,6 @@ function parseJson(text: string, acceptLanguage: string | null): ParsedSubmissio
   if (Object.keys(b.values).length > FORM_LIMITS.maxFields * 2) return null;
   return {
     formId: b.formId,
-    pageId: b.pageId ?? null,
     values: b.values,
     honeypot: b.website ?? '',
     elapsedMs: b.elapsedMs ?? null,
@@ -151,7 +148,6 @@ function parseUrlEncoded(text: string, now: number, acceptLanguage: string | nul
   const params = new URLSearchParams(text);
   const formId = params.get(TRANSPORT_FIELDS.formId)?.trim() ?? '';
   if (!formId || formId.length > 200) return null;
-  const pageId = params.get(TRANSPORT_FIELDS.pageId)?.trim() || null;
   const values: Record<string, unknown> = {};
   let count = 0;
   for (const [key, value] of params) {
@@ -164,7 +160,6 @@ function parseUrlEncoded(text: string, now: number, acceptLanguage: string | nul
   const elapsedMs = Number.isFinite(rendered) && rendered > 0 ? now - rendered : null;
   return {
     formId,
-    pageId: pageId && pageId.length <= 200 ? pageId : null,
     values,
     honeypot: params.get(TRANSPORT_FIELDS.honeypot) ?? '',
     elapsedMs,
@@ -179,12 +174,9 @@ interface LocatedForm {
   form: FormTreeNode;
 }
 
-/** The form in the published site: on the named page first, else on any page (first match). */
-export function locateForm(site: Pick<PublishedSite, 'pages'>, formId: string, pageId: string | null): LocatedForm | null {
-  const ordered = pageId
-    ? [...site.pages.filter((p) => p.pageId === pageId), ...site.pages.filter((p) => p.pageId !== pageId)]
-    : site.pages;
-  for (const page of ordered) {
+/** The form in the published site, on whichever page holds it (component ids are unique; first match). */
+export function locateForm(site: Pick<PublishedSite, 'pages'>, formId: string): LocatedForm | null {
+  for (const page of site.pages) {
     const root = snapshotToComponentNode(page.snapshot).root;
     const form = findFormNode<FormTreeNode>(root as FormTreeNode | null, formId);
     if (form) return { pageId: page.pageId, pageSlug: page.slug, form };
@@ -332,7 +324,7 @@ export async function handleFormSubmit(req: Request, deps: SubmitDeps): Promise<
   }
   const { site, tenantGroupId, db } = resolved;
 
-  const located = locateForm(site, parsed.formId, parsed.pageId);
+  const located = locateForm(site, parsed.formId);
   if (!located) return refuse(404, 'form_not_found', locale, copy.notFound, backHrefOf(req, '/'));
   const pagePath = linkPathOfSlug(located.pageSlug) ?? '/';
   const back = backHrefOf(req, pagePath);

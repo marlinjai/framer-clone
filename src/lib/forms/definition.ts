@@ -73,7 +73,6 @@ export const TYPE_LENGTH: Record<FieldType, { default: number; ceiling: number }
 export const RESERVED_KEY_PREFIX = '_';
 export const TRANSPORT_FIELDS = {
   formId: '_form',
-  pageId: '_page',
   honeypot: '_website',
   renderedAt: '_rendered',
 } as const;
@@ -209,7 +208,7 @@ export function normalizeFieldKey(raw: unknown): string {
     .replace(/\s+/g, '_')
     .replace(/[^A-Za-z0-9_-]/g, '')
     .slice(0, FORM_LIMITS.maxKeyChars);
-  // `_form`, `_page`, `_website` and the like belong to the transport.
+  // `_form`, `_website` and the like belong to the transport.
   while (key.startsWith(RESERVED_KEY_PREFIX)) key = key.slice(1);
   return key;
 }
