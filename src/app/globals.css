@@ -191,3 +191,9 @@ html[data-pointer="touch"] [data-spacing-handle]::before {
   transform: translate(-50%, -50%);
   border-radius: 9999px;
 }
+/* The corner radius dots sit 10px inside the corners, so their grown hit areas
+   overlap the corner resize handles' ones: the resize handle wins there and
+   the dot keeps the inner side. */
+html[data-pointer="touch"] [data-resize-direction] {
+  z-index: 2;
+}

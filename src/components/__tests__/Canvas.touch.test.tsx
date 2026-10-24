@@ -261,6 +261,26 @@ describe('one finger', () => {
     expect(document.activeElement).toBe(el);
   });
 
+  it('double-tap on the selected text node edits it, though its move captured the pointer', () => {
+    store.editorUI.selectComponent(nested, breakpointId);
+    const captured: Element[] = [];
+    vi.spyOn(Element.prototype, 'setPointerCapture').mockImplementation(function (this: Element) {
+      captured.push(this);
+    });
+    renderCanvas();
+    const el = nodeEl(nested);
+    const g = ground();
+    // A captured pointer's pointerup and click land on the capture target.
+    down(el, 1, { x: 5, y: 5 });
+    expect(captured.at(-1)).toBe(el); // the pressed element, never the ground
+    up(g, 1, { x: 5, y: 5 });
+    getDragManager()!.cancel();
+    down(el, 2, { x: 5, y: 5 });
+    up(g, 2, { x: 5, y: 5 });
+    expect(store.editorUI.editingComponent?.id).toBe(nested.id);
+    expect(camera().zoom).toBe(1);
+  });
+
   it('double-tap on empty canvas zooms in one step around the tap', () => {
     renderCanvas();
     const g = ground();

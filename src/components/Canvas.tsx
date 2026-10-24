@@ -403,6 +403,8 @@ const CanvasInner = observer(() => {
   // When the last touch or pen press happened, for the native dblclick and
   // contextmenu a touch can produce (the canvas handles both itself).
   const lastTouchPressAtRef = useRef(-Infinity);
+  // What each finger on the canvas pressed, for its tap.
+  const pressTargetsRef = useRef(new Map<number, EventTarget | null>());
 
   const groundPoint = useCallback((clientX: number, clientY: number) => {
     const rect = groundRef.current?.getBoundingClientRect();
@@ -449,8 +451,8 @@ const CanvasInner = observer(() => {
     if (panRef.current && touchRef.current?.has(panRef.current.pointerId)) endPan(panRef.current.pointerId);
   }, [endPan]);
 
-  /** The selected node the press is on or inside, if it may move. */
-  const selectedNodeUnder = useCallback((target: Element): ComponentInstance | null => {
+  /** The selected node the press is on or inside (and its element), if it may move. */
+  const selectedNodeUnder = useCallback((target: Element): { node: ComponentInstance; el: HTMLElement } | null => {
     const ui = rootStore.editorUI;
     const page = ui.currentPage;
     const ground = groundRef.current;
@@ -461,9 +463,9 @@ const CanvasInner = observer(() => {
       const id = el.getAttribute('data-inner-component-id') ?? el.getAttribute('data-ground-wrapper-id');
       if (id && ui.isSelected(id)) {
         const node = page.findComponent(id);
-        if (!node || node.isViewportNode) return null;
+        if (!node || node.isViewportNode || !(el instanceof HTMLElement)) return null;
         if (isLockedOnCanvas(node, nid => page.findComponent(nid))) return null;
-        return node;
+        return { node, el };
       }
       el = el.parentElement?.closest(selector) ?? null;
     }
@@ -547,6 +549,8 @@ const CanvasInner = observer(() => {
       // Land the camera on the fingers' final positions before re-anchoring.
       if (wasPhase === 'pinch') flushPinch();
       const { phase, tracked } = tracker.up(ev.pointerId, currentCamera());
+      const pressedTarget = pressTargetsRef.current.get(ev.pointerId);
+      pressTargetsRef.current.delete(ev.pointerId);
       if (phase === 'idle') {
         stopTouchListeners();
         if (tracker.multiTouch) blockTouchClicksUntilRef.current = performance.now() + 400;
@@ -561,9 +565,12 @@ const CanvasInner = observer(() => {
         rootStore.editorUI.selectedTool === EditorTool.SELECT
       ) {
         const tap = { x: ev.clientX, y: ev.clientY, time: performance.now() };
-        if (isDoubleTap(lastTapRef.current, tap) && ev.target instanceof Element) {
+        // The element the finger pressed, not the pointerup target: a drag
+        // source may have captured the pointer to itself or the ground.
+        const pressed = pressedTarget ?? ev.target;
+        if (isDoubleTap(lastTapRef.current, tap) && pressed instanceof Element && pressed.isConnected) {
           lastTapRef.current = null;
-          handleDoubleTap(ev.target, tap);
+          handleDoubleTap(pressed, tap);
         } else {
           lastTapRef.current = tap;
         }
@@ -585,12 +592,14 @@ const CanvasInner = observer(() => {
     touchListenersRef.current = null;
     if (pinchRafRef.current) cancelAnimationFrame(pinchRafRef.current);
     touchRef.current?.reset();
+    pressTargetsRef.current.clear();
   }, []);
 
   /** A touch or pen press on the canvas (capture phase, before any node). */
   const handleTouchPointerDown = useCallback((e: React.PointerEvent) => {
     const tracker = touchRef.current!;
     lastTouchPressAtRef.current = performance.now();
+    pressTargetsRef.current.set(e.pointerId, e.target);
     ensureTouchListeners();
     const result = tracker.down(
       e.pointerId,
@@ -624,8 +633,10 @@ const CanvasInner = observer(() => {
     const selected = selectedNodeUnder(target);
     if (selected) {
       // Move the selected node, even when the finger is on one of its
-      // children. Below the threshold this stays a tap (the click selects).
-      getDragManager()?.begin({ kind: 'moveNode', nodeId: selected.id }, e, selected);
+      // children. Below the threshold this stays a tap: the pointer is
+      // captured to what the finger pressed (not the ground, whose handler
+      // is running), so the click still lands there and selects it.
+      getDragManager()?.begin({ kind: 'moveNode', nodeId: selected.node.id }, e, selected.node, target);
       e.stopPropagation();
       return;
     }

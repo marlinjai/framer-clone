@@ -353,11 +353,17 @@ const DragManagerModel = types
        *   - Source is `moveNode` but the node is the app tree root.
        *   - Source is `moveNode` but the node is currently being inline-edited.
        *   - Dependencies haven't been wired yet (shouldn't happen at runtime).
+       *
+       * `captureTarget` is the element the pointer is captured to; it defaults
+       * to the element whose handler calls begin. The canvas passes what a
+       * finger pressed when it starts a move from its own capture-phase
+       * handler, so the click of a plain tap still reaches that element.
        */
       begin(
         source: DragSource,
         event: React.PointerEvent,
         sourceNode?: ComponentInstance,
+        captureTarget?: Element,
       ): boolean {
         if (self.isActive || self.source !== null) return false;
         const deps = self.deps;
@@ -384,7 +390,7 @@ const DragManagerModel = types
           : undefined;
 
         const mode = modeFor(source, sourceNode);
-        const el = event.currentTarget as HTMLElement;
+        const el = (captureTarget ?? event.currentTarget) as HTMLElement;
         const pointerId = event.pointerId;
 
         // Prevent the gesture from bubbling to an ancestor (viewport / ground)
