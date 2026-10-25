@@ -272,3 +272,86 @@ export class TouchGestureTracker {
     this.phase = 'pinch';
   }
 }
+
+// ===== Double-tap from touch events =====
+
+/**
+ * Recognises a one-finger double-tap from TOUCH events (touchstart,
+ * touchmove, touchend), not pointer events. The action a double-tap starts,
+ * text editing, must run inside a touchend handler: iOS Safari opens the
+ * on-screen keyboard only for a focus() made synchronously inside touchend
+ * (or click), and pointerup does not count. The canvas feeds this from
+ * window listeners, so a tap that lands on a selection handle above the text
+ * (a HUD element outside the canvas ground) still counts.
+ *
+ * A tap is one finger down and up within TAP_MAX_DURATION_MS, never moved
+ * past the touch drag threshold, with no other finger down at any point of
+ * its gesture. Two taps within DOUBLE_TAP_MAX_DELAY_MS and
+ * DOUBLE_TAP_MAX_DISTANCE_PX make a double-tap. Anything else (a drag, a
+ * pinch, a long press, a touch that did not start on the canvas) breaks the
+ * sequence.
+ */
+export class DoubleTapRecognizer {
+  private contact: { id: number; start: Point; startTime: number; moved: boolean } | null = null;
+  private multi = false;
+  private last: Tap | null = null;
+
+  /**
+   * A finger lands. `fingersDown` counts every finger on the screen now,
+   * this one included; `eligible` is false for a touch that did not start on
+   * the canvas (it breaks a double-tap in progress).
+   */
+  start(id: number, p: Point, time: number, fingersDown: number, eligible = true): void {
+    if (fingersDown > 1) {
+      this.multi = true;
+      this.contact = null;
+      this.last = null;
+      return;
+    }
+    this.multi = false;
+    if (!eligible) {
+      this.contact = null;
+      this.last = null;
+      return;
+    }
+    this.contact = { id, start: { ...p }, startTime: time, moved: false };
+  }
+
+  move(id: number, p: Point): void {
+    const c = this.contact;
+    if (!c || c.id !== id || c.moved) return;
+    if (isPastDragThreshold(c.start, p, 'touch')) c.moved = true;
+  }
+
+  /**
+   * A finger lifts. `fingersLeft` counts the fingers still down. Returns
+   * 'double' when this lift completes a double-tap, 'tap' for a single tap,
+   * null otherwise.
+   */
+  end(id: number, p: Point, time: number, fingersLeft: number): 'double' | 'tap' | null {
+    const c = this.contact;
+    if (!c || c.id !== id) {
+      if (fingersLeft === 0) this.multi = false;
+      return null;
+    }
+    this.contact = null;
+    if (this.multi || fingersLeft > 0 || c.moved || time - c.startTime > TAP_MAX_DURATION_MS) {
+      this.last = null;
+      return null;
+    }
+    const tap = { x: p.x, y: p.y, time };
+    if (isDoubleTap(this.last, tap)) {
+      this.last = null;
+      return 'double';
+    }
+    this.last = tap;
+    return 'tap';
+  }
+
+  /** The browser took the touch over (touchcancel), or the canvas reset. */
+  cancel(): void {
+    this.contact = null;
+    this.multi = false;
+    this.last = null;
+  }
+}

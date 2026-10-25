@@ -195,8 +195,9 @@ gestures.
 The trade-off: inside the editor a person cannot pinch to enlarge the editor chrome. The editor is
 a design tool with its own zoom for the design (pinch on the canvas, the zoom buttons), its chrome
 is sized for touch by the layout part, and keyboard zoom (Cmd or Ctrl plus) and the system text
-size settings still work. The viewport meta tag is unchanged and nothing of this applies to
-published sites (`src/app/(site)`) or the projects list, which keep normal page zoom. iOS Safari
+size settings still work. Since 2026-10-25 the viewport meta tag carries `maximum-scale=1` while
+the editor is mounted (see "Text editing on a real iPhone" below), restored on unmount; nothing of
+this applies to published sites (`src/app/(site)`) or the projects list, which keep normal page zoom. iOS Safari
 has ignored `user-scalable=no` for years, so the gesture events are the mechanism there; headless
 Chromium cannot prove the iOS path, only the Chromium one.
 
@@ -245,6 +246,59 @@ demo shows as a notice under the bar. The preview opened from the editor shows a
 At 768x1024 and 1024x768 the docked layout stays with no overflow (768 uses the compact top bar,
 1024 the full one). The preview's "Nothing to preview" state fits 390px. Not verifiable headless:
 the on-screen keyboard itself (covered by the unit test of the visualViewport handling).
+
+## Text editing on a real iPhone (2026-10-25)
+
+The owner, on his iPhone in Safari: "I can't change text with touch on mobile, it doesn't open the
+keyboard." Double-tap to edit had only been verified in headless Chromium, where focus needs no
+user gesture.
+
+Causes found:
+
+- The double-tap was recognised in `pointerup`, and the element only became `contentEditable` on
+  React's re-render after it. iOS opens the on-screen keyboard only for a `focus()` made
+  synchronously inside a `touchend` (or `click`) handler, on an element editable at that moment.
+- A selected small text is covered by the 44px touch targets of the resize handles (a HUD element
+  outside the canvas ground), so the second tap of a double-tap often hit a handle and never
+  reached the text.
+
+What changed (decided by the implementing session, say so if you disagree):
+
+- The double-tap is recognised from touch events (`DoubleTapRecognizer` in `touchGestures.ts`,
+  window listeners in `Canvas.tsx`) and acts inside `touchend`: the element turns editable and
+  selectable, takes focus and gets its caret in the same call stack
+  (`src/lib/canvas/inlineTextEdit.ts`), then the store is told, and React keeps the same DOM node.
+  The handled `touchend` is cancelled, so no emulated click follows into the text. A contact
+  without touch events (a pen on Windows) keeps the pointer path. The mouse double-click focuses
+  synchronously the same way.
+- A double-tap looks through handles to the canvas element under the finger, and the resize and
+  corner handles are hidden while a text is edited, so taps that move the caret are not taken for
+  a resize.
+- Caret: a finger puts the caret where it tapped (the end when beside the text); the mouse
+  double-click still selects the whole text.
+- The edited text carries `user-select: text` against the ground's `select-none` (defensive: iOS
+  reports say WebKit refuses a caret there; desktop WebKit accepted typing either way).
+- `maximum-scale=1` on the viewport meta tag while the editor is mounted: iOS zooms the page in on
+  focusing a field under 16px, and measures the font before the canvas zoom, so a 16px heading on
+  a canvas at 34% is a 5px field to it (as is every 12px panel field). With page pinch already off
+  in the editor the user could not even zoom back out.
+- A press elsewhere on the canvas ends the edit and commits it (iOS keeps focus otherwise).
+- While a text is edited on a phone the bottom bar is hidden, any sheet closes, and the camera pans
+  the text into the area above the keyboard (`revealOffset` in `cameraControls.ts`, driven by
+  `visualViewport` in `PhoneEditorChrome.tsx`); pans only, never zooms.
+- A Text field at the top of the properties panel (`TextContentSection`) for every element that
+  holds its own text, the path that works on a phone whatever the gestures do (a form field always
+  opens the keyboard). It writes through `setTextContent` once per committed edit (blur or Enter;
+  Escape reverts), so one edit is one undo step. Bound text shows the binding chip instead. It
+  replaces the Data section's text input and the submit button's Label row, which wrote on every
+  keystroke (one undo step per character).
+- Text bound to data is no longer typed over on the canvas: the binding would overwrite it.
+
+Verification: unit and component tests assert focus and `contentEditable` inside the `touchend`
+dispatch, before any re-render. Playwright WebKit 26 with touch at 390x844 and headless Chromium
+with CDP touches: the double-tap focuses the text inside `touchend`, typing and Enter commit to
+every breakpoint copy, two undos revert two edits, the Text field in the Edit sheet edits the same
+node. Neither can show the iOS keyboard itself; that needs the phone.
 
 ## Status
 

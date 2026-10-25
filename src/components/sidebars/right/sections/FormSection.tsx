@@ -286,9 +286,9 @@ const SubmitControls = observer(({ component }: { component: ComponentInstance }
   const props = component.props as Record<string, unknown>;
   return (
     <>
-      <PropertyRow label="Label">
-        <TextInput value={str(props.children)} placeholder="Send" onChange={(e) => component.setTextContent(e.target.value)} />
-      </PropertyRow>
+      {/* The button's own label is edited in the Text section at the top of
+          the panel (TextContentSection), like every text: one undo step per
+          edit, and the field that works on a phone. */}
       <PropertyRow label="Sending" hint="Shown on the button while the form is being sent">
         <TextInput
           value={str(props.loadingLabel)}
