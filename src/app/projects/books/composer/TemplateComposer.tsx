@@ -599,7 +599,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
           id="composer-name"
           value={name}
           maxLength={80}
-          className="rounded-md border border-transparent px-2 py-1 text-lg font-semibold hover:border-gray-300 focus:border-gray-400"
+          className="rounded-md border border-transparent px-2 py-1 text-lg font-semibold hover:border-border focus:border-foreground/30"
           ref={nameRef}
           onChange={(e) => setName(e.target.value)}
           onBlur={(e) => {
@@ -650,7 +650,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
       <div className="flex flex-col gap-2 px-4 pt-2">
         <ErrorAlert message={error} onDismiss={() => setError(null)} />
         {resume?.kind === 'restored' ? (
-          <div role="status" className="flex flex-wrap items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm">
+          <div role="status" className="flex flex-wrap items-center gap-2 rounded-md border border-brand/30 bg-brand/10 px-3 py-2 text-sm">
             Your unsaved changes from {formatTime(resume.copy.savedAt)} are back. Undo returns to the saved version.
             <Button size="sm" variant="ghost" onClick={() => setResume(null)}>
               OK
@@ -658,7 +658,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
           </div>
         ) : null}
         {resume?.kind === 'stale' ? (
-          <div role="alert" data-resume-offer className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
+          <div role="alert" data-resume-offer className="flex flex-wrap items-center gap-2 rounded-md border border-warning/45 bg-warning/10 px-3 py-2 text-sm">
             <span>
               Unsaved changes from {formatTime(resume.copy.savedAt)} are kept in this browser. They were made on version {resume.copy.baseVersion}; version{' '}
               {base.version} was saved since. Applying them replaces what the newer version changed when you save. Choose first: editing waits until
@@ -693,7 +693,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
           </div>
         ) : null}
         {conflict ? (
-          <div role="alert" className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
+          <div role="alert" className="flex flex-wrap items-center gap-2 rounded-md border border-warning/45 bg-warning/10 px-3 py-2 text-sm">
             Someone saved a newer version of this template meanwhile, so yours was not saved. Load the newest version; your changes stay in this browser and are
             offered to you there.
             <Button size="sm" variant="outline" onClick={() => void onReload()}>
@@ -702,7 +702,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
           </div>
         ) : null}
         {!parsed.success ? (
-          <div role="alert" className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
+          <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             <p className="font-medium">Some fields need a value before the preview can update:</p>
             <ul className="list-disc pl-5">
               {parsed.error.issues.slice(0, 5).map((issue, i) => (
@@ -712,7 +712,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
           </div>
         ) : null}
         {problems.length > 0 ? (
-          <section aria-label="What stops this template from being saved" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          <section aria-label="What stops this template from being saved" className="rounded-md border border-warning/45 bg-warning/10 px-3 py-2 text-sm text-foreground">
             <p className="font-medium">
               {saveProblems ? 'Not saved. To fix:' : 'To fix before saving:'} {problems.length} {problems.length === 1 ? 'problem' : 'problems'}
             </p>
@@ -765,7 +765,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
             <label className="flex items-center gap-2">
               <span>Preview with</span>
               <select
-                className="rounded-md border border-gray-500 px-2 py-1"
+                className="rounded-md border border-foreground/45 px-2 py-1"
                 value={subject.kind === 'sample' ? `sample:${subject.variant}` : `document:${subject.documentId}`}
                 onFocus={() => void loadDocuments()}
                 // Opening the list again retries after a failed load (an already focused list sends no focus event).
@@ -799,7 +799,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
             </label>
             <label className="flex items-center gap-2">
               <span>Zoom</span>
-              <select className="rounded-md border border-gray-500 px-2 py-1" value={String(zoom)} onChange={(e) => setZoom(Number(e.target.value))}>
+              <select className="rounded-md border border-foreground/45 px-2 py-1" value={String(zoom)} onChange={(e) => setZoom(Number(e.target.value))}>
                 {ZOOMS.map((z) => (
                   <option key={z} value={String(z)}>
                     {Math.round(z * 100)} %
@@ -827,8 +827,8 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
               </Button>
             ) : null}
           </div>
-          {preview.error ? <p className="px-3 pt-2 text-sm text-red-800">{preview.error}</p> : null}
-          {drawError ? <p className="px-3 pt-2 text-sm text-red-800">The preview could not be drawn: {drawError}</p> : null}
+          {preview.error ? <p className="px-3 pt-2 text-sm text-destructive">{preview.error}</p> : null}
+          {drawError ? <p className="px-3 pt-2 text-sm text-destructive">The preview could not be drawn: {drawError}</p> : null}
           <div className="min-h-0 flex-1 overflow-auto bg-muted/40 p-6">
             <PdfCanvas
               pdf={preview.result?.pdf ?? null}

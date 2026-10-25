@@ -10,10 +10,15 @@
 
 import React, { useEffect, useState } from 'react';
 
+import { Lock, Minus, Plus } from 'lucide-react';
+
 import { Button } from '@/components/ui/button';
 import { pdfUrl } from '@/lib/books/api';
 
 import PdfCanvas from '../composer/PdfCanvas';
+import { FloatingToolbar, ToolButton, ToolbarDivider } from './chrome';
+
+const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
 export default function StoredPdf({ id, version, imported }: { id: string; version: number; imported: boolean }) {
   const [bytes, setBytes] = useState<Uint8Array | null>(null);
@@ -39,31 +44,30 @@ export default function StoredPdf({ id, version, imported }: { id: string; versi
   }, [id, version, attempt]);
 
   return (
-    <section aria-label={imported ? 'The original PDF' : 'The issued PDF'} className="mb-6">
-      <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
-        <label className="flex items-center gap-2">
-          <span>Zoom</span>
-          <select className="rounded-md border border-gray-500 px-2 py-1" value={String(zoom)} onChange={(e) => setZoom(Number(e.target.value))}>
-            {[0.75, 1, 1.25, 1.5].map((z) => (
-              <option key={z} value={String(z)}>
-                {Math.round(z * 100)} %
-              </option>
-            ))}
-          </select>
-        </label>
-        <span className="text-muted-foreground">
-          {imported ? 'The original PDF, the document of record.' : 'As issued: this is the stored PDF, it cannot be changed.'}
+    <section aria-label={imported ? 'The original PDF' : 'The issued PDF'} className="relative flex-1">
+      {error ? (
+        <div role="alert" className="glass mx-auto mt-5 flex w-fit max-w-[calc(100%-2rem)] items-center gap-3 rounded-xl px-4 py-2.5 text-sm text-destructive">
+          {error}
+          <Button size="sm" variant="outline" onClick={() => setAttempt((n) => n + 1)}>
+            Try again
+          </Button>
+        </div>
+      ) : null}
+      <FloatingToolbar label="Viewing tools">
+        <ToolButton label="Zoom out" disabled={zoom <= ZOOMS[0]} disabledReason="Smallest size" onClick={() => setZoom(ZOOMS[Math.max(0, ZOOMS.indexOf(zoom) - 1)])}>
+          <Minus size={18} aria-hidden />
+        </ToolButton>
+        <span className="min-w-[3.5rem] text-center text-xs font-medium tabular-nums text-foreground/70">{Math.round(zoom * 100)}%</span>
+        <ToolButton label="Zoom in" disabled={zoom >= ZOOMS[ZOOMS.length - 1]} disabledReason="Largest size" onClick={() => setZoom(ZOOMS[Math.min(ZOOMS.length - 1, ZOOMS.indexOf(zoom) + 1)])}>
+          <Plus size={18} aria-hidden />
+        </ToolButton>
+        <ToolbarDivider />
+        <span className="flex items-center gap-1.5 px-2 text-xs text-muted-foreground">
+          <Lock size={13} aria-hidden />
+          {imported ? 'The original, the document of record' : 'As issued, it cannot be changed'}
         </span>
-        {error ? (
-          <span role="alert" className="flex items-center gap-2 text-red-800">
-            {error}
-            <Button size="sm" variant="outline" onClick={() => setAttempt((n) => n + 1)}>
-              Try again
-            </Button>
-          </span>
-        ) : null}
-      </div>
-      <div className="overflow-auto rounded-lg bg-muted/40 p-6">
+      </FloatingToolbar>
+      <div className="overflow-x-auto px-6 pb-12 pt-8">
         <PdfCanvas
           pdf={bytes}
           counter={bytes ? loads : null}

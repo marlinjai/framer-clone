@@ -119,10 +119,10 @@ export default function Outline(props: OutlineProps) {
         <h2 id="palette-title" className="text-sm font-semibold">
           Add a block
         </h2>
-        <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">
+        <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
           To
           <select
-            className="rounded-md border border-gray-500 px-2 py-1 text-sm"
+            className="rounded-md border border-foreground/45 px-2 py-1 text-sm"
             value={targetRegion}
             onChange={(e) => onTargetRegion(e.target.value as RegionName)}
           >
@@ -146,7 +146,7 @@ export default function Outline(props: OutlineProps) {
                     <button
                       type="button"
                       title={BLOCK_INFO[type].description}
-                      className="flex min-h-8 w-full items-center gap-1 rounded-md border border-gray-500 px-2 py-1 text-left text-sm font-medium hover:bg-accent focus-visible:outline-2 focus-visible:outline-blue-600"
+                      className="flex min-h-8 w-full items-center gap-1 rounded-md border border-foreground/45 px-2 py-1 text-left text-sm font-medium hover:bg-accent focus-visible:outline-2 focus-visible:outline-brand"
                       onClick={() => onAdd(type, targetRegion)}
                     >
                       {BLOCK_INFO[type].label}
@@ -160,10 +160,10 @@ export default function Outline(props: OutlineProps) {
                   <ul className="flex flex-col gap-1 pt-1">
                     {closed.map(({ type, check }) => (
                       <li key={type} className="flex items-baseline gap-1">
-                        <span className="font-medium text-gray-700">{BLOCK_INFO[type].label}</span>
+                        <span className="font-medium text-foreground/80">{BLOCK_INFO[type].label}</span>
                         {isRequired(type, targetRegion) ? (
                           <>
-                            <Lock aria-hidden className="size-3 self-center text-gray-600" />
+                            <Lock aria-hidden className="size-3 self-center text-muted-foreground" />
                             <span className="sr-only">(required)</span>
                           </>
                         ) : null}
@@ -194,7 +194,7 @@ export default function Outline(props: OutlineProps) {
             if (row.kind === 'group') {
               const region = regionOfGroup(row.id)!;
               return (
-                <div ref={setNodeRef} style={style} className="mt-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                <div ref={setNodeRef} style={style} className="mt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   {REGION_LABELS[region]}
                 </div>
               );
@@ -202,7 +202,7 @@ export default function Outline(props: OutlineProps) {
             if (row.kind === 'end') {
               const region = regionOfGroup(row.parent)!;
               return (
-                <div ref={setNodeRef} style={style} className={`h-2 rounded ${isOver ? 'bg-blue-200' : ''}`}>
+                <div ref={setNodeRef} style={style} className={`h-2 rounded ${isOver ? 'bg-brand/25' : ''}`}>
                   {regionList(doc, region).length === 0 ? <span className="text-xs text-muted-foreground">Empty</span> : null}
                 </div>
               );
@@ -218,14 +218,14 @@ export default function Outline(props: OutlineProps) {
               <div
                 ref={setNodeRef}
                 style={style}
-                className={`flex items-center gap-1 rounded-md pl-2 ${selected ? 'bg-blue-50 ring-1 ring-blue-500' : ''} ${isDragging ? 'opacity-50' : ''}`}
+                className={`flex items-center gap-1 rounded-md pl-2 ${selected ? 'bg-brand/10 ring-1 ring-brand/80' : ''} ${isDragging ? 'opacity-50' : ''}`}
               >
                 <button
                   type="button"
                   {...dragHandleProps}
                   data-drag-handle
                   aria-label={`Move ${label}`}
-                  className="flex size-6 shrink-0 cursor-grab items-center justify-center rounded text-gray-500 hover:text-gray-800 focus-visible:outline-2 focus-visible:outline-blue-600"
+                  className="flex size-6 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand"
                 >
                   <GripVertical aria-hidden className="size-4" />
                 </button>
@@ -233,7 +233,7 @@ export default function Outline(props: OutlineProps) {
                   type="button"
                   data-outline-select={row.id}
                   aria-current={selected || undefined}
-                  className="flex flex-1 items-center gap-1 py-1 text-left text-sm focus-visible:outline-2 focus-visible:outline-blue-600"
+                  className="flex flex-1 items-center gap-1 py-1 text-left text-sm focus-visible:outline-2 focus-visible:outline-brand"
                   onClick={() => onSelect(row.id)}
                   onKeyDown={onRowKey}
                 >
@@ -242,13 +242,13 @@ export default function Outline(props: OutlineProps) {
                     <span className="truncate text-xs text-muted-foreground">{at.block.heading ?? at.block.text.slice(0, 24)}</span>
                   ) : null}
                   {required ? (
-                    <span title={requiredReason(type)} className="ml-auto flex items-center text-gray-500">
+                    <span title={requiredReason(type)} className="ml-auto flex items-center text-muted-foreground">
                       <Lock aria-hidden className="size-3" />
                       <span className="sr-only">(required)</span>
                     </span>
                   ) : null}
                   {count > 0 ? (
-                    <span className={`${required ? '' : 'ml-auto'} rounded-full bg-amber-100 px-1.5 text-xs text-amber-900`}>
+                    <span className={`${required ? '' : 'ml-auto'} rounded-full bg-warning/15 px-1.5 text-xs text-foreground`}>
                       {count}
                       <span className="sr-only"> {count === 1 ? 'problem' : 'problems'}</span>
                     </span>

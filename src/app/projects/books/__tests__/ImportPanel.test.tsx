@@ -171,7 +171,7 @@ describe('ImportPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Check' }));
     const form = screen.getByRole('form', { name: 'Invoice as printed' });
     // The field the AI was unsure about is marked.
-    expect((within(form).getByLabelText('Name', { selector: '#i1-rname' }) as HTMLInputElement).className).toContain('amber');
+    expect((within(form).getByLabelText('Name', { selector: '#i1-rname' }) as HTMLInputElement).className).toContain('border-warning');
     fireEvent.change(within(form).getByLabelText('Invoice number'), { target: { value: '20' } });
     fireEvent.click(within(form).getByRole('button', { name: 'Save corrections' }));
     await within(await screen.findByLabelText('Problems')).findByText(/already in the Books/);

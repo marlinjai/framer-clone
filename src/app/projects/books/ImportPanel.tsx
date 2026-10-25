@@ -627,7 +627,7 @@ export default function ImportPanel() {
                         <span className="mt-1 block text-xs text-muted-foreground">{warnings.length} to check</span>
                       ) : null}
                       {raiseOf(item) !== null && item.status !== 'imported' ? (
-                        <span className="mt-1 block text-xs text-amber-700 dark:text-amber-400">
+                        <span className="mt-1 block text-xs text-warning dark:text-warning">
                           Importing sets your next invoice number to {raiseOf(item)}. It cannot be lowered later.
                         </span>
                       ) : null}

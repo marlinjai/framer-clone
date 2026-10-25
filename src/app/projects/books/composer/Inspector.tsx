@@ -107,7 +107,7 @@ export default function Inspector({ doc, selectedId, update, problems, onSelect,
       </div>
 
       {own.length > 0 ? (
-        <ul className="flex flex-col gap-1 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+        <ul className="flex flex-col gap-1 rounded-md border border-warning/45 bg-warning/10 p-2 text-xs text-foreground">
           {own.map((p, i) => (
             <li key={i}>{problemText(p)}</li>
           ))}
@@ -236,7 +236,7 @@ function OrderedItems<K extends string>(props: {
   const hidden = all.filter((k) => !shown.includes(k));
   return (
     <fieldset className="flex flex-col gap-1">
-      <legend className="mb-1 text-xs font-medium text-gray-600">{legend}</legend>
+      <legend className="mb-1 text-xs font-medium text-muted-foreground">{legend}</legend>
       {shown.map((item, i) => (
         <div key={item} className="flex items-center justify-between gap-2">
           <CheckboxField
@@ -317,7 +317,7 @@ function BlockFields({
       return (
         <div className="flex flex-col gap-3">
           <fieldset className="flex flex-col gap-2">
-            <legend className="mb-1 text-xs font-medium text-gray-600">Columns</legend>
+            <legend className="mb-1 text-xs font-medium text-muted-foreground">Columns</legend>
             <p className="text-xs text-muted-foreground">
               Widths in hundredths of the text width; Auto is the narrowest width that prints the largest value. The description takes the rest.
               You can also drag the column borders in the preview.
@@ -499,7 +499,7 @@ function WidthInput({ label, value, onChange }: { label: string; value: number; 
           step={1}
           value={value === 0 ? '' : value}
           placeholder="Auto"
-          className="w-16 rounded-md border border-gray-500 px-2 py-1 text-sm"
+          className="w-16 rounded-md border border-foreground/45 px-2 py-1 text-sm"
           onChange={(e) => {
             const n = e.target.value === '' ? 0 : Math.round(Number(e.target.value));
             if (Number.isFinite(n)) onChange(Math.max(0, Math.min(100, n)));
@@ -521,7 +521,7 @@ function TextArea({ label, value, maxLength, required, onChange }: { label: stri
   const empty = required && value.trim() === '';
   return (
     <div className="flex flex-col gap-1">
-      <label htmlFor={inputId} className="text-xs font-medium text-gray-600">
+      <label htmlFor={inputId} className="text-xs font-medium text-muted-foreground">
         {label}
       </label>
       <textarea
@@ -531,10 +531,10 @@ function TextArea({ label, value, maxLength, required, onChange }: { label: stri
         rows={4}
         aria-invalid={empty || undefined}
         aria-describedby={hintId}
-        className="rounded-md border border-gray-500 px-2 py-1 text-sm"
+        className="rounded-md border border-foreground/45 px-2 py-1 text-sm"
         onChange={(e) => onChange(e.target.value)}
       />
-      <span id={hintId} className={`text-xs ${empty ? 'text-red-700' : 'text-muted-foreground'}`}>
+      <span id={hintId} className={`text-xs ${empty ? 'text-destructive' : 'text-muted-foreground'}`}>
         {empty ? 'Enter a text, or remove the block.' : `${value.length} of ${maxLength} characters`}
       </span>
     </div>
@@ -547,12 +547,12 @@ function ColumnsFields({ block, doc, update, onSelect }: { block: Extract<Block,
   const at = locate(doc, id);
   return (
     <div className="flex flex-col gap-3">
-      <p className={`text-xs ${total > 12 ? 'text-red-700' : 'text-muted-foreground'}`}>
+      <p className={`text-xs ${total > 12 ? 'text-destructive' : 'text-muted-foreground'}`}>
         Cell widths in twelfths of the text width: {total} of 12 used.
       </p>
       {block.cells.map((cell, ci) => (
         <fieldset key={ci} className="flex flex-col gap-2 rounded-md border p-2">
-          <legend className="px-1 text-xs font-medium text-gray-600">Cell {ci + 1}</legend>
+          <legend className="px-1 text-xs font-medium text-muted-foreground">Cell {ci + 1}</legend>
           <SelectField
             label="Width"
             value={String(cell.width)}
@@ -699,7 +699,7 @@ function HexColorField({ label, value, onChange }: { label: string; value: strin
   const valid = /^#[0-9a-fA-F]{6}$/.test(text);
   return (
     <div className="flex flex-col gap-1">
-      <label htmlFor={inputId} className="text-xs font-medium text-gray-600">
+      <label htmlFor={inputId} className="text-xs font-medium text-muted-foreground">
         {label}
       </label>
       <div className="flex gap-2">
@@ -707,7 +707,7 @@ function HexColorField({ label, value, onChange }: { label: string; value: strin
           type="color"
           aria-label={`${label}, colour picker`}
           value={value}
-          className="h-8 w-8 cursor-pointer rounded border border-gray-500"
+          className="h-8 w-8 cursor-pointer rounded border border-foreground/45"
           onChange={(e) => onChange(e.target.value.toLowerCase())}
         />
         <input
@@ -716,7 +716,7 @@ function HexColorField({ label, value, onChange }: { label: string; value: strin
           spellCheck={false}
           aria-invalid={!valid || undefined}
           aria-describedby={valid ? undefined : hintId}
-          className="w-28 rounded-md border border-gray-500 px-2 py-1 font-mono text-sm"
+          className="w-28 rounded-md border border-foreground/45 px-2 py-1 font-mono text-sm"
           onChange={(e) => {
             setText(e.target.value);
             if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) onChange(e.target.value.toLowerCase());
@@ -725,7 +725,7 @@ function HexColorField({ label, value, onChange }: { label: string; value: strin
         />
       </div>
       {valid ? null : (
-        <span id={hintId} className="text-xs text-red-700">
+        <span id={hintId} className="text-xs text-destructive">
           A colour such as #1a2b3c. The template keeps {value} until then.
         </span>
       )}

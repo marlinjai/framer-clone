@@ -240,7 +240,7 @@ export default function ImportRowEditor({
     setForm((f) => ({ ...f, lines: f.lines.map((l, j) => (j === i ? { ...l, ...change } : l)) }));
   // An unsure field: an amber DASHED frame (not colour alone) and the explanation read out with it.
   const hintId = `${item.id}-unsure-hint`;
-  const mark = (path: string) => (unsure.has(path) ? 'border-dashed border-2 border-amber-500 ring-1 ring-amber-500' : '');
+  const mark = (path: string) => (unsure.has(path) ? 'border-dashed border-2 border-warning ring-1 ring-warning' : '');
   const fieldProps = (path: string, extra = '') => ({
     className: `h-9 rounded-md border bg-transparent px-2 text-sm ${mark(path)} ${extra}`,
     ...(unsure.has(path) ? { 'aria-describedby': hintId } : {}),

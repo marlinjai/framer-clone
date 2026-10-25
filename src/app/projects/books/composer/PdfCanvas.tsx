@@ -389,7 +389,7 @@ function PageView({ canvas, page, pageCount, layout, scale, selectedId, labelOf,
 
   if (overlay) {
     return (
-      <div ref={frame} className="relative bg-white shadow-md ring-1 ring-black/10" style={{ width, height }}>
+      <div ref={frame} className="relative bg-white shadow-[0_1px_2px_oklch(0_0_0/0.05),0_24px_56px_-20px_oklch(0.2_0.01_286/0.28)] ring-1 ring-black/5" style={{ width, height }}>
         <div ref={host} className="absolute inset-0" />
         <div data-page-overlay role="group" aria-label={`Page ${page} of ${pageCount}`} className="absolute inset-0">
           {overlay(page, scale)}
@@ -399,7 +399,7 @@ function PageView({ canvas, page, pageCount, layout, scale, selectedId, labelOf,
   }
 
   return (
-    <div ref={frame} className="relative bg-white shadow-md ring-1 ring-black/10" style={{ width, height }}>
+    <div ref={frame} className="relative bg-white shadow-[0_1px_2px_oklch(0_0_0/0.05),0_24px_56px_-20px_oklch(0.2_0.01_286/0.28)] ring-1 ring-black/5" style={{ width, height }}>
       <div ref={host} className="absolute inset-0" />
       <div
         data-page-overlay
@@ -422,8 +422,8 @@ function PageView({ canvas, page, pageCount, layout, scale, selectedId, labelOf,
               aria-pressed={selected}
               data-block-id={r.blockId}
               className={`absolute cursor-pointer rounded-[2px] outline-none ${
-                selected ? 'ring-2 ring-blue-600' : 'hover:ring-1 hover:ring-blue-400'
-              } ${drag?.active && drag.blockId === r.blockId ? 'bg-blue-500/10' : ''}`}
+                selected ? 'ring-2 ring-brand' : 'hover:ring-1 hover:ring-brand/60'
+              } ${drag?.active && drag.blockId === r.blockId ? 'bg-brand/10' : ''}`}
               style={{ left: r.x * scale, top: r.y * scale, width: Math.max(r.width * scale, 4), height: Math.max(r.height * scale, 4) }}
               onPointerDown={(e) => onPointerDown(e, r)}
               onPointerMove={onPointerMove}
@@ -433,7 +433,7 @@ function PageView({ canvas, page, pageCount, layout, scale, selectedId, labelOf,
               {isTarget ? (
                 <span
                   aria-hidden
-                  className="pointer-events-none absolute left-0 right-0 h-0.5 bg-blue-600"
+                  className="pointer-events-none absolute left-0 right-0 h-0.5 bg-brand"
                   style={drag!.target!.after ? { bottom: -2 } : { top: -2 }}
                 />
               ) : null}
@@ -450,7 +450,7 @@ function PageView({ canvas, page, pageCount, layout, scale, selectedId, labelOf,
               aria-orientation="vertical"
               aria-label={`Width of the ${COLUMN_LABELS[h.column].toLowerCase()} column`}
               title="Drag to change the column width"
-              className={`absolute z-10 w-2 -translate-x-1 cursor-col-resize ${live ? 'bg-blue-600/60' : 'hover:bg-blue-500/40'}`}
+              className={`absolute z-10 w-2 -translate-x-1 cursor-col-resize ${live ? 'bg-brand/60' : 'hover:bg-brand/40'}`}
               style={{ left: x * scale, top: h.top * scale, height: (h.bottom - h.top) * scale }}
               onPointerDown={(e) => startResize(e, h)}
               onPointerMove={(e) => moveResize(e, h)}

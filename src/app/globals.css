@@ -161,6 +161,56 @@
   --sidebar-ring: oklch(0.62 0.17 278);
 }
 
+/* Glass: the frosted surface language of the Books editors (plan
+   docs/plans/2026-10-25-books-invoice-editor-shell.md, after the owner's
+   reference of 2026-10-25). A soft neutral ground, panels of frosted
+   translucent white with a fine bright edge, an inner top highlight and a soft
+   deep shadow; near-black for emphasis. Defined once here, so any surface of
+   the app can take it on by class.
+   - glass-ground: the backdrop the panels float over (light falls in from the
+     top left, so the blur has something to catch);
+   - glass: a floating panel (bars, toolbars, menus, dialogs);
+   - glass-inset: a sunken well inside a panel (a switch track, a search field). */
+:root {
+  --glass-ground: oklch(0.83 0.003 286);
+  --glass-ground-light: oklch(0.89 0.002 286);
+  --glass-fill: oklch(0.985 0.002 286 / 0.66);
+  --glass-edge: oklch(1 0 0 / 0.75);
+  --glass-highlight: oklch(1 0 0 / 0.9);
+  --glass-shade: oklch(0.2 0.01 286 / 0.12);
+  --glass-inset: oklch(0.2 0.01 286 / 0.05);
+}
+.dark {
+  --glass-ground: oklch(0.17 0.005 286);
+  --glass-ground-light: oklch(0.23 0.006 286);
+  --glass-fill: oklch(0.25 0.006 286 / 0.6);
+  --glass-edge: oklch(1 0 0 / 0.1);
+  --glass-highlight: oklch(1 0 0 / 0.08);
+  --glass-shade: oklch(0 0 0 / 0.45);
+  --glass-inset: oklch(1 0 0 / 0.05);
+}
+@utility glass-ground {
+  background-color: var(--glass-ground);
+  background-image:
+    radial-gradient(ellipse 55% 45% at 10% 0%, var(--glass-ground-light), transparent 75%),
+    radial-gradient(ellipse 60% 50% at 100% 100%, oklch(0.82 0.004 286 / 0.7), transparent 70%);
+  background-attachment: fixed;
+}
+@utility glass {
+  background-color: var(--glass-fill);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid var(--glass-edge);
+  box-shadow:
+    inset 0 1px 0 0 var(--glass-highlight),
+    0 1px 2px 0 oklch(0 0 0 / 0.04),
+    0 16px 40px -12px var(--glass-shade);
+}
+@utility glass-inset {
+  background-color: var(--glass-inset);
+  box-shadow: inset 0 1px 2px 0 oklch(0 0 0 / 0.06);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
