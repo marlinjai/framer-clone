@@ -125,6 +125,22 @@ acceptance; invoice).
     - Worked example, 10 businesses at €3,000 a month in €50 card payments with a 1% platform fee: each
       business pays €90 a month (3.0%) on Stripe, €99 on Mollie; the platform nets €300 a month either way.
 
+    **Payment contract the Stripe adapter must meet before the first proof counts.** Today the shop's
+    `PaymentGateway` interface only has `authorize`, and `getPaymentGateway()` returns the fake gateway,
+    which moves no money; the interface grows before the proof:
+    - **Connected account:** each business has one Stripe connected account id, stored on the business and
+      passed on every charge (direct charge on that account); a business without a completed onboarding
+      cannot take a payment.
+    - **Platform fee:** the application fee is 1% of the charged amount, computed once in whole cents
+      (rounded half up), sent with the charge and recorded on the order.
+    - **Payout report:** the report shows the fee as its own line next to gross, Stripe's fee and net, per
+      payment.
+    - **Refunds:** a refund goes through the same interface; a full refund returns the platform fee, a
+      partial refund returns it in proportion, and the Books receipt is cancelled or credited to match.
+    - **Acceptance checks (Stripe test mode):** a payment lands on the connected account with the right
+      fee; the order, the fee and the Books receipt agree to the cent; a full and a partial refund each
+      reverse the fee correctly; an incomplete onboarding is refused with a clear message.
+
 13. **The payment layer stays provider-neutral** (the shop's test gateway already sits behind an interface),
     and building runs on the test gateway and Stripe's test mode. The live platform account is opened only
     before the first real payment, and only once its legal entity is chosen: a Stripe platform account
