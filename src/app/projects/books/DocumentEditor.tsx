@@ -33,7 +33,19 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-import { Button } from '@/components/ui/button';
+import { ArrowDown, ArrowUp, Ban, Check, ChevronLeft, Download, Eye, FileText, Loader2, MoreHorizontal, PenLine, Pencil, Trash2 } from 'lucide-react';
+
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import {
   BooksApiError,
@@ -51,6 +63,7 @@ import { browserRenderSupported } from '@/lib/books/engine';
 import { isStyled } from '@/server/books/render/richText';
 import { date, money, moneyInput, parseMoney, parseQuantity, quantity, quantityInput, rate } from '@/lib/books/units';
 
+import { GLASS_SURFACE, SegmentedSwitch, ToolLink } from './invoice/chrome';
 import InvoicePage from './invoice/InvoicePage';
 import StoredPdf from './invoice/StoredPdf';
 import { ErrorAlert, Field, ImportedBadge, StatusBadge, errorText, fieldA11y } from './ui';
@@ -201,6 +214,8 @@ export default function DocumentEditor({ id }: { id: string }) {
   const [confirming, setConfirming] = useState(false);
   const [cancelReason, setCancelReason] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The issue just done: its number, whether the PDF is stored, and the invoice it cancelled (the success dialog).
+  const [issued, setIssued] = useState<{ number: string; stored: boolean; replaced: string | null } | null>(null);
   const router = useRouter();
   const wide = useWideWindow();
   const [preferForm, setPreferForm] = useState(false);
@@ -258,19 +273,23 @@ export default function DocumentEditor({ id }: { id: string }) {
 
   if (fatal) {
     return (
-      <main className="mx-auto w-full max-w-4xl px-6 py-12">
-        <p className="text-sm">{fatal}</p>
-        <Link href="/projects/books" className="mt-4 inline-block text-sm underline underline-offset-4">
-          Back to the Books
-        </Link>
+      <main className="glass-ground flex min-h-dvh items-center justify-center p-6">
+        <div className="glass max-w-md rounded-2xl p-6 text-sm">
+          <p>{fatal}</p>
+          <Link href="/projects/books" className={`${buttonVariants({ size: 'sm', variant: 'outline' })} mt-4`}>
+            <ChevronLeft size={14} aria-hidden /> Back to the Books
+          </Link>
+        </div>
       </main>
     );
   }
   if (!detail) {
     return (
-      <main className="mx-auto w-full max-w-4xl px-6 py-12">
+      <main className="glass-ground flex min-h-dvh flex-col items-center justify-center gap-4 p-6" aria-busy="true">
         <ErrorAlert message={error} />
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 size={16} className="animate-spin" aria-hidden /> Loading the invoice…
+        </p>
       </main>
     );
   }
@@ -322,15 +341,11 @@ export default function DocumentEditor({ id }: { id: string }) {
       const res = await booksApi.issue(id, version);
       setDetail(res.document);
       setConfirming(false);
-      const issuedAs = `Issued as ${res.document.document.documentNumber}.`;
-      const replacedNote = res.replaced
-        ? ` Invoice ${res.document.related.replaces?.documentNumber ?? ''} is cancelled with a credit note.`
-        : '';
-      setNotice(
-        res.render.stored
-          ? `${issuedAs}${replacedNote} The PDF is stored and ready to download.`
-          : `${issuedAs}${replacedNote} The PDF will be created on the first download.`,
-      );
+      setIssued({
+        number: res.document.document.documentNumber ?? '',
+        stored: res.render.stored,
+        replaced: res.replaced ? (res.document.related.replaces?.documentNumber ?? null) : null,
+      });
     } catch (err) {
       setConfirming(false);
       setError(errorText(err));
@@ -374,363 +389,513 @@ export default function DocumentEditor({ id }: { id: string }) {
     }
   }
 
+  // Why Issue does nothing yet (shown on its tooltip; the button stays focusable so the reason can be read).
+  const issueBlocked = !doc.customerId
+    ? 'Choose a customer first'
+    : detail.lines.length === 0
+      ? 'Add at least one line first'
+      : busy
+        ? 'Saving…'
+        : null;
+  const title = `${TYPE_LABELS[doc.docType]}${doc.documentNumber ? ` ${doc.documentNumber}` : ''}`;
+  const subline = draft
+    ? recipientName ?? 'No customer yet'
+    : imported
+      ? `${recipientName ? `${recipientName} · ` : ''}imported, the original PDF is the document of record`
+      : `${recipientName ? `${recipientName} · ` : ''}${STATUS_LABELS[doc.status]}${doc.issueDate ? ` on ${date(doc.issueDate)}` : ''}${doc.dueDate ? ` · due ${date(doc.dueDate)}` : ''}`;
+  const moreItems = cancellable || (draft && pageCapable);
+
+  async function newInvoice() {
+    setBusy(true);
+    try {
+      const created = await booksApi.createDraft();
+      router.push(`/projects/books/documents/${created.document.id}`);
+    } catch (err) {
+      setIssued(null);
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <main className="mx-auto w-full max-w-4xl px-6 py-12">
-      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <Link href="/projects/books" className="text-sm text-muted-foreground underline-offset-4 hover:underline">
-            Books
-          </Link>
-          <h1 className="flex items-center gap-3 text-2xl font-semibold tracking-tight">
-            {TYPE_LABELS[doc.docType]} {doc.documentNumber ?? ''}
-            <StatusBadge status={doc.status} />
-            {imported ? <ImportedBadge /> : null}
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {draft
-              ? `Draft: the number is given when you issue it${nextNumber ? ` (next: ${nextNumber})` : ''}.`
-              : `${STATUS_LABELS[doc.status]} on ${date(doc.issueDate)}${doc.dueDate ? ` · due ${date(doc.dueDate)}` : ''}${
-                  imported ? ' · imported, the original PDF is the document of record' : ''
-                }`}
-          </p>
+    <div className="glass-ground flex min-h-dvh flex-col">
+      <header className="glass sticky top-3 z-50 mx-3 flex h-14 shrink-0 items-center gap-2 rounded-2xl px-2 phone:top-2 phone:mx-2 phone:h-12 lg:px-3">
+        <Link
+          href="/projects/books"
+          aria-label="Back to the Books"
+          title="Back to the Books"
+          className="flex size-8 shrink-0 items-center justify-center rounded-lg text-foreground/70 hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        >
+          <ChevronLeft size={18} aria-hidden />
+        </Link>
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 className="truncate text-sm font-semibold">{title}</h1>
+              <StatusBadge status={doc.status} />
+              {imported ? <ImportedBadge /> : null}
+            </div>
+            <p className="truncate text-xs text-muted-foreground phone:hidden">{subline}</p>
+          </div>
         </div>
-        <div className="flex gap-2">
-          {pageCapable ? (
-            <Button variant="ghost" onClick={() => chooseForm(!preferForm)}>
-              {preferForm ? 'Edit on the page' : 'Use the form'}
-            </Button>
-          ) : null}
-          <a href={pdfUrl(id)} className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium hover:bg-accent">
-            {draft ? 'Preview PDF' : imported ? 'Download original PDF' : 'Download PDF'}
-          </a>
-          {draft ? (
-            <Button onClick={() => setConfirming(true)} disabled={busy || detail.lines.length === 0}>
+
+        {draft ? (
+          <span className="flex items-center gap-1.5 px-2 text-xs text-muted-foreground max-md:hidden" aria-hidden>
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            {busy ? 'Saving…' : 'Saved'}
+          </span>
+        ) : null}
+        {pageCapable ? (
+          <SegmentedSwitch
+            label="Edit on"
+            value={preferForm ? 'form' : 'page'}
+            options={[
+              { value: 'page', label: 'Page' },
+              { value: 'form', label: 'Form' },
+            ]}
+            onChange={(v) => chooseForm(v === 'form')}
+          />
+        ) : null}
+        <ToolLink
+          label={draft ? 'Preview PDF' : imported ? 'Download original PDF' : 'Download PDF'}
+          href={pdfUrl(id)}
+        >
+          {draft ? <Eye size={16} aria-hidden /> : <Download size={16} aria-hidden />}
+        </ToolLink>
+        {moreItems ? (
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger
+              aria-label="More actions"
+              title="More actions"
+              className="flex size-8 shrink-0 items-center justify-center rounded-lg text-foreground/70 hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand data-[state=open]:bg-foreground/[0.06]"
+            >
+              <MoreHorizontal size={18} aria-hidden />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className={`min-w-[15rem] rounded-xl ${GLASS_SURFACE}`}>
+              {cancellable ? (
+                <>
+                  {correctable ? (
+                    replacedBy ? (
+                      <DropdownMenuItem asChild>
+                        <Link href={`/projects/books/documents/${replacedBy.id}`}>
+                          <PenLine aria-hidden /> Open the correction draft
+                        </Link>
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem disabled={busy} onSelect={() => void correct()}>
+                        <PenLine aria-hidden />
+                        <span className="flex flex-col">
+                          Correct
+                          <span className="text-xs text-muted-foreground">A new draft with this invoice’s data</span>
+                        </span>
+                      </DropdownMenuItem>
+                    )
+                  ) : imported ? (
+                    <DropdownMenuItem disabled>
+                      <PenLine aria-hidden />
+                      <span className="flex flex-col">
+                        Correct
+                        <span className="text-xs text-muted-foreground">
+                          An imported invoice cannot be corrected here: cancel it with a credit note and create a new one.
+                        </span>
+                      </span>
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" disabled={busy} onSelect={() => setCancelReason('')}>
+                    <Ban aria-hidden /> Cancel with a credit note…
+                  </DropdownMenuItem>
+                </>
+              ) : (
+                <DropdownMenuItem onSelect={() => chooseForm(!preferForm)}>
+                  <FileText aria-hidden /> {preferForm ? 'Edit on the page' : 'Edit in the form'}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+        {draft ? (
+          <span className="group/issue relative ml-1">
+            <Button
+              size="sm"
+              aria-disabled={issueBlocked ? true : undefined}
+              aria-describedby={issueBlocked ? 'issue-blocked' : undefined}
+              className={`rounded-lg px-4 ${issueBlocked ? 'cursor-not-allowed opacity-50' : ''}`}
+              onClick={() => !issueBlocked && setConfirming(true)}
+            >
               Issue…
             </Button>
-          ) : null}
-        </div>
+            {issueBlocked ? (
+              <span
+                id="issue-blocked"
+                role="tooltip"
+                className="pointer-events-none absolute right-0 top-full z-50 mt-2.5 whitespace-nowrap rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium text-background opacity-0 shadow-lg transition-opacity duration-150 group-hover/issue:opacity-100 group-focus-within/issue:opacity-100"
+              >
+                {issueBlocked}
+              </span>
+            ) : null}
+          </span>
+        ) : null}
       </header>
 
-      <ErrorAlert message={error} onDismiss={() => setError(null)} />
-      {notice ? (
-        <div role="status" className="mb-4 rounded-md border px-4 py-3 text-sm">
-          {notice}
-        </div>
-      ) : null}
-      {detail.stale ? (
-        <div role="status" className="mb-4 rounded-md border border-dashed px-4 py-3 text-sm">
-          The customer’s tax details changed since this draft was last saved. The figures below are recalculated and
-          are saved with your next change or when you issue.
-        </div>
-      ) : null}
-      {replacing && replaces ? (
-        <section role="region" aria-label="Correction" className="mb-4 rounded-md border px-4 py-3 text-sm">
-          {replaces.status === 'cancelled' ? (
-            <>
-              <p>
-                This draft was started to replace invoice {replaces.documentNumber}, which has been cancelled in the
-                meantime. Issue it as an ordinary invoice, or leave it.
-              </p>
-              <div className="mt-3">
-                <Button
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => void change(() => booksApi.updateDraft(id, { replacesDocumentId: null, expectedVersion: version }))}
-                >
-                  Make it an ordinary invoice
-                </Button>
-              </div>
-            </>
-          ) : (
-            <>
-              <p>
-                This draft replaces invoice {replaces.documentNumber} of {date(replaces.issueDate)}. When you issue it,
-                invoice {replaces.documentNumber} is cancelled with a credit note and this one gets a new number, in one
-                step. Until then invoice {replaces.documentNumber} stays valid.
-              </p>
-              <label className="mt-3 flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={doc.printReplacesReference}
-                  disabled={busy}
-                  onChange={(e) =>
-                    void change(() =>
-                      booksApi.updateDraft(id, { printReplacesReference: e.target.checked, expectedVersion: version }),
-                    )
-                  }
-                />
-                Print “Ersetzt Rechnung {replaces.documentNumber} vom {date(replaces.issueDate)}” under the title
-              </label>
-            </>
-          )}
-        </section>
-      ) : null}
-
-      {confirming ? (
-        <section role="dialog" aria-label="Confirm issue" className="mb-6 rounded-lg border p-4">
-          <h2 className="font-medium">Issue this invoice?</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            To {recipientName ?? 'no customer'}, total {money(doc.total, doc.currencyCode)}
-            {nextNumber ? `, as number ${nextNumber}` : ''}. An issued invoice can no longer be changed; it can only be
-            cancelled with a credit note.
-          </p>
-          {replacing && replaces ? (
-            <p className="mt-2 text-sm">
-              Invoice {replaces.documentNumber} is cancelled with a credit note at the same time.
-            </p>
+      {error || notice || detail.stale || (replacing && replaces) ? (
+        <div className="mx-auto mt-5 flex w-full max-w-3xl flex-col gap-3 px-4">
+          <ErrorAlert message={error} onDismiss={() => setError(null)} />
+          {notice ? (
+            <div role="status" className="glass rounded-xl px-4 py-3 text-sm">
+              {notice}
+            </div>
           ) : null}
-          <div className="mt-4 flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setConfirming(false)} disabled={busy}>
-              Back
-            </Button>
-            <Button onClick={issue} disabled={busy}>
-              {busy ? 'Issuing…' : 'Issue invoice'}
-            </Button>
-          </div>
-        </section>
+          {detail.stale ? (
+            <div role="status" className="glass rounded-xl px-4 py-3 text-sm">
+              The customer’s tax details changed since this draft was last saved. The figures are recalculated and are
+              saved with your next change or when you issue.
+            </div>
+          ) : null}
+          {replacing && replaces ? (
+            <section role="region" aria-label="Correction" className="glass rounded-xl px-4 py-3 text-sm">
+              {replaces.status === 'cancelled' ? (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p>
+                    This draft was started to replace invoice {replaces.documentNumber}, which has been cancelled in the
+                    meantime. Issue it as an ordinary invoice, or leave it.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => void change(() => booksApi.updateDraft(id, { replacesDocumentId: null, expectedVersion: version }))}
+                  >
+                    Make it an ordinary invoice
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <p>
+                    This draft replaces invoice {replaces.documentNumber} of {date(replaces.issueDate)}. Issuing it cancels
+                    invoice {replaces.documentNumber} with a credit note and gives this one a new number, in one step.
+                    Until then invoice {replaces.documentNumber} stays valid.
+                  </p>
+                  <label className="mt-2 flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-foreground"
+                      checked={doc.printReplacesReference}
+                      disabled={busy}
+                      onChange={(e) =>
+                        void change(() => booksApi.updateDraft(id, { printReplacesReference: e.target.checked, expectedVersion: version }))
+                      }
+                    />
+                    Print “Ersetzt Rechnung {replaces.documentNumber} vom {date(replaces.issueDate)}” under the title
+                  </label>
+                </>
+              )}
+            </section>
+          ) : null}
+        </div>
       ) : null}
 
       {onPage ? <InvoicePage id={id} detail={detail} customers={usable} busy={busy} change={change} /> : null}
-      {!draft && wide ? <StoredPdf id={id} version={doc.version} imported={imported} /> : null}
-
-      {onPage ? null : (
-      <>
-      <section className="mb-6 grid grid-cols-1 gap-4 rounded-lg border p-4 sm:grid-cols-2" aria-label="Recipient and dates">
-        {draft ? (
-          <Field label="Customer" htmlFor="doc-customer">
-            <select
-              id="doc-customer"
-              value={doc.customerId ?? ''}
-              disabled={busy}
-              onChange={(e) => e.target.value && change(() => booksApi.setCustomer(id, e.target.value, version))}
-              className="h-9 rounded-md border bg-transparent px-2 text-sm"
-            >
-              <option value="">Choose a customer…</option>
-              {usable.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.contact?.name ?? c.contactId}
-                </option>
-              ))}
-            </select>
-          </Field>
-        ) : (
-          <div className="text-sm">
-            <div className="text-xs font-medium text-muted-foreground">Recipient (as issued)</div>
-            {doc.customerSnapshot ? (
-              <address className="not-italic">
-                {doc.customerSnapshot.name}
-                <br />
-                {doc.customerSnapshot.addressLine1}
-                <br />
-                {doc.customerSnapshot.postalCode} {doc.customerSnapshot.city}
-              </address>
-            ) : null}
+      {!draft && wide ? (
+        <>
+          <StoredPdf id={id} version={doc.version} imported={imported} />
+          <div className="mx-auto w-full max-w-3xl px-4 pb-28">
+            <RelatedList related={detail.related} />
           </div>
-        )}
-        {draft ? (
-          <Field
-            label="Service date"
-            htmlFor="doc-service-date"
-            hint={regular ? 'Required before issuing under regular VAT.' : 'Optional; without it the issue date counts.'}
-          >
-            <Input
-              id="doc-service-date"
-              type="date"
-              defaultValue={doc.serviceDate ?? ''}
-              disabled={busy}
-              onBlur={(e) => {
-                const v = e.target.value || null;
-                if (v !== doc.serviceDate) void change(() => booksApi.updateDraft(id, { serviceDate: v, expectedVersion: version }));
-              }}
-            />
-          </Field>
-        ) : (
-          <div className="text-sm">
-            <div className="text-xs font-medium text-muted-foreground">Service date</div>
-            {doc.servicePeriodStart
-              ? `${date(doc.servicePeriodStart)} to ${date(doc.servicePeriodEnd)}`
-              : doc.serviceDate
-                ? date(doc.serviceDate)
-                : 'Same as the issue date'}
-          </div>
-        )}
-        {detail.customer && detail.customer.drift.length > 0 && draft ? (
-          <p className="text-xs text-muted-foreground sm:col-span-2">
-            The contact’s {detail.customer.drift.join(' and ')} differ from the customer’s tax details; the invoice uses
-            the customer’s.
-          </p>
-        ) : null}
-      </section>
+        </>
+      ) : null}
 
-      <DocumentTexts id={id} doc={doc} draft={draft} printsSubject={printsSubject} change={change} versionRef={versionRef} />
-
-      <section aria-label="Lines" className="mb-6">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="py-2 pr-2 font-medium">Description</th>
-              <th className="py-2 pr-2 text-right font-medium">Quantity</th>
-              <th className="py-2 pr-2 text-right font-medium">Unit price</th>
-              {regular ? <th className="py-2 pr-2 text-right font-medium">VAT</th> : null}
-              <th className="py-2 text-right font-medium">Amount</th>
-              {draft ? <th className="w-0" /> : null}
-            </tr>
-          </thead>
-          <tbody>
-            {detail.lines.map((l, i) =>
-              editing?.id === l.id ? (
-                <tr key={l.id} className="border-b">
-                  <td colSpan={draft ? (regular ? 6 : 5) : 5} className="py-3">
-                    <LineForm value={editing.value} onChange={(v) => setEditing({ id: l.id, value: v })} regular={regular} idPrefix={`edit-${l.id}`} />
-                    <div className="mt-2 flex justify-end gap-2">
-                      <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
-                        Cancel
-                      </Button>
-                      <Button size="sm" onClick={saveLine} disabled={busy}>
-                        Save line
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
+      {onPage || (!draft && wide) ? null : (
+        <main className="mx-auto w-full max-w-4xl px-4 py-6 lg:px-6 lg:py-8">
+          <div className="glass flex flex-col gap-8 rounded-2xl p-5 lg:p-7">
+            <section className="grid grid-cols-1 gap-4 sm:grid-cols-2" aria-label="Recipient and dates">
+              {draft ? (
+                <Field label="Customer" htmlFor="doc-customer">
+                  <select
+                    id="doc-customer"
+                    value={doc.customerId ?? ''}
+                    disabled={busy}
+                    onChange={(e) => e.target.value && change(() => booksApi.setCustomer(id, e.target.value, version))}
+                    className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                  >
+                    <option value="">Choose a customer…</option>
+                    {usable.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.contact?.name ?? c.contactId}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
               ) : (
-                <tr key={l.id} className="border-b align-top" data-testid="line">
-                  <td className={`py-2 pr-2 ${l.kind === 'text' ? 'italic text-muted-foreground' : ''}`}>{l.title}</td>
-                  <td className="py-2 pr-2 text-right tabular-nums">{l.kind === 'text' ? '' : `${quantity(l.quantity)} ${l.unitLabel}`}</td>
-                  <td className="py-2 pr-2 text-right tabular-nums">{l.kind === 'text' ? '' : money(l.unitPrice, doc.currencyCode)}</td>
-                  {regular ? (
-                    <td className="py-2 pr-2 text-right tabular-nums" data-testid="line-tax">
-                      {l.kind === 'text' ? '' : l.taxTreatment === 'reverse_charge' ? 'reverse charge' : rate(l.taxRate)}
-                    </td>
-                  ) : null}
-                  <td className="py-2 text-right tabular-nums">{l.kind === 'text' ? '' : money(sign * l.subtotal, doc.currencyCode)}</td>
-                  {draft ? (
-                    <td className="whitespace-nowrap py-1 pl-2 text-right">
-                      <Button size="sm" variant="ghost" aria-label={`Move ${l.title} up`} disabled={busy || i === 0} onClick={() => move(i, -1)}>
-                        ↑
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={`Move ${l.title} down`}
-                        disabled={busy || i === detail.lines.length - 1}
-                        onClick={() => move(i, 1)}
-                      >
-                        ↓
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setEditing({ id: l.id, value: draftOf(l) })}>
-                        Edit
-                      </Button>
-                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => change(() => booksApi.removeLine(id, l.id, version))}>
-                        Remove
-                      </Button>
-                    </td>
-                  ) : null}
-                </tr>
-              ),
-            )}
-          </tbody>
-        </table>
-        {detail.lines.length === 0 ? <p className="py-4 text-sm text-muted-foreground">No lines yet.</p> : null}
+                <div className="text-sm">
+                  <div className="text-xs font-medium text-muted-foreground">Recipient (as issued)</div>
+                  {doc.customerSnapshot ? (
+                    <address className="not-italic">
+                      {doc.customerSnapshot.name}
+                      <br />
+                      {doc.customerSnapshot.addressLine1}
+                      <br />
+                      {doc.customerSnapshot.postalCode} {doc.customerSnapshot.city}
+                    </address>
+                  ) : (
+                    <p className="text-muted-foreground">No recipient was stored with this invoice; the PDF shows the one it was issued to.</p>
+                  )}
+                </div>
+              )}
+              {draft ? (
+                <Field
+                  label="Service date"
+                  htmlFor="doc-service-date"
+                  hint={regular ? 'Required before issuing under regular VAT.' : 'Optional; without it the issue date counts.'}
+                >
+                  <Input
+                    id="doc-service-date"
+                    type="date"
+                    defaultValue={doc.serviceDate ?? ''}
+                    disabled={busy}
+                    onBlur={(e) => {
+                      const v = e.target.value || null;
+                      if (v !== doc.serviceDate) void change(() => booksApi.updateDraft(id, { serviceDate: v, expectedVersion: version }));
+                    }}
+                  />
+                </Field>
+              ) : (
+                <div className="text-sm">
+                  <div className="text-xs font-medium text-muted-foreground">Service date</div>
+                  {doc.servicePeriodStart
+                    ? `${date(doc.servicePeriodStart)} to ${date(doc.servicePeriodEnd)}`
+                    : doc.serviceDate
+                      ? date(doc.serviceDate)
+                      : 'Same as the issue date'}
+                </div>
+              )}
+              {detail.customer && detail.customer.drift.length > 0 && draft ? (
+                <p className="text-xs text-muted-foreground sm:col-span-2">
+                  The contact’s {detail.customer.drift.join(' and ')} differ from the customer’s tax details; the invoice uses
+                  the customer’s.
+                </p>
+              ) : null}
+            </section>
 
-        {draft ? (
-          <form onSubmit={addLine} className="mt-4 rounded-lg border p-4" aria-label="Add line">
-            <LineForm value={newLine} onChange={setNewLine} regular={regular} idPrefix="new" />
-            <div className="mt-2 flex justify-end">
-              <Button type="submit" size="sm" disabled={busy}>
-                Add line
-              </Button>
-            </div>
-          </form>
-        ) : null}
-      </section>
+            <DocumentTexts id={id} doc={doc} draft={draft} printsSubject={printsSubject} change={change} versionRef={versionRef} />
 
-      <section aria-label="Totals" className="mb-6 ml-auto w-full max-w-sm text-sm">
-        {regular
-          ? doc.taxSummary.map((g) => (
-              <div key={`${g.taxRate}-${g.taxTreatment}`} className="flex justify-between py-0.5 text-muted-foreground">
-                <span>
-                  {g.taxTreatment === 'reverse_charge' ? 'Reverse charge' : `VAT ${rate(g.taxRate)} on ${money(sign * g.net, doc.currencyCode)}`}
+            <section aria-label="Lines">
+              {/* On a phone each line stacks: its title with quantity, price and rate under it, the amount beside it. */}
+              <table className="w-full text-sm phone:block">
+                <thead className="phone:hidden">
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="py-2 pr-2 font-medium">Description</th>
+                    <th className="py-2 pr-2 text-right font-medium">Quantity</th>
+                    <th className="py-2 pr-2 text-right font-medium">Unit price</th>
+                    {regular ? <th className="py-2 pr-2 text-right font-medium">VAT</th> : null}
+                    <th className="py-2 text-right font-medium">Amount</th>
+                    {draft ? <th className="w-0" /> : null}
+                  </tr>
+                </thead>
+                <tbody className="phone:block">
+                  {detail.lines.map((l, i) =>
+                    editing?.id === l.id ? (
+                      <tr key={l.id} className="border-b phone:block">
+                        <td colSpan={draft ? (regular ? 6 : 5) : 5} className="py-3 phone:block">
+                          <LineForm value={editing.value} onChange={(v) => setEditing({ id: l.id, value: v })} regular={regular} idPrefix={`edit-${l.id}`} />
+                          <div className="mt-2 flex justify-end gap-2">
+                            <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
+                              Cancel
+                            </Button>
+                            <Button size="sm" onClick={saveLine} disabled={busy}>
+                              Save line
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      <tr key={l.id} className="border-b align-top phone:grid phone:grid-cols-[1fr_auto] phone:gap-x-3 phone:py-2" data-testid="line">
+                        <td className={`py-2 pr-2 phone:p-0 ${l.kind === 'text' ? 'italic text-muted-foreground' : ''}`}>
+                          {l.title}
+                          {l.kind === 'text' ? null : (
+                            <span aria-hidden className="hidden text-xs text-muted-foreground tabular-nums phone:block">
+                              {quantity(l.quantity)} {l.unitLabel} × {money(l.unitPrice, doc.currencyCode)}
+                              {regular ? ` · ${l.taxTreatment === 'reverse_charge' ? 'reverse charge' : rate(l.taxRate)}` : ''}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-2 text-right tabular-nums phone:hidden">{l.kind === 'text' ? '' : `${quantity(l.quantity)} ${l.unitLabel}`}</td>
+                        <td className="py-2 pr-2 text-right tabular-nums phone:hidden">{l.kind === 'text' ? '' : money(l.unitPrice, doc.currencyCode)}</td>
+                        {regular ? (
+                          <td className="py-2 pr-2 text-right tabular-nums phone:hidden" data-testid="line-tax">
+                            {l.kind === 'text' ? '' : l.taxTreatment === 'reverse_charge' ? 'reverse charge' : rate(l.taxRate)}
+                          </td>
+                        ) : null}
+                        <td className="py-2 text-right tabular-nums phone:p-0">{l.kind === 'text' ? '' : money(sign * l.subtotal, doc.currencyCode)}</td>
+                        {draft ? (
+                          <td className="whitespace-nowrap py-1 pl-2 text-right phone:col-span-2 phone:-mr-2 phone:pt-1 phone:pl-0">
+                            <Button size="icon" variant="ghost" aria-label={`Move ${l.title} up`} title="Move up" disabled={busy || i === 0} onClick={() => move(i, -1)}>
+                              <ArrowUp size={15} aria-hidden />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              aria-label={`Move ${l.title} down`}
+                              title="Move down"
+                              disabled={busy || i === detail.lines.length - 1}
+                              onClick={() => move(i, 1)}
+                            >
+                              <ArrowDown size={15} aria-hidden />
+                            </Button>
+                            <Button size="icon" variant="ghost" aria-label={`Edit ${l.title}`} title="Edit" onClick={() => setEditing({ id: l.id, value: draftOf(l) })}>
+                              <Pencil size={15} aria-hidden />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              aria-label={`Remove ${l.title}`}
+                              title="Remove"
+                              className="text-destructive hover:text-destructive"
+                              disabled={busy}
+                              onClick={() => change(() => booksApi.removeLine(id, l.id, version))}
+                            >
+                              <Trash2 size={15} aria-hidden />
+                            </Button>
+                          </td>
+                        ) : null}
+                      </tr>
+                    ),
+                  )}
+                </tbody>
+              </table>
+              {detail.lines.length === 0 ? <p className="py-4 text-sm text-muted-foreground">No lines yet.</p> : null}
+
+              {draft ? (
+                <form onSubmit={addLine} className="glass-inset mt-4 rounded-xl p-4" aria-label="Add line">
+                  <LineForm value={newLine} onChange={setNewLine} regular={regular} idPrefix="new" />
+                  <div className="mt-2 flex justify-end">
+                    <Button type="submit" size="sm" disabled={busy}>
+                      Add line
+                    </Button>
+                  </div>
+                </form>
+              ) : null}
+            </section>
+
+            <section aria-label="Totals" className="ml-auto w-full max-w-sm text-sm">
+              {regular
+                ? doc.taxSummary.map((g) => (
+                    <div key={`${g.taxRate}-${g.taxTreatment}`} className="flex justify-between py-0.5 text-muted-foreground">
+                      <span>
+                        {g.taxTreatment === 'reverse_charge' ? 'Reverse charge' : `VAT ${rate(g.taxRate)} on ${money(sign * g.net, doc.currencyCode)}`}
+                      </span>
+                      <span className="tabular-nums">{money(sign * g.tax, doc.currencyCode)}</span>
+                    </div>
+                  ))
+                : null}
+              {regular ? (
+                <div className="flex justify-between py-0.5">
+                  <span>Net</span>
+                  <span className="tabular-nums">{money(sign * doc.subtotal, doc.currencyCode)}</span>
+                </div>
+              ) : null}
+              <div className="flex justify-between border-t py-1 font-semibold">
+                <span>Total</span>
+                <span className="tabular-nums" data-testid="total">
+                  {money(sign * doc.total, doc.currencyCode)}
                 </span>
-                <span className="tabular-nums">{money(sign * g.tax, doc.currencyCode)}</span>
               </div>
-            ))
-          : null}
-        {regular ? (
-          <div className="flex justify-between py-0.5">
-            <span>Net</span>
-            <span className="tabular-nums">{money(sign * doc.subtotal, doc.currencyCode)}</span>
+              {doc.taxNote ? <p className="mt-2 text-xs text-muted-foreground">{doc.taxNote}</p> : null}
+            </section>
           </div>
-        ) : null}
-        <div className="flex justify-between border-t py-1 font-semibold">
-          <span>Total</span>
-          <span className="tabular-nums" data-testid="total">
-            {money(sign * doc.total, doc.currencyCode)}
-          </span>
-        </div>
-        {doc.taxNote ? <p className="mt-2 text-xs text-muted-foreground">{doc.taxNote}</p> : null}
-      </section>
-      </>
+          <RelatedList related={detail.related} />
+        </main>
       )}
 
-      {cancellable ? (
-        cancelReason === null ? (
-          <div className="flex flex-wrap items-center gap-2">
-            {correctable ? (
-              replacedBy ? (
-                <Link
-                  href={`/projects/books/documents/${replacedBy.id}`}
-                  className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium hover:bg-accent"
-                >
-                  Open the correction draft
-                </Link>
-              ) : (
-                <Button onClick={() => void correct()} disabled={busy}>
-                  {busy ? 'Opening…' : 'Correct'}
-                </Button>
-              )
-            ) : null}
-            <Button variant="outline" onClick={() => setCancelReason('')} disabled={busy}>
-              Cancel with a credit note…
+      <AlertDialog open={confirming} onOpenChange={(open) => !busy && setConfirming(open)}>
+        <AlertDialogContent className={`max-w-[440px] rounded-2xl ${GLASS_SURFACE}`}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Issue this invoice?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div>
+                <dl className="glass-inset mt-1 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 rounded-xl px-4 py-3 text-[13px] text-foreground">
+                  <dt className="text-muted-foreground">To</dt>
+                  <dd className="truncate">{recipientName ?? 'No customer'}</dd>
+                  {nextNumber ? (
+                    <>
+                      <dt className="text-muted-foreground">Number</dt>
+                      <dd>{nextNumber}</dd>
+                    </>
+                  ) : null}
+                  <dt className="text-muted-foreground">Total</dt>
+                  <dd className="font-semibold tabular-nums">{money(doc.total, doc.currencyCode)}</dd>
+                </dl>
+                <p className="mt-3">
+                  An issued invoice can no longer be changed; it can only be cancelled with a credit note.
+                  {replacing && replaces ? ` Invoice ${replaces.documentNumber} is cancelled with a credit note at the same time.` : ''}
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Back</AlertDialogCancel>
+            <Button size="sm" disabled={busy} onClick={() => void issue()}>
+              {busy ? 'Issuing…' : 'Issue invoice'}
             </Button>
-            {correctable ? (
-              <p className="w-full text-xs text-muted-foreground">
-                Correct opens a new draft with this invoice’s data. This invoice stays valid until you issue the
-                corrected one; then it is cancelled with a credit note.
-              </p>
-            ) : imported ? (
-              <p className="w-full text-xs text-muted-foreground">
-                An imported invoice cannot be corrected here: cancel it with a credit note and create a new invoice.
-              </p>
-            ) : null}
-          </div>
-        ) : (
-          <form onSubmit={cancel} className="rounded-lg border p-4" aria-label="Cancel invoice">
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={issued !== null} onOpenChange={(open) => !open && setIssued(null)}>
+        <AlertDialogContent className={`max-w-[420px] rounded-2xl ${GLASS_SURFACE}`}>
+          <AlertDialogHeader>
+            <span aria-hidden className="mb-1 flex size-9 items-center justify-center rounded-full bg-status-published/15 text-status-published">
+              <Check size={18} />
+            </span>
+            <AlertDialogTitle>Invoice {issued?.number} issued</AlertDialogTitle>
+            <AlertDialogDescription>
+              {issued?.stored ? 'The PDF is stored and ready to download.' : 'The PDF is created on the first download.'}
+              {issued?.replaced ? ` Invoice ${issued.replaced} is cancelled with a credit note.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-wrap">
+            <Button size="sm" variant="ghost" onClick={() => router.push('/projects/books')}>
+              Back to documents
+            </Button>
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => void newInvoice()}>
+              New invoice
+            </Button>
+            <a href={pdfUrl(id)} className={buttonVariants({ size: 'sm' })}>
+              <Download size={14} aria-hidden /> Download PDF
+            </a>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={cancelReason !== null} onOpenChange={(open) => !open && !busy && setCancelReason(null)}>
+        <AlertDialogContent className={`max-w-[440px] rounded-2xl ${GLASS_SURFACE}`}>
+          <form onSubmit={cancel} className="flex min-h-0 flex-col gap-4" aria-label="Cancel invoice">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Cancel invoice {doc.documentNumber}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                A credit note offsetting the full amount is issued with its own number; the invoice stays as it was and is
+                marked cancelled.
+                {replacedBy && replacedBy.status === 'draft'
+                  ? ' A correction draft is open for this invoice. After this cancellation it can no longer replace it; it can still be issued as an ordinary invoice.'
+                  : ''}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
             <Field label="Reason (short, no personal data)" htmlFor="cancel-reason">
-              <Input id="cancel-reason" maxLength={200} value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} />
+              <Input id="cancel-reason" autoFocus maxLength={200} value={cancelReason ?? ''} onChange={(e) => setCancelReason(e.target.value)} />
             </Field>
-            <p className="mt-2 text-xs text-muted-foreground">
-              A credit note offsetting the full amount is issued with its own number; the invoice stays as it was and is
-              marked cancelled.
-            </p>
-            {replacedBy && replacedBy.status === 'draft' ? (
-              <p className="mt-2 text-sm" role="note">
-                A correction draft is open for this invoice. After this cancellation it can no longer replace it; it can
-                still be issued as an ordinary invoice.
-              </p>
-            ) : null}
-            <div className="mt-3 flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={() => setCancelReason(null)}>
+            <AlertDialogFooter>
+              <AlertDialogCancel type="button" disabled={busy}>
                 Back
-              </Button>
-              <Button type="submit" variant="destructive" disabled={busy}>
+              </AlertDialogCancel>
+              <Button type="submit" size="sm" variant="destructive" disabled={busy}>
                 Issue credit note
               </Button>
-            </div>
+            </AlertDialogFooter>
           </form>
-        )
-      ) : null}
-      <RelatedList related={detail.related} />
-    </main>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
   );
 }
 
@@ -823,7 +988,7 @@ function DocumentTexts({
     const shown = fields.filter((f) => doc[f.key]);
     if (shown.length === 0) return null;
     return (
-      <section aria-label="Texts" className="mb-6 rounded-lg border p-4 text-sm">
+      <section aria-label="Texts" className="text-sm">
         <dl className="grid grid-cols-1 gap-3">
           {shown.map((f) => (
             <div key={f.key}>
@@ -836,7 +1001,7 @@ function DocumentTexts({
     );
   }
   return (
-    <section aria-label="Texts" className="mb-6 grid grid-cols-1 gap-4 rounded-lg border p-4 sm:grid-cols-2">
+    <section aria-label="Texts" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       {fields.map((f) => {
         const fieldId = `doc-${f.key}`;
         const styled = (f.key === 'introText' && isStyled(doc.introFormat)) || (f.key === 'outroText' && isStyled(doc.outroFormat));

@@ -14,7 +14,7 @@
 //      a removed line comes back at its place;
 //   3. resume: what the page shows is the server's (render input read again
 //      after every change);
-//   4. re-entry: a narrow window and "Use the form" give the form; an issued
+//   4. re-entry: a narrow window and the Page and Form switch give the form; an issued
 //      invoice is shown as its stored PDF.
 // All data is synthetic.
 
@@ -32,7 +32,7 @@ vi.mock('@/lib/books/engine', () => ({
     renderInputs += 1;
     return { format: 1, documentId: 'doc-1', documentVersion: 3, fontFamily: 'dejavu-sans', input: { draft: true, document: {}, lines: [] }, template: {}, logos: [] };
   }),
-  renderDraftInBrowser: vi.fn(async () => ({ bytes: new Uint8Array([37, 80, 68, 70]), layout: LAYOUT, renderMs: 12 })),
+  renderDraftInBrowser: vi.fn(async () => ({ bytes: new Uint8Array([37, 80, 68, 70]), layout: layoutNow(), renderMs: 12 })),
   BrowserRenderError: class extends Error {},
 }));
 
@@ -44,6 +44,8 @@ vi.mock('../../composer/PdfCanvas', () => ({
 }));
 
 import DocumentEditor from '../../DocumentEditor';
+import type { LineView } from '@/lib/books/api';
+import { lineName } from '../fields';
 
 type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -73,6 +75,18 @@ const LAYOUT = {
     addLine: [{ blockId: 'lineTable', rect: { page: 1, x: 60, y: 360, width: 480, height: 14 }, room: 20 }],
   },
 };
+
+/** The layout as the renderer reports it: a text slot is empty while the draft holds no text for it. */
+function layoutNow() {
+  const d = current?.document ?? {};
+  const filled: Record<string, boolean> = {
+    subject: Boolean(d.subject),
+    introText: Boolean(d.introText),
+    outroText: Boolean(d.outroText),
+    'line.l1.description': Boolean(current?.lines?.find((l: Json) => l.id === 'l1')?.description),
+  };
+  return { ...LAYOUT, fields: LAYOUT.fields.map((f: Json) => (f.id in filled ? { ...f, empty: !filled[f.id] } : f)) };
+}
 
 function line(over: Json = {}): Json {
   return { id: 'l1', position: 1, kind: 'service', title: 'Consulting', description: null, quantity: 1500, unitLabel: 'Std', unitPrice: 8000, discountBp: 0, subtotal: 12000, taxClass: 'standard', taxRateOverride: null, taxRate: 1900, taxAmount: 2280, taxTreatment: 'standard', updatedAt: '2026-10-19T08:00:00.000Z', ...over };
@@ -175,6 +189,15 @@ const typeRich = (box: HTMLElement, html: string) => {
   fireEvent.input(box);
 };
 const fieldButton = (id: string) => document.querySelector<HTMLButtonElement>(`[data-field-id="${id}"]`)!;
+/** Chooses an item of one of the page's menus (Radix opens a menu on a primary pointer press). */
+function choose(trigger: HTMLElement, item: string | RegExp) {
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+  fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: item }));
+}
+/** The floating toolbar's "Add" menu: an empty optional part is added from there. */
+const addPart = (label: string) => choose(screen.getByRole('button', { name: 'Add' }), label);
+/** Opens the intro text: on the page where it prints, or from the "Add" menu while it is empty. */
+const editIntro = () => (fieldButton('introText') ? fireEvent.click(fieldButton('introText')) : addPart('Intro text'));
 
 beforeEach(() => {
   current = detail();
@@ -211,12 +234,11 @@ describe('the invoice page: forward', () => {
     await waitFor(() => expect(renderInputs).toBeGreaterThanOrEqual(2));
   });
 
-  it('an empty intro text offers "Add an intro text" where it would print, and saves the typed text', async () => {
+  it('an empty intro text is not drawn on the invoice: the Add menu offers it, and the typed text is saved', async () => {
     server();
     await opened();
-    const slot = fieldButton('introText');
-    expect(slot.textContent).toContain('Add an intro text');
-    fireEvent.click(slot);
+    expect(fieldButton('introText')).toBeNull();
+    addPart('Intro text');
     const box = screen.getByRole('textbox', { name: 'Intro text' });
     typeRich(box, '<p>Vielen Dank.</p><p>Hier die Leistungen.</p>');
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
@@ -228,12 +250,11 @@ describe('the invoice page: forward', () => {
     );
   });
 
-  it('an empty subject offers "Add a subject" where it would print; the typed line is saved trimmed', async () => {
+  it('an empty subject is added from the Add menu; the typed line is saved trimmed', async () => {
     server();
     await opened();
-    const slot = fieldButton('subject');
-    expect(slot.textContent).toContain('Add a subject');
-    fireEvent.click(slot);
+    expect(fieldButton('subject')).toBeNull();
+    addPart('Subject');
     const input = screen.getByRole('textbox', { name: 'Subject' });
     fireEvent.change(input, { target: { value: ' Website-Relaunch, Phase 1 ' } });
     fireEvent.keyDown(input, { key: 'Enter' });
@@ -255,8 +276,8 @@ describe('the invoice page: forward', () => {
   it('picks a line from the product list, with its price basis for the server to convert', async () => {
     server();
     await opened();
-    fireEvent.click(screen.getByRole('button', { name: 'Choose product' }));
-    fireEvent.click(await screen.findByRole('button', { name: /Beratung/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
+    fireEvent.click(await screen.findByRole('option', { name: /Beratung/ }));
     await waitFor(() =>
       expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
         kind: 'service', title: 'Beratung', description: 'Strategie', unitLabel: 'Std', unitPrice: 9900, priceBasis: 'gross', taxClass: 'standard', discountBp: 0, quantity: 1000, expectedVersion: 3,
@@ -305,12 +326,16 @@ describe('the invoice page: backtrack and revise', () => {
     await waitFor(() => expect(calls.filter((c) => c.method === 'PATCH').at(-1)!.body).toEqual({ quantity: 4000, expectedVersion: 5 }));
   });
 
+  it('lines are named as the invoice numbers them: a text row between them does not count', () => {
+    const lines = [line(), line({ id: 't1', position: 2, kind: 'text', title: 'Phase zwei' }), line({ id: 'l2', position: 3, title: 'Second' })] as LineView[];
+    expect(lines.map((l) => lineName(l, lines))).toEqual(['Line 1', 'Text row 1', 'Line 2']);
+  });
+
   it('a removed line comes back at its place with undo', async () => {
     current = detail({ lines: [line(), line({ id: 'l2', position: 2, title: 'Second' })] });
     server();
     await opened();
-    fireEvent.click(screen.getByRole('button', { name: 'Line 1 actions' }));
-    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Remove' }));
+    choose(screen.getByRole('button', { name: 'Line 1 actions' }), 'Remove');
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE')).toBe(true));
     await waitFor(() => expect(live()).toContain('Line 1 removed.'));
     fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true });
@@ -355,7 +380,7 @@ describe('the invoice page: review fixes', () => {
       },
     });
     await opened();
-    fireEvent.click(fieldButton('introText'));
+    editIntro();
     const box = screen.getByRole('textbox', { name: 'Intro text' });
     typeRich(box, '<p>Hallo</p>');
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
@@ -371,7 +396,7 @@ describe('the invoice page: review fixes', () => {
     failNext = true;
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     await waitFor(() => expect(live()).toBe('Could not undo Intro text; it was taken off the list.'));
-    expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Undo' }).getAttribute('aria-disabled')).toBe('true');
   });
 
   it('after a refused save, leaving the field sends nothing; Enter compares with what is saved now', async () => {
@@ -419,12 +444,12 @@ describe('the invoice page: review fixes', () => {
     const input = screen.getByRole('textbox', { name: 'Line 1, quantity' });
     fireEvent.change(input, { target: { value: '2' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(fieldButton('introText'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Undo' }).getAttribute('aria-disabled')).toBeNull());
+    editIntro();
     const box = screen.getByRole('textbox', { name: 'Intro text' });
     typeRich(box, '<p>Hallo</p>');
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Undo' }).getAttribute('aria-disabled')).toBe('true'));
     expect(screen.getByRole('region', { name: 'Invoice page' })).toBeTruthy();
   });
 
@@ -442,33 +467,92 @@ describe('the invoice page: review fixes', () => {
       },
     });
     await opened();
-    fireEvent.click(screen.getByRole('button', { name: 'Choose product' }));
-    await screen.findByRole('button', { name: /Aaa first/ });
-    const search = screen.getByRole('textbox', { name: 'Search your products and services' });
+    fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
+    await screen.findByRole('option', { name: /Aaa first/ });
+    const search = screen.getByRole('combobox', { name: 'Search your products and services' });
     fireEvent.change(search, { target: { value: 'Bera' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body?.title).toBe('Beratung'));
+  });
+
+  it('the arrow keys move through the products and Enter picks the highlighted one', async () => {
+    server({
+      'GET /api/books/products': () => ({
+        status: 200,
+        body: {
+          items: [
+            { id: 'p0', kind: 'goods', name: 'Aaa first', description: null, unitLabel: 'Stk', unitPrice: 100, priceBasis: 'net', taxClass: 'standard', discountBp: 0, archivedAt: null },
+            { id: 'p1', kind: 'service', name: 'Beratung', description: null, unitLabel: 'Std', unitPrice: 9900, priceBasis: 'net', taxClass: 'standard', discountBp: 0, archivedAt: null },
+          ],
+          nextCursor: null,
+          total: 2,
+        },
+      }),
+    });
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
+    const first = await screen.findByRole('option', { name: /Aaa first/ });
+    const search = screen.getByRole('combobox', { name: 'Search your products and services' });
+    expect(search.getAttribute('aria-activedescendant')).toBe(first.id);
+    fireEvent.keyDown(search, { key: 'ArrowDown' });
+    const second = screen.getByRole('option', { name: /Beratung/ });
+    expect(second.getAttribute('aria-selected')).toBe('true');
+    expect(search.getAttribute('aria-activedescendant')).toBe(second.id);
+    fireEvent.keyDown(search, { key: 'ArrowDown' });
+    expect(first.getAttribute('aria-selected')).toBe('true'); // it wraps round
+    fireEvent.keyDown(search, { key: 'ArrowUp' });
     fireEvent.keyDown(search, { key: 'Enter' });
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body?.title).toBe('Beratung'));
   });
 });
 
-describe('the invoice page: margin markers', () => {
-  it('an empty line description with no room is a "+" left of the whole row, not over its columns', async () => {
+describe('the invoice page: the floating toolbar', () => {
+  it('zoom steps in and out from 100 %, stops at its ends, and the percentage resets it', async () => {
     server();
     await opened();
-    const marker = fieldButton('line.l1.description');
-    expect(marker.getAttribute('aria-label')).toBe('Add details (Line 1, details)');
-    // The row starts at x 60 (the position number), the description at 80: the marker sits 34 px left of the row.
-    expect(marker.style.left).toBe('26px');
+    const percent = () => screen.getByRole('button', { name: /^Zoom \d+ percent/ });
+    expect(percent().textContent).toBe('100%');
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
+    expect(percent().textContent).toBe('110%');
+    for (let i = 0; i < 12; i++) fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
+    expect(percent().textContent).toBe('200%');
+    expect(screen.getByRole('button', { name: 'Zoom in' }).getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(percent());
+    expect(percent().textContent).toBe('100%');
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }));
+    expect(percent().textContent).toBe('90%');
   });
 
-  it('two markers that would land on one spot sit side by side, each reachable', async () => {
+  it('the product picker with nothing to offer says so and leads to where products are added', async () => {
+    server({ 'GET /api/books/products': () => ({ status: 200, body: { items: [], nextCursor: null, total: 0 } }) });
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
+    const picker = screen.getByRole('dialog', { name: 'Choose a product or service' });
+    await within(picker).findByText('No products or services yet.');
+    expect(within(picker).getByRole('link', { name: /Add them in Products and services/ }).getAttribute('href')).toBe('/projects/books?tab=products');
+    fireEvent.change(within(picker).getByRole('combobox', { name: 'Search your products and services' }), { target: { value: 'xyz' } });
+    await within(picker).findByText('Nothing matches “xyz”.');
+  });
+});
+
+describe('the invoice page: empty parts', () => {
+  it('nothing is drawn on the invoice for an empty part; the Add menu offers each, in the order they print', async () => {
     server();
     await opened();
-    const a = fieldButton('line.l1.description');
-    const b = fieldButton('outroText');
-    expect(a.style.top).toBe(b.style.top);
-    expect(a.style.left).toBe('26px');
-    expect(b.style.left).toBe('2px');
+    for (const id of ['subject', 'introText', 'outroText', 'line.l1.description']) expect(fieldButton(id)).toBeNull();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Add' }), { button: 0, ctrlKey: false });
+    const items = within(screen.getByRole('menu')).getAllByRole('menuitem').map((i) => i.textContent?.trim());
+    expect(items).toEqual(['Line', 'Product or service…', 'Subject', 'Intro text', 'Closing text']);
+  });
+
+  it("a line's details are added from the line's menu, and saved on the line", async () => {
+    server();
+    await opened();
+    choose(screen.getByRole('button', { name: 'Line 1 actions' }), 'Add details');
+    const box = screen.getByRole('textbox', { name: 'Line 1, details' });
+    fireEvent.change(box, { target: { value: 'Workshop' } });
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ description: 'Workshop', expectedVersion: 3 }));
   });
 });
 
@@ -560,7 +644,7 @@ describe('the invoice page: formatted intro and closing texts', () => {
     current = detail({ document: { introText: 'Hallo Welt' } });
     server();
     await opened();
-    fireEvent.click(fieldButton('introText'));
+    editIntro();
     const box = screen.getByRole('textbox', { name: 'Intro text' });
     expect(box.getAttribute('aria-multiline')).toBe('true');
     expect(box.innerHTML).toBe('<p>Hallo Welt</p>');
@@ -574,7 +658,7 @@ describe('the invoice page: formatted intro and closing texts', () => {
   it('the toolbar: Bold, Italic and Bullet list buttons ask the browser, keep the text focused, and arrows move between them', async () => {
     server();
     await opened();
-    fireEvent.click(fieldButton('introText'));
+    editIntro();
     const toolbar = screen.getByRole('toolbar', { name: 'Intro text, formatting' });
     const [b, i, list] = within(toolbar).getAllByRole('button');
     expect([b, i, list].map((x) => x.getAttribute('aria-label'))).toEqual(['Bold', 'Italic', 'Bullet list']);
@@ -594,7 +678,7 @@ describe('the invoice page: formatted intro and closing texts', () => {
     current = detail({ document: { introText: 'Hallo Welt', introFormat: bold } });
     server();
     await opened();
-    fireEvent.click(fieldButton('introText'));
+    editIntro();
     const box = screen.getByRole('textbox', { name: 'Intro text' });
     expect(box.innerHTML).toBe('<p>Hallo <strong>Welt</strong></p>');
     typeRich(box, '<p>Hal<span>lo </span><b>Welt</b><br></p>');
@@ -607,12 +691,12 @@ describe('the invoice page: formatted intro and closing texts', () => {
     current = detail({ document: { introText: 'Hallo Welt', introFormat: bold } });
     server();
     await opened();
-    fireEvent.click(fieldButton('introText'));
+    editIntro();
     let box = screen.getByRole('textbox', { name: 'Intro text' });
     typeRich(box, '<p>weg</p>');
     fireEvent.keyDown(box, { key: 'Escape' });
     expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
-    fireEvent.click(fieldButton('introText'));
+    editIntro();
     box = screen.getByRole('textbox', { name: 'Intro text' });
     typeRich(box, '<ul><li>Punkt <i>eins</i></li></ul>');
     fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
@@ -630,7 +714,7 @@ describe('the invoice page: formatted intro and closing texts', () => {
   it('resume: the runs being typed survive a reload and come back unsent, formatted', async () => {
     server();
     await opened();
-    fireEvent.click(fieldButton('introText'));
+    editIntro();
     typeRich(screen.getByRole('textbox', { name: 'Intro text' }), '<p>Neu <b>fett</b></p>');
     expect(JSON.parse(window.sessionStorage.getItem('books-invoice-unsaved:doc-1')!).value).toBe(
       JSON.stringify({ v: 1, blocks: [{ kind: 'paragraph', runs: [{ text: 'Neu ' }, { text: 'fett', bold: true }] }] }),
@@ -645,7 +729,7 @@ describe('the invoice page: formatted intro and closing texts', () => {
   it('refuses an edit the run model cannot hold (underline, a font) before the browser applies it', async () => {
     server();
     await opened();
-    fireEvent.click(fieldButton('introText'));
+    editIntro();
     const box = screen.getByRole('textbox', { name: 'Intro text' });
     const edit = (inputType: string) => {
       const e = new InputEvent('beforeinput', { inputType, bubbles: true, cancelable: true });
@@ -665,7 +749,7 @@ describe('the invoice page: formatted intro and closing texts', () => {
   it('a key an input method composes with is left to it: Escape cancels the conversion, not the edit', async () => {
     server();
     await opened();
-    fireEvent.click(fieldButton('introText'));
+    editIntro();
     const box = screen.getByRole('textbox', { name: 'Intro text' });
     fireEvent.keyDown(box, { key: 'Escape', isComposing: true });
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true, keyCode: 229 });
@@ -677,12 +761,12 @@ describe('the invoice page: formatted intro and closing texts', () => {
     try {
       server();
       await opened();
-      fireEvent.click(fieldButton('introText'));
+      editIntro();
       typeRich(screen.getByRole('textbox', { name: 'Intro text' }), '<p><b>fett</b></p>');
       const toolbar = screen.getByRole('toolbar', { name: 'Intro text, formatting' });
       const bold = within(toolbar).getByRole('button', { name: 'Bold' });
       expect(bold.getAttribute('aria-pressed')).toBe('true');
-      expect(bold.className).toContain('bg-blue-700');
+      expect(bold.className).toContain('bg-foreground');
       expect(within(toolbar).getByRole('button', { name: 'Italic' }).getAttribute('aria-pressed')).toBe('false');
       expect(fireEvent.mouseDown(toolbar)).toBe(false);
       // The tab stop follows the arrow keys.
@@ -704,7 +788,7 @@ describe('the invoice page: formatted intro and closing texts', () => {
   it('says how long a text over the limit is, instead of failing to read it', async () => {
     server();
     await opened();
-    fireEvent.click(fieldButton('introText'));
+    editIntro();
     const box = screen.getByRole('textbox', { name: 'Intro text' });
     typeRich(box, `<p>${'x'.repeat(4001)}</p>`);
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
@@ -716,8 +800,8 @@ describe('the invoice page: formatted intro and closing texts', () => {
     delete (document as unknown as { execCommand?: unknown }).execCommand;
     server();
     await opened();
-    fireEvent.click(fieldButton('introText'));
-    expect(screen.queryByRole('toolbar')).toBeNull();
+    editIntro();
+    expect(screen.queryByRole('toolbar', { name: 'Intro text, formatting' })).toBeNull();
     const box = screen.getByRole('textbox', { name: 'Intro text' });
     typeRich(box, '<p>ohne Format</p>');
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
@@ -732,7 +816,7 @@ describe('the invoice page: formatted intro and closing texts', () => {
   it('a paste comes in as plain text, whatever the clipboard holds', async () => {
     server();
     await opened();
-    fireEvent.click(fieldButton('introText'));
+    editIntro();
     const box = screen.getByRole('textbox', { name: 'Intro text' });
     fireEvent.paste(box, { clipboardData: { getData: (type: string) => (type === 'text/plain' ? 'eins\r\nzwei' : '<h1 style="color:red">eins</h1>') } });
     expect(exec).toHaveBeenCalledWith('insertText', false, 'eins\nzwei');
@@ -740,22 +824,23 @@ describe('the invoice page: formatted intro and closing texts', () => {
 });
 
 describe('the invoice page: re-entry', () => {
-  it('"Use the form" switches to the form and is remembered; a narrow window gets the form', async () => {
+  it('the Page and Form switch changes to the form and is remembered; a narrow window gets the form', async () => {
     server();
     await opened();
-    fireEvent.click(screen.getByRole('button', { name: 'Use the form' }));
+    expect(screen.getByRole('button', { name: 'Page' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Form' }));
     expect(screen.getByRole('region', { name: 'Lines' })).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'Invoice page' })).toBeNull();
     cleanup();
     render(<DocumentEditor id="doc-1" />);
     await screen.findByRole('region', { name: 'Lines' });
-    expect(screen.getByRole('button', { name: 'Edit on the page' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Form' }).getAttribute('aria-pressed')).toBe('true');
     cleanup();
     window.localStorage.clear();
     wideWindow(false);
     render(<DocumentEditor id="doc-1" />);
     await screen.findByRole('region', { name: 'Lines' });
-    expect(screen.queryByRole('button', { name: 'Use the form' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Form' })).toBeNull();
   });
 
   it('an issued invoice is shown as its stored PDF, never drawn again', async () => {

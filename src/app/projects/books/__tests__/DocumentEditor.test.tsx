@@ -170,7 +170,7 @@ describe('DocumentEditor', () => {
       }),
     });
     render(<DocumentEditor id="doc-1" />);
-    await screen.findByText(/next: 62/);
+    await screen.findByRole('form', { name: 'Add line' });
 
     const form = screen.getByRole('form', { name: 'Add line' });
     fireEvent.change(within(form).getByLabelText('Description'), { target: { value: 'Consulting' } });
@@ -182,13 +182,16 @@ describe('DocumentEditor', () => {
     expect(add.body).toMatchObject({ quantity: 1500, unitPrice: 8000, expectedVersion: 3 });
 
     fireEvent.click(screen.getByRole('button', { name: 'Issue…' }));
-    const dialog = screen.getByRole('dialog', { name: 'Confirm issue' });
+    // The confirmation sums up what is issued: to whom, under which number, for how much.
+    const dialog = screen.getByRole('alertdialog', { name: 'Issue this invoice?' });
     expect(dialog.textContent).toContain('142,80 €');
-    expect(dialog.textContent).toContain('as number 62');
+    expect(dialog.textContent).toMatch(/Number\s*62/);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Issue invoice' }));
-    await screen.findByText(/Issued as 62/);
+    // The issued moment: a confirmation with the next steps, the PDF first.
+    const done = await screen.findByRole('alertdialog', { name: 'Invoice 62 issued' });
     expect(calls.find((c) => c.url.endsWith('/issue'))!.body).toEqual({ expectedVersion: 4 });
-    expect(screen.getByRole('link', { name: 'Download PDF' }).getAttribute('href')).toBe('/api/books/documents/doc-1/pdf');
+    expect(within(done).getByRole('link', { name: 'Download PDF' }).getAttribute('href')).toBe('/api/books/documents/doc-1/pdf');
+    expect(within(done).getByRole('button', { name: 'New invoice' })).toBeTruthy();
     expect(screen.queryByRole('form', { name: 'Add line' })).toBeNull();
   });
 
@@ -247,9 +250,19 @@ describe('DocumentEditor', () => {
     await screen.findByText('Added elsewhere');
   });
 
+  it('a draft without a customer cannot be issued yet, and the Issue button says why', async () => {
+    server(base(() => detail({ document: { customerId: null } })));
+    render(<DocumentEditor id="doc-1" />);
+    const issue = await screen.findByRole('button', { name: 'Issue…' });
+    expect(issue.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(issue.getAttribute('aria-describedby')!)?.textContent).toBe('Choose a customer first');
+    fireEvent.click(issue);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
   it('a refused issue keeps the draft and names what to fix', async () => {
     server({
-      ...base(() => detail({ document: { customerId: null } })),
+      ...base(() => detail()),
       'POST /api/books/documents/doc-1/issue': () => ({
         status: 422,
         body: { error: { code: 'customer_required', message: 'x' } },
@@ -428,7 +441,8 @@ describe('DocumentEditor: an imported invoice', () => {
     });
     server(base(() => imported));
     render(<DocumentEditor id="doc-1" />);
-    expect((await screen.findByRole('heading', { level: 1 })).textContent).toContain('Imported');
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.getByRole('banner').textContent).toContain('Imported');
     expect(screen.getByText(/imported, the original PDF is the document of record/)).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Download original PDF' }).getAttribute('href')).toBe('/api/books/documents/doc-1/pdf');
     expect(screen.queryByRole('button', { name: 'Issue…' })).toBeNull();
@@ -437,6 +451,12 @@ describe('DocumentEditor: an imported invoice', () => {
     expect(screen.queryByText(/€/)).toBeNull();
   });
 });
+
+/** Opens the top bar's "More actions" menu (Radix opens it on a primary pointer press). */
+async function openMore() {
+  fireEvent.pointerDown(await screen.findByRole('button', { name: 'More actions' }), { button: 0, ctrlKey: false });
+  return screen.findByRole('menu');
+}
 
 describe('DocumentEditor: the Correct flow', () => {
   const ISSUED = {
@@ -457,11 +477,12 @@ describe('DocumentEditor: the Correct flow', () => {
       }),
     });
     render(<DocumentEditor id="doc-1" />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Correct' }));
+    const menu = await openMore();
+    // Nothing is cancelled by Correct: the plain cancellation stays offered next to it.
+    expect(within(menu).getByRole('menuitem', { name: 'Cancel with a credit note…' })).toBeTruthy();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /^Correct/ }));
     await waitFor(() => expect(push).toHaveBeenCalledWith('/projects/books/documents/doc-2'));
     expect(calls.find((c) => c.method === 'POST')).toMatchObject({ url: '/api/books/documents/doc-1/correct', body: {} });
-    // Nothing is cancelled by the click: the plain cancellation stays offered next to it.
-    expect(screen.getByRole('button', { name: 'Cancel with a credit note…' })).toBeTruthy();
   });
 
   it('a refused Correct stays on the invoice and says why', async () => {
@@ -473,10 +494,10 @@ describe('DocumentEditor: the Correct flow', () => {
       }),
     });
     render(<DocumentEditor id="doc-1" />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Correct' }));
+    fireEvent.click(within(await openMore()).getByRole('menuitem', { name: /^Correct/ }));
     expect((await screen.findByRole('alert')).textContent).toMatch(/archived/);
     expect(push).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Correct' })).toBeTruthy();
+    expect(within(await openMore()).getByRole('menuitem', { name: /^Correct/ })).toBeTruthy();
   });
 
   it('an invoice with an open replacement links to it instead of offering a second one', async () => {
@@ -489,14 +510,15 @@ describe('DocumentEditor: the Correct flow', () => {
       ),
     );
     render(<DocumentEditor id="doc-1" />);
-    const link = await screen.findByRole('link', { name: 'Open the correction draft' });
+    const menu = await openMore();
+    const link = within(menu).getByRole('menuitem', { name: 'Open the correction draft' });
     expect(link.getAttribute('href')).toBe('/projects/books/documents/doc-2');
-    expect(screen.queryByRole('button', { name: 'Correct' })).toBeNull();
-    const linked = screen.getByRole('region', { name: 'Linked documents' });
+    expect(within(menu).queryByRole('menuitem', { name: /^Correct/ })).toBeNull();
+    const linked = screen.getByRole('region', { name: 'Linked documents', hidden: true });
     expect(within(linked).getByText(/Correction draft \(open\)/)).toBeTruthy();
     // Cancelling meanwhile warns that the open draft can no longer replace it.
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel with a credit note…' }));
-    expect(screen.getByRole('note').textContent).toMatch(/can no longer replace it/);
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Cancel with a credit note…' }));
+    expect((await screen.findByRole('alertdialog', { name: 'Cancel invoice 62?' })).textContent).toMatch(/can no longer replace it/);
   });
 
   it('the replacement draft says what issuing does, and the issue names the cancelled invoice', async () => {
@@ -525,9 +547,9 @@ describe('DocumentEditor: the Correct flow', () => {
     expect(banner.textContent).toMatch(/replaces invoice 62/);
     expect(banner.textContent).toMatch(/stays valid/);
     fireEvent.click(screen.getByRole('button', { name: 'Issue…' }));
-    expect(screen.getByRole('dialog', { name: 'Confirm issue' }).textContent).toMatch(/Invoice 62 is cancelled with a credit note at the same time/);
+    expect(screen.getByRole('alertdialog', { name: 'Issue this invoice?' }).textContent).toMatch(/Invoice 62 is cancelled with a credit note at the same time/);
     fireEvent.click(screen.getByRole('button', { name: 'Issue invoice' }));
-    expect((await screen.findByText(/Issued as 63\./)).textContent).toMatch(/Invoice 62 is cancelled with a credit note/);
+    expect((await screen.findByRole('alertdialog', { name: 'Invoice 63 issued' })).textContent).toMatch(/Invoice 62 is cancelled with a credit note/);
   });
 
   it('a replacement can print the replaced invoice under its title', async () => {
@@ -572,8 +594,9 @@ describe('DocumentEditor: the Correct flow', () => {
   it('an imported invoice offers no Correct, and says how to fix one', async () => {
     server(base(() => detail({ document: { ...ISSUED, source: 'import' } })));
     render(<DocumentEditor id="doc-1" />);
-    expect(await screen.findByText(/An imported invoice cannot be corrected here/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Correct' })).toBeNull();
+    const correct = within(await openMore()).getByRole('menuitem', { name: /^Correct/ });
+    expect(correct.getAttribute('aria-disabled')).toBe('true');
+    expect(correct.textContent).toMatch(/An imported invoice cannot be corrected here: cancel it with a credit note/);
   });
 });
 

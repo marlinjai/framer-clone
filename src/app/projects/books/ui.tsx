@@ -27,30 +27,26 @@ export function ErrorAlert({ message, onDismiss }: { message: string | null; onD
   );
 }
 
-const STATUS_STYLES: Record<DocumentView['status'], string> = {
-  draft: 'border-dashed text-muted-foreground',
-  issued: 'border-foreground/30 text-foreground',
-  sent: 'border-foreground/30 text-foreground',
-  accepted: 'border-foreground/30 text-foreground',
-  rejected: 'text-muted-foreground',
-  paid: 'border-foreground/30 text-foreground',
-  cancelled: 'text-muted-foreground line-through',
+/** Each status as a coloured dot (the app's status tokens) beside readable text: the colour never carries it alone. */
+const STATUS_DOTS: Record<DocumentView['status'], string> = {
+  draft: 'bg-status-draft',
+  issued: 'bg-status-published',
+  sent: 'bg-status-scheduled',
+  accepted: 'bg-status-published',
+  rejected: 'bg-muted-foreground',
+  paid: 'bg-status-published',
+  cancelled: 'bg-destructive',
 };
 
 export function StatusBadge({ status }: { status: DocumentView['status'] }) {
   return (
-    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs ${STATUS_STYLES[status]}`}>
+    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground">
+      <span aria-hidden className={`size-1.5 rounded-full ${STATUS_DOTS[status]}`} />
       {STATUS_LABELS[status]}
     </span>
   );
 }
 
-/**
- * A labelled field. With `error`, the message is shown under it with the id
- * {@link fieldErrorId}; the control names it in `aria-describedby` and sets
- * `aria-invalid` (see {@link fieldA11y}), so a screen reader reads the problem
- * with the field.
- */
 export function Field({
   label,
   htmlFor,
@@ -114,7 +110,7 @@ export function errorText(err: unknown): string {
 export function ImportedBadge() {
   return (
     <span
-      className="shrink-0 rounded-full border border-dashed px-2 py-0.5 text-xs text-muted-foreground"
+      className="inline-flex shrink-0 items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
       title="Imported from the earlier invoices: the original PDF is the document of record"
     >
       Imported

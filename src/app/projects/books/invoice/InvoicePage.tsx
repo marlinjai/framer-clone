@@ -28,10 +28,47 @@
 //   order; Enter opens a field, Escape leaves it unchanged, Enter in the new
 //   line's last field adds it and opens the next one (decision 7).
 
-import { MoreHorizontal, Plus, Search } from 'lucide-react';
+import {
+  AlignLeft,
+  ArrowDown,
+  ArrowUp,
+  Copy,
+  Hash,
+  Heading,
+  Loader2,
+  Minus,
+  MoreHorizontal,
+  MoveHorizontal,
+  Package,
+  Percent,
+  Plus,
+  Receipt,
+  Redo2,
+  Rows3,
+  Search,
+  TextQuote,
+  Trash2,
+  Undo2,
+  UserPlus,
+} from 'lucide-react';
+import Link from 'next/link';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { booksApi, type CustomerView, type DocumentDetail, type LineView, type ProductView } from '@/lib/books/api';
 import { lineFromProduct } from '@/lib/books/products';
 import { money, parseMoney, parseQuantity } from '@/lib/books/units';
@@ -39,7 +76,8 @@ import type { FieldRect, LayoutField } from '@/server/books/render/engine';
 
 import PdfCanvas from '../composer/PdfCanvas';
 import { errorText } from '../ui';
-import { TAX_CLASS_OPTIONS, applyLocal, editValue, editorValue, fieldLabel, isRichField, parseValue, richOfValue, readOnlyReason, sameValue, type FieldRequest } from './fields';
+import { TAX_CLASS_OPTIONS, applyLocal, editValue, editorValue, fieldLabel, isRichField, lineName, parseValue, richOfValue, readOnlyReason, sameValue, type FieldRequest } from './fields';
+import { FloatingToolbar, GLASS_SURFACE, ToolButton, ToolbarDivider } from './chrome';
 import RichTextEditor from './RichTextEditor';
 import { cssFontFamily, registerItalicFonts, useDraftPage } from './useDraftPage';
 
@@ -52,7 +90,22 @@ export interface InvoicePageProps {
   change: (fn: () => Promise<DocumentDetail>) => Promise<boolean>;
 }
 
-const ZOOMS = [0.75, 1, 1.25, 1.5];
+/** The zoom steps of the toolbar's minus and plus (fit width may land between them). */
+const ZOOMS = [0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+/** The range fit width may set (a very narrow or very wide window). */
+const ZOOM_MIN = 0.4;
+const ZOOM_MAX = 2.5;
+/** CSS pixels per PDF point (PdfCanvas draws at zoom times this). */
+const PX_PER_PT = 96 / 72;
+/** The optional parts the "Add" menu offers when the template prints them and the draft leaves them empty. */
+const OPTIONAL_PARTS: Partial<Record<string, { label: string; icon: React.ComponentType<{ 'aria-hidden'?: boolean }> }>> = {
+  subject: { label: 'Subject', icon: Heading },
+  introText: { label: 'Intro text', icon: TextQuote },
+  'meta.contract': { label: 'Reference', icon: Hash },
+  outroText: { label: 'Closing text', icon: TextQuote },
+};
+/** Their order where two print at the same place (an empty subject slot sits where the intro would start). */
+const PART_ORDER = ['meta.contract', 'subject', 'introText', 'outroText'];
 
 interface ActiveEditor {
   field: LayoutField;
@@ -75,25 +128,6 @@ interface UndoStep {
   /** Run against the latest version. */
   undo: (version: number) => Promise<DocumentDetail>;
   redo: (version: number) => Promise<DocumentDetail>;
-}
-
-/** What an empty field's placeholder says ("Add details", "Add an intro text"). */
-function placeholderText(f: LayoutField): string {
-  if (f.id === 'recipient.customer') return 'Choose a customer';
-  switch (f.documentField) {
-    case 'description':
-      return 'Add details';
-    case 'introText':
-      return 'Add an intro text';
-    case 'outroText':
-      return 'Add a closing text';
-    case 'contractReference':
-      return 'Add a reference';
-    case 'subject':
-      return 'Add a subject';
-    default:
-      return 'Add';
-  }
 }
 
 /**
@@ -157,7 +191,6 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
   const [zoom, setZoom] = useState(1);
   const [active, setActive] = useState<ActiveEditor | null>(null);
   const [adding, setAdding] = useState<{ title: string; quantity: string; unit: string; price: string; error: string | null } | null>(null);
-  const [menuFor, setMenuFor] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   // Counts lines added with "again", so the new line's description takes focus for the next one.
   const [nextLine, setNextLine] = useState(0);
@@ -174,6 +207,8 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
   const aliases = useRef(new Map<string, string>());
   // The version this page's own last change produced: any other version means the draft changed elsewhere.
   const ownVersion = useRef(doc.version);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const modKey = typeof navigator !== 'undefined' && /Mac|iP(hone|ad|od)/i.test(navigator.platform) ? '⌘' : 'Ctrl+';
   const announceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const announce = useCallback((text: string) => {
@@ -276,7 +311,6 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     const value = editorValue(field, detail);
     // The formatting editor types in the invoice's real italic faces, loaded the first time one opens.
     if (isRichField(field)) void registerItalicFonts(field.style.fontFamily);
-    setMenuFor(null);
     setPicking(false);
     closing.current = false;
     setActive({ field, rect, rectIndex, value, initial: value, error: null, retry: false });
@@ -408,6 +442,12 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     );
   }
 
+  function startLine() {
+    if (busy) return;
+    setPicking(false);
+    setAdding({ title: '', quantity: '1', unit: 'Std', price: '', error: null });
+  }
+
   async function saveNewLine(again: boolean) {
     if (!adding || savingLine.current || busy) return;
     const title = adding.title.trim();
@@ -431,9 +471,9 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
   }
 
   function lineAction(l: LineView, action: 'up' | 'down' | 'duplicate' | 'remove') {
-    setMenuFor(null);
     const ids = detailRef.current.lines.map((x) => x.id);
     const i = ids.indexOf(l.id);
+    const name = lineName(l, detailRef.current.lines);
     if (action === 'up' || action === 'down') {
       const j = i + (action === 'up' ? -1 : 1);
       if (j < 0 || j >= ids.length) return;
@@ -441,11 +481,11 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
       [next[i], next[j]] = [next[j], next[i]];
       focusAfter.current = `menu:${l.id}`;
       const order = (list: string[]) => (v: number) => booksApi.reorderLines(id, list.map(resolveLine), v);
-      void run({ label: 'Move', undo: order(ids), redo: order(next) }, order(next), `Line ${i + 1} moved ${action}.`);
+      void run({ label: 'Move', undo: order(ids), redo: order(next) }, order(next), `${name} moved ${action}.`);
       return;
     }
     if (action === 'duplicate') {
-      void addLineFrom(copyOfLine(l), `A copy of line ${i + 1}`, `menu:${l.id}`);
+      void addLineFrom(copyOfLine(l), `A copy of ${name.toLowerCase()}`, `menu:${l.id}`);
       return;
     }
     // Remove: undo adds it back at its place (under a new id, which steps for the old one follow).
@@ -453,7 +493,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     focusAfter.current = ids[i + 1] ? `menu:${ids[i + 1]}` : ids[i - 1] ? `menu:${ids[i - 1]}` : 'add-line';
     void run(
       {
-        label: `Remove line ${i + 1}`,
+        label: `Remove ${name.toLowerCase()}`,
         undo: async (v) => {
           let current = resolveLine(l.id);
           let d = detailRef.current;
@@ -477,7 +517,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
         redo: (v) => booksApi.removeLine(id, resolveLine(l.id), v),
       },
       (v) => booksApi.removeLine(id, resolveLine(l.id), v),
-      `Line ${i + 1} removed. Undo with Ctrl+Z or Cmd+Z.`,
+      `${name} removed. Undo with Ctrl+Z or Cmd+Z.`,
     );
   }
 
@@ -536,18 +576,6 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     const style = (r: FieldRect): React.CSSProperties => ({ left: r.x * scale, top: r.y * scale, width: Math.max(r.width * scale, 12), height: Math.max(r.height * scale, 10) });
     const nodes: React.ReactNode[] = [];
     let editorShown = false;
-    // The margin markers placed on this page so far: two empty slots that print at the same place (an empty subject
-    // right above an empty intro) would put their "+" on top of each other, the lower one out of a mouse's reach.
-    const markers: Array<{ left: number; top: number }> = [];
-    const markerAt = (left: number, top: number) => {
-      let x = left;
-      while (markers.some((m) => Math.abs(m.left - x) < 22 && Math.abs(m.top - top) < 22)) x -= 24;
-      markers.push({ left: x, top });
-      return { left: x, top };
-    };
-    // A line's margin marker sits left of the whole row (its position number), never over the table's columns.
-    const marginX = (f: LayoutField, r: FieldRect) =>
-      (f.lineId ? layout.anchors.rows.find((row) => row.lineId === f.lineId)?.rects.find((x) => x.page === r.page)?.x : undefined) ?? r.x;
     const editor = (rect: FieldRect) =>
       active ? (
         <InlineEditor
@@ -577,35 +605,32 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
         const recipient = f.id.startsWith('recipient.');
         const editable = f.kind !== 'readonly' || recipient;
         if (!editable) {
-          nodes.push(<span key={key} aria-hidden title={readOnlyReason(f)} className="absolute cursor-default rounded-[2px] hover:bg-gray-500/5" style={style(r)} />);
+          nodes.push(<span key={key} aria-hidden title={readOnlyReason(f)} className="absolute cursor-default rounded-[3px]" style={style(r)} />);
           return;
         }
         const label = fieldLabel(f, detail);
-        const value = f.kind === 'readonly' ? '' : editValue(f, detail);
-        const placeholder = f.empty && f.kind !== 'readonly';
-        const room = f.room ?? 999;
-        // Where the slot has hardly any free room (an empty line description sits right on the next row), the
-        // placeholder is a small "+" in the left margin, faint until hovered or focused, never over printed text.
-        if (placeholder && room < 9) {
+        const asCustomer = (): LayoutField => ({ ...f, kind: 'select', source: 'document', documentField: 'customerId', empty: false });
+        // Nothing is drawn on the invoice for an empty optional part (the "Add" menu offers it), except the customer,
+        // without whom there is no invoice: the address window asks for one.
+        if (f.empty && f.kind !== 'readonly') {
+          if (f.id !== 'recipient.customer') return;
           nodes.push(
             <button
               key={key}
               type="button"
               data-field-id={f.id}
               data-focus-key={ri === 0 ? f.id : undefined}
-              tabIndex={ri === 0 ? 0 : -1}
-              aria-label={`${placeholderText(f)} (${label})`}
-              title={placeholderText(f)}
               aria-disabled={busy || undefined}
-              className="absolute flex size-5 items-center justify-center rounded-full border border-blue-500 bg-white text-blue-700 opacity-30 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-blue-600"
-              style={markerAt(marginX(f, r) * scale - 34, Math.max(0, r.y * scale - 10))}
-              onClick={() => open(f, r, ri)}
+              className="glass absolute flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+              style={{ left: r.x * scale, top: r.y * scale }}
+              onClick={() => open(asCustomer(), r, ri)}
             >
-              <Plus aria-hidden className="size-3" />
+              <UserPlus aria-hidden className="size-3.5" /> Choose a customer
             </button>,
           );
           return;
         }
+        const value = f.kind === 'readonly' ? '' : editValue(f, detail);
         nodes.push(
           <button
             key={key}
@@ -616,79 +641,51 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
             aria-label={recipient ? `${label}: from the customer. Choose another customer` : `${label}: ${value || 'empty'}. Edit`}
             title={recipient ? readOnlyReason(f) : undefined}
             aria-disabled={busy || undefined}
-            className={`absolute rounded-[2px] text-left outline-none hover:ring-1 hover:ring-blue-400 focus-visible:ring-2 focus-visible:ring-blue-600 ${
-              placeholder ? 'border border-dashed border-blue-400/70 bg-blue-50/60' : ''
-            }`}
-            style={placeholder ? { ...style(r), height: Math.max(Math.min(r.height, Math.max(room, 9)) * scale, 14) } : style(r)}
-            onClick={() => {
-              if (recipient) {
-                const asCustomer: LayoutField = { ...f, kind: 'select', source: 'document', documentField: 'customerId', empty: false };
-                open(asCustomer, r, ri);
-              } else open(f, r, ri);
-            }}
-          >
-            {placeholder ? (
-              <span className="pointer-events-none flex items-center gap-1 px-1 text-[11px] leading-none text-blue-700">
-                <Plus aria-hidden className="size-3" />
-                {placeholderText(f)}
-              </span>
-            ) : null}
-          </button>,
+            className="absolute rounded-[3px] text-left outline-none transition-shadow duration-100 hover:ring-1 hover:ring-brand/45 focus-visible:ring-2 focus-visible:ring-brand"
+            style={style(r)}
+            onClick={() => (recipient ? open(asCustomer(), r, ri) : open(f, r, ri))}
+          />,
         );
       });
     }
 
-    // The line menus, beside each row in the right margin.
+    // Each line's actions, beside its row in the right margin.
     for (const row of layout.anchors.rows) {
       const r = row.rects.find((x) => x.page === pageNo);
       if (!r || row.rects[0] !== r) continue;
       const l = detail.lines.find((x) => x.id === row.lineId);
       if (!l) continue;
       const n = detail.lines.indexOf(l) + 1;
-      const menuOpen = menuFor === l.id;
+      const name = lineName(l, detail.lines);
+      const details = layout.fields.find((x) => x.id === `line.${l.id}.description`) ?? null;
       nodes.push(
-        <div key={`menu:${l.id}`} className="absolute" style={{ left: (r.x + r.width) * scale + 6, top: r.y * scale }}>
-          <button
-            type="button"
-            data-focus-key={`menu:${l.id}`}
-            aria-label={`Line ${n} actions`}
-            aria-expanded={menuOpen}
-            aria-haspopup="menu"
-            aria-disabled={busy || undefined}
-            className="flex size-6 items-center justify-center rounded border border-gray-500 bg-white text-gray-700 opacity-60 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-blue-600"
-            onClick={() => !busy && setMenuFor(menuOpen ? null : l.id)}
-          >
-            <MoreHorizontal aria-hidden className="size-4" />
-          </button>
-          {menuOpen ? (
-            <LineMenu
-              line={l}
-              index={n - 1}
-              count={detail.lines.length}
-              regular={!doc.kleinunternehmer && !doc.reverseCharge}
-              onAction={(a) => lineAction(l, a)}
-              onDiscount={() => {
-                const f: LayoutField =
-                  layout.fields.find((x) => x.id === `line.${l.id}.discount`) ??
-                  ({ ...syntheticLineField(l.id, 'discountBp', r), kind: 'number', valueUnit: 'basisPoints' } as LayoutField);
-                setMenuFor(null);
-                open(f, f.rects[0] ?? r);
-              }}
-              onTax={(taxClass) => {
-                setMenuFor(null);
-                const f = syntheticLineField(l.id, 'taxClass', r);
-                const before = l.taxClass ?? 'standard';
-                if (before === taxClass) return focusSoon(`menu:${l.id}`);
-                focusAfter.current = `menu:${l.id}`;
-                const to = (tc: string) => (v: number) => send({ kind: 'line', lineId: l.id, body: { taxClass: tc } }, v);
-                void run({ label: `Line ${n}, tax rate`, undo: to(before), redo: to(taxClass) }, to(taxClass), `${fieldLabel(f, detail)} saved.`);
-              }}
-              onClose={() => {
-                setMenuFor(null);
-                focusSoon(`menu:${l.id}`);
-              }}
-            />
-          ) : null}
+        <div key={`menu:${l.id}`} className="absolute" style={{ left: (r.x + r.width) * scale + 10, top: r.y * scale - 3 }}>
+          <LineActions
+            line={l}
+            index={n - 1}
+            name={name}
+            count={detail.lines.length}
+            busy={busy}
+            regular={!doc.kleinunternehmer && !doc.reverseCharge}
+            hasDetails={Boolean(l.description)}
+            onAction={(a) => lineAction(l, a)}
+            onDetails={() => details && open(details, details.rects[0] ?? r)}
+            canDetails={details !== null}
+            onDiscount={() => {
+              const f: LayoutField =
+                layout.fields.find((x) => x.id === `line.${l.id}.discount`) ??
+                ({ ...syntheticLineField(l.id, 'discountBp', r), kind: 'number', valueUnit: 'basisPoints' } as LayoutField);
+              open(f, f.rects[0] ?? r);
+            }}
+            onTax={(taxClass) => {
+              const f = syntheticLineField(l.id, 'taxClass', r);
+              const before = l.taxClass ?? 'standard';
+              if (before === taxClass) return;
+              focusAfter.current = `menu:${l.id}`;
+              const to = (tc: string) => (v: number) => send({ kind: 'line', lineId: l.id, body: { taxClass: tc } }, v);
+              void run({ label: `${name}, tax rate`, undo: to(before), redo: to(taxClass) }, to(taxClass), `${fieldLabel(f, detail)} saved.`);
+            }}
+          />
         </div>,
       );
     }
@@ -716,30 +713,22 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
           />,
         );
       } else {
+        const chip =
+          'glass flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-foreground/80 transition-colors hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand';
         nodes.push(
-          <div key="add-line" className="absolute flex items-center gap-2" style={{ left: a.rect.x * scale, top: a.rect.y * scale + 2 }}>
-            <button
-              type="button"
-              data-focus-key="add-line"
-              aria-disabled={busy || undefined}
-              className="flex items-center gap-1 rounded border border-dashed border-blue-500 bg-white px-2 py-0.5 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-blue-600"
-              onClick={() => {
-                if (busy) return;
-                setPicking(false);
-                setAdding({ title: '', quantity: '1', unit: 'Std', price: '', error: null });
-              }}
-            >
-              <Plus aria-hidden className="size-3" /> Add line
+          <div key="add-line" data-add-line className="absolute flex items-center gap-1.5" style={{ left: a.rect.x * scale, top: a.rect.y * scale + 4 }}>
+            <button type="button" data-focus-key="add-line" aria-disabled={busy || undefined} className={chip} onClick={startLine}>
+              <Plus aria-hidden className="size-3.5" /> Add line
             </button>
             <button
               type="button"
               data-focus-key="choose-product"
               aria-disabled={busy || undefined}
               aria-expanded={picking}
-              className="flex items-center gap-1 rounded border border-dashed border-blue-500 bg-white px-2 py-0.5 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-blue-600"
+              className={chip}
               onClick={() => !busy && setPicking(!picking)}
             >
-              <Search aria-hidden className="size-3" /> Choose product
+              <Package aria-hidden className="size-3.5" /> Product or service
             </button>
             {picking ? (
               <ProductSearch
@@ -780,46 +769,36 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
   }
 
   const pageCount = layout?.pageCount ?? 0;
+  const zoomTo = (z: number) => setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z * 100) / 100)));
+  const zoomStep = (dir: 1 | -1) => {
+    const next = dir > 0 ? ZOOMS.find((z) => z > zoom + 0.001) : [...ZOOMS].reverse().find((z) => z < zoom - 0.001);
+    if (next !== undefined) zoomTo(next);
+  };
+  // Fit width: the A4 page across the canvas's width, inside its margins.
+  const fitWidth = () => {
+    const width = canvasRef.current?.clientWidth ?? 0;
+    const pageWidth = (layout?.page.width ?? 595.28) * PX_PER_PT;
+    if (width > 0) zoomTo((width - 96) / pageWidth);
+  };
+  // The optional parts the template prints and the draft leaves empty: the "Add" menu offers each, in print order.
+  const emptyParts = (layout?.fields ?? [])
+    .filter((f) => f.empty && f.kind !== 'readonly' && OPTIONAL_PARTS[f.id] !== undefined && f.rects[0] !== undefined)
+    .sort((a, b) => a.rects[0]!.page - b.rects[0]!.page || a.rects[0]!.y - b.rects[0]!.y || PART_ORDER.indexOf(a.id) - PART_ORDER.indexOf(b.id));
 
   return (
-    <section aria-label="Invoice page" className="mb-6">
-      <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
-        <label className="flex items-center gap-2">
-          <span>Zoom</span>
-          <select className="rounded-md border border-gray-500 px-2 py-1" value={String(zoom)} onChange={(e) => setZoom(Number(e.target.value))}>
-            {ZOOMS.map((z) => (
-              <option key={z} value={String(z)}>
-                {Math.round(z * 100)} %
-              </option>
-            ))}
-          </select>
-        </label>
-        <Button size="sm" variant="outline" onClick={() => void undo()} disabled={undoStack.length === 0} aria-disabled={busy || undefined} aria-keyshortcuts="Control+Z Meta+Z">
-          Undo
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => void redo()} disabled={redoStack.length === 0} aria-disabled={busy || undefined} aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y">
-          Redo
-        </Button>
-        <span className="text-muted-foreground">
-          {page.error ? '' : page.pending ? 'Updating the page…' : pageCount > 0 ? `${pageCount} ${pageCount === 1 ? 'page' : 'pages'}` : ''}
-        </span>
-        {page.error ? (
-          <span role="alert" className="flex items-center gap-2 text-red-800">
-            {page.error}
-            <Button size="sm" variant="outline" onClick={page.reload}>
-              Try again
-            </Button>
-          </span>
-        ) : null}
-      </div>
-      <p className="mb-3 text-xs text-muted-foreground">
-        Click any text you can change and type. Amounts, tax and totals are calculated for you. The logo, the sender and the small print come
-        from the template.
-      </p>
+    <section aria-label="Invoice page" className="relative flex-1">
       <p aria-live="polite" className="sr-only">
         {announcement}
       </p>
-      <div className="overflow-auto rounded-lg bg-muted/40 p-6">
+      {page.error ? (
+        <div role="alert" className="glass mx-auto mt-5 flex w-fit max-w-[calc(100%-2rem)] items-center gap-3 rounded-xl px-4 py-2.5 text-sm text-destructive">
+          {page.error}
+          <Button size="sm" variant="outline" onClick={page.reload}>
+            Try again
+          </Button>
+        </div>
+      ) : null}
+      <div ref={canvasRef} className="overflow-x-auto px-6 pb-32 pt-8">
         <PdfCanvas
           pdf={page.drawn?.bytes ?? null}
           counter={page.drawn?.counter ?? null}
@@ -837,6 +816,97 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
           overlay={overlay}
         />
       </div>
+      <FloatingToolbar label="Invoice tools">
+        <ToolButton
+          label="Undo"
+          shortcut={`${modKey}Z`}
+          keys="Control+Z Meta+Z"
+          disabled={undoStack.length === 0 || busy}
+          disabledReason={busy ? 'Saving…' : 'Nothing to undo'}
+          onClick={() => void undo()}
+        >
+          <Undo2 size={18} aria-hidden />
+        </ToolButton>
+        <ToolButton
+          label="Redo"
+          shortcut={`${modKey}⇧Z`}
+          keys="Control+Shift+Z Meta+Shift+Z Control+Y"
+          disabled={redoStack.length === 0 || busy}
+          disabledReason={busy ? 'Saving…' : 'Nothing to redo'}
+          onClick={() => void redo()}
+        >
+          <Redo2 size={18} aria-hidden />
+        </ToolButton>
+        <ToolbarDivider />
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger
+            aria-disabled={busy || undefined}
+            className="flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-foreground transition-colors hover:bg-foreground/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand data-[state=open]:bg-foreground/[0.06]"
+          >
+            <Plus size={16} aria-hidden /> Add
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="center" sideOffset={12} className={`min-w-[13rem] rounded-xl ${GLASS_SURFACE}`}>
+            <DropdownMenuItem disabled={busy} onSelect={startLine}>
+              <Rows3 aria-hidden /> Line
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={busy}
+              onSelect={() => {
+                setAdding(null);
+                setPicking(true);
+                document.querySelector('[data-add-line]')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              }}
+            >
+              <Package aria-hidden /> Product or service…
+            </DropdownMenuItem>
+            {emptyParts.length > 0 ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>On the page</DropdownMenuLabel>
+                {emptyParts.map((f) => {
+                  const { label, icon: Icon } = OPTIONAL_PARTS[f.id]!;
+                  return (
+                    <DropdownMenuItem key={f.id} disabled={busy} onSelect={() => open(f, f.rects[0]!)}>
+                      <Icon aria-hidden /> {label}
+                    </DropdownMenuItem>
+                  );
+                })}
+              </>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <ToolbarDivider />
+        <ToolButton label="Zoom out" disabled={!ZOOMS.some((z) => z < zoom - 0.001)} disabledReason="Smallest size" onClick={() => zoomStep(-1)}>
+          <Minus size={18} aria-hidden />
+        </ToolButton>
+        <button
+          type="button"
+          onClick={() => zoomTo(1)}
+          title="Actual size"
+          aria-label={`Zoom ${Math.round(zoom * 100)} percent, set to actual size`}
+          className="h-9 min-w-[3.5rem] rounded-lg px-1 text-xs font-medium tabular-nums text-foreground/70 hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <ToolButton label="Zoom in" disabled={!ZOOMS.some((z) => z > zoom + 0.001)} disabledReason="Largest size" onClick={() => zoomStep(1)}>
+          <Plus size={18} aria-hidden />
+        </ToolButton>
+        <ToolButton label="Fit width" onClick={fitWidth}>
+          <MoveHorizontal size={18} aria-hidden />
+        </ToolButton>
+        <ToolbarDivider />
+        <span className="flex min-w-[4.5rem] items-center justify-center gap-1.5 px-2 text-xs text-muted-foreground" aria-hidden>
+          {page.pending ? (
+            <>
+              <Loader2 size={13} className="animate-spin" /> Drawing
+            </>
+          ) : pageCount > 0 ? (
+            `${pageCount} ${pageCount === 1 ? 'page' : 'pages'}`
+          ) : (
+            ''
+          )}
+        </span>
+      </FloatingToolbar>
       <section aria-label="Totals" className="sr-only">
         <p>
           Total {money(doc.total, doc.currencyCode)}, net {money(doc.subtotal, doc.currencyCode)}, tax {money(doc.taxAmount, doc.currencyCode)}.
@@ -904,7 +974,7 @@ function InlineEditor({
       onCommit('key');
     }
   };
-  const cls = 'w-full bg-white p-0 outline-2 outline-blue-600 ring-0 border-0';
+  const cls = 'w-full rounded-[3px] border-0 bg-background p-0 outline-none ring-2 ring-brand';
   let control: React.ReactNode;
   if (field.documentField === 'customerId') {
     control = (
@@ -932,7 +1002,7 @@ function InlineEditor({
   } else if (field.documentField === 'servicePeriod') {
     const [start = '', end = ''] = value.split('/');
     control = (
-      <span className="flex gap-1 bg-white p-1 shadow" onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && onCommit('blur')}>
+      <span className="glass flex gap-1 rounded-lg p-1" onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && onCommit('blur')}>
         <input aria-label={`${label}, first day`} aria-invalid={common['aria-invalid']} aria-describedby={common['aria-describedby']} type="date" autoFocus className="text-sm" value={start} onChange={(e) => onType(`${e.target.value}/${end}`)} onKeyDown={(e) => keys(e, false)} />
         <input aria-label={`${label}, last day`} aria-invalid={common['aria-invalid']} aria-describedby={common['aria-describedby']} type="date" className="text-sm" value={end} onChange={(e) => onType(`${start}/${e.target.value}`)} onKeyDown={(e) => keys(e, false)} />
       </span>
@@ -943,7 +1013,9 @@ function InlineEditor({
         initial={richOfValue(value)}
         label={label}
         textStyle={text}
-        minHeight={Math.max(rect.height, s.lineHeightPt * 2) * scale}
+        // The slot's own height to begin with (an empty one is one line): the text grows the box as it is typed,
+        // without covering what prints below before there is anything to show.
+        minHeight={Math.max(rect.height, s.lineHeightPt) * scale}
         invalid={Boolean(error)}
         describedBy={error ? errorId : undefined}
         onChange={(rich) => onType(JSON.stringify(rich))}
@@ -978,9 +1050,8 @@ function InlineEditor({
   return (
     <div style={box} className="z-20">
       {control}
-      {field.kind === 'multiline' ? <span className="mt-0.5 block text-[10px] text-gray-600">Ctrl+Enter or Cmd+Enter saves, Escape leaves it as it was.</span> : null}
       {error ? (
-        <span id={errorId} role="alert" className="mt-0.5 block rounded bg-red-50 px-1 text-xs text-red-800">
+        <span id={errorId} role="alert" className="mt-1 block w-fit rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive">
           {error}
         </span>
       ) : null}
@@ -1014,7 +1085,7 @@ function NewLineRow({
     const c = columns[col];
     return { left: (c?.x ?? fallbackX) * scale, width: Math.max((c?.width ?? fallbackW) * scale - 4, 40) };
   };
-  const input = 'absolute h-6 rounded-sm border border-blue-500 bg-white px-1 text-xs';
+  const input = 'absolute h-7 rounded-md border border-input bg-background px-1.5 text-xs shadow-sm outline-none focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/30';
   const style = { fontFamily: `${fontFamily}, system-ui, sans-serif` };
   const description = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -1036,17 +1107,17 @@ function NewLineRow({
       <input aria-label="New line, quantity" inputMode="decimal" className={`${input} text-right`} style={{ ...style, ...at('quantity', rect.x + rect.width * 0.45, 50), top: 0 }} value={value.quantity} onChange={(e) => onChange({ quantity: e.target.value })} onKeyDown={(e) => keys(e, false)} />
       <input aria-label="New line, unit" className={input} style={{ ...style, ...at('unit', rect.x + rect.width * 0.55, 40), top: 0 }} value={value.unit} onChange={(e) => onChange({ unit: e.target.value })} onKeyDown={(e) => keys(e, false)} />
       <input aria-label="New line, unit price in euros" inputMode="decimal" className={`${input} text-right`} style={{ ...style, ...at('unitPrice', rect.x + rect.width * 0.65, 70), top: 0 }} value={value.price} onChange={(e) => onChange({ price: e.target.value })} onKeyDown={(e) => keys(e, true)} />
-      <div className="absolute flex gap-2" style={{ left: rect.x * scale, top: 28 }}>
-        <Button size="sm" onClick={() => onSave(false)}>
-          Add the line
+      <div className="glass absolute flex items-center gap-1.5 rounded-xl p-1" style={{ left: rect.x * scale, top: 34 }}>
+        <Button size="sm" className="rounded-lg" onClick={() => onSave(false)} title="Enter in the price adds it and starts the next line">
+          Add line
+          <kbd className="ml-1 rounded border border-background/30 px-1 font-sans text-[10px] font-medium opacity-70">↵</kbd>
         </Button>
-        <Button size="sm" variant="ghost" onClick={onCancel}>
+        <Button size="sm" variant="ghost" className="rounded-lg" onClick={onCancel}>
           Cancel
         </Button>
-        <span className="self-center text-[11px] text-gray-600">Enter in the price adds it and starts the next one.</span>
       </div>
       {value.error ? (
-        <p role="alert" className="absolute rounded bg-red-50 px-1 text-xs text-red-800" style={{ left: rect.x * scale, top: 60 }}>
+        <p role="alert" className="absolute rounded-lg bg-destructive/10 px-2 py-1 text-xs text-destructive" style={{ left: rect.x * scale, top: 78 }}>
           {value.error}
         </p>
       ) : null}
@@ -1054,81 +1125,97 @@ function NewLineRow({
   );
 }
 
-function LineMenu({
+/** A line's actions: the shared menu, grouped (arrange, details and price, the VAT rate), Remove set apart. */
+function LineActions({
   line,
   index,
+  name,
   count,
+  busy,
   regular,
+  hasDetails,
+  canDetails,
   onAction,
+  onDetails,
   onDiscount,
   onTax,
-  onClose,
 }: {
   line: LineView;
   index: number;
+  /** "Line 2" or "Text row 1", as the invoice numbers its rows. */
+  name: string;
   count: number;
+  busy: boolean;
   regular: boolean;
+  hasDetails: boolean;
+  canDetails: boolean;
   onAction: (a: 'up' | 'down' | 'duplicate' | 'remove') => void;
+  onDetails: () => void;
   onDiscount: () => void;
   onTax: (taxClass: 'standard' | 'reduced' | 'zero') => void;
-  onClose: () => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    ref.current?.querySelector<HTMLElement>('button')?.focus();
-  }, []);
-  const item = 'block w-full rounded px-2 py-1 text-left text-sm hover:bg-accent focus-visible:outline-2 focus-visible:outline-blue-600 disabled:opacity-50';
+  const priced = line.kind !== 'text';
   return (
-    <div
-      ref={ref}
-      role="menu"
-      aria-label={`Line ${index + 1}`}
-      className="absolute left-0 top-7 z-30 w-48 rounded-md border border-gray-500 bg-white p-1 shadow-lg"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          onClose();
-        }
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-          e.preventDefault();
-          const items = Array.from(ref.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);
-          const i = items.indexOf(document.activeElement as HTMLButtonElement);
-          items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
-        }
-      }}
-    >
-      <button role="menuitem" type="button" className={item} disabled={index === 0} onClick={() => onAction('up')}>
-        Move up
-      </button>
-      <button role="menuitem" type="button" className={item} disabled={index === count - 1} onClick={() => onAction('down')}>
-        Move down
-      </button>
-      <button role="menuitem" type="button" className={item} onClick={() => onAction('duplicate')}>
-        Duplicate
-      </button>
-      {line.kind !== 'text' ? (
-        <button role="menuitem" type="button" className={item} onClick={onDiscount}>
-          {line.discountBp > 0 ? 'Change the discount' : 'Add a discount'}
-        </button>
-      ) : null}
-      {line.kind !== 'text' && regular
-        ? TAX_CLASS_OPTIONS.map((o) => (
-            <button
-              key={o.value}
-              role="menuitemradio"
-              aria-checked={(line.taxClass ?? 'standard') === o.value}
-              type="button"
-              className={item}
-              onClick={() => onTax(o.value)}
-            >
-              VAT {o.label}
-            </button>
-          ))
-        : null}
-      <button role="menuitem" type="button" className={`${item} text-red-800`} onClick={() => onAction('remove')}>
-        Remove
-      </button>
-    </div>
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger
+        data-focus-key={`menu:${line.id}`}
+        aria-label={`${name} actions`}
+        title={`${name} actions`}
+        aria-disabled={busy || undefined}
+        className="flex size-7 items-center justify-center rounded-lg text-foreground/60 transition-colors hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand data-[state=open]:bg-foreground/[0.06] data-[state=open]:text-foreground"
+      >
+        <MoreHorizontal aria-hidden className="size-4" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className={`min-w-[13rem] rounded-xl ${GLASS_SURFACE}`} aria-label={name}>
+        <DropdownMenuGroup>
+          <DropdownMenuItem disabled={busy || index === 0} onSelect={() => onAction('up')}>
+            <ArrowUp aria-hidden /> Move up
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={busy || index === count - 1} onSelect={() => onAction('down')}>
+            <ArrowDown aria-hidden /> Move down
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={busy} onSelect={() => onAction('duplicate')}>
+            <Copy aria-hidden /> Duplicate
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        {canDetails || priced ? <DropdownMenuSeparator /> : null}
+        <DropdownMenuGroup>
+          {canDetails ? (
+            <DropdownMenuItem disabled={busy} onSelect={onDetails}>
+              <AlignLeft aria-hidden /> {hasDetails ? 'Edit the details' : 'Add details'}
+            </DropdownMenuItem>
+          ) : null}
+          {priced ? (
+            <DropdownMenuItem disabled={busy} onSelect={onDiscount}>
+              <Percent aria-hidden /> {line.discountBp > 0 ? 'Change the discount' : 'Add a discount'}
+            </DropdownMenuItem>
+          ) : null}
+          {priced && regular ? (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger disabled={busy}>
+                <Receipt aria-hidden /> VAT rate
+                <span className="ml-auto pl-3 text-xs text-muted-foreground">
+                  {TAX_CLASS_OPTIONS.find((o) => o.value === (line.taxClass ?? 'standard'))?.label}
+                </span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className={`rounded-xl ${GLASS_SURFACE}`}>
+                <DropdownMenuRadioGroup value={line.taxClass ?? 'standard'} onValueChange={(v) => onTax(v as 'standard' | 'reduced' | 'zero')}>
+                  {TAX_CLASS_OPTIONS.map((o) => (
+                    <DropdownMenuRadioItem key={o.value} value={o.value}>
+                      {o.label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          ) : null}
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" disabled={busy} onSelect={() => onAction('remove')}>
+          <Trash2 aria-hidden /> Remove
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -1138,7 +1225,10 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; 
   const [result, setResult] = useState<{ q: string; items: ProductView[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pickFirst = useRef(false);
+  // The highlighted product (the combobox pattern: the focus stays in the search, the arrows move this).
+  const [active, setActive] = useState(0);
   const items = result?.items ?? null;
+  useEffect(() => setActive(0), [result]);
   useEffect(() => {
     let cancelled = false;
     const query = q.trim();
@@ -1160,13 +1250,21 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; 
       onPick(result.items[0]);
     }
   }, [current, result, onPick]);
+  const option = (i: number) => `product-option-${i}`;
   return (
-    <div role="dialog" aria-label="Choose a product or service" className="absolute left-0 top-7 z-30 w-80 rounded-md border border-gray-500 bg-white p-2 shadow-lg">
-      <label className="flex flex-col gap-1 text-xs font-medium text-gray-700">
-        Search your products and services
+    <div role="dialog" aria-label="Choose a product or service" className={`absolute left-0 top-9 z-30 w-80 rounded-xl border p-1.5 text-popover-foreground ${GLASS_SURFACE}`}>
+      <label className="glass-inset flex items-center gap-2 rounded-lg px-2.5">
+        <Search aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        <span className="sr-only">Search your products and services</span>
         <input
           autoFocus
-          className="rounded-md border border-gray-500 px-2 py-1 text-sm"
+          role="combobox"
+          aria-expanded={Boolean(items?.length)}
+          aria-controls="product-options"
+          aria-autocomplete="list"
+          aria-activedescendant={current && result.items[active] ? option(active) : undefined}
+          placeholder="Search products and services"
+          className="h-9 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
@@ -1174,29 +1272,52 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; 
               e.preventDefault();
               onClose();
             }
+            if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && items && items.length > 0) {
+              e.preventDefault();
+              const next = (active + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+              setActive(next);
+              document.getElementById(option(next))?.scrollIntoView({ block: 'nearest' });
+            }
             if (e.key === 'Enter') {
               e.preventDefault();
-              if (current && result.items[0]) onPick(result.items[0]);
+              if (current && result.items[active]) onPick(result.items[active]);
               else if (!current) pickFirst.current = true;
             }
           }}
         />
       </label>
-      {error ? <p className="mt-2 text-xs text-red-800">{error}</p> : null}
-      {items === null ? <p className="mt-2 text-xs text-muted-foreground">Loading…</p> : null}
-      {items?.length === 0 ? (
-        <p className="mt-2 text-xs text-muted-foreground">Nothing found. Products and services are kept in the Books’ Products tab.</p>
+      {error ? <p role="alert" className="px-2.5 pt-2 text-xs text-destructive">{error}</p> : null}
+      {items === null && !error ? (
+        <p className="flex items-center gap-2 px-2.5 py-3 text-xs text-muted-foreground">
+          <Loader2 aria-hidden className="size-3.5 animate-spin" /> Loading…
+        </p>
       ) : null}
-      <ul className="mt-2 max-h-64 overflow-y-auto">
-        {items?.map((p) => (
-          <li key={p.id}>
-            <button type="button" className="flex w-full justify-between gap-2 rounded px-2 py-1 text-left text-sm hover:bg-accent focus-visible:outline-2 focus-visible:outline-blue-600" onClick={() => onPick(p)}>
-              <span className="truncate">{p.name}</span>
-              <span className="shrink-0 tabular-nums text-muted-foreground">
-                {money(p.unitPrice)} / {p.unitLabel}
-                {p.priceBasis === 'gross' ? ' brutto' : ''}
-              </span>
-            </button>
+      {items?.length === 0 ? (
+        <div className="px-2.5 py-3 text-xs text-muted-foreground">
+          {q.trim() ? <p>Nothing matches “{q.trim()}”.</p> : <p>No products or services yet.</p>}
+          <Link href="/projects/books?tab=products" className="mt-1.5 inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline">
+            <Plus aria-hidden className="size-3.5" /> Add them in Products and services
+          </Link>
+        </div>
+      ) : null}
+      <ul id="product-options" role="listbox" aria-label="Products and services" className="mt-1 max-h-64 overflow-y-auto empty:hidden">
+        {items?.map((p, i) => (
+          <li
+            key={p.id}
+            id={option(i)}
+            role="option"
+            aria-selected={i === active}
+            className={`flex cursor-pointer justify-between gap-3 rounded-lg px-2.5 py-2 text-[13px] ${i === active ? 'bg-accent' : ''}`}
+            // A press keeps the focus in the search, so the picker does not close before the pick.
+            onMouseDown={(e) => e.preventDefault()}
+            onMouseEnter={() => setActive(i)}
+            onClick={() => onPick(p)}
+          >
+            <span className="truncate font-medium">{p.name}</span>
+            <span className="shrink-0 tabular-nums text-muted-foreground">
+              {money(p.unitPrice)} / {p.unitLabel}
+              {p.priceBasis === 'gross' ? ' brutto' : ''}
+            </span>
           </li>
         ))}
       </ul>

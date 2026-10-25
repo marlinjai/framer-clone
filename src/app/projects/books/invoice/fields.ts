@@ -170,13 +170,23 @@ const DOCUMENT_PARTS: Record<string, string> = {
   customerId: 'Customer',
 };
 
+/**
+ * What a line is called, as the invoice numbers it: priced lines count 1, 2, 3 in the "Pos." column, a text
+ * row between them has no number there, so it is "Text row 1", "Text row 2".
+ */
+export function lineName(line: LineView, lines: LineView[]): string {
+  const same = lines.filter((l) => (l.kind === 'text') === (line.kind === 'text'));
+  const n = same.indexOf(line) + 1;
+  return line.kind === 'text' ? `Text row ${n}` : `Line ${n}`;
+}
+
 /** What a field is called ("Line 2, quantity", "Intro text", "Recipient, line 1"). */
 export function fieldLabel(field: LayoutField, detail: DocumentDetail): string {
   if (field.lineId) {
     const line = lineOf(field, detail);
-    const n = line ? line.position : detail.lines.findIndex((l) => l.id === field.lineId) + 1;
+    const name = line ? lineName(line, detail.lines) : `Line ${detail.lines.findIndex((l) => l.id === field.lineId) + 1}`;
     const part = field.documentField ? LINE_PARTS[field.documentField] : field.id.split('.').pop();
-    return `Line ${n}, ${part === 'rate' ? 'tax rate' : part}`;
+    return `${name}, ${part === 'rate' ? 'tax rate' : part}`;
   }
   if (field.documentField) return DOCUMENT_PARTS[field.documentField] ?? field.id;
   if (field.id.startsWith('recipient.line.')) return `Recipient, line ${field.id.split('.').pop()}`;

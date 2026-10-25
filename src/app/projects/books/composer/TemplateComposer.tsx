@@ -30,6 +30,7 @@
 // `aria-live` region.
 
 import { useUndoableState } from '@marlinjai/block-editor-react';
+import { ChevronLeft, Loader2, Redo2, Undo2 } from 'lucide-react';
 import Link from 'next/link';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -107,8 +108,9 @@ export default function TemplateComposer({ id }: { id: string }) {
 
   if (failure) {
     return (
-      <main className="mx-auto flex max-w-xl flex-col gap-4 p-8">
-        <h1 className="text-xl font-semibold">Template composer</h1>
+      <main className="glass-ground flex min-h-dvh items-start justify-center p-3 pt-16">
+        <div className="glass flex w-full max-w-xl flex-col gap-4 rounded-2xl p-6">
+        <h1 className="text-lg font-semibold">Template composer</h1>
         <p>
           {failure.code === 'template_not_found'
             ? 'This template does not exist or was removed. Documents issued with it keep their layout.'
@@ -120,14 +122,17 @@ export default function TemplateComposer({ id }: { id: string }) {
           </Button>
           {failure.code === 'template_not_found' ? null : <Button onClick={() => void load()}>Try again</Button>}
         </div>
+        </div>
       </main>
     );
   }
   if (!template) {
     return (
-      <p className="p-8 text-sm text-muted-foreground" role="status">
-        Loading the template…
-      </p>
+      <div className="glass-ground flex min-h-dvh items-start justify-center p-3 pt-16">
+        <p className="glass flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm text-muted-foreground" role="status">
+          <Loader2 size={14} aria-hidden className="animate-spin" /> Loading the template…
+        </p>
+      </div>
     );
   }
   return (
@@ -586,10 +591,14 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
   const pageCount = preview.result?.layout.pageCount ?? 0;
 
   return (
-    <div className="flex min-h-screen flex-col lg:h-screen">
+    <div className="glass-ground flex min-h-dvh flex-col gap-3 p-3 lg:h-dvh">
       <h1 className="sr-only">Template composer: {name}</h1>
-      <header className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
-        <Link href="/projects/books?tab=templates" className="text-sm underline">
+      <header className="glass flex min-h-14 shrink-0 flex-wrap items-center gap-2 rounded-2xl px-2 py-1.5 lg:px-3">
+        <Link
+          href="/projects/books?tab=templates"
+          className="flex h-8 items-center gap-1 rounded-lg pl-1 pr-2 text-sm text-foreground/70 hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        >
+          <ChevronLeft size={16} aria-hidden />
           Templates
         </Link>
         <label className="sr-only" htmlFor="composer-name">
@@ -599,7 +608,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
           id="composer-name"
           value={name}
           maxLength={80}
-          className="rounded-md border border-transparent px-2 py-1 text-lg font-semibold hover:border-gray-300 focus:border-gray-400"
+          className="min-w-0 rounded-lg border border-transparent bg-transparent px-2 py-1 text-[15px] font-semibold outline-none hover:bg-foreground/[0.04] focus-visible:border-brand focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-brand/25"
           ref={nameRef}
           onChange={(e) => setName(e.target.value)}
           onBlur={(e) => {
@@ -624,20 +633,20 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
           {dirty ? ', unsaved changes' : ''}
         </span>
         {isDefault ? (
-          <span className="rounded-full border px-2 py-0.5 text-xs">Default</span>
+          <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium">Default</span>
         ) : (
           <Button size="sm" variant="ghost" onClick={() => void makeDefault()}>
             Make default
           </Button>
         )}
-        <span className="ml-auto flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={undo} disabled={!canUndo} aria-keyshortcuts="Control+Z Meta+Z">
-            Undo
+        <span className="ml-auto flex items-center gap-1">
+          <Button size="sm" variant="ghost" className="rounded-lg" onClick={undo} disabled={!canUndo} aria-keyshortcuts="Control+Z Meta+Z">
+            <Undo2 aria-hidden /> Undo
           </Button>
-          <Button size="sm" variant="outline" onClick={redo} disabled={!canRedo} aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y">
-            Redo
+          <Button size="sm" variant="ghost" className="rounded-lg" onClick={redo} disabled={!canRedo} aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y">
+            <Redo2 aria-hidden /> Redo
           </Button>
-          <Button size="sm" onClick={() => void save()} disabled={saving || !dirty || resume?.kind === 'stale'} aria-keyshortcuts="Control+S Meta+S">
+          <Button size="sm" className="ml-1 rounded-lg px-4" onClick={() => void save()} disabled={saving || !dirty || resume?.kind === 'stale'} aria-keyshortcuts="Control+S Meta+S">
             {saving ? 'Saving…' : 'Save'}
           </Button>
         </span>
@@ -647,10 +656,10 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
         {announcement}
       </p>
 
-      <div className="flex flex-col gap-2 px-4 pt-2">
+      <div className="flex flex-col gap-2 empty:hidden">
         <ErrorAlert message={error} onDismiss={() => setError(null)} />
         {resume?.kind === 'restored' ? (
-          <div role="status" className="flex flex-wrap items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm">
+          <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl border border-brand/30 bg-brand/10 px-3 py-2 text-sm">
             Your unsaved changes from {formatTime(resume.copy.savedAt)} are back. Undo returns to the saved version.
             <Button size="sm" variant="ghost" onClick={() => setResume(null)}>
               OK
@@ -658,7 +667,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
           </div>
         ) : null}
         {resume?.kind === 'stale' ? (
-          <div role="alert" data-resume-offer className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
+          <div role="alert" data-resume-offer className="flex flex-wrap items-center gap-2 rounded-xl border border-warning/45 bg-warning/10 px-3 py-2 text-sm">
             <span>
               Unsaved changes from {formatTime(resume.copy.savedAt)} are kept in this browser. They were made on version {resume.copy.baseVersion}; version{' '}
               {base.version} was saved since. Applying them replaces what the newer version changed when you save. Choose first: editing waits until
@@ -693,7 +702,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
           </div>
         ) : null}
         {conflict ? (
-          <div role="alert" className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
+          <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-warning/45 bg-warning/10 px-3 py-2 text-sm">
             Someone saved a newer version of this template meanwhile, so yours was not saved. Load the newest version; your changes stay in this browser and are
             offered to you there.
             <Button size="sm" variant="outline" onClick={() => void onReload()}>
@@ -702,7 +711,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
           </div>
         ) : null}
         {!parsed.success ? (
-          <div role="alert" className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
+          <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             <p className="font-medium">Some fields need a value before the preview can update:</p>
             <ul className="list-disc pl-5">
               {parsed.error.issues.slice(0, 5).map((issue, i) => (
@@ -712,7 +721,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
           </div>
         ) : null}
         {problems.length > 0 ? (
-          <section aria-label="What stops this template from being saved" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          <section aria-label="What stops this template from being saved" className="rounded-xl border border-warning/45 bg-warning/10 px-3 py-2 text-sm text-foreground">
             <p className="font-medium">
               {saveProblems ? 'Not saved. To fix:' : 'To fix before saving:'} {problems.length} {problems.length === 1 ? 'problem' : 'problems'}
             </p>
@@ -735,9 +744,9 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
       {/* While earlier edits are offered (stale working copy) the panels wait for the choice, so nothing is lost between the two. */}
       <div
         inert={resume?.kind === 'stale'}
-        className="grid min-h-0 flex-1 grid-cols-1 overflow-auto lg:grid-cols-[16rem_1fr_20rem] lg:overflow-hidden"
+        className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto lg:grid-cols-[16rem_1fr_20rem] lg:overflow-hidden"
       >
-        <nav aria-label="Blocks" className="overflow-y-auto border-r p-3">
+        <nav aria-label="Blocks" className="glass overflow-y-auto rounded-2xl p-3">
           <Outline
             doc={doc}
             selectedId={selectedId}
@@ -760,12 +769,12 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
           />
         </nav>
 
-        <section aria-label="Preview" className="flex min-h-0 flex-col">
-          <div className="flex flex-wrap items-center gap-3 border-b px-3 py-2 text-sm">
+        <section aria-label="Preview" className="flex min-h-0 flex-col gap-3">
+          <div className="glass flex flex-wrap items-center gap-3 rounded-xl px-3 py-1.5 text-sm">
             <label className="flex items-center gap-2">
               <span>Preview with</span>
               <select
-                className="rounded-md border border-gray-500 px-2 py-1"
+                className="h-8 rounded-lg border border-foreground/45 bg-background px-2"
                 value={subject.kind === 'sample' ? `sample:${subject.variant}` : `document:${subject.documentId}`}
                 onFocus={() => void loadDocuments()}
                 // Opening the list again retries after a failed load (an already focused list sends no focus event).
@@ -799,7 +808,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
             </label>
             <label className="flex items-center gap-2">
               <span>Zoom</span>
-              <select className="rounded-md border border-gray-500 px-2 py-1" value={String(zoom)} onChange={(e) => setZoom(Number(e.target.value))}>
+              <select className="h-8 rounded-lg border border-foreground/45 bg-background px-2" value={String(zoom)} onChange={(e) => setZoom(Number(e.target.value))}>
                 {ZOOMS.map((z) => (
                   <option key={z} value={String(z)}>
                     {Math.round(z * 100)} %
@@ -827,9 +836,9 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
               </Button>
             ) : null}
           </div>
-          {preview.error ? <p className="px-3 pt-2 text-sm text-red-800">{preview.error}</p> : null}
-          {drawError ? <p className="px-3 pt-2 text-sm text-red-800">The preview could not be drawn: {drawError}</p> : null}
-          <div className="min-h-0 flex-1 overflow-auto bg-muted/40 p-6">
+          {preview.error ? <p className="px-3 pt-2 text-sm text-destructive">{preview.error}</p> : null}
+          {drawError ? <p className="px-3 pt-2 text-sm text-destructive">The preview could not be drawn: {drawError}</p> : null}
+          <div className="min-h-0 flex-1 overflow-auto px-2 py-4">
             <PdfCanvas
               pdf={preview.result?.pdf ?? null}
               counter={preview.result?.counter ?? null}
@@ -852,7 +861,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
           </div>
         </section>
 
-        <aside aria-labelledby="inspector-title" ref={inspectorRef} className="overflow-y-auto border-l p-3">
+        <aside aria-labelledby="inspector-title" ref={inspectorRef} className="glass overflow-y-auto rounded-2xl p-3">
           <Inspector doc={doc} selectedId={selectedId} update={update} problems={problems} onSelect={select}
             onRemove={remove}
             onStep={(d) => step(d)}
@@ -867,7 +876,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
 
 function Versions({ versions }: { versions: TemplateVersionView[] | null }) {
   return (
-    <details className="mt-6 border-t pt-3 text-sm">
+    <details className="mt-6 border-t border-foreground/10 pt-3 text-sm">
       <summary className="cursor-pointer font-medium">Saved versions</summary>
       {versions === null ? (
         <p className="pt-2 text-muted-foreground">Loading…</p>

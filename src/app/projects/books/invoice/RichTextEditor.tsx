@@ -76,6 +76,9 @@ function pressed(command: Command): boolean {
   }
 }
 
+/** The save shortcut's modifier as the keyboard shows it. */
+const MOD = typeof navigator !== 'undefined' && /Mac|iP(hone|ad|od)/i.test(navigator.platform) ? '⌘' : 'Ctrl+';
+
 /** A key that belongs to an input method composing a character (its Escape cancels the conversion, not the edit). */
 function composing(e: React.KeyboardEvent): boolean {
   return e.nativeEvent.isComposing || e.keyCode === 229;
@@ -193,7 +196,7 @@ export default function RichTextEditor({
           role="toolbar"
           aria-label={`${label}, formatting`}
           // Floats above the text, so the text stays exactly where the PDF prints it.
-          className="absolute bottom-full left-0 z-30 mb-1 flex w-max gap-0.5 rounded border border-gray-500 bg-white p-0.5 shadow-sm"
+          className="glass absolute bottom-full left-0 z-30 mb-2 flex w-max items-center gap-0.5 rounded-xl p-1"
           // A press anywhere on the toolbar (between the buttons too) keeps the focus and the selection in the text.
           onMouseDown={(e) => e.preventDefault()}
           onKeyDown={(e) => {
@@ -214,9 +217,9 @@ export default function RichTextEditor({
               aria-keyshortcuts={keys || undefined}
               title={keys ? `${name} (${keys.split(' ')[0].replace('Control', 'Ctrl')})` : name}
               tabIndex={i === stop ? 0 : -1}
-              // Pressed is a solid fill (a contrast of more than 3 to 1 with the toolbar, WCAG 1.4.11).
-              className={`flex size-6 items-center justify-center rounded focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-600 ${
-                state[command] ? 'bg-blue-700 text-white' : 'text-gray-800 hover:bg-gray-100'
+              // Pressed is a near-black fill (far more than 3 to 1 against the glass, WCAG 1.4.11).
+              className={`flex size-7 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
+                state[command] ? 'bg-foreground text-background' : 'text-foreground/70 hover:bg-foreground/[0.06] hover:text-foreground'
               }`}
               onFocus={() => setStop(i)}
               onClick={() => apply(command)}
@@ -224,6 +227,9 @@ export default function RichTextEditor({
               <Icon aria-hidden className="size-3.5" />
             </button>
           ))}
+          <span aria-hidden className="ml-1 border-l border-foreground/10 pl-2.5 pr-1.5 text-xs text-muted-foreground">
+            {MOD}↵ saves · Esc leaves it
+          </span>
         </div>
       ) : null}
       <div
@@ -236,7 +242,7 @@ export default function RichTextEditor({
         contentEditable
         suppressContentEditableWarning
         spellCheck
-        className="w-full bg-white p-0 outline-2 outline-blue-600 [&_li]:ml-4 [&_li]:list-disc [&_p]:m-0 [&_ul]:m-0 [&_ul]:p-0"
+        className="w-full rounded-[3px] bg-background p-0 outline-none ring-2 ring-brand [&_li]:ml-4 [&_li]:list-disc [&_p]:m-0 [&_ul]:m-0 [&_ul]:p-0"
         style={{ ...textStyle, minHeight }}
         onFocus={prepare}
         onInput={changed}

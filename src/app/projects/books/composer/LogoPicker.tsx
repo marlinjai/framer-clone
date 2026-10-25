@@ -214,14 +214,14 @@ export default function LogoPicker({
 
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-xs font-medium text-gray-600">Image</span>
+      <span className="text-xs font-medium text-muted-foreground">Image</span>
       {assetSha256 ? (
         // eslint-disable-next-line @next/next/no-img-element -- a private, authenticated asset; the image optimiser cannot fetch it
-        <img src={booksApi.assetUrl(assetSha256)} alt="The current logo" className="max-h-24 max-w-full self-start rounded border border-gray-500 bg-white object-contain p-1" />
+        <img src={booksApi.assetUrl(assetSha256)} alt="The current logo" className="max-h-24 max-w-full self-start rounded border border-foreground/45 bg-white object-contain p-1" />
       ) : (
         <p className="text-xs text-muted-foreground">No image yet: the block prints nothing until one is chosen.</p>
       )}
-      <label htmlFor={inputId} className="text-xs font-medium text-gray-600">
+      <label htmlFor={inputId} className="text-xs font-medium text-muted-foreground">
         {assetSha256 ? 'Replace the logo' : 'Upload a logo'}
       </label>
       <input
@@ -231,7 +231,7 @@ export default function LogoPicker({
         accept="image/png,image/jpeg,image/svg+xml,.svg"
         disabled={busy}
         aria-describedby={hintId}
-        className="text-sm file:mr-2 file:rounded-md file:border file:border-gray-500 file:bg-white file:px-2 file:py-1"
+        className="text-sm file:mr-2 file:rounded-md file:border file:border-foreground/45 file:bg-white file:px-2 file:py-1"
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) void upload(file);
@@ -246,15 +246,15 @@ export default function LogoPicker({
           Remove the image
         </Button>
       ) : null}
-      <p ref={statusLine} tabIndex={-1} role="status" className={`text-xs ${status?.kind === 'error' ? 'text-red-800' : 'text-muted-foreground'}`}>
+      <p ref={statusLine} tabIndex={-1} role="status" className={`text-xs ${status?.kind === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
         {working === 'upload' ? 'Uploading…' : working === 'delete' ? 'Deleting…' : (status?.text ?? '')}
       </p>
 
-      <span id={listId} className="mt-1 text-xs font-medium text-gray-600">
+      <span id={listId} className="mt-1 text-xs font-medium text-muted-foreground">
         Your logos
       </span>
       {listError ? (
-        <p role="alert" className="text-xs text-red-800">
+        <p role="alert" className="text-xs text-destructive">
           {listError}
         </p>
       ) : logos === null ? (
@@ -276,7 +276,7 @@ export default function LogoPicker({
                   disabled={busy}
                   onClick={() => chooseStored(a)}
                   className={`flex h-12 w-24 shrink-0 items-center justify-center rounded border bg-white p-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground ${
-                    chosen ? 'border-foreground ring-2 ring-foreground' : 'border-gray-500'
+                    chosen ? 'border-foreground ring-2 ring-foreground' : 'border-foreground/45'
                   }`}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element -- a private, authenticated asset; the image optimiser cannot fetch it */}
@@ -287,14 +287,14 @@ export default function LogoPicker({
                   {chosen ? <span className="block text-foreground">Chosen</span> : null}
                 </span>
                 {a.inUse ? (
-                  <span className="shrink-0 rounded-full border border-gray-500 px-2 py-0.5 text-xs">
+                  <span className="shrink-0 rounded-full border border-foreground/45 px-2 py-0.5 text-xs">
                     In use<span className="sr-only">: printed on an issued document or used by a template, so it cannot be deleted</span>
                   </span>
                 ) : chosen ? null : (
                   <Button
                     size="sm"
                     variant="outline"
-                    className="shrink-0 border-gray-500"
+                    className="shrink-0 border-foreground/45"
                     disabled={busy}
                     aria-label={`Delete the logo ${name}`}
                     onClick={(e) => {
