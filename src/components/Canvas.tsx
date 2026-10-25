@@ -21,6 +21,7 @@ import {
 } from '@/lib/canvas/marquee';
 import {
   DOUBLE_TAP_ZOOM_FACTOR,
+  DoubleTapRecognizer,
   TAP_MAX_DURATION_MS,
   TouchGestureTracker,
   clampZoom,
@@ -31,6 +32,14 @@ import {
   type CameraTransform,
   type Tap,
 } from '@/lib/canvas/touchGestures';
+import { placeCaret, startInlineTextEdit } from '@/lib/canvas/inlineTextEdit';
+
+/**
+ * HUD elements a finger may press while it means the canvas under them: the
+ * selection's resize and corner dots and the spacing handles grow 44px touch
+ * targets that cover a small selected text (globals.css).
+ */
+const CANVAS_HANDLE_SELECTOR = '[data-resize-direction],[data-radius-corner],[data-spacing-handle]';
 
 /** Where a marquee started: empty canvas, or one breakpoint frame. */
 type MarqueeScope =
@@ -406,6 +415,13 @@ const CanvasInner = observer(() => {
   const lastTouchPressAtRef = useRef(-Infinity);
   // What each finger on the canvas pressed, for its tap.
   const pressTargetsRef = useRef(new Map<number, EventTarget | null>());
+  // Double-taps of fingers come from touch events (doubleTapRef below); the
+  // pointer path only recognises them for a contact that sends no touch
+  // events (a pen on Windows). Browsers send pointerdown before touchstart,
+  // so this is reset on the first pointerdown and set by the touchstart.
+  const contactHasTouchEventsRef = useRef(false);
+  const doubleTapRef = useRef<DoubleTapRecognizer | null>(null);
+  if (!doubleTapRef.current) doubleTapRef.current = new DoubleTapRecognizer();
 
   const groundPoint = useCallback((clientX: number, clientY: number) => {
     const rect = groundRef.current?.getBoundingClientRect();
@@ -493,9 +509,36 @@ const CanvasInner = observer(() => {
     return null;
   }, [rootStore.editorUI]);
 
-  const handleDoubleTap = useCallback((target: Element, tap: Tap) => {
-    if (target instanceof HTMLElement && target.isContentEditable) return;
+  /**
+   * What a double-tap at `tap` is on: the deepest canvas element under the
+   * point. A handle above the text (outside the ground) is looked through,
+   * so a double-tap on a small selected text edits it instead of hitting the
+   * handle's touch target. Falls back to what the finger pressed.
+   */
+  const canvasTargetAt = useCallback((tap: Tap, pressed: EventTarget | null): Element | null => {
+    const ground = groundRef.current;
+    if (!ground) return null;
+    const stack = typeof document.elementsFromPoint === 'function' ? document.elementsFromPoint(tap.x, tap.y) : [];
+    for (const el of stack) {
+      if (el.closest(CANVAS_HANDLE_SELECTOR)) continue;
+      if (ground.contains(el)) return el;
+      // Something else of the editor (a bar, a sheet) is on top: not a canvas tap.
+      if (el.closest('[data-editor-ui]')) return null;
+    }
+    return pressed instanceof Element && ground.contains(pressed) && pressed.isConnected ? pressed : null;
+  }, []);
+
+  /**
+   * A double-tap on `target`. Runs inside the gesture's touchend handler
+   * (src/lib/canvas/inlineTextEdit.ts says why). Returns true when it did
+   * something (text editing started, or the camera zoomed).
+   */
+  const handleDoubleTap = useCallback((target: Element, tap: Tap): boolean => {
+    if (target instanceof HTMLElement && target.isContentEditable) return false;
     // The same double-click handlers the mouse uses decide (text editing).
+    // ComponentRenderer's onDoubleClick runs synchronously inside this
+    // dispatch, makes the element editable and focuses it, all still inside
+    // the touchend.
     const dbl = new MouseEvent('dblclick', {
       bubbles: true,
       cancelable: true,
@@ -506,23 +549,25 @@ const CanvasInner = observer(() => {
     const handled = !target.dispatchEvent(dbl);
     const editing = rootStore.editorUI.editingComponent;
     if (handled && editing) {
-      // Focus inside this tap, not in the effect after the re-render: iOS only
-      // opens the keyboard for a focus that happens during the user gesture.
       let el: Element | null = target.closest('[data-inner-component-id]');
       while (el && el.getAttribute('data-inner-component-id') !== editing.id) {
         el = el.parentElement?.closest('[data-inner-component-id]') ?? null;
       }
       if (el instanceof HTMLElement) {
-        el.contentEditable = 'true';
-        el.focus();
+        // A finger puts the caret where it tapped (the end when the tap was
+        // beside the text); the mouse double-click selected everything.
+        if (document.activeElement !== el) startInlineTextEdit(el, tap);
+        else placeCaret(el, tap);
       }
-      return;
+      return true;
     }
-    if (handled) return;
+    if (handled) return true;
     // Empty canvas: zoom in one step around the tap.
     if (marqueeScopeFor(target)?.kind === 'canvas') {
       applyCamera(zoomAround(currentCamera(), groundPoint(tap.x, tap.y), DOUBLE_TAP_ZOOM_FACTOR));
+      return true;
     }
+    return false;
   }, [applyCamera, currentCamera, groundPoint, marqueeScopeFor, rootStore.editorUI]);
 
   const stopTouchListeners = useCallback(() => {
@@ -558,6 +603,7 @@ const CanvasInner = observer(() => {
       }
       if (
         ev.type === 'pointerup' &&
+        !contactHasTouchEventsRef.current &&
         wasPhase === 'single' &&
         tracked &&
         !tracked.moved &&
@@ -569,9 +615,10 @@ const CanvasInner = observer(() => {
         // The element the finger pressed, not the pointerup target: a drag
         // source may have captured the pointer to itself or the ground.
         const pressed = pressedTarget ?? ev.target;
-        if (isDoubleTap(lastTapRef.current, tap) && pressed instanceof Element && pressed.isConnected) {
+        const target = isDoubleTap(lastTapRef.current, tap) ? canvasTargetAt(tap, pressed) : null;
+        if (target) {
           lastTapRef.current = null;
-          handleDoubleTap(pressed, tap);
+          handleDoubleTap(target, tap);
         } else {
           lastTapRef.current = tap;
         }
@@ -585,7 +632,54 @@ const CanvasInner = observer(() => {
       window.removeEventListener('pointerup', onEnd);
       window.removeEventListener('pointercancel', onEnd);
     };
-  }, [currentCamera, flushPinch, groundPoint, handleDoubleTap, rootStore.editorUI, schedulePinch, stopTouchListeners]);
+  }, [canvasTargetAt, currentCamera, flushPinch, groundPoint, handleDoubleTap, rootStore.editorUI, schedulePinch, stopTouchListeners]);
+
+  // Double-tap from touch events, on the window: the action must run inside
+  // touchend for iOS to open the keyboard (src/lib/canvas/inlineTextEdit.ts),
+  // and a finger on a selection handle (outside the ground) still means the
+  // canvas under it. A handled double-tap cancels the touchend's default, so
+  // no emulated mouse events or click follow it into the text just focused.
+  useEffect(() => {
+    const recognizer = doubleTapRef.current!;
+    const onCanvas = (target: EventTarget | null) =>
+      target instanceof Element &&
+      (!!groundRef.current?.contains(target) || !!target.closest(CANVAS_HANDLE_SELECTOR));
+    const onStart = (e: TouchEvent) => {
+      contactHasTouchEventsRef.current = true;
+      const t = e.changedTouches[0];
+      if (!t) return;
+      const eligible = onCanvas(e.target) && rootStore.editorUI.selectedTool === EditorTool.SELECT;
+      recognizer.start(t.identifier, { x: t.clientX, y: t.clientY }, performance.now(), e.touches.length, eligible);
+    };
+    const onMove = (e: TouchEvent) => {
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        recognizer.move(t.identifier, { x: t.clientX, y: t.clientY });
+      }
+    };
+    const onEnd = (e: TouchEvent) => {
+      const t = e.changedTouches[0];
+      if (!t) return;
+      const time = performance.now();
+      const result = recognizer.end(t.identifier, { x: t.clientX, y: t.clientY }, time, e.touches.length);
+      if (result !== 'double' || rootStore.editorUI.selectedTool !== EditorTool.SELECT) return;
+      const tap = { x: t.clientX, y: t.clientY, time };
+      const target = canvasTargetAt(tap, e.target);
+      if (target && handleDoubleTap(target, tap) && e.cancelable) e.preventDefault();
+    };
+    const onCancel = () => recognizer.cancel();
+    window.addEventListener('touchstart', onStart, { capture: true, passive: true });
+    window.addEventListener('touchmove', onMove, { capture: true, passive: true });
+    window.addEventListener('touchend', onEnd, { capture: true, passive: false });
+    window.addEventListener('touchcancel', onCancel, { capture: true });
+    return () => {
+      window.removeEventListener('touchstart', onStart, { capture: true });
+      window.removeEventListener('touchmove', onMove, { capture: true });
+      window.removeEventListener('touchend', onEnd, { capture: true });
+      window.removeEventListener('touchcancel', onCancel, { capture: true });
+      recognizer.cancel();
+    };
+  }, [canvasTargetAt, handleDoubleTap, rootStore.editorUI]);
 
   // Unmount: drop the fingers and any pending frame.
   useEffect(() => () => {
@@ -611,6 +705,7 @@ const CanvasInner = observer(() => {
       pressTargetsRef.current.clear();
       blockTouchClicksUntilRef.current = 0;
       lastTapRef.current = null;
+      doubleTapRef.current?.cancel();
     };
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') forget();
@@ -622,6 +717,14 @@ const CanvasInner = observer(() => {
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [cancelOneFingerGestures]);
+
+  /** Blur the text being edited inline when a press lands outside it (onBlur commits). */
+  const endInlineEditOutside = useCallback((target: Element) => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.isContentEditable && groundRef.current?.contains(active) && !active.contains(target)) {
+      active.blur();
+    }
+  }, []);
 
   /** A touch or pen press on the canvas (capture phase, before any node). */
   const handleTouchPointerDown = useCallback((e: React.PointerEvent) => {
@@ -645,6 +748,7 @@ const CanvasInner = observer(() => {
       return;
     }
     blockTouchClicksUntilRef.current = 0;
+    contactHasTouchEventsRef.current = false;
     // Pen barrel button or eraser: nothing.
     if (e.button !== 0) return;
     const tool = rootStore.editorUI.selectedTool;
@@ -658,6 +762,10 @@ const CanvasInner = observer(() => {
     if (!(target instanceof Element)) return;
     // Editing text: the finger places the caret.
     if (target instanceof HTMLElement && target.isContentEditable) return;
+    // A press anywhere else on the canvas ends the edit (and commits it):
+    // iOS keeps the keyboard and the focus when a finger lands on something
+    // that cannot take focus.
+    endInlineEditOutside(target);
     const selected = selectedNodeUnder(target);
     if (selected) {
       // Move the selected node, even when the finger is on one of its
@@ -673,6 +781,7 @@ const CanvasInner = observer(() => {
   }, [
     cancelOneFingerGestures,
     currentCamera,
+    endInlineEditOutside,
     ensureTouchListeners,
     groundPoint,
     marqueeScopeFor,

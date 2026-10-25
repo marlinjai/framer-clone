@@ -27,6 +27,7 @@ vi.mock('../sidebars/right/sections', () => {
   return {
     SizeSection: Stub, PositionSection: Stub, StylesSection: Stub, LayoutSection: Stub, TypographySection: Stub,
     ImageSection: Stub, DataSourceSection: Stub, EffectsSection: Stub, FormSection: Stub, StickyCtaSection: Stub,
+    TextContentSection: Stub,
   };
 });
 

@@ -16,6 +16,9 @@
 // - When it mounts, and when the page changes, the camera fits the narrowest
 //   breakpoint frame (the phone frame, normally) to the screen's width; the
 //   Fit button fits every frame (an overview).
+// - While a text is edited inline on the canvas, the bar and any sheet step
+//   aside (nothing may cover the text), and the camera pans the text into
+//   the part of the screen the on-screen keyboard leaves visible.
 'use client';
 
 import React from 'react';
@@ -25,7 +28,7 @@ import { Layers, SlidersHorizontal, PencilLine } from 'lucide-react';
 import { PiCursorLight, PiHandGrabbingBold, PiArrowUUpLeft, PiArrowUUpRight } from 'react-icons/pi';
 import { EditorTool, type EditorUIType } from '@/stores/EditorUIStore';
 import { getUndoManager } from '@/stores/RootStore';
-import { useCameraControls, type CanvasInsets, type Rect } from '@/lib/canvas/cameraControls';
+import { revealOffset, useCameraControls, type CameraTransform, type CanvasInsets, type Edges, type Rect } from '@/lib/canvas/cameraControls';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import LeftSidebar from '@/components/sidebars/LeftSidebar';
 import RightSidebar from '@/components/sidebars/RightSidebar';
@@ -88,10 +91,82 @@ function measureInsets(bar: HTMLElement | null, extraTop = 0): CanvasInsets {
   return { top: top + extraTop, bottom };
 }
 
+/**
+ * The part of the screen the edited text may use, in client pixels: below
+ * the top bar, above the on-screen keyboard (the visual viewport's bottom).
+ */
+function editingVisibleEdges(): Edges {
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+  const vTop = vv ? vv.offsetTop : 0;
+  const vLeft = vv ? vv.offsetLeft : 0;
+  const vHeight = vv ? vv.height : window.innerHeight;
+  const vWidth = vv ? vv.width : window.innerWidth;
+  const barBottom = document.querySelector<HTMLElement>('[data-editor-topbar]')?.getBoundingClientRect().bottom ?? 0;
+  return { top: Math.max(vTop, barBottom), bottom: vTop + vHeight, left: vLeft, right: vLeft + vWidth };
+}
+
+/** The screen box to keep visible: the text, or its caret when the text is taller than the room. */
+function editedTextBox(el: HTMLElement, visible: Edges): Edges {
+  const r = el.getBoundingClientRect();
+  if (r.height <= visible.bottom - visible.top - 32) return r;
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
+    const c = sel.getRangeAt(0).getBoundingClientRect();
+    if (c.height > 0) return { top: c.top, bottom: c.bottom, left: r.left, right: Math.min(r.right, r.left + (visible.right - visible.left)) };
+  }
+  return r;
+}
+
+/**
+ * While `editingId` is edited inline, keep its text inside the visible area
+ * whenever the visual viewport changes (the keyboard opens, closes or
+ * changes height) and once the keyboard has settled. Pans only, never zooms.
+ */
+function useRevealEditedText(editingId: string | undefined, apply: (t: CameraTransform) => void, read: () => CameraTransform) {
+  React.useEffect(() => {
+    if (!editingId) return;
+    const reveal = () => {
+      const el = document.querySelector<HTMLElement>(
+        `[data-camera-transform] [data-inner-component-id="${CSS.escape(editingId)}"][contenteditable="true"]`,
+      );
+      if (!el) return;
+      const visible = editingVisibleEdges();
+      const { dx, dy } = revealOffset(editedTextBox(el, visible), visible);
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      const cur = read();
+      apply({ zoom: cur.zoom, panX: cur.panX + dx, panY: cur.panY + dy });
+    };
+    const vv = window.visualViewport;
+    let raf = requestAnimationFrame(reveal);
+    // The keyboard slides in over about 300ms on iOS; reveal again once it is up.
+    const settle = window.setTimeout(reveal, 350);
+    const onViewport = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(reveal);
+    };
+    vv?.addEventListener('resize', onViewport);
+    vv?.addEventListener('scroll', onViewport);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(settle);
+      vv?.removeEventListener('resize', onViewport);
+      vv?.removeEventListener('scroll', onViewport);
+    };
+  }, [editingId, apply, read]);
+}
+
 const PhoneEditorChrome = observer(({ editorUI }: { editorUI: EditorUIType }) => {
   const [sheet, setSheet] = React.useState<PhoneSheet>(null);
   const barRef = React.useRef<HTMLDivElement>(null);
-  const { zoomPercentage, fit } = useCameraControls();
+  const { zoomPercentage, fit, apply, read } = useCameraControls();
+
+  // Inline text editing on the canvas: close any sheet, hide the bar (below),
+  // and keep the text above the keyboard.
+  const editingId = editorUI.editingComponent?.id;
+  React.useEffect(() => {
+    if (editingId) setSheet(null);
+  }, [editingId]);
+  useRevealEditedText(editingId, apply, read);
 
   const undoManager = getUndoManager();
   // An element on the page, not a breakpoint frame.
@@ -158,6 +233,9 @@ const PhoneEditorChrome = observer(({ editorUI }: { editorUI: EditorUIType }) =>
         data-testid="phone-bottom-bar"
         role="toolbar"
         aria-label="Editor tools"
+        // Hidden while a text is edited on the canvas: it must not cover the
+        // text, and the keyboard's Done (or a tap elsewhere) ends the edit.
+        hidden={!!editingId}
         className="fixed inset-x-0 bottom-0 z-90 border-t border-border bg-background px-2 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]"
       >
         <div className="mx-auto flex max-w-[560px] items-center gap-1">

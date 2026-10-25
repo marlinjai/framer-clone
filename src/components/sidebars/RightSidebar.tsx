@@ -6,7 +6,7 @@ import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 import RightSidebarHeader from './right/RightSidebarHeader';
 import { getComponentCategory, SECTION_MAP, type SectionId } from './right/sectionConfig';
-import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographySection, ImageSection, DataSourceSection, EffectsSection, FormSection, StickyCtaSection } from './right/sections';
+import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographySection, ImageSection, DataSourceSection, EffectsSection, FormSection, StickyCtaSection, TextContentSection } from './right/sections';
 import { ComponentInstance } from '@/models/ComponentModel';
 
 const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: ComponentInstance; breakpointId?: string }>> = {
@@ -70,6 +70,10 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
           <div className="min-w-0">
             {target ? (
               <>
+                {/* Text first for every element that holds its own text: on a
+                    phone this field is the dependable way to change text (a
+                    form field always opens the keyboard). Null otherwise. */}
+                <TextContentSection component={target} breakpointId={breakpointId} />
                 {sections.map((sectionId) => {
                   const SectionComponent = SECTION_COMPONENTS[sectionId];
                   return (
