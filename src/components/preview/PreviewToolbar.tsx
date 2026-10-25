@@ -1,32 +1,33 @@
-// Top toolbar for /preview. Hosts back navigation, reload, fullscreen, the
-// breakpoint preset selector, and W/H number inputs. All controls are
-// stateless: they read from props and call onChange callbacks owned by the
-// shell. Under 768px the button labels collapse to icons (they stay the
-// accessible names) and the width and height inputs are hidden.
+// Top toolbar for the preview. Hosts back to the editor, reload, the frame
+// choice (fill the window, or a device frame with its breakpoint preset and
+// W/H inputs), real fullscreen and the page picker. All controls are
+// stateless: they read from props and call callbacks owned by the shell.
+// Under 768px the button labels collapse to icons (they stay the accessible
+// names) and the width and height inputs are hidden.
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
-import { useRouter } from 'next/navigation';
-import { ArrowLeft, RefreshCw, Maximize2, Minimize2 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Maximize2, Smartphone } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 
-export type PreviewMode = 'fitted' | 'fullscreen';
+/** How the page is framed: at the window's width, or in a sized device frame. */
+export type PreviewFrameMode = 'fill' | 'device';
 
 export interface PreviewToolbarProps {
   viewportNodes: readonly ComponentInstance[];
   width: number;
   height: number;
   activeBreakpointId: string | undefined;
-  mode: PreviewMode;
-  /** Filling the window only (a load with ?fullscreen=1): the button enters real fullscreen. */
-  enterOnly?: boolean;
+  frame: PreviewFrameMode;
+  onFrameChange: (frame: PreviewFrameMode) => void;
   onWidthChange: (next: number) => void;
   onHeightChange: (next: number) => void;
   onPresetChange: (viewport: ComponentInstance) => void;
   onReload: () => void;
-  onToggleMode: () => void;
-  /** Where "Editor" goes: this project's editor on the page being previewed. */
-  editorHref: string;
+  /** Real browser fullscreen: only the page, with a floating way out. */
+  onEnterFullscreen: () => void;
+  /** "Editor": back to the editor on the page being previewed. */
+  onBack: () => void;
   pages: ReadonlyArray<{ id: string; title: string }>;
   currentPageId: string;
   onPageChange: (pageId: string) => void;
@@ -37,28 +38,26 @@ const PreviewToolbar = observer(({
   width,
   height,
   activeBreakpointId,
-  mode,
-  enterOnly = false,
+  frame,
+  onFrameChange,
   onWidthChange,
   onHeightChange,
   onPresetChange,
   onReload,
-  onToggleMode,
-  editorHref,
+  onEnterFullscreen,
+  onBack,
   pages,
   currentPageId,
   onPageChange,
 }: PreviewToolbarProps) => {
-  const router = useRouter();
-  const isFullscreen = mode === 'fullscreen';
-  const showExit = isFullscreen && !enterOnly;
+  const isDevice = frame === 'device';
 
   return (
     <div className="flex items-center gap-1 md:gap-2 h-12 px-2 md:px-3 bg-gray-900 text-gray-100 border-b border-gray-800">
       {/* Back to editor */}
       <button
         type="button"
-        onClick={() => router.push(editorHref)}
+        onClick={onBack}
         className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800"
         title="Back to the editor, on this page"
       >
@@ -78,15 +77,27 @@ const PreviewToolbar = observer(({
         <span className="text-xs max-md:sr-only">Reload</span>
       </button>
 
+      {/* The page fills the window by default, like a visitor sees it; the
+          device frame sizes it to a breakpoint instead. */}
       <button
         type="button"
-        onClick={onToggleMode}
-        className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800"
-        title={showExit ? 'Exit fullscreen' : 'Fullscreen'}
-        aria-pressed={showExit}
+        onClick={() => onFrameChange(isDevice ? 'fill' : 'device')}
+        className={`flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800 ${isDevice ? 'bg-gray-800' : ''}`}
+        title={isDevice ? 'Fill the window again' : 'Show the page in a device frame'}
+        aria-pressed={isDevice}
       >
-        {showExit ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-        <span className="text-xs max-md:sr-only">{showExit ? 'Exit fullscreen' : enterOnly ? 'Enter fullscreen' : 'Fullscreen'}</span>
+        <Smartphone size={14} />
+        <span className="text-xs max-md:sr-only">Device frame</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={onEnterFullscreen}
+        className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800"
+        title="Fullscreen (F)"
+      >
+        <Maximize2 size={14} />
+        <span className="text-xs max-md:sr-only">Fullscreen</span>
       </button>
 
       <div className="w-px h-6 bg-gray-700 mx-1 max-md:hidden" />
@@ -108,9 +119,9 @@ const PreviewToolbar = observer(({
 
       <div className="flex-1" />
 
-      {/* Fitted-mode-only controls. In fullscreen the frame always fills the
-          viewport, so preset + W/H inputs are hidden to keep the toolbar clean. */}
-      {!isFullscreen && (
+      {/* Device-frame-only controls. Filling the window, the width is the
+          window's, so preset + W/H inputs are hidden to keep the toolbar clean. */}
+      {isDevice && (
         <>
           <select
             value={activeBreakpointId ?? ''}

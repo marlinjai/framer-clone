@@ -38,7 +38,6 @@ import {
   Inbox,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useStore } from '@/hooks/useStore';
 import { getHistoryStore } from '@/stores/RootStore';
 import PublishButton from '@/components/PublishButton';
@@ -303,21 +302,12 @@ const TopBar = observer(() => {
   const project = editorUI.currentProject;
   const currentPage = editorUI.currentPage;
   const history = getHistoryStore();
-  const router = useRouter();
   const [dialog, setDialog] = React.useState<TopBarDialog>(null);
   // Open state for one dialog, in the shape the buttons take.
   const control = (which: Exclude<TopBarDialog, null>) => ({
     open: dialog === which,
     onOpenChange: (open: boolean) => setDialog((cur) => (open ? which : cur === which ? null : cur)),
   });
-
-  // Preview the page being edited (`?page=`). A dashboard project previews
-  // at its own route; the browser-only demo project (`/`) has no server copy,
-  // so it previews at /preview, from this tab's store.
-  const pageQuery = currentPage ? `?page=${encodeURIComponent(currentPage.id)}` : '';
-  const previewHref = project && !editorUI.isUnsavedDemo
-    ? `/projects/${project.id}/preview${pageQuery}`
-    : `/preview${pageQuery}`;
 
   // Hidden in the compact bar (reached through the More menu instead).
   const wideOnly = 'max-lg:hidden';
@@ -388,7 +378,7 @@ const TopBar = observer(() => {
           visually grouped with the other rightward actions. */}
       <button
         type="button"
-        onClick={() => router.push(previewHref)}
+        onClick={() => editorUI.setPreviewOpen(true)}
         title="Preview"
         aria-label="Preview"
         className="flex items-center justify-center w-8 h-8 shrink-0 rounded text-foreground hover:bg-accent mr-1 lg:mr-2"

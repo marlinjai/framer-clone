@@ -23,10 +23,13 @@ vi.mock('next/link', () => ({
   __esModule: true,
   default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
 }));
-// The frame's renderer is covered elsewhere; here: which page it shows.
+// The frame's renderer is covered elsewhere; here: which page it shows, and
+// whether it fills the window.
 vi.mock('../PreviewFrame', () => ({
   __esModule: true,
-  default: ({ page }: { page: { id: string } }) => <div data-testid="frame">{page.id}</div>,
+  default: ({ page, fill }: { page: { id: string }; fill?: boolean }) => (
+    <div data-testid="frame" data-fill={String(Boolean(fill))}>{page.id}</div>
+  ),
 }));
 vi.mock('@/components/EditorCommerceProvider', () => ({
   __esModule: true,
@@ -41,6 +44,7 @@ let bakeryId: string;
 let replaceState: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
+  window.localStorage.clear();
   replaceState = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
   store = createRootStore();
   pathname = '/projects/site_1/preview';
@@ -67,11 +71,11 @@ describe('PreviewShell', () => {
   });
 
   it('the page switcher shows another page and keeps it in the address, without a server reload', () => {
-    search = 'fullscreen=1';
+    search = 'utm=x';
     render(<PreviewShell />);
     fireEvent.change(screen.getByRole('combobox', { name: 'Page' }), { target: { value: homeId } });
     expect(screen.getByTestId('frame').textContent).toBe(homeId);
-    expect(replaceState.mock.calls.at(-1)?.[2]).toBe(`/projects/site_1/preview?fullscreen=1&page=${homeId}`);
+    expect(replaceState.mock.calls.at(-1)?.[2]).toBe(`/projects/site_1/preview?utm=x&page=${homeId}`);
     expect(replace).not.toHaveBeenCalled();
   });
 
@@ -84,11 +88,59 @@ describe('PreviewShell', () => {
     expect(labels).toContain(`test page (/${twin.slug})`);
   });
 
-  it('fullscreen stays on this project preview (it used to jump to /preview)', () => {
-    search = `page=${bakeryId}`;
+  it('fills the window by default, without the device controls', () => {
     render(<PreviewShell />);
-    fireEvent.click(screen.getByRole('button', { name: /fullscreen/i }));
-    expect(replaceState.mock.calls.at(-1)?.[2]).toBe(`/projects/site_1/preview?page=${bakeryId}&fullscreen=1`);
+    expect(screen.getByTestId('frame').getAttribute('data-fill')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Device frame' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.queryByRole('combobox', { name: 'Breakpoint' })).toBeNull();
+  });
+
+  it('the device frame shows the breakpoint controls, and the choice is remembered', () => {
+    render(<PreviewShell />);
+    fireEvent.click(screen.getByRole('button', { name: 'Device frame' }));
+    expect(screen.getByTestId('frame').getAttribute('data-fill')).toBe('false');
+    expect(screen.getByRole('combobox', { name: 'Breakpoint' })).toBeTruthy();
+    cleanup();
+    render(<PreviewShell />);
+    expect(screen.getByTestId('frame').getAttribute('data-fill')).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: 'Device frame' }));
+    cleanup();
+    render(<PreviewShell />);
+    expect(screen.getByTestId('frame').getAttribute('data-fill')).toBe('true');
+  });
+
+  it('still opens when storage throws (a private window)', () => {
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('denied'); });
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('denied'); });
+    render(<PreviewShell />);
+    expect(screen.getByTestId('frame').getAttribute('data-fill')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Device frame' }));
+    expect(screen.getByTestId('frame').getAttribute('data-fill')).toBe('false');
+    get.mockRestore();
+    set.mockRestore();
+  });
+
+  it('over the editor: "Editor" and Escape close it, and the address is left alone', () => {
+    const onClose = vi.fn();
+    render(<PreviewShell onClose={onClose} />);
+    fireEvent.click(screen.getByRole('button', { name: /editor/i }));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(push).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Page' }), { target: { value: homeId } });
+    expect(screen.getByTestId('frame').textContent).toBe(homeId);
+    expect(replaceState).not.toHaveBeenCalled();
+  });
+
+  it('Escape does nothing at a preview route, or while typing in a field', () => {
+    const onClose = vi.fn();
+    render(<PreviewShell />);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(push).not.toHaveBeenCalled();
+    cleanup();
+    render(<PreviewShell onClose={onClose} />);
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Page' }), { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('"Editor" returns to this project on this page (it used to open the demo editor at /)', () => {
@@ -138,30 +190,21 @@ describe('PreviewShell', () => {
       expect(screen.queryByRole('combobox', { name: 'Page' })).toBeNull();
       expect(screen.queryByRole('status')).toBeNull();
       expect(screen.getByTestId('frame')).toBeTruthy();
-      expect(replaceState.mock.calls.at(-1)?.[2]).toBe('/projects/site_1/preview?fullscreen=1');
+      expect(replaceState).not.toHaveBeenCalled();
     });
 
-    it('Esc ends it: the fitted preview is back and the param is removed', async () => {
-      search = 'fullscreen=1';
-      render(<PreviewShell />);
-      fireEvent.click(screen.getAllByRole('button', { name: 'Enter fullscreen' })[0]);
+    it('Esc ends it (the browser leaves fullscreen): the toolbar is back, the preview stays open', async () => {
+      const onClose = vi.fn();
+      render(<PreviewShell onClose={onClose} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Fullscreen' }));
       await screen.findByRole('button', { name: 'Exit fullscreen' });
       act(() => {
         current = null;
         document.dispatchEvent(new Event('fullscreenchange'));
       });
       expect(screen.queryByRole('button', { name: 'Exit fullscreen' })).toBeNull();
-      expect(replaceState.mock.calls.at(-1)?.[2]).toBe('/projects/site_1/preview');
-    });
-
-    it('a load with ?fullscreen=1 fills the window and offers Enter fullscreen (no dead state)', () => {
-      search = 'fullscreen=1';
-      render(<PreviewShell />);
-      expect(screen.getAllByRole('button', { name: 'Enter fullscreen' }).length).toBeGreaterThan(0);
       expect(screen.getByRole('combobox', { name: 'Page' })).toBeTruthy();
-      expect(HTMLElement.prototype.requestFullscreen).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole('button', { name: 'Show fitted preview' }));
-      expect(replaceState.mock.calls.at(-1)?.[2]).toBe('/projects/site_1/preview');
+      expect(onClose).not.toHaveBeenCalled();
     });
 
     it('F toggles fullscreen, but not while typing in a field', async () => {
@@ -182,6 +225,19 @@ describe('PreviewShell', () => {
       expect(screen.queryByRole('combobox', { name: 'Page' })).toBeNull();
       fireEvent.click(exit);
       expect(screen.getByRole('combobox', { name: 'Page' })).toBeTruthy();
+    });
+
+    it('Escape leaves the in-window stand-in first, and only then closes the preview', async () => {
+      (HTMLElement.prototype.requestFullscreen as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('denied'));
+      const onClose = vi.fn();
+      render(<PreviewShell onClose={onClose} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Fullscreen' }));
+      await screen.findByRole('button', { name: 'Exit fullscreen' });
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(screen.getByRole('combobox', { name: 'Page' })).toBeTruthy();
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(onClose).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -90,10 +90,13 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
       ref={frameRef}
       className={
         fill
-          ? 'bg-white overflow-auto w-full h-full'
-          : 'bg-white shadow-2xl overflow-auto'
+          ? 'bg-white overflow-auto w-full h-full outline-none'
+          : 'bg-white shadow-2xl overflow-auto outline-none'
       }
       style={fill ? undefined : { width, height }}
+      // Focusable from script, so Space, the arrows and Page Down scroll the
+      // page (the shell focuses it when the preview opens).
+      tabIndex={-1}
       data-preview-frame=""
       data-preview-breakpoint={breakpointId}
       data-preview-fill={fill ? '' : undefined}
