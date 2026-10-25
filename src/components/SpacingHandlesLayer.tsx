@@ -50,6 +50,18 @@ import {
   type SpacingTarget,
 } from '@/lib/canvas/spacingGeometry';
 import { isAutoSide, parseCssPx, sideProp, startSpacingDrag } from '@/lib/canvas/spacingDrag';
+import { QUICKBAR_MOVED_EVENT, QUICKBAR_SELECTOR } from '@/lib/quickbar/placement';
+
+/** Longer than the quick toolbar's entrance (float-enter), so its final rect is read. */
+const QUICKBAR_SETTLE_MS = 250;
+
+/** The visible phone quick toolbar's screen rect, if any: spacing handles keep out from under it. */
+function quickbarObstacles(): ScreenRect[] {
+  const bar = document.querySelector<HTMLElement>(QUICKBAR_SELECTOR);
+  if (!bar) return [];
+  const r = bar.getBoundingClientRect();
+  return r.width > 0 && r.height > 0 ? [{ left: r.left, top: r.top, width: r.width, height: r.height }] : [];
+}
 
 interface Measured {
   regions: SpacingRegion[];
@@ -199,7 +211,9 @@ const SpacingHandlesLayer = observer(() => {
     const handles = placeHandles(
       regions,
       rect,
-      lastPointerIsTouch() ? { selection: node.isFloatingElement ? rect : (visibleRectInFrame(el) ?? rect) } : undefined,
+      lastPointerIsTouch()
+        ? { selection: node.isFloatingElement ? rect : (visibleRectInFrame(el) ?? rect), obstacles: quickbarObstacles() }
+        : undefined,
     );
     const frame = node.isFloatingElement ? null : el.closest('[data-viewport-content-id]');
     return {
@@ -362,6 +376,24 @@ const SpacingHandlesLayer = observer(() => {
 
   // Mouse and finger place the handles differently (placeHandles).
   useEffect(() => onPointerModalityChange(scheduleRefresh), [scheduleRefresh]);
+  // The phone quick toolbar is an obstacle: re-measure when it moves. On a new
+  // selection this layer's own update, the toolbar's placement and its short
+  // entrance land within a few frames of each other in no fixed order, so it
+  // re-measures at once, on the next frame, and once the entrance has ended.
+  useEffect(() => {
+    let late: number | undefined;
+    const onMoved = () => {
+      refresh();
+      scheduleRefresh();
+      window.clearTimeout(late);
+      late = window.setTimeout(refresh, QUICKBAR_SETTLE_MS);
+    };
+    window.addEventListener(QUICKBAR_MOVED_EVENT, onMoved);
+    return () => {
+      window.removeEventListener(QUICKBAR_MOVED_EVENT, onMoved);
+      window.clearTimeout(late);
+    };
+  }, [refresh, scheduleRefresh]);
 
   // Selection, styles, frame heights or the enabled state changed: wait one
   // frame for the renderer to apply styles, then measure.

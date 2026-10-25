@@ -259,6 +259,20 @@ describe('placeHandles', () => {
     expectClear(handles, element);
   });
 
+  it('keeps handles out from under the phone quick toolbar (an obstacle)', () => {
+    const element = rect(0, 200, 390, 220);
+    const without = placeHandles(bandsOf(element), element, { selection: element });
+    expect(without.has('margin-top')).toBe(true);
+    // The toolbar floating just above the element, as placeQuickbar puts it.
+    const toolbar = rect(8, 110, 374, 80);
+    const withBar = placeHandles(bandsOf(element), element, { selection: element, obstacles: [toolbar] });
+    expect(withBar.has('margin-top')).toBe(false);
+    for (const h of withBar.values()) expect(rectsOverlap(spacingTouchArea(h), toolbar)).toBe(false);
+    // Handles away from the toolbar are unaffected.
+    expect(withBar.has('margin-bottom')).toBe(true);
+    expect(withBar.has('padding-top')).toBe(true);
+  });
+
   it('a medium element keeps its margins and the paddings that fit, hides the rest', () => {
     const element = rect(0, 0, 150, 100);
     const handles = placeHandles(bandsOf(element), element, { selection: element });

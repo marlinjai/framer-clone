@@ -56,6 +56,7 @@ import { cn } from '@/lib/utils';
 import {
   QUICKBAR_GAP,
   QUICKBAR_MARGIN,
+  QUICKBAR_MOVED_EVENT,
   placeQuickbar,
   type PlacementResult,
 } from '@/lib/quickbar/placement';
@@ -283,12 +284,23 @@ const QuickToolbar = observer(({ editorUI, hidden = false, onMore }: QuickToolba
   // A new selection closes any open popover.
   React.useEffect(() => setPanel(null), [component?.id]);
 
+  // The spacing handles keep out from under the toolbar (SpacingHandlesLayer
+  // treats its rect as an obstacle), so they re-measure whenever it moves,
+  // shows or hides. Only a real change is announced, so this cannot loop.
+  const lastAnnouncedRef = React.useRef<string | null>(null);
+  const announceMoved = React.useCallback((key: string) => {
+    if (lastAnnouncedRef.current === key) return;
+    lastAnnouncedRef.current = key;
+    window.dispatchEvent(new Event(QUICKBAR_MOVED_EVENT));
+  }, []);
+
   const position = React.useCallback(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
     const rect = active && component ? screenRectFor(component, breakpointId) : null;
     if (!rect) {
       wrapper.dataset.shown = 'false';
+      announceMoved('hidden');
       return;
     }
     const area = measureVisibleArea(inset);
@@ -298,6 +310,7 @@ const QuickToolbar = observer(({ editorUI, hidden = false, onMore }: QuickToolba
     wrapper.style.transform = `translate(${Math.round(placed.left)}px, ${Math.round(placed.top)}px)`;
     wrapper.dataset.placement = placed.placement;
     wrapper.dataset.shown = 'true';
+    announceMoved(`${Math.round(placed.left)},${Math.round(placed.top)},${bar.width},${bar.height}`);
 
     const pop = panelRef.current;
     if (pop) {
@@ -313,7 +326,7 @@ const QuickToolbar = observer(({ editorUI, hidden = false, onMore }: QuickToolba
       const left = Math.min(Math.max(QUICKBAR_MARGIN, placed.left), area.width - QUICKBAR_MARGIN - pw);
       pop.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
     }
-  }, [active, component, breakpointId, inset]);
+  }, [active, component, breakpointId, inset, announceMoved]);
 
   // After every render (a value changed, so did the element's size), and on
   // the next frame once layout has caught up.
@@ -330,6 +343,9 @@ const QuickToolbar = observer(({ editorUI, hidden = false, onMore }: QuickToolba
     const stop = subscribe(() => {
       const wrapper = wrapperRef.current;
       if (wrapper) wrapper.dataset.shown = 'false';
+      // Announce the hide too, or the re-show at the same place would be
+      // de-duplicated and the spacing handles keep a stale obstacle.
+      announceMoved('hidden');
       window.clearTimeout(settle);
       settle = window.setTimeout(position, SETTLE_MS);
     });
@@ -337,7 +353,7 @@ const QuickToolbar = observer(({ editorUI, hidden = false, onMore }: QuickToolba
       stop();
       window.clearTimeout(settle);
     };
-  }, [subscribe, position]);
+  }, [subscribe, position, announceMoved]);
 
   React.useEffect(() => {
     window.addEventListener('resize', position);

@@ -469,7 +469,7 @@ export function rectsOverlap(a: ScreenRect, b: ScreenRect): boolean {
 export function placeHandles(
   regions: SpacingRegion[],
   element: ScreenRect,
-  touch?: { selection: ScreenRect },
+  touch?: { selection: ScreenRect; obstacles?: ScreenRect[] },
 ): Map<string, HandlePlacement> {
   const out = new Map<string, HandlePlacement>();
   if (!touch) {
@@ -479,7 +479,8 @@ export function placeHandles(
     }
     return out;
   }
-  const taken = selectionHandleTouchAreas(touch.selection);
+  // Other UI floating over the canvas (the phone quick toolbar) counts as taken.
+  const taken = [...selectionHandleTouchAreas(touch.selection), ...(touch.obstacles ?? [])];
   for (const r of regions) {
     const offsets = r.target.kind === 'gap' ? [HANDLE_MIN_OFFSET] : [HANDLE_MIN_OFFSET, TOUCH_HANDLE_MIN_OFFSET];
     for (const offset of offsets) {
