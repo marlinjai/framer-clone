@@ -8,3 +8,4 @@ export { DataSourceSection } from './DataSourceSection';
 export { EffectsSection } from './EffectsSection';
 export { FormSection } from './FormSection';
 export { StickyCtaSection } from './StickyCtaSection';
+export { TextContentSection } from './TextContentSection';

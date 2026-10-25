@@ -161,5 +161,23 @@ describe('redirect targets are always on-site', () => {
     expect(list).toEqual([{ from: 'about', pageId: 'p1', createdAt: NOW.toISOString() }]);
     expect(findRedirectTarget(list, [{ pageId: 'p1', slug: '' }], ['about'])).toBe('/');
   });
-});
 
+  it('on a home page change, sends the new home page old path to the root and records nothing for the root', () => {
+    // "About" becomes the home page; the former home page moves to /home-page.
+    const pages: Array<[string, string]> = [['home', 'home-page'], ['about', '']];
+    const list = step([], { home: '', about: 'about' }, pages);
+    expect(list).toEqual([{ from: 'about', pageId: 'about', createdAt: NOW.toISOString() }]);
+    const live = pages.map(([pageId, slug]) => ({ pageId, slug }));
+    expect(findRedirectTarget(list, live, ['about'])).toBe('/');
+    expect(findRedirectTarget(list, live, ['home-page'])).toBeNull();
+    // Never published: no old links to keep.
+    expect(step([], { home: '', about: 'about' }, pages, false)).toEqual([]);
+  });
+
+  it('changing the home page back drops the redirect, because the page owns its path again', () => {
+    const first = step([], { home: '', about: 'about' }, [['home', 'home-page'], ['about', '']]);
+    const back = step(first, { home: 'home-page', about: '' }, [['home', ''], ['about', 'about']]);
+    expect(back).toEqual([{ from: 'home-page', pageId: 'home', createdAt: NOW.toISOString() }]);
+    expect(findRedirectTarget(back, [{ pageId: 'home', slug: '' }, { pageId: 'about', slug: 'about' }], ['about'])).toBeNull();
+  });
+});

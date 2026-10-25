@@ -99,4 +99,27 @@ describe('slug changes on a real database', () => {
     await repo.saveProject(SCOPE, project({ home: '', about: 'about-us', team: 'about' }));
     expect(await storedRedirects()).toEqual([]);
   });
+
+  it('accepts a home page change, serves the new home page at the root and redirects its old path there', async () => {
+    const repo = getSiteRepository();
+    // "Set as home page" on "team": it takes the root, the former home page
+    // moves to a slug from its name.
+    await repo.saveProject(SCOPE, project({ home: 'home-page', about: 'about-us', team: '' }));
+    expect(await storedRedirects()).toEqual([{ from: 'about', pageId: 'team', createdAt: expect.any(String) }]);
+    const { subdomain } = await repo.ensureSiteDomain(SCOPE, SITE_ID);
+    const site = await resolvePublishedSiteByKey({ kind: 'subdomain', value: subdomain }, prisma);
+    expect(findRedirectTarget(site!.redirects, site!.pages, ['about'])).toBe('/');
+    const rows = await prisma.sitePage.findMany({ where: { siteId: SITE_ID }, select: { pageId: true, slug: true } });
+    expect(Object.fromEntries(rows.map((r) => [r.pageId, r.slug]))).toEqual({ home: 'home-page', about: 'about-us', team: '' });
+  });
+
+  it('then deletes the former home page like any page, but never leaves the root empty', async () => {
+    const repo = getSiteRepository();
+    await repo.saveProject(SCOPE, project({ about: 'about-us', team: '' }));
+    await expect(repo.saveProject(SCOPE, project({ about: 'about-us', team: 'team' }))).rejects.toBeInstanceOf(
+      InvalidPageSlugError,
+    );
+    const rows = await prisma.sitePage.findMany({ where: { siteId: SITE_ID }, select: { pageId: true, slug: true } });
+    expect(Object.fromEntries(rows.map((r) => [r.pageId, r.slug]))).toEqual({ about: 'about-us', team: '' });
+  });
 });

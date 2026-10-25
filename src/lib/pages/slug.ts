@@ -256,14 +256,18 @@ export function tidySlugInput(raw: string): string {
  *   - a slug identical to the stored one for the same page is accepted as is
  *     (grandfathered: older pages may predate these rules, and refusing them
  *     would make an existing project impossible to save);
- *   - the HOME page (empty slug) keeps the site root: while the stored project
- *     has one, at least one of its stored home pages must still be in the
- *     snapshot with the empty slug (so it is neither deleted nor moved), and no
- *     other page may take the empty slug. Older projects that ended up with two
- *     empty-slug pages keep saving, and may move or delete the extra one;
+ *   - the site root always serves a page: while the stored project has a home
+ *     page (empty slug), the snapshot must still have one. Either a stored home
+ *     page keeps the empty slug (and then no other page may take it), or the
+ *     home page CHANGED: exactly one other page now holds the empty slug and
+ *     every former home page is gone or at a new, valid slug (the editor's
+ *     "Set as home page", ProjectModel.setHomePage). A save with no page at the
+ *     root is refused, so the home page can never just be deleted or moved
+ *     away. Older projects that ended up with two empty-slug pages keep saving,
+ *     and may move or delete the extra one;
  *   - a project WITHOUT a home page (possible for older projects, whose home
  *     page could be deleted) may give exactly one page the empty slug: that is
- *     how the editor's "Make home page" recovers the site root;
+ *     how the editor's "Set as home page" recovers the site root;
  *   - every other new or changed slug must pass validateSlugFormat and be
  *     unique among all pages of the snapshot.
  * Returns the first problem found, naming the page, or null when all is well.
@@ -279,23 +283,36 @@ export function findProjectSlugProblem(
   const keptHomes = incomingHomes.filter((p) => storedHomeIds.has(p.pageId));
 
   if (storedHomeIds.size > 0) {
-    if (keptHomes.length === 0) {
+    if (incomingHomes.length === 0) {
+      // Nothing would be served at the root: the home page was deleted or
+      // moved away without another page taking its place.
       const [homeId] = storedHomeIds;
       const moved = pages.find((p) => p.pageId === homeId);
       return {
         pageId: homeId,
         code: 'home_locked',
         message: moved
-          ? `Page ${label(moved)} is the home page; its URL is always the site root and cannot change.`
-          : 'The home page cannot be deleted: it is what the site serves at its root.',
+          ? `Page ${label(moved)} is the home page; its URL is the site root. Make another page the home page first.`
+          : 'The home page cannot be deleted: it is what the site serves at its root. Make another page the home page first.',
       };
     }
-    const newHome = incomingHomes.find((p) => !storedHomeIds.has(p.pageId));
-    if (newHome) {
+    if (keptHomes.length > 0) {
+      // The home page stays; no other page may join it at the root.
+      const newHome = incomingHomes.find((p) => !storedHomeIds.has(p.pageId));
+      if (newHome) {
+        return {
+          pageId: newHome.pageId,
+          code: 'taken',
+          message: `Page ${label(newHome)} has an empty slug, but only the home page may.`,
+        };
+      }
+    } else if (incomingHomes.length > 1) {
+      // The home page changed, but to exactly one page.
+      const second = incomingHomes[1];
       return {
-        pageId: newHome.pageId,
+        pageId: second.pageId,
         code: 'taken',
-        message: `Page ${label(newHome)} has an empty slug, but only the home page may.`,
+        message: `Page ${label(second)} has an empty slug, but only the home page may.`,
       };
     }
   } else if (incomingHomes.length > 1) {

@@ -19,11 +19,20 @@
 //      canvas handles can grow 44px hit areas for fingers only; a pen keeps
 //      the precise small ones.
 //
+//   4. Adds `maximum-scale=1` to the viewport meta tag while the editor is
+//      mounted. iOS zooms the whole page in when a field whose text is under
+//      16px gets focus, and it measures the font before the canvas zoom: a
+//      16px heading on a canvas at 34% is a 5px field to iOS, as is every
+//      12px panel field. With page pinch already off (1 and 2) the user
+//      could not even zoom back out. maximum-scale stops that focus zoom;
+//      the tag is restored on unmount.
+//
 // Accessibility trade-off (docs/plans/2026-10-24-editor-on-phones.md): inside
 // the editor, browser page zoom by pinch is off; the canvas zoom replaces it
 // for the design, and the editor chrome is sized for touch. Keyboard zoom
 // (Cmd/Ctrl +) and the system's text size settings still work, and the
-// viewport meta tag is unchanged, so published sites keep normal zoom.
+// viewport meta tag is only changed while the editor is mounted, so published
+// sites keep normal zoom.
 'use client';
 import { useEffect } from 'react';
 
@@ -48,6 +57,12 @@ export function useEditorGestureGuard(): void {
     const prevTouchAction = root.style.touchAction;
     const prevPointer = root.getAttribute('data-pointer');
     root.style.touchAction = 'pan-x pan-y';
+
+    const viewportMeta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+    const prevViewport = viewportMeta?.getAttribute('content') ?? null;
+    if (viewportMeta && prevViewport !== null && !/maximum-scale\s*=/.test(prevViewport)) {
+      viewportMeta.setAttribute('content', prevViewport ? `${prevViewport}, maximum-scale=1` : 'maximum-scale=1');
+    }
 
     let coarse = false;
     try {
@@ -86,6 +101,7 @@ export function useEditorGestureGuard(): void {
       document.removeEventListener('touchmove', onTouchMove);
       document.removeEventListener('wheel', onWheel);
       root.style.touchAction = prevTouchAction;
+      if (viewportMeta && prevViewport !== null) viewportMeta.setAttribute('content', prevViewport);
       if (prevPointer === null) root.removeAttribute('data-pointer');
       else root.setAttribute('data-pointer', prevPointer);
     };

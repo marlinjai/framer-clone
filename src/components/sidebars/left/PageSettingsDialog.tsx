@@ -10,7 +10,10 @@
 // - The slug follows the shared rules (src/lib/pages/slug.ts), the same ones
 //   the server save path enforces, and every problem is explained inline.
 // - The home page always lives at the site root, so its slug is shown but not
-//   editable.
+//   editable. Any other page offers "Set as home page" under its URL, confirmed
+//   in place with what will happen (HomeChangeSummary), then run as
+//   ProjectModel.setHomePage (its own undo step); the form then shows the page
+//   as the home page.
 // - On a site that has been published, a changed slug keeps the old address
 //   working: the server records a redirect and it goes live with the next
 //   publish (src/lib/pages/redirects.ts). The panel says so.
@@ -29,7 +32,7 @@
 
 import React from 'react';
 import { observer } from 'mobx-react-lite';
-import { Wand2 } from 'lucide-react';
+import { Home, Wand2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -45,6 +48,7 @@ import type { ProjectModelType } from '@/models/ProjectModel';
 import { useSiteAddress } from '@/contexts/SiteAddressContext';
 import { suggestSlug, tidySlugInput, validateSlug, SLUG_MAX_LENGTH } from '@/lib/pages/slug';
 import { isHttpsUrl } from '@/lib/site/siteSettings';
+import { HomeChangeSummary } from './SetHomePageDialog';
 
 /** Search engines show roughly this many characters of a description. */
 const DESCRIPTION_HINT_LENGTH = 155;
@@ -102,6 +106,24 @@ const PageSettingsForm = observer(({
   const [noIndex, setNoIndex] = React.useState(page.metadata.noIndex);
   const [notFoundPage, setNotFoundPage] = React.useState(project.site.notFoundPageId === page.id);
   const ogImageRef = React.useRef<HTMLInputElement>(null);
+  // "Set as home page" asks first, in place, with what will happen.
+  const [confirmHome, setConfirmHome] = React.useState(false);
+  const setHomeButtonRef = React.useRef<HTMLButtonElement>(null);
+  const confirmHomeRef = React.useRef<HTMLButtonElement>(null);
+  // Cancelling the question hands focus back to the button that asked it
+  // (once it is rendered again).
+  const focusSetHomeButton = React.useRef(false);
+  const cancelConfirmHome = () => {
+    focusSetHomeButton.current = true;
+    setConfirmHome(false);
+  };
+  React.useEffect(() => {
+    if (confirmHome) confirmHomeRef.current?.focus();
+    else if (focusSetHomeButton.current) {
+      focusSetHomeButton.current = false;
+      setHomeButtonRef.current?.focus();
+    }
+  }, [confirmHome]);
 
   const otherPages = project.pagesArray.map((p) => ({ id: p.id, slug: p.slug }));
   const cleanSlug = isHome ? '' : slugTouched ? tidySlugInput(slug) : page.slug;
@@ -232,7 +254,8 @@ const PageSettingsForm = observer(({
               />
               <p id="page-settings-slug-home" className="text-[11px] text-muted-foreground">
                 This is the home page. It always lives at the root of your site, so visitors who type
-                just your address land here. Its URL cannot change.
+                just your address land here. To show another page here, open that page&rsquo;s settings
+                or menu and choose &ldquo;Set as home page&rdquo;.
               </p>
             </>
           ) : (
@@ -299,6 +322,63 @@ const PageSettingsForm = observer(({
               </p>
             )}
           </div>
+          {!isHome && project.canBecomeHomePage(page.id) &&
+            (confirmHome ? (
+              <div
+                className="flex flex-col gap-2 rounded-md border border-border px-3 py-2"
+                data-testid="page-settings-home-confirm"
+                data-escape-local=""
+                onKeyDown={(e) => {
+                  // Escape cancels this question, not the whole dialog.
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cancelConfirmHome();
+                  }
+                }}
+              >
+                <HomeChangeSummary project={project} pageId={page.id} />
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    ref={confirmHomeRef}
+                    type="button"
+                    variant="brand"
+                    size="sm"
+                    onClick={() => {
+                      const result = project.setHomePage(page.id);
+                      setConfirmHome(false);
+                      setAnnouncement(result.ok ? `${page.metadata.title} is now the home page.` : result.message);
+                      // The confirmation is gone; keep focus in the form, on
+                      // the address that now reads "/".
+                      if (result.ok) {
+                        // setHomePage cleared the 404 pointer; drop the local flag too.
+                        setNotFoundPage(false);
+                        setTimeout(() => document.getElementById('page-settings-slug')?.focus(), 0);
+                      }
+                    }}
+                  >
+                    Set as home page
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={cancelConfirmHome}
+                  >
+                    Keep current home page
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <button
+                ref={setHomeButtonRef}
+                type="button"
+                onClick={() => setConfirmHome(true)}
+                className="inline-flex items-center gap-1.5 self-start rounded px-1 py-0.5 text-[12px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring phone:py-1.5"
+              >
+                <Home size={12} aria-hidden="true" /> Set as home page
+              </button>
+            ))}
         </div>
 
         <div className="flex flex-col gap-1.5">
@@ -436,6 +516,12 @@ const PageSettingsDialog: React.FC<PageSettingsDialogProps> = ({
             e.preventDefault();
             target.focus();
           }
+        }}
+        // Escape inside a local question (the "Set as home page"
+        // confirmation) answers that question; it does not close the dialog.
+        onEscapeKeyDown={(e) => {
+          const target = e.target instanceof Element ? e.target : null;
+          if (target?.closest('[data-escape-local]')) e.preventDefault();
         }}
         // Keep editor shortcuts (Delete removes the selected element, and so
         // on) from firing while the dialog has focus. Escape still reaches

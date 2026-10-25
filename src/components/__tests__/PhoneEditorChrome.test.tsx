@@ -12,10 +12,13 @@ import PhoneEditorChrome, { narrowestFrame } from '../PhoneEditorChrome';
 
 let store: RootStoreType;
 const fit = vi.fn(() => true);
+const apply = vi.fn();
+const read = () => ({ zoom: 0.5, panX: 10, panY: 20 });
 
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
-vi.mock('@/lib/canvas/cameraControls', () => ({
-  useCameraControls: () => ({ zoomPercentage: 42, fit, apply: vi.fn(), zoomStep: vi.fn(), reset: vi.fn() }),
+vi.mock('@/lib/canvas/cameraControls', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/canvas/cameraControls')>()),
+  useCameraControls: () => ({ zoomPercentage: 42, fit, apply, read, zoomStep: vi.fn(), reset: vi.fn() }),
 }));
 // The left sidebar's panes and the properties sections have their own tests.
 vi.mock('../sidebars/left/PagesPanel', () => ({ __esModule: true, default: () => <div data-testid="pages-pane" /> }));
@@ -27,6 +30,7 @@ vi.mock('../sidebars/right/sections', () => {
   return {
     SizeSection: Stub, PositionSection: Stub, StylesSection: Stub, LayoutSection: Stub, TypographySection: Stub,
     ImageSection: Stub, DataSourceSection: Stub, EffectsSection: Stub, FormSection: Stub, StickyCtaSection: Stub,
+    TextContentSection: Stub,
   };
 });
 
@@ -57,6 +61,7 @@ beforeEach(() => {
   store = createRootStore();
   window.localStorage.clear();
   fit.mockClear();
+  apply.mockClear();
 });
 afterEach(() => {
   cleanup();
@@ -233,5 +238,54 @@ describe('narrowestFrame', () => {
     ];
     expect(narrowestFrame(frames)).toEqual([frames[1]]);
     expect(narrowestFrame([])).toEqual([]);
+  });
+});
+
+describe('inline text editing on a phone', () => {
+  it('closes the open sheet and hides the bar while a text is edited, and brings both back after', () => {
+    seedProject();
+    const child = someChild();
+    store.editorUI.selectComponent(child);
+    render(<PhoneEditorChrome editorUI={store.editorUI} />);
+    fireEvent.click(barButton(/^Edit /));
+    expect(screen.getByRole('dialog', { name: 'Properties' })).toBeTruthy();
+    act(() => store.editorUI.beginTextEdit(child));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByTestId('phone-bottom-bar').hidden).toBe(true);
+    act(() => store.editorUI.endTextEdit());
+    expect(screen.getByTestId('phone-bottom-bar').hidden).toBe(false);
+  });
+
+  it('pans the edited text above the on-screen keyboard when the visual viewport shrinks', async () => {
+    seedProject();
+    const child = someChild();
+    // The edited text as the canvas renders it, low on a 844px tall screen.
+    const camera = document.createElement('div');
+    camera.setAttribute('data-camera-transform', '10,20,0.5');
+    const text = document.createElement('p');
+    text.setAttribute('data-inner-component-id', child.id);
+    text.setAttribute('contenteditable', 'true');
+    text.getBoundingClientRect = () => ({ top: 600, bottom: 640, left: 20, right: 300, width: 280, height: 40, x: 20, y: 600, toJSON: () => ({}) });
+    camera.appendChild(text);
+    document.body.appendChild(camera);
+    // The keyboard leaves the top 508px visible.
+    const listeners: Record<string, () => void> = {};
+    const vv = {
+      offsetTop: 0, offsetLeft: 0, height: 844, width: 390,
+      addEventListener: (type: string, fn: () => void) => { listeners[type] = fn; },
+      removeEventListener: vi.fn(),
+    };
+    Object.defineProperty(window, 'visualViewport', { value: vv, configurable: true });
+    render(<PhoneEditorChrome editorUI={store.editorUI} />);
+    act(() => store.editorUI.beginTextEdit(child));
+    await act(() => new Promise((r) => requestAnimationFrame(() => r(null))));
+    expect(apply).not.toHaveBeenCalled();
+    vv.height = 508;
+    act(() => listeners.resize());
+    await act(() => new Promise((r) => requestAnimationFrame(() => r(null))));
+    // 640 must come up to 508 - 16: a pan of -148, zoom untouched.
+    expect(apply).toHaveBeenLastCalledWith({ zoom: 0.5, panX: 10, panY: 20 - 148 });
+    camera.remove();
+    Object.defineProperty(window, 'visualViewport', { value: undefined, configurable: true });
   });
 });
