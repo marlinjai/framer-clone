@@ -122,8 +122,10 @@ connections to the suite. The four lines below are in that order.
   reused as packages. Architecture decided; the catalogue design comes next. See
   [plan](docs/plans/2026-10-25-business-platform-architecture.md). (2026-10-25)
 - [ ] 3d. Deletable invoice drafts: a draft (no number, not a bookkeeping record) can be deleted with its
-  lines and events; issued documents stay undeletable. Reverses decision 8 of the Books integration plan
-  for drafts only. See [plan](docs/plans/2026-10-25-business-platform-architecture.md). (2026-10-25)
+  lines and events (hard delete, no tombstone, migration relaxing the 007 guards for drafts only);
+  issued documents stay undeletable. Reverses decision 8 of the Books integration plan for drafts
+  only. Needs the accounting owner's confirmation that draft data and events are outside the
+  retention duty before it is built. See [plan](docs/plans/2026-10-25-business-platform-architecture.md). (2026-10-25)
 - [ ] 4. Existing invoices and the suite. The historical import is DONE: invoices 1 to 61 (the
   full series) were imported live on 2026-10-20 at 15:08 with `pnpm books:import` for Whiz-Art
   Media, 61 imported and 0 errors, the printed yearly totals matching the filed returns 2019 to

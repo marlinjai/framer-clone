@@ -1077,6 +1077,9 @@ say so if you disagree.
    "Leistungsdatum entspricht dem Rechnungsdatum".
 8. **No draft delete.** The 007 trigger refuses deleting any document, and an abandoned draft
    consumes nothing, so the editor offers none (P1.11 left this to phase 2).
+   *Superseded for drafts only (2026-10-25):* the business platform plan makes drafts deletable, with
+   their lines and events hard-deleted and the 007 guards relaxed for drafts; issued documents stay
+   undeletable. See `2026-10-25-business-platform-architecture.md`, decision 9.
 9. **Issue confirms a version.** `issue` takes an optional `expectedVersion` (checked before and
    under the lock); the editor sends the version whose total and customer the user confirmed, so
    a change made in another window is never issued unseen.

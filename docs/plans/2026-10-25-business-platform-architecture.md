@@ -75,14 +75,22 @@ acceptance; invoice).
    `sales_document.source_order_id`; hand-written invoices stay possible.
 9. **Invoice drafts become deletable.** A draft has no number and is not a bookkeeping record; issued
    documents stay undeletable (GoBD). This reverses decision 8 of the Books integration plan for drafts only,
-   and is built separately, ahead of this plan.
+   and is built separately, ahead of this plan. **Event invariant:** deleting a draft deletes
+   its lines and its `sales_document_event` rows (`draft_created`, `customer_set`) in the same transaction;
+   no tombstone is kept, because a draft was never issued and carries no number. The migration relaxes the
+   delete guards on `sales_document`, `sales_document_line` and `sales_document_event` (migration 007) for
+   rows whose document is still a draft, and keeps them for every issued or cancelled document. Before it
+   is built, the accounting owner confirms that draft data and its events fall outside the retention duty
+   (GoBD, section 147 AO).
 10. **Out of the first versions:** payments at a counter (they make the system a cash register under
     KassenSichV, with a certified TSE and registration at the tax office) and medical practices (health data
     is a special category under GDPR Article 9).
 11. **Order of work:**
     1. the catalogue with services and resources;
     2. instant booking for one practitioner, paid online, with the receipt in the Books (proof: Sharon's
-       practice or ŌPUNTIA's calls);
+       practice or ŌPUNTIA's calls). **Blocked on the owner's real-payments decision** (see "Open for the
+       owner"): until a Stripe setup exists the engine only has a fake gateway, so this step can be built
+       against the fake gateway but not shipped as paid booking;
     3. quotes of services and materials, accepted online, turning into the invoice (reference: the Basis
        Camp offers module);
     4. team scheduling and dispatch (reference: ArboSano's crews).
