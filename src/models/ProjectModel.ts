@@ -120,6 +120,15 @@ export interface PageSettingsInput {
   notFoundPage?: boolean;
 }
 
+/**
+ * The outcome of ProjectModel.setHomePage: the chosen page's slug before the
+ * change (its old path, now leading to the root) and where the former home
+ * page(s) moved.
+ */
+export type SetHomePageResult =
+  | { ok: true; previousSlug: string; moved: Array<{ pageId: string; title: string; slug: string }> }
+  | { ok: false; message: string };
+
 /** The outcome of ProjectModel.updateSiteSettings. */
 export type SiteSettingsResult = { ok: true } | { ok: false; errors: SiteSettingsErrors };
 
@@ -141,6 +150,29 @@ function homePageCount(pages: Iterable<{ slug: string }>): number {
   let n = 0;
   for (const p of pages) if (p.slug === '') n++;
   return n;
+}
+
+/**
+ * Where the current home page(s) move when `pageId` becomes the home page:
+ * every OTHER page holding the empty slug gets a free slug suggested from its
+ * name. The chosen page's current path stays taken, so it can become a
+ * redirect to the root instead of being claimed by the former home page.
+ * Shared by ProjectModel.setHomePage and the panel's preview of it.
+ */
+function planHomeChange(
+  pages: Iterable<{ id: string; slug: string; metadata: { title: string } }>,
+  pageId: string,
+): Array<{ pageId: string; title: string; slug: string }> {
+  const list = Array.from(pages);
+  const taken = list.map(p => p.slug);
+  const moved: Array<{ pageId: string; title: string; slug: string }> = [];
+  for (const former of list) {
+    if (former.id === pageId || former.slug !== '') continue;
+    const slug = suggestSlug(former.metadata.title, taken);
+    taken.push(slug);
+    moved.push({ pageId: former.id, title: former.metadata.title, slug });
+  }
+  return moved;
 }
 
 // Main ProjectModel - Framer-style unified architecture
@@ -549,23 +581,60 @@ export const ProjectModel = types
       return { ok: true };
     },
 
-    // Give a project that has NO home page one: the chosen page takes the
-    // empty slug and is served at the site root. Only for projects without a
-    // home page (older projects could delete theirs); with a home page this is
-    // refused, since the home page itself can never move. On a published site
-    // the page's old path keeps working as a redirect to the root.
-    makeHomePage(pageId: string): boolean {
+    // "Set as home page": the chosen page takes the empty slug and is served
+    // at the site root, in ONE action (one undo step). The page that was the
+    // home page until now (or, in an older project, every page holding the
+    // empty slug) moves to a free slug derived from its name, through the
+    // shared slug rules (src/lib/pages/slug.ts); it is then an ordinary page,
+    // so it can be renamed, moved or deleted. A project without a home page
+    // (older projects could delete theirs) simply gets one.
+    //
+    // The chosen page's old path is reserved while the former home page's
+    // slug is picked, so the two never trade places by accident. In-site links
+    // to that old path (href "/about", also with "#..." or "?...") are pointed
+    // at "/" in the same action, so they keep working on an unpublished site
+    // too. On a published site the server additionally records the old path
+    // as a redirect to the page (now the root) on the next save, and the root
+    // address now serves the new home page (src/lib/pages/redirects.ts).
+    //
+    // The 404 page can never be the home page: the pointer is cleared when it
+    // named the chosen page. Sitemap, canonical URLs and the published router
+    // read the slugs, so they follow without further changes.
+    setHomePage(pageId: string): SetHomePageResult {
       const page = self.pages.get(pageId);
-      if (!page) return false;
-      if (Array.from(self.pages.values()).some(p => p.slug === '')) return false;
+      if (!page) return { ok: false, message: 'This page no longer exists.' };
+      if (page.slug === '' && homePageCount(self.pages.values()) === 1) {
+        return { ok: false, message: 'This page is already the home page.' };
+      }
+      const previousSlug = page.slug;
+      const moved = planHomeChange(self.pages.values(), pageId);
+      for (const m of moved) self.pages.get(m.pageId)?.setSlug(m.slug);
       page.setSlug('');
-      // The home page can never be the 404 page.
+
+      if (previousSlug !== '') {
+        const oldPath = `/${previousSlug}`;
+        const retarget = (href: string): string | undefined => {
+          if (href === oldPath) return '/';
+          if (href.startsWith(`${oldPath}#`) || href.startsWith(`${oldPath}?`)) return `/${href.slice(oldPath.length)}`;
+          return undefined;
+        };
+        const visit = (node: ComponentInstance) => {
+          const href = (node.props as Record<string, unknown>).href;
+          if (typeof href === 'string') {
+            const next = retarget(href);
+            if (next !== undefined) node.setProps({ href: next });
+          }
+          node.children.forEach((c: ComponentInstance) => visit(c));
+        };
+        for (const p of self.pages.values()) visit(p.appComponentTree as unknown as ComponentInstance);
+      }
+
       const settings = normalizeSiteSettings(self.siteSettings);
       if (settings.notFoundPageId === pageId) {
         self.siteSettings = { ...settings, notFoundPageId: '' };
       }
       self.metadata.updatedAt = new Date();
-      return true;
+      return { ok: true, previousSlug, moved };
     },
 
     // Update project metadata
@@ -588,8 +657,21 @@ export const ProjectModel = types
       return !!page && page.slug === '' && homePageCount(self.pages.values()) <= 1;
     },
 
-    // True when the project has no page at the site root (older projects
-    // whose home page was deleted); the page list then offers makeHomePage.
+    // What setHomePage(pageId) would do, without doing it: the former home
+    // page(s) and the slug each would move to. The panel shows this before
+    // the owner confirms.
+    previewHomeChange(pageId: string): Array<{ pageId: string; title: string; slug: string }> {
+      return planHomeChange(self.pages.values(), pageId);
+    },
+
+    // The page served at the site root (the first, in an older project with
+    // two), or undefined when the project has none.
+    get homePage(): PageModelType | undefined {
+      return Array.from(self.pages.values()).find(p => p.slug === '');
+    },
+
+    // False when the project has no page at the site root (older projects
+    // whose home page was deleted); any page can then take it (setHomePage).
     get hasHomePage(): boolean {
       return homePageCount(self.pages.values()) > 0;
     },

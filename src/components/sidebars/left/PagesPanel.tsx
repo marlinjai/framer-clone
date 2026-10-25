@@ -279,7 +279,7 @@ const PagesPanel = observer(() => {
               : [{
                   label: 'Make home page',
                   icon: <Home size={14} />,
-                  onClick: () => project.makeHomePage(menu.pageId),
+                  onClick: () => { project.setHomePage(menu.pageId); },
                 }]),
             {
               label: 'Delete',

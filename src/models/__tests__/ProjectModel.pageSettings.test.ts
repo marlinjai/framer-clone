@@ -134,14 +134,13 @@ describe('updatePageSettings', () => {
 });
 
 describe('home page edge cases of older projects', () => {
-  it('makeHomePage gives a project without a home page one, and only then', () => {
+  it('setHomePage gives a project without a home page one', () => {
     const p = project();
     const home = p.pagesArray.find((pg) => pg.isHome)!;
     const about = p.createPage('About');
-    expect(p.makeHomePage(about.id)).toBe(false);
     p.removePage(home.id);
     expect(p.hasHomePage).toBe(false);
-    expect(p.makeHomePage(about.id)).toBe(true);
+    expect(p.setHomePage(about.id)).toEqual({ ok: true, previousSlug: 'about', moved: [] });
     expect(about.slug).toBe('');
     expect(p.hasHomePage).toBe(true);
     expect(p.isSlugLocked(about.id)).toBe(true);
