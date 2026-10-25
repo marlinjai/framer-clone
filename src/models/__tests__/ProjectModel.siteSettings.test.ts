@@ -133,7 +133,7 @@ describe('the 404 page through Page settings', () => {
     const p = ProjectModel.create({ id: 'p2', metadata: { title: 'x' }, pages: {} });
     const a = p.createPage('Oops');
     p.updatePageSettings(a.id, { title: 'Oops', slug: a.slug, description: '', notFoundPage: true });
-    expect(p.makeHomePage(a.id)).toBe(true);
+    expect(p.setHomePage(a.id)).toMatchObject({ ok: true });
     expect(p.site.notFoundPageId).toBe('');
   });
 

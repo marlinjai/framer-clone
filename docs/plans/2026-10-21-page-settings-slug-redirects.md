@@ -10,6 +10,10 @@ projects: [framer-clone]
 
 # Page settings with URL slug, and redirects from old slugs
 
+> Update 2026-10-25: the home page can now be changed ("Set as home page" on any other page,
+> which replaces "Make home page" below) and the save check accepts that change; see
+> `2026-10-25-set-as-home-page.md`.
+
 Build notes for the change asked for on 2026-10-20 ("the page settings also need a way to change
 the slug"). Written after the build, so it records what exists and why, not a proposal.
 

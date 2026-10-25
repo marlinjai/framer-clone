@@ -11,6 +11,13 @@ export interface MenuItem {
   onClick: () => void;
   destructive?: boolean;
   disabled?: boolean;
+  /**
+   * For a disabled item that should explain itself: the item stays focusable
+   * and tappable (aria-disabled instead of the disabled attribute), looks
+   * disabled, and choosing it runs this instead of onClick. Touch screens have
+   * no hover tooltip, so this is how they learn why.
+   */
+  onDisabledClick?: () => void;
 }
 
 /** Why the menu closed: Escape and choosing an item hand focus back to the row. */
@@ -127,15 +134,20 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
           key={item.label}
           type="button"
           role="menuitem"
-          disabled={item.disabled}
+          disabled={item.disabled && !item.onDisabledClick}
+          aria-disabled={item.disabled && item.onDisabledClick ? true : undefined}
           onClick={() => {
-            if (item.disabled) return;
-            item.onClick();
+            if (item.disabled) {
+              if (!item.onDisabledClick) return;
+              item.onDisabledClick();
+            } else {
+              item.onClick();
+            }
             onClose('item');
           }}
           className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left transition-colors ${
             item.disabled
-              ? 'text-muted-foreground cursor-not-allowed'
+              ? `text-muted-foreground ${item.onDisabledClick ? 'cursor-help hover:bg-accent' : 'cursor-not-allowed'}`
               : item.destructive
                 ? 'text-destructive hover:bg-destructive/10'
                 : 'text-foreground hover:bg-accent'
