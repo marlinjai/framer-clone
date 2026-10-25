@@ -227,7 +227,7 @@ export default function RichTextEditor({
               <Icon aria-hidden className="size-3.5" />
             </button>
           ))}
-          <span aria-hidden className="ml-1 border-l border-foreground/10 pl-2.5 pr-1.5 text-[11px] text-muted-foreground">
+          <span aria-hidden className="ml-1 border-l border-foreground/10 pl-2.5 pr-1.5 text-xs text-muted-foreground">
             {MOD}↵ saves · Esc leaves it
           </span>
         </div>

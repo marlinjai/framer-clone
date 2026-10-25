@@ -96,3 +96,29 @@ The invoice page tests cover the four stateful-flow paths for the new controls:
 - re-entry: the issued view and the form view keep the shell.
 
 Then a Chrome check at desktop and phone widths, and a fresh Impeccable critique against 21/40.
+
+## Fresh critique (2026-10-25)
+
+A second, independent Impeccable critique scored the redesign **25/40** (from 21). Fixed in this round:
+
+- line menus are named as the invoice numbers its rows ("Line 2", "Text row 1"), not by their place in the
+  list, so a screen reader says the same number the "Pos." column prints;
+- the line action buttons are darker at rest (`foreground/60`, above 3:1);
+- one name for the product action ("Product or service") on the page and in the Add menu;
+- the product picker is a combobox with a listbox: the arrow keys move a highlight, Enter picks it;
+- the formatting hint is 12px;
+- an issued invoice without a stored recipient says so instead of showing an empty label;
+- "Issued on" appears only with a date.
+
+Set aside, with the reason:
+
+- "the issued view still says draft": an artefact of the local stand-in, which prints every PDF as a draft;
+  the real issued PDF is the stored one (proven on TEST-4 to TEST-6);
+- near-black for the pressed Bold button and Issue: the owner's glass direction, decided above;
+- the toolbar over the page while scrolling: the canvas has room to scroll the last line clear of it;
+- the document data block, the logo band and the draft stamp: the template's own design, edited in the
+  composer, not the editor's chrome;
+- renaming the dialog's "Back" to "Cancel": next to issuing and cancelling invoices, "Cancel" would be read
+  as cancelling the invoice;
+- collapsing the always-open "Add line" form on a phone: adding lines is the main job of a draft there.
+

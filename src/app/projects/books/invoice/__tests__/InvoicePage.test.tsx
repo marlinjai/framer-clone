@@ -44,6 +44,8 @@ vi.mock('../../composer/PdfCanvas', () => ({
 }));
 
 import DocumentEditor from '../../DocumentEditor';
+import type { LineView } from '@/lib/books/api';
+import { lineName } from '../fields';
 
 type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -274,8 +276,8 @@ describe('the invoice page: forward', () => {
   it('picks a line from the product list, with its price basis for the server to convert', async () => {
     server();
     await opened();
-    fireEvent.click(screen.getByRole('button', { name: 'Choose product' }));
-    fireEvent.click(await screen.findByRole('button', { name: /Beratung/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
+    fireEvent.click(await screen.findByRole('option', { name: /Beratung/ }));
     await waitFor(() =>
       expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
         kind: 'service', title: 'Beratung', description: 'Strategie', unitLabel: 'Std', unitPrice: 9900, priceBasis: 'gross', taxClass: 'standard', discountBp: 0, quantity: 1000, expectedVersion: 3,
@@ -322,6 +324,11 @@ describe('the invoice page: backtrack and revise', () => {
     await waitFor(() => expect(live()).toBe('Undone: Line 1, quantity.'));
     fireEvent.keyDown(document.body, { key: 'z', metaKey: true, shiftKey: true });
     await waitFor(() => expect(calls.filter((c) => c.method === 'PATCH').at(-1)!.body).toEqual({ quantity: 4000, expectedVersion: 5 }));
+  });
+
+  it('lines are named as the invoice numbers them: a text row between them does not count', () => {
+    const lines = [line(), line({ id: 't1', position: 2, kind: 'text', title: 'Phase zwei' }), line({ id: 'l2', position: 3, title: 'Second' })] as LineView[];
+    expect(lines.map((l) => lineName(l, lines))).toEqual(['Line 1', 'Text row 1', 'Line 2']);
   });
 
   it('a removed line comes back at its place with undo', async () => {
@@ -460,10 +467,40 @@ describe('the invoice page: review fixes', () => {
       },
     });
     await opened();
-    fireEvent.click(screen.getByRole('button', { name: 'Choose product' }));
-    await screen.findByRole('button', { name: /Aaa first/ });
-    const search = screen.getByRole('textbox', { name: 'Search your products and services' });
+    fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
+    await screen.findByRole('option', { name: /Aaa first/ });
+    const search = screen.getByRole('combobox', { name: 'Search your products and services' });
     fireEvent.change(search, { target: { value: 'Bera' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body?.title).toBe('Beratung'));
+  });
+
+  it('the arrow keys move through the products and Enter picks the highlighted one', async () => {
+    server({
+      'GET /api/books/products': () => ({
+        status: 200,
+        body: {
+          items: [
+            { id: 'p0', kind: 'goods', name: 'Aaa first', description: null, unitLabel: 'Stk', unitPrice: 100, priceBasis: 'net', taxClass: 'standard', discountBp: 0, archivedAt: null },
+            { id: 'p1', kind: 'service', name: 'Beratung', description: null, unitLabel: 'Std', unitPrice: 9900, priceBasis: 'net', taxClass: 'standard', discountBp: 0, archivedAt: null },
+          ],
+          nextCursor: null,
+          total: 2,
+        },
+      }),
+    });
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
+    const first = await screen.findByRole('option', { name: /Aaa first/ });
+    const search = screen.getByRole('combobox', { name: 'Search your products and services' });
+    expect(search.getAttribute('aria-activedescendant')).toBe(first.id);
+    fireEvent.keyDown(search, { key: 'ArrowDown' });
+    const second = screen.getByRole('option', { name: /Beratung/ });
+    expect(second.getAttribute('aria-selected')).toBe('true');
+    expect(search.getAttribute('aria-activedescendant')).toBe(second.id);
+    fireEvent.keyDown(search, { key: 'ArrowDown' });
+    expect(first.getAttribute('aria-selected')).toBe('true'); // it wraps round
+    fireEvent.keyDown(search, { key: 'ArrowUp' });
     fireEvent.keyDown(search, { key: 'Enter' });
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body?.title).toBe('Beratung'));
   });
@@ -489,11 +526,11 @@ describe('the invoice page: the floating toolbar', () => {
   it('the product picker with nothing to offer says so and leads to where products are added', async () => {
     server({ 'GET /api/books/products': () => ({ status: 200, body: { items: [], nextCursor: null, total: 0 } }) });
     await opened();
-    fireEvent.click(screen.getByRole('button', { name: 'Choose product' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
     const picker = screen.getByRole('dialog', { name: 'Choose a product or service' });
     await within(picker).findByText('No products or services yet.');
     expect(within(picker).getByRole('link', { name: /Add them in Products and services/ }).getAttribute('href')).toBe('/projects/books?tab=products');
-    fireEvent.change(within(picker).getByRole('textbox', { name: 'Search your products and services' }), { target: { value: 'xyz' } });
+    fireEvent.change(within(picker).getByRole('combobox', { name: 'Search your products and services' }), { target: { value: 'xyz' } });
     await within(picker).findByText('Nothing matches “xyz”.');
   });
 });

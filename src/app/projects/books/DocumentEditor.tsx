@@ -638,7 +638,9 @@ export default function DocumentEditor({ id }: { id: string }) {
                       <br />
                       {doc.customerSnapshot.postalCode} {doc.customerSnapshot.city}
                     </address>
-                  ) : null}
+                  ) : (
+                    <p className="text-muted-foreground">No recipient was stored with this invoice; the PDF shows the one it was issued to.</p>
+                  )}
                 </div>
               )}
               {draft ? (

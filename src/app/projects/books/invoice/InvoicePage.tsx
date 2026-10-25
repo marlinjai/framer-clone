@@ -76,7 +76,7 @@ import type { FieldRect, LayoutField } from '@/server/books/render/engine';
 
 import PdfCanvas from '../composer/PdfCanvas';
 import { errorText } from '../ui';
-import { TAX_CLASS_OPTIONS, applyLocal, editValue, editorValue, fieldLabel, isRichField, parseValue, richOfValue, readOnlyReason, sameValue, type FieldRequest } from './fields';
+import { TAX_CLASS_OPTIONS, applyLocal, editValue, editorValue, fieldLabel, isRichField, lineName, parseValue, richOfValue, readOnlyReason, sameValue, type FieldRequest } from './fields';
 import { FloatingToolbar, GLASS_SURFACE, ToolButton, ToolbarDivider } from './chrome';
 import RichTextEditor from './RichTextEditor';
 import { cssFontFamily, registerItalicFonts, useDraftPage } from './useDraftPage';
@@ -473,6 +473,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
   function lineAction(l: LineView, action: 'up' | 'down' | 'duplicate' | 'remove') {
     const ids = detailRef.current.lines.map((x) => x.id);
     const i = ids.indexOf(l.id);
+    const name = lineName(l, detailRef.current.lines);
     if (action === 'up' || action === 'down') {
       const j = i + (action === 'up' ? -1 : 1);
       if (j < 0 || j >= ids.length) return;
@@ -480,11 +481,11 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
       [next[i], next[j]] = [next[j], next[i]];
       focusAfter.current = `menu:${l.id}`;
       const order = (list: string[]) => (v: number) => booksApi.reorderLines(id, list.map(resolveLine), v);
-      void run({ label: 'Move', undo: order(ids), redo: order(next) }, order(next), `Line ${i + 1} moved ${action}.`);
+      void run({ label: 'Move', undo: order(ids), redo: order(next) }, order(next), `${name} moved ${action}.`);
       return;
     }
     if (action === 'duplicate') {
-      void addLineFrom(copyOfLine(l), `A copy of line ${i + 1}`, `menu:${l.id}`);
+      void addLineFrom(copyOfLine(l), `A copy of ${name.toLowerCase()}`, `menu:${l.id}`);
       return;
     }
     // Remove: undo adds it back at its place (under a new id, which steps for the old one follow).
@@ -492,7 +493,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     focusAfter.current = ids[i + 1] ? `menu:${ids[i + 1]}` : ids[i - 1] ? `menu:${ids[i - 1]}` : 'add-line';
     void run(
       {
-        label: `Remove line ${i + 1}`,
+        label: `Remove ${name.toLowerCase()}`,
         undo: async (v) => {
           let current = resolveLine(l.id);
           let d = detailRef.current;
@@ -516,7 +517,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
         redo: (v) => booksApi.removeLine(id, resolveLine(l.id), v),
       },
       (v) => booksApi.removeLine(id, resolveLine(l.id), v),
-      `Line ${i + 1} removed. Undo with Ctrl+Z or Cmd+Z.`,
+      `${name} removed. Undo with Ctrl+Z or Cmd+Z.`,
     );
   }
 
@@ -655,12 +656,14 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
       const l = detail.lines.find((x) => x.id === row.lineId);
       if (!l) continue;
       const n = detail.lines.indexOf(l) + 1;
+      const name = lineName(l, detail.lines);
       const details = layout.fields.find((x) => x.id === `line.${l.id}.description`) ?? null;
       nodes.push(
         <div key={`menu:${l.id}`} className="absolute" style={{ left: (r.x + r.width) * scale + 10, top: r.y * scale - 3 }}>
           <LineActions
             line={l}
             index={n - 1}
+            name={name}
             count={detail.lines.length}
             busy={busy}
             regular={!doc.kleinunternehmer && !doc.reverseCharge}
@@ -680,7 +683,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
               if (before === taxClass) return;
               focusAfter.current = `menu:${l.id}`;
               const to = (tc: string) => (v: number) => send({ kind: 'line', lineId: l.id, body: { taxClass: tc } }, v);
-              void run({ label: `Line ${n}, tax rate`, undo: to(before), redo: to(taxClass) }, to(taxClass), `${fieldLabel(f, detail)} saved.`);
+              void run({ label: `${name}, tax rate`, undo: to(before), redo: to(taxClass) }, to(taxClass), `${fieldLabel(f, detail)} saved.`);
             }}
           />
         </div>,
@@ -725,7 +728,7 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
               className={chip}
               onClick={() => !busy && setPicking(!picking)}
             >
-              <Package aria-hidden className="size-3.5" /> Choose product
+              <Package aria-hidden className="size-3.5" /> Product or service
             </button>
             {picking ? (
               <ProductSearch
@@ -1126,6 +1129,7 @@ function NewLineRow({
 function LineActions({
   line,
   index,
+  name,
   count,
   busy,
   regular,
@@ -1138,6 +1142,8 @@ function LineActions({
 }: {
   line: LineView;
   index: number;
+  /** "Line 2" or "Text row 1", as the invoice numbers its rows. */
+  name: string;
   count: number;
   busy: boolean;
   regular: boolean;
@@ -1153,14 +1159,14 @@ function LineActions({
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger
         data-focus-key={`menu:${line.id}`}
-        aria-label={`Line ${index + 1} actions`}
-        title={`Line ${index + 1} actions`}
+        aria-label={`${name} actions`}
+        title={`${name} actions`}
         aria-disabled={busy || undefined}
-        className="flex size-7 items-center justify-center rounded-lg text-foreground/45 transition-colors hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand data-[state=open]:bg-foreground/[0.06] data-[state=open]:text-foreground"
+        className="flex size-7 items-center justify-center rounded-lg text-foreground/60 transition-colors hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand data-[state=open]:bg-foreground/[0.06] data-[state=open]:text-foreground"
       >
         <MoreHorizontal aria-hidden className="size-4" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className={`min-w-[13rem] rounded-xl ${GLASS_SURFACE}`} aria-label={`Line ${index + 1}`}>
+      <DropdownMenuContent align="start" className={`min-w-[13rem] rounded-xl ${GLASS_SURFACE}`} aria-label={name}>
         <DropdownMenuGroup>
           <DropdownMenuItem disabled={busy || index === 0} onSelect={() => onAction('up')}>
             <ArrowUp aria-hidden /> Move up
@@ -1219,7 +1225,10 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; 
   const [result, setResult] = useState<{ q: string; items: ProductView[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pickFirst = useRef(false);
+  // The highlighted product (the combobox pattern: the focus stays in the search, the arrows move this).
+  const [active, setActive] = useState(0);
   const items = result?.items ?? null;
+  useEffect(() => setActive(0), [result]);
   useEffect(() => {
     let cancelled = false;
     const query = q.trim();
@@ -1241,6 +1250,7 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; 
       onPick(result.items[0]);
     }
   }, [current, result, onPick]);
+  const option = (i: number) => `product-option-${i}`;
   return (
     <div role="dialog" aria-label="Choose a product or service" className={`absolute left-0 top-9 z-30 w-80 rounded-xl border p-1.5 text-popover-foreground ${GLASS_SURFACE}`}>
       <label className="glass-inset flex items-center gap-2 rounded-lg px-2.5">
@@ -1248,6 +1258,11 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; 
         <span className="sr-only">Search your products and services</span>
         <input
           autoFocus
+          role="combobox"
+          aria-expanded={Boolean(items?.length)}
+          aria-controls="product-options"
+          aria-autocomplete="list"
+          aria-activedescendant={current && result.items[active] ? option(active) : undefined}
           placeholder="Search products and services"
           className="h-9 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           value={q}
@@ -1257,9 +1272,15 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; 
               e.preventDefault();
               onClose();
             }
+            if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && items && items.length > 0) {
+              e.preventDefault();
+              const next = (active + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+              setActive(next);
+              document.getElementById(option(next))?.scrollIntoView({ block: 'nearest' });
+            }
             if (e.key === 'Enter') {
               e.preventDefault();
-              if (current && result.items[0]) onPick(result.items[0]);
+              if (current && result.items[active]) onPick(result.items[active]);
               else if (!current) pickFirst.current = true;
             }
           }}
@@ -1279,16 +1300,24 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; 
           </Link>
         </div>
       ) : null}
-      <ul className="mt-1 max-h-64 overflow-y-auto">
-        {items?.map((p) => (
-          <li key={p.id}>
-            <button type="button" className="flex w-full justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-accent focus-visible:bg-accent focus-visible:outline-none" onClick={() => onPick(p)}>
-              <span className="truncate font-medium">{p.name}</span>
-              <span className="shrink-0 tabular-nums text-muted-foreground">
-                {money(p.unitPrice)} / {p.unitLabel}
-                {p.priceBasis === 'gross' ? ' brutto' : ''}
-              </span>
-            </button>
+      <ul id="product-options" role="listbox" aria-label="Products and services" className="mt-1 max-h-64 overflow-y-auto empty:hidden">
+        {items?.map((p, i) => (
+          <li
+            key={p.id}
+            id={option(i)}
+            role="option"
+            aria-selected={i === active}
+            className={`flex cursor-pointer justify-between gap-3 rounded-lg px-2.5 py-2 text-[13px] ${i === active ? 'bg-accent' : ''}`}
+            // A press keeps the focus in the search, so the picker does not close before the pick.
+            onMouseDown={(e) => e.preventDefault()}
+            onMouseEnter={() => setActive(i)}
+            onClick={() => onPick(p)}
+          >
+            <span className="truncate font-medium">{p.name}</span>
+            <span className="shrink-0 tabular-nums text-muted-foreground">
+              {money(p.unitPrice)} / {p.unitLabel}
+              {p.priceBasis === 'gross' ? ' brutto' : ''}
+            </span>
           </li>
         ))}
       </ul>
