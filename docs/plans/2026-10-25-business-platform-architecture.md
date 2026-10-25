@@ -94,7 +94,8 @@ acceptance; invoice).
        against the fake gateway but not shipped as paid booking;
     3. quotes of services and materials, accepted online, turning into the invoice (reference: the Basis
        Camp offers module);
-    4. team scheduling and dispatch (reference: ArboSano's crews).
+    4. team scheduling and dispatch (reference: a field-service crew; ArboSano is not a customer for this,
+       owner 2026-10-25).
     Basis Camp stays on Medusa; moving it is not part of this plan.
 
 12. **Payments run on Stripe Connect** (owner, 2026-10-25), so the platform takes a fee on every purchase in
@@ -103,13 +104,40 @@ acceptance; invoice).
     the platform's fee is taken per payment as an application fee. Businesses join through Stripe's hosted
     onboarding, so identity checks and payouts stay with Stripe, the licensed payment institution.
 
+    The provider comparison of 2026-10-25 (Stripe Connect, Mollie Connect, Adyen for Platforms, PayPal,
+    Mangopay and others) confirms Stripe for the start:
+    - **Stripe Connect, direct charges, full-dashboard accounts the business owns, "Stripe handles
+      pricing":** the platform pays Stripe nothing (no per-account, payout or onboarding fees), the business
+      pays Stripe's own rates (EEA cards 1.5% + €0.25, SEPA Direct Debit €0.35) plus the platform fee, and
+      carries its own chargebacks. No licence is needed while money never passes through the platform's own
+      bank account (to be confirmed by a lawyer before launch). Portability is not assumed: Stripe allows only
+      one platform to control a connected account at a time, so whether a business can take its account to
+      another platform depends on the account type and platform-control state, to be confirmed with Stripe
+      before launch.
+    - **Mollie Connect** is the fallback: also free for the platform, 0.3 points dearer on cards, and the
+      most portable (the business owns its Mollie account).
+    - **Adyen for Platforms** (sales-led, minimum monthly invoice) and Stripe's "you handle pricing" (about
+      €770 a month of platform costs for the same 10 businesses and 600 card payments of €50: €600 of
+      processing at 1.5% + €0.25 each, $2 per active account about €20, 0.25% of €30,000 in payouts €75, and
+      €0.25 on each of about 300 daily payouts €75; dollars treated as euros) only pay off at large volume.
+    - Worked example, 10 businesses at €3,000 a month in €50 card payments with a 1% platform fee: each
+      business pays €90 a month (3.0%) on Stripe, €99 on Mollie; the platform nets €300 a month either way.
+
+13. **The payment layer stays provider-neutral** (the shop's test gateway already sits behind an interface),
+    and building runs on the test gateway and Stripe's test mode. The live platform account is opened only
+    before the first real payment, and only once its legal entity is chosen: a Stripe platform account
+    cannot move to another company, so connected businesses would have to sign up again. Whiz-Art Media may
+    hold it for one or two proof customers if Lumitra has no company of its own by then.
+
 ## Open for the owner
 
 - **The fee:** its size per payment, and whether it is shown as its own line to the business.
-- **The legal entity** that holds the Stripe platform account (it invoices the fees to the businesses), and
-  the account itself: creating it and passing Stripe's platform review need the owner's identity.
-- **The first proof customer** among Sharon's practice and ŌPUNTIA, and whether ArboSano is offered the
-  quotes and dispatch phase instead of HERO.
+- **The legal entity** that holds the Stripe platform account (it invoices the fees to the businesses).
+  Whiz-Art Media is the only company today; whether and where Lumitra becomes its own company is an
+  international tax question for a tax adviser (a company managed from Germany is taxed in Germany, §10 AO,
+  and the foreign-company rules of §§7 to 14 AStG apply). Needed only before the first live payment.
+- **The account itself:** creating it and passing Stripe's platform review need the owner's identity.
+- **The first proof customer:** Sharon's practice or ŌPUNTIA.
 
 ## Next
 
