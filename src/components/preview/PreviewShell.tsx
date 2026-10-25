@@ -8,7 +8,7 @@
 // (width, height, reload key) lives here so the toolbar's W/H inputs and
 // the gutters' drag deltas converge to a single source of truth.
 'use client';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -166,7 +166,9 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
   // the in-window fullscreen stand-in (the browser handles its own), and over
   // the editor otherwise closes the preview.
   const keysRef = useRef({ immersive, native: fullscreen.native, onEnterFullscreen, onExitFullscreen, onClose });
-  keysRef.current = { immersive, native: fullscreen.native, onEnterFullscreen, onExitFullscreen, onClose };
+  useLayoutEffect(() => {
+    keysRef.current = { immersive, native: fullscreen.native, onEnterFullscreen, onExitFullscreen, onClose };
+  }, [immersive, fullscreen.native, onEnterFullscreen, onExitFullscreen, onClose]);
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;

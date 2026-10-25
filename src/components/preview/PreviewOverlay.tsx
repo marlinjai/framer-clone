@@ -75,12 +75,20 @@ const PreviewOverlay = observer(() => {
   React.useEffect(() => {
     if (!open) return;
     returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const root = rootRef.current;
+    // The portal root is a direct child of <body>; everything else is the editor
+    // behind it. Inert keeps Tab and assistive technology inside the preview.
+    const background = Array.from(document.body.children).filter(
+      (el): el is HTMLElement => el instanceof HTMLElement && el !== root && !el.hasAttribute('inert'),
+    );
+    background.forEach((el) => el.setAttribute('inert', ''));
     // The page itself, so Space and the arrows scroll it; the dialog when the
     // page has no frame (no viewports).
-    const root = rootRef.current;
     const frame = root?.querySelector<HTMLElement>('[data-preview-frame]');
     (frame ?? root)?.focus({ preventScroll: true });
     return () => {
+      // Before focus returns: an inert element cannot take focus.
+      background.forEach((el) => el.removeAttribute('inert'));
       const back = returnFocusRef.current;
       returnFocusRef.current = null;
       if (back && back.isConnected) back.focus({ preventScroll: true });
