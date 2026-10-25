@@ -42,7 +42,7 @@ function textOf(node: ComponentInstance): string {
  * is still open when the field goes away (the selection changed) is
  * committed to the node it was typed for.
  */
-export const TextContentField = observer(({ node, label = 'Text', variant = 'area', className }: TextContentFieldProps) => {
+export const TextContentField = observer(({ node, label = 'Text content', variant = 'area', className }: TextContentFieldProps) => {
   const stored = textOf(node);
   const [draft, setDraft] = React.useState(stored);
   const focused = React.useRef(false);

@@ -48,7 +48,7 @@ function seed() {
 
 afterEach(() => cleanup());
 
-const field = () => screen.getByRole('textbox', { name: 'Text' }) as HTMLTextAreaElement;
+const field = () => screen.getByRole('textbox', { name: 'Text content' }) as HTMLTextAreaElement;
 
 describe('TextContentSection', () => {
   it('shows only for elements that hold their own text', () => {
@@ -119,7 +119,7 @@ describe('TextContentSection', () => {
     const { para } = seed();
     para.setBinding('children', { mode: 'read', expression: '{{page.params.slug}}' });
     render(<TextContentSection component={para} />);
-    expect(screen.queryByRole('textbox', { name: 'Text' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Text content' })).toBeNull();
     expect(screen.getByText('{{page.params.slug}}')).toBeTruthy();
     expect(screen.getByRole('button', { name: /Unbind/ })).toBeTruthy();
   });
