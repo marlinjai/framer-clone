@@ -110,12 +110,16 @@ acceptance; invoice).
       pricing":** the platform pays Stripe nothing (no per-account, payout or onboarding fees), the business
       pays Stripe's own rates (EEA cards 1.5% + €0.25, SEPA Direct Debit €0.35) plus the platform fee, and
       carries its own chargebacks. No licence is needed while money never passes through the platform's own
-      bank account (to be confirmed by a lawyer before launch). Full-dashboard accounts can also authorise a
-      new platform later, which keeps them portable.
+      bank account (to be confirmed by a lawyer before launch). Portability is not assumed: Stripe allows only
+      one platform to control a connected account at a time, so whether a business can take its account to
+      another platform depends on the account type and platform-control state, to be confirmed with Stripe
+      before launch.
     - **Mollie Connect** is the fallback: also free for the platform, 0.3 points dearer on cards, and the
       most portable (the business owns its Mollie account).
     - **Adyen for Platforms** (sales-led, minimum monthly invoice) and Stripe's "you handle pricing" (about
-      €774 a month of platform costs for 10 businesses at €3,000) only pay off at large volume.
+      €770 a month of platform costs for the same 10 businesses and 600 card payments of €50: €600 of
+      processing at 1.5% + €0.25 each, $2 per active account about €20, 0.25% of €30,000 in payouts €75, and
+      €0.25 on each of about 300 daily payouts €75; dollars treated as euros) only pay off at large volume.
     - Worked example, 10 businesses at €3,000 a month in €50 card payments with a 1% platform fee: each
       business pays €90 a month (3.0%) on Stripe, €99 on Mollie; the platform nets €300 a month either way.
 
