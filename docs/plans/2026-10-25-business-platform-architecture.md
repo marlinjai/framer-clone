@@ -69,8 +69,9 @@ acceptance; invoice).
 6. **Contacts stays the customer master.** Booking guests and shop buyers become contacts; documents keep
    their snapshot of the recipient as they do today.
 7. **Sell separate plans, deploy one platform:** booking only, shop, Books, website, switched on per company
-   through the auth-brain app grants that already exist (`sites`, `books`, `booking`). Flat prices with
-   monthly cancellation, no commission on new clients.
+   through the auth-brain app grants that already exist (`sites`, `books`, `booking`). Flat plan prices with
+   monthly cancellation; no marketplace commission on new clients (the Treatwell model reviewers complain
+   about). The platform earns a small, visible fee on each online payment instead (decision 12).
 8. **An invoice is the receipt of an order or a completed job,** created by the platform through the existing
    `sales_document.source_order_id`; hand-written invoices stay possible.
 9. **Invoice drafts become deletable.** A draft has no number and is not a bookkeeping record; issued
@@ -96,10 +97,17 @@ acceptance; invoice).
     4. team scheduling and dispatch (reference: ArboSano's crews).
     Basis Camp stays on Medusa; moving it is not part of this plan.
 
+12. **Payments run on Stripe Connect** (owner, 2026-10-25), so the platform takes a fee on every purchase in
+    every store and booking. Each business is its own connected account and the seller of record (direct
+    charges): its customer pays the business, the receipt is the business's own invoice in the Books, and
+    the platform's fee is taken per payment as an application fee. Businesses join through Stripe's hosted
+    onboarding, so identity checks and payouts stay with Stripe, the licensed payment institution.
+
 ## Open for the owner
 
-- **Real payments.** The engine has a fake gateway. Online payment needs a Stripe setup (one platform account
-  or Stripe Connect for each business), which is a contract and money decision.
+- **The fee:** its size per payment, and whether it is shown as its own line to the business.
+- **The legal entity** that holds the Stripe platform account (it invoices the fees to the businesses), and
+  the account itself: creating it and passing Stripe's platform review need the owner's identity.
 - **The first proof customer** among Sharon's practice and ŌPUNTIA, and whether ArboSano is offered the
   quotes and dispatch phase instead of HERO.
 
