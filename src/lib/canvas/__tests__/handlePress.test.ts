@@ -1,7 +1,7 @@
 // A finger press on a selection handle: drag means the handle gesture, a
 // still hold means the selection's long-press menu (src/lib/canvas/handlePress.ts).
 import { describe, it, expect, vi } from 'vitest';
-import { startHandlePress, type HandlePressDeps } from '../handlePress';
+import { followHandlePress, startHandlePress, type HandlePressDeps } from '../handlePress';
 import { LONG_PRESS_MS, TOUCH_DRAG_THRESHOLD_PX } from '../touchGestures';
 
 function harness(tickResult: string = 'vibrate') {
@@ -86,6 +86,42 @@ describe('startHandlePress', () => {
     expect(h.deps.clearTimer).toHaveBeenCalled();
     expect(h.deps.startHandle).not.toHaveBeenCalled();
     expect(h.deps.openMenu).not.toHaveBeenCalled();
+    expect(h.deps.tick).not.toHaveBeenCalled();
+  });
+});
+
+describe('followHandlePress', () => {
+  const pointer = (type: string, pointerId: number, clientX = 0, clientY = 0) =>
+    Object.assign(new Event(type), { pointerId, clientX, clientY });
+
+  it('follows its own pointer, hands the deciding point to the handle once, and stops listening at the end', () => {
+    const h = harness();
+    const target = new EventTarget();
+    const startHandle = vi.fn();
+    const press = followHandlePress({ pointerId: 5, start: { x: 10, y: 10 }, target, deps: { ...h.deps, startHandle } });
+    target.dispatchEvent(pointer('pointermove', 9, 200, 200)); // another finger
+    expect(press.state).toBe('waiting');
+    target.dispatchEvent(pointer('pointermove', 5, 10 + TOUCH_DRAG_THRESHOLD_PX + 3, 10));
+    expect(startHandle).toHaveBeenCalledTimes(1);
+    expect(startHandle).toHaveBeenCalledWith({ x: 10 + TOUCH_DRAG_THRESHOLD_PX + 3, y: 10 });
+    target.dispatchEvent(pointer('pointermove', 5, 80, 10));
+    expect(startHandle).toHaveBeenCalledTimes(1);
+    target.dispatchEvent(pointer('pointerup', 5));
+    expect(press.state).toBe('done');
+    target.dispatchEvent(pointer('pointermove', 5, 300, 300));
+    expect(h.deps.slideMove).not.toHaveBeenCalled();
+  });
+
+  it('a hold opens the menu; a cancel ends the press without the deferred tick', () => {
+    const h = harness('deferred');
+    const target = new EventTarget();
+    const press = followHandlePress({ pointerId: 2, start: { x: 0, y: 0 }, target, deps: { ...h.deps, startHandle: vi.fn() } });
+    h.fire();
+    expect(h.deps.openMenu).toHaveBeenCalledTimes(1);
+    target.dispatchEvent(pointer('pointermove', 2, 40, 40));
+    expect(h.deps.slideMove).toHaveBeenCalledWith(40, 40);
+    target.dispatchEvent(pointer('pointercancel', 2));
+    expect(press.state).toBe('done');
     expect(h.deps.tick).not.toHaveBeenCalled();
   });
 });

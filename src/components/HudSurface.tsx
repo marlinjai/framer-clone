@@ -21,9 +21,8 @@ import {
 import EffectBadge from './EffectBadge';
 import { lastPointerIsTouch, onPointerModalityChange } from '@/hooks/useEditorGestureGuard';
 import { matchesPhone } from '@/hooks/use-mobile';
-import { haptic, hapticOrDefer } from '@/lib/haptics';
-import { slideMenuMove } from '@/components/phone/PhoneContextMenu';
-import { startHandlePress } from '@/lib/canvas/handlePress';
+import { startPhoneHandlePress } from '@/components/phone/phoneHandlePress';
+import { RADIUS_MIN_TOUCH_ELEMENT } from '@/lib/canvas/spacingGeometry';
 
 type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 const HANDLE_DIRECTIONS: { dir: ResizeDirection; className: string; cursor: string }[] = [
@@ -68,7 +67,8 @@ const CORNER_INWARD: Record<RadiusCorner, { x: 1 | -1; y: 1 | -1 }> = {
 const RADIUS_MIN_OVERLAY_PX = 40; // hide dots if overlay is smaller than this
 // Under a finger the radius dots get 44px hit areas (globals.css); on a
 // smaller selection they would cover the element and its resize handles.
-const RADIUS_MIN_OVERLAY_TOUCH_PX = 120;
+// Shared with the spacing handles' touch placement, which keeps clear of them.
+const RADIUS_MIN_OVERLAY_TOUCH_PX = RADIUS_MIN_TOUCH_ELEMENT;
 
 /**
  * Follow a handle press until it ends. A mouse press keeps the document
@@ -126,11 +126,15 @@ function touchPress(handler: (e: React.MouseEvent<HTMLDivElement>) => void, edit
     e.stopPropagation();
     const el = e.currentTarget;
     const native = e.nativeEvent;
-    const id = e.pointerId;
     const start = { x: e.clientX, y: e.clientY };
-    const press = startHandlePress(start, {
+    startPhoneHandlePress({
+      editorUI,
+      pointerId: e.pointerId,
+      start,
       // The handler reads only these fields; currentTarget is gone once the
-      // React dispatch has returned, so it is captured here.
+      // React dispatch has returned, so it is captured here. The gesture
+      // starts from the press point; the handle's own listeners take the
+      // moves from here on.
       startHandle: () => handler({
         button: 0,
         currentTarget: el,
@@ -140,24 +144,7 @@ function touchPress(handler: (e: React.MouseEvent<HTMLDivElement>) => void, edit
         preventDefault: () => {},
         stopPropagation: () => {},
       } as unknown as React.MouseEvent<HTMLDivElement>),
-      openMenu: () => editorUI.openPhoneContextMenu(start),
-      slideMove: (x, y) => slideMenuMove(editorUI, x, y),
-      tryTick: hapticOrDefer,
-      tick: () => { haptic(); },
-      setTimer: (fn, ms) => window.setTimeout(fn, ms),
-      clearTimer: (t) => window.clearTimeout(t),
     });
-    const move = (ev: PointerEvent) => { if (ev.pointerId === id) press.move(ev.clientX, ev.clientY); };
-    const end = (ev: PointerEvent) => {
-      if (ev.pointerId !== id) return;
-      press.end(ev.type === 'pointerup');
-      document.removeEventListener('pointermove', move);
-      document.removeEventListener('pointerup', end);
-      document.removeEventListener('pointercancel', end);
-    };
-    document.addEventListener('pointermove', move);
-    document.addEventListener('pointerup', end);
-    document.addEventListener('pointercancel', end);
   };
 }
 

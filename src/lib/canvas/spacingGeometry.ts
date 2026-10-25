@@ -72,7 +72,37 @@ export const HANDLE_MIN_LENGTH = HANDLE_LENGTH + 2 * HANDLE_HIT_PAD;
  * pushed-in handles would overlap, so they are hidden. A band thick enough to
  * hold its own handle is never hidden by this rule.
  */
-export const PADDING_HANDLE_MIN_ELEMENT = 2 * (HANDLE_MIN_OFFSET + HANDLE_HIT_PAD + HANDLE_THICKNESS / 2) + 8;
+export const PADDING_HANDLE_MIN_ELEMENT = paddingHandleMinElement(HANDLE_MIN_OFFSET);
+
+function paddingHandleMinElement(minOffset: number): number {
+  return 2 * (minOffset + HANDLE_HIT_PAD + HANDLE_THICKNESS / 2) + 8;
+}
+
+/*
+ * Touch layout (a finger, html[data-pointer="touch"]). Every canvas handle,
+ * the spacing handles included, then grows an invisible hit area of at least
+ * TOUCH_TARGET x TOUCH_TARGET css px centred on its dot or bar (globals.css).
+ * The desktop placement would put a thin band's spacing handle inside the
+ * mid-edge resize handle's touch area, and the spacing layer paints above
+ * HudSurface, so a finger could never reach n/e/s/w resize. Under touch,
+ * placeHandles keeps every spacing handle's touch area clear of every
+ * selection handle's one (resize dots, and the radius dots when HudSurface
+ * shows them) and of the other spacing handles; a handle with no clear spot
+ * is hidden (the properties panel and the quick toolbar still set it).
+ */
+export const TOUCH_TARGET = 44;
+/** HudSurface's resize dots are centred on its outline, 2px outside the element. */
+export const RESIZE_DOT_OUTSET = 2;
+/** HudSurface's radius dots sit 10px inside the outline: centre 12px inside the element. */
+export const RADIUS_DOT_INSET = 12;
+/** Under touch HudSurface shows the radius dots only on an element at least this big (both sides). */
+export const RADIUS_MIN_TOUCH_ELEMENT = 120;
+/**
+ * Least distance from the element's edge to a spacing handle's centre under
+ * touch: a whole touch target past the resize dot's centre (which sits
+ * RESIZE_DOT_OUTSET outside the edge), plus 2px of air.
+ */
+export const TOUCH_HANDLE_MIN_OFFSET = TOUCH_TARGET + RESIZE_DOT_OUTSET + 2;
 
 const EPS = 0.5;
 
@@ -286,9 +316,14 @@ export function gapBands(input: {
  * element's edge: a thin padding band's handle moves inward, a thin margin
  * band's handle outward, so a 0px side is still grabbable and never covers a
  * resize dot. Gap handles sit in the middle of the gap. `element` is the
- * element's border box on screen.
+ * element's border box on screen. `minOffset` is HANDLE_MIN_OFFSET for a
+ * mouse or pen; placeHandles passes TOUCH_HANDLE_MIN_OFFSET under touch.
  */
-export function handleForRegion(region: SpacingRegion, element: ScreenRect): HandlePlacement | null {
+export function handleForRegion(
+  region: SpacingRegion,
+  element: ScreenRect,
+  minOffset: number = HANDLE_MIN_OFFSET,
+): HandlePlacement | null {
   const { rect, target } = region;
   let orientation: 'horizontal' | 'vertical';
   let cx: number;
@@ -307,10 +342,10 @@ export function handleForRegion(region: SpacingRegion, element: ScreenRect): Han
     const length = horizontal ? rect.width : rect.height;
     if (length < HANDLE_MIN_LENGTH) return null;
     const thickness = horizontal ? rect.height : rect.width;
-    const offset = Math.max(thickness / 2, HANDLE_MIN_OFFSET);
-    if (kind === 'padding' && thickness / 2 < HANDLE_MIN_OFFSET) {
+    const offset = Math.max(thickness / 2, minOffset);
+    if (kind === 'padding' && thickness / 2 < minOffset) {
       const across = horizontal ? element.height : element.width;
-      if (across < PADDING_HANDLE_MIN_ELEMENT) return null;
+      if (across < paddingHandleMinElement(minOffset)) return null;
     }
     // The edge the band starts from (the element side) and the direction
     // pointing away from it into the band.
@@ -363,4 +398,99 @@ export function intersectRects(a: ScreenRect, b: ScreenRect): ScreenRect | null 
   const btm = Math.min(bottom(a), bottom(b));
   if (r <= left || btm <= top) return null;
   return { left, top, width: r - left, height: btm - top };
+}
+
+/** A TOUCH_TARGET square centred on a point. */
+export function touchArea(cx: number, cy: number): ScreenRect {
+  return { left: cx - TOUCH_TARGET / 2, top: cy - TOUCH_TARGET / 2, width: TOUCH_TARGET, height: TOUCH_TARGET };
+}
+
+/**
+ * A spacing handle's grabbable area under touch: its hit rect, grown to at
+ * least TOUCH_TARGET on each axis around the same centre (the CSS
+ * `max(100%, 44px)` hit area). Squares stand in for the CSS discs, so the
+ * overlap checks err on the safe side.
+ */
+export function spacingTouchArea(h: HandlePlacement): ScreenRect {
+  const width = Math.max(h.hit.width, TOUCH_TARGET);
+  const height = Math.max(h.hit.height, TOUCH_TARGET);
+  const cx = h.hit.left + h.hit.width / 2;
+  const cy = h.hit.top + h.hit.height / 2;
+  return { left: cx - width / 2, top: cy - height / 2, width, height };
+}
+
+/**
+ * The touch areas of HudSurface's selection handles around `selection` (the
+ * element's frame-clipped rect, which is what HudSurface outlines): the
+ * eight resize dots, plus the four radius dots when it shows them under touch.
+ */
+export function selectionHandleTouchAreas(selection: ScreenRect): ScreenRect[] {
+  const o = RESIZE_DOT_OUTSET;
+  const l = selection.left - o;
+  const r = right(selection) + o;
+  const t = selection.top - o;
+  const b = bottom(selection) + o;
+  const cx = selection.left + selection.width / 2;
+  const cy = selection.top + selection.height / 2;
+  const areas = [
+    touchArea(l, t), touchArea(cx, t), touchArea(r, t),
+    touchArea(l, cy), touchArea(r, cy),
+    touchArea(l, b), touchArea(cx, b), touchArea(r, b),
+  ];
+  if (Math.min(selection.width, selection.height) >= RADIUS_MIN_TOUCH_ELEMENT) {
+    const i = RADIUS_DOT_INSET;
+    areas.push(
+      touchArea(selection.left + i, selection.top + i),
+      touchArea(right(selection) - i, selection.top + i),
+      touchArea(selection.left + i, bottom(selection) - i),
+      touchArea(right(selection) - i, bottom(selection) - i),
+    );
+  }
+  return areas;
+}
+
+/** True when two rects share area (touching edges do not count). */
+export function rectsOverlap(a: ScreenRect, b: ScreenRect): boolean {
+  return intersectRects(a, b) !== null;
+}
+
+/**
+ * Every band's handle, keyed by region id; a band without one is absent.
+ *
+ * With a mouse or pen (no `touch`) this is handleForRegion for each band,
+ * unchanged. Under touch (`touch.selection` is the rect HudSurface outlines)
+ * each padding and margin handle tries its desktop spot first (a thick band
+ * keeps its handle in the middle), then TOUCH_HANDLE_MIN_OFFSET from the edge;
+ * a gap handle has only its spot in the gap. The first spot whose touch area
+ * overlaps no selection handle and no handle placed before it wins; with none
+ * the handle is hidden. Bands are taken in order, so earlier ones (padding)
+ * win a tie.
+ */
+export function placeHandles(
+  regions: SpacingRegion[],
+  element: ScreenRect,
+  touch?: { selection: ScreenRect },
+): Map<string, HandlePlacement> {
+  const out = new Map<string, HandlePlacement>();
+  if (!touch) {
+    for (const r of regions) {
+      const h = handleForRegion(r, element);
+      if (h) out.set(r.id, h);
+    }
+    return out;
+  }
+  const taken = selectionHandleTouchAreas(touch.selection);
+  for (const r of regions) {
+    const offsets = r.target.kind === 'gap' ? [HANDLE_MIN_OFFSET] : [HANDLE_MIN_OFFSET, TOUCH_HANDLE_MIN_OFFSET];
+    for (const offset of offsets) {
+      const h = handleForRegion(r, element, offset);
+      if (!h) continue;
+      const area = spacingTouchArea(h);
+      if (taken.some(t => rectsOverlap(t, area))) continue;
+      taken.push(area);
+      out.set(r.id, h);
+      break;
+    }
+  }
+  return out;
 }

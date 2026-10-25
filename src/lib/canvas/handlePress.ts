@@ -77,3 +77,40 @@ export function startHandlePress(start: { x: number; y: number }, deps: HandlePr
     },
   };
 }
+
+/**
+ * startHandlePress wired to one finger's pointer events on `target` (the
+ * document in the app): moves and the release of `pointerId` drive the
+ * press, other pointers are ignored, and the listeners go away when the press
+ * ends. `startHandle` receives the point of the move that crossed the
+ * threshold; a handle that starts from `start` and applies that point at
+ * once follows the finger without a jump and without losing that move.
+ */
+export function followHandlePress(opts: {
+  pointerId: number;
+  start: { x: number; y: number };
+  target: EventTarget;
+  deps: Omit<HandlePressDeps, 'startHandle'> & { startHandle: (at: { x: number; y: number }) => void };
+}): HandlePress {
+  const { pointerId, start, target, deps } = opts;
+  let latest = start;
+  const press = startHandlePress(start, { ...deps, startHandle: () => deps.startHandle(latest) });
+  const move = (ev: Event) => {
+    const e = ev as PointerEvent;
+    if (e.pointerId !== pointerId) return;
+    latest = { x: e.clientX, y: e.clientY };
+    press.move(latest.x, latest.y);
+  };
+  const end = (ev: Event) => {
+    const e = ev as PointerEvent;
+    if (e.pointerId !== pointerId) return;
+    press.end(e.type === 'pointerup');
+    target.removeEventListener('pointermove', move);
+    target.removeEventListener('pointerup', end);
+    target.removeEventListener('pointercancel', end);
+  };
+  target.addEventListener('pointermove', move);
+  target.addEventListener('pointerup', end);
+  target.addEventListener('pointercancel', end);
+  return press;
+}
