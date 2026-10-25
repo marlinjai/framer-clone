@@ -171,6 +171,15 @@ export function useCameraControls() {
 
   const reset = React.useCallback(() => apply({ zoom: 1, panX: 0, panY: 0 }), [apply]);
 
+  /** Move the camera by screen pixels (positive moves the content right and down). */
+  const panBy = React.useCallback(
+    (dx: number, dy: number) => {
+      const current = transformState.current;
+      apply({ zoom: current.zoom, panX: current.panX + dx, panY: current.panY + dy });
+    },
+    [transformState, apply],
+  );
+
   /**
    * Fit the canvas frames into the visible area. `pick` chooses which frames
    * (default all); returns false when there is nothing to fit yet.
@@ -188,5 +197,5 @@ export function useCameraControls() {
     [transformState, apply],
   );
 
-  return { zoomPercentage, apply, zoomStep, reset, fit };
+  return { zoomPercentage, apply, zoomStep, reset, fit, panBy };
 }

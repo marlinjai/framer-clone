@@ -210,3 +210,68 @@ html[data-pointer="touch"] [data-spacing-handle]::before {
 html[data-pointer="touch"] [data-resize-direction] {
   z-index: 2;
 }
+
+/* Floating glass for the phone quick toolbar, its popovers and the
+   long-press menu (docs/plans/2026-10-24-editor-on-phones.md, "Quick
+   toolbar"). The tint is 86% of the theme background, solid enough that the
+   foreground text and icons keep their contrast over any page content (a
+   photo, a dark section); the blur only softens what shows through. Without
+   backdrop-filter support, or when the person asks for less transparency,
+   the surface is solid. */
+.glass-surface {
+  background-color: color-mix(in oklab, var(--background) 86%, transparent);
+  color: var(--foreground);
+  border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.18), 0 1px 3px rgb(0 0 0 / 0.12);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-surface {
+    background-color: var(--background);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass-surface {
+    background-color: var(--background);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* The dimmed, blurred screen behind the long-press menu; the pressed element
+   stays sharp through a hole cut with clip-path. */
+.glass-scrim {
+  background-color: rgb(0 0 0 / 0.32);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-scrim {
+    background-color: rgb(0 0 0 / 0.45);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass-scrim {
+    background-color: rgb(0 0 0 / 0.5);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* Entrances of the floating phone controls: opacity and a small scale, under
+   200ms, ease-out; none at all under reduced motion. */
+.float-enter {
+  transition:
+    opacity 150ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 150ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.float-enter[data-shown="false"] {
+  opacity: 0;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .float-enter {
+    transition: none;
+  }
+}

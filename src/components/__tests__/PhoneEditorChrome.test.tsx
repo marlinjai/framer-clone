@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { createRootStore, type RootStoreType } from '@/stores/RootStore';
 import PhoneEditorChrome, { narrowestFrame } from '../PhoneEditorChrome';
+import { TransformProvider } from '@/contexts/TransformContext';
 
 let store: RootStoreType;
 const fit = vi.fn(() => true);
@@ -66,14 +67,14 @@ afterEach(() => {
 describe('phone bottom bar', () => {
   it('fits the canvas when it mounts, and every button is a 7-item bar', () => {
     seedProject();
-    render(<PhoneEditorChrome editorUI={store.editorUI} />);
+    render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
     expect(within(bar()).getAllByRole('button')).toHaveLength(7);
     expect(barButton(/zoom 42%/)).toBeTruthy();
   });
 
   it('Select and Hand switch the tool and show which is active', () => {
     seedProject();
-    render(<PhoneEditorChrome editorUI={store.editorUI} />);
+    render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
     fireEvent.click(barButton('Hand tool, pan the canvas'));
     expect(store.editorUI.selectedTool).toBe('grab');
     expect(barButton('Hand tool, pan the canvas').getAttribute('aria-pressed')).toBe('true');
@@ -85,7 +86,7 @@ describe('phone bottom bar', () => {
 describe('panel sheets', () => {
   it('Layers opens a modal sheet labelled by its title, holding the same left sidebar', () => {
     seedProject();
-    render(<PhoneEditorChrome editorUI={store.editorUI} />);
+    render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
     fireEvent.click(barButton('Pages and layers'));
     const sheet = screen.getByRole('dialog', { name: 'Pages and layers' });
     expect(sheet.getAttribute('aria-modal')).toBe('true');
@@ -97,7 +98,7 @@ describe('panel sheets', () => {
 
   it('closes by its close button', () => {
     seedProject();
-    render(<PhoneEditorChrome editorUI={store.editorUI} />);
+    render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
     fireEvent.click(barButton('Pages and layers'));
     fireEvent.click(screen.getByRole('button', { name: 'Close Pages and layers' }));
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -107,7 +108,7 @@ describe('panel sheets', () => {
     seedProject();
     const child = someChild();
     store.editorUI.selectComponent(child);
-    render(<PhoneEditorChrome editorUI={store.editorUI} />);
+    render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
     fireEvent.click(barButton(/^Edit /));
     const sheet = screen.getByRole('dialog', { name: 'Properties' });
     const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
@@ -122,7 +123,7 @@ describe('panel sheets', () => {
 
   it('closes on a tap on the backdrop', async () => {
     seedProject();
-    render(<PhoneEditorChrome editorUI={store.editorUI} />);
+    render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
     fireEvent.click(barButton('Pages and layers'));
     await tick();
     fireEvent.pointerDown(screen.getByTestId('layers-sheet-backdrop'));
@@ -131,7 +132,7 @@ describe('panel sheets', () => {
 
   it('closes on a swipe down on its title row, a short drag does not', () => {
     seedProject();
-    render(<PhoneEditorChrome editorUI={store.editorUI} />);
+    render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
     fireEvent.click(barButton('Pages and layers'));
     const title = screen.getByText('Pages and layers', { selector: 'h2' });
     // react-remove-scroll (inside Radix) reads clientX from touches and changedTouches.
@@ -149,7 +150,7 @@ describe('panel sheets', () => {
 
   it('only one sheet is open at a time', () => {
     seedProject();
-    render(<PhoneEditorChrome editorUI={store.editorUI} />);
+    render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
     fireEvent.click(barButton('Pages and layers'));
     expect(screen.getByRole('dialog', { name: 'Pages and layers' })).toBeTruthy();
     // The bar is hidden from assistive technology behind the modal sheet, but
@@ -165,14 +166,14 @@ describe('selection on a phone', () => {
   it('the root the page selects by itself does not highlight Edit', () => {
     seedProject();
     expect(store.editorUI.selectedComponent).toBeTruthy();
-    render(<PhoneEditorChrome editorUI={store.editorUI} />);
+    render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
     const edit = barButton(/^Edit /);
     expect(edit.className).not.toContain('bg-brand text-white');
   });
 
   it('a new selection highlights Edit, named after it, and does not open the sheet', () => {
     seedProject();
-    render(<PhoneEditorChrome editorUI={store.editorUI} />);
+    render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
     const child = someChild();
     act(() => store.editorUI.selectComponent(child));
     const edit = barButton(`Edit ${child.displayName}`);
@@ -188,7 +189,7 @@ describe('selection on a phone', () => {
   it('with nothing selected the button reads Properties', () => {
     seedProject();
     act(() => store.editorUI.clearSelection());
-    render(<PhoneEditorChrome editorUI={store.editorUI} />);
+    render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
     expect(barButton('Properties')).toBeTruthy();
   });
 });
@@ -198,7 +199,7 @@ describe('desktop state stays desktop', () => {
     seedProject();
     const ui = store.editorUI;
     const before = { left: ui.leftSidebarCollapsed, right: ui.rightSidebarCollapsed, width: ui.leftSidebarWidth };
-    render(<PhoneEditorChrome editorUI={ui} />);
+    render(<TransformProvider><PhoneEditorChrome editorUI={ui} /></TransformProvider>);
     fireEvent.click(barButton('Pages and layers'));
     const layers = screen.getByRole('dialog', { name: 'Pages and layers' });
     // No desktop-only controls in the sheet.
@@ -217,7 +218,7 @@ describe('desktop state stays desktop', () => {
     seedProject();
     store.editorUI.toggleLeftSidebar();
     store.editorUI.toggleRightSidebar();
-    render(<PhoneEditorChrome editorUI={store.editorUI} />);
+    render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
     fireEvent.click(barButton('Pages and layers'));
     expect(screen.getByTestId('layers-pane')).toBeTruthy();
     expect(store.editorUI.leftSidebarCollapsed).toBe(true);

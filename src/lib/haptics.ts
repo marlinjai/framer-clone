@@ -150,6 +150,59 @@ export function haptic(): 'vibrate' | 'switch' | 'none' {
   return 'none';
 }
 
+/**
+ * True when the page has transient user activation right now (inside a click,
+ * pointerup or touchend), where the browser exposes it
+ * (navigator.userActivation: Chrome, Safari 16.4+). Undefined when unknown.
+ */
+export function hasTransientActivation(): boolean | undefined {
+  try {
+    const ua = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation;
+    return ua ? ua.isActive : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A tick from code that may run outside the user's gesture (the long-press
+ * timer). The Vibration API only needs sticky activation (any earlier tap),
+ * so Android ticks right away. The iOS switch most likely needs transient
+ * activation, which a timer callback does not have (touch activation starts at
+ * pointerup): there, when the browser says activation is not active, nothing
+ * is attempted now and 'deferred' tells the caller to call haptic() from the
+ * next pointerup of the same gesture instead.
+ */
+export function hapticOrDefer(): 'vibrate' | 'switch' | 'none' | 'deferred' {
+  if (!hapticsEnabled()) return 'none';
+  if (canVibrate()) return haptic();
+  if (hasSwitchControl()) return hasTransientActivation() === false ? 'deferred' : haptic();
+  return 'none';
+}
+
+let lastSelectionKey: string | null = null;
+
+/**
+ * The tick for a finger sliding over a list (the long-press menu's
+ * slide-to-select): one tick each time the item under the finger changes to
+ * another item, none while it stays on the same one, none when it leaves the
+ * list. Platform reality: Android Chrome vibrates during the move (sticky
+ * activation suffices); iOS Safari's switch haptic most likely needs transient
+ * activation, which touchmove and pointermove never grant, so on iOS these
+ * calls are attempted and stay silent. Never throws.
+ */
+export function selectionTick(key: string | null): 'vibrate' | 'switch' | 'none' {
+  if (key === lastSelectionKey) return 'none';
+  lastSelectionKey = key;
+  if (key === null) return 'none';
+  return haptic();
+}
+
+/** Start a new slide: the first item reached ticks again. */
+export function resetSelectionTick(): void {
+  lastSelectionKey = null;
+}
+
 /** Test hook: forget the cached switch and the in-memory preference. */
 export function resetHapticsForTests(): void {
   try {
@@ -159,5 +212,6 @@ export function resetHapticsForTests(): void {
   }
   switchLabel = null;
   memoryPreference = undefined;
+  lastSelectionKey = null;
   listeners.clear();
 }

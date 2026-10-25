@@ -73,6 +73,14 @@ const EditorUIStore = types.model('EditorUI', {
   // A message for the person above the canvas (see EditorNotice), dismissable.
   editorNotice: undefined as { kind: 'changedElsewhere' | 'missingPage'; message: string } | undefined,
   isResizing: false,
+  // Phone layout (docs/plans/2026-10-24-editor-on-phones.md, "Quick toolbar"):
+  // the long-press context menu, open at a finger point (screen px), and the
+  // style its Copy style took (appearance properties as resolved on the frame
+  // it was copied in), for Paste style. Editor session only.
+  phoneContextMenu: undefined as { x: number; y: number } | undefined,
+  // The menu item under a finger sliding from the long-press (slide-to-select).
+  phoneContextMenuHover: undefined as string | undefined,
+  copiedStyle: undefined as Record<string, string | number> | undefined,
   // The tool to return to when the held Space key (temporary pan) is
   // released. Undefined while Space is not held.
   toolBeforeTemporaryGrab: undefined as EditorTool | undefined,
@@ -296,6 +304,24 @@ const EditorUIStore = types.model('EditorUI', {
   endResize() {
     self.isResizing = false;
     self.resizeData = undefined;
+  },
+
+  openPhoneContextMenu(point: { x: number; y: number }) {
+    self.phoneContextMenu = { x: point.x, y: point.y };
+    self.phoneContextMenuHover = undefined;
+  },
+
+  closePhoneContextMenu() {
+    self.phoneContextMenu = undefined;
+    self.phoneContextMenuHover = undefined;
+  },
+
+  setPhoneContextMenuHover(item: string | undefined) {
+    if (self.phoneContextMenuHover !== item) self.phoneContextMenuHover = item;
+  },
+
+  setCopiedStyle(style: Record<string, string | number> | undefined) {
+    self.copiedStyle = style;
   },
 
   beginTextEdit(component: ComponentInstance) {

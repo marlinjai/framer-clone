@@ -79,7 +79,7 @@ describe('what the toolbar offers per element kind', () => {
     expect(quickKindOf(box)).toBe('container');
     expect(quickGroupsFor(heading)).toEqual(['tree', 'text', 'element']);
     expect(quickGroupsFor(box)).toEqual(['tree', 'container', 'element']);
-    const image = (page.appComponentTree as ComponentInstance).children.find(c => c.type === 'img');
+    const image = (page.appComponentTree as ComponentInstance).children.find((c: ComponentInstance) => c.type === "img");
     if (image) {
       expect(quickKindOf(image as ComponentInstance)).toBe('image');
       expect(quickGroupsFor(image as ComponentInstance)).toEqual(['tree', 'element']);
@@ -209,7 +209,7 @@ describe('center in parent, by parent layout', () => {
   it('an inline element in a block parent becomes a block first', () => {
     const { box, ctx, mobile, main } = setup();
     main.addChildren([createIntrinsicComponent('q-span', 'span', { children: 'x' })]);
-    const span = main.children.find(c => c.id === 'q-span') as ComponentInstance;
+    const span = main.children.find((c: ComponentInstance) => c.id === "q-span") as ComponentInstance;
     centerInParent(ctx(span, mobile.breakpointId, { computed: (p) => (p === 'display' ? 'inline' : undefined) }), box);
     expect(own(span, 'display', mobile.breakpointId)).toBe('block');
   });

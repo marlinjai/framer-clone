@@ -12,15 +12,43 @@
 // swipe down on the grab handle or title row closes it, and while the
 // on-screen keyboard is up the sheet sits on the keyboard and shrinks to the
 // visible area, with the focused field scrolled into view.
+//
+// Detents (optional, the properties sheet; plan section "Quick toolbar"): a
+// sheet given `detent` rests at 'peek' (about 38% of the screen, the canvas
+// and the edited element visible above it) or 'full' (its size). Swiping the
+// handle up from peek goes to full, down from full goes to peek, down from
+// peek closes; the chevron button in the title row does the same for those
+// who cannot swipe. The sheet keeps its full height and moves down by the
+// difference at peek (the CSS `translate` property, so it composes with the
+// open and close animation's `transform`), with the same amount of padding at
+// the end of the content, so every row stays reachable by scrolling.
 'use client';
 
 import * as React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { XIcon } from 'lucide-react';
+import { ChevronDown, ChevronUp, XIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /** How far a swipe down must travel before it closes the sheet, in pixels. */
 export const SWIPE_CLOSE_DISTANCE = 80;
+
+/** The resting heights of a sheet with detents. */
+export type SheetDetent = 'peek' | 'full';
+/** Height of the peek detent, in percent of the small viewport height. */
+export const PEEK_SVH = 38;
+/** Full heights per size, in percent of the small viewport height. */
+export const SHEET_SVH = { tall: 85, medium: 60 } as const;
+
+/**
+ * Where a swipe on the handle leaves a sheet: `dy` is the finger's travel
+ * (positive down). Returns the next detent, 'close', or null (snap back).
+ * Without detents a swipe down closes and nothing else does.
+ */
+export function swipeOutcome(detent: SheetDetent | undefined, dy: number): SheetDetent | 'close' | null {
+  if (dy >= SWIPE_CLOSE_DISTANCE) return detent === 'full' ? 'peek' : 'close';
+  if (dy <= -SWIPE_CLOSE_DISTANCE && detent === 'peek') return 'full';
+  return null;
+}
 
 /**
  * How much of the layout viewport the on-screen keyboard covers, and the
@@ -69,6 +97,9 @@ export interface BottomSheetProps {
   backdrop?: 'dim' | 'light';
   /** Extra content in the title row, before the close button. */
   headerExtra?: React.ReactNode;
+  /** Resting height, for a sheet with detents (see the header comment). Omit for a fixed-height sheet. */
+  detent?: SheetDetent;
+  onDetentChange?: (detent: SheetDetent) => void;
   children: React.ReactNode;
   'data-testid'?: string;
 }
@@ -80,6 +111,8 @@ export function BottomSheet({
   size = 'tall',
   backdrop = 'dim',
   headerExtra,
+  detent,
+  onDetentChange,
   children,
   'data-testid': testId,
 }: BottomSheetProps) {
@@ -102,14 +135,19 @@ export function BottomSheet({
   const onTouchMove = (e: React.TouchEvent) => {
     const s = swipe.current;
     if (!s || e.touches.length !== 1) return;
-    s.dy = Math.max(0, e.touches[0].clientY - s.startY);
+    const raw = e.touches[0].clientY - s.startY;
+    // Upward travel only means something at peek (towards full).
+    s.dy = detent === 'peek' ? raw : Math.max(0, raw);
     setDragOffset(s.dy);
   };
   const onTouchEnd = () => {
     const s = swipe.current;
     swipe.current = null;
     setDragOffset(0);
-    if (s && s.dy >= SWIPE_CLOSE_DISTANCE) onOpenChange(false);
+    if (!s) return;
+    const outcome = swipeOutcome(detent, s.dy);
+    if (outcome === 'close') onOpenChange(false);
+    else if (outcome) onDetentChange?.(outcome);
   };
 
   // A field focused inside the sheet scrolls itself into view once the
@@ -122,12 +160,20 @@ export function BottomSheet({
 
   const heightClass = size === 'tall' ? 'h-[85svh]' : 'h-[60svh]';
   const style: React.CSSProperties = {};
-  if (inset > 0 && visibleHeight) {
+  const keyboardUp = inset > 0 && !!visibleHeight;
+  if (keyboardUp) {
     style.bottom = inset;
     // max-height beats the svh height class whenever the visible area is smaller.
-    style.maxHeight = `${Math.max(160, visibleHeight - 16)}px`;
+    style.maxHeight = `${Math.max(160, (visibleHeight ?? 0) - 16)}px`;
   }
-  if (dragOffset > 0) style.transform = `translateY(${dragOffset}px)`;
+  // At peek the sheet sits lower by the difference (never while typing: the
+  // keyboard already shrinks it to the visible area).
+  const peekOffset = detent === 'peek' && !keyboardUp ? `${SHEET_SVH[size] - PEEK_SVH}svh` : '0px';
+  if (detent) {
+    style.translate = dragOffset !== 0 ? `0 max(0px, calc(${peekOffset} + ${dragOffset}px))` : `0 ${peekOffset}`;
+  } else if (dragOffset > 0) {
+    style.transform = `translateY(${dragOffset}px)`;
+  }
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -151,11 +197,14 @@ export function BottomSheet({
           aria-modal="true"
           onFocusCapture={onFocusCapture}
           className={cn(
-            'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom fixed inset-x-0 bottom-0 z-[1010] flex flex-col overflow-hidden rounded-t-2xl border-t border-border bg-background shadow-2xl duration-200 ease-out outline-none',
+            'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom fixed inset-x-0 bottom-0 z-[1010] flex flex-col overflow-hidden rounded-t-2xl border-t border-border bg-background shadow-2xl duration-[180ms] ease-out outline-none',
             heightClass,
-            dragOffset > 0 ? 'transition-none' : '',
+            // Detent changes glide (translate only, under 200ms, ease-out); a finger drag follows directly.
+            detent ? 'transition-[translate] motion-reduce:transition-none' : '',
+            dragOffset !== 0 ? 'transition-none' : '',
           )}
           style={style}
+          data-detent={detent}
         >
           <div
             className="shrink-0 border-b border-border"
@@ -171,6 +220,17 @@ export function BottomSheet({
             <div className="flex h-11 items-center gap-2 pl-4 pr-2">
               <DialogPrimitive.Title className="min-w-0 flex-1 truncate text-[15px] font-semibold">{title}</DialogPrimitive.Title>
               {headerExtra}
+              {detent && onDetentChange && (
+                <button
+                  type="button"
+                  onClick={() => onDetentChange(detent === 'peek' ? 'full' : 'peek')}
+                  aria-label={detent === 'peek' ? `Expand ${title}` : `Shrink ${title}`}
+                  data-testid={testId ? `${testId}-detent` : undefined}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                >
+                  {detent === 'peek' ? <ChevronUp className="size-5" /> : <ChevronDown className="size-5" />}
+                </button>
+              )}
               <DialogPrimitive.Close
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                 aria-label={`Close ${title}`}
@@ -181,7 +241,12 @@ export function BottomSheet({
           </div>
           {/* The panel inside owns its scrolling (both sidebars scroll their
               own content), so the sheet only gives it the remaining height. */}
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">{children}</div>
+          <div
+            className="flex min-h-0 flex-1 flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]"
+            style={peekOffset !== '0px' ? { paddingBottom: `calc(${peekOffset} + env(safe-area-inset-bottom))` } : undefined}
+          >
+            {children}
+          </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

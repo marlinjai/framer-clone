@@ -2,7 +2,7 @@
 // element, below it when there is no room, docked above the bottom bar when
 // neither fits, never over the bars or the keyboard, never off screen.
 import { describe, expect, it } from 'vitest';
-import { QUICKBAR_GAP, QUICKBAR_MARGIN, placeMenuAtPoint, placeQuickbar, visibleBottom } from '../placement';
+import { QUICKBAR_GAP, QUICKBAR_MARGIN, panDeltaIntoView, placeMenuAtPoint, placeQuickbar, visibleBottom } from '../placement';
 
 // A 390x844 phone: top bar to 48, bottom bar from 780.
 const area = { width: 390, top: 48, bottom: 780 };
@@ -67,6 +67,24 @@ describe('placeQuickbar', () => {
   it('a bar wider than the screen starts at the margin', () => {
     const r = placeQuickbar({ left: 100, top: 400, width: 20, height: 20 }, { width: 500, height: 44 }, area);
     expect(r.left).toBe(QUICKBAR_MARGIN);
+  });
+});
+
+describe('panDeltaIntoView (the sheet at peek)', () => {
+  // Free band between the top bar (48) and a peek sheet starting at 523.
+  it('leaves an element that is already visible', () => {
+    expect(panDeltaIntoView({ left: 0, top: 100, width: 100, height: 100 }, 48, 523)).toBe(0);
+  });
+  it('centres an element hidden under the sheet in the free band', () => {
+    const d = panDeltaIntoView({ left: 0, top: 600, width: 100, height: 100 }, 48, 523);
+    const top = 600 + d;
+    expect(Math.abs(top - (48 + QUICKBAR_MARGIN) - (523 - QUICKBAR_MARGIN - (top + 100)))).toBeLessThanOrEqual(1);
+  });
+  it('aligns a taller element with the band top', () => {
+    expect(panDeltaIntoView({ left: 0, top: 300, width: 100, height: 900 }, 48, 523)).toBe(48 + QUICKBAR_MARGIN - 300);
+  });
+  it('brings an element above the top bar down', () => {
+    expect(panDeltaIntoView({ left: 0, top: -200, width: 100, height: 50 }, 48, 523)).toBeGreaterThan(0);
   });
 });
 

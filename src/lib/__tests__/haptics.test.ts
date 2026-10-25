@@ -5,7 +5,10 @@ import {
   HAPTICS_STORAGE_KEY,
   HAPTIC_TICK_MS,
   haptic,
+  hapticOrDefer,
   hapticsEnabled,
+  resetSelectionTick,
+  selectionTick,
   hapticsSupported,
   onHapticsPreferenceChange,
   resetHapticsForTests,
@@ -69,6 +72,49 @@ describe('haptic()', () => {
     });
     expect(() => haptic()).not.toThrow();
     expect(haptic()).toBe('none');
+  });
+});
+
+describe('selectionTick (slide-to-select)', () => {
+  it('ticks once per item change, never twice on the same item, not when leaving', () => {
+    const vibrate = vi.fn(() => true);
+    stubVibrate(vibrate);
+    expect(selectionTick('a')).toBe('vibrate');
+    expect(selectionTick('a')).toBe('none');
+    expect(selectionTick('b')).toBe('vibrate');
+    expect(selectionTick(null)).toBe('none');
+    expect(selectionTick('b')).toBe('vibrate');
+    expect(vibrate).toHaveBeenCalledTimes(3);
+    resetSelectionTick();
+    selectionTick('b');
+    expect(vibrate).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe('hapticOrDefer (the long-press timer)', () => {
+  it('vibrates right away where the Vibration API exists', () => {
+    stubVibrate(vi.fn(() => true));
+    expect(hapticOrDefer()).toBe('vibrate');
+  });
+
+  it('defers the iOS switch tick when there is no transient activation', () => {
+    proto.switch = false;
+    Object.defineProperty(navigator, 'userActivation', { value: { isActive: false }, configurable: true });
+    const click = vi.spyOn(HTMLLabelElement.prototype, 'click');
+    expect(hapticOrDefer()).toBe('deferred');
+    expect(click).not.toHaveBeenCalled();
+    delete nav.userActivation;
+  });
+
+  it('attempts the switch when activation is active or unknown', () => {
+    proto.switch = false;
+    expect(hapticOrDefer()).toBe('switch');
+  });
+
+  it('respects the setting', () => {
+    stubVibrate(vi.fn(() => true));
+    setHapticsEnabled(false);
+    expect(hapticOrDefer()).toBe('none');
   });
 });
 

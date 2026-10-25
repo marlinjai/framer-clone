@@ -87,6 +87,23 @@ export function placeQuickbar(
 }
 
 /**
+ * How far to pan the canvas vertically (screen px, positive moves the content
+ * down) so `target` shows between `top` and `bottom`: the properties sheet at
+ * peek covers the lower part of the screen, and the edited element must stay
+ * visible above it. Zero when it already fits. An element that fits is
+ * centred in the free band; a taller one is aligned with the band's top.
+ */
+export function panDeltaIntoView(target: ScreenRect, top: number, bottom: number, margin = QUICKBAR_MARGIN): number {
+  const bandTop = top + margin;
+  const bandBottom = bottom - margin;
+  const band = bandBottom - bandTop;
+  if (band <= 0) return 0;
+  if (target.top >= bandTop && target.top + target.height <= bandBottom) return 0;
+  const desiredTop = target.height <= band ? bandTop + (band - target.height) / 2 : bandTop;
+  return Math.round(desiredTop - target.top);
+}
+
+/**
  * Place a menu (the long-press context menu) next to a finger point: to the
  * right of and below the finger by default, flipped left or up when it would
  * leave the visible area, then clamped inside it.
