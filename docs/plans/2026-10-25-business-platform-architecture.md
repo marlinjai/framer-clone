@@ -86,19 +86,21 @@ acceptance; invoice).
 10. **Out of the first versions:** payments at a counter (they make the system a cash register under
     KassenSichV, with a certified TSE and registration at the tax office) and medical practices (health data
     is a special category under GDPR Article 9).
-11. **Order of work:**
-    1. the catalogue with services and resources;
-    2. instant booking for one practitioner, paid online, with the receipt in the Books (proof: Sharon's
-       practice or ŌPUNTIA's calls). **Blocked on the owner's real-payments decision** (see "Open for the
-       owner"): until a Stripe setup exists the engine only has a fake gateway, so this step can be built
-       against the fake gateway but not shipped as paid booking;
-    3. quotes of services and materials, accepted online, turning into the invoice (reference: the Basis
+11. **Order of work** (first proof changed by the owner, 2026-10-25):
+    1. the catalogue with products, variants and services;
+    2. **the first proof: the owner's own test jewellery shop** with sample products, sold on its site through
+       the cart and checkout, paid through Stripe Connect in test mode (no live account needed), with the
+       receipt created in the Books;
+    3. instant booking for one practitioner, paid online, with the receipt in the Books (Sharon's practice
+       or ŌPUNTIA's calls);
+    4. quotes of services and materials, accepted online, turning into the invoice (reference: the Basis
        Camp offers module);
-    4. team scheduling and dispatch (reference: a field-service crew; ArboSano is not a customer for this,
+    5. team scheduling and dispatch (reference: a field-service crew; ArboSano is not a customer for this,
        owner 2026-10-25).
     Basis Camp stays on Medusa; moving it is not part of this plan.
 
-12. **Payments run on Stripe Connect** (owner, 2026-10-25), so the platform takes a fee on every purchase in
+12. **Payments run on Stripe Connect** (owner, 2026-10-25), so the platform takes a fee of **1% per payment**
+    (owner, 2026-10-25), shown as its own line in the business's payout report, on every purchase in
     every store and booking. Each business is its own connected account and the seller of record (direct
     charges): its customer pays the business, the receipt is the business's own invoice in the Books, and
     the platform's fee is taken per payment as an application fee. Businesses join through Stripe's hosted
@@ -131,13 +133,12 @@ acceptance; invoice).
 
 ## Open for the owner
 
-- **The fee:** its size per payment, and whether it is shown as its own line to the business.
 - **The legal entity** that holds the Stripe platform account (it invoices the fees to the businesses).
   Whiz-Art Media is the only company today; whether and where Lumitra becomes its own company is an
   international tax question for a tax adviser (a company managed from Germany is taxed in Germany, §10 AO,
   and the foreign-company rules of §§7 to 14 AStG apply). Needed only before the first live payment.
 - **The account itself:** creating it and passing Stripe's platform review need the owner's identity.
-- **The first proof customer:** Sharon's practice or ŌPUNTIA.
+- **The first booking customer:** Sharon's practice or ŌPUNTIA.
 
 ## Next
 
