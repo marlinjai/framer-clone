@@ -32,7 +32,7 @@ import {
   type CameraTransform,
   type Tap,
 } from '@/lib/canvas/touchGestures';
-import { placeCaret, startInlineTextEdit } from '@/lib/canvas/inlineTextEdit';
+import { isEditingText, placeCaret, startInlineTextEdit } from '@/lib/canvas/inlineTextEdit';
 
 /**
  * HUD elements a finger may press while it means the canvas under them: the
@@ -251,7 +251,7 @@ const CanvasInner = observer(() => {
     if (!(target instanceof Element)) return null;
     const ground = groundRef.current;
     if (!ground || !ground.contains(target)) return null;
-    if (target instanceof HTMLElement && target.isContentEditable) return null;
+    if (isEditingText(target)) return null;
     // Outside every canvas node: the ground, grid or camera itself.
     if (!target.closest('.ground-wrapper')) return { kind: 'canvas' };
     // Inside a frame's content box: only its background (the content box or
@@ -534,7 +534,7 @@ const CanvasInner = observer(() => {
    * something (text editing started, or the camera zoomed).
    */
   const handleDoubleTap = useCallback((target: Element, tap: Tap): boolean => {
-    if (target instanceof HTMLElement && target.isContentEditable) return false;
+    if (isEditingText(target)) return false;
     // The same double-click handlers the mouse uses decide (text editing).
     // ComponentRenderer's onDoubleClick runs synchronously inside this
     // dispatch, makes the element editable and focuses it, all still inside
@@ -721,7 +721,7 @@ const CanvasInner = observer(() => {
   /** Blur the text being edited inline when a press lands outside it (onBlur commits). */
   const endInlineEditOutside = useCallback((target: Element) => {
     const active = document.activeElement;
-    if (active instanceof HTMLElement && active.isContentEditable && groundRef.current?.contains(active) && !active.contains(target)) {
+    if (isEditingText(active) && groundRef.current?.contains(active) && !active.contains(target)) {
       active.blur();
     }
   }, []);
@@ -761,7 +761,7 @@ const CanvasInner = observer(() => {
     const target = e.target;
     if (!(target instanceof Element)) return;
     // Editing text: the finger places the caret.
-    if (target instanceof HTMLElement && target.isContentEditable) return;
+    if (isEditingText(target)) return;
     // A press anywhere else on the canvas ends the edit (and commits it):
     // iOS keeps the keyboard and the focus when a finger lands on something
     // that cannot take focus.

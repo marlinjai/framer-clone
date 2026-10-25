@@ -126,9 +126,9 @@ function useRevealEditedText(editingId: string | undefined, apply: (t: CameraTra
   React.useEffect(() => {
     if (!editingId) return;
     const reveal = () => {
-      const el = document.querySelector<HTMLElement>(
-        `[data-camera-transform] [data-inner-component-id="${CSS.escape(editingId)}"][contenteditable="true"]`,
-      );
+      const el = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-camera-transform] [contenteditable="true"][data-inner-component-id]'),
+      ).find((node) => node.getAttribute('data-inner-component-id') === editingId);
       if (!el) return;
       const visible = editingVisibleEdges();
       const { dx, dy } = revealOffset(editedTextBox(el, visible), visible);

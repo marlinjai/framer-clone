@@ -42,7 +42,9 @@ export const EDITING_TEXT_STYLE = {
  * 'all' to select the whole text (a mouse double-click: type to replace).
  */
 export function startInlineTextEdit(el: HTMLElement, caret: CaretPoint | 'all' | 'end'): void {
-  if (el.contentEditable !== 'true') el.contentEditable = 'true';
+  // The attribute, not the IDL property: the same thing in browsers, and the
+  // one React writes for the editing node too.
+  if (el.getAttribute('contenteditable') !== 'true') el.setAttribute('contenteditable', 'true');
   el.style.userSelect = 'text';
   el.style.setProperty('-webkit-user-select', 'text');
   el.style.setProperty('-webkit-touch-callout', 'default');
@@ -56,6 +58,14 @@ export function startInlineTextEdit(el: HTMLElement, caret: CaretPoint | 'all' |
     }
   }
   placeCaret(el, caret);
+}
+
+/** True for an element being edited as text (its own contenteditable, or inside one). */
+export function isEditingText(el: EventTarget | null): el is HTMLElement {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.isContentEditable) return true;
+  // Environments without isContentEditable (jsdom) still see the attribute.
+  return !!el.closest('[contenteditable="true"]');
 }
 
 /** A collapsed range at a screen point, when the point is over `el`'s text. */

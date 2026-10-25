@@ -39,6 +39,18 @@ describe('useEditorGestureGuard', () => {
     expect(document.documentElement.hasAttribute('data-pointer')).toBe(false);
   });
 
+  it('stops iOS zooming in on a focused field while mounted (maximum-scale), and restores the tag', () => {
+    const meta = document.createElement('meta');
+    meta.name = 'viewport';
+    meta.content = 'width=device-width, initial-scale=1';
+    document.head.appendChild(meta);
+    const { unmount } = render(<Editor />);
+    expect(meta.content).toBe('width=device-width, initial-scale=1, maximum-scale=1');
+    unmount();
+    expect(meta.content).toBe('width=device-width, initial-scale=1');
+    meta.remove();
+  });
+
   it('a pinch outside the canvas does not zoom the page (default prevented)', () => {
     const { getByTestId } = render(<Editor />);
     expect(touchMove(getByTestId('panel'), 2)).toBe(true);
