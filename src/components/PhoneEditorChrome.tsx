@@ -87,7 +87,8 @@ const FRAME_LABEL_SPACE = 28;
 
 function measureInsets(bar: HTMLElement | null, extraTop = 0): CanvasInsets {
   const top = document.querySelector<HTMLElement>('[data-editor-topbar]')?.getBoundingClientRect().bottom ?? 0;
-  const bottom = bar ? Math.max(0, window.innerHeight - bar.getBoundingClientRect().top) : 0;
+  // A hidden bar (inline text editing) measures as a zero rect and covers nothing.
+  const bottom = bar && !bar.hidden ? Math.max(0, window.innerHeight - bar.getBoundingClientRect().top) : 0;
   return { top: top + extraTop, bottom };
 }
 

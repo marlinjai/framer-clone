@@ -133,13 +133,12 @@ describe('the Form section', () => {
     expect(screen.getByText(/Email notifications are not available yet/)).toBeTruthy();
   });
 
-  it('edits the submit button label and its sending label', () => {
+  it('edits the submit button sending label; its own label lives in the Text section', () => {
     const { form } = setup();
     const submit = form.children[4];
     render(<FormSection component={submit} />);
-    fireEvent.change(screen.getByLabelText('Label'), { target: { value: 'Book now' } });
+    expect(screen.queryByLabelText('Label')).toBeNull();
     fireEvent.change(screen.getByLabelText('Sending'), { target: { value: 'Booking...' } });
-    expect((submit.props as Record<string, unknown>).children).toBe('Book now');
     expect((submit.props as Record<string, unknown>).loadingLabel).toBe('Booking...');
   });
 });
