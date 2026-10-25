@@ -350,7 +350,11 @@ const PageSettingsForm = observer(({
                       setAnnouncement(result.ok ? `${page.metadata.title} is now the home page.` : result.message);
                       // The confirmation is gone; keep focus in the form, on
                       // the address that now reads "/".
-                      if (result.ok) setTimeout(() => document.getElementById('page-settings-slug')?.focus(), 0);
+                      if (result.ok) {
+                        // setHomePage cleared the 404 pointer; drop the local flag too.
+                        setNotFoundPage(false);
+                        setTimeout(() => document.getElementById('page-settings-slug')?.focus(), 0);
+                      }
                     }}
                   >
                     Set as home page
