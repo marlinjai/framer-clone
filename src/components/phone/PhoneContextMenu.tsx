@@ -19,7 +19,11 @@
 // its release here (slideMenuMove, slideMenuRelease): the item under the
 // finger highlights, a selection tick plays once per item change, and lifting
 // on an item runs it. Lifting anywhere else leaves the menu open for a normal
-// tap.
+// tap. The release is taken from touchend where the browser sends touch
+// events (the menu listens for it while open), not from pointerup: iOS opens
+// the keyboard for "Edit text" only from a focus inside touchend or click.
+// A contact without touch events (a pen on Windows) releases from Canvas's
+// pointerup instead.
 'use client';
 
 import React from 'react';
@@ -131,6 +135,20 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
     menu.querySelector<HTMLElement>('[role="menuitem"]')?.focus({ preventScroll: true });
     return () => cancelAnimationFrame(raf);
   }, [open, point]);
+
+  // Slide-to-select release, and any tap on an item, from touchend (see the
+  // header). Cancelling the touchend's default stops the emulated click, so
+  // an item never runs twice.
+  React.useEffect(() => {
+    if (!open) return;
+    const onTouchEnd = (e: TouchEvent) => {
+      const t = e.changedTouches[0];
+      if (!t || e.touches.length > 0) return;
+      if (slideMenuRelease(editorUI, t.clientX, t.clientY) && e.cancelable) e.preventDefault();
+    };
+    window.addEventListener('touchend', onTouchEnd, { capture: true, passive: false });
+    return () => window.removeEventListener('touchend', onTouchEnd, { capture: true });
+  }, [open, editorUI]);
 
   React.useEffect(() => {
     if (!open) return;

@@ -8,59 +8,28 @@ import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { Database } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
-import { getBindableSlotsFor, getComponentEntry } from '@/lib/componentRegistry';
+import { getBindableSlotsFor } from '@/lib/componentRegistry';
+import { holdsText } from '@/lib/renderer/textContent';
 import { cn } from '@/lib/utils';
 import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL } from '../primitives';
 import BindingControl from '../BindingControl';
 import QueryBuilder from '../QueryBuilder';
+import { getRegistryIdForNode } from '../registryId';
+import { TextContentField } from './TextContentSection';
+
+export { getRegistryIdForNode };
 
 interface DataSourceSectionProps {
   component: ComponentInstance;
   breakpointId?: string;
 }
 
-/**
- * Resolve the registry id for a node so we can look up its bindable slots.
- * Nodes are created as `${registryId}-${uuid}`, so the id prefix is the most
- * reliable signal; we fall back to the data-component marker and then the
- * intrinsic html type for hand-built nodes.
- */
-export function getRegistryIdForNode(node: ComponentInstance): string | undefined {
-  const idPrefix = node.id.split('-')[0];
-  if (getComponentEntry(idPrefix)) return idPrefix;
-
-  const kind = (node.props as Record<string, unknown> | undefined)?.['data-component-kind'];
-  if (kind === 'collection') return 'collection';
-  if (kind === 'record-view') return 'recordView';
-  if (kind === 'table-view') return 'tableView';
-
-  switch (node.type) {
-    case 'p':
-      return 'text';
-    case 'button':
-      return 'button';
-    case 'img':
-      return 'image';
-    default:
-      return undefined;
-  }
-}
-
 /** The static (unbound) control shown next to a slot. */
 const StaticSlotControl = observer(
   ({ node, slot, label }: { node: ComponentInstance; slot: string; label: string }) => {
     if (slot === 'children') {
-      const value = typeof node.props?.children === 'string' ? node.props.children : '';
-      return (
-        <input
-          type="text"
-          aria-label={label}
-          value={value}
-          placeholder={label}
-          onChange={(e) => node.setTextContent(e.target.value)}
-          className={FIELD_CONTROL}
-        />
-      );
+      // Committed on blur or Enter: one edit, one undo step.
+      return <TextContentField key={node.id} node={node} label={label} variant="line" />;
     }
 
     const raw = node.props?.[slot];
@@ -90,8 +59,11 @@ export const DataSourceSection = observer(({ component }: DataSourceSectionProps
   // props.query), so we drop those slots from the per-slot binding controls to
   // avoid two competing controls for the same concept.
   const QUERY_SLOTS = new Set(['filter', 'sort', 'limit']);
+  // The text of a text element has its own section at the top of the panel
+  // (TextContentSection, with the same bind button), so it is not repeated here.
+  const textHasOwnSection = holdsText(component);
   const slotEntries = Object.entries(slots).filter(
-    ([slot]) => !(showQueryBuilder && QUERY_SLOTS.has(slot)),
+    ([slot]) => !(showQueryBuilder && QUERY_SLOTS.has(slot)) && !(textHasOwnSection && slot === 'children'),
   );
 
   if (slotEntries.length === 0 && !showQueryBuilder) return null;

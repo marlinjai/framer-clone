@@ -215,6 +215,45 @@ describe('findProjectSlugProblem (the server save check)', () => {
     expect(findProjectSlugProblem(pages, stored)).toMatchObject({ pageId: 'home', code: 'home_locked' });
   });
 
+  describe('changing the home page', () => {
+    const swapped = base.map((p) =>
+      p.pageId === 'home' ? { ...p, slug: 'home-page' } : p.pageId === 'about' ? { ...p, slug: '' } : p,
+    );
+
+    it('accepts another page taking the root while the former home page moves to a free slug', () => {
+      expect(findProjectSlugProblem(swapped, stored)).toBeNull();
+    });
+
+    it('accepts the former home page being deleted in the same save', () => {
+      expect(findProjectSlugProblem(swapped.filter((p) => p.pageId !== 'home'), stored)).toBeNull();
+    });
+
+    it('validates the slug the former home page moves to', () => {
+      const reserved = swapped.map((p) => (p.pageId === 'home' ? { ...p, slug: 'api' } : p));
+      expect(findProjectSlugProblem(reserved, stored)).toMatchObject({ pageId: 'home', code: 'reserved' });
+      const withContact = [...swapped, { pageId: 'contact', slug: 'contact', title: 'Contact' }];
+      const taken = withContact.map((p) => (p.pageId === 'home' ? { ...p, slug: 'contact' } : p));
+      expect(findProjectSlugProblem(taken, stored)).toMatchObject({ code: 'taken' });
+    });
+
+    it('refuses two pages taking the root at once', () => {
+      const two = swapped.map((p) => (p.pageId === 'legacy' ? { ...p, slug: '' } : p));
+      expect(findProjectSlugProblem(two, stored)).toMatchObject({ code: 'taken' });
+    });
+
+    it('still refuses a save that leaves nothing at the root, with the way out in the message', () => {
+      const moved = base.map((p) => (p.pageId === 'home' ? { ...p, slug: 'start' } : p));
+      const problem = findProjectSlugProblem(moved, stored);
+      expect(problem).toMatchObject({ pageId: 'home', code: 'home_locked' });
+      expect(problem?.message).toContain('Make another page the home page first.');
+    });
+
+    it('accepts changing back (the previous home page takes the root again)', () => {
+      const storedSwapped = new Map(swapped.map((p) => [p.pageId, p.slug]));
+      expect(findProjectSlugProblem(base, storedSwapped)).toBeNull();
+    });
+  });
+
   describe('older projects', () => {
     const twoHomes = new Map([['h1', ''], ['h2', ''], ['about', 'about']]);
     const twoHomePages = [

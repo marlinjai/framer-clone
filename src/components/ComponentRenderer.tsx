@@ -11,6 +11,8 @@ import { useDragSource } from '@/lib/drag';
 import { createComponentElement } from '@/lib/renderer/createComponentElement';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
 import { createScope, type BindingScope } from '@/lib/bindings/resolver/scope';
+import { EDITING_TEXT_STYLE, startInlineTextEdit } from '@/lib/canvas/inlineTextEdit';
+import { isTextBound } from '@/lib/renderer/textContent';
 
 interface ComponentRendererProps {
   component: ComponentInstance;
@@ -29,8 +31,12 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
   const { editorUI } = useStore();
   const editRef = React.useRef<HTMLElement | null>(null);
 
-  // Autofocus + select-all when entering edit mode so the user can immediately
-  // type to replace the placeholder text.
+  // Focus + select-all when entering edit mode, as a fallback only: the
+  // gesture that starts editing (double-click here, double-tap in Canvas)
+  // focuses the element itself, synchronously, because iOS opens the
+  // keyboard only for a focus inside the gesture (src/lib/canvas/
+  // inlineTextEdit.ts). When the element already has focus this leaves the
+  // caret where the gesture put it.
   //
   // Only the copy in the frame where editing began becomes the text box. Every
   // breakpoint frame renders the same node; if each copy turned editable and
@@ -44,13 +50,8 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
   React.useEffect(() => {
     if (editingId !== component.id) return;
     const el = editRef.current;
-    if (!el) return;
-    el.focus();
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(range);
+    if (!el || document.activeElement === el) return;
+    startInlineTextEdit(el, 'all');
   }, [editingId, component.id]);
 
   // Only non-root tree components can be moved. The root of the app tree must
@@ -92,9 +93,11 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
   // Text-editing eligibility: a single string-valued `children` and no nested
   // components. Anything with child components renders its own subtree and
   // isn't safe to turn contenteditable (we'd lose the children).
+  // Text bound to data is the binding's: it shows as the binding in the
+  // properties panel and is not typed over on the canvas.
   const rawChildren = (resolvedAttributes as any).children;
   const isTextEditable =
-    component.children.length === 0 && typeof rawChildren === 'string';
+    component.children.length === 0 && typeof rawChildren === 'string' && !isTextBound(component);
 
   // `data-component-id` and `data-inner-component-id` are emitted centrally
   // by `createComponentElement` (see the `identity` option below) so the
@@ -125,6 +128,11 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
       if (editorUI.selectedTool !== EditorTool.SELECT) return;
       e.stopPropagation();
       e.preventDefault();
+      // Edit in this event, before the store hears of it: the element turns
+      // editable, takes focus and selects its text now (a double-tap reaches
+      // here inside its touchend, which is what lets iOS open the keyboard),
+      // and the re-render below renders the same attributes on the same node.
+      startInlineTextEdit(e.currentTarget as HTMLElement, 'all');
       editorUI.selectComponent(component, breakpointId || undefined);
       editorUI.beginTextEdit(component);
     },
@@ -135,7 +143,7 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
     finalProps.contentEditable = 'true';
     finalProps.suppressContentEditableWarning = true;
     finalProps.ref = editRef;
-    finalProps.style = { ...editorStyle, cursor: 'text', outline: '2px solid #3b82f6' };
+    finalProps.style = { ...editorStyle, ...EDITING_TEXT_STYLE };
     const initialText = rawChildren as string;
     finalProps.onBlur = (e: React.FocusEvent<HTMLElement>) => {
       const next = e.currentTarget.textContent ?? '';

@@ -905,6 +905,11 @@ const HudSurface = observer(() => {
     document.addEventListener('keydown', handleKey);
   }, [editorUI, transformState, updateOverlayPosition]);
 
+  // While a text is edited inline, the handles step aside: their touch hit
+  // areas (44px, see globals.css) would cover a small text, so a tap meant to
+  // move the caret would start a resize instead.
+  const editingText = !!editorUI.editingComponent;
+
   return (
     <div className="fixed inset-0 pointer-events-none" style={{ zIndex: 10 }}>
       {/* Primary selection overlay */}
@@ -916,18 +921,20 @@ const HudSurface = observer(() => {
       >
         {/* Selection / resize handles. pointer-events: auto so they receive the
             mousedown even though the parent overlay is pointer-events-none. */}
-        <div ref={resizeHandlesRef} className="absolute inset-0 pointer-events-none" data-testid="resize-handles">
-          {HANDLE_DIRECTIONS.map(({ dir, className, cursor }) => (
-            <div
-              key={dir}
-              data-resize-direction={dir}
-              data-testid={`resize-handle-${dir}`}
-              onMouseDown={onHandleMouseDown}
-              onPointerDown={touchPress(onHandleMouseDown)}
-              className={`absolute w-2 h-2 bg-brand rounded-full ${className}`}
-              style={{ cursor, pointerEvents: 'auto' }}
-            />
-          ))}
+        <div className="absolute inset-0 pointer-events-none" style={editingText ? { display: 'none' } : undefined}>
+          <div ref={resizeHandlesRef} className="absolute inset-0 pointer-events-none" data-testid="resize-handles">
+            {HANDLE_DIRECTIONS.map(({ dir, className, cursor }) => (
+              <div
+                key={dir}
+                data-resize-direction={dir}
+                data-testid={`resize-handle-${dir}`}
+                onMouseDown={onHandleMouseDown}
+                onPointerDown={touchPress(onHandleMouseDown)}
+                className={`absolute w-2 h-2 bg-brand rounded-full ${className}`}
+                style={{ cursor, pointerEvents: 'auto' }}
+              />
+            ))}
+          </div>
         </div>
 
         {/* Effect badge: the canvas shows the final state, this says an effect is set. */}
@@ -935,24 +942,26 @@ const HudSurface = observer(() => {
 
         {/* Border-radius corner dots. Hidden by default; updateOverlayPosition
             toggles the wrapper's display based on selection kind and overlay size. */}
-        <div
-          ref={radiusHandlesRef}
-          className="absolute inset-0 pointer-events-none"
-          style={{ display: 'none' }}
-          data-testid="radius-handles"
-        >
-          {RADIUS_CORNERS.map(({ id, className, cursor }) => (
-            <div
-              key={id}
-              data-radius-corner={id}
-              data-testid={`radius-handle-${id}`}
-              onMouseDown={onRadiusHandleMouseDown}
-              onPointerDown={touchPress(onRadiusHandleMouseDown)}
-              title="Drag to round corners. Hold Alt to round just this corner."
-              className={`absolute w-2 h-2 bg-white border border-brand rounded-full opacity-70 hover:opacity-100 transition-opacity ${className}`}
-              style={{ cursor, pointerEvents: 'auto' }}
-            />
-          ))}
+        <div className="absolute inset-0 pointer-events-none" style={editingText ? { display: 'none' } : undefined}>
+          <div
+            ref={radiusHandlesRef}
+            className="absolute inset-0 pointer-events-none"
+            style={{ display: 'none' }}
+            data-testid="radius-handles"
+          >
+            {RADIUS_CORNERS.map(({ id, className, cursor }) => (
+              <div
+                key={id}
+                data-radius-corner={id}
+                data-testid={`radius-handle-${id}`}
+                onMouseDown={onRadiusHandleMouseDown}
+                onPointerDown={touchPress(onRadiusHandleMouseDown)}
+                title="Drag to round corners. Hold Alt to round just this corner."
+                className={`absolute w-2 h-2 bg-white border border-brand rounded-full opacity-70 hover:opacity-100 transition-opacity ${className}`}
+                style={{ cursor, pointerEvents: 'auto' }}
+              />
+            ))}
+          </div>
         </div>
       </div>
       

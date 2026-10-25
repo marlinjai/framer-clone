@@ -76,6 +76,35 @@ export function unionRects(rects: readonly Rect[]): Rect | null {
   return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
 }
 
+/** Screen edges of a box, in client pixels. */
+export interface Edges {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/**
+ * How far to pan the camera so `target` sits inside `visible` with `margin`
+ * to spare (both in client pixels). Zero on an axis where it already fits.
+ * A target bigger than the visible area is aligned at its start (top, left).
+ * Used to keep the text being edited above the on-screen keyboard.
+ */
+export function revealOffset(target: Edges, visible: Edges, margin = 16): { dx: number; dy: number } {
+  const axis = (start: number, end: number, vStart: number, vEnd: number) => {
+    const lo = vStart + margin;
+    const hi = vEnd - margin;
+    if (end - start > hi - lo) return lo - start;
+    if (start < lo) return lo - start;
+    if (end > hi) return hi - end;
+    return 0;
+  };
+  return {
+    dx: axis(target.left, target.right, visible.left, visible.right),
+    dy: axis(target.top, target.bottom, visible.top, visible.bottom),
+  };
+}
+
 // ---------- DOM side ----------
 
 function groundElement(): HTMLElement | null {
@@ -197,5 +226,8 @@ export function useCameraControls() {
     [transformState, apply],
   );
 
-  return { zoomPercentage, apply, zoomStep, reset, fit, panBy };
+  /** The camera as currently applied. */
+  const read = React.useCallback((): CameraTransform => ({ ...transformState.current }), [transformState]);
+
+  return { zoomPercentage, apply, read, zoomStep, reset, fit, panBy };
 }

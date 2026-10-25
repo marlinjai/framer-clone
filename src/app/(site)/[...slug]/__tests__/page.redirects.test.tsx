@@ -72,6 +72,8 @@ vi.mock('@/server/cms', () => ({
 }));
 
 import SitePage from '../page';
+import ProjectModel from '@/models/ProjectModel';
+import { nextSiteRedirects } from '@/lib/pages/redirects';
 
 function page(pageId: string, slug: string): Page {
   return { pageId, slug, snapshot: { id: pageId } };
@@ -152,3 +154,40 @@ describe('published router after a slug change', () => {
   });
 });
 
+describe('published router after the home page changed ("Set as home page")', () => {
+  // The editor action and the server's redirect bookkeeping run for real: the
+  // model swaps the slugs, nextSiteRedirects records what the save would.
+  function publishAfterHomeChange() {
+    const project = ProjectModel.create({ id: 'site_1', metadata: { title: 'Bakery' }, pages: {} });
+    const home = project.createPage('Home');
+    home.setSlug('');
+    const about = project.createPage('About');
+    const stored = new Map(project.pagesArray.map((pg) => [pg.id, pg.slug]));
+    expect(project.setHomePage(about.id).ok).toBe(true);
+    const pages = project.pagesArray.map((pg) => page(pg.id, pg.slug));
+    site = {
+      pages,
+      redirects: nextSiteRedirects({ previous: [], storedSlugs: stored, pages, everPublished: true, now: new Date() }),
+    };
+    return { homeId: home.id, aboutId: about.id };
+  }
+
+  it('serves the new home page at the root', async () => {
+    const { aboutId } = publishAfterHomeChange();
+    await visit(['__home']);
+    expect(renderedPageId()).toBe(aboutId);
+  });
+
+  it('sends the new home page old address to the root, keeping the query string', async () => {
+    publishAfterHomeChange();
+    await expect(visit(['about'], { ref: 'mail' })).rejects.toBeInstanceOf(RedirectSignal);
+    expect(permanentRedirect).toHaveBeenCalledWith('/?ref=mail');
+  });
+
+  it('serves the former home page at its new slug', async () => {
+    const { homeId } = publishAfterHomeChange();
+    await visit(['home-page']);
+    expect(renderedPageId()).toBe(homeId);
+    expect(permanentRedirect).not.toHaveBeenCalled();
+  });
+});
