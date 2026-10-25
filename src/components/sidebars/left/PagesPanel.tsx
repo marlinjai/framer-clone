@@ -426,7 +426,7 @@ const PagesPanel = observer(() => {
             },
             // Any page but the home page can become the home page (also in
             // an older project that has none, whose root answers 404).
-            ...(project.isSlugLocked(menuPage.id)
+            ...(!project.canBecomeHomePage(menuPage.id)
               ? []
               : [{
                   label: 'Set as home page',
@@ -457,8 +457,17 @@ const PagesPanel = observer(() => {
         request={homeRequest}
         onClose={() => setHomeRequest(null)}
         // The notice has done its job: the former home page is now an
-        // ordinary page and can be deleted.
-        onDone={() => setDeleteNotice(null)}
+        // ordinary page and can be deleted. Focus goes to that page's row (its
+        // delete X was replaced by a working one, so the old element is gone).
+        onDone={() => {
+          const formerHomeId = deleteNotice?.pageId;
+          setDeleteNotice(null);
+          if (formerHomeId) {
+            returnFocusRef.current =
+              document.querySelector<HTMLElement>(`[data-testid="page-row-${formerHomeId}"] button`) ??
+              returnFocusRef.current;
+          }
+        }}
         returnFocusTo={returnFocusRef}
       />
     </div>

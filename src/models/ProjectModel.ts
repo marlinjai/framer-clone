@@ -5,7 +5,7 @@ import { types, Instance, SnapshotIn, SnapshotOut, getSnapshot } from 'mobx-stat
 import { v4 as uuidv4 } from 'uuid';
 import PageModel, { PageModelType } from './PageModel';
 import ComponentModel, { createIntrinsicComponent, createViewportNode, type ComponentInstance, type ComponentSnapshotIn } from './ComponentModel';
-import { suggestSlug, validateSlug, type SlugValidation } from '@/lib/pages/slug';
+import { isDynamicSegment, suggestSlug, validateSlug, type SlugValidation } from '@/lib/pages/slug';
 import {
   isHttpsUrl,
   normalizeSiteSettings,
@@ -606,6 +606,12 @@ export const ProjectModel = types
       if (page.slug === '' && homePageCount(self.pages.values()) === 1) {
         return { ok: false, message: 'This page is already the home page.' };
       }
+      // A page with a dynamic segment (`products/:handle`) needs its value
+      // from the address; at the root there is none, so it would render
+      // empty. Such a page cannot be the home page.
+      if (page.slug.split('/').some(isDynamicSegment)) {
+        return { ok: false, message: 'A page that shows a different item for each address cannot be the home page.' };
+      }
       const previousSlug = page.slug;
       const moved = planHomeChange(self.pages.values(), pageId);
       for (const m of moved) self.pages.get(m.pageId)?.setSlug(m.slug);
@@ -655,6 +661,16 @@ export const ProjectModel = types
     isSlugLocked(pageId: string): boolean {
       const page = self.pages.get(pageId);
       return !!page && page.slug === '' && homePageCount(self.pages.values()) <= 1;
+    },
+
+    // True when setHomePage(pageId) would accept the page: it exists, is not
+    // already THE home page, and its slug has no dynamic segment. The menus,
+    // Page settings and the chooser offer the action only for such pages.
+    canBecomeHomePage(pageId: string): boolean {
+      const page = self.pages.get(pageId);
+      if (!page) return false;
+      if (page.slug === '' && homePageCount(self.pages.values()) <= 1) return false;
+      return !page.slug.split('/').some(isDynamicSegment);
     },
 
     // What setHomePage(pageId) would do, without doing it: the former home

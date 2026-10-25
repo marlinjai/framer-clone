@@ -6,7 +6,7 @@
 // saved project, and re-entry after deleting the former home page.
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, fireEvent, screen, within, act } from '@testing-library/react';
+import { render, cleanup, fireEvent, screen, within, act, waitFor } from '@testing-library/react';
 import { getSnapshot } from 'mobx-state-tree';
 import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
 import type { PageModelType } from '@/models/PageModel';
@@ -203,7 +203,7 @@ describe('the home page delete control', () => {
     expect(within(notice).queryByRole('button', { name: 'Set another page as home' })).toBeNull();
   });
 
-  it('the chooser lists the other pages, explains the selected one, and makes it the home page', () => {
+  it('the chooser lists the other pages, explains the selected one, and makes it the home page', async () => {
     renderPanel();
     fireEvent.click(deleteButton('Home'));
     fireEvent.click(screen.getByRole('button', { name: 'Set another page as home' }));
@@ -217,12 +217,34 @@ describe('the home page delete control', () => {
 
     expect(contact.slug).toBe('');
     expect(home.slug).toBe('home-page');
+    // Focus lands on the former home page's row, not on the page body.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(screen.getByTestId(`page-row-${home.id}`)).getAllByRole('button')[0]),
+    );
     // The notice is gone, and the former home page now deletes like any page.
     expect(screen.queryByTestId('page-delete-notice')).toBeNull();
     const x = deleteButton('Home');
     expect(x.hasAttribute('aria-disabled')).toBe(false);
     fireEvent.click(x);
     expect(project.getPage(home.id)).toBeUndefined();
+  });
+});
+
+describe('pages that cannot become the home page', () => {
+  it('a page with a dynamic slug is offered nowhere: not in its menu, its settings, or the chooser', () => {
+    const product = project.createPage('Product');
+    product.setSlug('products/:handle');
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for Product' }));
+    expect(screen.queryByRole('menuitem', { name: 'Set as home page' })).toBeNull();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: 'Page settings for Product' }));
+    expect(within(screen.getByTestId('page-settings-dialog')).queryByRole('button', { name: 'Set as home page' })).toBeNull();
+    fireEvent.click(within(screen.getByTestId('page-settings-dialog')).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(deleteButton('Home'));
+    fireEvent.click(screen.getByRole('button', { name: 'Set another page as home' }));
+    const values = within(screen.getByTestId('set-home-page-dialog')).getAllByRole('radio').map((r) => (r as HTMLInputElement).value);
+    expect(values).toEqual([about.id, contact.id]);
   });
 });
 

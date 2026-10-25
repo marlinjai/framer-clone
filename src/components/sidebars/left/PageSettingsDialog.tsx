@@ -322,7 +322,7 @@ const PageSettingsForm = observer(({
               </p>
             )}
           </div>
-          {!isHome &&
+          {!isHome && project.canBecomeHomePage(page.id) &&
             (confirmHome ? (
               <div
                 className="flex flex-col gap-2 rounded-md border border-border px-3 py-2"

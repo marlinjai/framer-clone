@@ -89,7 +89,7 @@ const SetHomePageForm = observer(({
   onClose: () => void;
   onDone?: (pageId: string) => void;
 }) => {
-  const candidates = project.pagesArray.filter((p) => !project.isSlugLocked(p.id));
+  const candidates = project.pagesArray.filter((p) => project.canBecomeHomePage(p.id));
   const [chosen, setChosen] = React.useState<string>(candidates[0]?.id ?? '');
   const [error, setError] = React.useState('');
   // A page deleted (or made home) elsewhere while the dialog is open drops
@@ -117,7 +117,7 @@ const SetHomePageForm = observer(({
     <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
       <DialogBody className="flex flex-col gap-3">
         {request.mode === 'confirm' && !selected && (
-          <p className="text-[13px] text-muted-foreground">This page is already the home page, or it no longer exists.</p>
+          <p className="text-[13px] text-muted-foreground">This page cannot be the home page: it already is, it no longer exists, or it shows a different item for each address.</p>
         )}
         {request.mode === 'choose' &&
           (candidates.length === 0 ? (

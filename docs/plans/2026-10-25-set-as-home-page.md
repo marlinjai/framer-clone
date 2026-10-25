@@ -55,6 +55,10 @@ and why. Builds on `2026-10-21-page-settings-slug-redirects.md`.
 - Redirects are recorded only once the site has been published (the existing `everPublished`
   gate): a draft site has no old links to keep. The editor's link retargeting covers in-site
   links either way.
+- A page with a dynamic slug (`products/:handle`) cannot become the home page: at the root there
+  is no value for the segment, so it would render empty, and no redirect could be recorded. The
+  action is not offered for it (`ProjectModel.canBecomeHomePage`, shared by both menus, Page
+  settings and the chooser), and `setHomePage` refuses it.
 - Links to `/` are left alone: they mean "the home page", which is now the new one.
 - The confirmation is a dialog (or, inside Page settings, an in-place question) rather than an
   instant action, because the change moves the site's front door; it is still undoable in one

@@ -100,6 +100,18 @@ describe('setHomePage: forward', () => {
     expect(history.history.length).toBe(0);
   });
 
+  it('refuses a page with a dynamic slug: at the root it has no item to show', () => {
+    const p = project();
+    const product = p.createPage('Product');
+    product.setSlug('products/:handle');
+    expect(p.canBecomeHomePage(product.id)).toBe(false);
+    expect(p.setHomePage(product.id)).toMatchObject({ ok: false });
+    expect(product.slug).toBe('products/:handle');
+    expect(homeOf(p).slug).toBe('');
+    expect(p.canBecomeHomePage(homeOf(p).id)).toBe(false);
+    expect(p.canBecomeHomePage(p.createPage('About').id)).toBe(true);
+  });
+
   it('in an older project with two empty-slug pages, moves both away so one home page remains', () => {
     const p = project();
     const extra = p.createPage('Start');
