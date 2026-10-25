@@ -259,11 +259,17 @@ describe('old links', () => {
 });
 
 describe('deleting', () => {
-  it('never offers to delete the home page, which serves the site root', () => {
+  it('never deletes the home page, which serves the site root; its delete controls explain why instead', () => {
     renderPanel();
-    expect(screen.queryByRole('button', { name: 'Delete page Hearth & Crumb Bakery' })).toBeNull();
+    const x = screen.getByRole('button', { name: 'Delete page Hearth & Crumb Bakery' });
+    expect(x.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(x);
+    expect(project.getPage(home.id)).toBeDefined();
+    expect(screen.getByTestId('page-delete-notice').textContent).toContain('The home page cannot be deleted.');
     fireEvent.contextMenu(screen.getByTestId(`page-row-${home.id}`), { clientX: 10, clientY: 10 });
-    expect(screen.getByRole('menuitem', { name: /Delete/ })).toHaveProperty('disabled', true);
+    const item = screen.getByRole('menuitem', { name: /Delete/ });
+    expect(item.getAttribute('aria-disabled')).toBe('true');
+    expect(project.getPage(home.id)).toBeDefined();
   });
 
   it('still deletes other pages', () => {
@@ -282,9 +288,11 @@ describe('keyboard and screen readers', () => {
     fireEvent.keyDown(items[0], { key: 'ArrowDown' });
     expect(document.activeElement).toBe(items[1]);
     fireEvent.keyDown(items[1], { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(items[2]);
+    fireEvent.keyDown(items[2], { key: 'ArrowDown' });
     expect(document.activeElement).toBe(items[0]);
     fireEvent.keyDown(items[0], { key: 'ArrowUp' });
-    expect(document.activeElement).toBe(items[1]);
+    expect(document.activeElement).toBe(items[2]);
   });
 
   it('anchors the menu to the row when opened from the keyboard (Shift+F10)', () => {
@@ -354,19 +362,15 @@ describe('older projects', () => {
     expect(about.slug).toBe('Old_Slug');
   });
 
-  it('offers "Make home page" only when the project has no home page', () => {
-    renderPanel();
-    fireEvent.contextMenu(screen.getByTestId(`page-row-${about.id}`), { clientX: 10, clientY: 10 });
-    expect(screen.queryByRole('menuitem', { name: /Make home page/ })).toBeNull();
-    fireEvent.keyDown(document, { key: 'Escape' });
-    cleanup();
-
+  it('a project without a home page can give any page the root', () => {
     project.removePage(home.id);
     renderPanel();
     fireEvent.contextMenu(screen.getByTestId(`page-row-${about.id}`), { clientX: 10, clientY: 10 });
-    fireEvent.click(screen.getByRole('menuitem', { name: /Make home page/ }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Set as home page/ }));
+    const dialog = screen.getByTestId('set-home-page-dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Set as home page' }));
     expect(about.slug).toBe('');
-    expect(screen.queryByRole('button', { name: 'Delete page About' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Delete page About' }).getAttribute('aria-disabled')).toBe('true');
   });
 
   it('explains a published site without a configured address', () => {
