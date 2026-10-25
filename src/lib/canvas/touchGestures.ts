@@ -14,6 +14,10 @@
 //     drag anywhere else draws the selection rectangle, double-tap edits text
 //     (or zooms in a step on empty canvas). One finger never pans, except
 //     with the Grab tool, which is an explicit choice to pan.
+//   - long-press (added 2026-10-25 with the owner, phone layout): one finger
+//     held still for LONG_PRESS_MS on an element selects it and opens the
+//     context menu. Moving past the drag threshold or a second finger
+//     cancels it, exactly as either turns a tap into something else.
 
 /** The camera: screen = world * zoom + pan. Same shape as TransformContext. */
 export interface CameraTransform {
@@ -43,8 +47,19 @@ export const TOUCH_DRAG_THRESHOLD_PX = 8;
 /** Two taps within this time and distance are a double-tap. */
 export const DOUBLE_TAP_MAX_DELAY_MS = 300;
 export const DOUBLE_TAP_MAX_DISTANCE_PX = 24;
-/** A press held longer than this is not a tap (a long-press does nothing). */
+/** A press held longer than this is not a tap. */
 export const TAP_MAX_DURATION_MS = 450;
+/** A still finger held this long is a long-press (the phone context menu). */
+export const LONG_PRESS_MS = 450;
+
+/**
+ * True when a press counts as a long-press now: one finger the whole time,
+ * never moved past the drag threshold, held at least LONG_PRESS_MS.
+ */
+export function isLongPress(press: { startTime: number; moved: boolean }, now: number, multiTouch: boolean): boolean {
+  if (multiTouch || press.moved) return false;
+  return now - press.startTime >= LONG_PRESS_MS;
+}
 
 export function clampZoom(zoom: number): number {
   if (!Number.isFinite(zoom)) return 1;
@@ -252,6 +267,16 @@ export class TouchGestureTracker {
       }
     }
     return { phase: this.phase, tracked };
+  }
+
+  /**
+   * True when finger `id` is a long-press at `now`: the only finger of the
+   * gesture (no pinch ever started), still down, and still where it landed.
+   */
+  longPressDue(id: number, now: number): boolean {
+    const t = this.pointers.get(id);
+    if (!t || this.phase !== 'single' || this.pointers.size !== 1) return false;
+    return isLongPress(t, now, this.wasMulti);
   }
 
   /** Forget every finger (canvas unmount, tool switch, window blur). */

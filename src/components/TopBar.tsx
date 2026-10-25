@@ -19,6 +19,8 @@
 'use client';
 
 import React from 'react';
+import { useIsPhone } from '@/hooks/use-mobile';
+import { hapticsEnabled, hapticsSupported, onHapticsPreferenceChange, setHapticsEnabled } from '@/lib/haptics';
 import { observer } from 'mobx-react-lite';
 import {
   Undo2,
@@ -28,6 +30,7 @@ import {
   Play,
   ChevronLeft,
   MoreHorizontal,
+  Vibrate,
   Sparkles,
   Wand,
   Globe,
@@ -199,6 +202,20 @@ HistoryMenu.displayName = 'HistoryMenu';
 /** Which top-bar dialog is open (one at a time). */
 export type TopBarDialog = 'generate' | 'polish' | 'domains' | 'siteSettings' | 'forms' | 'history' | null;
 
+// --- Haptics preference ----------------------------------------------------
+// The phone editor's haptic ticks (src/lib/haptics.ts) can be turned off here;
+// a local preference on this device. Offered only where some haptic mechanism
+// may work (the Vibration API, or the iOS switch control).
+function useHapticsPreference(): [supported: boolean, enabled: boolean] {
+  const enabled = React.useSyncExternalStore(onHapticsPreferenceChange, hapticsEnabled, () => true);
+  const supported = React.useSyncExternalStore(
+    () => () => {},
+    hapticsSupported,
+    () => false,
+  );
+  return [supported, enabled];
+}
+
 // --- MoreMenu --------------------------------------------------------------
 // The compact bar's overflow menu: every action the wide bar shows that does
 // not fit. Items only set which dialog is open; the dialogs are siblings of
@@ -210,6 +227,11 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
   const hasProject = !!editorUI.currentProject;
   const hasPage = !!editorUI.currentPage;
   const history = getHistoryStore();
+  const [hapticsSupportedHere, hapticsOn] = useHapticsPreference();
+  // Phone layout only: desktop Chrome has a no-op navigator.vibrate and desktop
+  // Safari knows the switch control, and the desktop editor has no haptics.
+  const isPhone = useIsPhone();
+  const hapticsAvailable = isPhone && hapticsSupportedHere;
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger
@@ -248,6 +270,23 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
               <span className="ml-auto text-xs text-muted-foreground">
                 {history.undoIdx}/{history.history.length}
               </span>
+            </DropdownMenuItem>
+          </>
+        )}
+        {hapticsAvailable && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              role="menuitemcheckbox"
+              aria-checked={hapticsOn}
+              // Keep the menu open: it is a setting, the state is shown in place.
+              onSelect={(e) => {
+                e.preventDefault();
+                setHapticsEnabled(!hapticsOn);
+              }}
+            >
+              <Vibrate /> Haptic feedback
+              <span className="ml-auto text-xs text-muted-foreground">{hapticsOn ? 'On' : 'Off'}</span>
             </DropdownMenuItem>
           </>
         )}

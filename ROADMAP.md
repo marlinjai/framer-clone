@@ -40,7 +40,9 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   pinch-zoom on the canvas only, one finger taps, moves the selection, draws the selection
   rectangle and double-taps to edit text, finger-sized handles, no browser page zoom inside the
   editor, published sites keep it). Asked by Marlin on 2026-10-24 after the editor proved unusable
-  at 390px; both parts built 2026-10-24. See [plan](docs/plans/2026-10-24-editor-on-phones.md). (2026-10-24)
+  at 390px; both parts built 2026-10-24. Then a floating glass quick toolbar next to the
+  selection, a long-press menu with slide-to-select, peek and full detents for the properties
+  sheet, and haptic ticks (2026-10-25). See [plan](docs/plans/2026-10-24-editor-on-phones.md). (2026-10-25)
 - [ ] Scroll-driven page type (later): an opt-in page type for scrollytelling pages, the only place
   GSAP ScrollTrigger pinning and scrubbing is used, because there the scroll is the requested
   interaction (the sanctioned exception to the scroll-jacking rule, as the scroll-craft skill

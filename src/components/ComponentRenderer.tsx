@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 import React from 'react';
+import { haptic } from '@/lib/haptics';
+import { lastPointerIsTouch } from '@/hooks/useEditorGestureGuard';
 import { observer } from 'mobx-react-lite';
 import { ComponentInstance } from '../models/ComponentModel';
 import { EditorTool } from '../stores/EditorUIStore';
@@ -111,7 +113,13 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
       if (editorUI.selectedTool === EditorTool.SELECT) {
         // Shift+click adds the node to the selection or takes it out.
         if (e.shiftKey) editorUI.toggleInSelection(component, breakpointId || undefined);
-        else editorUI.selectComponent(component, breakpointId || undefined);
+        else {
+          // A finger that selects something new gets a light haptic tick
+          // (src/lib/haptics.ts); this click is inside the user's gesture.
+          const isNew = editorUI.selectedComponent?.id !== component.id;
+          editorUI.selectComponent(component, breakpointId || undefined);
+          if (isNew && lastPointerIsTouch()) haptic();
+        }
       }
       (resolvedAttributes as any)?.onClick?.(e);
     },

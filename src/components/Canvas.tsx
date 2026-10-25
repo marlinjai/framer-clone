@@ -11,6 +11,9 @@ import { getDragManager } from '@/stores/RootStore';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { visibleRectInFrame } from '@/lib/canvas/viewportFrame';
 import { isLockedOnCanvas } from '@/lib/layers/layerActions';
+import { matchesPhone } from '@/hooks/use-mobile';
+import { haptic, hapticOrDefer } from '@/lib/haptics';
+import { slideMenuMove, slideMenuRelease } from '@/components/phone/PhoneContextMenu';
 import {
   boxFromPoints,
   marqueeHitTest,
@@ -21,6 +24,7 @@ import {
 } from '@/lib/canvas/marquee';
 import {
   DOUBLE_TAP_ZOOM_FACTOR,
+  LONG_PRESS_MS,
   DoubleTapRecognizer,
   TAP_MAX_DURATION_MS,
   TouchGestureTracker,
@@ -415,6 +419,15 @@ const CanvasInner = observer(() => {
   const lastTouchPressAtRef = useRef(-Infinity);
   // What each finger on the canvas pressed, for its tap.
   const pressTargetsRef = useRef(new Map<number, EventTarget | null>());
+  // The pending or fired long-press of the current one-finger gesture (phone
+  // layout): the timer, the finger, whether it opened the menu, and whether
+  // its opening tick still has to play at the finger's release (iOS, see
+  // hapticOrDefer in src/lib/haptics.ts).
+  const longPressRef = useRef<{ timer: number; pointerId: number; fired: boolean; tickPending: boolean } | null>(null);
+  const clearLongPress = useCallback(() => {
+    if (longPressRef.current) window.clearTimeout(longPressRef.current.timer);
+    longPressRef.current = null;
+  }, []);
   // Double-taps of fingers come from touch events (doubleTapRef below); the
   // pointer path only recognises them for a contact that sends no touch
   // events (a pen on Windows). Browsers send pointerdown before touchstart,
@@ -483,6 +496,31 @@ const CanvasInner = observer(() => {
         if (!node || node.isViewportNode || !(el instanceof HTMLElement)) return null;
         if (isLockedOnCanvas(node, nid => page.findComponent(nid))) return null;
         return { node, el };
+      }
+      el = el.parentElement?.closest(selector) ?? null;
+    }
+    return null;
+  }, [rootStore.editorUI]);
+
+  /**
+   * The element a long-press is on: the nearest unlocked component under the
+   * finger (a locked one passes the press to its unlocked ancestor, as a tap
+   * does), with the frame it is in. Null on empty canvas or a frame label.
+   */
+  const longPressNodeAt = useCallback((target: Element): { node: ComponentInstance; breakpointId?: string } | null => {
+    const page = rootStore.editorUI.currentPage;
+    const ground = groundRef.current;
+    if (!page || !ground) return null;
+    const selector = '[data-inner-component-id],[data-ground-wrapper-id]';
+    let el: Element | null = target.closest(selector);
+    while (el && ground.contains(el)) {
+      const id = el.getAttribute('data-inner-component-id') ?? el.getAttribute('data-ground-wrapper-id');
+      const node = id ? page.findComponent(id) : undefined;
+      if (node && !node.isViewportNode && !isLockedOnCanvas(node, nid => page.findComponent(nid))) {
+        const breakpointId = node.isFloatingElement
+          ? undefined
+          : el.closest('[data-breakpoint-id]')?.getAttribute('data-breakpoint-id') ?? undefined;
+        return { node, breakpointId };
       }
       el = el.parentElement?.closest(selector) ?? null;
     }
@@ -588,6 +626,13 @@ const CanvasInner = observer(() => {
       if (!tracker.has(ev.pointerId)) return;
       const camera = tracker.move(ev.pointerId, groundPoint(ev.clientX, ev.clientY), ev.pointerType);
       if (camera) schedulePinch();
+      const lp = longPressRef.current;
+      if (lp && lp.pointerId === ev.pointerId) {
+        // After the menu opened, the same finger slides over its items;
+        // before it, moving past the drag threshold cancels the long-press.
+        if (lp.fired) slideMenuMove(rootStore.editorUI, ev.clientX, ev.clientY);
+        else if (tracker.pointer(ev.pointerId)?.moved) clearLongPress();
+      }
     };
     const onEnd = (ev: PointerEvent) => {
       if (!tracker.has(ev.pointerId)) return;
@@ -597,11 +642,28 @@ const CanvasInner = observer(() => {
       const { phase, tracked } = tracker.up(ev.pointerId, currentCamera());
       const pressedTarget = pressTargetsRef.current.get(ev.pointerId);
       pressTargetsRef.current.delete(ev.pointerId);
+      const lp = longPressRef.current;
+      const longPressFired = !!lp && lp.pointerId === ev.pointerId && lp.fired;
+      if (lp && lp.pointerId === ev.pointerId) {
+        clearLongPress();
+        if (longPressFired && ev.type === 'pointerup') {
+          // The opening tick iOS could not play from the timer: this pointerup
+          // is a real user gesture. Then slide-to-select: lifting on an item runs it.
+          if (lp.tickPending) haptic();
+          // With touch events the menu releases from touchend (iOS focus
+          // rules, see PhoneContextMenu); a contact without them releases here.
+          if (!contactHasTouchEventsRef.current) slideMenuRelease(rootStore.editorUI, ev.clientX, ev.clientY);
+        } else if (longPressFired) {
+          rootStore.editorUI.setPhoneContextMenuHover(undefined);
+        }
+      }
       if (phase === 'idle') {
         stopTouchListeners();
-        if (tracker.multiTouch) blockTouchClicksUntilRef.current = performance.now() + 400;
+        // The lift of a long-press must not select or clear under the menu.
+        if (tracker.multiTouch || longPressFired) blockTouchClicksUntilRef.current = performance.now() + 400;
       }
       if (
+        !longPressFired &&
         ev.type === 'pointerup' &&
         !contactHasTouchEventsRef.current &&
         wasPhase === 'single' &&
@@ -632,7 +694,7 @@ const CanvasInner = observer(() => {
       window.removeEventListener('pointerup', onEnd);
       window.removeEventListener('pointercancel', onEnd);
     };
-  }, [canvasTargetAt, currentCamera, flushPinch, groundPoint, handleDoubleTap, rootStore.editorUI, schedulePinch, stopTouchListeners]);
+  }, [canvasTargetAt, clearLongPress, currentCamera, flushPinch, groundPoint, handleDoubleTap, rootStore.editorUI, schedulePinch, stopTouchListeners]);
 
   // Double-tap from touch events, on the window: the action must run inside
   // touchend for iOS to open the keyboard (src/lib/canvas/inlineTextEdit.ts),
@@ -685,6 +747,8 @@ const CanvasInner = observer(() => {
   useEffect(() => () => {
     touchListenersRef.current?.();
     touchListenersRef.current = null;
+    if (longPressRef.current) window.clearTimeout(longPressRef.current.timer);
+    longPressRef.current = null;
     if (pinchRafRef.current) cancelAnimationFrame(pinchRafRef.current);
     touchRef.current?.reset();
     pressTargetsRef.current.clear();
@@ -695,6 +759,7 @@ const CanvasInner = observer(() => {
   // every later first finger into a second one. Forget them all.
   useEffect(() => {
     const forget = () => {
+      clearLongPress();
       // Before the reset: it checks which pointers the tracker still holds.
       cancelOneFingerGestures();
       touchListenersRef.current?.();
@@ -716,7 +781,7 @@ const CanvasInner = observer(() => {
       window.removeEventListener('blur', forget);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [cancelOneFingerGestures]);
+  }, [cancelOneFingerGestures, clearLongPress]);
 
   /** Blur the text being edited inline when a press lands outside it (onBlur commits). */
   const endInlineEditOutside = useCallback((target: Element) => {
@@ -744,6 +809,8 @@ const CanvasInner = observer(() => {
       e.stopPropagation();
       blockTouchClicksUntilRef.current = Infinity;
       lastTapRef.current = null;
+      // A second finger is a pinch, never a long-press.
+      if (longPressRef.current && !longPressRef.current.fired) clearLongPress();
       if (result === 'pinch-start') cancelOneFingerGestures();
       return;
     }
@@ -766,6 +833,38 @@ const CanvasInner = observer(() => {
     // iOS keeps the keyboard and the focus when a finger lands on something
     // that cannot take focus.
     endInlineEditOutside(target);
+    // Phone layout: a still finger held LONG_PRESS_MS on an element selects
+    // it and opens the context menu (src/components/phone/PhoneContextMenu.tsx).
+    // The timer only proposes; the tracker decides (still one finger, never
+    // moved past the threshold). Whatever the press started below (an armed
+    // move, a rectangle) is dropped when it fires.
+    clearLongPress();
+    if (matchesPhone() && longPressNodeAt(target)) {
+      const pointerId = e.pointerId;
+      const point = { x: e.clientX, y: e.clientY };
+      const timer = window.setTimeout(() => {
+        const lp = longPressRef.current;
+        if (!lp || lp.pointerId !== pointerId || !touchRef.current?.longPressDue(pointerId, performance.now())) return;
+        const hit = target.isConnected ? longPressNodeAt(target) : null;
+        if (!hit) {
+          clearLongPress();
+          return;
+        }
+        const dm = getDragManager();
+        if (dm && dm.pointerId === pointerId) dm.cancel();
+        marqueeCleanupRef.current?.();
+        blockTouchClicksUntilRef.current = Infinity;
+        lastTapRef.current = null;
+        lp.fired = true;
+        const ui = rootStore.editorUI;
+        ui.selectComponent(hit.node, hit.breakpointId);
+        // A timer is outside the user gesture: Android vibrates anyway; iOS
+        // gets its tick at the finger's release instead (hapticOrDefer).
+        lp.tickPending = hapticOrDefer() === 'deferred';
+        ui.openPhoneContextMenu(point);
+      }, LONG_PRESS_MS);
+      longPressRef.current = { timer, pointerId, fired: false, tickPending: false };
+    }
     const selected = selectedNodeUnder(target);
     if (selected) {
       // Move the selected node, even when the finger is on one of its
@@ -780,10 +879,12 @@ const CanvasInner = observer(() => {
     if (scope) startMarquee(e, scope);
   }, [
     cancelOneFingerGestures,
+    clearLongPress,
     currentCamera,
     endInlineEditOutside,
     ensureTouchListeners,
     groundPoint,
+    longPressNodeAt,
     marqueeScopeFor,
     rootStore.editorUI,
     selectedNodeUnder,

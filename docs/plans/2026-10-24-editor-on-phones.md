@@ -300,9 +300,168 @@ with CDP touches: the double-tap focuses the text inside `touchend`, typing and 
 every breakpoint copy, two undos revert two edits, the Text field in the Edit sheet edits the same
 node. Neither can show the iOS keyboard itself; that needs the phone.
 
+## Quick toolbar, long-press menu, sheet detents and haptics (2026-10-25)
+
+The owner, from his iPhone: "Could we have a better way to adjust properties on mobile, ways to
+select parent layers, and to center, adjust fonts and sizes? Right now it's kind of impossible to
+see the output while making changes on mobile, because the properties panel spans most of the
+screen. Some smaller glassmorphism floating settings would be better, ideally selectable by
+touching the screen." Plus haptic feedback on selection, an iOS-style long-press menu, and
+slide-to-select in that menu (added by the lead the same day). Phone layout only; the desktop
+editor is unchanged.
+
+### What was built
+
+- **Quick toolbar** (`src/components/phone/QuickToolbar.tsx`): a compact glass bar next to the
+  selected element. Row one, for every element: select parent (up arrow), a breadcrumb chip with
+  the element's name and the frame being edited ("MOBILE") that opens the ancestor list (tap one to
+  select it), select first child (containers), Edit text (text that can be edited inline), center
+  in parent, width mode (Auto, Fit, Fill, Fixed; a tap cycles), duplicate, delete, and More (the
+  properties sheet at peek). Row two for text: font size stepper (minus, value, plus; press and
+  hold repeats and speeds up), weight (Regular, Medium, Bold, cycling), font family (a small list
+  of the library's families, each rendered in its own face), align left, center, right, and a text
+  colour swatch (eight swatches and a custom picker). Row two for containers: layout direction,
+  center content (justify and align center in one tap; a second tap undoes the centring), gap and
+  padding steppers (4px steps).
+- **Placement** (`src/lib/quickbar/placement.ts`, pure): above the element, centred on it; below
+  when there is no room above; when neither fits (a section taller than the visible area) it docks
+  at the bottom of the visible area, just above the bottom bar and the keyboard, because covering
+  part of such an element cannot be avoided and the bottom edge is where controls are expected.
+  Always clamped between the top bar and the bottom bar or the on-screen keyboard (whichever is
+  higher, from `visualViewport`), and inside 8px side margins.
+- **Following the camera**: the bar subscribes to the canvas transform like HudSurface (direct DOM
+  writes, no React render per frame). It hides the moment the camera moves (pinch, two-finger pan,
+  wheel, fit) and comes back 160ms after it rests; it also hides during a drag, while a sheet or
+  the long-press menu is open, while a text is edited inline, with several elements selected, and
+  with the Hand tool.
+- **Glass**: `.glass-surface` in `globals.css`: the theme background at 86% opacity (solid enough
+  that text and icons keep their contrast over a photo or a dark section), an 18px backdrop blur
+  and a hairline border; solid when `backdrop-filter` is unsupported or under
+  `prefers-reduced-transparency`. Entrances are opacity and scale, 150ms, ease-out, off under
+  reduced motion.
+- **Every quick edit** (`src/lib/quickbar/actions.ts`, unit tested on the real stores) writes
+  through `updateResponsiveStyle` with the frame the selection was made in, so on the Mobile frame
+  it is a Mobile override (desktop-first cascade), and is one undo step: multi-property actions
+  run in a history batch, and a stepper's press-and-hold run is one batch around all its steps.
+  Values the model does not store (a heading's default size, a flex container's default
+  direction) are read from the rendered element. A small dot on a control means its value is set
+  on this frame (an override of a larger one), the same meaning as the properties panel's dot.
+- **Center in parent, by the parent's layout on this frame**: flex column: `align-self: center`;
+  flex row: `margin-left/right: auto`; grid: `justify-self: center`; block (or anything else):
+  `margin-left/right: auto`, plus `width: fit-content` when the width is automatic (a full-width
+  block cannot be centred), and an inline element becomes a block first (auto margins do nothing on
+  inline boxes).
+- **Width mode**: Fit writes `fit-content`, Fill `100%`, Fixed the width it renders at now in whole
+  px (nothing moves until the person resizes). Not offered on floating elements, whose wrapper is
+  sized in px only.
+- **Long-press menu** (`src/components/phone/PhoneContextMenu.tsx`): a finger held still for 450ms
+  on an element (the 8px touch drag threshold still applies; moving past it or a second finger
+  cancels; recognised by `TouchGestureTracker.longPressDue`, pure and tested) selects it, plays the
+  haptic tick, drops whatever the press had started (an armed move, a selection rectangle), dims
+  and blurs the rest of the screen while the element stays sharp through a hole in the scrim with
+  a lifted outline (no layout change), and opens a compact glass menu next to the finger, clamped
+  on screen: Select parent, Select child (containers), Edit text (text), Duplicate, Copy style,
+  Paste style (once a style was copied), Delete (red). A tap outside or Escape closes it; picking
+  an item runs it and closes. The browser's own callout and text selection were already off on the
+  canvas ground (#159, the phone layout and touch gestures); the lift of the finger never selects
+  or clears underneath.
+- **Slide-to-select**: the long-press finger may stay down and slide over the items: the item under
+  it highlights and a selection tick plays once per item change; lifting on an item runs it,
+  lifting elsewhere leaves the menu open for a tap. The finger's moves arrive at the canvas
+  (implicit pointer capture), which forwards them to the menu. The release is taken from
+  `touchend`, not `pointerup`, because iOS opens the keyboard for Edit text only from a focus inside
+  `touchend` or `click`; a contact without touch events (a pen on Windows) releases from
+  `pointerup`.
+- **Copy style and Paste style** copy the element's appearance as it renders on the frame
+  (inherited values included): colour, background, border, corner radius, font, line height,
+  letter spacing, text properties, shadow, opacity, filters. Never geometry or layout (width,
+  padding, margin, display, flex direction): pasting a heading's width onto a container is not
+  what anyone means by paste style. The paste is one undo step on the frame being edited.
+- **Properties sheet detents** (`src/components/ui/bottom-sheet.tsx`): peek (38% of the small
+  viewport height) and full (60%, the previous height). The toolbar's More opens it at peek and
+  pans the edited element into the band between the top bar and the sheet; the bottom bar's Edit
+  opens it at full. A swipe up on the handle from peek goes to full, down from full goes to peek,
+  down from peek closes; a chevron button in the title row does the same without a swipe. The
+  sheet keeps its full height and moves down by the difference at peek with the CSS `translate`
+  property (it composes with the open animation's `transform`), with the same padding at the end of
+  its content so every row stays reachable; 180ms, ease-out, off under reduced motion. While the
+  keyboard is up it is never pushed down. It stays modal at both detents (Radix remounts the
+  content when `modal` changes, which would happen mid-gesture).
+- **Haptics** (`src/lib/haptics.ts`): a light tick when a touch selects a new element (the canvas
+  tap, the toolbar's parent and child buttons, the ancestor list), on each stepper step, when the
+  long-press opens the menu, and per item while sliding. `navigator.vibrate(10)` where the
+  Vibration API exists (Android Chrome); on iOS Safari, which has none, the hidden-switch
+  technique: an invisible, off-screen `<input type="checkbox" switch>` whose label is clicked,
+  which plays the system selection haptic on iOS 18 and later. This relies on undocumented platform
+  behaviour that may change, which the module says in its header. Platform reality: Android
+  vibrates during a slide (sticky activation is enough), so ticks fire per item; the iOS switch
+  most likely needs transient user activation, which a touchmove never grants and a timer never has
+  (touch activation starts at pointerup), so on iOS the long-press tick is deferred to the finger's
+  release when `navigator.userActivation` reports no activation, and the per-item slide ticks are
+  attempted and stay silent. Nothing ever throws. The person can turn haptics off in the top bar's
+  More menu ("Haptic feedback", shown only where a mechanism exists), a local preference in
+  localStorage read and written inside try/catch.
+
+### Decided (say so if you disagree)
+
+- **The tap rule stays as #159 built it**: one tap selects the element directly under the finger
+  (as a click does), a double-tap edits text. Not "a second tap selects the parent": that collides
+  with the double-tap timing already decided with the owner. Walking the tree is the toolbar's
+  parent and child buttons, the ancestor list and the long-press menu.
+- **Long-press duration 450ms**, the same as the longest press that still counts as a tap, so a
+  press is always exactly one of the two.
+- The toolbar uses two rows of 36px controls (at most about 374px wide) rather than one scrolling
+  row: everything stays visible at 390px, and each row scrolls sideways on narrower phones.
+- The weight control cycles Regular, Medium, Bold instead of opening a popover: one tap per change
+  and no extra layer over the page; all nine weights stay in the properties sheet.
+
+### Files
+
+`src/lib/quickbar/{placement,actions,dom}.ts`, `src/lib/haptics.ts`,
+`src/components/phone/{QuickToolbar,PhoneContextMenu}.tsx`, long-press and slide forwarding in
+`src/components/Canvas.tsx`, the selection tick in `src/components/ComponentRenderer.tsx`, detents
+in `src/components/ui/bottom-sheet.tsx`, wiring in `src/components/PhoneEditorChrome.tsx`, `panBy`
+in `src/lib/canvas/cameraControls.ts`, the haptics setting in `src/components/TopBar.tsx`, glass
+classes in `src/app/globals.css`, menu state (`phoneContextMenu`, its slide highlight,
+`copiedStyle`) in `src/stores/EditorUIStore.ts`.
+
+### Tests
+
+Placement (above, below, docked, clamped, the keyboard), pan into view at peek, long-press
+recognition (timing, wobble under the threshold, a move past it cancels for good, a second finger
+cancels), every quick action on the real stores (right property, Mobile override, desktop base
+untouched, one undo step, a held run is one step), center in parent per parent layout, width
+modes, tree navigation keeps the frame, copy and paste style round trip and undo, menu items per
+kind, the toolbar's contents per kind and its hiding rules, slide-to-select (the highlight follows
+the finger, lifting on an item runs it, lifting elsewhere keeps the menu, one tick per item
+change), sheet detents (swipe rules, the chevron, peek offset, the keyboard), haptics (feature
+detection, no throw, the setting, the deferred iOS tick, one tick per item change).
+
+### Verification (2026-10-25, headless Chromium at 390x844 with touch emulation)
+
+Through CDP touch events on the demo editor: a tap on a text selected it in the Mobile frame and
+the toolbar appeared below it (no room above), never over it; two taps on plus made the size an
+18px Mobile override with the override dot; the breadcrumb listed Text, Main, Header and picking
+Main selected it in the Mobile frame with the container toolbar; More opened the sheet at peek
+(top at 523 of 844) with the element visible above and the toolbar hidden; the chevron expanded it
+to full, a swipe down returned it to peek, the close button closed it; a 700ms hold on the text
+selected it and opened the menu under a blurred scrim; sliding highlighted Duplicate, then Copy
+style, and lifting there copied the style and closed the menu; a hold on Main released in place
+kept the menu open with Paste style offered, and a tap on it pasted colour and size as Mobile
+overrides; a press that moved 40px opened nothing. After merging the iPhone text-editing work,
+Edit text from the toolbar and from a slide release on the menu both started inline editing with
+the element focused, and a double-tap still edits. No page errors. Screenshots in
+`~/.dev-browser/tmp/`: `qb-01-toolbar-text.png` (text), `qb-03-toolbar-container.png`
+(container), `qb-02-ancestors.png` (ancestor list), `qb-04-sheet-peek.png` (peek),
+`qb-05-context-menu.png` and `qb-06-slide-highlight.png` (the menu). The haptics themselves need a
+real phone: headless Chromium has neither a vibration motor nor the iOS switch.
+
 ## Status
 
 Completed 2026-10-24: both parts built in parallel and merged on one branch (the layout agent's
 worktree branch, with the touch agent's branch merged in). One zoom-math source after the merge:
 `src/lib/canvas/touchGestures.ts` (limits, clamping, zooming around a point), used by the canvas
 pinch and wheel, the toolbar's zoom buttons and the phone layout's fit (`cameraControls.ts`).
+
+Reopened 2026-10-25 for the quick toolbar, the long-press menu with slide-to-select, the sheet
+detents and haptics (section above), completed the same day.

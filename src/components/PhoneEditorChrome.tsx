@@ -16,6 +16,12 @@
 // - When it mounts, and when the page changes, the camera fits the narrowest
 //   breakpoint frame (the phone frame, normally) to the screen's width; the
 //   Fit button fits every frame (an overview).
+// - The floating quick toolbar (phone/QuickToolbar.tsx) sits next to the
+//   selection while no sheet is open; its More opens the properties sheet at
+//   peek, with the edited element panned into the visible band above it. The
+//   Edit button opens the sheet at full height. The long-press menu
+//   (phone/PhoneContextMenu.tsx) is mounted here too (plan section "Quick
+//   toolbar").
 // - While a text is edited inline on the canvas, the bar and any sheet step
 //   aside (nothing may cover the text), and the camera pans the text into
 //   the part of the screen the on-screen keyboard leaves visible.
@@ -29,7 +35,11 @@ import { PiCursorLight, PiHandGrabbingBold, PiArrowUUpLeft, PiArrowUUpRight } fr
 import { EditorTool, type EditorUIType } from '@/stores/EditorUIStore';
 import { getUndoManager } from '@/stores/RootStore';
 import { revealOffset, useCameraControls, type CameraTransform, type CanvasInsets, type Edges, type Rect } from '@/lib/canvas/cameraControls';
-import { BottomSheet } from '@/components/ui/bottom-sheet';
+import { BottomSheet, PEEK_SVH, type SheetDetent } from '@/components/ui/bottom-sheet';
+import QuickToolbar from '@/components/phone/QuickToolbar';
+import PhoneContextMenu from '@/components/phone/PhoneContextMenu';
+import { panDeltaIntoView } from '@/lib/quickbar/placement';
+import { screenRectFor } from '@/lib/quickbar/dom';
 import LeftSidebar from '@/components/sidebars/LeftSidebar';
 import RightSidebar from '@/components/sidebars/RightSidebar';
 
@@ -158,15 +168,19 @@ function useRevealEditedText(editingId: string | undefined, apply: (t: CameraTra
 
 const PhoneEditorChrome = observer(({ editorUI }: { editorUI: EditorUIType }) => {
   const [sheet, setSheet] = React.useState<PhoneSheet>(null);
+  const [propertiesDetent, setPropertiesDetent] = React.useState<SheetDetent>('full');
   const barRef = React.useRef<HTMLDivElement>(null);
-  const { zoomPercentage, fit, apply, read } = useCameraControls();
+  const { zoomPercentage, fit, apply, read, panBy } = useCameraControls();
 
   // Inline text editing on the canvas: close any sheet, hide the bar (below),
   // and keep the text above the keyboard.
   const editingId = editorUI.editingComponent?.id;
   React.useEffect(() => {
-    if (editingId) setSheet(null);
-  }, [editingId]);
+    if (editingId) {
+      setSheet(null);
+      editorUI.closePhoneContextMenu();
+    }
+  }, [editingId, editorUI]);
   useRevealEditedText(editingId, apply, read);
 
   const undoManager = getUndoManager();
@@ -219,7 +233,32 @@ const PhoneEditorChrome = observer(({ editorUI }: { editorUI: EditorUIType }) =>
     };
   }, [editorUI, fit]);
 
-  const open = (next: Exclude<PhoneSheet, null>) => setSheet((cur) => (cur === next ? null : next));
+  const open = (next: Exclude<PhoneSheet, null>) => {
+    if (next === 'properties') setPropertiesDetent('full');
+    setSheet((cur) => (cur === next ? null : next));
+  };
+  // The quick toolbar's More: the properties at peek, the page still in view.
+  const openPropertiesPeek = () => {
+    setPropertiesDetent('peek');
+    setSheet('properties');
+  };
+
+  // At peek the sheet covers the lower part of the screen: pan the edited
+  // element into the band between the top bar and the sheet, after the sheet
+  // has started to open (and again when the selection changes meanwhile).
+  const targetBreakpointId = editorUI.selectedViewportNode?.breakpointId;
+  React.useEffect(() => {
+    if (sheet !== 'properties' || propertiesDetent !== 'peek' || !target) return;
+    const raf = requestAnimationFrame(() => {
+      const rect = screenRectFor(target, targetBreakpointId);
+      if (!rect) return;
+      const top = document.querySelector<HTMLElement>('[data-editor-topbar]')?.getBoundingClientRect().bottom ?? 0;
+      const bottom = window.innerHeight * (1 - PEEK_SVH / 100);
+      const dy = panDeltaIntoView(rect, top, bottom);
+      if (dy !== 0) panBy?.(0, dy);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [sheet, propertiesDetent, target, targetBreakpointId, panBy]);
   const onSheetChange = (which: Exclude<PhoneSheet, null>) => (isOpen: boolean) =>
     setSheet((cur) => (isOpen ? which : cur === which ? null : cur));
 
@@ -290,10 +329,15 @@ const PhoneEditorChrome = observer(({ editorUI }: { editorUI: EditorUIType }) =>
         title="Properties"
         size="medium"
         backdrop="light"
+        detent={propertiesDetent}
+        onDetentChange={setPropertiesDetent}
         data-testid="properties-sheet"
       >
         <RightSidebar variant="sheet" />
       </BottomSheet>
+
+      <QuickToolbar editorUI={editorUI} hidden={sheet !== null} onMore={openPropertiesPeek} />
+      <PhoneContextMenu editorUI={editorUI} />
     </>
   );
 });
