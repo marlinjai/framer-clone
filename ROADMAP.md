@@ -116,6 +116,16 @@ connections to the suite. The four lines below are in that order.
 - [ ] 3b. The invoice editor in the app's editor shell (PR #164, the glass redesign of the invoice
   editor and template composer): built and in review; open are the deploy and a proof run on the
   Testfirma company. See [plan](docs/plans/2026-10-25-books-invoice-editor-shell.md). (2026-10-25)
+- [ ] 3c. One business platform: a company-level catalogue of products and services on the commerce
+  engine (replacing the Books' own list), then instant booking for one practitioner paid online with the
+  receipt in the Books, then quotes, then team dispatch; lumitra-booking's slot engine and calendar sync
+  reused as packages. Architecture decided; the catalogue design comes next. See
+  [plan](docs/plans/2026-10-25-business-platform-architecture.md). (2026-10-25)
+- [ ] 3d. Deletable invoice drafts: a draft (no number, not a bookkeeping record) can be deleted with its
+  lines and events (hard delete, no tombstone, migration relaxing the 007 guards for drafts only);
+  issued documents stay undeletable. Reverses decision 8 of the Books integration plan for drafts
+  only. Needs the accounting owner's confirmation that draft data and events are outside the
+  retention duty before it is built. See [plan](docs/plans/2026-10-25-business-platform-architecture.md). (2026-10-25)
 - [ ] 4. Existing invoices and the suite. The historical import is DONE: invoices 1 to 61 (the
   full series) were imported live on 2026-10-20 at 15:08 with `pnpm books:import` for Whiz-Art
   Media, 61 imported and 0 errors, the printed yearly totals matching the filed returns 2019 to
