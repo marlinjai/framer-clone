@@ -1,16 +1,17 @@
-// PreviewShell wires together the toolbar and either the resizable fitted
-// frame or a fullscreen-fill frame. `?fullscreen=1` records the choice so it
-// is shareable and survives reloads; real browser fullscreen (see
-// useFullscreen) is requested by the Fullscreen button or F, because browsers
-// refuse it without a user gesture. A load with the param therefore shows the
-// in-window fill with an "Enter fullscreen" prompt. State
+// PreviewShell wires together the toolbar and the page, either filling the
+// window (the default, how a visitor sees it) or in the resizable device
+// frame; the choice is remembered per browser (framePreference). Real browser
+// fullscreen (see useFullscreen) is requested by the Fullscreen button or F,
+// because browsers refuse it without a user gesture. It runs in two places:
+// over the editor (PreviewOverlay, `onClose` set: instant, from the store the
+// editor already holds) and at the preview routes for direct links. State
 // (width, height, reload key) lives here so the toolbar's W/H inputs and
 // the gutters' drag deltas converge to a single source of truth.
 'use client';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useStore } from '@/hooks/useStore';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
@@ -18,7 +19,8 @@ import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/pri
 import EditorCommerceProvider from '@/components/EditorCommerceProvider';
 import PreviewFrame from './PreviewFrame';
 import FullscreenExitControl from './FullscreenExitControl';
-import PreviewToolbar, { type PreviewMode } from './PreviewToolbar';
+import PreviewToolbar, { type PreviewFrameMode } from './PreviewToolbar';
+import { readFramePreference, writeFramePreference } from './framePreference';
 import ResizeGutter from './ResizeGutter';
 import { useFullscreen } from './useFullscreen';
 
@@ -53,22 +55,34 @@ export interface PreviewShellProps {
    * saved, after a full reload): the home page shows instead, with a notice.
    */
   missingPageId?: string;
+  /**
+   * Set when the preview is shown over the editor (PreviewOverlay): "Editor"
+   * and Escape close it, and the address is left to the editor.
+   */
+  onClose?: () => void;
 }
 
-const PreviewShell = observer(({ missingPageId }: PreviewShellProps = {}) => {
+const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {}) => {
   const rootStore = useStore();
   const page = rootStore.editorUI.currentPage;
   const project = rootStore.editorUI.currentProject;
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const router = useRouter();
   // The notice applies until the person picks a page themselves.
   const [showMissingNotice, setShowMissingNotice] = useState(Boolean(missingPageId));
   // The text goes in after the first paint, so the live region announces it.
   const [noticeReady, setNoticeReady] = useState(false);
   useEffect(() => setNoticeReady(true), []);
-  // The param alone (a load or reload) fills the window under the toolbar;
-  // `immersive` (real or fallback fullscreen) also drops every bit of chrome.
-  const paramFill = searchParams.get('fullscreen') === '1';
+  // Fill the window (the default) or the device frame; `immersive` (real or
+  // fallback fullscreen) also drops every bit of chrome.
+  const [frame, setFrameRaw] = useState<PreviewFrameMode>(() =>
+    typeof window === 'undefined' ? 'fill' : readFramePreference(),
+  );
+  const setFrame = useCallback((next: PreviewFrameMode) => {
+    setFrameRaw(next);
+    writeFramePreference(next);
+  }, []);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Initial frame size: largest viewport's dimensions, falling back to a
@@ -110,23 +124,20 @@ const PreviewShell = observer(({ missingPageId }: PreviewShellProps = {}) => {
   // Every address change stays on THIS preview (the project's, or the demo's
   // /preview) and keeps the other parameters, the page included. Written with
   // history.replaceState, which Next keeps useSearchParams in step with: no
-  // navigation, so switching page or fullscreen never reloads the project
-  // from the server (that would also drop unsaved work shown here).
+  // navigation, so switching page never reloads the project from the server
+  // (that would also drop unsaved work shown here). Over the editor the
+  // address is the editor's, which keeps `?page=` in step by itself.
   const replaceParams = useCallback((change: (params: URLSearchParams) => void) => {
+    if (onClose) return;
     const params = new URLSearchParams(searchParams.toString());
     change(params);
     const qs = params.toString();
     window.history.replaceState(window.history.state, '', qs ? `${pathname}?${qs}` : pathname);
-  }, [pathname, searchParams]);
+  }, [pathname, searchParams, onClose]);
 
-  // Esc, the exit control or the browser ended real fullscreen: back to the
-  // fitted preview, with the param gone so a reload agrees.
-  const onLeaveFullscreen = useCallback(() => {
-    replaceParams((params) => params.delete('fullscreen'));
-  }, [replaceParams]);
-  const fullscreen = useFullscreen(rootRef, { onLeave: onLeaveFullscreen });
+  const fullscreen = useFullscreen(rootRef);
   const { immersive } = fullscreen;
-  const isFill = paramFill || immersive;
+  const isFill = frame === 'fill' || immersive;
   useEffect(() => {
     if (!isFill) return;
     const onResize = () => setWindowWidth(window.innerWidth);
@@ -141,35 +152,45 @@ const PreviewShell = observer(({ missingPageId }: PreviewShellProps = {}) => {
       document.removeEventListener('webkitfullscreenchange', onResize);
     };
   }, [isFill]);
-  const mode: PreviewMode = isFill ? 'fullscreen' : 'fitted';
 
+  // The request is made inside the click or key handler, so it still counts
+  // as the person's gesture.
   const onEnterFullscreen = useCallback(() => {
-    // The request goes first so it still counts as the click's user gesture.
-    const entering = fullscreen.enter();
-    if (!paramFill) replaceParams((params) => params.set('fullscreen', '1'));
-    return entering;
-  }, [fullscreen, paramFill, replaceParams]);
+    void fullscreen.enter();
+  }, [fullscreen]);
   const onExitFullscreen = useCallback(() => {
     void fullscreen.exit();
-    replaceParams((params) => params.delete('fullscreen'));
-  }, [fullscreen, replaceParams]);
-  // Fill from a load (param only): the button enters real fullscreen. Once
-  // immersive, or when fitted, it toggles as usual.
-  const onToggleMode = useCallback(() => {
-    if (immersive) onExitFullscreen();
-    else void onEnterFullscreen();
-  }, [immersive, onEnterFullscreen, onExitFullscreen]);
+  }, [fullscreen]);
 
-  // F toggles fullscreen unless the person is typing somewhere.
-  const onToggleModeRef = useRef(onToggleMode);
-  onToggleModeRef.current = onToggleMode;
+  // F toggles fullscreen unless the person is typing somewhere. Escape leaves
+  // the in-window fullscreen stand-in (the browser handles its own), and over
+  // the editor otherwise closes the preview.
+  const keysRef = useRef({ immersive, native: fullscreen.native, onEnterFullscreen, onExitFullscreen, onClose });
+  keysRef.current = { immersive, native: fullscreen.native, onEnterFullscreen, onExitFullscreen, onClose };
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() !== 'f' || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
       const t = e.target as HTMLElement | null;
-      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      const typing = Boolean(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)));
+      const k = keysRef.current;
+      if (e.key === 'Escape') {
+        if (e.defaultPrevented || typing) return;
+        if (k.immersive) {
+          if (!k.native) {
+            e.preventDefault();
+            k.onExitFullscreen();
+          }
+          return;
+        }
+        if (k.onClose) {
+          e.preventDefault();
+          k.onClose();
+        }
+        return;
+      }
+      if (e.key.toLowerCase() !== 'f' || e.repeat || e.metaKey || e.ctrlKey || e.altKey || typing) return;
       e.preventDefault();
-      onToggleModeRef.current();
+      if (k.immersive) k.onExitFullscreen();
+      else k.onEnterFullscreen();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -203,10 +224,11 @@ const PreviewShell = observer(({ missingPageId }: PreviewShellProps = {}) => {
   }
 
   const viewportNodes = page.sortedViewportNodes;
-  // Back to the editor on the same page: the project's editor, or the
-  // browser-only demo editor at `/` for its project.
+  // Back to the editor on the same page: over the editor, close; at a route,
+  // the project's editor, or the browser-only demo editor at `/`.
   const editorBase = rootStore.editorUI.isUnsavedDemo ? '/' : `/projects/${project.id}`;
   const editorHref = `${editorBase}?page=${encodeURIComponent(page.id)}`;
+  const onBack = onClose ?? (() => router.push(editorHref));
   // Title plus address, so two pages with the same title can be told apart.
   const pages = project.pagesArray.map((p) => ({
     id: p.id,
@@ -228,14 +250,14 @@ const PreviewShell = observer(({ missingPageId }: PreviewShellProps = {}) => {
         width={width}
         height={height}
         activeBreakpointId={activeBreakpointId}
-        mode={mode}
-        enterOnly={paramFill && !immersive}
+        frame={frame}
+        onFrameChange={setFrame}
         onWidthChange={setWidth}
         onHeightChange={setHeight}
         onPresetChange={onPresetChange}
         onReload={() => setReloadKey(k => k + 1)}
-        onToggleMode={onToggleMode}
-        editorHref={editorHref}
+        onEnterFullscreen={onEnterFullscreen}
+        onBack={onBack}
         pages={pages}
         currentPageId={page.id}
         onPageChange={onPageChange}
@@ -264,25 +286,6 @@ const PreviewShell = observer(({ missingPageId }: PreviewShellProps = {}) => {
           </>
         ) : null}
       </div>
-      {paramFill && !immersive ? (
-        <div className="flex items-center gap-3 bg-gray-800 px-3 py-1.5 text-xs text-gray-200">
-          <span>This preview fills the window. Enter fullscreen to see the page alone (or press F).</span>
-          <button
-            type="button"
-            onClick={() => void onEnterFullscreen()}
-            className="rounded bg-brand px-2 py-1 text-white hover:opacity-90"
-          >
-            Enter fullscreen
-          </button>
-          <button
-            type="button"
-            onClick={onExitFullscreen}
-            className="rounded px-2 py-1 hover:bg-gray-700"
-          >
-            Show fitted preview
-          </button>
-        </div>
-      ) : null}
       </>
       )}
 

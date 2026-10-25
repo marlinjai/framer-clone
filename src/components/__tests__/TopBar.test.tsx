@@ -4,7 +4,7 @@
 //   - a "back to /projects" control is always present,
 //   - the workspace selector is HIDDEN for the common single-workspace case
 //     and RENDERED (re-scoping on change) when the session has >1 workspace,
-//   - the Preview control targets the id-aware route when a project is loaded.
+//   - the Preview control opens the preview over the editor, with no navigation.
 //
 // The store, router, and next/link are mocked so the bar renders in jsdom
 // without the editor runtime. getHistoryStore is mocked to null (HistoryMenu
@@ -36,8 +36,9 @@ vi.mock('next/link', () => ({
   ),
 }));
 
+const setPreviewOpen = vi.fn();
 let currentStore: {
-  editorUI: { currentProject: unknown; currentPage: unknown };
+  editorUI: { currentProject: unknown; currentPage: unknown; setPreviewOpen: (open: boolean) => void };
 };
 vi.mock('@/hooks/useStore', () => ({
   useStore: () => currentStore,
@@ -49,10 +50,12 @@ vi.mock('@/stores/RootStore', () => ({
 
 beforeEach(() => {
   pushMock.mockReset();
+  setPreviewOpen.mockReset();
   currentStore = {
     editorUI: {
       currentProject: { id: 'site_1', metadata: { title: 'Demo' } },
       currentPage: null,
+      setPreviewOpen,
     },
   };
 });
@@ -68,9 +71,10 @@ describe('TopBar navigation chrome', () => {
     expect(link.getAttribute('href')).toBe('/projects');
   });
 
-  it('targets the id-aware preview route when a project is loaded', () => {
+  it('opens the preview over the editor at once, without navigating (it used to load a route)', () => {
     render(<TopBar />);
     fireEvent.click(screen.getByRole('button', { name: /preview/i }));
-    expect(pushMock).toHaveBeenCalledWith('/projects/site_1/preview');
+    expect(setPreviewOpen).toHaveBeenCalledWith(true);
+    expect(pushMock).not.toHaveBeenCalled();
   });
 });

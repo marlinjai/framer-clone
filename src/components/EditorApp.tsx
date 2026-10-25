@@ -25,6 +25,7 @@ import { duplicateLayer } from '@/lib/layers/layerActions';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
 import EditorCommerceProvider from '@/components/EditorCommerceProvider';
+import PreviewOverlay, { previewRequestedInLocation } from '@/components/preview/PreviewOverlay';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 
 import { useStore } from "@/hooks/useStore";
@@ -124,6 +125,8 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
       // demo, whose creation is not something to undo) starts it afresh.
       if (previousProjectId !== editorUI.currentProject?.id || !demoId) getHistoryStore()?.clear();
     }
+    // A reload with the preview open (`?preview=1`) comes back to it.
+    if (previewRequestedInLocation()) editorUI.setPreviewOpen(true);
     if (missingPageId) {
       editorUI.setEditorNotice({
         kind: 'missingPage',
@@ -155,6 +158,8 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
       // state. DragManager's own Escape handler still fires (it listens with
       // capture, so it sees the event before bubbling).
       if (getDragManager()?.isActive) return;
+      // The preview over the editor has its own keys (PreviewOverlay).
+      if (rootStore.editorUI.previewOpen) return;
 
       const match = resolveAction(e);
       if (!match) return;
@@ -228,6 +233,8 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
     const isSpace = (e: KeyboardEvent) => e.code === 'Space' || e.key === ' ';
     const onKeyDown = (e: KeyboardEvent) => {
       if (!isSpace(e) || isEditableTarget(e.target)) return;
+      // Space scrolls the preview over the editor; it is not a pan there.
+      if (ui.previewOpen) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       // Stops the page from scrolling and a focused button from activating.
       e.preventDefault();
@@ -296,6 +303,8 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
           </div>
         </>
       )}
+      {/* Preview over the editor, from this store (PreviewOverlay). */}
+      <PreviewOverlay />
     </div>
     </TransformProvider>
     </EditorCommerceProvider>

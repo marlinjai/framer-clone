@@ -73,6 +73,10 @@ const EditorUIStore = types.model('EditorUI', {
   // A message for the person above the canvas (see EditorNotice), dismissable.
   editorNotice: undefined as { kind: 'changedElsewhere' | 'missingPage'; message: string } | undefined,
   isResizing: false,
+  // The preview shown over the editor (PreviewOverlay), from this store: no
+  // navigation and no server round trip. The editor's own keyboard shortcuts
+  // stand down while it is open. Editor session only.
+  previewOpen: false,
   // Phone layout (docs/plans/2026-10-24-editor-on-phones.md, "Quick toolbar"):
   // the long-press context menu, open at a finger point (screen px), and the
   // style its Copy style took (appearance properties as resolved on the frame
@@ -114,6 +118,16 @@ const EditorUIStore = types.model('EditorUI', {
 
   setEditorNotice(notice: { kind: 'changedElsewhere' | 'missingPage'; message: string } | undefined) {
     self.editorNotice = notice;
+  },
+
+  /** Shows or hides the preview over the editor (PreviewOverlay). */
+  setPreviewOpen(open: boolean) {
+    self.previewOpen = open;
+    // Nothing that floats over the canvas outlives the switch.
+    if (open) {
+      self.phoneContextMenu = undefined;
+      self.phoneContextMenuHover = undefined;
+    }
   },
 
   // Project selection
