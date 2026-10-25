@@ -110,8 +110,19 @@ const PageSettingsForm = observer(({
   const [confirmHome, setConfirmHome] = React.useState(false);
   const setHomeButtonRef = React.useRef<HTMLButtonElement>(null);
   const confirmHomeRef = React.useRef<HTMLButtonElement>(null);
+  // Cancelling the question hands focus back to the button that asked it
+  // (once it is rendered again).
+  const focusSetHomeButton = React.useRef(false);
+  const cancelConfirmHome = () => {
+    focusSetHomeButton.current = true;
+    setConfirmHome(false);
+  };
   React.useEffect(() => {
     if (confirmHome) confirmHomeRef.current?.focus();
+    else if (focusSetHomeButton.current) {
+      focusSetHomeButton.current = false;
+      setHomeButtonRef.current?.focus();
+    }
   }, [confirmHome]);
 
   const otherPages = project.pagesArray.map((p) => ({ id: p.id, slug: p.slug }));
@@ -316,13 +327,13 @@ const PageSettingsForm = observer(({
               <div
                 className="flex flex-col gap-2 rounded-md border border-border px-3 py-2"
                 data-testid="page-settings-home-confirm"
+                data-escape-local=""
                 onKeyDown={(e) => {
                   // Escape cancels this question, not the whole dialog.
                   if (e.key === 'Escape') {
                     e.preventDefault();
                     e.stopPropagation();
-                    setConfirmHome(false);
-                    setHomeButtonRef.current?.focus();
+                    cancelConfirmHome();
                   }
                 }}
               >
@@ -348,10 +359,7 @@ const PageSettingsForm = observer(({
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => {
-                      setConfirmHome(false);
-                      setHomeButtonRef.current?.focus();
-                    }}
+                    onClick={cancelConfirmHome}
                   >
                     Keep current home page
                   </Button>
@@ -504,6 +512,12 @@ const PageSettingsDialog: React.FC<PageSettingsDialogProps> = ({
             e.preventDefault();
             target.focus();
           }
+        }}
+        // Escape inside a local question (the "Set as home page"
+        // confirmation) answers that question; it does not close the dialog.
+        onEscapeKeyDown={(e) => {
+          const target = e.target instanceof Element ? e.target : null;
+          if (target?.closest('[data-escape-local]')) e.preventDefault();
         }}
         // Keep editor shortcuts (Delete removes the selected element, and so
         // on) from firing while the dialog has focus. Escape still reaches
