@@ -1,6 +1,6 @@
 ---
 type: plan
-status: decided
+status: in-progress
 date: 2026-10-25
 title: "Books: the invoice editor in the app's editor shell"
 summary: "Redesign the invoice editor (the draft written on its PDF page, the form, the issued view) so it meets the app's design bar: the site editor's shell (fixed top bar with a brand primary action, a floating bottom toolbar, a full-bleed canvas), no placeholders on the invoice (an Add-to-page menu instead), the app's tokens and shared components everywhere, a designed issue moment, and the same palette and menu fixes in the template composer."
@@ -28,14 +28,32 @@ and hand-made menus. Its P3 issue: an instruction paragraph and tiny hint text.
    added from an "Add to page" menu. The page shows exactly what the client gets.
 3. **Everything in this round, the template composer's shared palette and menu problems included.**
 
+4. **Glass, like the reference dashboard the owner sent** ("this nice glass morphism that is incorporated
+   everywhere, which looks really beautiful and really clean"): frosted surfaces over a soft grey ground.
+
+## Decided while building (say so if you disagree)
+
+- **Glass is a set of shared utilities in `globals.css`** (`glass-ground`, `glass`, `glass-inset`, with dark
+  variants), not one-off classes, so the rest of the app can adopt it later. The shared menus and dialogs
+  take the same frosted fill through `GLASS_SURFACE` in `invoice/chrome.tsx`.
+- **The top bar floats as a frosted pill** (inset from the edges, rounded) instead of the site editor's
+  edge-to-edge bar: it is what makes the reference read as glass, and the canvas shows through under it.
+- **Emphasis is near-black, not iris:** Issue, the pressed formatting buttons and the active segment use
+  the foreground colour, as in the reference. Iris (the brand colour) stays for focus rings and the
+  selection outline on a field being edited, so it always means "this is where you are".
+- **Imported invoices keep a disabled Correct** in the More menu that says how to fix one, instead of
+  hiding it, so the way forward stays findable.
+- **The form view stacks each line on a phone** (title, then quantity × price · rate, the amount beside
+  it, the actions below) instead of a table that scrolled the page sideways.
+
 ## Design
 
-- **Top bar** (the TopBar pattern: fixed, `h-16`, `border-b`, `bg-background`):
+- **Top bar** (the TopBar pattern, as a floating frosted pill, see the decisions above):
   - Left: back chevron to the Books, the document's name ("Invoice" or "Invoice 62") and its status chip.
   - Right: a Page | Form switch (segmented, the `PaneTabs` look) where both exist, a save state ("Saved",
     "Saving…"), Preview or Download as an icon button with a tooltip, a More menu (Correct, Cancel), and the
-    primary action **Issue** as the brand button. Issue is disabled with a reason on hover and focus
-    ("Add a customer and at least one line").
+    primary action **Issue** as the near-black button. Issue is disabled with a reason on hover and focus
+    ("Choose a customer first", "Add at least one line first").
 - **Canvas:** full width under the bar on the muted ground, the A4 page centred with the toolbar's elevation.
   Fields show a brand ring on hover and focus (the HudSurface selection). Nothing else is drawn on the page
   except the lines' action buttons, which appear on row hover or focus, and the address window's "Choose a
@@ -49,7 +67,7 @@ and hand-made menus. Its P3 issue: an instruction paragraph and tiny hint text.
   - The line menu is the shared dropdown menu with groups (Arrange, Details, a VAT submenu as a radio group,
     then Remove in destructive red after a separator).
   - The product picker uses tokens, lists products at once, and its empty state links to the Products tab.
-  - The formatting toolbar uses the active-tool look (brand fill).
+  - The formatting toolbar uses the active-tool look (near-black fill).
 - **Editors and messages:** tokens only (`background`, `popover`, `border`, `brand`, `destructive`,
   `muted-foreground`), so dark mode follows. The keyboard hint sits in the formatting toolbar. Errors appear
   as destructive chips under the field.

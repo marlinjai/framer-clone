@@ -402,7 +402,7 @@ export default function DocumentEditor({ id }: { id: string }) {
     ? recipientName ?? 'No customer yet'
     : imported
       ? `${recipientName ? `${recipientName} · ` : ''}imported, the original PDF is the document of record`
-      : `${recipientName ? `${recipientName} · ` : ''}${STATUS_LABELS[doc.status]} on ${date(doc.issueDate)}${doc.dueDate ? ` · due ${date(doc.dueDate)}` : ''}`;
+      : `${recipientName ? `${recipientName} · ` : ''}${STATUS_LABELS[doc.status]}${doc.issueDate ? ` on ${date(doc.issueDate)}` : ''}${doc.dueDate ? ` · due ${date(doc.dueDate)}` : ''}`;
   const moreItems = cancellable || (draft && pageCapable);
 
   async function newInvoice() {
@@ -679,8 +679,9 @@ export default function DocumentEditor({ id }: { id: string }) {
             <DocumentTexts id={id} doc={doc} draft={draft} printsSubject={printsSubject} change={change} versionRef={versionRef} />
 
             <section aria-label="Lines">
-              <table className="w-full text-sm">
-                <thead>
+              {/* On a phone each line stacks: its title with quantity, price and rate under it, the amount beside it. */}
+              <table className="w-full text-sm phone:block">
+                <thead className="phone:hidden">
                   <tr className="border-b text-left text-xs text-muted-foreground">
                     <th className="py-2 pr-2 font-medium">Description</th>
                     <th className="py-2 pr-2 text-right font-medium">Quantity</th>
@@ -690,11 +691,11 @@ export default function DocumentEditor({ id }: { id: string }) {
                     {draft ? <th className="w-0" /> : null}
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="phone:block">
                   {detail.lines.map((l, i) =>
                     editing?.id === l.id ? (
-                      <tr key={l.id} className="border-b">
-                        <td colSpan={draft ? (regular ? 6 : 5) : 5} className="py-3">
+                      <tr key={l.id} className="border-b phone:block">
+                        <td colSpan={draft ? (regular ? 6 : 5) : 5} className="py-3 phone:block">
                           <LineForm value={editing.value} onChange={(v) => setEditing({ id: l.id, value: v })} regular={regular} idPrefix={`edit-${l.id}`} />
                           <div className="mt-2 flex justify-end gap-2">
                             <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
@@ -707,18 +708,26 @@ export default function DocumentEditor({ id }: { id: string }) {
                         </td>
                       </tr>
                     ) : (
-                      <tr key={l.id} className="border-b align-top" data-testid="line">
-                        <td className={`py-2 pr-2 ${l.kind === 'text' ? 'italic text-muted-foreground' : ''}`}>{l.title}</td>
-                        <td className="py-2 pr-2 text-right tabular-nums">{l.kind === 'text' ? '' : `${quantity(l.quantity)} ${l.unitLabel}`}</td>
-                        <td className="py-2 pr-2 text-right tabular-nums">{l.kind === 'text' ? '' : money(l.unitPrice, doc.currencyCode)}</td>
+                      <tr key={l.id} className="border-b align-top phone:grid phone:grid-cols-[1fr_auto] phone:gap-x-3 phone:py-2" data-testid="line">
+                        <td className={`py-2 pr-2 phone:p-0 ${l.kind === 'text' ? 'italic text-muted-foreground' : ''}`}>
+                          {l.title}
+                          {l.kind === 'text' ? null : (
+                            <span aria-hidden className="hidden text-xs text-muted-foreground tabular-nums phone:block">
+                              {quantity(l.quantity)} {l.unitLabel} × {money(l.unitPrice, doc.currencyCode)}
+                              {regular ? ` · ${l.taxTreatment === 'reverse_charge' ? 'reverse charge' : rate(l.taxRate)}` : ''}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-2 text-right tabular-nums phone:hidden">{l.kind === 'text' ? '' : `${quantity(l.quantity)} ${l.unitLabel}`}</td>
+                        <td className="py-2 pr-2 text-right tabular-nums phone:hidden">{l.kind === 'text' ? '' : money(l.unitPrice, doc.currencyCode)}</td>
                         {regular ? (
-                          <td className="py-2 pr-2 text-right tabular-nums" data-testid="line-tax">
+                          <td className="py-2 pr-2 text-right tabular-nums phone:hidden" data-testid="line-tax">
                             {l.kind === 'text' ? '' : l.taxTreatment === 'reverse_charge' ? 'reverse charge' : rate(l.taxRate)}
                           </td>
                         ) : null}
-                        <td className="py-2 text-right tabular-nums">{l.kind === 'text' ? '' : money(sign * l.subtotal, doc.currencyCode)}</td>
+                        <td className="py-2 text-right tabular-nums phone:p-0">{l.kind === 'text' ? '' : money(sign * l.subtotal, doc.currencyCode)}</td>
                         {draft ? (
-                          <td className="whitespace-nowrap py-1 pl-2 text-right">
+                          <td className="whitespace-nowrap py-1 pl-2 text-right phone:col-span-2 phone:-mr-2 phone:pt-1 phone:pl-0">
                             <Button size="icon" variant="ghost" aria-label={`Move ${l.title} up`} title="Move up" disabled={busy || i === 0} onClick={() => move(i, -1)}>
                               <ArrowUp size={15} aria-hidden />
                             </Button>

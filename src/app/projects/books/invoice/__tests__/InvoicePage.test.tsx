@@ -83,7 +83,7 @@ function layoutNow() {
     outroText: Boolean(d.outroText),
     'line.l1.description': Boolean(current?.lines?.find((l: Json) => l.id === 'l1')?.description),
   };
-  return { ...LAYOUT, fields: LAYOUT.fields.map((f) => (f.id in filled ? { ...f, empty: !filled[f.id] } : f)) };
+  return { ...LAYOUT, fields: LAYOUT.fields.map((f: Json) => (f.id in filled ? { ...f, empty: !filled[f.id] } : f)) };
 }
 
 function line(over: Json = {}): Json {
