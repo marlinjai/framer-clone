@@ -8,7 +8,15 @@ import {
   gapBands,
   handleForRegion,
   outerBox,
+  placeHandles,
+  rectsOverlap,
+  selectionHandleTouchAreas,
+  spacingTouchArea,
+  RADIUS_MIN_TOUCH_ELEMENT,
+  TOUCH_HANDLE_MIN_OFFSET,
+  TOUCH_TARGET,
   type Edges,
+  type HandlePlacement,
   type SpacingRegion,
 } from '../spacingGeometry';
 
@@ -197,5 +205,142 @@ describe('handleForRegion', () => {
     expect(h.orientation).toBe('vertical');
     expect(h.bar.left + h.bar.width / 2).toBe(50);
     expect(h.bar.top + h.bar.height / 2).toBe(50);
+  });
+});
+
+describe('placeHandles', () => {
+  const centre = (h: HandlePlacement) => ({ x: h.bar.left + h.bar.width / 2, y: h.bar.top + h.bar.height / 2 });
+  const bandsOf = (element: ReturnType<typeof rect>, padding: Edges = ZERO, margin: Edges = ZERO) =>
+    boxBands({ rect: element, border: ZERO, padding, margin, scale: 1, includeMargin: true });
+
+  /** No spacing handle's touch area overlaps a selection handle's or another spacing handle's. */
+  function expectClear(handles: Map<string, HandlePlacement>, selection: ReturnType<typeof rect>) {
+    const hud = selectionHandleTouchAreas(selection);
+    const areas = [...handles.entries()].map(([id, h]) => [id, spacingTouchArea(h)] as const);
+    for (const [id, area] of areas) {
+      for (const t of hud) expect(rectsOverlap(area, t), `${id} overlaps a selection handle`).toBe(false);
+      for (const [other, b] of areas) {
+        if (other !== id) expect(rectsOverlap(area, b), `${id} overlaps ${other}`).toBe(false);
+      }
+    }
+  }
+
+  it('without touch places exactly what handleForRegion places (desktop unchanged)', () => {
+    const element = rect(100, 100, 200, 200);
+    const regions = bandsOf(element, edges(40, 0, 6, 0), edges(0, 3, 0, 0));
+    const handles = placeHandles(regions, element);
+    for (const r of regions) {
+      const expected = handleForRegion(r, element);
+      if (expected) expect(handles.get(r.id)).toEqual(expected);
+      else expect(handles.has(r.id)).toBe(false);
+    }
+    // Still the desktop offset, not the touch one.
+    expect(centre(handles.get('margin-right')!).x).toBe(300 + HANDLE_MIN_OFFSET);
+  });
+
+  it('the desktop spot of a 0px side lies inside the mid-edge resize handle under touch (the bug)', () => {
+    const element = rect(0, 0, 200, 100);
+    const regions = byId(bandsOf(element));
+    const desktop = handleForRegion(regions['margin-right'], element)!;
+    const east = selectionHandleTouchAreas(element)[4];
+    expect(rectsOverlap(spacingTouchArea(desktop), east)).toBe(true);
+  });
+
+  it('a large element keeps all eight box handles, clear of resize and radius handles', () => {
+    const element = rect(0, 0, 390, 220);
+    expect(Math.min(element.width, element.height)).toBeGreaterThanOrEqual(RADIUS_MIN_TOUCH_ELEMENT);
+    const handles = placeHandles(bandsOf(element), element, { selection: element });
+    expect([...handles.keys()].sort()).toEqual([
+      'margin-bottom', 'margin-left', 'margin-right', 'margin-top',
+      'padding-bottom', 'padding-left', 'padding-right', 'padding-top',
+    ]);
+    expect(centre(handles.get('margin-right')!)).toEqual({ x: 390 + TOUCH_HANDLE_MIN_OFFSET, y: 110 });
+    expect(centre(handles.get('padding-top')!)).toEqual({ x: 195, y: TOUCH_HANDLE_MIN_OFFSET });
+    expectClear(handles, element);
+  });
+
+  it('keeps handles out from under the phone quick toolbar (an obstacle)', () => {
+    const element = rect(0, 200, 390, 220);
+    const without = placeHandles(bandsOf(element), element, { selection: element });
+    expect(without.has('margin-top')).toBe(true);
+    // The toolbar floating just above the element, as placeQuickbar puts it.
+    const toolbar = rect(8, 110, 374, 80);
+    const withBar = placeHandles(bandsOf(element), element, { selection: element, obstacles: [toolbar] });
+    expect(withBar.has('margin-top')).toBe(false);
+    for (const h of withBar.values()) expect(rectsOverlap(spacingTouchArea(h), toolbar)).toBe(false);
+    // Handles away from the toolbar are unaffected.
+    expect(withBar.has('margin-bottom')).toBe(true);
+    expect(withBar.has('padding-top')).toBe(true);
+  });
+
+  it('a medium element keeps its margins and the paddings that fit, hides the rest', () => {
+    const element = rect(0, 0, 150, 100);
+    const handles = placeHandles(bandsOf(element), element, { selection: element });
+    for (const id of ['margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-left', 'padding-right']) {
+      expect(handles.has(id), id).toBe(true);
+    }
+    expect(handles.has('padding-top')).toBe(false);
+    expect(handles.has('padding-bottom')).toBe(false);
+    expectClear(handles, element);
+  });
+
+  it('a small element shows no padding handles, and whatever it shows is clear', () => {
+    const element = rect(0, 0, 40, 30);
+    const handles = placeHandles(bandsOf(element), element, { selection: element });
+    for (const id of ['padding-top', 'padding-right', 'padding-bottom', 'padding-left']) {
+      expect(handles.has(id), id).toBe(false);
+    }
+    expect(handles.has('margin-top')).toBe(true);
+    expectClear(handles, element);
+    const tiny = rect(0, 0, 10, 10);
+    expect(placeHandles(bandsOf(tiny), tiny, { selection: tiny }).size).toBe(0);
+  });
+
+  it('thin bands and thick bands', () => {
+    const element = rect(0, 0, 300, 200);
+    const handles = placeHandles(bandsOf(element, edges(60, 2, 2, 2), edges(2)), element, { selection: element });
+    // A 60px padding band would centre its handle 30px in, still inside the
+    // north resize handle's touch area: it moves to the touch offset.
+    expect(centre(handles.get('padding-top')!).y).toBe(TOUCH_HANDLE_MIN_OFFSET);
+    // A thin margin band's handle sits the touch offset outside.
+    expect(centre(handles.get('margin-left')!).x).toBe(-TOUCH_HANDLE_MIN_OFFSET);
+    expectClear(handles, element);
+    // A band thick enough keeps its handle in the middle.
+    const thick = placeHandles(bandsOf(element, edges(120, 0, 0, 0)), element, { selection: element });
+    expect(centre(thick.get('padding-top')!).y).toBe(60);
+    expectClear(thick, element);
+  });
+
+  it('keeps clear of the frame-clipped rect HudSurface outlines', () => {
+    const element = rect(0, 0, 300, 200);
+    const clipped = rect(0, 0, 300, 120); // the frame cuts the bottom off
+    const handles = placeHandles(bandsOf(element), element, { selection: clipped });
+    expectClear(handles, clipped);
+  });
+
+  it('hides a gap handle that would sit on a resize handle, keeps one that is clear', () => {
+    const element = rect(0, 0, 300, 100);
+    const near = gapBands({
+      content: element, flow: 'row', wrap: false, rowGap: 0, columnGap: 10, scale: 1,
+      children: [rect(0, 0, 270, 100), rect(280, 0, 20, 100)],
+    });
+    expect(placeHandles(near, element, { selection: element }).size).toBe(0);
+    expect(placeHandles(near, element).size).toBe(1); // desktop unchanged
+    const clear = gapBands({
+      content: element, flow: 'row', wrap: false, rowGap: 0, columnGap: 10, scale: 1,
+      children: [rect(0, 0, 100, 100), rect(110, 0, 190, 100)],
+    });
+    const h = placeHandles(clear, element, { selection: element });
+    expect(h.size).toBe(1);
+    expectClear(h, element);
+  });
+
+  it('touch areas are at least a touch target', () => {
+    const element = rect(0, 0, 300, 200);
+    const h = handleForRegion(byId(bandsOf(element))['margin-top'], element)!;
+    const a = spacingTouchArea(h);
+    expect(a.width).toBe(TOUCH_TARGET);
+    expect(a.height).toBe(TOUCH_TARGET);
+    expect(a.left + a.width / 2).toBe(centre(h).x);
   });
 });

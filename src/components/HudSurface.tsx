@@ -6,7 +6,7 @@ import { frameHeightsKey, viewportResizeUpdate, visibleRectInFrame } from '@/lib
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 import { useTransformContext } from '@/contexts/TransformContext';
-import { EditorTool } from '../stores/EditorUIStore';
+import { EditorTool, type EditorUIType } from '../stores/EditorUIStore';
 import { getHistoryStore, getDragManager } from '../stores/RootStore';
 import type { ComponentInstance } from '../models/ComponentModel';
 import { isLockedOnCanvas } from '@/lib/layers/layerActions';
@@ -20,6 +20,9 @@ import {
 } from '@/utils/crossViewportHighlighting';
 import EffectBadge from './EffectBadge';
 import { lastPointerIsTouch, onPointerModalityChange } from '@/hooks/useEditorGestureGuard';
+import { matchesPhone } from '@/hooks/use-mobile';
+import { startPhoneHandlePress } from '@/components/phone/phoneHandlePress';
+import { RADIUS_MIN_TOUCH_ELEMENT } from '@/lib/canvas/spacingGeometry';
 
 type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 const HANDLE_DIRECTIONS: { dir: ResizeDirection; className: string; cursor: string }[] = [
@@ -64,7 +67,8 @@ const CORNER_INWARD: Record<RadiusCorner, { x: 1 | -1; y: 1 | -1 }> = {
 const RADIUS_MIN_OVERLAY_PX = 40; // hide dots if overlay is smaller than this
 // Under a finger the radius dots get 44px hit areas (globals.css); on a
 // smaller selection they would cover the element and its resize handles.
-const RADIUS_MIN_OVERLAY_TOUCH_PX = 120;
+// Shared with the spacing handles' touch placement, which keeps clear of them.
+const RADIUS_MIN_OVERLAY_TOUCH_PX = RADIUS_MIN_TOUCH_ELEMENT;
 
 /**
  * Follow a handle press until it ends. A mouse press keeps the document
@@ -102,11 +106,45 @@ function trackPress(
   };
 }
 
-/** Pointer-event entry for handles: only fingers and pens (the mouse keeps onMouseDown). */
-function touchPress(handler: (e: React.MouseEvent<HTMLDivElement>) => void) {
+/**
+ * Pointer-event entry for handles: only fingers and pens (the mouse keeps
+ * onMouseDown). In the phone layout a finger first decides between the handle
+ * gesture and the selection's long-press menu (src/lib/canvas/handlePress.ts):
+ * on a small element the handles cover it, and a long-press there must still
+ * open the menu. Pens start the handle gesture at once.
+ */
+function touchPress(handler: (e: React.MouseEvent<HTMLDivElement>) => void, editorUI: EditorUIType) {
   return (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse' || !e.isPrimary) return;
-    handler(e);
+    if (e.pointerType !== 'touch' || !matchesPhone()) {
+      handler(e);
+      return;
+    }
+    // Keep the compat mouse events and the canvas out of this press, as the
+    // handle gesture itself does.
+    e.preventDefault();
+    e.stopPropagation();
+    const el = e.currentTarget;
+    const native = e.nativeEvent;
+    const start = { x: e.clientX, y: e.clientY };
+    startPhoneHandlePress({
+      editorUI,
+      pointerId: e.pointerId,
+      start,
+      // The handler reads only these fields; currentTarget is gone once the
+      // React dispatch has returned, so it is captured here. The gesture
+      // starts from the press point; the handle's own listeners take the
+      // moves from here on.
+      startHandle: () => handler({
+        button: 0,
+        currentTarget: el,
+        clientX: start.x,
+        clientY: start.y,
+        nativeEvent: native,
+        preventDefault: () => {},
+        stopPropagation: () => {},
+      } as unknown as React.MouseEvent<HTMLDivElement>),
+    });
   };
 }
 
@@ -929,7 +967,7 @@ const HudSurface = observer(() => {
                 data-resize-direction={dir}
                 data-testid={`resize-handle-${dir}`}
                 onMouseDown={onHandleMouseDown}
-                onPointerDown={touchPress(onHandleMouseDown)}
+                onPointerDown={touchPress(onHandleMouseDown, editorUI)}
                 className={`absolute w-2 h-2 bg-brand rounded-full ${className}`}
                 style={{ cursor, pointerEvents: 'auto' }}
               />
@@ -955,7 +993,7 @@ const HudSurface = observer(() => {
                 data-radius-corner={id}
                 data-testid={`radius-handle-${id}`}
                 onMouseDown={onRadiusHandleMouseDown}
-                onPointerDown={touchPress(onRadiusHandleMouseDown)}
+                onPointerDown={touchPress(onRadiusHandleMouseDown, editorUI)}
                 title="Drag to round corners. Hold Alt to round just this corner."
                 className={`absolute w-2 h-2 bg-white border border-brand rounded-full opacity-70 hover:opacity-100 transition-opacity ${className}`}
                 style={{ cursor, pointerEvents: 'auto' }}

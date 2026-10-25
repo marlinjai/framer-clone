@@ -47,6 +47,10 @@ export interface PlacementResult {
 
 /** Space between the element and the toolbar. */
 export const QUICKBAR_GAP = 10;
+/** Window event the quick toolbar dispatches when it moves, shows or hides. */
+export const QUICKBAR_MOVED_EVENT = 'quickbar:moved';
+/** The quick toolbar's root (its data-testid); `data-shown="true"` while visible. */
+export const QUICKBAR_SELECTOR = '[data-testid="quick-toolbar"][data-shown="true"]';
 /** Space kept from the screen edges and the bars. */
 export const QUICKBAR_MARGIN = 8;
 

@@ -27,7 +27,9 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
-import { lastPointerIsTouch } from '@/hooks/useEditorGestureGuard';
+import { lastPointerIsTouch, onPointerModalityChange } from '@/hooks/useEditorGestureGuard';
+import { matchesPhone } from '@/hooks/use-mobile';
+import { startPhoneHandlePress } from '@/components/phone/phoneHandlePress';
 import { useTransformContext } from '@/contexts/TransformContext';
 import { EditorTool } from '@/stores/EditorUIStore';
 import { getDragManager, getHistoryStore } from '@/stores/RootStore';
@@ -38,9 +40,9 @@ import {
   boxBands,
   contentBox,
   gapBands,
-  handleForRegion,
   intersectRects,
   outerBox,
+  placeHandles,
   rectContains,
   type Edges,
   type HandlePlacement,
@@ -48,6 +50,18 @@ import {
   type SpacingTarget,
 } from '@/lib/canvas/spacingGeometry';
 import { isAutoSide, parseCssPx, sideProp, startSpacingDrag } from '@/lib/canvas/spacingDrag';
+import { QUICKBAR_MOVED_EVENT, QUICKBAR_SELECTOR } from '@/lib/quickbar/placement';
+
+/** Longer than the quick toolbar's entrance (float-enter), so its final rect is read. */
+const QUICKBAR_SETTLE_MS = 250;
+
+/** The visible phone quick toolbar's screen rect, if any: spacing handles keep out from under it. */
+function quickbarObstacles(): ScreenRect[] {
+  const bar = document.querySelector<HTMLElement>(QUICKBAR_SELECTOR);
+  if (!bar) return [];
+  const r = bar.getBoundingClientRect();
+  return r.width > 0 && r.height > 0 ? [{ left: r.left, top: r.top, width: r.width, height: r.height }] : [];
+}
 
 interface Measured {
   regions: SpacingRegion[];
@@ -192,11 +206,15 @@ const SpacingHandlesLayer = observer(() => {
       }));
     }
 
-    const handles = new Map<string, HandlePlacement>();
-    for (const r of regions) {
-      const h = handleForRegion(r, rect);
-      if (h) handles.set(r.id, h);
-    }
+    // Under a finger, handles keep clear of HudSurface's resize and radius
+    // handles, which sit on the frame-clipped rect it outlines.
+    const handles = placeHandles(
+      regions,
+      rect,
+      lastPointerIsTouch()
+        ? { selection: node.isFloatingElement ? rect : (visibleRectInFrame(el) ?? rect), obstacles: quickbarObstacles() }
+        : undefined,
+    );
     const frame = node.isFloatingElement ? null : el.closest('[data-viewport-content-id]');
     return {
       regions,
@@ -356,6 +374,27 @@ const SpacingHandlesLayer = observer(() => {
   // Camera changes: repaint in the same frame, like HudSurface.
   useEffect(() => subscribe(refresh), [subscribe, refresh]);
 
+  // Mouse and finger place the handles differently (placeHandles).
+  useEffect(() => onPointerModalityChange(scheduleRefresh), [scheduleRefresh]);
+  // The phone quick toolbar is an obstacle: re-measure when it moves. On a new
+  // selection this layer's own update, the toolbar's placement and its short
+  // entrance land within a few frames of each other in no fixed order, so it
+  // re-measures at once, on the next frame, and once the entrance has ended.
+  useEffect(() => {
+    let late: number | undefined;
+    const onMoved = () => {
+      refresh();
+      scheduleRefresh();
+      window.clearTimeout(late);
+      late = window.setTimeout(refresh, QUICKBAR_SETTLE_MS);
+    };
+    window.addEventListener(QUICKBAR_MOVED_EVENT, onMoved);
+    return () => {
+      window.removeEventListener(QUICKBAR_MOVED_EVENT, onMoved);
+      window.clearTimeout(late);
+    };
+  }, [refresh, scheduleRefresh]);
+
   // Selection, styles, frame heights or the enabled state changed: wait one
   // frame for the renderer to apply styles, then measure.
   useEffect(() => {
@@ -419,18 +458,17 @@ const SpacingHandlesLayer = observer(() => {
     if (!enabled) endDragRef.current?.(true);
   }, [enabled]);
 
-  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || !e.isPrimary) return;
-    const handleEl = (e.target as Element).closest('[data-spacing-handle]');
-    const id = handleEl?.getAttribute('data-spacing-handle');
+  /** Start a spacing drag of `region` from `origin` (screen px). */
+  const beginDrag = useCallback((
+    region: SpacingRegion,
+    handleEl: HTMLElement,
+    origin: { x: number; y: number },
+    pointerId: number,
+    mirror: boolean,
+  ): ((x: number, y: number, snap: boolean) => void) | null => {
     const m = ui.current.measured;
-    const region = id && m ? m.regions.find(r => r.id === id) : undefined;
     const { enabled: on, selected: node, breakpointId: bp } = live.current;
-    if (!region || !m || !node || !on || ui.current.drag) return;
-
-    // Nothing else may treat this press as a selection, pan or text selection.
-    e.preventDefault();
-    e.stopPropagation();
+    if (!m || !node || !on || ui.current.drag) return null;
 
     const target = region.target;
     const start = target.kind === 'gap'
@@ -442,7 +480,7 @@ const SpacingHandlesLayer = observer(() => {
       target,
       start,
       scale: m.scale,
-      mirror: e.altKey,
+      mirror,
       history: getHistoryStore(),
     });
     const startValue = target.kind === 'gap'
@@ -450,23 +488,21 @@ const SpacingHandlesLayer = observer(() => {
       : (start as Edges)[target.side];
     ui.current.drag = { id: region.id, target, value: startValue };
 
-    const pointerId = e.pointerId;
-    const origin = { x: e.clientX, y: e.clientY };
     const body = document.body.style;
     const prevCursor = body.cursor;
     const prevUserSelect = body.userSelect;
-    body.cursor = (handleEl as HTMLElement).style.cursor;
+    body.cursor = handleEl.style.cursor;
     body.userSelect = 'none';
 
-    const onMove = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId || !ui.current.drag) return;
-      ui.current.drag.value = session.update({
-        dx: ev.clientX - origin.x,
-        dy: ev.clientY - origin.y,
-        snap: ev.shiftKey,
-      });
-      ui.current.pointer = { x: ev.clientX, y: ev.clientY };
+    const update = (x: number, y: number, snap: boolean) => {
+      if (!ui.current.drag) return;
+      ui.current.drag.value = session.update({ dx: x - origin.x, dy: y - origin.y, snap });
+      ui.current.pointer = { x, y };
       scheduleRefresh();
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      update(ev.clientX, ev.clientY, ev.shiftKey);
     };
     const onUp = (ev: PointerEvent) => {
       if (ev.pointerId !== pointerId) return;
@@ -503,7 +539,41 @@ const SpacingHandlesLayer = observer(() => {
     window.addEventListener('blur', onBlur);
     endDragRef.current = end;
     paint();
+    return update;
   }, [paint, scheduleRefresh]);
+
+  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || !e.isPrimary) return;
+    const handleEl = (e.target as Element).closest<HTMLElement>('[data-spacing-handle]');
+    const id = handleEl?.getAttribute('data-spacing-handle');
+    const m = ui.current.measured;
+    const region = id && m ? m.regions.find(r => r.id === id) : undefined;
+    const { enabled: on, selected: node } = live.current;
+    if (!handleEl || !region || !m || !node || !on || ui.current.drag) return;
+
+    // Nothing else may treat this press as a selection, pan or text selection.
+    e.preventDefault();
+    e.stopPropagation();
+
+    const origin = { x: e.clientX, y: e.clientY };
+    if (e.pointerType === 'touch' && matchesPhone()) {
+      // A finger in the phone layout first decides between the drag and the
+      // selection's long-press menu (src/lib/canvas/handlePress.ts), as on
+      // the resize handles: the drag starts from the press point and takes
+      // the move that decided it at once, a still hold opens the menu.
+      startPhoneHandlePress({
+        editorUI,
+        pointerId: e.pointerId,
+        start: origin,
+        startHandle: (at) => {
+          const update = beginDrag(region, handleEl, origin, e.pointerId, false);
+          update?.(at.x, at.y, false);
+        },
+      });
+      return;
+    }
+    beginDrag(region, handleEl, origin, e.pointerId, e.altKey);
+  }, [beginDrag, editorUI]);
 
   return (
     <div
