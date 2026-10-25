@@ -113,6 +113,9 @@ connections to the suite. The four lines below are in that order.
   Whiz-Art Media. Then the first real invoice from the editor closes this line. See
   [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md), sections "Phase 1 build
   specification" and "Phase 2 and 3 build notes (2026-10-20)". (2026-10-20)
+- [ ] 3b. The invoice editor in the app's editor shell (PR #164, the glass redesign of the invoice
+  editor and template composer): built and in review; open are the deploy and a proof run on the
+  Testfirma company. See [plan](docs/plans/2026-10-25-books-invoice-editor-shell.md). (2026-10-25)
 - [ ] 4. Existing invoices and the suite. The historical import is DONE: invoices 1 to 61 (the
   full series) were imported live on 2026-10-20 at 15:08 with `pnpm books:import` for Whiz-Art
   Media, 61 imported and 0 errors, the printed yearly totals matching the filed returns 2019 to
