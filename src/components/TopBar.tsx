@@ -19,6 +19,7 @@
 'use client';
 
 import React from 'react';
+import { useIsPhone } from '@/hooks/use-mobile';
 import { hapticsEnabled, hapticsSupported, onHapticsPreferenceChange, setHapticsEnabled } from '@/lib/haptics';
 import { observer } from 'mobx-react-lite';
 import {
@@ -226,7 +227,11 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
   const hasProject = !!editorUI.currentProject;
   const hasPage = !!editorUI.currentPage;
   const history = getHistoryStore();
-  const [hapticsAvailable, hapticsOn] = useHapticsPreference();
+  const [hapticsSupportedHere, hapticsOn] = useHapticsPreference();
+  // Phone layout only: desktop Chrome has a no-op navigator.vibrate and desktop
+  // Safari knows the switch control, and the desktop editor has no haptics.
+  const isPhone = useIsPhone();
+  const hapticsAvailable = isPhone && hapticsSupportedHere;
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger
