@@ -117,8 +117,9 @@ connections to the suite. The four lines below are in that order.
   editor and template composer): built and in review; open are the deploy and a proof run on the
   Testfirma company. See [plan](docs/plans/2026-10-25-books-invoice-editor-shell.md). (2026-10-25)
 - [ ] 3c. One business platform: a company-level catalogue of products and services on the commerce
-  engine (replacing the Books' own list), then instant booking for one practitioner paid online with the
-  receipt in the Books, then quotes, then team dispatch; lumitra-booking's slot engine and calendar sync
+  engine (replacing the Books' own list), first proven on the owner's test jewellery shop (sample products,
+  checkout through Stripe Connect in test mode, receipt in the Books), then instant booking for one
+  practitioner (paid online, receipt in the Books), then quotes, then team dispatch; lumitra-booking's slot engine and calendar sync
   reused as packages. Architecture decided; the catalogue design comes next. See
   [plan](docs/plans/2026-10-25-business-platform-architecture.md). (2026-10-25)
 - [ ] 3d. Deletable invoice drafts: a draft (no number, not a bookkeeping record) can be deleted with its
