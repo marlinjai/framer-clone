@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
+  LONG_PRESS_MS,
   TouchGestureTracker,
+  isLongPress,
   ZOOM_MAX,
   ZOOM_MIN,
   clampZoom,
@@ -193,5 +195,48 @@ describe('TouchGestureTracker', () => {
     expect(t.size).toBe(0);
     expect(t.phase).toBe('idle');
     expect(t.multiTouch).toBe(false);
+  });
+});
+
+describe('long-press', () => {
+  it('a still finger held LONG_PRESS_MS is a long-press, not before', () => {
+    const t = new TouchGestureTracker();
+    t.down(1, { x: 10, y: 10 }, 1000, cam());
+    expect(t.longPressDue(1, 1000 + LONG_PRESS_MS - 1)).toBe(false);
+    expect(t.longPressDue(1, 1000 + LONG_PRESS_MS)).toBe(true);
+  });
+
+  it('wobble under the touch threshold keeps it; a move past it cancels for good', () => {
+    const t = new TouchGestureTracker();
+    t.down(1, { x: 10, y: 10 }, 0, cam());
+    t.move(1, { x: 15, y: 13 }, 'touch');
+    expect(t.longPressDue(1, LONG_PRESS_MS)).toBe(true);
+    t.move(1, { x: 30, y: 10 }, 'touch');
+    expect(t.longPressDue(1, LONG_PRESS_MS + 100)).toBe(false);
+    t.move(1, { x: 10, y: 10 }, 'touch');
+    expect(t.longPressDue(1, LONG_PRESS_MS + 200)).toBe(false);
+  });
+
+  it('a second finger cancels it, also after that finger lifts', () => {
+    const t = new TouchGestureTracker();
+    t.down(1, { x: 10, y: 10 }, 0, cam());
+    t.down(2, { x: 100, y: 10 }, 50, cam());
+    expect(t.longPressDue(1, LONG_PRESS_MS)).toBe(false);
+    t.up(2, cam());
+    expect(t.longPressDue(1, LONG_PRESS_MS + 100)).toBe(false);
+  });
+
+  it('a lifted finger is never a long-press', () => {
+    const t = new TouchGestureTracker();
+    t.down(1, { x: 10, y: 10 }, 0, cam());
+    t.up(1, cam());
+    expect(t.longPressDue(1, LONG_PRESS_MS)).toBe(false);
+  });
+
+  it('isLongPress is the pure rule', () => {
+    expect(isLongPress({ startTime: 0, moved: false }, LONG_PRESS_MS, false)).toBe(true);
+    expect(isLongPress({ startTime: 0, moved: false }, LONG_PRESS_MS - 1, false)).toBe(false);
+    expect(isLongPress({ startTime: 0, moved: true }, LONG_PRESS_MS, false)).toBe(false);
+    expect(isLongPress({ startTime: 0, moved: false }, LONG_PRESS_MS, true)).toBe(false);
   });
 });
