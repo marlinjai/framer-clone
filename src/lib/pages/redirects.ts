@@ -89,6 +89,8 @@ export function nextSiteRedirects(input: {
       const before = storedSlugs.get(page.pageId);
       if (before === undefined || !isStaticSlug(before)) continue;
       if (slugKey(before) === slugKey(page.slug)) continue;
+      // A dynamic destination can never be redirected to, so it would only burn a redirect slot.
+      if (page.slug !== '' && !isStaticSlug(page.slug)) continue;
       const fromKey = slugKey(before);
       list = list.filter((r) => slugKey(r.from) !== fromKey);
       list.push({ from: before, pageId: page.pageId, createdAt: now.toISOString() });

@@ -61,6 +61,9 @@ export const RESERVED_SLUG_SEGMENTS: readonly string[] = [
 
 const SEGMENT = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/** The product page's dynamic segment: the product handle the product detail resolves (`{{page.params.handle}}`). */
+export const PRODUCT_PARAM_SEGMENT = ':handle';
+
 export type SlugErrorCode =
   | 'empty'
   | 'too_long'
@@ -134,11 +137,21 @@ export function validateSlugFormat(slug: string): SlugValidation {
     return fail('leading_or_trailing_slash', 'A slug cannot start or end with a slash.');
   }
   const segments = slug.split('/');
-  for (const segment of segments) {
+  for (const [index, segment] of segments.entries()) {
     if (segment.length === 0) {
       return fail('empty_segment', 'Use a single slash between the parts of a nested path.');
     }
     if (SEGMENT.test(segment)) continue;
+    // A product page: the one dynamic segment a page may author, `:handle` as the last part after a
+    // fixed one (`products/:handle`), the parameter the product detail reads. Any other dynamic
+    // segment is matched by the router when an older page has it, but cannot be authored.
+    if (segment === PRODUCT_PARAM_SEGMENT && index > 0 && index === segments.length - 1) continue;
+    if (isDynamicSegment(segment)) {
+      return fail(
+        'invalid_characters',
+        'Only a product page may have a placeholder: ":handle" as the last part after a fixed one, like "products/:handle".',
+      );
+    }
     if (/[A-Z]/.test(segment) && SEGMENT.test(segment.toLowerCase())) {
       return fail('uppercase', 'Use lowercase letters only.');
     }

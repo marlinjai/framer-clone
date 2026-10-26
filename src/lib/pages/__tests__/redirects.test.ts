@@ -46,6 +46,10 @@ describe('nextSiteRedirects', () => {
     expect(step([], { p1: 'products/:handle' }, [['p1', 'shop']])).toEqual([]);
   });
 
+  it('does not record a redirect when the page moves to a dynamic slug', () => {
+    expect(step([], { p1: 'products' }, [['p1', 'products/:handle']])).toEqual([]);
+  });
+
   it('never chains: both old paths lead to the page wherever it lives now', () => {
     const first = step([], { p1: 'a' }, [['p1', 'b']]);
     const second = step(first, { p1: 'b' }, [['p1', 'c']]);

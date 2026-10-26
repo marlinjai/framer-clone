@@ -33,12 +33,20 @@ describe('validateSlugFormat', () => {
     ['hello world', 'invalid_characters'],
     ['a_b', 'invalid_characters'],
     ['robots.txt', 'invalid_characters'],
-    ['products/:handle', 'invalid_characters'],
     ['-about', 'edge_hyphen'],
     ['about-', 'edge_hyphen'],
     ['blog/-x', 'edge_hyphen'],
     ['about--us', 'double_hyphen'],
   ])('refuses %j with %s', (slug, code) => expect(codeOf(slug)).toBe(code));
+
+  it.each(['products/:handle', 'shop/rings/:handle'])('accepts the product page %s', (slug) =>
+    expect(codeOf(slug)).toBe('ok'),
+  );
+
+  it.each([':handle', 'products/:id', 'products/[handle]', 'products/:handle/reviews', ':handle/products'])(
+    'refuses the placeholder in %j (only a final :handle after a fixed part)',
+    (slug) => expect(codeOf(slug)).toBe('invalid_characters'),
+  );
 
   it.each(['api', 'api/v1', 'projects', 'preview', 'static', 'images', 'home', 'index', 'favicon', 'robots', 'sitemap'])(
     'refuses the reserved path %s',
@@ -179,6 +187,16 @@ describe('findProjectSlugProblem (the server save check)', () => {
   it('refuses a changed slug that breaks the rules', () => {
     const pages = base.map((p) => (p.pageId === 'about' ? { ...p, slug: 'About Us' } : p));
     expect(findProjectSlugProblem(pages, stored)).toMatchObject({ pageId: 'about', code: 'invalid_characters' });
+  });
+
+  it('accepts a new product page', () => {
+    const pages = [...base.filter((p) => p.pageId !== 'product'), { pageId: 'shop', slug: 'shop/:handle', title: 'Shop item' }];
+    expect(findProjectSlugProblem(pages, stored)).toBeNull();
+  });
+
+  it('refuses a second product page at the same path', () => {
+    const pages = [...base, { pageId: 'new', slug: 'products/:handle', title: 'Product 2' }];
+    expect(findProjectSlugProblem(pages, stored)).toMatchObject({ pageId: 'new', code: 'taken' });
   });
 
   it('refuses a reserved path', () => {
