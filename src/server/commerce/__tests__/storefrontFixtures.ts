@@ -173,7 +173,8 @@ export async function seedBuyableProduct(
   const productId = randomUUID();
   await db
     .insertInto('product')
-    .values({ tenant_id: DEMO_COMPANY_ID, status: 'published', id: productId, title: opts.title, handle: opts.handle, updated_at: now })
+    // Net-priced, as the shop's catalogue was before price bases existed (the orders tests add VAT on top).
+    .values({ tenant_id: DEMO_COMPANY_ID, status: 'published', price_basis: 'net', id: productId, title: opts.title, handle: opts.handle, updated_at: now })
     .execute();
 
   const optionId = randomUUID();

@@ -74,6 +74,28 @@ Parent: [one business platform](2026-10-25-business-platform-architecture.md), s
 - **Price basis.** Existing products keep `net` (the shop priced them net and added VAT), new products
   default to `gross` (the consumer price a shop shows); the checkout prices an order on its products' basis.
 
+## Decided while building slice 4 (2026-10-26, say so if you disagree)
+
+- **The placed order stays append-only.** Its payment and receipt live in `order_payment` (migration
+  `021_order_payment`), one row per order with a guarded state machine (pending, paid, failed, cancelled,
+  expired, refunded; BK018), the 1% fee recorded once, and the receipt linked once. Provider events are kept
+  in an append-only `payment_event` (BK019), which is what makes a repeated webhook change nothing.
+- **One handler for every provider.** The demo provider decides at once and reports through the same
+  `handlePaymentEvent` a Stripe webhook will call, so the demo proves the real path's states, stock moves and
+  receipt. The storefront pays through `POST /api/commerce/orders/<id>/pay`; the browser never decides that
+  an order is paid.
+- **The receipt goes through the Issue button's steps**: buyer to contact (reused when the same identity
+  exists), contact to Books customer, a draft linked to the order (one per order, a partial unique index),
+  the order's lines, the totals compared with the order's, issue with the PDF stored. A failure keeps the
+  reason on the payment (the payment stands) and the next delivery of an event retries.
+- **The shop charges VAT as the Books do**: a small business (section 19) charges none, so the receipt adds
+  up; an order's price basis is its products' (a cart mixing net and gross products is refused with a
+  clear message).
+- **A declined order is closed** (its stock goes back); paying again places a new order.
+- **Expiry** is swept when a payment is attempted; a late success re-reserves the stock or is refunded.
+- **The refund email to the customer** is not sent: the app has no outgoing mail yet. Logged and on the
+  roadmap.
+
 ## Data model (additions to the commerce engine)
 
 - `product`: `tenant_id`, `kind`, `product_type`, `tags text[]`, `seo_title`, `seo_description`, `tax_class`

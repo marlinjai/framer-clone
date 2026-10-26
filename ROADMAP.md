@@ -125,6 +125,9 @@ connections to the suite. The four lines below are in that order.
   lines from the catalogue, the receipt from a paid order, Stripe Connect, the test shop, and rolling 020 out).
   See [plan](docs/plans/2026-10-25-business-platform-architecture.md) and
   [catalogue design](docs/plans/2026-10-25-catalogue-design.md). (2026-10-26)
+- [ ] 3e. Customer email from the shop: an order confirmation with the receipt, and the notice when a late
+  payment had to be refunded (the payment handler logs it today; the app sends no email yet). See
+  [catalogue design](docs/plans/2026-10-25-catalogue-design.md), "Decided while building slice 4". (2026-10-26)
 - [ ] 3d. Deletable invoice drafts: a draft (no number, not a bookkeeping record) can be deleted with its
   lines and events (hard delete, no tombstone, migration relaxing the 007 guards for drafts only);
   issued documents stay undeletable. Reverses decision 8 of the Books integration plan for drafts

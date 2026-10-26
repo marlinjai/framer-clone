@@ -27,8 +27,9 @@
 //     cleared and the visitor is told to remove the unavailable items.
 //   - an order-create fault (any other status / a network error): a loud error,
 //     never a false confirmation.
-//   - a declined / failed payment: surfaced in the payment step with a retry; the
-//     order already exists, so retrying re-attempts ONLY the payment.
+//   - a declined payment: the server closed the order (its stock went back), so
+//     the checkout forgets it and the visitor checks out again (a new order);
+//     a fault in the payment step keeps the order and retries ONLY the payment.
 'use client';
 
 import React from 'react';
@@ -36,7 +37,7 @@ import React from 'react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { useCart, type CartLine } from '@/lib/commerce/cart';
-import { getPaymentGateway, type PaymentGateway } from '@/lib/commerce/payment';
+import { getPaymentGateway, type CheckoutBuyer, type PaymentGateway } from '@/lib/commerce/payment';
 
 /** A single per-line shortage, in the client's variant vocabulary. */
 export interface CheckoutShortage {
@@ -64,8 +65,34 @@ type CheckoutState =
       paying: boolean;
       /** Last decline/fault message for the payment step, or null. */
       paymentError: string | null;
+      /** The buyer the receipt is made out to, as typed so far. */
+      buyer: CheckoutBuyer;
     }
-  | { status: 'confirmed'; order: PlacedOrder; transactionId: string };
+  | { status: 'confirmed'; order: PlacedOrder; transactionId: string; receiptNumber: string | null };
+
+const EMPTY_BUYER: CheckoutBuyer = {
+  name: '',
+  email: '',
+  addressLine1: '',
+  postalCode: '',
+  city: '',
+  country: 'DE',
+};
+
+/** The buyer fields the receipt needs, with their labels, in form order. */
+const BUYER_FIELDS: Array<{ key: keyof CheckoutBuyer; label: string; type?: string; autoComplete: string }> = [
+  { key: 'name', label: 'Full name', autoComplete: 'name' },
+  { key: 'email', label: 'Email', type: 'email', autoComplete: 'email' },
+  { key: 'addressLine1', label: 'Street and number', autoComplete: 'address-line1' },
+  { key: 'postalCode', label: 'Postal code', autoComplete: 'postal-code' },
+  { key: 'city', label: 'City', autoComplete: 'address-level2' },
+  { key: 'country', label: 'Country (two letters, e.g. DE)', autoComplete: 'country' },
+];
+
+/** Every field the receipt needs is filled in. */
+function buyerComplete(buyer: CheckoutBuyer): boolean {
+  return BUYER_FIELDS.every(({ key }) => String(buyer[key] ?? '').trim().length > 0);
+}
 
 export interface CheckoutButtonProps {
   node: ComponentInstance;
@@ -152,6 +179,8 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
   // The last successfully placed order for the current signature, so "Back to
   // cart" then re-checkout resumes payment without re-placing.
   const placedRef = React.useRef<{ signature: string; order: PlacedOrder } | null>(null);
+  // The buyer as last typed, kept across "Back to cart" and a new checkout after a decline.
+  const buyerRef = React.useRef<CheckoutBuyer>(EMPTY_BUYER);
 
   const label = stringProp(node.props as Record<string, unknown> | undefined, 'label', 'Checkout');
   const payLabel = stringProp(node.props as Record<string, unknown> | undefined, 'payLabel', 'Pay');
@@ -165,7 +194,15 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
   };
 
   const goToPayment = (order: PlacedOrder) => {
-    setState({ status: 'payment', order, simulateDecline: false, paying: false, paymentError: null });
+    setState((prev) => ({
+      status: 'payment',
+      order,
+      simulateDecline: false,
+      paying: false,
+      paymentError: null,
+      // Keep what was typed when coming back to the same order.
+      buyer: prev.status === 'payment' ? prev.buyer : buyerRef.current,
+    }));
   };
 
   // STEP 1: place the order (server authors money + stock). Out-of-stock and
@@ -250,7 +287,11 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
   // STEP 2: authorize the (DEMO) payment for the AUTHORITATIVE server total.
   const pay = async () => {
     if (state.status !== 'payment' || state.paying) return;
-    const { order, simulateDecline } = state;
+    const { order, simulateDecline, buyer } = state;
+    if (!buyerComplete(buyer)) {
+      setState({ ...state, paymentError: 'fill in your name, email and address: the receipt is made out to them' });
+      return;
+    }
     setState({ ...state, paying: true, paymentError: null });
 
     try {
@@ -259,6 +300,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
         amountCents: order.totalCents,
         currency: order.currency,
         simulateDecline,
+        buyer,
       });
 
       if (result.ok) {
@@ -267,7 +309,25 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
         attemptKeyRef.current = null;
         attemptSignatureRef.current = null;
         placedRef.current = null;
-        setState({ status: 'confirmed', order, transactionId: result.transactionId });
+        setState({
+          status: 'confirmed',
+          order,
+          transactionId: result.transactionId,
+          receiptNumber: result.receiptNumber ?? null,
+        });
+        return;
+      }
+
+      if (result.code === 'declined' || result.code === 'closed') {
+        // The server closed this order (its stock went back): a retry needs a NEW order, so forget this one
+        // and its idempotency key. The cart stays; the visitor checks out again.
+        attemptKeyRef.current = null;
+        attemptSignatureRef.current = null;
+        placedRef.current = null;
+        setState({
+          status: 'order_error',
+          message: `${result.message}. Your cart is kept: check out again to try once more.`,
+        });
         return;
       }
 
@@ -332,6 +392,13 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
       onPay: pay,
       onToggleDecline: (next) =>
         setState((prev) => (prev.status === 'payment' ? { ...prev, simulateDecline: next } : prev)),
+      onBuyerChange: (key, value) =>
+        setState((prev) => {
+          if (prev.status !== 'payment') return prev;
+          const buyer = { ...prev.buyer, [key]: value };
+          buyerRef.current = buyer;
+          return { ...prev, buyer };
+        }),
       onBackToCart: () => setState({ status: 'idle' }),
     }),
   );
@@ -342,13 +409,14 @@ interface OutcomeHandlers {
   isDemo: boolean;
   onPay: () => void;
   onToggleDecline: (next: boolean) => void;
+  onBuyerChange: (key: keyof CheckoutBuyer, value: string) => void;
   onBackToCart: () => void;
 }
 
 /** Render the step/outcome panel (payment / confirmation / shortage / error). */
 function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.ReactNode {
   if (state.status === 'payment') {
-    const { order, simulateDecline, paying, paymentError } = state;
+    const { order, simulateDecline, paying, paymentError, buyer } = state;
     const total = formatCents(order.totalCents, order.currency);
     return (
       <div data-checkout-payment style={PANEL_STYLE}>
@@ -360,6 +428,31 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
         <div data-checkout-payment-total style={{ marginTop: '8px', fontWeight: 600 }}>
           Total to pay: {total}
         </div>
+        <fieldset data-checkout-buyer style={{ border: 'none', margin: '8px 0 0', padding: 0, display: 'grid', gap: '6px' }}>
+          <legend style={{ fontWeight: 600, padding: 0 }}>Your receipt is made out to</legend>
+          {BUYER_FIELDS.map((field) => (
+            <label key={field.key} style={{ display: 'grid', gap: '2px', color: '#374151' }}>
+              {field.label}
+              <input
+                type={field.type ?? 'text'}
+                name={field.key}
+                required
+                autoComplete={field.autoComplete}
+                data-checkout-buyer-field={field.key}
+                value={String(buyer[field.key] ?? '')}
+                disabled={paying}
+                onChange={(event) => handlers.onBuyerChange(field.key, event.target.value)}
+                style={{
+                  padding: '6px 8px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  fontFamily: 'inherit',
+                  fontSize: '13px',
+                }}
+              />
+            </label>
+          ))}
+        </fieldset>
         {handlers.isDemo ? (
           <label
             style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', color: '#6b7280' }}
@@ -437,6 +530,11 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
         <div data-checkout-payment-ref style={{ marginTop: '4px', color: '#6b7280' }}>
           Payment reference: {state.transactionId} (simulated payment, no real charge).
         </div>
+        {state.receiptNumber ? (
+          <div data-checkout-receipt style={{ marginTop: '4px', color: '#6b7280' }}>
+            Receipt {state.receiptNumber} is on its way to you.
+          </div>
+        ) : null}
       </div>
     );
   }

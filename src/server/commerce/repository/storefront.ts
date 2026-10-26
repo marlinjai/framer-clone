@@ -196,6 +196,8 @@ export interface ResolvedOrderLine {
   variantId: string;
   inventoryItemId: string;
   quantity: number;
+  /** The product's price basis: whether its prices include VAT (020_catalogue_company). */
+  priceBasis: 'net' | 'gross';
 }
 
 /**
@@ -222,7 +224,7 @@ export async function resolveOrderLines(
           .onRef('product.id', '=', 'product_variant.product_id')
           .onRef('product.tenant_id', '=', 'product_variant.tenant_id'),
       )
-      .select(['product_variant.id as id', 'product_variant.sku as sku'])
+      .select(['product_variant.id as id', 'product_variant.sku as sku', 'product.price_basis as priceBasis'])
       .where('product_variant.id', '=', line.variantId)
       .where('product_variant.deleted_at', 'is', null)
       .where((eb) => eb.and(visibleProductConditions(eb, view)))
@@ -246,6 +248,7 @@ export async function resolveOrderLines(
       variantId: line.variantId,
       inventoryItemId: item.id,
       quantity: line.quantity,
+      priceBasis: variant.priceBasis === 'net' ? 'net' : 'gross',
     });
   }
   return resolved;

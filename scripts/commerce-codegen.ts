@@ -105,6 +105,8 @@ const JSON_COLUMNS: Record<string, string> = {
   // 020_catalogue_company: the formatted descriptions, the run model of render/richText.ts.
   'product.description_format': 'RichText',
   'collection.description_format': 'RichText',
+  // 021_order_payment: the buyer given at checkout, parsed with zod on read (src/server/commerce/payment/buyer.ts).
+  'order_payment.buyer': 'Record<string, unknown>',
 };
 
 /** The type-only imports the JSON shapes need. */
@@ -135,6 +137,9 @@ const TABLE_DOCS: Record<string, string> = {
   collection: '020_catalogue_company: a manual collection of products.',
   collection_product: '020_catalogue_company: the ordered products of a collection.',
   product_site_hidden: '020_catalogue_company: a product switched off for one site of its company.',
+  order_payment:
+    '021_order_payment: the payment of one order (pending, paid, failed, cancelled, expired, refunded), its\n1% platform fee and its receipt in the Books. Guarded state machine (BK018).',
+  payment_event: '021_order_payment: a provider event, recorded once (append-only, BK019).',
   price_rule: '004_pricing_and_tax: price rule (attribute match).',
   price_list: '004_pricing_and_tax: price list (override / sale window).',
   credit_note:

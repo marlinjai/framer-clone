@@ -40,6 +40,9 @@ vi.mock('@/server/commerce/repository/storefront', async (importOriginal) => ({
   readOrderTotal: vi.fn(),
 }));
 
+vi.mock('@/server/commerce/payment/shopTax', () => ({
+  shopTaxProfile: vi.fn(async () => ({ kleinunternehmer: false, booksReady: true })),
+}));
 vi.mock('@/server/commerce/order/createOrder', () => ({
   createOrder: vi.fn(),
 }));
@@ -96,7 +99,7 @@ beforeEach(() => {
   // Default happy wiring: variant -> inventory item resolves, the order commits,
   // and the read-back returns the server total.
   resolveLinesMock.mockImplementation(async (_db, _view, lines) =>
-    lines.map((line) => ({ ...line, inventoryItemId: 'inv_a' })),
+    lines.map((line) => ({ ...line, inventoryItemId: 'inv_a', priceBasis: 'gross' as const })),
   );
   readTotalMock.mockResolvedValue({ totalCents: 4760, currency: 'EUR' });
   createOrderMock.mockResolvedValue({ ok: true, orderId: 'order_created' });

@@ -28,6 +28,25 @@ export interface PaymentRequest {
    * adapter ignores this field (the provider decides the outcome).
    */
   simulateDecline?: boolean;
+  /**
+   * The buyer the receipt is made out to (name, email, postal address). The server keeps it with the payment
+   * and makes the receipt's contact from it; the fake gateway ignores it.
+   */
+  buyer?: CheckoutBuyer;
+}
+
+/** The buyer as entered at checkout (mirrors src/server/commerce/payment/buyer.ts). */
+export interface CheckoutBuyer {
+  kind?: 'person' | 'organization';
+  name: string;
+  email: string;
+  companyName?: string | null;
+  addressLine1: string;
+  addressLine2?: string | null;
+  postalCode: string;
+  city: string;
+  country: string;
+  vatId?: string | null;
 }
 
 /** A successful authorization: money is (notionally) captured. */
@@ -37,6 +56,8 @@ export interface PaymentSuccess {
   provider: string;
   /** The provider transaction reference, surfaced on the order confirmation. */
   transactionId: string;
+  /** The receipt's number in the seller's Books once issued; null while it is still being issued. */
+  receiptNumber?: string | null;
 }
 
 /** A failed authorization. `code` lets the UI distinguish a decline from a fault. */
@@ -48,8 +69,9 @@ export interface PaymentFailure {
    * `invalid`: the request itself was malformed (e.g. a non-positive amount). A
    *   programming error surfaced loudly, never a silent success.
    * `gateway_error`: the gateway/network failed. Retryable.
+   * `closed`: the order no longer takes a payment (declined before, expired): check out again.
    */
-  code: 'declined' | 'invalid' | 'gateway_error';
+  code: 'declined' | 'invalid' | 'gateway_error' | 'closed';
   /** A human-readable message surfaced to the visitor (never swallowed). */
   message: string;
 }

@@ -783,6 +783,42 @@ export interface ProductSiteHiddenTable {
   created_at: Generated<Timestamp>;
 }
 
+/**
+ * 021_order_payment: the payment of one order (pending, paid, failed, cancelled, expired, refunded), its
+ * 1% platform fee and its receipt in the Books. Guarded state machine (BK018).
+ */
+export interface OrderPaymentTable {
+  tenant_id: string;
+  order_id: string;
+  status: Generated<string>;
+  provider: string;
+  provider_payment_id: string | null;
+  amount: number;
+  currency_code: string;
+  application_fee_amount: number;
+  buyer: JsonColumn<Record<string, unknown>>;
+  expires_at: Timestamp;
+  paid_at: Timestamp | null;
+  closed_at: Timestamp | null;
+  failure_code: string | null;
+  refund_id: string | null;
+  receipt_document_id: string | null;
+  receipt_error: string | null;
+  version: Generated<number>;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
+}
+
+/** 021_order_payment: a provider event, recorded once (append-only, BK019). */
+export interface PaymentEventTable {
+  provider: string;
+  event_id: string;
+  tenant_id: string;
+  order_id: string;
+  event_type: string;
+  created_at: Generated<Timestamp>;
+}
+
 // =============================================================================
 // The Database interface. GLOBAL keys are `public.`-qualified; tenant tables
 // are BARE. The two namespaces are disjoint by construction.
@@ -831,6 +867,8 @@ export interface CommerceDB {
   collection: CollectionTable;
   collection_product: CollectionProductTable;
   product_site_hidden: ProductSiteHiddenTable;
+  order_payment: OrderPaymentTable;
+  payment_event: PaymentEventTable;
 }
 
 // --- compile-time discipline guards (the package's brand types) --------------

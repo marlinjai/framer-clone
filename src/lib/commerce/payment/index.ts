@@ -23,17 +23,18 @@
 // to PAID. The interface here is unchanged by that swap; only the order status
 // lifecycle (a separate, deferred piece) changes.
 
-import { FakePaymentGateway } from './fakeGateway';
+import { StorefrontPaymentGateway } from './storefrontGateway';
 import type { PaymentGateway } from './types';
 
 export * from './types';
 export { FakePaymentGateway, DEMO_PROVIDER_ID } from './fakeGateway';
+export { StorefrontPaymentGateway } from './storefrontGateway';
 
 /**
- * Resolve the active payment gateway. DEMO: always the FakePaymentGateway with a
- * small simulated latency so the checkout shows a realistic processing state.
- * This is the seam a real provider plugs into (see the file header).
+ * Resolve the active payment gateway: the storefront's server, which runs the payment provider (the demo
+ * provider today, no real money) and issues the receipt in the shop owner's Books. A hosted provider
+ * (Stripe Checkout) plugs in behind the same server route. The FakePaymentGateway stays for tests.
  */
 export function getPaymentGateway(): PaymentGateway {
-  return new FakePaymentGateway({ latencyMs: 600 });
+  return new StorefrontPaymentGateway();
 }
