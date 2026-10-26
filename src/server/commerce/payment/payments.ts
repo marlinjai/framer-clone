@@ -13,6 +13,11 @@ import 'server-only';
 //   checkout_cancelled  pending -> cancelled, the reserved stock released.
 //   checkout_expired    pending -> expired, the reserved stock released (also sweepExpiredPayments).
 //
+// This row is the order's state. The order itself is append-only (005_minimal_orders revokes UPDATE from the
+// app role: a placed order is a bookkeeping record), so its `status` stays `confirmed`, meaning "placed",
+// whatever the payment does. A late success clears the closing time and the decline code of the earlier
+// close; the payment_event rows keep that history.
+//
 // Each provider event is recorded once (payment_event); a repeated delivery changes nothing. The state change,
 // the event record and the stock movements commit together. A paid order without a receipt gets one after the
 // commit (receipt.ts); when that fails the payment stays paid, the reason is kept on it, and the next delivery
@@ -227,6 +232,9 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
             .set({
               status: 'paid',
               paid_at: at,
+              // A late success: the earlier close no longer describes the payment.
+              closed_at: null,
+              failure_code: null,
               provider_payment_id: payment.provider_payment_id ?? event.providerPaymentId ?? null,
               version: payment.version + 1,
               updated_at: at,

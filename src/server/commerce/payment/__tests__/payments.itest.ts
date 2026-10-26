@@ -21,7 +21,7 @@ import { pricingRepository } from '../../repository/pricing';
 import { createOrder } from '../../order/createOrder';
 import { handlePaymentEvent, platformFee, sweepExpiredPayments, type PaymentDeps } from '../payments';
 import { demoProvider, type PaymentEvent, type PaymentProvider } from '../provider';
-import { ensureReceipt } from '../receipt';
+import { berlinDay, ensureReceipt } from '../receipt';
 import type { BuyerInput } from '../buyer';
 import { booksScope } from '@/server/books/scope';
 import { rejectionCode } from '@/server/books/__tests__/booksFixtures';
@@ -211,9 +211,13 @@ describe('paying an order and its receipt', () => {
     expect(outcome).toMatchObject({ status: 'paid', duplicate: false, receiptError: null });
     const [receipt] = await receiptsOf(orderId);
     expect(receipt).toMatchObject({ id: outcome.receiptDocumentId, status: 'issued', document_number: '1000', total: 9998 });
+    // The service date is the Berlin day the order was placed. The order's created_at comes from the
+    // database clock, not the fake one, so the expectation is read from the row rather than hardcoded.
     // A DATE column reads back as a local-midnight Date: compare its calendar day.
+    const placed = await env.ownerDb.selectFrom('order').select('created_at').where('id', '=', orderId).executeTakeFirstOrThrow();
     const day = receipt.service_date as unknown as Date;
-    expect([day.getFullYear(), day.getMonth() + 1, day.getDate()]).toEqual([2026, 10, 26]);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    expect(`${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`).toBe(berlinDay(new Date(placed.created_at)));
     const lines = await env.ownerDb
       .selectFrom('sales_document_line')
       .select(['kind', 'title', 'quantity', 'unit_price', 'tax_rate'])
@@ -318,6 +322,18 @@ describe('paying an order and its receipt', () => {
     expect(await reserved(ring.item)).toBe(1);
     expect(await receiptsOf(orderId)).toHaveLength(1);
     expect(shop.refunds).toEqual([]);
+  });
+
+  it('declined, then paid in the same checkout: the paid payment keeps no closing time or decline code', async () => {
+    const ring = await stockedRing(2);
+    const orderId = await placeOrder(ring);
+    await handlePaymentEvent(shop.deps, event(orderId, 'payment_failed', { failureCode: 'card_declined' }));
+    expect(await payment(orderId)).toMatchObject({ status: 'failed', failure_code: 'card_declined' });
+    expect((await payment(orderId)).closed_at).not.toBeNull();
+
+    expect((await handlePaymentEvent(shop.deps, event(orderId, 'payment_succeeded'))).status).toBe('paid');
+    expect(await payment(orderId)).toMatchObject({ status: 'paid', failure_code: null, closed_at: null });
+    expect(await reserved(ring.item)).toBe(1);
   });
 
   it('late with the stock gone: refunded in full, the order stays closed, no receipt', async () => {
