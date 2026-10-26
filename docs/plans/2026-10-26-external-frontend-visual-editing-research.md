@@ -122,8 +122,10 @@ blocks, unique block ids and an `href` pattern. Puck itself was not installed ye
   the shared editor and preview dispatch `createComponentElement.tsx:312`:
   `(window as any).__componentRegistry?.[component.type]`. Nothing outside a test registers anything.
   The published-site renderer `src/lib/renderer/server/renderComponentNode.tsx` has no
-  function-component branch at all (its own comment at `:18-22`); an unknown `type` falls through
-  `resolveHtmlTag` (`:59-63`) and is emitted as a literal element such as `<FancyBox>`.
+  function-component branch at all (its own comment at `:18-22`). A non-empty unknown `type` falls
+  through `resolveHtmlTag` (`:59-63`), which returns the string unchanged, so it is emitted as a
+  literal element such as `<FancyBox>`; only an empty or non-string `type` yields no tag and renders
+  `null` (`:173-174`).
 - **The AI page generator forbids function nodes** (`src/lib/ai/pageGen/schema.ts:106-115`,
   `validate.ts` forces `componentType: host`).
 - **No document version.** No version field in page or project snapshots, no migration code;
