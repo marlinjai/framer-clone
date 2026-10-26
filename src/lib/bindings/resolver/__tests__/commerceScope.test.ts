@@ -12,6 +12,7 @@ import {
   pushVariantFrame,
   pushAvailabilityFrame,
   pushRowFrame,
+  pushPageFrame,
   lookup,
 } from '../scope';
 import type {
@@ -105,6 +106,27 @@ describe('commerce frame resolution via lookup', () => {
     expect(lookup(scope, ['availability', 'availableQuantity'])).toBe(12);
     // Single-segment sugar still resolves against the row frame.
     expect(lookup(scope, ['title'])).toBe('Row Title');
+  });
+});
+
+describe('product.href: the link to the product page', () => {
+  it('builds the link from the page frame product page path and the handle', () => {
+    const scope = pushProductFrame(pushPageFrame(createScope(), {}, '/products'), product);
+    expect(lookup(scope, ['product', 'href'])).toBe('/products/classic-tee');
+  });
+
+  it('encodes the handle, so it can never leave the product page path', () => {
+    const scope = pushProductFrame(pushPageFrame(createScope(), {}, '/shop/items'), {
+      ...product,
+      handle: '../a b?c#d',
+    });
+    expect(lookup(scope, ['product', 'href'])).toBe('/shop/items/..%2Fa%20b%3Fc%23d');
+  });
+
+  it('is undefined without a product page or without a product', () => {
+    expect(lookup(pushProductFrame(pushPageFrame(createScope(), {}), product), ['product', 'href'])).toBeUndefined();
+    expect(lookup(pushProductFrame(createScope(), product), ['product', 'href'])).toBeUndefined();
+    expect(lookup(pushPageFrame(createScope(), {}, '/products'), ['product', 'href'])).toBeUndefined();
   });
 });
 

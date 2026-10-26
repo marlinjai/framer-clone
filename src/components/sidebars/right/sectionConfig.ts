@@ -2,8 +2,8 @@ import { ComponentInstance } from '@/models/ComponentModel';
 import { formKindOf } from '@/lib/forms/definition';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 
-export type ComponentCategory = 'viewport' | 'container' | 'text' | 'image' | 'generic' | 'form' | 'formField' | 'formSubmit' | 'stickyCta';
-export type SectionId = 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles' | 'effects' | 'form' | 'stickyCta';
+export type ComponentCategory = 'viewport' | 'container' | 'text' | 'link' | 'image' | 'generic' | 'form' | 'formField' | 'formSubmit' | 'stickyCta';
+export type SectionId = 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles' | 'effects' | 'form' | 'stickyCta' | 'link';
 
 // Exported so the AI page generator's schema docs (src/lib/ai/pageGen/schema.ts)
 // offer exactly the tags this properties panel knows how to edit.
@@ -20,6 +20,7 @@ export function getComponentCategory(component: ComponentInstance): ComponentCat
   // The sticky call to action bar is a div, but not a layout container.
   if (isStickyCta(component.props)) return 'stickyCta';
   if (component.type === 'img') return 'image';
+  if (component.type === 'a') return 'link';
   if (TEXT_TYPES.has(component.type)) return 'text';
   if (CONTAINER_TYPES.has(component.type)) return 'container';
   return 'generic';
@@ -31,6 +32,8 @@ export const SECTION_MAP: Record<ComponentCategory, SectionId[]> = {
   // body family, which is how generated pages set fonts).
   container: ['size', 'position', 'layout', 'typography', 'image', 'styles', 'effects'],
   text:      ['size', 'position', 'typography', 'styles', 'effects'],
+  // A link is text with a target: the Link section first.
+  link:      ['link', 'size', 'position', 'typography', 'styles', 'effects'],
   image:     ['size', 'position', 'image', 'styles', 'effects'],
   generic:   ['size', 'position', 'styles', 'effects'],
   // A form may reveal like any section; single fields and the submit button

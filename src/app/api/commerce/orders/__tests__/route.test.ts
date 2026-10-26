@@ -101,7 +101,7 @@ beforeEach(() => {
   resolveLinesMock.mockImplementation(async (_db, _view, lines) =>
     lines.map((line) => ({ ...line, inventoryItemId: 'inv_a', priceBasis: 'gross' as const })),
   );
-  readTotalMock.mockResolvedValue({ totalCents: 4760, currency: 'EUR' });
+  readTotalMock.mockResolvedValue({ totalCents: 4760, currency: 'EUR', orderNumber: 'ORD-000007' });
   createOrderMock.mockResolvedValue({ ok: true, orderId: 'order_created' });
 });
 
@@ -111,6 +111,7 @@ describe('POST /api/commerce/orders tenancy (D4: tenant from the HOST)', () => {
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual({
       orderId: 'order_created',
+      orderNumber: 'ORD-000007',
       totalCents: 4760,
       currency: 'EUR',
       // Stripe is not configured in tests: the demo provider takes the payment.

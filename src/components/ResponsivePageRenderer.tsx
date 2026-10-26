@@ -74,8 +74,9 @@ const ResponsivePageRenderer = observer(() => {
   // Root binding scope: a page frame carrying route params. The editor canvas
   // has no concrete route params yet, so this is an empty params bag; a bound
   // RecordView therefore resolves `{{page.params.id}}` to undefined and shows
-  // its empty state until preview/publish supplies real params.
-  const rootScope: BindingScope = pushPageFrame(createScope(), {});
+  // its empty state until preview/publish supplies real params. The product
+  // page path makes `{{product.href}}` resolve as on the published site.
+  const rootScope: BindingScope = pushPageFrame(createScope(), {}, project.productPagePath);
 
   return (
     <>

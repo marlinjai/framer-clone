@@ -225,7 +225,7 @@ describe('Stripe Connect through the webhook (fake Stripe)', () => {
       tenantId: company,
       tenantGroupId: env.tgId,
       idempotencyKey: `checkout:${orderId}`,
-      successUrl: `https://shop.example/cart?checkout=paid&order=${orderId}`,
+      successUrl: 'https://shop.example/cart?checkout=paid&order=ORD-1',
     });
     expect(session.expiresAt as number).toBeGreaterThanOrEqual(Math.floor(Date.now() / 1000) + 30 * 60);
   });

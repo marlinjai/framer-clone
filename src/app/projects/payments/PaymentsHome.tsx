@@ -4,8 +4,9 @@
 //
 // The company's payments: whether its shop takes real payments through its own Stripe account, and the two
 // ways to get there: Stripe's hosted onboarding for a new account, or connecting an account the business
-// already has. Until then the shop's checkout uses the demo payment (no real money). The 1% platform fee is
-// stated before anyone connects. Glass look as the Books (globals.css glass utilities).
+// already has. Until then the shop's checkout uses the demo payment (no real money). While the platform runs on
+// Stripe's test keys a connected account takes test payments only, and the page says so. The 1% platform fee
+// is stated before anyone connects. Glass look as the Books (globals.css glass utilities).
 
 import Link from 'next/link';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -34,6 +35,10 @@ const STATUS_TEXT: Record<AccountStatus, { title: string; body: string }> = {
   },
 };
 
+/** The ready text while the platform runs on Stripe's test keys: nothing a buyer pays is real. */
+const READY_TEST_MODE_BODY =
+  "Your shop is connected to your Stripe account in Stripe's test mode: buyers pay with Stripe's test cards and no real money moves. Every paid test order gets its receipt in your Books.";
+
 /** What the address says after coming back from Stripe. */
 const RETURN_TEXT: Record<string, string> = {
   invalid_state: 'That link from Stripe was not for this company or has expired. Start again.',
@@ -45,6 +50,7 @@ const RETURN_TEXT: Record<string, string> = {
 
 export default function PaymentsHome({ returned }: { returned: string | null }) {
   const [status, setStatus] = useState<AccountStatus | null>(null);
+  const [testMode, setTestMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -52,12 +58,17 @@ export default function PaymentsHome({ returned }: { returned: string | null }) 
     setError(null);
     try {
       const res = await fetch('/api/payments/stripe/account');
-      const body = (await res.json().catch(() => ({}))) as { status?: AccountStatus; error?: { message?: string } };
+      const body = (await res.json().catch(() => ({}))) as {
+        status?: AccountStatus;
+        testMode?: boolean;
+        error?: { message?: string };
+      };
       if (!res.ok || !body.status) {
         setError(body.error?.message ?? `the payment status could not be read (${res.status})`);
         return;
       }
       setStatus(body.status);
+      setTestMode(body.testMode === true);
     } catch {
       setError('the payment status could not be read; check your connection and reload');
     }
@@ -85,7 +96,11 @@ export default function PaymentsHome({ returned }: { returned: string | null }) 
     }
   }
 
-  const text = status ? STATUS_TEXT[status] : null;
+  const text = status
+    ? status === 'ready' && testMode
+      ? { title: 'Ready (test mode)', body: READY_TEST_MODE_BODY }
+      : STATUS_TEXT[status]
+    : null;
   const notice = returned && RETURN_TEXT[returned];
 
   return (

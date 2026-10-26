@@ -28,6 +28,7 @@ import {
 import { jsonLdScriptText } from '@/lib/site/publishedHead';
 import { siteLookFromPages } from '@/lib/site/notFoundDefault';
 import { findLegalPage } from '@/lib/legal/legalPages';
+import { productPagePath } from '@/lib/pages/slug';
 
 /** Path of the site's privacy policy page, or null when it has none. */
 export function privacyPolicyHref(site: PublishedSite): string | null {
@@ -102,6 +103,8 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
     cmsRepo: getPublishedCmsRepository(site.workspaceId),
     commerceRepo: await commerceRepoForSite(site, adapted.root),
     analytics,
+    // The base of `{{product.href}}`: the site's product page, if it has one.
+    productPagePath: productPagePath(site.pages.map((p) => p.slug)),
     breakpoints: adapted.breakpoints,
     // Lenis smooth scrolling, the site's setting (off by default; off for
     // visitors who ask for reduced motion, decided in the browser).

@@ -6,7 +6,7 @@ import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 import RightSidebarHeader from './right/RightSidebarHeader';
 import { getComponentCategory, SECTION_MAP, type SectionId } from './right/sectionConfig';
-import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographySection, ImageSection, DataSourceSection, EffectsSection, FormSection, StickyCtaSection, TextContentSection } from './right/sections';
+import { SizeSection, PositionSection, StylesSection, LayoutSection, TypographySection, ImageSection, DataSourceSection, EffectsSection, FormSection, StickyCtaSection, TextContentSection, LinkSection } from './right/sections';
 import { ComponentInstance } from '@/models/ComponentModel';
 
 const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: ComponentInstance; breakpointId?: string }>> = {
@@ -19,6 +19,7 @@ const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: Com
   effects: EffectsSection,
   form: FormSection,
   stickyCta: StickyCtaSection,
+  link: LinkSection,
 };
 
 /**

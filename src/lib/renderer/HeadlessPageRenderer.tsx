@@ -7,6 +7,7 @@
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
+import { getParent, hasParent } from 'mobx-state-tree';
 import type { PageModelType } from '@/models/PageModel';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import HeadlessComponentRenderer, { StickyCtaPreviewContext } from './HeadlessComponentRenderer';
@@ -22,6 +23,14 @@ function firstStickyCta(node: ComponentInstance): ComponentInstance | null {
   return null;
 }
 import PageFontFaces from '@/lib/fonts/PageFontFaces';
+import { createScope, pushPageFrame } from '@/lib/bindings/resolver/scope';
+
+/** The product page path of the project holding `page` (pages map -> project), or null. */
+function productPagePathOf(page: PageModelType): string | null {
+  if (!hasParent(page, 2)) return null;
+  const project = getParent(page, 2) as { productPagePath?: string | null };
+  return project.productPagePath ?? null;
+}
 
 export interface HeadlessPageRendererProps {
   page: PageModelType;
@@ -46,6 +55,8 @@ const HeadlessPageRenderer = observer(({ page, breakpointId }: HeadlessPageRende
   const smallest = [...allBreakpoints].sort((a, b) => a.minWidth - b.minWidth)[0];
   const stickyBar = isStickyCta(appComponentTree.props) ? null : firstStickyCta(appComponentTree);
   const pinned = stickyBar !== null && smallest?.id === breakpointId;
+  // The page frame, as on the published page: `{{product.href}}` links to the product page.
+  const scope = pushPageFrame(createScope(), {}, productPagePathOf(page));
 
   return (
     <>
@@ -56,6 +67,7 @@ const HeadlessPageRenderer = observer(({ page, breakpointId }: HeadlessPageRende
           component={appComponentTree}
           breakpointId={breakpointId}
           allBreakpoints={allBreakpoints}
+          scope={scope}
         />
         {pinned && stickyBar ? (
           // After the page root, as a child of the preview frame (the scroll
@@ -66,6 +78,7 @@ const HeadlessPageRenderer = observer(({ page, breakpointId }: HeadlessPageRende
               component={stickyBar}
               breakpointId={breakpointId}
               allBreakpoints={allBreakpoints}
+              scope={scope}
               hoisted
             />
           </div>

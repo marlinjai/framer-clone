@@ -107,6 +107,8 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
     ...resolvedAttributes,
     style: editorStyle,
     onClick: (e: React.MouseEvent) => {
+      // A link on the canvas selects, it never navigates the editor away.
+      if ((e.currentTarget as HTMLElement).closest('a[href]')) e.preventDefault();
       // A locked node lets the click bubble to its nearest unlocked ancestor.
       if (isLocked) return;
       e.stopPropagation();

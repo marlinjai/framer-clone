@@ -16,7 +16,8 @@ import { PanelBottom } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { useStore } from '@/hooks/useStore';
 import { CollapsibleSection, ColorInput, PropertyRow, PropertySelect, TextInput } from '../primitives';
-import { DEFAULT_STICKY_CTA, isSafeCtaHref, isSafeCtaStyleValue } from '@/lib/stickyCta/stickyCta';
+import { DEFAULT_STICKY_CTA, isSafeCtaStyleValue } from '@/lib/stickyCta/stickyCta';
+import { isSafeHref } from '@/lib/links/safeHref';
 import { isLinkablePageSlug } from '@/lib/forms/paths';
 
 interface StickyCtaSectionProps {
@@ -42,7 +43,7 @@ export const StickyCtaSection = observer(({ component }: StickyCtaSectionProps) 
   const hrefError =
     draftHref.trim() === ''
       ? 'Add a link: a page of this site, #section, https://, mailto: or tel:'
-      : isSafeCtaHref(draftHref)
+      : isSafeHref(draftHref)
         ? null
         : 'Use a page path (/contact), #section, https://, mailto: or tel:';
   const pages = project ? Array.from(project.pages.values()).filter((p) => isLinkablePageSlug(p.slug)) : [];
@@ -73,7 +74,7 @@ export const StickyCtaSection = observer(({ component }: StickyCtaSectionProps) 
           onChange={(e) => {
             const next = e.target.value;
             setDraftHref(next);
-            if (isSafeCtaHref(next)) component.setProps({ ctaHref: next.trim() });
+            if (isSafeHref(next)) component.setProps({ ctaHref: next.trim() });
             else if (next.trim() === '') component.setProps({ ctaHref: undefined });
           }}
         />

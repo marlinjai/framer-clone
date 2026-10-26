@@ -186,6 +186,22 @@ export function validateSlug(slug: string, ctx: ValidateSlugContext = {}): SlugV
   return { ok: true };
 }
 
+/**
+ * The path a product page lives under (`/products` for a page `products/:handle`), from the slugs of
+ * a site's pages, or null when the site has no valid product page. With more than one, the first in
+ * sort order wins, so every renderer picks the same page.
+ */
+export function productPagePath(slugs: Iterable<string>): string | null {
+  const suffix = `/${PRODUCT_PARAM_SEGMENT}`;
+  const candidates = [...slugs].filter((slug) => slug.endsWith(suffix) && validateSlugFormat(slug).ok).sort();
+  return candidates.length > 0 ? `/${candidates[0].slice(0, -suffix.length)}` : null;
+}
+
+/** The link to one product's page under `productPagePath`; the handle is encoded, never trusted as a path. */
+export function productHref(pagePath: string, handle: string): string {
+  return `${pagePath}/${encodeURIComponent(handle)}`;
+}
+
 /** German umlauts and other letters NFKD cannot decompose into ASCII. */
 const TRANSLITERATIONS: Record<string, string> = {
   ä: 'ae',

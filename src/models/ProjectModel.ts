@@ -5,7 +5,7 @@ import { types, Instance, SnapshotIn, SnapshotOut, getSnapshot } from 'mobx-stat
 import { v4 as uuidv4 } from 'uuid';
 import PageModel, { PageModelType } from './PageModel';
 import ComponentModel, { createIntrinsicComponent, createViewportNode, type ComponentInstance, type ComponentSnapshotIn } from './ComponentModel';
-import { isDynamicSegment, suggestSlug, validateSlug, type SlugValidation } from '@/lib/pages/slug';
+import { isDynamicSegment, productPagePath, suggestSlug, validateSlug, type SlugValidation } from '@/lib/pages/slug';
 import {
   isHttpsUrl,
   normalizeSiteSettings,
@@ -705,6 +705,11 @@ export const ProjectModel = types
     // Check if project has pages
     get hasPages(): boolean {
       return self.pages.size > 0;
+    },
+
+    // Where the product page lives (`/products` for `products/:handle`), the base of `{{product.href}}`
+    get productPagePath(): string | null {
+      return productPagePath(Array.from(self.pages.values(), page => page.slug));
     },
     
     // Find page by slug

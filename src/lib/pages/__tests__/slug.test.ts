@@ -3,6 +3,8 @@ import {
   RESERVED_SLUG_SEGMENTS,
   SLUG_MAX_LENGTH,
   findProjectSlugProblem,
+  productHref,
+  productPagePath,
   slugKey,
   suggestSlug,
   tidySlugInput,
@@ -98,6 +100,25 @@ describe('validateSlug uniqueness', () => {
 
   it('checks the format before uniqueness', () => {
     expect(validateSlug('api', { pages: [] })).toMatchObject({ ok: false, code: 'reserved' });
+  });
+});
+
+describe('productPagePath and productHref', () => {
+  it('finds the product page of a site and links a product under it', () => {
+    expect(productPagePath(['', 'about', 'products/:handle'])).toBe('/products');
+    expect(productPagePath(['shop/rings/:handle'])).toBe('/shop/rings');
+    expect(productHref('/products', 'pearl-necklace')).toBe('/products/pearl-necklace');
+  });
+
+  it('is null without a valid product page', () => {
+    expect(productPagePath(['', 'about'])).toBeNull();
+    expect(productPagePath([':handle'])).toBeNull();
+    expect(productPagePath(['events/:id'])).toBeNull();
+  });
+
+  it('picks the same page every time when a site has two', () => {
+    expect(productPagePath(['shop/:handle', 'products/:handle'])).toBe('/products');
+    expect(productPagePath(['products/:handle', 'shop/:handle'])).toBe('/products');
   });
 });
 

@@ -206,6 +206,14 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
     replaceParams((params) => params.set('page', pageId));
   }, [project, rootStore, replaceParams]);
 
+  // A link to a fixed page of the site switches the preview to it; a product
+  // link (a dynamic page) has no product to show here, so it stays put.
+  const onSitePath = useCallback((path: string) => {
+    const slug = path.replace(/^\/+|\/+$/g, '').toLowerCase();
+    const target = project?.pagesArray.find(p => p.slug.toLowerCase() === slug);
+    if (target) onPageChange(target.id);
+  }, [project, onPageChange]);
+
   const onPresetChange = useCallback((viewport: ComponentInstance) => {
     if (viewport.viewportWidth) setWidth(viewport.viewportWidth);
     if (viewport.viewportHeight) setHeight(viewport.viewportHeight);
@@ -300,6 +308,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
             height={0}
             fill
             smoothScroll={project?.site.smoothScroll ?? false}
+            onSitePath={onSitePath}
           />
         </div>
       ) : (
@@ -319,6 +328,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
                 width={width}
                 height={height}
                 smoothScroll={project?.site.smoothScroll ?? false}
+                onSitePath={onSitePath}
               />
               <ResizeGutter
                 side="right"

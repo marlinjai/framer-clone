@@ -189,6 +189,9 @@ library default of its kind; a plain system stack (system-ui, Georgia, ...) is k
 ### preset "image" (Image, category basic)
 - type: img (void: no children)
 - defaults: {"alt":"Image","draggable":false,"src":"/images/sample-image.jpg","style":{"borderRadius":"8px","display":"block","height":"160px","objectFit":"cover","userSelect":"none","width":"240px"}}
+### preset "link" (Link, category basic)
+- type: a
+- defaults: {"children":"Link","href":"/","style":{"color":"#111827","display":"inline-block","fontFamily":"inherit","fontSize":"16px","padding":"4px","textDecoration":"underline"}}
 ### preset "productDetail" (Product detail, category commerce)
 - type: div
 - data component "product-detail": renders a placeholder until the user binds it in the properties panel (bindable: product). Use it only when the brief clearly asks for this kind of content; never add children to it.

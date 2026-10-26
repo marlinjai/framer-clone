@@ -261,11 +261,11 @@ export async function resolveOrderLines(
 export async function readOrderTotal(
   db: Kysely<CommerceDB>,
   orderId: string,
-): Promise<{ totalCents: number; currency: string } | null> {
+): Promise<{ totalCents: number; currency: string; orderNumber: string } | null> {
   const row = await db
     .selectFrom('order')
-    .select(['total', 'currency_code'])
+    .select(['total', 'currency_code', 'order_number'])
     .where('id', '=', orderId)
     .executeTakeFirst();
-  return row ? { totalCents: row.total, currency: row.currency_code } : null;
+  return row ? { totalCents: row.total, currency: row.currency_code, orderNumber: row.order_number } : null;
 }

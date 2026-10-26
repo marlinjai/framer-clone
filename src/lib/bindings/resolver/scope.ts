@@ -18,6 +18,7 @@ import type {
   ProductDTO,
   ProductVariantDTO,
 } from '@/lib/commerce/types';
+import { productHref } from '@/lib/pages/slug';
 
 /** A row frame exposes a single fetched Row. `{{title}}` and `{{row.title}}`
  *  resolve a column value against `row.values`. */
@@ -38,10 +39,17 @@ export interface CollectionFrame {
 export interface PageFrame {
   kind: 'page';
   params: Record<string, string>;
+  /**
+   * Where the site's product page lives (`/products` for a page `products/:handle`,
+   * `productPagePath` in src/lib/pages/slug.ts), or absent when the site has none.
+   * Drives `{{product.href}}`.
+   */
+  productPagePath?: string;
 }
 
 /** A product frame exposes a single ProductDTO. `{{product.title}}` resolves a
- *  field against the ProductDTO object directly. */
+ *  field against the ProductDTO object directly; `{{product.href}}` is the link
+ *  to its product page, computed from the page frame (see lookup). */
 export interface ProductFrame {
   kind: 'product';
   product: ProductDTO;
@@ -101,12 +109,15 @@ export function pushCollectionFrame(
 }
 
 /** Push a page frame, returning a NEW immutable scope. Page params drive
- *  `{{page.params.*}}` resolution. (Not a commerce frame.) */
+ *  `{{page.params.*}}` resolution, the site's product page path drives
+ *  `{{product.href}}`. (Not a commerce frame.) */
 export function pushPageFrame(
   scope: BindingScope,
   params: Record<string, string>,
+  productPagePath?: string | null,
 ): BindingScope {
-  return { frames: [...scope.frames, { kind: 'page', params }] };
+  const frame: PageFrame = productPagePath ? { kind: 'page', params, productPagePath } : { kind: 'page', params };
+  return { frames: [...scope.frames, frame] };
 }
 
 /** Push a product frame, returning a NEW immutable scope. Drives
@@ -173,7 +184,9 @@ function getNested(root: unknown, segments: string[]): unknown {
  * - `['row', ...rest]`      -> innermost row frame, `rest` against row.values
  * - `['collection', ...]`   -> innermost collection frame, rest against it
  * - `['page', ...]`         -> innermost page frame, rest against it
- * - `['product', ...]`      -> innermost product frame, rest against the product
+ * - `['product', ...]`      -> innermost product frame, rest against the product;
+ *   `['product', 'href']` is the link to its product page (needs the page frame's
+ *   productPagePath)
  * - `['variant', ...]`      -> innermost variant frame, rest against the variant;
  *   `['variant', 'price', ...]` resolves against the folded price (NO standalone
  *   `price.*` root)
@@ -200,7 +213,15 @@ export function lookup(scope: BindingScope, path: string[]): unknown {
   }
   if (head === 'product') {
     const frame = findFrame(scope, 'product');
-    return frame ? getNested(frame.product, rest) : undefined;
+    if (!frame) return undefined;
+    // `product.href`: the link to this product's page, built from its handle and
+    // the site's product page path. Undefined when the site has no product page,
+    // so a bound link keeps its own address instead of pointing nowhere.
+    if (rest.length === 1 && rest[0] === 'href') {
+      const pagePath = findFrame(scope, 'page')?.productPagePath;
+      return pagePath && frame.product.handle ? productHref(pagePath, frame.product.handle) : undefined;
+    }
+    return getNested(frame.product, rest);
   }
   if (head === 'variant') {
     const frame = findFrame(scope, 'variant');

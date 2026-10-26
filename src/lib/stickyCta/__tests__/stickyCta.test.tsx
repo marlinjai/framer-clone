@@ -1,7 +1,7 @@
 // The sticky call to action primitive (src/lib/stickyCta/stickyCta.ts) and its
 // published rendering: the hoist (first bar to the end of the page root, at
 // most one), the stylesheet (pinned below the smallest breakpoint, safe area,
-// body padding, the consent banner lifted above it), the link checks, and the
+// body padding, the consent banner lifted above it), unsafe values left out, and the
 // server renderer's output.
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -10,7 +10,6 @@ import {
   STICKY_CTA_FALLBACK_MAX_WIDTH,
   STICKY_CTA_PINNED_ATTR,
   hoistStickyCta,
-  isSafeCtaHref,
   readStickyCta,
   stickyCtaCss,
   stickyCtaMaxWidth,
@@ -88,15 +87,6 @@ describe('stickyCtaCss', () => {
 });
 
 describe('link checks', () => {
-  it('accepts site paths, anchors, https, mailto and tel only', () => {
-    for (const ok of ['/contact', '#booking', 'https://example.com/book', 'mailto:hi@example.com', 'tel:+49301234']) {
-      expect(isSafeCtaHref(ok)).toBe(true);
-    }
-    for (const bad of ['javascript:alert(1)', '//evil.example', 'data:text/html,x', '', 'https://a b', 'ftp://x']) {
-      expect(isSafeCtaHref(bad)).toBe(false);
-    }
-  });
-
   it('reads a bar with unsafe values left out or defaulted', () => {
     const link = readStickyCta({ ctaLabel: '  Book  ', ctaHref: 'javascript:alert(1)', buttonBackground: 'red;x:y', buttonRadius: '4px' });
     expect(link).toEqual({

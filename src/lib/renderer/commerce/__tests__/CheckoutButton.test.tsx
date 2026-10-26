@@ -2,7 +2,7 @@
 //   - PLACE 201: the AUTHORITATIVE total is shown in a clearly-labeled demo
 //     payment step; the cart is NOT cleared yet (only after a successful pay).
 //   - PAY (demo, simulated): on success the cart is CLEARED and the confirmation
-//     shows the order id, the server total, and the demo transaction reference.
+//     shows the order number, the server total, and the demo transaction reference.
 //   - PAY declined (the demo "simulate decline" toggle): the failure is surfaced,
 //     the cart is kept, and a retry succeeds.
 //   - PLACE 409 shortage: the cart is kept, the failing lines + next action are
@@ -104,7 +104,7 @@ afterEach(() => {
 describe('CheckoutButton place order (201) -> demo payment step', () => {
   it('posts intentions + an idempotency key, shows the demo payment step, and does NOT clear the cart yet', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      fakeResponse(201, { orderId: 'order_123', totalCents: 4760, currency: 'EUR' }),
+      fakeResponse(201, { orderId: 'order_123', orderNumber: 'ORD-123', totalCents: 4760, currency: 'EUR' }),
     );
     const { container, getByTestId } = renderCheckout();
     await waitForHydratedCart(getByTestId);
@@ -136,7 +136,7 @@ describe('CheckoutButton place order (201) -> demo payment step', () => {
 describe('CheckoutButton pay (demo, simulated success)', () => {
   it('clears the cart and shows the confirmation + demo transaction reference', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      fakeResponse(201, { orderId: 'order_123', totalCents: 4760, currency: 'EUR' }),
+      fakeResponse(201, { orderId: 'order_123', orderNumber: 'ORD-123', totalCents: 4760, currency: 'EUR' }),
     );
     const { container, getByTestId } = renderCheckout();
     await waitForHydratedCart(getByTestId);
@@ -151,7 +151,7 @@ describe('CheckoutButton pay (demo, simulated success)', () => {
 
     await waitFor(() => {
       const confirmation = container.querySelector('[data-checkout-confirmation]');
-      expect(confirmation?.textContent).toContain('order_123');
+      expect(confirmation?.textContent).toContain('ORD-123');
       expect(confirmation?.textContent).toContain('47.60 EUR');
     });
     // The demo transaction reference is surfaced and labeled simulated.
@@ -166,8 +166,8 @@ describe('CheckoutButton pay (demo, simulated success)', () => {
 describe('CheckoutButton pay declined (demo decline toggle)', () => {
   it('surfaces the decline, keeps the cart, and a new checkout places a new order that pays', async () => {
     vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(fakeResponse(201, { orderId: 'order_123', totalCents: 4760, currency: 'EUR' }))
-      .mockResolvedValueOnce(fakeResponse(201, { orderId: 'order_124', totalCents: 4760, currency: 'EUR' }));
+      .mockResolvedValueOnce(fakeResponse(201, { orderId: 'order_123', orderNumber: 'ORD-123', totalCents: 4760, currency: 'EUR' }))
+      .mockResolvedValueOnce(fakeResponse(201, { orderId: 'order_124', orderNumber: 'ORD-124', totalCents: 4760, currency: 'EUR' }));
     const { container, getByTestId } = renderCheckout();
     await waitForHydratedCart(getByTestId);
 
@@ -198,7 +198,7 @@ describe('CheckoutButton pay declined (demo decline toggle)', () => {
       fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
     });
     await waitFor(() => {
-      expect(container.querySelector('[data-checkout-confirmation]')?.textContent).toContain('order_124');
+      expect(container.querySelector('[data-checkout-confirmation]')?.textContent).toContain('ORD-124');
     });
     const posts = vi.mocked(globalThis.fetch).mock.calls.map(([, init]) => JSON.parse(String(init?.body)).idempotencyKey);
     expect(posts).toHaveLength(2);
@@ -207,7 +207,7 @@ describe('CheckoutButton pay declined (demo decline toggle)', () => {
 
   it('asks for the buyer before paying and calls no gateway without it', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      fakeResponse(201, { orderId: 'order_123', totalCents: 4760, currency: 'EUR' }),
+      fakeResponse(201, { orderId: 'order_123', orderNumber: 'ORD-123', totalCents: 4760, currency: 'EUR' }),
     );
     const authorize = vi.fn();
     const { container, getByTestId } = renderCheckout(makeNode(), { id: 'demo', isDemo: true, authorize });
@@ -219,6 +219,29 @@ describe('CheckoutButton pay declined (demo decline toggle)', () => {
     });
     expect(container.querySelector('[data-checkout-payment-declined]')?.textContent).toMatch(/name, email and address/);
     expect(authorize).not.toHaveBeenCalled();
+  });
+});
+
+describe('CheckoutButton back from a hosted checkout (Stripe)', () => {
+  afterEach(() => window.history.replaceState(null, '', '/'));
+
+  it('paid: thanks the buyer with the order number, promises no email, and clears the cart', async () => {
+    window.history.replaceState(null, '', '/cart?checkout=paid&order=ORD-000005');
+    const { container, getByTestId } = renderCheckout();
+    await waitFor(() => {
+      expect(container.querySelector('[data-checkout-returned="paid"]')?.textContent).toContain('ORD-000005');
+    });
+    expect(container.textContent).not.toMatch(/email/i);
+    await waitFor(() => expect(getByTestId('lines').textContent).toBe('[]'));
+  });
+
+  it('cancelled: keeps the cart', async () => {
+    window.history.replaceState(null, '', '/cart?checkout=cancelled&order=ORD-000006');
+    const { container, getByTestId } = renderCheckout();
+    await waitFor(() => {
+      expect(container.querySelector('[data-checkout-returned="cancelled"]')).not.toBeNull();
+    });
+    await waitForHydratedCart(getByTestId);
   });
 });
 
@@ -272,7 +295,7 @@ describe('CheckoutButton place fault', () => {
 describe('CheckoutButton idempotency (back to cart -> re-checkout)', () => {
   it('resumes the placed order without posting a duplicate', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      fakeResponse(201, { orderId: 'order_123', totalCents: 4760, currency: 'EUR' }),
+      fakeResponse(201, { orderId: 'order_123', orderNumber: 'ORD-123', totalCents: 4760, currency: 'EUR' }),
     );
     const { container, getByTestId } = renderCheckout();
     await waitForHydratedCart(getByTestId);
@@ -312,7 +335,7 @@ describe('CheckoutButton empty cart', () => {
 describe('CheckoutButton gateway fault', () => {
   it('surfaces a thrown gateway error in the payment step, never a false confirmation', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      fakeResponse(201, { orderId: 'order_9', totalCents: 1000, currency: 'EUR' }),
+      fakeResponse(201, { orderId: 'order_9', orderNumber: 'ORD-9', totalCents: 1000, currency: 'EUR' }),
     );
     const throwingGateway: PaymentGateway = {
       id: 'demo',

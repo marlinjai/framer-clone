@@ -1,6 +1,6 @@
 // src/app/api/commerce/orders/route.ts
 //
-// POST /api/commerce/orders -> 201 { orderId, totalCents, currency }
+// POST /api/commerce/orders -> 201 { orderId, orderNumber, totalCents, currency, provider }
 //                           -> 409 { ok: false, shortages: { variantId, needed, available }[] }
 //
 // The ONE storefront-side WRITE seam into the server-authoritative commerce
@@ -231,7 +231,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     return Response.json(
-      { orderId: result.orderId, totalCents: order.totalCents, currency: order.currency, provider },
+      { orderId: result.orderId, orderNumber: order.orderNumber, totalCents: order.totalCents, currency: order.currency, provider },
       { status: 201 },
     );
   } catch (err) {

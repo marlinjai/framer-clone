@@ -8,6 +8,10 @@
 // the start-state rules with `data-fx-on` (set before the first paint, only
 // when motion is allowed), and with the site's smooth scrolling on, Lenis
 // scrolls the frame.
+//
+// A link to a path of the site (`/contact`) never navigates the app: it is
+// handed to `onSitePath`, which switches the preview to that page when one
+// matches. Anchors and outside links behave as in a browser.
 'use client';
 import React, { useEffect, useLayoutEffect, useRef } from 'react';
 import { observer } from 'mobx-react-lite';
@@ -28,13 +32,23 @@ export interface PreviewFrameProps {
   fill?: boolean;
   /** The site's smooth scrolling setting: Lenis scrolls the frame. */
   smoothScroll?: boolean;
+  /** A click on a link to a path of the site (`/contact`), with that path. */
+  onSitePath?: (path: string) => void;
+}
+
+/** The site path a click lands on (`/contact` from `<a href="/contact#x">`), or null for anchors and outside links. */
+export function sitePathOfClick(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  const href = target.closest('a[href]')?.getAttribute('href') ?? '';
+  if (!href.startsWith('/') || href.startsWith('//')) return null;
+  return href.split(/[?#]/)[0];
 }
 
 // useLayoutEffect warns during server rendering; this module only renders in
 // the browser (PreviewShell is loaded without SSR), but stay safe.
 const useBeforePaint = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
-const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll = false }: PreviewFrameProps) => {
+const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll = false, onSitePath }: PreviewFrameProps) => {
   const frameRef = useRef<HTMLDivElement>(null);
 
   const viewportNodes = page.sortedViewportNodes;
@@ -100,6 +114,12 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
       data-preview-frame=""
       data-preview-breakpoint={breakpointId}
       data-preview-fill={fill ? '' : undefined}
+      onClickCapture={(e) => {
+        const path = sitePathOfClick(e.target);
+        if (path === null) return;
+        e.preventDefault();
+        onSitePath?.(path);
+      }}
     >
       <EffectsStyles startScope={`[${FX_ATTR.scope}] `} smoothScroll={smoothScroll} />
       <HeadlessPageRenderer page={page} breakpointId={breakpointId} />

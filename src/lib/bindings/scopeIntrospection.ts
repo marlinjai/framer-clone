@@ -28,9 +28,11 @@ export type ScopeFrameSource = 'collection' | 'record-view' | 'table-view';
  *   `collectionId` is the source collection id read off that ancestor's binding
  *   (null when the ancestor is not yet bound to a source). `source` records
  *   which data component supplied the frame.
+ * - `product`: present when an ancestor is a Product list or Product detail,
+ *   which push a product frame (`{{product.*}}`) at render time.
  */
 export interface ScopeFrameInfo {
-  kind: 'page' | 'row';
+  kind: 'page' | 'row' | 'product';
   collectionId?: string | null;
   source?: ScopeFrameSource;
 }
@@ -120,7 +122,8 @@ function rowFrameFor(node: ComponentInstance): ScopeFrameInfo | null {
  *
  * Always returns a page frame. When the node lives (at any depth) inside a
  * Collection / RecordView / TableView, the INNERMOST such ancestor contributes
- * a row frame carrying that ancestor's source collectionId. A deeply-nested
+ * a row frame carrying that ancestor's source collectionId; inside a Product
+ * list or Product detail a product frame is added. A deeply-nested
  * node (Collection > Stack > Card > Text) therefore still resolves the
  * Collection ancestor's collectionId.
  */
@@ -128,13 +131,20 @@ export function getAvailableScopeFrames(node: ComponentInstance): ScopeFrameInfo
   const frames: ScopeFrameInfo[] = [{ kind: 'page' }];
 
   let current = getParentComponent(node);
+  let hasRow = false;
+  let hasProduct = false;
   // Guard against pathological cycles with a generous depth cap.
   let guard = 0;
-  while (current && guard < 1000) {
-    const rowFrame = rowFrameFor(current);
+  while (current && guard < 1000 && !(hasRow && hasProduct)) {
+    const rowFrame = hasRow ? null : rowFrameFor(current);
     if (rowFrame) {
-      frames.push(rowFrame);
-      break; // innermost row-producing ancestor wins
+      frames.push(rowFrame); // innermost row-producing ancestor wins
+      hasRow = true;
+    }
+    const kind = dataComponentKindOf(current);
+    if (!hasProduct && (kind === 'product-list' || kind === 'product-detail')) {
+      frames.push({ kind: 'product' });
+      hasProduct = true;
     }
     current = getParentComponent(current);
     guard += 1;
