@@ -526,6 +526,25 @@ describe('Books routes: deleting a draft (019_books_draft_delete)', () => {
     expect((await leftovers(id)).document).toBe(1);
   });
 
+  it('a draft another document refers to stays, with its lines and events, until that document goes', async () => {
+    const id = (await api.createDraft({})).json.document.id as string;
+    await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    const row = await env.ownerDb.selectFrom('sales_document').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
+    const creditId = randomUUID();
+    await env.ownerDb
+      .insertInto('sales_document')
+      .values({ ...row, id: creditId, doc_type: 'credit_note', corrects_document_id: id, version: 0 } as never)
+      .execute();
+    const before = await leftovers(id);
+    const refused = await api.remove(id);
+    expect(refused.status).toBe(409);
+    expect(refused.json.error.code).toBe('not_deletable');
+    expect(await leftovers(id)).toEqual(before);
+    // Once the referencing draft is gone, the draft can go too.
+    expect((await api.remove(creditId)).status).toBe(204);
+    expect((await api.remove(id)).status).toBe(204);
+  });
+
   it('another company cannot delete a draft by its id', async () => {
     const id = (await api.createDraft({})).json.document.id as string;
     const owner = tenantId;

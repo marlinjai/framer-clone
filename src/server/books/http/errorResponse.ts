@@ -125,7 +125,7 @@ const MESSAGES: Partial<Record<BooksErrorCode, string>> = {
   DUPLICATE_PRODUCT:
     'another live item of the list has this name (case and accents do not count); choose another name or archive that item (nothing was saved)',
   NOT_DELETABLE:
-    'this draft was issued once, so its number is spent and it stays (nothing was deleted)',
+    'this draft stays: it was issued once (its number is spent) or another document refers to it (nothing was deleted)',
 };
 
 /** Lower snake case of a domain code, as the API answers it. */

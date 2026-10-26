@@ -404,7 +404,8 @@ export type DeleteDraftInput = z.input<typeof deleteInput>;
  * Delete a draft of the company with its lines and events (019_books_draft_delete; ROADMAP 3d). Only a draft
  * that never had a number goes: NOT_FOUND (also for another company's id, or a draft already deleted),
  * NOT_DRAFT for an issued document, CONCURRENT_EDIT for a stale `expectedVersion`, NOT_DELETABLE for an offer
- * that was issued once and went back to draft (its number is spent). The database trigger enforces the same
+ * that was issued once and went back to draft (its number is spent) or a draft another document refers to (a draft
+ * credit note correcting it). The database trigger enforces the same
  * rules for every caller; this function answers them as the domain errors first, under the row lock.
  */
 export async function deleteDraft(scope: BooksScope, id: string, input: DeleteDraftInput = {}): Promise<void> {

@@ -26,10 +26,12 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      the events of the one document the trigger above is deleting, named by a
  *      transaction-local setting the trigger sets and clears. Any other DELETE,
  *      UPDATE or TRUNCATE of an event is refused for every role, as before.
- *   4. Files: a draft never has a stored file (008, guarantee 3: only a
+ *   4. A draft another document points at (a draft credit note correcting it, a draft replacing it) is
+ *      refused with BK016 before anything is removed, instead of failing later on a RESTRICT foreign key.
+ *   5. Files: a draft never has a stored file (008, guarantee 3: only a
  *      non-draft document gets one), so there is nothing to remove; the trigger
  *      asserts it rather than assuming it.
- *   5. `sales_document_guard` (007, redefined by 009 and 010) keeps its body and
+ *   6. `sales_document_guard` (007, redefined by 009 and 010) keeps its body and
  *      fires on INSERT OR UPDATE only now; its DELETE branch is unreachable.
  *      Recreating the trigger instead of copying the function keeps every
  *      refusal of an insert or update exactly as 010 wrote it.
@@ -40,7 +42,7 @@ import type { Migration } from '@marlinjai/tenant-db';
 export const booksDraftDelete: Migration = {
   id: '019_books_draft_delete',
   up: async (tx) => {
-    // Guarantee 5: the guard no longer sees deletes.
+    // Guarantee 6: the guard no longer sees deletes.
     await tx`DROP TRIGGER IF EXISTS "sales_document_guard" ON "sales_document"`;
     await tx`
       CREATE TRIGGER "sales_document_guard"
@@ -67,7 +69,7 @@ export const booksDraftDelete: Migration = {
       $$
     `;
 
-    // Guarantees 1, 2 and 4.
+    // Guarantees 1, 2, 4 and 5.
     await tx`
       CREATE OR REPLACE FUNCTION "sales_document_draft_delete"()
       RETURNS TRIGGER
@@ -85,6 +87,16 @@ export const booksDraftDelete: Migration = {
                WHERE "tenant_id" = OLD."tenant_id" AND "document_id" = OLD."id" AND "event_type" = 'issued'
           ) THEN
               RAISE EXCEPTION 'sales_document % was issued once: its number is spent, it cannot be deleted', OLD."id"
+                  USING ERRCODE = 'BK016';
+          END IF;
+          -- A draft another document points at (a draft credit note correcting it, or a draft replacing
+          -- it) stays: the foreign keys are RESTRICT, and the referencing draft must go first.
+          IF EXISTS (
+              SELECT 1 FROM "sales_document"
+               WHERE "tenant_id" = OLD."tenant_id"
+                 AND ("corrects_document_id" = OLD."id" OR "replaces_document_id" = OLD."id")
+          ) THEN
+              RAISE EXCEPTION 'sales_document % is referenced by another document and cannot be deleted', OLD."id"
                   USING ERRCODE = 'BK016';
           END IF;
           IF EXISTS (
