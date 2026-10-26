@@ -39,6 +39,10 @@ import {
 import { catalogRepository } from '../catalog';
 import { pricingRepository } from '../pricing';
 import { commerceReadRepository, getCommerceServerRepository } from '../read';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
+
+/** The catalogue view the reads use: the demo company, one site (020_catalogue_company). */
+const VIEW = { companyId: DEMO_COMPANY_ID, siteId: 'site-under-test' };
 
 let fx: StorefrontFixtures;
 let db: Kysely<CommerceDB>;
@@ -57,33 +61,33 @@ beforeAll(async () => {
   fx = openStorefrontFixtures();
   db = (await provisionCommerceTenant(fx, 'cm13-read')).db;
 
-  const product = await catalogRepository.createProduct(db, {
+  const product = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, status: 'published',
     title: 'Classic Tee',
     handle: 'classic-tee',
     description: 'Cotton',
   });
   await db.updateTable('product').set({ tax_class: 'standard' }).where('id', '=', product.id).execute();
-  const size = await catalogRepository.addOption(db, { productId: product.id, title: 'Size' });
-  const small = await catalogRepository.addOptionValue(db, { optionId: size.id, value: 'Small' });
-  const medium = await catalogRepository.addOptionValue(db, { optionId: size.id, value: 'Medium' });
+  const size = await catalogRepository.addOption(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, title: 'Size' });
+  const small = await catalogRepository.addOptionValue(db, { tenantId: DEMO_COMPANY_ID, optionId: size.id, value: 'Small' });
+  const medium = await catalogRepository.addOptionValue(db, { tenantId: DEMO_COMPANY_ID, optionId: size.id, value: 'Medium' });
   // A soft-deleted value and option must never surface.
-  const gone = await catalogRepository.addOptionValue(db, { optionId: size.id, value: 'Gone' });
+  const gone = await catalogRepository.addOptionValue(db, { tenantId: DEMO_COMPANY_ID, optionId: size.id, value: 'Gone' });
   await db.updateTable('product_option_value').set({ deleted_at: new Date() }).where('id', '=', gone.id).execute();
-  const ghostOption = await catalogRepository.addOption(db, { productId: product.id, title: 'Ghost' });
+  const ghostOption = await catalogRepository.addOption(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, title: 'Ghost' });
   await db.updateTable('product_option').set({ deleted_at: new Date() }).where('id', '=', ghostOption.id).execute();
 
-  const vS = await catalogRepository.addVariant(db, {
+  const vS = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID,
     productId: product.id,
     title: 'Small',
     sku: 'TEE-S',
     barcode: '0000000000017',
   });
-  await catalogRepository.setVariantOptions(db, vS.id, [{ optionId: size.id, optionValueId: small.id }]);
-  const vM = await catalogRepository.addVariant(db, { productId: product.id, title: 'Medium' });
-  await catalogRepository.setVariantOptions(db, vM.id, [{ optionId: size.id, optionValueId: medium.id }]);
+  await catalogRepository.setVariantOptions(db, DEMO_COMPANY_ID, vS.id, [{ optionId: size.id, optionValueId: small.id }]);
+  const vM = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, title: 'Medium' });
+  await catalogRepository.setVariantOptions(db, DEMO_COMPANY_ID, vM.id, [{ optionId: size.id, optionValueId: medium.id }]);
   await db.updateTable('product_variant').set({ tax_class: 'reduced' }).where('id', '=', vM.id).execute();
   // A soft-deleted variant must not appear in variantIds or listVariants.
-  const vGone = await catalogRepository.addVariant(db, { productId: product.id, title: 'Gone', sku: 'TEE-GONE' });
+  const vGone = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, title: 'Gone', sku: 'TEE-GONE' });
   await db.updateTable('product_variant').set({ deleted_at: new Date() }).where('id', '=', vGone.id).execute();
 
   Object.assign(tee, {
@@ -97,10 +101,10 @@ beforeAll(async () => {
 
   // More products for filter / sort / limit, one soft-deleted, one with a LIKE
   // metacharacter in its title.
-  await catalogRepository.createProduct(db, { title: 'Hoodie', handle: 'hoodie' });
-  await catalogRepository.createProduct(db, { title: 'Tee Deluxe', handle: 'hidden' });
-  await catalogRepository.createProduct(db, { title: '50% Off Tee', handle: 'sale-tee' });
-  const deleted = await catalogRepository.createProduct(db, { title: 'Old Tee', handle: 'old-tee' });
+  await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, status: 'published', title: 'Hoodie', handle: 'hoodie' });
+  await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, status: 'published', title: 'Tee Deluxe', handle: 'hidden' });
+  await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, status: 'published', title: '50% Off Tee', handle: 'sale-tee' });
+  const deleted = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, status: 'published', title: 'Old Tee', handle: 'old-tee' });
   await db.updateTable('product').set({ deleted_at: new Date() }).where('id', '=', deleted.id).execute();
 }, 120_000);
 
@@ -130,7 +134,7 @@ async function seedLevel(itemId: string, stocked: number, reserved: number): Pro
 
 describe('listProducts', () => {
   it('maps live rows to ProductDTOs (options, live values, live variant ids) and a total', async () => {
-    const page = await commerceReadRepository.listProducts(db, {
+    const page = await commerceReadRepository.listProducts(db, VIEW, {
       filter: [{ field: 'handle', op: 'eq', value: 'classic-tee' }],
     });
     expect(page.total).toBe(1);
@@ -148,7 +152,7 @@ describe('listProducts', () => {
   });
 
   it('omits taxClass from the DTO when the product has none, and hides soft-deleted products', async () => {
-    const page = await commerceReadRepository.listProducts(db);
+    const page = await commerceReadRepository.listProducts(db, VIEW);
     const hoodie = page.products.find((p) => p.handle === 'hoodie');
     expect(hoodie).toBeDefined();
     expect('taxClass' in hoodie!).toBe(false);
@@ -157,7 +161,7 @@ describe('listProducts', () => {
   });
 
   it('translates filter (ANDed, case-insensitive) + sort + limit; total ignores the limit', async () => {
-    const page = await commerceReadRepository.listProducts(db, {
+    const page = await commerceReadRepository.listProducts(db, VIEW, {
       filter: [
         { field: 'title', op: 'contains', value: 'TEE' },
         { field: 'handle', op: 'ne', value: 'HIDDEN' },
@@ -171,18 +175,18 @@ describe('listProducts', () => {
   });
 
   it('matches a filter value literally (LIKE metacharacters are escaped)', async () => {
-    const page = await commerceReadRepository.listProducts(db, {
+    const page = await commerceReadRepository.listProducts(db, VIEW, {
       filter: [{ field: 'title', op: 'contains', value: '50%' }],
     });
     expect(page.products.map((p) => p.handle)).toEqual(['sale-tee']);
-    const none = await commerceReadRepository.listProducts(db, {
+    const none = await commerceReadRepository.listProducts(db, VIEW, {
       filter: [{ field: 'title', op: 'contains', value: '_' }],
     });
     expect(none.total).toBe(0);
   });
 
   it('a negative limit floors at 0 while the total still counts every match', async () => {
-    const page = await commerceReadRepository.listProducts(db, { limit: -5 });
+    const page = await commerceReadRepository.listProducts(db, VIEW, { limit: -5 });
     expect(page.products).toEqual([]);
     expect(page.total).toBe(4);
   });
@@ -190,15 +194,15 @@ describe('listProducts', () => {
 
 describe('getProductByHandle', () => {
   it('returns the mapped ProductDTO for a live handle, and null otherwise (soft-deleted included)', async () => {
-    expect((await commerceReadRepository.getProductByHandle(db, 'classic-tee'))?.id).toBe(tee.productId);
-    expect(await commerceReadRepository.getProductByHandle(db, 'nope')).toBeNull();
-    expect(await commerceReadRepository.getProductByHandle(db, 'old-tee')).toBeNull();
+    expect((await commerceReadRepository.getProductByHandle(db, VIEW, 'classic-tee'))?.id).toBe(tee.productId);
+    expect(await commerceReadRepository.getProductByHandle(db, VIEW, 'nope')).toBeNull();
+    expect(await commerceReadRepository.getProductByHandle(db, VIEW, 'old-tee')).toBeNull();
   });
 });
 
 describe('listVariants', () => {
   it('maps live variants with option coordinates and labels, and the taxClass fallback / preference', async () => {
-    const variants = await commerceReadRepository.listVariants(db, tee.productId);
+    const variants = await commerceReadRepository.listVariants(db, VIEW, tee.productId);
     expect(variants).toHaveLength(2);
     const small = variants.find((v) => v.id === tee.variantS)!;
     const medium = variants.find((v) => v.id === tee.variantM)!;
@@ -213,20 +217,20 @@ describe('listVariants', () => {
   });
 
   it('returns an empty array when the product has no variants', async () => {
-    const page = await commerceReadRepository.listProducts(db, {
+    const page = await commerceReadRepository.listProducts(db, VIEW, {
       filter: [{ field: 'handle', op: 'eq', value: 'hoodie' }],
     });
-    expect(await commerceReadRepository.listVariants(db, page.products[0].id)).toEqual([]);
+    expect(await commerceReadRepository.listVariants(db, VIEW, page.products[0].id)).toEqual([]);
   });
 });
 
 describe('getPrices', () => {
   it('maps price rows to PriceDTOs: integer cents, resolved taxClass, band only when present', async () => {
-    const priceSet = await pricingRepository.createPriceSet(db, { variantId: tee.variantS });
-    await pricingRepository.addPrice(db, { priceSetId: priceSet.id, currency: 'USD', amount: 2700 });
-    await pricingRepository.addPrice(db, { priceSetId: priceSet.id, currency: 'USD', amount: 2400, minQuantity: 10 });
+    const priceSet = await pricingRepository.createPriceSet(db, { tenantId: DEMO_COMPANY_ID, variantId: tee.variantS });
+    await pricingRepository.addPrice(db, { tenantId: DEMO_COMPANY_ID, priceSetId: priceSet.id, currency: 'USD', amount: 2700 });
+    await pricingRepository.addPrice(db, { tenantId: DEMO_COMPANY_ID, priceSetId: priceSet.id, currency: 'USD', amount: 2400, minQuantity: 10 });
 
-    const prices = await commerceReadRepository.getPrices(db, tee.variantS);
+    const prices = await commerceReadRepository.getPrices(db, VIEW, tee.variantS);
     expect(prices).toHaveLength(2);
     const base = prices.find((p) => p.amountCents === 2700)!;
     const banded = prices.find((p) => p.amountCents === 2400)!;
@@ -236,8 +240,8 @@ describe('getPrices', () => {
   });
 
   it('returns an empty array when the variant has no prices or does not exist', async () => {
-    expect(await commerceReadRepository.getPrices(db, tee.variantM)).toEqual([]);
-    expect(await commerceReadRepository.getPrices(db, randomUUID())).toEqual([]);
+    expect(await commerceReadRepository.getPrices(db, VIEW, tee.variantM)).toEqual([]);
+    expect(await commerceReadRepository.getPrices(db, VIEW, randomUUID())).toEqual([]);
   });
 });
 
@@ -248,25 +252,25 @@ describe('getAvailability (ADVISORY, never permission to sell)', () => {
     const main = await seedLevel(itemId, 12, 2); // 10
     await seedLevel(itemId, 30, 0); // 30
 
-    expect(await commerceReadRepository.getAvailability(db, tee.variantS)).toEqual({
+    expect(await commerceReadRepository.getAvailability(db, VIEW, tee.variantS)).toEqual({
       variantId: tee.variantS,
       locationId: ALL_LOCATIONS,
       availableQuantity: 40,
       stale: false,
     });
-    expect(await commerceReadRepository.getAvailability(db, tee.variantS, main)).toEqual({
+    expect(await commerceReadRepository.getAvailability(db, VIEW, tee.variantS, main)).toEqual({
       variantId: tee.variantS,
       locationId: main,
       availableQuantity: 10,
       stale: false,
     });
     // A location with no level row for this item legitimately sums to zero.
-    const empty = await commerceReadRepository.getAvailability(db, tee.variantS, randomUUID());
+    const empty = await commerceReadRepository.getAvailability(db, VIEW, tee.variantS, randomUUID());
     expect(empty.availableQuantity).toBe(0);
   });
 
   it('reports zero (not an error) for a variant without SKU', async () => {
-    const availability = await commerceReadRepository.getAvailability(db, tee.variantM);
+    const availability = await commerceReadRepository.getAvailability(db, VIEW, tee.variantM);
     expect(availability).toEqual({
       variantId: tee.variantM,
       locationId: ALL_LOCATIONS,
@@ -276,20 +280,20 @@ describe('getAvailability (ADVISORY, never permission to sell)', () => {
   });
 
   it('reports zero when the SKU has no LIVE inventory_item', async () => {
-    const product = await catalogRepository.createProduct(db, { title: 'Cap', handle: 'cap-avail' });
-    const variant = await catalogRepository.addVariant(db, { productId: product.id, sku: 'CAP-1' });
+    const product = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, status: 'published', title: 'Cap', handle: 'cap-avail' });
+    const variant = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'CAP-1' });
     const itemId = randomUUID();
     await db
       .insertInto('inventory_item')
       .values({ id: itemId, sku: 'CAP-1', deleted_at: new Date(), updated_at: new Date() })
       .execute();
     await seedLevel(itemId, 5, 0);
-    expect((await commerceReadRepository.getAvailability(db, variant.id)).availableQuantity).toBe(0);
+    expect((await commerceReadRepository.getAvailability(db, VIEW, variant.id)).availableQuantity).toBe(0);
   });
 
   it('throws for a missing variant and for a soft-deleted one', async () => {
     const ghost = randomUUID();
-    await expect(commerceReadRepository.getAvailability(db, ghost)).rejects.toThrow(
+    await expect(commerceReadRepository.getAvailability(db, VIEW, ghost)).rejects.toThrow(
       `no variant with id "${ghost}"`,
     );
     const gone = await db
@@ -297,13 +301,13 @@ describe('getAvailability (ADVISORY, never permission to sell)', () => {
       .select('id')
       .where('sku', '=', 'TEE-GONE')
       .executeTakeFirstOrThrow();
-    await expect(commerceReadRepository.getAvailability(db, gone.id)).rejects.toThrow(/no variant with id/);
+    await expect(commerceReadRepository.getAvailability(db, VIEW, gone.id)).rejects.toThrow(/no variant with id/);
   });
 });
 
 describe('getCommerceServerRepository', () => {
   it('delegates every CommerceServerRepository method to the scoped read repository', async () => {
-    const repo = getCommerceServerRepository(db);
+    const repo = getCommerceServerRepository(db, VIEW);
     expect((await repo.getProductByHandle('classic-tee'))?.id).toBe(tee.productId);
     expect((await repo.listProducts({ filter: [{ field: 'handle', op: 'eq', value: 'hoodie' }] })).total).toBe(1);
     expect(await repo.listVariants(tee.productId)).toHaveLength(2);

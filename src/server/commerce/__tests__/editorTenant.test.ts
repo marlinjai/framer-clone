@@ -46,7 +46,12 @@ function session(workspaceId: string, groupId: string): SessionVerifyResponse {
 
 function prismaWith(site: { workspaceId: string; tenantGroupId: string } | null) {
   return {
-    site: { findUnique: vi.fn(async () => site) },
+    site: {
+      findUnique: vi.fn(async () => site),
+      // The company stamp (sites.company_id): a site of these fixtures is not stamped yet.
+      updateMany: vi.fn(async () => ({ count: site ? 1 : 0 })),
+      findFirst: vi.fn(async () => site),
+    },
   } as unknown as PrismaClient;
 }
 

@@ -133,6 +133,7 @@ function makeFakeDb(canned: { variant?: unknown } = {}): {
 /** A minimal valid one-line cart; tests override fields as needed. */
 function baseCart(over: Partial<Cart> = {}): Cart {
   return {
+    tenantId: '018f9c10-0000-7000-8000-0000000000dc',
     requestId: 'req-1',
     currency: 'EUR',
     taxRegion: 'DE',

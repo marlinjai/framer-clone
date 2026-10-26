@@ -42,6 +42,7 @@ import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
 import { commerceProvisionOptions } from '../../provisioning/provision';
 import { catalogRepository } from '../catalog';
 import { pricingRepository } from '../pricing';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 const DB_NAME = 'framer_clone_test';
 const APP_ROLE = 'commerce_app';
@@ -104,33 +105,33 @@ beforeAll(async () => {
   const dbB = tenantDb(ownerBase, TG_B);
 
   // Seed a variant + price per schema through the repositories.
-  const prodA = await catalogRepository.createProduct(dbA, {
+  const prodA = await catalogRepository.createProduct(dbA, { tenantId: DEMO_COMPANY_ID,
     title: 'Priced A',
     handle: 'priced-a',
   });
-  const varA = await catalogRepository.addVariant(dbA, {
+  const varA = await catalogRepository.addVariant(dbA, { tenantId: DEMO_COMPANY_ID,
     productId: prodA.id,
     sku: 'PRICED-A-1',
   });
   variantIdA = varA.id;
-  const psetA = await pricingRepository.createPriceSet(dbA, { variantId: varA.id });
-  await pricingRepository.addPrice(dbA, {
+  const psetA = await pricingRepository.createPriceSet(dbA, { tenantId: DEMO_COMPANY_ID, variantId: varA.id });
+  await pricingRepository.addPrice(dbA, { tenantId: DEMO_COMPANY_ID,
     priceSetId: psetA.id,
     currency: 'EUR',
     amount: PRICE_A,
   });
 
-  const prodB = await catalogRepository.createProduct(dbB, {
+  const prodB = await catalogRepository.createProduct(dbB, { tenantId: DEMO_COMPANY_ID,
     title: 'Priced B',
     handle: 'priced-b',
   });
-  const varB = await catalogRepository.addVariant(dbB, {
+  const varB = await catalogRepository.addVariant(dbB, { tenantId: DEMO_COMPANY_ID,
     productId: prodB.id,
     sku: 'PRICED-B-1',
   });
   variantIdB = varB.id;
-  const psetB = await pricingRepository.createPriceSet(dbB, { variantId: varB.id });
-  await pricingRepository.addPrice(dbB, {
+  const psetB = await pricingRepository.createPriceSet(dbB, { tenantId: DEMO_COMPANY_ID, variantId: varB.id });
+  await pricingRepository.addPrice(dbB, { tenantId: DEMO_COMPANY_ID,
     priceSetId: psetB.id,
     currency: 'EUR',
     amount: PRICE_B,
@@ -221,7 +222,7 @@ describe('CM-06 pricing isolation: schema-per-tenant wall (tenant schema)', () =
     // promise is built, so the bad amount throws at the call site (no I/O). The
     // thunk form captures that synchronous throw (mirrors pricing.test.ts).
     expect(() =>
-      pricingRepository.addPrice(dbA, {
+      pricingRepository.addPrice(dbA, { tenantId: DEMO_COMPANY_ID,
         priceSetId: 'irrelevant',
         currency: 'EUR',
         amount: 19.99, // euros, not cents — a float, rejected at the boundary

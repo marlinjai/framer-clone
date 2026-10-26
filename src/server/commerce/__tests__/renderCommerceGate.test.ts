@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { commerceRepoForSite } from '../storefrontTenant';
 
-const SITE = { siteId: 'site_a', tenantGroupId: '018f9c10-0000-7000-8000-0000000014aa' };
+const SITE = { siteId: 'site_a', tenantGroupId: '018f9c10-0000-7000-8000-0000000014aa', companyId: null };
 
 const COMMERCE_PAGE = {
   type: 'div',

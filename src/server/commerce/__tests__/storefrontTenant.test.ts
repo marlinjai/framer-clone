@@ -50,6 +50,7 @@ function publishedSite(tenantGroupId: unknown) {
     siteId: 'site_a',
     workspaceId: 'ws_a',
     tenantGroupId,
+    companyId: '018f9c10-0000-7000-8000-0000000000a1',
     name: 'Store A',
     analyticsProjectId: null,
     ingestionEndpoint: null,
@@ -160,7 +161,7 @@ describe('commerceRepoForSite (SSR render edge)', () => {
 
   it('never builds a repo (never touches the commerce connection) for a page without bound commerce sources', async () => {
     const build = vi.fn(async () => fakeRepo);
-    expect(await commerceRepoForSite({ siteId: 's1', tenantGroupId: TG_A }, CMS_ONLY_PAGE, build)).toBeUndefined();
+    expect(await commerceRepoForSite({ siteId: 's1', tenantGroupId: TG_A, companyId: null }, CMS_ONLY_PAGE, build)).toBeUndefined();
     expect(build).not.toHaveBeenCalled();
   });
 
@@ -171,7 +172,7 @@ describe('commerceRepoForSite (SSR render edge)', () => {
     for (const tenantGroupId of ['', null, 'demo-tenant-group']) {
       expect(
         await commerceRepoForSite(
-          { siteId: 's', tenantGroupId: tenantGroupId as unknown as string },
+          { siteId: 's', tenantGroupId: tenantGroupId as unknown as string, companyId: null },
           COMMERCE_PAGE,
           build,
         ),
@@ -186,7 +187,7 @@ describe('commerceRepoForSite (SSR render edge)', () => {
 
   it("builds the repo for the site's own tenant group only", async () => {
     const build = vi.fn(async () => fakeRepo);
-    expect(await commerceRepoForSite({ siteId: 's1', tenantGroupId: TG_A }, COMMERCE_PAGE, build)).toBe(fakeRepo);
+    expect(await commerceRepoForSite({ siteId: 's1', tenantGroupId: TG_A, companyId: null }, COMMERCE_PAGE, build)).toBe(fakeRepo);
     expect(build).toHaveBeenCalledWith(TG_A);
   });
 
@@ -197,7 +198,7 @@ describe('commerceRepoForSite (SSR render edge)', () => {
       });
     });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await commerceRepoForSite({ siteId: 's1', tenantGroupId: TG_A }, COMMERCE_PAGE, build)).toBeUndefined();
+    expect(await commerceRepoForSite({ siteId: 's1', tenantGroupId: TG_A, companyId: null }, COMMERCE_PAGE, build)).toBeUndefined();
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('rendering without commerce data'));
     errorSpy.mockRestore();
   });
@@ -207,7 +208,7 @@ describe('commerceRepoForSite (SSR render edge)', () => {
       throw new Error('COMMERCE_APP_DATABASE_URL is not set');
     });
     await expect(
-      commerceRepoForSite({ siteId: 's1', tenantGroupId: TG_A }, COMMERCE_PAGE, build),
+      commerceRepoForSite({ siteId: 's1', tenantGroupId: TG_A, companyId: null }, COMMERCE_PAGE, build),
     ).rejects.toThrow('COMMERCE_APP_DATABASE_URL is not set');
   });
 });

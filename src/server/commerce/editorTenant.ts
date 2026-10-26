@@ -49,6 +49,7 @@ import {
 } from '@/lib/authBrainAvailability';
 import { getPrismaClient } from '@/server/db';
 import { resolveScopeForCompanyWorkspace } from '@/server/sites/scope';
+import { stampSiteCompany } from '@/server/sites/siteCompany';
 import { commerceTenantDbChecked, isCommerceTenantNotProvisioned } from './db';
 import { isEditorHost } from '@/lib/editorHost';
 import type { CommerceReadContext } from './readHandlers';
@@ -144,8 +145,17 @@ export async function resolveEditorCommerce(
   }
   if (tenantGroupId !== sessionGroup) return forbidden();
 
+  // The company is the session's (the site's workspace belongs to exactly one company); the site is
+  // stamped with it here too, so a site opened in the editor once is linked for its storefront.
+  const companyId = scope.companyId;
+  await stampSiteCompany(scope.scope, projectId, companyId, prisma);
+
   try {
-    return { ok: true, db: await commerceTenantDbChecked(tenantGroupId) };
+    return {
+      ok: true,
+      db: await commerceTenantDbChecked(tenantGroupId),
+      view: { companyId, siteId: projectId },
+    };
   } catch (err) {
     // A valid tenant group whose tg_<id> schema does not exist.
     if (isCommerceTenantNotProvisioned(err)) {

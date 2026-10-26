@@ -60,7 +60,7 @@ async function handlePOST(req: Request): Promise<Response> {
     const denial = activeScopeDenial(scopeResult.error);
     return jsonError(denial.code, denial.message, 403);
   }
-  const { scope } = scopeResult;
+  const { scope, companyId } = scopeResult;
 
   // 3. Admin guard: the real auth-brain `editSite` permission (workspace.admin)
   //    on the resolved workspace. 401 (no session) / 403 (not an admin).
@@ -84,7 +84,7 @@ async function handlePOST(req: Request): Promise<Response> {
   const project = body.data.project as unknown as ProjectSnapshotOut;
   try {
     const repo = getSiteRepository();
-    await repo.saveProject(scope, project, { mustExist: true });
+    await repo.saveProject(scope, project, { mustExist: true, companyId });
   } catch (err) {
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
     return jsonError(

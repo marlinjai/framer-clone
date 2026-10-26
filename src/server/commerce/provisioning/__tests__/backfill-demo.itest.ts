@@ -60,6 +60,7 @@ import {
   DEMO_TENANT_GROUP_ID,
   DEMO_PRODUCT_TITLES,
 } from '@/lib/renderer/server/seedDemoSite';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 const DB_NAME = 'framer_clone_test';
 const APP_ROLE = 'commerce_app';
@@ -161,7 +162,7 @@ describe('CM-12 seed FLIP: every commerce write routes through commerceTenantDb'
   });
 
   it('the demo read path returns the seeded catalog from tg_<demo>', async () => {
-    const repo = getCommerceServerRepository(tenantDb(ownerBase!, TG_DEMO));
+    const repo = getCommerceServerRepository(tenantDb(ownerBase!, TG_DEMO), { companyId: DEMO_COMPANY_ID, siteId: 'demo-site' });
     const page = await repo.listProducts();
     expect(page.total).toBe(2);
     expect(page.products.map((p) => p.title).sort()).toEqual([...DEMO_PRODUCT_TITLES].sort());
@@ -193,6 +194,7 @@ describe('CM-12 seed FLIP: every commerce write routes through commerceTenantDb'
       .executeTakeFirstOrThrow();
 
     const cart: Cart = {
+      tenantId: DEMO_COMPANY_ID,
       requestId: `cm12-demo-order-${randomUUID()}`,
       currency: 'EUR',
       taxRegion: 'DE',
@@ -394,6 +396,7 @@ describe('CM-12 backfill: copy commerce -> tg_<backfill>, regenerate generated/t
     // into the UNIQUE order_number of the copied ORD-000007.
     const dbBackfill = tenantDb(ownerBase!, TG_BACKFILL);
     const cart: Cart = {
+      tenantId: DEMO_COMPANY_ID,
       requestId: `cm12-backfill-order-${randomUUID()}`,
       currency: 'EUR',
       taxRegion: 'DE',

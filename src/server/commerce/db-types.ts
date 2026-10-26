@@ -220,7 +220,10 @@ export interface FulfillmentLocationDefaultTable {
   updated_at: Timestamp;
 }
 
-/** 003_catalog (+ 004 tax_class): product. */
+/**
+ * 003_catalog (+ 004 tax_class, 020 company and shop fields): product or service of one company.
+ * A service has exactly one variant and no options (BK017).
+ */
 export interface ProductTable {
   id: string;
   title: string;
@@ -232,6 +235,19 @@ export interface ProductTable {
   deleted_at: Timestamp | null;
   // Added in 004_pricing_and_tax (classification string, not a rate).
   tax_class: string | null;
+  tenant_id: string | null;
+  kind: Generated<string>;
+  product_type: string | null;
+  tags: Generated<string[]>;
+  seo_title: string | null;
+  seo_description: string | null;
+  price_basis: Generated<string>;
+  unit_label: Generated<string>;
+  discount_bp: Generated<number>;
+  description_format: JsonColumn<RichText> | null;
+  search_text: string | null;
+  archived_at: Timestamp | null;
+  books_product_id: string | null;
 }
 
 /** 003_catalog: product option (e.g. "Size"). */
@@ -242,6 +258,7 @@ export interface ProductOptionTable {
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
   deleted_at: Timestamp | null;
+  tenant_id: string | null;
 }
 
 /** 003_catalog: product option value (e.g. "Large"). */
@@ -252,6 +269,7 @@ export interface ProductOptionValueTable {
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
   deleted_at: Timestamp | null;
+  tenant_id: string | null;
 }
 
 /**
@@ -275,6 +293,7 @@ export interface ProductVariantTable {
   manage_inventory: Generated<boolean>;
   // Added in 006_inventory_policy (default FALSE).
   allow_backorder: Generated<boolean>;
+  tenant_id: string | null;
 }
 
 /** 003_catalog: the variant<->option-value matrix (composite PK). */
@@ -282,6 +301,7 @@ export interface ProductVariantOptionTable {
   variant_id: string;
   option_id: string;
   option_value_id: string;
+  tenant_id: string | null;
 }
 
 /** 004_pricing_and_tax: one price set per variant. */
@@ -290,9 +310,12 @@ export interface PriceSetTable {
   variant_id: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
+  tenant_id: string | null;
 }
 
-/** 004_pricing_and_tax: a price (amount = INTEGER minor units / cents). */
+/**
+ * 004_pricing_and_tax (+ 020 company, compare_at_amount): a price (amount = INTEGER minor units / cents).
+ */
 export interface PriceTable {
   id: string;
   price_set_id: string;
@@ -303,6 +326,8 @@ export interface PriceTable {
   max_quantity: number | null;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
+  tenant_id: string | null;
+  compare_at_amount: number | null;
 }
 
 /** 004_pricing_and_tax: price rule (attribute match). */
@@ -375,6 +400,8 @@ export interface OrderTable {
   total: number;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
+  tenant_id: string | null;
+  site_id: string | null;
 }
 
 /**
@@ -396,6 +423,7 @@ export interface OrderLineItemTable {
   variant_ref: string | null;
   variant_ref_source: Generated<VariantRefSource>;
   created_at: Generated<Timestamp>;
+  tenant_id: string | null;
 }
 
 /**
@@ -698,6 +726,63 @@ export interface FormSubmissionTable {
   created_at: Generated<Timestamp>;
 }
 
+/**
+ * 020_catalogue_company: an image of the catalogue (bytes beside the documents, one per company and hash).
+ */
+export interface CatalogImageTable {
+  id: string;
+  tenant_id: string;
+  sha256: string;
+  content_type: string;
+  byte_size: number;
+  width: number;
+  height: number;
+  content: Buffer;
+  created_at: Generated<Timestamp>;
+}
+
+/** 020_catalogue_company: the ordered images of a product, optionally tied to one variant. */
+export interface ProductImageTable {
+  id: string;
+  tenant_id: string;
+  product_id: string;
+  image_id: string;
+  variant_id: string | null;
+  position: number;
+  alt: string | null;
+  created_at: Generated<Timestamp>;
+}
+
+/** 020_catalogue_company: a manual collection of products. */
+export interface CollectionTable {
+  id: string;
+  tenant_id: string;
+  title: string;
+  handle: string;
+  description: string | null;
+  description_format: JsonColumn<RichText> | null;
+  image_id: string | null;
+  archived_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
+}
+
+/** 020_catalogue_company: the ordered products of a collection. */
+export interface CollectionProductTable {
+  tenant_id: string;
+  collection_id: string;
+  product_id: string;
+  position: number;
+}
+
+/** 020_catalogue_company: a product switched off for one site of its company. */
+export interface ProductSiteHiddenTable {
+  tenant_id: string;
+  product_id: string;
+  site_id: string;
+  created_at: Generated<Timestamp>;
+}
+
 // =============================================================================
 // The Database interface. GLOBAL keys are `public.`-qualified; tenant tables
 // are BARE. The two namespaces are disjoint by construction.
@@ -741,6 +826,11 @@ export interface CommerceDB {
   books_asset: BooksAssetTable;
   books_product: BooksProductTable;
   form_submission: FormSubmissionTable;
+  catalog_image: CatalogImageTable;
+  product_image: ProductImageTable;
+  collection: CollectionTable;
+  collection_product: CollectionProductTable;
+  product_site_hidden: ProductSiteHiddenTable;
 }
 
 // --- compile-time discipline guards (the package's brand types) --------------

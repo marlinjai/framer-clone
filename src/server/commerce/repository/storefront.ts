@@ -28,6 +28,7 @@ import { jsonArrayFrom } from 'kysely/helpers/postgres';
 
 import type { CommerceDB } from '../db-types';
 import { pricingRepository } from './pricing';
+import { visibleProductConditions, type CatalogueView } from './read';
 import { toProductDTO, type ProductDTO, type ProductGraph } from '@/lib/commerce/dto';
 
 /**
@@ -117,10 +118,11 @@ export interface StorefrontProductPage {
  */
 export async function listStorefrontProducts(
   db: Kysely<CommerceDB>,
+  view: CatalogueView,
   args: { limit: number; cursor?: string; currency: string },
 ): Promise<StorefrontProductPage> {
   let query = selectStorefrontProductGraph(db)
-    .where('product.deleted_at', 'is', null)
+    .where((eb) => eb.and(visibleProductConditions(eb, view)))
     .orderBy('product.id')
     .limit(args.limit + 1);
   if (args.cursor) {
@@ -145,12 +147,13 @@ export async function listStorefrontProducts(
  */
 export async function getStorefrontProductByHandle(
   db: Kysely<CommerceDB>,
+  view: CatalogueView,
   handle: string,
   currency: string,
 ): Promise<ProductDTO | null> {
   const row: ProductGraph | undefined = await selectStorefrontProductGraph(db)
     .where('product.handle', '=', handle)
-    .where('product.deleted_at', 'is', null)
+    .where((eb) => eb.and(visibleProductConditions(eb, view)))
     .executeTakeFirst();
   if (!row) return null;
   return toPricedProductDTO(db, row, currency);
@@ -206,15 +209,23 @@ export interface ResolvedOrderLine {
  */
 export async function resolveOrderLines(
   db: Kysely<CommerceDB>,
+  view: CatalogueView,
   lines: ReadonlyArray<{ variantId: string; quantity: number }>,
 ): Promise<ResolvedOrderLine[]> {
   const resolved: ResolvedOrderLine[] = [];
   for (const line of lines) {
+    // Only a live variant of a product this site shows (the company's, published, unarchived, not hidden).
     const variant = await db
       .selectFrom('product_variant')
-      .select(['id', 'sku'])
-      .where('id', '=', line.variantId)
-      .where('deleted_at', 'is', null)
+      .innerJoin('product', (join) =>
+        join
+          .onRef('product.id', '=', 'product_variant.product_id')
+          .onRef('product.tenant_id', '=', 'product_variant.tenant_id'),
+      )
+      .select(['product_variant.id as id', 'product_variant.sku as sku'])
+      .where('product_variant.id', '=', line.variantId)
+      .where('product_variant.deleted_at', 'is', null)
+      .where((eb) => eb.and(visibleProductConditions(eb, view)))
       .executeTakeFirst();
     if (!variant) {
       throw new UnknownVariantError(line.variantId);

@@ -59,11 +59,15 @@ const TG_A = '018f9c10-0000-7000-8000-0000000012aa';
 const HOST_A = 'store-a.example.com';
 const SCOPED_A = { __scopedHandleFor: TG_A };
 
+/** The catalogue view of the storefront site: its company and the site (020_catalogue_company). */
+const VIEW_A = { companyId: '018f9c10-0000-7000-8000-0000000000a1', siteId: 'site_a' };
+
 function site(tenantGroupId: unknown) {
   return {
     siteId: 'site_a',
     workspaceId: 'ws_a',
     tenantGroupId,
+    companyId: '018f9c10-0000-7000-8000-0000000000a1',
     pages: [],
   } as unknown as Awaited<ReturnType<typeof resolvePublishedSite>>;
 }
@@ -178,7 +182,7 @@ describe('GET /api/commerce/products (list)', () => {
     expect(product.options[0].values[0]).toEqual({ id: 'val-red', value: 'Red' });
     expect(product.variants[0].resolvedPriceCents).toBe(1999);
     expect(product).not.toHaveProperty('values.title');
-    expect(listMock).toHaveBeenCalledWith(SCOPED_A, {
+    expect(listMock).toHaveBeenCalledWith(SCOPED_A, VIEW_A, {
       limit: 50,
       cursor: undefined,
       currency: 'EUR',
@@ -192,7 +196,7 @@ describe('GET /api/commerce/products (list)', () => {
     );
     expect(res.status).toBe(200);
     expect((await res.json()).nextCursor).toBe('prod-1');
-    expect(listMock).toHaveBeenCalledWith(SCOPED_A, {
+    expect(listMock).toHaveBeenCalledWith(SCOPED_A, VIEW_A, {
       limit: 1,
       cursor: 'prod-0',
       currency: 'USD',
@@ -259,7 +263,7 @@ describe('GET /api/commerce/products/[handle] (detail)', () => {
     const body = await res.json();
     expect(body.handle).toBe('tee');
     expect(body.variants[0].resolvedPriceCents).toBe(1999);
-    expect(byHandleMock).toHaveBeenCalledWith(SCOPED_A, 'tee', 'USD');
+    expect(byHandleMock).toHaveBeenCalledWith(SCOPED_A, VIEW_A, 'tee', 'USD');
   });
 
   it('returns a 404 not_found envelope when the handle resolves to no live product', async () => {

@@ -105,11 +105,17 @@ function assertLineRules(line: LineDraft): void {
 /** Catalog defaults for a variant line: the variant and its product, live rows only. */
 async function variantDefaults(
   trx: Transaction<CommerceDB>,
+  scope: BooksScope,
   variantId: string,
 ): Promise<{ title: string; unitPrice: number | null; taxClass: TaxClass | null }> {
+  // Only the company's own catalogue (020_catalogue_company): another company's variant id is not found.
   const v = await trx
     .selectFrom('product_variant')
-    .innerJoin('product', 'product.id', 'product_variant.product_id')
+    .innerJoin('product', (join) =>
+      join
+        .onRef('product.id', '=', 'product_variant.product_id')
+        .onRef('product.tenant_id', '=', 'product_variant.tenant_id'),
+    )
     .select([
       'product_variant.title as variantTitle',
       'product_variant.tax_class as variantTaxClass',
@@ -117,6 +123,7 @@ async function variantDefaults(
       'product.tax_class as productTaxClass',
     ])
     .where('product_variant.id', '=', variantId)
+    .where('product_variant.tenant_id', '=', scope.tenantId)
     .where('product_variant.deleted_at', 'is', null)
     .where('product.deleted_at', 'is', null)
     .executeTakeFirst();
@@ -167,7 +174,7 @@ export async function addLine(scope: BooksScope, id: string, input: AddLineInput
 
   return inDraftTransaction(scope, async (trx) => {
     const row = await lockDraft(trx, scope, id, args.expectedVersion);
-    const defaults = args.variantRef ? await variantDefaults(trx, args.variantRef) : null;
+    const defaults = args.variantRef ? await variantDefaults(trx, scope, args.variantRef) : null;
     const title = args.title ?? defaults?.title;
     const unitPrice = args.unitPrice ?? (args.kind === 'text' ? 0 : defaults?.unitPrice ?? undefined);
     const missing: Array<{ path: string[]; message: string }> = [];

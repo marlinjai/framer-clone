@@ -71,11 +71,15 @@ function postReq(body: unknown, host = 'store-a.example.com'): Request {
   });
 }
 
+/** The company the storefront site belongs to (sites.company_id, 020_catalogue_company). */
+const COMPANY_A = '018f9c10-0000-7000-8000-0000000000a1';
+
 function site(tenantGroupId: unknown) {
   return {
     siteId: 'site_a',
     workspaceId: 'ws_a',
     tenantGroupId,
+    companyId: COMPANY_A,
   } as unknown as Awaited<ReturnType<typeof resolvePublishedSite>>;
 }
 
@@ -91,7 +95,7 @@ beforeEach(() => {
 
   // Default happy wiring: variant -> inventory item resolves, the order commits,
   // and the read-back returns the server total.
-  resolveLinesMock.mockImplementation(async (_db, lines) =>
+  resolveLinesMock.mockImplementation(async (_db, _view, lines) =>
     lines.map((line) => ({ ...line, inventoryItemId: 'inv_a' })),
   );
   readTotalMock.mockResolvedValue({ totalCents: 4760, currency: 'EUR' });
@@ -111,8 +115,14 @@ describe('POST /api/commerce/orders tenancy (D4: tenant from the HOST)', () => {
     expect(resolveSiteMock).toHaveBeenCalledWith('store-a.example.com');
     expect(tenantDbMock).toHaveBeenCalledTimes(1);
     expect(tenantDbMock).toHaveBeenCalledWith(TG_A);
-    expect(resolveLinesMock).toHaveBeenCalledWith(SCOPED_A, [{ variantId: 'var_a', quantity: 2 }]);
-    expect(createOrderMock).toHaveBeenCalledWith(SCOPED_A, TG_A, expect.any(Object));
+    expect(resolveLinesMock).toHaveBeenCalledWith(SCOPED_A, { companyId: COMPANY_A, siteId: 'site_a' }, [
+      { variantId: 'var_a', quantity: 2 },
+    ]);
+    expect(createOrderMock).toHaveBeenCalledWith(
+      SCOPED_A,
+      TG_A,
+      expect.objectContaining({ tenantId: COMPANY_A, siteId: 'site_a' }),
+    );
     expect(readTotalMock).toHaveBeenCalledWith(SCOPED_A, 'order_created');
   });
 

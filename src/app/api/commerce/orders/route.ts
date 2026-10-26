@@ -122,7 +122,8 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
   if (!commerce.ok) return commerce.response;
-  const { db, tenantGroupId } = commerce;
+  const { db, tenantGroupId, companyId, site } = commerce;
+  const view = { companyId, siteId: site.siteId };
 
   const parsed = await parseBody(req, orderBodySchema);
   if (!parsed.ok) return parsed.response;
@@ -133,7 +134,7 @@ export async function POST(req: Request): Promise<Response> {
     // never sends stock identity). Read-only, in THIS tenant group's schema.
     let resolved: Awaited<ReturnType<typeof resolveOrderLines>>;
     try {
-      resolved = await resolveOrderLines(db, lines);
+      resolved = await resolveOrderLines(db, view, lines);
     } catch (err) {
       if (err instanceof UnknownVariantError) {
         // The cart names an item this storefront does not sell (a stale cart, or
@@ -154,6 +155,8 @@ export async function POST(req: Request): Promise<Response> {
       // The client-owned idempotency key when present (so a re-submit dedupes to
       // the same order), else a fresh server-owned key.
       requestId: idempotencyKey ?? newRequestId(),
+      tenantId: companyId,
+      siteId: site.siteId,
       currency: DEFAULT_CURRENCY,
       taxRegion: ORDER_TAX_REGION,
       lines: resolved.map((line) => ({

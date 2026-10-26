@@ -45,6 +45,7 @@ import {
 import { GET as productsGET } from '../products/route';
 import { GET as productGET } from '../products/[handle]/route';
 import { GET as inventoryGET } from '../inventory/route';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 const sessionMock = vi.mocked(getVerifiedSession);
 const accessMock = vi.mocked(checkWorkspaceAccess);
@@ -62,8 +63,10 @@ let productB: SeededProduct;
 function memberOf(workspaceId: string, groupId: string): SessionVerifyResponse {
   return {
     user: { id: `user-${workspaceId}` },
-    workspaces: [{ id: workspaceId, tenant_id: `tenant-${workspaceId}` }],
-    tenants: [{ id: `tenant-${workspaceId}`, app_grants: ['sites'], group_id: groupId }],
+    // The company is the one the fixtures seed the catalogue for (020_catalogue_company); each tenant group
+    // is its own schema, so the same company id in two groups still sees only its own group's rows.
+    workspaces: [{ id: workspaceId, tenant_id: DEMO_COMPANY_ID }],
+    tenants: [{ id: DEMO_COMPANY_ID, app_grants: ['sites'], group_id: groupId }],
     active_workspace: { id: workspaceId },
   } as unknown as SessionVerifyResponse;
 }

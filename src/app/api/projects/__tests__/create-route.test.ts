@@ -262,6 +262,8 @@ describe('POST /api/projects (authorized)', () => {
     expect(save).toHaveBeenCalledWith(
       { workspaceId: 'ws_beta', tenantGroupId: group },
       expect.anything(),
+      // The new site belongs to the chosen company (sites.company_id).
+      { companyId: 'tenant-2' },
     );
   });
 

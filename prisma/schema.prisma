@@ -263,6 +263,13 @@ model Site {
   // normalizeSiteSettings, so a new field needs no migration.
   siteSettings Json @default("{}") @map("site_settings")
 
+  // The auth-brain company the site belongs to (docs/plans/2026-10-25-catalogue-design.md): the storefront
+  // has no session, so the catalogue reads of a published site find the company here. Stamped at creation
+  // and whenever a signed-in member of the company opens the site in the editor; NULL only for a site
+  // created before this column and not opened since (the storefront then falls back to the tenant group's
+  // sole company, src/server/commerce/storefrontTenant.ts).
+  companyId String? @map("company_id")
+
   // Persistence-layer timestamps (when the ROW was written), set by the DB.
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

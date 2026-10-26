@@ -19,6 +19,7 @@ import { booksSubject } from './016_books_subject';
 import { formSubmissions } from './017_form_submissions';
 import { booksTextFormat } from './018_books_text_format';
 import { booksDraftDelete } from './019_books_draft_delete';
+import { catalogueCompany } from './020_catalogue_company';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -103,6 +104,11 @@ import { booksDraftDelete } from './019_books_draft_delete';
  *                            and events in one statement (BEFORE DELETE trigger,
  *                            SECURITY DEFINER); issued documents stay
  *                            undeletable (BK001), a once-issued draft too (BK016)
+ *   020_catalogue_company  : the catalogue per company: tenant_id with composite
+ *                            foreign keys on the product graph, pricing and orders
+ *                            (backfilled to the schema's sole company), product
+ *                            kind and shop fields, images, collections, per-site
+ *                            visibility, the Books' list moved in (BK017)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -125,4 +131,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   formSubmissions,
   booksTextFormat,
   booksDraftDelete,
+  catalogueCompany,
 ];

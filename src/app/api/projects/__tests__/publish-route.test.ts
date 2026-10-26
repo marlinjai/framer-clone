@@ -209,7 +209,8 @@ describe('POST /api/projects/publish (authorized)', () => {
     expect(save).toHaveBeenCalledWith(
       SCOPE,
       expect.objectContaining({ id: 'site_1' }),
-      { mustExist: true },
+      // The company comes from the session too, and is stamped on the site (sites.company_id).
+      { mustExist: true, companyId: 'tenant-1' },
     );
     expect(publish).toHaveBeenCalledWith(SCOPE, 'site_1');
     expect(ensure).toHaveBeenCalledWith(SCOPE, 'site_1');

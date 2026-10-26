@@ -64,6 +64,8 @@ export const orderRepository: OrderRepository = {
   insertOrder(db: Kysely<CommerceDB>, input: CreateOrderRowInput): Promise<OrderRow> {
     const values: Insertable<OrderTable> = {
       id: randomUUID(),
+      tenant_id: input.tenantId,
+      site_id: input.siteId,
       order_number: input.orderNumber,
       request_id: input.requestId,
       status: input.status,
@@ -89,6 +91,7 @@ export const orderRepository: OrderRepository = {
   ): Promise<OrderLineItemRow> {
     const values: Insertable<OrderLineItemTable> = {
       id: randomUUID(),
+      tenant_id: input.tenantId,
       order_id: input.orderId,
       variant_title: input.variantTitle ?? null,
       variant_sku: input.variantSku ?? null,

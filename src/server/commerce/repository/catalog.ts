@@ -50,10 +50,11 @@ import type {
 } from './types';
 
 export const catalogRepository: CatalogRepository = {
-  async count(db: Kysely<CommerceDB>): Promise<number> {
+  async count(db: Kysely<CommerceDB>, tenantId: string): Promise<number> {
     const row = await db
       .selectFrom('product')
       .select(db.fn.countAll().as('c'))
+      .where('tenant_id', '=', tenantId)
       .executeTakeFirstOrThrow();
     return Number(row.c);
   },
@@ -61,6 +62,7 @@ export const catalogRepository: CatalogRepository = {
   createProduct(db: Kysely<CommerceDB>, input: CreateProductInput): Promise<CatalogProductRow> {
     const values: Insertable<ProductTable> = {
       id: randomUUID(),
+      tenant_id: input.tenantId,
       title: input.title,
       handle: input.handle,
       description: input.description ?? null,
@@ -68,6 +70,7 @@ export const catalogRepository: CatalogRepository = {
     };
     // status is Generated<> (DB default 'draft'); pass it through only when given.
     if (input.status) values.status = input.status;
+    if (input.kind) values.kind = input.kind;
     return db.insertInto('product').values(values).returningAll().executeTakeFirstOrThrow();
   },
 
@@ -76,6 +79,7 @@ export const catalogRepository: CatalogRepository = {
       .insertInto('product_option')
       .values({
         id: randomUUID(),
+        tenant_id: input.tenantId,
         product_id: input.productId,
         title: input.title,
         updated_at: new Date(),
@@ -92,6 +96,7 @@ export const catalogRepository: CatalogRepository = {
       .insertInto('product_option_value')
       .values({
         id: randomUUID(),
+        tenant_id: input.tenantId,
         option_id: input.optionId,
         value: input.value,
         updated_at: new Date(),
@@ -107,6 +112,7 @@ export const catalogRepository: CatalogRepository = {
       .insertInto('product_variant')
       .values({
         id: randomUUID(),
+        tenant_id: input.tenantId,
         product_id: input.productId,
         title: input.title ?? null,
         sku: input.sku ?? null,
@@ -119,6 +125,7 @@ export const catalogRepository: CatalogRepository = {
 
   async setVariantOptions(
     db: Kysely<CommerceDB>,
+    tenantId: string,
     variantId: string,
     assignments: VariantOptionAssignment[],
   ): Promise<void> {
@@ -130,6 +137,7 @@ export const catalogRepository: CatalogRepository = {
     await db.transaction().execute(async (trx) => {
       await trx
         .deleteFrom('product_variant_option')
+        .where('tenant_id', '=', tenantId)
         .where('variant_id', '=', variantId)
         .execute();
 
@@ -138,6 +146,7 @@ export const catalogRepository: CatalogRepository = {
           .insertInto('product_variant_option')
           .values(
             assignments.map((assignment) => ({
+              tenant_id: tenantId,
               variant_id: variantId,
               option_id: assignment.optionId,
               option_value_id: assignment.optionValueId,

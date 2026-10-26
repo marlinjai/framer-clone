@@ -40,26 +40,33 @@ import type {
 
 /** Create-a-product input. status defaults to 'draft' when omitted. */
 export interface CreateProductInput {
+  /** The company the product belongs to (020_catalogue_company). */
+  tenantId: string;
   title: string;
   handle: string;
   description?: string | null;
   status?: ProductStatus;
+  /** 'physical' (the default) or 'service' (one variant, no options, no stock). */
+  kind?: 'physical' | 'service';
 }
 
 /** Add-an-option input (an option belongs to a product, e.g. "Color"). */
 export interface AddOptionInput {
+  tenantId: string;
   productId: string;
   title: string;
 }
 
 /** Add-an-option-value input (a value belongs to an option, e.g. "Red"). */
 export interface AddOptionValueInput {
+  tenantId: string;
   optionId: string;
   value: string;
 }
 
 /** Add-a-variant input. The option_signature is computed by the DB trigger. */
 export interface AddVariantInput {
+  tenantId: string;
   productId: string;
   title?: string | null;
   sku?: string | null;
@@ -77,6 +84,7 @@ export interface VariantOptionAssignment {
 
 /** Create-a-price-set input. variantId attaches the set to a variant (one per variant). */
 export interface CreatePriceSetInput {
+  tenantId: string;
   variantId?: string | null;
 }
 
@@ -86,6 +94,7 @@ export interface CreatePriceSetInput {
  * to a quantity band (NULL = unbounded on that side).
  */
 export interface AddPriceInput {
+  tenantId: string;
   priceSetId: string;
   currency: string;
   /** Integer minor units (cents). Must be an integer; floats are rejected. */
@@ -115,6 +124,10 @@ export interface ResolvePriceOptions {
  * nextOrderNumber; request_id is the order-level idempotency key.
  */
 export interface CreateOrderRowInput {
+  /** The company that sells (the site's company, 020_catalogue_company). */
+  tenantId: string;
+  /** The site the order was placed on. */
+  siteId: string | null;
   orderNumber: string;
   requestId: string;
   status?: OrderStatus;
@@ -138,6 +151,7 @@ export interface CreateOrderRowInput {
  * discriminator) and the loose variant carrier (none | datatable | owned).
  */
 export interface CreateOrderLineItemInput {
+  tenantId: string;
   orderId: string;
   variantTitle?: string | null;
   variantSku?: string | null;
@@ -168,8 +182,8 @@ export type OrderLineItemRow = Selectable<OrderLineItemTable>;
  * schema stay authoritative; nothing is re-checked in JS.
  */
 export interface CatalogRepository {
-  /** Count catalog entries (products) visible in the scoped tenant schema. */
-  count(db: Kysely<CommerceDB>): Promise<number>;
+  /** Count the company's catalog entries (products) in the scoped tenant schema. */
+  count(db: Kysely<CommerceDB>, tenantId: string): Promise<number>;
 
   /** Create a product (status defaults to 'draft' at the DB when omitted). */
   createProduct(db: Kysely<CommerceDB>, input: CreateProductInput): Promise<CatalogProductRow>;
@@ -194,6 +208,7 @@ export interface CatalogRepository {
    */
   setVariantOptions(
     db: Kysely<CommerceDB>,
+    tenantId: string,
     variantId: string,
     assignments: VariantOptionAssignment[],
   ): Promise<void>;
