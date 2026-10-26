@@ -138,6 +138,29 @@ describe('applyBindings — isLoading', () => {
   });
 });
 
+describe('applyBindings: a bound link target', () => {
+  const linkNode: ComponentNode = {
+    type: 'a',
+    bindings: { href: { mode: 'read', expression: '{{url}}' } },
+  };
+  const withUrl = (url: unknown) => rowScope({ id: 'r', values: { url } } as unknown as Row);
+
+  it('takes a safe target from data', () => {
+    for (const ok of ['/contact', 'https://example.com', '#top', 'mailto:hi@example.com']) {
+      expect(applyBindings(linkNode, { href: '/' }, withUrl(ok)).resolvedProps.href).toBe(ok);
+    }
+    expect(applyBindings(linkNode, { href: '/' }, withUrl('mailto:hi@example.com?subject=Hello there')).resolvedProps.href).toBe(
+      'mailto:hi@example.com?subject=Hello%20there',
+    );
+  });
+
+  it('keeps its own address when the data holds an unsafe or non-text value', () => {
+    for (const bad of ['javascript:alert(1)', 'data:text/html,x', '//evil.example', '/\\evil.example', '', 42, { a: 1 }]) {
+      expect(applyBindings(linkNode, { href: '/' }, withUrl(bad)).resolvedProps.href).toBe('/');
+    }
+  });
+});
+
 describe('resolver runtime — node environment', () => {
   it('runs under environment:node (no jsdom globals)', () => {
     expect(typeof window).toBe('undefined');

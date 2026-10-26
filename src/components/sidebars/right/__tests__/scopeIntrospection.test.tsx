@@ -38,7 +38,32 @@ function deepCollectionTree() {
   });
 }
 
+function productListWithLink() {
+  return ComponentModel.create({
+    id: 'productList-root',
+    type: 'div',
+    componentType: 'host',
+    props: { 'data-component-kind': 'product-list' },
+    bindings: { products: { mode: 'read', expression: 'products' } },
+    children: [
+      {
+        id: 'card-1',
+        type: 'div',
+        componentType: 'host',
+        props: {},
+        children: [{ id: 'link-1', type: 'a', componentType: 'host', props: { children: 'View', href: '/' } }],
+      },
+    ],
+  });
+}
+
 describe('getAvailableScopeFrames', () => {
+  it('adds a product frame inside a product list, at any depth', () => {
+    const link = productListWithLink().children[0].children[0];
+    const frames = getAvailableScopeFrames(link);
+    expect(frames.map((f) => f.kind)).toEqual(['page', 'product']);
+  });
+
   it('always returns a page frame', () => {
     const node = ComponentModel.create({
       id: 'text-orphan',

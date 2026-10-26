@@ -21,6 +21,8 @@ export function getRegistryIdForNode(node: ComponentInstance): string | undefine
   switch (node.type) {
     case 'p':
       return 'text';
+    case 'a':
+      return 'link';
     case 'button':
       return 'button';
     case 'img':

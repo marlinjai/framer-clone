@@ -27,6 +27,7 @@
 // PURE: no React, no MST. Shared by the registry, the generator's validator,
 // the renderers and the properties panel.
 
+import { isSafeHref } from '@/lib/links/safeHref';
 import { maxWidthBelow } from '@/lib/responsive/responsiveCss';
 import { CONSENT_BANNER_ID } from '@/lib/consent/consent';
 
@@ -86,15 +87,6 @@ export function isStickyCta(props: unknown): boolean {
   return isRecord(props) && props[STICKY_CTA_ATTR] === STICKY_CTA_MARKER;
 }
 
-/** Allowed link targets: http(s), mailto, tel, an in-page anchor or a site path (the generator's rule). */
-export function isSafeCtaHref(value: string): boolean {
-  const v = value.trim();
-  if (v.length === 0 || v.length > 500) return false;
-  if (/[\u0000-\u001f\u007f\s<>"]/.test(v)) return false;
-  if (v.startsWith('#') || (v.startsWith('/') && !v.startsWith('//'))) return true;
-  return /^(https?:\/\/|mailto:|tel:)/i.test(v);
-}
-
 /**
  * A colour or length for the button: printable, short, and unable to escape
  * a declaration (no ; { } \ < > quotes). Anything else falls back to the
@@ -117,7 +109,7 @@ function text(value: unknown): string | undefined {
 export function readStickyCta(props: unknown): StickyCtaLink {
   const p = isRecord(props) ? props : {};
   const label = (text(p.ctaLabel) ?? '').trim().slice(0, 80);
-  const href = typeof p.ctaHref === 'string' && isSafeCtaHref(p.ctaHref) ? p.ctaHref.trim() : '';
+  const href = typeof p.ctaHref === 'string' && isSafeHref(p.ctaHref) ? p.ctaHref.trim() : '';
   const pick = (key: 'buttonBackground' | 'buttonTextColor' | 'buttonRadius') =>
     isSafeCtaStyleValue(p[key]) ? (p[key] as string).trim() : DEFAULT_STICKY_CTA[key];
   return {
@@ -165,7 +157,7 @@ export function cleanStickyCtaProp(key: StickyCtaPropKey, value: unknown): strin
     const t = text(value)?.replace(/\s+/g, ' ').trim();
     return t && t.length <= 80 && !/[<>\u0000-\u001f\u007f]/.test(t) ? t : undefined;
   }
-  if (key === 'ctaHref') return typeof value === 'string' && isSafeCtaHref(value) ? value.trim() : undefined;
+  if (key === 'ctaHref') return typeof value === 'string' && isSafeHref(value) ? value.trim() : undefined;
   return isSafeCtaStyleValue(value) ? value.trim() : undefined;
 }
 

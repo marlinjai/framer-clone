@@ -1,8 +1,9 @@
 'use client';
 // BindingPicker: the popover that lets a builder pick what a bindable slot
-// resolves to. It shows a scope tree (Page params, plus the LIVE columns of the
-// collection bound by a Collection / RecordView / TableView ancestor) and a
-// free-form `{{...}}` input that red-borders when the expression fails to parse.
+// resolves to. It shows a scope tree (Page params, the LIVE columns of the
+// collection bound by a Collection / RecordView / TableView ancestor, and the
+// product fields inside a Product list / Product detail) and a free-form
+// `{{...}}` input that red-borders when the expression fails to parse.
 //
 // The set of scope sections shown is driven by the slot's `scopeHint`. The
 // switch DEFAULTS (the `any` / `default` branch) on UNKNOWN hints so Track C's
@@ -14,7 +15,7 @@
 // the call site, in BindingControl).
 import React from 'react';
 import { observer } from 'mobx-react-lite';
-import { Database, FileText, Globe } from 'lucide-react';
+import { Database, FileText, Globe, ShoppingBag } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindableSlotMeta, ReadBinding } from '@/lib/bindings/types';
 import type { Collection, Column } from '@/lib/bindings/dataSource/types';
@@ -57,6 +58,14 @@ export function visibleSectionsForHint(hint?: string): VisibleSections {
   }
 }
 
+/** The product fields offered inside a Product list / Product detail (`{{product.*}}`, see lookup in scope.ts). */
+export const PRODUCT_FIELDS: ReadonlyArray<{ path: string; label: string }> = [
+  { path: 'title', label: 'Title' },
+  { path: 'description', label: 'Description' },
+  { path: 'handle', label: 'Handle' },
+  { path: 'href', label: 'Link to its product page' },
+];
+
 const ITEM_CLASS =
   'flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-brand/10';
 
@@ -69,6 +78,7 @@ const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPicker
   const frames = getAvailableScopeFrames(node);
   const rowFrame = frames.find((f) => f.kind === 'row');
   const rowCollectionId = rowFrame?.collectionId ?? null;
+  const hasProductFrame = frames.some((f) => f.kind === 'product');
 
   // LIVE columns for the row frame's source collection.
   const [rowColumns, setRowColumns] = React.useState<Column[] | null>(null);
@@ -209,6 +219,30 @@ const BindingPicker = observer(({ node, meta, onCommit, onClose }: BindingPicker
           {rowColumns && rowColumns.length === 0 && !rowError && (
             <div className="px-2 py-1 text-[11px] text-muted-foreground">No columns</div>
           )}
+        </div>
+      )}
+
+      {/* Product scope (inside a Product list / Product detail) */}
+      {sections.row && hasProductFrame && (
+        <div className="mb-2">
+          <div className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-medium text-muted-foreground">
+            <ShoppingBag size={11} />
+            <span>Product</span>
+          </div>
+          {PRODUCT_FIELDS.map((field) => {
+            const expression = `{{product.${field.path}}}`;
+            return (
+              <button
+                key={field.path}
+                type="button"
+                className={ITEM_CLASS}
+                onClick={() => commitRead(expression)}
+              >
+                <span className="flex-1">{field.label}</span>
+                <span className="font-mono text-[10px] text-muted-foreground">{expression}</span>
+              </button>
+            );
+          })}
         </div>
       )}
 

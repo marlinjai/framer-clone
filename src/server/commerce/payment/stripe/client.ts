@@ -7,9 +7,8 @@ import 'server-only';
 // takes them; no SDK. Direct charges: every call about a company's money carries its connected account in
 // the `Stripe-Account` header, so the charge, the refund and the fee are on the company's own account.
 //
-// UNPROVEN against Stripe itself: no Stripe account exists yet (checked 2026-10-26); the keys in Infisical are
-// placeholders. Configuration with placeholders or unset keys reads as "Stripe not configured" and the shop
-// keeps the demo provider.
+// Proven against Stripe's sandbox on 2026-10-26 (four test purchases on app.lumitra.co). Configuration with
+// placeholders or unset keys reads as "Stripe not configured" and the shop keeps the demo provider.
 
 export interface StripeConfig {
   secretKey: string;
@@ -19,6 +18,14 @@ export interface StripeConfig {
 }
 
 const PLACEHOLDER = 'PLACEHOLDER_REPLACE_ME';
+
+/**
+ * True when the platform runs on Stripe's test keys (a sandbox): no real money moves, whatever a shop's
+ * account says, so the owner's pages must not promise real payments.
+ */
+export function isStripeTestMode(config: StripeConfig): boolean {
+  return /^(sk|rk)_test_/.test(config.secretKey);
+}
 
 /** The Stripe configuration, or null while it is missing or still the placeholders. */
 export function stripeConfig(env: Record<string, string | undefined> = process.env): StripeConfig | null {

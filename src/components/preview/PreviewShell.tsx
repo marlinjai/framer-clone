@@ -71,6 +71,8 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
   const router = useRouter();
   // The notice applies until the person picks a page themselves.
   const [showMissingNotice, setShowMissingNotice] = useState(Boolean(missingPageId));
+  // Why a clicked link did not switch the preview (a product page, a page that does not exist).
+  const [linkNotice, setLinkNotice] = useState<string | null>(null);
   // The text goes in after the first paint, so the live region announces it.
   const [noticeReady, setNoticeReady] = useState(false);
   useEffect(() => setNoticeReady(true), []);
@@ -203,8 +205,27 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
     if (!next) return;
     rootStore.editorUI.setCurrentPage(next);
     setShowMissingNotice(false);
+    setLinkNotice(null);
     replaceParams((params) => params.set('page', pageId));
   }, [project, rootStore, replaceParams]);
+
+  // A link to a fixed page of the site switches the preview to it; a product
+  // link (a dynamic page) has no product to show here, so it stays put and
+  // says why, as does a link to a page the site does not have.
+  const onSitePath = useCallback((path: string) => {
+    const slug = path.replace(/^\/+|\/+$/g, '').toLowerCase();
+    const target = project?.pagesArray.find(p => p.slug.toLowerCase() === slug);
+    if (target) {
+      onPageChange(target.id);
+      return;
+    }
+    const productPath = project?.productPagePath;
+    setLinkNotice(
+      productPath && path.toLowerCase().startsWith(`${productPath}/`)
+        ? `${path} is a product page: it opens with its product on the published site.`
+        : `This site has no page at ${path}.`,
+    );
+  }, [project, onPageChange]);
 
   const onPresetChange = useCallback((viewport: ComponentInstance) => {
     if (viewport.viewportWidth) setWidth(viewport.viewportWidth);
@@ -268,18 +289,22 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
       <div
         role="status"
         aria-live="polite"
-        className={showMissingNotice && noticeReady ? 'flex items-center gap-3 bg-amber-950 px-3 py-1.5 text-xs text-amber-100' : 'sr-only'}
+        className={(showMissingNotice || linkNotice) && noticeReady ? 'flex items-center gap-3 bg-amber-950 px-3 py-1.5 text-xs text-amber-100' : 'sr-only'}
       >
-        {showMissingNotice && noticeReady ? (
+        {(showMissingNotice || linkNotice) && noticeReady ? (
           <>
             <span>
-              {isDemo
-                ? 'That page is not in this demo project, so its home page is shown.'
-                : 'The page you asked for is not in the saved project (it may not be saved yet), so the home page is shown. Save in the editor, then preview again.'}
+              {linkNotice ??
+                (isDemo
+                  ? 'That page is not in this demo project, so its home page is shown.'
+                  : 'The page you asked for is not in the saved project (it may not be saved yet), so the home page is shown. Save in the editor, then preview again.')}
             </span>
             <button
               type="button"
-              onClick={() => setShowMissingNotice(false)}
+              onClick={() => {
+                setShowMissingNotice(false);
+                setLinkNotice(null);
+              }}
               className="ml-auto rounded px-1.5 hover:bg-amber-900"
               aria-label="Dismiss notice"
             >
@@ -300,6 +325,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
             height={0}
             fill
             smoothScroll={project?.site.smoothScroll ?? false}
+            onSitePath={onSitePath}
           />
         </div>
       ) : (
@@ -319,6 +345,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
                 width={width}
                 height={height}
                 smoothScroll={project?.site.smoothScroll ?? false}
+                onSitePath={onSitePath}
               />
               <ResizeGutter
                 side="right"

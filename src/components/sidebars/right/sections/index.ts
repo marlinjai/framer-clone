@@ -9,3 +9,4 @@ export { EffectsSection } from './EffectsSection';
 export { FormSection } from './FormSection';
 export { StickyCtaSection } from './StickyCtaSection';
 export { TextContentSection } from './TextContentSection';
+export { LinkSection } from './LinkSection';

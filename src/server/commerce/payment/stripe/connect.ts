@@ -179,8 +179,8 @@ export function stripeProvider(
         currency: args.currency,
         applicationFeeAmount: args.applicationFeeAmount,
         customerEmail: args.buyerEmail,
-        successUrl: `${args.returnUrl}${args.returnUrl.includes('?') ? '&' : '?'}checkout=paid&order=${encodeURIComponent(args.orderId)}`,
-        cancelUrl: `${args.returnUrl}${args.returnUrl.includes('?') ? '&' : '?'}checkout=cancelled&order=${encodeURIComponent(args.orderId)}`,
+        successUrl: `${args.returnUrl}${args.returnUrl.includes('?') ? '&' : '?'}checkout=paid&order=${encodeURIComponent(args.orderNumber)}`,
+        cancelUrl: `${args.returnUrl}${args.returnUrl.includes('?') ? '&' : '?'}checkout=cancelled&order=${encodeURIComponent(args.orderNumber)}`,
         // Stripe keeps a session open at least 30 minutes; one that outlives the payment window and is paid
         // late goes through the late-success path (the stock reserved again, or a full refund).
         expiresAt: Math.floor(Math.max(args.expiresAt?.getTime() ?? 0, Date.now() + MIN_SESSION_MS) / 1000),

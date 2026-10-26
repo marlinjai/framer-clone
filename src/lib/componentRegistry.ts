@@ -40,6 +40,7 @@ import {
   ShieldCheck as ConsentIcon,
   Send as SubmitIcon,
   PanelBottom as StickyCtaIcon,
+  Link as LinkIcon,
 } from 'lucide-react';
 import type { IntrinsicElementType, PropsRecord } from '@/models/ComponentModel';
 import type { BindableSlotMeta } from '@/lib/bindings/types';
@@ -289,6 +290,34 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
     defaultSize: { width: 120, height: 40 },
     bindableSlots: {
       children: { label: 'Label', allowedModes: ['read'], scopeHint: 'any' },
+    },
+  },
+  // A text link. Its target is a page path, an anchor, https, mailto or tel
+  // (src/lib/links/safeHref.ts), set in the Link section or bound: inside a
+  // product list `{{product.href}}` links each product to its product page.
+  link: {
+    id: 'link',
+    label: 'Link',
+    category: 'basic',
+    icon: LinkIcon,
+    iconClassName: 'bg-sky-100 text-sky-600',
+    htmlType: 'a',
+    defaultProps: {
+      children: 'Link',
+      href: '/',
+      style: {
+        display: 'inline-block',
+        fontSize: '16px',
+        fontFamily: 'inherit',
+        color: '#111827',
+        textDecoration: 'underline',
+        padding: '4px',
+      },
+    },
+    defaultSize: { width: 120, height: 32 },
+    bindableSlots: {
+      children: { label: 'Text', allowedModes: ['read'], scopeHint: 'any' },
+      href: { label: 'Link', allowedModes: ['read'], scopeHint: 'any' },
     },
   },
   // The sticky mobile call to action (published site essentials, decision 7,

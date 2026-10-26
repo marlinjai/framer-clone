@@ -135,11 +135,14 @@ connections to the suite. The four lines below are in that order.
   slice 5". Progress 2026-10-26: the sandbox "Lumitra Sites" in the Lumitra Stripe account has Connect
   (Standard accounts, OAuth) and the webhook; the three keys are in Infisical prod and dev; the test shop's
   Stripe account finished onboarding and reads "Ready". Open: the test purchases. (2026-10-26)
-- [ ] 3g. Shop pages that link up: a product list cannot link each item to its product page today (a binding
-  is a single `{{path}}`, so `/products/{{product.handle}}` is refused), and the payments page says "real
-  payments" while the platform runs on Stripe test keys. Found while building the test shop on 2026-10-26;
-  product pages themselves became authorable the same day (`products/:handle`, `src/lib/pages/slug.ts`).
-  (2026-10-26)
+- [x] 3g. Shop pages that link up: a Link component (its target checked as it is typed, or picked from the
+  site's pages), and `{{product.href}}` in the binding picker inside a product list or detail, which links
+  each product to the site's product page (`products/:handle`, `productPagePath` in `src/lib/pages/slug.ts`).
+  Every bound link target passes `isSafeHref` (`src/lib/links/safeHref.ts`), so a CMS cell can never become
+  a `javascript:` link; the canvas no longer navigates when a link is clicked, and the preview follows links
+  to the site's fixed pages. The payments page says "test mode" while the platform runs on Stripe test keys,
+  and the buyer's thank-you shows the order number and no longer promises an email. Found while building the
+  test shop on 2026-10-26, built the same day. (2026-10-26)
 - [ ] 3e. Customer email from the shop: an order confirmation with the receipt, and the notice when a late
   payment had to be refunded (the payment handler logs it today; the app sends no email yet). See
   [catalogue design](docs/plans/2026-10-25-catalogue-design.md), "Decided while building slice 4". (2026-10-26)

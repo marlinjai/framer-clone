@@ -222,10 +222,11 @@ export async function hydrateBindings(
   pageTree: ComponentNode,
   pageParams: Record<string, string>,
   repos: HydrationRepos,
+  productPagePath?: string | null,
 ): Promise<ComponentNode> {
   // The page frame drives `{{page.params.*}}` resolution (RecordView row id,
-  // ProductDetail handle).
-  const rootScope = pushPageFrame(createScope(), pageParams);
+  // ProductDetail handle) and `{{product.href}}` (the site's product page path).
+  const rootScope = pushPageFrame(createScope(), pageParams, productPagePath);
   return hydrateNode(pageTree, rootScope, repos);
 }
 

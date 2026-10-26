@@ -62,8 +62,13 @@ export const DataSourceSection = observer(({ component }: DataSourceSectionProps
   // The text of a text element has its own section at the top of the panel
   // (TextContentSection, with the same bind button), so it is not repeated here.
   const textHasOwnSection = holdsText(component);
+  // So has a link's target (LinkSection, with the same bind button).
+  const hrefHasOwnSection = component.type === 'a';
   const slotEntries = Object.entries(slots).filter(
-    ([slot]) => !(showQueryBuilder && QUERY_SLOTS.has(slot)) && !(textHasOwnSection && slot === 'children'),
+    ([slot]) =>
+      !(showQueryBuilder && QUERY_SLOTS.has(slot)) &&
+      !(textHasOwnSection && slot === 'children') &&
+      !(hrefHasOwnSection && slot === 'href'),
   );
 
   if (slotEntries.length === 0 && !showQueryBuilder) return null;

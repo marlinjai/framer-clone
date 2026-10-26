@@ -13,6 +13,7 @@ import 'server-only';
 
 import { completeOauth, oauthState, oauthUrl, readAccount, readOauthState, refreshAccount, startOnboarding } from './connect';
 import type { OwnerContext } from './ownerRoute';
+import { isStripeTestMode } from './client';
 
 /** Where the owner manages payments in the editor. */
 export const PAYMENTS_PAGE = '/projects/payments';
@@ -30,7 +31,7 @@ function redirect(to: string): Response {
 
 export async function accountStatus(ctx: OwnerContext): Promise<Response> {
   const account = await readAccount(ctx.db, ctx.companyId);
-  return Response.json({ status: account.status });
+  return Response.json({ status: account.status, testMode: isStripeTestMode(ctx.config) });
 }
 
 export async function onboarding(ctx: OwnerContext, req: Request): Promise<Response> {

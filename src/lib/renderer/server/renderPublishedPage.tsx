@@ -66,6 +66,12 @@ export interface RenderPublishedPageInput {
   /** Resolved analytics binding; injection is gated on `enabled` + a public key. */
   analytics?: ResolvedAnalytics;
   /**
+   * Where the site's product page lives (`/products` for `products/:handle`,
+   * productPagePath in src/lib/pages/slug.ts), or null when it has none: the
+   * base of every `{{product.href}}` link.
+   */
+  productPagePath?: string | null;
+  /**
    * The page's breakpoints (from its viewport canvas nodes). Responsive styles
    * become max-width media queries between them; without any, a responsive
    * style's base value applies at every width.
@@ -138,10 +144,10 @@ function resolveTracker(analytics: ResolvedAnalytics | undefined): TrackerPayloa
 export async function renderPublishedPage(
   input: RenderPublishedPageInput,
 ): Promise<RenderedPage> {
-  const { root, pageParams, cmsRepo, commerceRepo, analytics, breakpoints = [], smoothScroll = false, consent } = input;
+  const { root, pageParams, cmsRepo, commerceRepo, analytics, productPagePath = null, breakpoints = [], smoothScroll = false, consent } = input;
   const tracker = resolveTracker(analytics);
 
-  const hydratedTree = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo });
+  const hydratedTree = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo }, productPagePath);
   // The sticky call to action (src/lib/stickyCta): the page's first bar moves
   // to the end of the page root (its pinned place in the reading order),
   // further ones are dropped (at most one per page).
@@ -166,8 +172,8 @@ export async function renderPublishedPage(
   // rewrite moves styles into classes (src/lib/fonts/registry.ts).
   const fonts = publishedFontAssets(hydrated);
 
-  // The page frame drives any island re-resolution of {{page.params.*}}.
-  const scope = pushPageFrame(createScope(), pageParams);
+  // The page frame drives any island re-resolution of {{page.params.*}} and {{product.href}}.
+  const scope = pushPageFrame(createScope(), pageParams, productPagePath);
   const tree = renderComponentNode(responsive.root, scope);
 
   return {

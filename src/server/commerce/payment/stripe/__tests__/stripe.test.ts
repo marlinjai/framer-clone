@@ -9,7 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
-import { formEncode, httpStripeApi, stripeConfig, StripeApiError, type StripeConfig } from '../client';
+import { formEncode, httpStripeApi, isStripeTestMode, stripeConfig, StripeApiError, type StripeConfig } from '../client';
 import { oauthState, oauthUrl, readOauthState } from '../connect';
 import { readStripeDelivery, signStripePayload, StripeSignatureError, verifyStripeSignature } from '../webhook';
 
@@ -99,6 +99,14 @@ describe('the Stripe client', () => {
     expect(
       stripeConfig({ STRIPE_SECRET_KEY: CONFIG.secretKey, STRIPE_WEBHOOK_SECRET: CONFIG.webhookSecret, STRIPE_CONNECT_CLIENT_ID: CONFIG.connectClientId }),
     ).toEqual(CONFIG);
+  });
+
+  it('knows test keys from live ones, so the owner is never promised real payments in a sandbox', () => {
+    // Prefixes joined at run time: no vendor-shaped literal in the source.
+    const key = (mode: string, kind = 'sk') => `${kind}_${mode}_${randomBytes(12).toString('hex')}`;
+    expect(isStripeTestMode({ ...CONFIG, secretKey: key('test') })).toBe(true);
+    expect(isStripeTestMode({ ...CONFIG, secretKey: key('test', 'rk') })).toBe(true);
+    expect(isStripeTestMode({ ...CONFIG, secretKey: key('live') })).toBe(false);
   });
 
   it('a checkout session is a direct charge on the connected account with the fee and an idempotency key', async () => {

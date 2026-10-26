@@ -49,6 +49,8 @@ export interface CheckoutShortage {
 /** A server-authored, placed order awaiting (demo) payment. */
 interface PlacedOrder {
   orderId: string;
+  /** The number the buyer sees (ORD-000001); the id stays internal. */
+  orderNumber: string;
   totalCents: number;
   currency: string;
   /** Who takes the payment: the demo provider (no real money) or Stripe (a hosted checkout page). */
@@ -72,7 +74,7 @@ type CheckoutState =
     }
   | { status: 'confirmed'; order: PlacedOrder; transactionId: string; receiptNumber: string | null }
   | { status: 'redirecting' }
-  | { status: 'returned'; outcome: 'paid' | 'cancelled'; orderId: string };
+  | { status: 'returned'; outcome: 'paid' | 'cancelled'; orderNumber: string };
 
 const EMPTY_BUYER: CheckoutBuyer = {
   name: '',
@@ -186,16 +188,16 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
   // The buyer as last typed, kept across "Back to cart" and a new checkout after a decline.
   const buyerRef = React.useRef<CheckoutBuyer>(EMPTY_BUYER);
 
-  // Back from a hosted checkout (Stripe appends checkout=paid|cancelled and the order id to the return
-  // address): paid clears the cart and thanks the buyer (the receipt follows once Stripe's webhook arrived);
+  // Back from a hosted checkout (Stripe appends checkout=paid|cancelled and the order number to the return
+  // address): paid clears the cart and thanks the buyer (the receipt is issued once Stripe's webhook arrived);
   // cancelled keeps the cart, and the order's stock goes back when its payment window closes.
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const outcome = params.get('checkout');
-    const orderId = params.get('order');
-    if ((outcome === 'paid' || outcome === 'cancelled') && orderId) {
+    const orderNumber = params.get('order');
+    if ((outcome === 'paid' || outcome === 'cancelled') && orderNumber) {
       if (outcome === 'paid') cart.clear();
-      setState({ status: 'returned', outcome, orderId });
+      setState({ status: 'returned', outcome, orderNumber });
     }
     // Once, on arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -261,6 +263,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
         const data = (await res.json()) as PlacedOrder;
         const order: PlacedOrder = {
           orderId: data.orderId,
+          orderNumber: data.orderNumber,
           totalCents: data.totalCents,
           currency: data.currency,
           provider: data.provider === 'stripe' ? 'stripe' : 'demo',
@@ -560,7 +563,7 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
     return (
       <div data-checkout-returned={state.outcome} style={{ ...PANEL_STYLE, color: state.outcome === 'paid' ? '#065f46' : '#b45309' }}>
         {state.outcome === 'paid'
-          ? `Thank you: the payment for order ${state.orderId} went through. Your receipt follows by email.`
+          ? `Thank you: the payment for order ${state.orderNumber} went through. Keep the order number for any question about your order.`
           : 'The payment was cancelled. Your cart is kept: check out again whenever you are ready.'}
       </div>
     );
@@ -573,7 +576,7 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
         style={{ marginTop: '8px', color: '#065f46', fontFamily: 'inherit', fontSize: '13px' }}
       >
         <div>
-          Order {state.order.orderId} confirmed. Total: {formatCents(state.order.totalCents, state.order.currency)}.
+          Order {state.order.orderNumber} confirmed. Total: {formatCents(state.order.totalCents, state.order.currency)}.
         </div>
         <div data-checkout-payment-ref style={{ marginTop: '4px', color: '#6b7280' }}>
           Payment reference: {state.transactionId} (simulated payment, no real charge).

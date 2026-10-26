@@ -246,6 +246,28 @@ describe('hydrateBindings commerce', () => {
     expect(commerceRepo.calls.listProducts).toHaveLength(1);
   });
 
+  it('links each product card to its product page with {{product.href}}, and keeps its own address without a product page', async () => {
+    const withLink = (): ComponentNode => {
+      const list = productListNode();
+      list.children![0] = {
+        id: 'card',
+        type: 'a',
+        props: { href: '/shop' },
+        bindings: { href: { mode: 'read', expression: '{{product.href}}' } },
+        children: list.children![0].children,
+      };
+      return list;
+    };
+    const repos = () => ({ cmsRepo: makeCmsRepo(), commerceRepo: makeCommerceRepo({ products: PRODUCTS }) });
+
+    const linked = await hydrateBindings(withLink(), {}, repos(), '/products');
+    expect(linked.children!.map((card) => card.props?.href)).toEqual(['/products/alpha', '/products/beta']);
+
+    // No product page on the site: the binding resolves nothing, the card keeps `/shop`.
+    const unlinked = await hydrateBindings(withLink(), {}, repos(), null);
+    expect(unlinked.children!.map((card) => card.props?.href)).toEqual(['/shop', '/shop']);
+  });
+
   it('passes the structured CommerceQuery on props.query through to listProducts', async () => {
     const query: CommerceQuery = {
       filter: [{ field: 'title', op: 'contains', value: 'Al' }],

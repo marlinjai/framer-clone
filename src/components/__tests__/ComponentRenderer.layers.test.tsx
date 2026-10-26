@@ -1,6 +1,7 @@
 // The canvas renderer honours the Layers panel flags: a hidden layer is not
 // rendered, a locked layer (or one inside a locked layer) passes clicks
-// through to its nearest unlocked ancestor and never arms a drag.
+// through to its nearest unlocked ancestor and never arms a drag. A link
+// selects on a click and never navigates the editor.
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, fireEvent, act } from '@testing-library/react';
@@ -98,5 +99,25 @@ describe('locked layers', () => {
     renderTree();
     fireEvent.doubleClick(nodeEl(nested)!);
     expect(store.editorUI.editingComponent).toBeUndefined();
+  });
+});
+
+describe('links on the canvas', () => {
+  it('a click on a link, or on text inside one, selects without navigating the editor', () => {
+    main.addChildren([createIntrinsicComponent('link-1', 'a', { href: '/contact' })]);
+    const link = main.children[1] as ComponentInstance;
+    link.addChildren([createIntrinsicComponent('link-text', 'span', { children: 'Contact' })]);
+    const inner = link.children[0] as ComponentInstance;
+    renderTree();
+
+    // fireEvent answers false when the default action was prevented: no navigation.
+    expect(fireEvent.click(nodeEl(link)!)).toBe(false);
+    expect(store.editorUI.selectedComponent?.id).toBe(link.id);
+
+    expect(fireEvent.click(nodeEl(inner)!)).toBe(false);
+    expect(store.editorUI.selectedComponent?.id).toBe(inner.id);
+
+    // An ordinary node keeps its default action.
+    expect(fireEvent.click(nodeEl(nested)!)).toBe(true);
   });
 });

@@ -57,7 +57,27 @@ function renderWithProvider(ui: React.ReactElement, provider: InMemoryDataSource
   );
 }
 
+function productListWithLink() {
+  return ComponentModel.create({
+    id: 'productList-root',
+    type: 'div',
+    componentType: 'host',
+    props: { 'data-component-kind': 'product-list' },
+    bindings: { products: { mode: 'read', expression: 'products' } },
+    children: [
+      {
+        id: 'card-1',
+        type: 'div',
+        componentType: 'host',
+        props: {},
+        children: [{ id: 'link-1', type: 'a', componentType: 'host', props: { children: 'View', href: '/' } }],
+      },
+    ],
+  });
+}
+
 const TEXT_META = getBindableSlotsFor('text').children as BindableSlotMeta;
+const LINK_META = getBindableSlotsFor('link').href as BindableSlotMeta;
 
 afterEach(() => cleanup());
 
@@ -128,6 +148,28 @@ describe('BindingPicker', () => {
       expect(screen.getByText('City')).toBeTruthy();
     });
     expect(screen.getByText('{{row.title}}')).toBeTruthy();
+  });
+
+  it('offers the product fields inside a product list, the product page link among them', () => {
+    const provider = new InMemoryDataSourceProvider(EVENTS_SEED);
+    const link = productListWithLink().children[0].children[0];
+    const commits: string[] = [];
+    renderWithProvider(
+      <BindingPicker node={link} slot="href" meta={LINK_META} onCommit={(b) => commits.push(b.expression)} onClose={() => {}} />,
+      provider,
+    );
+    expect(screen.getByText('Product')).toBeTruthy();
+    fireEvent.click(screen.getByText('Link to its product page'));
+    expect(commits).toEqual(['{{product.href}}']);
+  });
+
+  it('shows no product fields outside a product list or detail', () => {
+    const provider = new InMemoryDataSourceProvider(EVENTS_SEED);
+    renderWithProvider(
+      <BindingPicker node={collectionWithText().children[0]} slot="children" meta={TEXT_META} onCommit={() => {}} onClose={() => {}} />,
+      provider,
+    );
+    expect(screen.queryByText('Link to its product page')).toBeNull();
   });
 
   it('tolerates an UNKNOWN scopeHint and still renders the row columns', async () => {
