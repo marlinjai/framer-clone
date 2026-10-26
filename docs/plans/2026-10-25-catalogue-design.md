@@ -71,6 +71,8 @@ Parent: [one business platform](2026-10-25-business-platform-architecture.md), s
 - **Images live beside the documents** (`catalog_image` bytes, PNG, JPEG or WebP up to 2 MB, one per company
   and hash), as 008 and 013 do, until a storage-brain client exists in this repository.
 - **What an invoice line copies** is on the product too: `unit_label` and `discount_bp`.
+- **Price basis.** Existing products keep `net` (the shop priced them net and added VAT), new products
+  default to `gross` (the consumer price a shop shows); the checkout prices an order on its products' basis.
 
 ## Data model (additions to the commerce engine)
 

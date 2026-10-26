@@ -144,6 +144,9 @@ describe('020_catalogue_company on a schema that already holds rows', () => {
          WHERE p.books_product_id IS NOT NULL
          ORDER BY p.books_product_id`;
     });
+    // The existing product keeps the net basis the shop priced it on.
+    const legacy = await owner`SELECT price_basis FROM ${owner(schema)}.product WHERE id = 'p1'`;
+    expect(legacy[0].price_basis).toBe('net');
     expect(moved.map((r) => ({ ...r }))).toEqual([
       {
         books_product_id: 'bp-0-p', tenant_id: COMPANY_A, kind: 'physical', title: 'Kabel 0', status: 'draft',

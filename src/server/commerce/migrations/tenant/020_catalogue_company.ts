@@ -32,7 +32,8 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      `books_product` table itself stays untouched until a later migration retires it.
  *   5. Product fields of the design: `kind` ('physical' or 'service'), `product_type`, `tags`,
  *      `seo_title`, `seo_description`, `tax_class` ('standard', 'reduced', 'zero', as the Books),
- *      `price_basis` ('net' or 'gross'), `unit_label` and `discount_bp` (what an invoice line copies),
+ *      `price_basis` ('net' or 'gross'; existing products keep 'net', the basis the shop priced them on, new
+ *      ones default to 'gross'), `unit_label` and `discount_bp` (what an invoice line copies),
  *      `description_format` (the formatted text, as 018; the plain `description` is derived from it),
  *      `search_text` (the folded title and description the pickers match with LIKE, written by the
  *      repository with src/lib/books/searchKey.ts), `archived_at` (archived, not deleted; the status enum
@@ -170,7 +171,10 @@ export const catalogueCompany: Migration = {
     await tx`ALTER TABLE "product" ADD COLUMN IF NOT EXISTS "tags" TEXT[] NOT NULL DEFAULT '{}'`;
     await tx`ALTER TABLE "product" ADD COLUMN IF NOT EXISTS "seo_title" TEXT`;
     await tx`ALTER TABLE "product" ADD COLUMN IF NOT EXISTS "seo_description" TEXT`;
-    await tx`ALTER TABLE "product" ADD COLUMN IF NOT EXISTS "price_basis" TEXT NOT NULL DEFAULT 'gross'`;
+    // Existing products were priced net (the shop added VAT on top): they keep it. New products default to
+    // gross, the consumer price a shop shows.
+    await tx`ALTER TABLE "product" ADD COLUMN IF NOT EXISTS "price_basis" TEXT NOT NULL DEFAULT 'net'`;
+    await tx`ALTER TABLE "product" ALTER COLUMN "price_basis" SET DEFAULT 'gross'`;
     await tx`ALTER TABLE "product" ADD COLUMN IF NOT EXISTS "unit_label" TEXT NOT NULL DEFAULT 'Stk'`;
     await tx`ALTER TABLE "product" ADD COLUMN IF NOT EXISTS "discount_bp" INTEGER NOT NULL DEFAULT 0`;
     await tx`ALTER TABLE "product" ADD COLUMN IF NOT EXISTS "description_format" JSONB`;
