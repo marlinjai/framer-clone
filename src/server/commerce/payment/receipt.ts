@@ -31,6 +31,7 @@ import { addLine } from '@/server/books/repository/lines';
 import { getDocument } from '@/server/books/repository/read';
 import type { BooksScope } from '@/server/books/scope';
 import { requireSettings } from '@/server/books/settings';
+import { lineTitle } from '@/lib/commerce/lineTitle';
 import { readBuyer, type Buyer } from './buyer';
 
 /** The actor recorded on the receipt's events: the shop, not a person. */
@@ -172,7 +173,8 @@ export async function ensureReceipt(
     for (const line of lines) {
       await addLine(scope, id, {
         kind: line.productKind === 'service' ? 'service' : 'product',
-        title: (line.title?.trim() || line.productTitle || line.sku || 'Artikel').slice(0, 300),
+        // What was sold, as the cart named it: "Stacking ring, 54 / Silver".
+        title: lineTitle(line.productTitle, line.title, line.sku, 'Artikel').slice(0, 300),
         quantity: line.quantity * 1000,
         unitLabel: line.unitLabel ?? 'Stk',
         unitPrice: line.unitPrice,

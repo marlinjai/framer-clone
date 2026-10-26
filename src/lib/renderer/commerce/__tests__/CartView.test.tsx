@@ -13,7 +13,7 @@ import { CommerceDataSourceContext } from '@/lib/commerce/context';
 import { InMemoryCommerceDataSource } from '@/lib/commerce/inMemoryCommerceDataSource';
 import type { CommerceDataSource } from '@/lib/commerce/provider';
 import { CartProvider, CART_STORAGE_KEY, type CartLine } from '@/lib/commerce/cart';
-import CartView, { cartLineTitle } from '../CartView';
+import CartView from '../CartView';
 
 function makeNode(props: Record<string, unknown> = {}): ComponentInstance {
   return { props } as unknown as ComponentInstance;
@@ -37,18 +37,6 @@ afterEach(() => {
   cleanup();
   window.localStorage.clear();
   vi.restoreAllMocks();
-});
-
-describe('cartLineTitle', () => {
-  it('names a line by its product and variant, never by an internal id', () => {
-    expect(cartLineTitle('Stacking ring', { title: '54 / Silver', sku: 'RING-54-S' })).toBe('Stacking ring, 54 / Silver');
-    expect(cartLineTitle('Ring sizing', { title: null, sku: undefined })).toBe('Ring sizing');
-    expect(cartLineTitle('Ring sizing', { title: '  ', sku: undefined })).toBe('Ring sizing');
-    // The product could not be read: the variant names the line, then its SKU, then a plain word.
-    expect(cartLineTitle(null, { title: '54 / Silver', sku: 'RING-54-S' })).toBe('54 / Silver');
-    expect(cartLineTitle(null, { title: null, sku: 'RING-54-S' })).toBe('RING-54-S');
-    expect(cartLineTitle(null, { title: null, sku: undefined })).toBe('Item');
-  });
 });
 
 describe('CartView display', () => {

@@ -35,6 +35,7 @@ import type {
   ProductVariantDTO,
 } from '@/lib/commerce/types';
 import { computeDisplaySubtotalCents, useCart, type CartLine } from '@/lib/commerce/cart';
+import { lineTitle } from '@/lib/commerce/lineTitle';
 import {
   resolveDataState,
   type DataStateMode,
@@ -117,17 +118,6 @@ function formatDisplayMoney(amountCents: number, currency: string): string {
   } catch {
     return `${(amountCents / 100).toFixed(2)} ${currency.toUpperCase()}`;
   }
-}
-
-/**
- * What a cart line is called: the product and its variant ("Stacking ring, 54 / Silver"), the product
- * alone when it has a single variant without a title, and never an internal id.
- */
-export function cartLineTitle(productTitle: string | null, variant: Pick<ProductVariantDTO, 'title' | 'sku'>): string {
-  const variantTitle = variant.title?.trim() || null;
-  const product = productTitle?.trim() || null;
-  if (product && variantTitle) return `${product}, ${variantTitle}`;
-  return product ?? variantTitle ?? variant.sku ?? 'Item';
 }
 
 /** Read a string node prop, falling back when absent or empty. */
@@ -336,7 +326,8 @@ const CartView = observer(
         return <div key={line.variantId} data-cart-line={line.variantId} style={LINE_STYLE} />;
       }
 
-      const title = cartLineTitle(data.productTitle, data.variant);
+      // Named as on the receipt (src/lib/commerce/lineTitle.ts), never by an id.
+      const title = lineTitle(data.productTitle, data.variant.title, data.variant.sku, 'Item');
       const priceLabel = data.price
         ? formatDisplayMoney(data.price.amountCents, data.price.currency)
         : 'Price unavailable';
