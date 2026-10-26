@@ -149,6 +149,12 @@ Parent: [one business platform](2026-10-25-business-platform-architecture.md), s
 
 ## The test jewellery company
 
+Prepared 2026-10-26 (slice 6): `pnpm catalogue:seed-test-shop --tenant-group <uuid> --tenant <uuid>` seeds the
+catalogue below for a company, idempotently (`src/server/catalog/testShop.ts`). Creating the company itself
+needs the owner's own auth-brain account (as Books Testfirma was made), so it is the owner's step, followed
+by the deploy that brings migrations 020 to 022, the seed, a site, and Stripe test onboarding.
+
+
 Acceptance criteria for the proof, none of which exists yet. A new auth-brain company ("Schmuck Testshop", marked as test data like Books Testfirma) with a site, sample
 products (rings with size and metal options, necklaces, earrings, one archived product), two collections, Stripe
 test onboarding done. To be proven in the browser: create and edit a product, buy it on the site with a test card, see
