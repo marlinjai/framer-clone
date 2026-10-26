@@ -49,6 +49,7 @@ const availability: AvailabilityDTO = {
   variantId: 'var_1',
   locationId: 'all',
   availableQuantity: 12,
+  limited: true,
   stale: false,
 };
 

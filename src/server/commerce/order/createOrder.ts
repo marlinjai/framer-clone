@@ -50,7 +50,7 @@ import type { Kysely } from 'kysely';
 import { RESERVE_ISOLATION_LEVEL, reserve, type Shortage } from '../inventory/reserve';
 import { pricingRepository } from '../repository/pricing';
 import { orderRepository } from '../repository/order';
-import { UnknownVariantError } from '../repository/storefront';
+import { UnknownVariantError } from '../repository/errors';
 import { toJsonb } from '../../books/snapshots';
 import type { Buyer } from '../payment/buyer';
 import { PAYMENT_WINDOW_MS, platformFee } from '../payment/payments';

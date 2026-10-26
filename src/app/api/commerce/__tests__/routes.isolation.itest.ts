@@ -190,9 +190,8 @@ describe('route-level two-tenant isolation (host decides the tenant group)', () 
     }
   });
 
-  it("inventory: the other tenant's (item, location) pair is 404 on each host", async () => {
-    const qs = (p: SeededProduct) =>
-      `/api/commerce/inventory?variantId=${p.inventoryItemId}&locationId=${p.locationId}`;
+  it("inventory: the other tenant's variant is 404 on each host", async () => {
+    const qs = (p: SeededProduct) => `/api/commerce/inventory?variantId=${p.variantId}&locationId=${p.locationId}`;
 
     const ownA = await inventoryGET(get(qs(productA), hostA));
     expect(ownA.status).toBe(200);

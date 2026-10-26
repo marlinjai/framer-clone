@@ -47,7 +47,7 @@ const ERROR_CHIP_STYLE: React.CSSProperties = {
 type AvailabilityState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'ready'; availableQuantity: number }
+  | { status: 'ready'; availableQuantity: number; limited: boolean }
   | { status: 'error'; message: string };
 
 export interface AddToCartButtonProps {
@@ -109,7 +109,7 @@ function AddToCartButton({
     dataSource
       .getAvailability(selectedVariantId)
       .then((dto) => {
-        if (active) setAvailability({ status: 'ready', availableQuantity: dto.availableQuantity });
+        if (active) setAvailability({ status: 'ready', availableQuantity: dto.availableQuantity, limited: dto.limited });
       })
       .catch((err: unknown) => {
         if (active) {
@@ -144,8 +144,10 @@ function AddToCartButton({
   // UX-HINT DISABLE (never the authority): no selected variant, or the advisory
   // availability is not a positive-quantity "content" state. The reserve at
   // checkout is the real gate; a stale advisory zero only spares a futile click.
-  const advisoryQuantity = availability.status === 'ready' ? availability.availableQuantity : 0;
-  const disabled = !variant || directive.kind !== 'content' || advisoryQuantity <= 0;
+  // An untracked or back-orderable variant (`limited: false`) is never sold out.
+  const soldOut =
+    availability.status === 'ready' && availability.limited && availability.availableQuantity <= 0;
+  const disabled = !variant || directive.kind !== 'content' || soldOut;
 
   const quantity = quantityProp(node.props as Record<string, unknown> | undefined);
   const label = stringProp(node.props as Record<string, unknown> | undefined, 'label', 'Add to cart');

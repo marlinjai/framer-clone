@@ -29,6 +29,7 @@ import { jsonArrayFrom } from 'kysely/helpers/postgres';
 import type { CommerceDB } from '../db-types';
 import { pricingRepository } from './pricing';
 import { visibleProductConditions, type CatalogueView } from './read';
+import { UnknownVariantError } from './errors';
 import { toProductDTO, type ProductDTO, type ProductGraph } from '@/lib/commerce/dto';
 
 /**
@@ -157,38 +158,6 @@ export async function getStorefrontProductByHandle(
     .executeTakeFirst();
   if (!row) return null;
   return toPricedProductDTO(db, row, currency);
-}
-
-/**
- * The GENERATED `available_quantity` (= stocked - reserved) for one
- * (inventory item, location) pair, or null when no level row exists for it.
- * ADVISORY only: never permission to sell (the guarded reserve is the authority).
- */
-export async function readInventoryAvailable(
-  db: Kysely<CommerceDB>,
-  inventoryItemId: string,
-  locationId: string,
-): Promise<number | null> {
-  const row = await db
-    .selectFrom('inventory_level')
-    .select('available_quantity')
-    .where('inventory_item_id', '=', inventoryItemId)
-    .where('location_id', '=', locationId)
-    .executeTakeFirst();
-  return row ? Number(row.available_quantity) : null;
-}
-
-/**
- * A cart line names a variant that does not exist (or is soft-deleted) in THIS
- * tenant group: a client-side problem (a stale cart, or another shop's id), not
- * a server fault. The orders route answers it with 422 `unknown_variant`.
- */
-export class UnknownVariantError extends Error {
-  readonly code = 'UNKNOWN_VARIANT';
-  constructor(readonly variantId: string) {
-    super(`unknown variant ${variantId}`);
-    this.name = 'UnknownVariantError';
-  }
 }
 
 /** A client order line after the server resolved its inventory identity. */

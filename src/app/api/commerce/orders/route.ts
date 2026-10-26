@@ -60,11 +60,8 @@ import { buyerSchema } from '@/server/commerce/payment/buyer';
 import { shopTaxProfile } from '@/server/commerce/payment/shopTax';
 import { configuredStripeApi } from '@/server/commerce/payment/deps';
 import { readAccount } from '@/server/commerce/payment/stripe/connect';
-import {
-  readOrderTotal,
-  resolveOrderLines,
-  UnknownVariantError,
-} from '@/server/commerce/repository/storefront';
+import { UnknownVariantError } from '@/server/commerce/repository/errors';
+import { readOrderTotal, resolveOrderLines } from '@/server/commerce/repository/storefront';
 import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
 import { commerceServerFault } from '@/server/commerce/faults';
 import { jsonError, parseBody } from '@/lib/api/respond';

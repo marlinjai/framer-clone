@@ -104,11 +104,16 @@ export interface PriceDTO {
  *
  * When availability is requested without a locationId, the provider aggregates
  * across locations and reports `locationId` as the sentinel "all".
+ *
+ * `limited` is false when the quantity is no limit at all: the variant's stock is
+ * not tracked (a service) or it may be back-ordered. A storefront then never shows
+ * it as sold out; the reserve at checkout applies the same policy.
  */
 export interface AvailabilityDTO {
   variantId: string;
   locationId: string;
   availableQuantity: number;
+  limited: boolean;
   stale: boolean;
 }
 

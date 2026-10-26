@@ -40,6 +40,7 @@ function stubDataSource(): CommerceDataSource {
     variantId: 'v1',
     locationId: 'all',
     availableQuantity: 10,
+    limited: true,
     stale: false,
   };
   return {

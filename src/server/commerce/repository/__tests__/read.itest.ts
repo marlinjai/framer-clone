@@ -38,6 +38,7 @@ import {
 } from '../../__tests__/storefrontFixtures';
 import { catalogRepository } from '../catalog';
 import { pricingRepository } from '../pricing';
+import { UnknownVariantError } from '../errors';
 import { commerceReadRepository, getCommerceServerRepository } from '../read';
 import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
@@ -256,12 +257,14 @@ describe('getAvailability (ADVISORY, never permission to sell)', () => {
       variantId: tee.variantS,
       locationId: ALL_LOCATIONS,
       availableQuantity: 40,
+      limited: true,
       stale: false,
     });
     expect(await commerceReadRepository.getAvailability(db, VIEW, tee.variantS, main)).toEqual({
       variantId: tee.variantS,
       locationId: main,
       availableQuantity: 10,
+      limited: true,
       stale: false,
     });
     // A location with no level row for this item legitimately sums to zero.
@@ -275,6 +278,7 @@ describe('getAvailability (ADVISORY, never permission to sell)', () => {
       variantId: tee.variantM,
       locationId: ALL_LOCATIONS,
       availableQuantity: 0,
+      limited: true,
       stale: false,
     });
   });
@@ -291,17 +295,26 @@ describe('getAvailability (ADVISORY, never permission to sell)', () => {
     expect((await commerceReadRepository.getAvailability(db, VIEW, variant.id)).availableQuantity).toBe(0);
   });
 
+  it('says the quantity is no limit for untracked stock and for an allowed back-order', async () => {
+    const product = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, status: 'published', title: 'Sizing', handle: 'sizing-avail' });
+    const untracked = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'SIZE-1' });
+    const backorder = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'SIZE-2' });
+    await db.updateTable('product_variant').set({ manage_inventory: false }).where('id', '=', untracked.id).execute();
+    await db.updateTable('product_variant').set({ allow_backorder: true }).where('id', '=', backorder.id).execute();
+
+    expect(await commerceReadRepository.getAvailability(db, VIEW, untracked.id)).toMatchObject({ availableQuantity: 0, limited: false });
+    expect(await commerceReadRepository.getAvailability(db, VIEW, backorder.id)).toMatchObject({ availableQuantity: 0, limited: false });
+  });
+
   it('throws for a missing variant and for a soft-deleted one', async () => {
     const ghost = randomUUID();
-    await expect(commerceReadRepository.getAvailability(db, VIEW, ghost)).rejects.toThrow(
-      `no variant with id "${ghost}"`,
-    );
+    await expect(commerceReadRepository.getAvailability(db, VIEW, ghost)).rejects.toThrow(UnknownVariantError);
     const gone = await db
       .selectFrom('product_variant')
       .select('id')
       .where('sku', '=', 'TEE-GONE')
       .executeTakeFirstOrThrow();
-    await expect(commerceReadRepository.getAvailability(db, VIEW, gone.id)).rejects.toThrow(/no variant with id/);
+    await expect(commerceReadRepository.getAvailability(db, VIEW, gone.id)).rejects.toThrow(UnknownVariantError);
   });
 });
 

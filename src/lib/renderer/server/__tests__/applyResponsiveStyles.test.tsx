@@ -144,7 +144,7 @@ describe('renderPublishedPage: responsive styles', () => {
     getProductByHandle: async () => null,
     listVariants: async () => [],
     getPrices: async () => [],
-    getAvailability: async () => ({ variantId: 'x', locationId: 'all', availableQuantity: 0, stale: false }),
+    getAvailability: async () => ({ variantId: 'x', locationId: 'all', availableQuantity: 0, limited: true, stale: false }),
   } as CommerceServerRepository;
 
   it('publishes the class and a style tag with the media queries, never an inline responsive map', async () => {
