@@ -47,6 +47,12 @@ importers:
       '@marlinjai/data-table-react':
         specifier: ^0.3.1
         version: 0.3.1(react-dom@19.1.9(react@19.1.9))(react@19.1.9)
+      '@marlinjai/mail-contract':
+        specifier: 0.20.0
+        version: 0.20.0
+      '@marlinjai/mail-sdk':
+        specifier: 0.20.0
+        version: 0.20.0(zod@4.3.6)
       '@marlinjai/tenant-db':
         specifier: ^0.2.0
         version: 0.2.0(postgres@3.4.9)
@@ -1372,6 +1378,15 @@ packages:
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
+
+  '@marlinjai/mail-contract@0.20.0':
+    resolution: {integrity: sha512-43Yp1FUevNoPYz/WE/mwAjlITros0AZT6yJ9tDyGQ6HWIvi61NeZPS5OSwEdQ3xR532O3zy9f9S8NLCddOoMMw==}
+
+  '@marlinjai/mail-sdk@0.20.0':
+    resolution: {integrity: sha512-XcRwMLX7Qc9voYm2E1Mk3dRffvgTlS4VItCDC+Ui836+lBmY3r/5tCgfXp1Kp5Rght0riaNjoYMNxAuAN3wNOw==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      zod: ^3.25.0
 
   '@marlinjai/tenant-db@0.2.0':
     resolution: {integrity: sha512-/NgvK93cl44CwCCXR/AVNbXYxJaOXeoVVktSU6dSCMG7pB/1ce/1POVYy31/fSiD8uYuEQCv5gf92WTVjy2/0A==}
@@ -7239,6 +7254,15 @@ snapshots:
       '@marlinjai/data-table-core': 0.3.0
       react: 19.1.9
       react-dom: 19.1.9(react@19.1.9)
+
+  '@marlinjai/mail-contract@0.20.0':
+    dependencies:
+      zod: 3.25.76
+
+  '@marlinjai/mail-sdk@0.20.0(zod@4.3.6)':
+    dependencies:
+      '@marlinjai/mail-contract': 0.20.0
+      zod: 4.3.6
 
   '@marlinjai/tenant-db@0.2.0(postgres@3.4.9)':
     dependencies:

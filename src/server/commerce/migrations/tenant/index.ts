@@ -22,6 +22,7 @@ import { booksDraftDelete } from './019_books_draft_delete';
 import { catalogueCompany } from './020_catalogue_company';
 import { orderPayment } from './021_order_payment';
 import { paymentAccount } from './022_payment_account';
+import { shopMail } from './023_shop_mail';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -143,4 +144,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   catalogueCompany,
   orderPayment,
   paymentAccount,
+  shopMail,
 ];

@@ -76,6 +76,11 @@ export interface PaymentDeps {
   now?: () => Date;
   /** The company's connected account for refunds (Stripe Connect). */
   connectedAccountId?: string;
+  /**
+   * Tell the buyer (the shop's receipt email, mail/runtime.ts): called once the receipt is issued, or a late
+   * payment refunded. It never throws and never changes the payment; absent in tests that send no mail.
+   */
+  mail?: (tenantId: string, orderId: string, kind: 'order_confirmation' | 'late_refund') => Promise<void>;
 }
 
 export interface PaymentOutcome {
@@ -249,6 +254,7 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
   } catch (err) {
     if (!(err instanceof LateStockGoneError)) throw err;
     status = await refundLatePayment(deps, event, now());
+    if (status === 'refunded') await deps.mail?.(event.tenantId, event.orderId, 'late_refund');
   }
 
   const after = await deps.db
@@ -260,7 +266,10 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
   if (status !== 'paid' || after.receipt_document_id) {
     return { status, duplicate, receiptDocumentId: after.receipt_document_id, receiptError: after.receipt_error };
   }
-  return { status, duplicate, ...(await issueReceipt(deps, event.tenantId, event.orderId, now())) };
+  const receipt = await issueReceipt(deps, event.tenantId, event.orderId, now());
+  // The buyer hears once the receipt exists (the letter links it); a retried receipt mails then.
+  if (receipt.receiptDocumentId) await deps.mail?.(event.tenantId, event.orderId, 'order_confirmation');
+  return { status, duplicate, ...receipt };
 }
 
 /** The late success whose stock is gone: refund in full, the order stays closed. */

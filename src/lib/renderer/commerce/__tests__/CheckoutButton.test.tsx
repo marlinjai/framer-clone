@@ -22,7 +22,7 @@ import { createScope } from '@/lib/bindings/resolver/scope';
 import { CartProvider, useCart, CART_STORAGE_KEY } from '@/lib/commerce/cart';
 import { FakePaymentGateway } from '@/lib/commerce/payment';
 import type { PaymentGateway, PaymentResult } from '@/lib/commerce/payment';
-import CheckoutButton from '../CheckoutButton';
+import CheckoutButton, { RETURN_NOTE_KEY } from '../CheckoutButton';
 
 function makeNode(props: Record<string, unknown> = {}): ComponentInstance {
   return { props } as unknown as ComponentInstance;
@@ -163,6 +163,65 @@ describe('CheckoutButton pay (demo, simulated success)', () => {
   });
 });
 
+describe('CheckoutButton confirmation and the receipt email', () => {
+  const receiptGateway = (): PaymentGateway => ({
+    id: 'demo',
+    async authorize() {
+      return { ok: true, provider: 'demo', transactionId: 'demo_txn_1', receiptNumber: 'RE-9' } as PaymentResult;
+    },
+  } as unknown as PaymentGateway);
+
+  async function payWith(confirmationEmail: boolean) {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      fakeResponse(201, { orderId: 'order_9', orderNumber: 'ORD-9', totalCents: 4760, currency: 'EUR', confirmationEmail }),
+    );
+    const { container, getByTestId } = renderCheckout(makeNode(), receiptGateway());
+    await waitForHydratedCart(getByTestId);
+    clickCheckout(container);
+    await waitFor(() => expect(container.querySelector('[data-checkout-pay]')).not.toBeNull());
+    fillBuyer(container);
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
+    });
+    await waitFor(() => expect(container.querySelector('[data-checkout-receipt]')).not.toBeNull());
+    return container.querySelector('[data-checkout-receipt]')!.textContent;
+  }
+
+  it('says where the confirmation goes when the shop emails its buyers', async () => {
+    expect(await payWith(true)).toBe('A confirmation with receipt RE-9 is on its way to alex@example.com.');
+  });
+
+  it('promises no email when the shop does not send one', async () => {
+    expect(await payWith(false)).toBe('Receipt RE-9 is issued.');
+  });
+
+  it('before leaving for a hosted checkout, notes the address only for a shop that emails its buyers', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign, pathname: '/cart', search: '' });
+    const hosted = { id: 'stripe', authorize: async () => ({ ok: true, redirectUrl: 'https://checkout.stripe.test/pay' }) } as unknown as PaymentGateway;
+    for (const confirmationEmail of [true, false]) {
+      window.sessionStorage.clear();
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        fakeResponse(201, { orderId: 'order_10', orderNumber: 'ORD-10', totalCents: 4760, currency: 'EUR', provider: 'stripe', confirmationEmail }),
+      );
+      const { container, getByTestId, unmount } = renderCheckout(makeNode(), hosted);
+      await waitForHydratedCart(getByTestId);
+      clickCheckout(container);
+      await waitFor(() => expect(container.querySelector('[data-checkout-pay]')).not.toBeNull());
+      fillBuyer(container);
+      await act(async () => {
+        fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
+      });
+      await waitFor(() => expect(assign).toHaveBeenCalledWith('https://checkout.stripe.test/pay'));
+      const note = window.sessionStorage.getItem(RETURN_NOTE_KEY);
+      expect(note === null ? null : JSON.parse(note)).toEqual(confirmationEmail ? { orderNumber: 'ORD-10', email: 'alex@example.com' } : null);
+      unmount();
+      assign.mockClear();
+    }
+    vi.unstubAllGlobals();
+  });
+});
+
 describe('CheckoutButton pay declined (demo decline toggle)', () => {
   it('surfaces the decline, keeps the cart, and a new checkout places a new order that pays', async () => {
     vi.spyOn(globalThis, 'fetch')
@@ -223,7 +282,10 @@ describe('CheckoutButton pay declined (demo decline toggle)', () => {
 });
 
 describe('CheckoutButton back from a hosted checkout (Stripe)', () => {
-  afterEach(() => window.history.replaceState(null, '', '/'));
+  afterEach(() => {
+    window.history.replaceState(null, '', '/');
+    window.sessionStorage.clear();
+  });
 
   it('paid: thanks the buyer with the order number, promises no email, and clears the cart', async () => {
     window.history.replaceState(null, '', '/cart?checkout=paid&order=ORD-000005');
@@ -233,6 +295,26 @@ describe('CheckoutButton back from a hosted checkout (Stripe)', () => {
     });
     expect(container.textContent).not.toMatch(/email/i);
     await waitFor(() => expect(getByTestId('lines').textContent).toBe('[]'));
+  });
+
+  it('paid, from a shop that emails its buyers: names the address the confirmation goes to, once', async () => {
+    window.sessionStorage.setItem(RETURN_NOTE_KEY, JSON.stringify({ orderNumber: 'ORD-000007', email: 'alex@example.com' }));
+    window.history.replaceState(null, '', '/cart?checkout=paid&order=ORD-000007');
+    const { container } = renderCheckout();
+    await waitFor(() => {
+      expect(container.querySelector('[data-checkout-returned="paid"]')?.textContent).toContain(
+        'A confirmation with your receipt is on its way to alex@example.com.',
+      );
+    });
+    expect(window.sessionStorage.getItem(RETURN_NOTE_KEY)).toBeNull();
+  });
+
+  it('paid, with a note of another order: promises no email', async () => {
+    window.sessionStorage.setItem(RETURN_NOTE_KEY, JSON.stringify({ orderNumber: 'ORD-000001', email: 'alex@example.com' }));
+    window.history.replaceState(null, '', '/cart?checkout=paid&order=ORD-000008');
+    const { container } = renderCheckout();
+    await waitFor(() => expect(container.querySelector('[data-checkout-returned="paid"]')).not.toBeNull());
+    expect(container.textContent).not.toMatch(/alex@example\.com|email/i);
   });
 
   it('cancelled: keeps the cart', async () => {

@@ -300,6 +300,7 @@ describe('connecting an account (owner routes)', () => {
     db: env.appDb,
     companyId,
     tenantGroupId: env.tgId,
+    subject: 'owner-subject',
     email: 'owner@example.com',
     api: stripe,
     config,

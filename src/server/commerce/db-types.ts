@@ -819,6 +819,36 @@ export interface PaymentEventTable {
   created_at: Generated<Timestamp>;
 }
 
+/** 023_shop_mail: the company's Lumitra Mail workspace for the receipt email (the send key sealed). */
+export interface ShopMailConnectionTable {
+  tenant_id: string;
+  workspace_id: string;
+  workspace_name: string;
+  provider_id: string;
+  sender: string;
+  api_key_id: string;
+  api_key_sealed: string;
+  template_ids: JsonColumn<Record<string, string>>;
+  templates_version: string;
+  connected_by: string;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
+}
+
+/** 023_shop_mail: the outbox, one row per order and kind of mail. */
+export interface ShopMailTable {
+  tenant_id: string;
+  order_id: string;
+  kind: 'order_confirmation' | 'late_refund';
+  status: Generated<'pending' | 'sent' | 'blocked' | 'failed'>;
+  attempts: Generated<number>;
+  next_attempt_at: Timestamp;
+  last_error: string | null;
+  mailing_id: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
+}
+
 /**
  * 022_payment_account: the company's connected payment account (Stripe Connect); the account id is fixed (BK020).
  */
@@ -883,6 +913,8 @@ export interface CommerceDB {
   product_site_hidden: ProductSiteHiddenTable;
   order_payment: OrderPaymentTable;
   payment_event: PaymentEventTable;
+  shop_mail_connection: ShopMailConnectionTable;
+  shop_mail: ShopMailTable;
   payment_account: PaymentAccountTable;
 }
 

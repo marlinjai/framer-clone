@@ -51,10 +51,38 @@ interface PlacedOrder {
   orderId: string;
   /** The number the buyer sees (ORD-000001); the id stays internal. */
   orderNumber: string;
+  /** The shop emails the buyer an order confirmation with the receipt (it is connected to Lumitra Mail). */
+  confirmationEmail: boolean;
   totalCents: number;
   currency: string;
   /** Who takes the payment: the demo provider (no real money) or Stripe (a hosted checkout page). */
   provider: 'demo' | 'stripe';
+}
+
+/**
+ * Where the confirmation of an order paid on a hosted checkout goes, noted in this tab before leaving for it
+ * (sessionStorage, the tab only) and read once on the return. Storage that throws (a private window, blocked
+ * site data) only means the thank-you names no address.
+ */
+export const RETURN_NOTE_KEY = 'framer-clone:checkout-return';
+
+function writeReturnNote(orderNumber: string, email: string): void {
+  try {
+    window.sessionStorage.setItem(RETURN_NOTE_KEY, JSON.stringify({ orderNumber, email }));
+  } catch {
+    // Not remembered: the thank-you then names no address.
+  }
+}
+
+function readReturnNote(orderNumber: string): string | null {
+  try {
+    const raw = window.sessionStorage.getItem(RETURN_NOTE_KEY);
+    window.sessionStorage.removeItem(RETURN_NOTE_KEY);
+    const note = raw ? (JSON.parse(raw) as { orderNumber?: unknown; email?: unknown }) : null;
+    return note && note.orderNumber === orderNumber && typeof note.email === 'string' ? note.email : null;
+  } catch {
+    return null;
+  }
 }
 
 type CheckoutState =
@@ -72,9 +100,9 @@ type CheckoutState =
       /** The buyer the receipt is made out to, as typed so far. */
       buyer: CheckoutBuyer;
     }
-  | { status: 'confirmed'; order: PlacedOrder; transactionId: string; receiptNumber: string | null }
+  | { status: 'confirmed'; order: PlacedOrder; transactionId: string; receiptNumber: string | null; email: string }
   | { status: 'redirecting' }
-  | { status: 'returned'; outcome: 'paid' | 'cancelled'; orderNumber: string };
+  | { status: 'returned'; outcome: 'paid' | 'cancelled'; orderNumber: string; confirmationTo: string | null };
 
 const EMPTY_BUYER: CheckoutBuyer = {
   name: '',
@@ -197,7 +225,8 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
     const orderNumber = params.get('order');
     if ((outcome === 'paid' || outcome === 'cancelled') && orderNumber) {
       if (outcome === 'paid') cart.clear();
-      setState({ status: 'returned', outcome, orderNumber });
+      const noted = readReturnNote(orderNumber);
+      setState({ status: 'returned', outcome, orderNumber, confirmationTo: outcome === 'paid' ? noted : null });
     }
     // Once, on arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -264,6 +293,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
         const order: PlacedOrder = {
           orderId: data.orderId,
           orderNumber: data.orderNumber,
+          confirmationEmail: data.confirmationEmail === true,
           totalCents: data.totalCents,
           currency: data.currency,
           provider: data.provider === 'stripe' ? 'stripe' : 'demo',
@@ -331,6 +361,8 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
         // A hosted checkout (Stripe): the buyer pays there; the shop hears of it by webhook. The cart is
         // cleared when the buyer comes back paid (see the checkout=paid return below).
         setState({ status: 'redirecting' });
+        // The thank-you after the return names where the confirmation goes, when the shop sends one.
+        if (order.confirmationEmail) writeReturnNote(order.orderNumber, buyer.email);
         window.location.assign(result.redirectUrl);
         return;
       }
@@ -346,6 +378,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
           order,
           transactionId: result.transactionId,
           receiptNumber: result.receiptNumber ?? null,
+          email: buyer.email,
         });
         return;
       }
@@ -563,7 +596,11 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
     return (
       <div data-checkout-returned={state.outcome} style={{ ...PANEL_STYLE, color: state.outcome === 'paid' ? '#065f46' : '#b45309' }}>
         {state.outcome === 'paid'
-          ? `Thank you: the payment for order ${state.orderNumber} went through. Keep the order number for any question about your order.`
+          ? `Thank you: the payment for order ${state.orderNumber} went through. ${
+              state.confirmationTo
+                ? `A confirmation with your receipt is on its way to ${state.confirmationTo}.`
+                : 'Keep the order number for any question about your order.'
+            }`
           : 'The payment was cancelled. Your cart is kept: check out again whenever you are ready.'}
       </div>
     );
@@ -583,7 +620,9 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
         </div>
         {state.receiptNumber ? (
           <div data-checkout-receipt style={{ marginTop: '4px', color: '#6b7280' }}>
-            Receipt {state.receiptNumber} is on its way to you.
+            {state.order.confirmationEmail
+              ? `A confirmation with receipt ${state.receiptNumber} is on its way to ${state.email}.`
+              : `Receipt ${state.receiptNumber} is issued.`}
           </div>
         ) : null}
       </div>

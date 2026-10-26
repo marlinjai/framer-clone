@@ -44,6 +44,10 @@ vi.mock('@/server/commerce/payment/shopTax', () => ({
 vi.mock('@/server/commerce/order/createOrder', () => ({
   createOrder: vi.fn(),
 }));
+// Whether the shop emails its buyers (connected to Lumitra Mail): not connected unless a test says so.
+vi.mock('@/server/commerce/mail/connection', () => ({
+  hasShopMail: vi.fn(async () => false),
+}));
 
 import { createOrder } from '@/server/commerce/order/createOrder';
 import { commerceTenantDbChecked } from '@/server/commerce/db';
@@ -111,6 +115,7 @@ describe('POST /api/commerce/orders tenancy (D4: tenant from the HOST)', () => {
       currency: 'EUR',
       // Stripe is not configured in tests: the demo provider takes the payment.
       provider: 'demo',
+      confirmationEmail: false,
     });
 
     expect(resolveSiteMock).toHaveBeenCalledWith('store-a.example.com');

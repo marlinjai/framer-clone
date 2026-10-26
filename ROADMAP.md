@@ -143,9 +143,11 @@ connections to the suite. The four lines below are in that order.
   to the site's fixed pages. The payments page says "test mode" while the platform runs on Stripe test keys,
   and the buyer's thank-you shows the order number and no longer promises an email. Found while building the
   test shop on 2026-10-26, built the same day. (2026-10-26)
-- [ ] 3e. Customer email from the shop: an order confirmation with the receipt, and the notice when a late
-  payment had to be refunded (the payment handler logs it today; the app sends no email yet). See
-  [catalogue design](docs/plans/2026-10-25-catalogue-design.md), "Decided while building slice 4". (2026-10-26)
+- [ ] 3e. Customer email from the shop: an order confirmation with a link to the receipt, and the notice when a
+  late payment had to be refunded, sent from the shop company's own Lumitra Mail workspace (framer-clone is
+  Lumitra Mail's trusted application `sites`, email-editor pull request 176). Plan
+  [shop receipt email](docs/plans/2026-10-27-shop-receipt-email.md) : in-progress; built and tested 2026-10-27,
+  open: the proof on production with the test company (connect, buy, receive, open the link). (2026-10-27)
 - [ ] 3d. Deletable invoice drafts: a draft (no number, not a bookkeeping record) can be deleted with its
   lines and events (hard delete, no tombstone, migration relaxing the 007 guards for drafts only);
   issued documents stay undeletable. Reverses decision 8 of the Books integration plan for drafts
