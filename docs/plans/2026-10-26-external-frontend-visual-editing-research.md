@@ -3,7 +3,7 @@ type: plan
 status: draft
 date: 2026-10-26
 title: "Editing an existing Next.js frontend visually in framer-clone (BusBasis storefront as the case)"
-summary: "Research: what framer-clone would need so the BusBasis storefront (Next.js 16, Medusa 2.19, basiscampberlin.de) can be edited visually in it: code components with typed property controls, headless delivery of page documents, an editor canvas that runs the storefront's own components, and a BusBasis company with team logins. Verdict: about 11 to 16 weeks of work, most of it the canvas; the decided Puck plan stays right for BusBasis, and its block schemas are the natural first code components. Recommends building code components first (framer-clone needs them anyway), headless delivery second, and the hosted canvas only once a product decision says framer-clone edits other people's frontends."
+summary: "Research on what framer-clone would need so the BusBasis storefront (Next.js 16, Medusa 2.19) can be edited visually in it: code components with typed property controls, headless delivery, a canvas that runs the storefront's components, and a BusBasis company. Verdict: about 11 to 16 weeks, half of it the canvas, so the decided Puck plan stays right for BusBasis and its block schemas become framer-clone's first code components later."
 tags: [framer-clone, code-components, property-controls, headless, canvas, busbasis, puck, medusa]
 projects: [framer-clone]
 ---
@@ -46,7 +46,7 @@ Recommended order, each step useful on its own:
 | Point | What exists | Main gap | Effort |
 |---|---|---|---|
 | 1. Code components | A dormant, editor-only hook for React components; untyped props; hand-written properties panel | Stored component id, a shared registry for editor and server, a control schema, a generated inspector, a server render branch, a document version | 3 to 4 weeks |
-| 2. Headless delivery | Pure functions that turn a stored page into a render tree | Published copy, read API with machine keys, publish webhook, schema contract, preview | 2 to 3 weeks |
+| 2. Headless delivery | Pure functions that turn a stored page into a render tree | Published copy, read API (application programming interface) with machine keys, publish webhook, schema contract, preview | 2 to 3 weeks |
 | 3. Canvas with the storefront's components | Same-document canvas, no iframe | A hosted canvas mode: iframe into the storefront, a message protocol, an overlay | 5 to 7 weeks |
 | 4. BusBasis company | Companies, logins, roles all in auth-brain | Editor-without-publish role, page image storage, invite flow | 1 to 2 weeks |
 
@@ -70,7 +70,7 @@ Facts about the storefront that matter for every point below:
 - **Routing** goes through `src/proxy.ts` (Next 16 renamed middleware to proxy). It fetches the
   Medusa regions and redirects every path without a country code to `/{countryCode}/...`, sets a
   per-visitor `_medusa_cache_id` cookie and a `Cache-Control: s-maxage=60` header.
-- **i18n is German only in practice**: `src/i18n/request.ts` hard-codes `locale = 'de'` and the root
+- **Internationalisation (i18n) is German only in practice**: `src/i18n/request.ts` hard-codes `locale = 'de'` and the root
   layout imports `messages/de.json`; `messages/en.json` exists but nothing loads it.
 - **The homepage sections** (Hero, Services, Team, Verein, Contact, FAQ, plus the announcement banner
   and a prefetcher) are all client components. On `main` none takes props: texts come from
@@ -227,7 +227,7 @@ real marketing sections (hero, features, call to action) built as code component
   canvas and editor fields and returns `{ type, props, bindings, children, id }`; `hydrateBindings.ts`
   resolves CMS and commerce bindings; `renderPublishedPage.tsx` renders. The site route
   `src/app/(site)/[...slug]/page.tsx` is `force-dynamic` with the whole site cached by tag.
-- **No public API for documents, no machine keys, no CORS.** The only anonymous endpoints are
+- **No public API for documents, no machine keys, no CORS (Cross-Origin Resource Sharing, the headers that let a browser on another domain call an endpoint).** The only anonymous endpoints are
   host-scoped reads of CMS rows and commerce products, and form submission. auth-brain already
   issues service-account keys for machine-to-machine calls
   (`docs/plans/2026-06-23-framer-hosting-platform-foundation.md:41`).
@@ -256,7 +256,7 @@ real marketing sections (hero, features, call to action) built as code component
    and `GET .../pages` (slugs and metadata for the consumer's sitemap). Authenticated with an
    auth-brain service-account key bound to the site's workspace, read-only. Called from the
    consumer's server, so no CORS is needed; if a browser ever calls it, CORS is added then.
-4. **Publish webhook**: on publish and unpublish, a signed POST (HMAC, a shared secret per
+4. **Publish webhook**: on publish and unpublish, a signed POST (HMAC, a hash-based message authentication code with a shared secret per
    subscription) to URLs the site owner registers, with `{ siteId, slugs, revision }`. The storefront
    gets a route that verifies the signature and calls `revalidateTag('fc-page:<slug>')`. Without an
    outbox in framer-clone, the first version sends directly after the publish transaction commits and
@@ -277,7 +277,7 @@ real marketing sections (hero, features, call to action) built as code component
 
 | Option | For | Against |
 |---|---|---|
-| A. REST delivery API plus webhook, consumer renders with its own components (the Builder.io model, self-hosted) | Fits the storefront as it is; the storefront keeps its routing, shop and caching; small surface | Two repositories share a contract that must be versioned with care |
+| A. REST (plain HTTP and JSON) delivery API plus webhook, consumer renders with its own components (the Builder.io model, self-hosted) | Fits the storefront as it is; the storefront keeps its routing, shop and caching; small surface | Two repositories share a contract that must be versioned with care |
 | B. framer-clone serves the pages itself and the storefront proxies or iframes them | No contract | framer-clone cannot render the storefront's components (point 3), and the shop shares header, cart and search with the pages |
 | C. Codegen: framer-clone writes React files into the storefront repository on publish (Plasmic codegen) | No runtime dependency | A publish becomes a pull request and a deploy; non-developers lose instant publishing |
 | D. Emit Puck's data shape from framer-clone, so the storefront's Puck renderer keeps working | The storefront would not change at all when switching editors | Ties framer-clone's contract to Puck; nested framer-clone trees need slots to map |
