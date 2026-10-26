@@ -140,13 +140,6 @@ export const FORBIDDEN_TAGS: ReadonlySet<string> = new Set([
   'select', 'link', 'meta', 'base', 'frame', 'frameset', 'template', 'svg', 'math',
 ]);
 
-/** Allowed link schemes for `href`: http(s), mailto, tel, an in-page anchor, or a site-relative path. */
-export function isSafeHref(value: string): boolean {
-  const v = value.trim();
-  if (v.startsWith('#') || (v.startsWith('/') && !v.startsWith('//'))) return true;
-  return /^(https?:\/\/|mailto:|tel:)/i.test(v);
-}
-
 /** Allowed image sources: http(s) or a site-relative path. No data: or javascript: URLs. */
 export function isSafeSrc(value: string): boolean {
   const v = value.trim();

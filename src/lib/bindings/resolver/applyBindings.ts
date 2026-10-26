@@ -10,7 +10,7 @@
 import type { BindingsRecord, ReadBinding } from '@/lib/bindings/types';
 import type { BindingScope } from './scope';
 import { evaluateExpression, parseExpression } from './expression';
-import { isSafeHref } from '@/lib/links/safeHref';
+import { safeHrefFromData } from '@/lib/links/safeHref';
 
 /** A render-time props bag. Mirrors ComponentModel's PropsRecord without
  *  importing the (React-coupled) model. */
@@ -79,8 +79,8 @@ function setDeep(target: Props, path: string[], value: unknown): void {
  *   left as the base value (no overwrite).
  * - Any slot resolving to `LOADING_SENTINEL` flips `isLoading` to true and is
  *   left as the base value.
- * - The `href` slot only takes a safe link target (isSafeHref); anything else
- *   leaves the base value.
+ * - The `href` slot only takes a safe link target (safeHrefFromData); anything
+ *   else leaves the base value.
  *
  * Non-read bindings (`write` / `two-way`) are ignored in Phase 1. The input
  * `baseProps` is never mutated; a shallow-then-deep copy is returned.
@@ -104,10 +104,11 @@ export function applyBindings(
     }
     if (value === undefined) continue;
     // A bound link target comes from data (a CMS cell, a product): only a safe
-    // one (src/lib/links/safeHref.ts) replaces the element's own address, so a
-    // `javascript:` value never reaches a published page.
+    // one (src/lib/links/safeHref.ts, spaces encoded) replaces the element's own
+    // address, so a `javascript:` value never reaches a published page.
     if (slot === 'href') {
-      if (typeof value === 'string' && isSafeHref(value)) resolvedProps.href = value.trim();
+      const href = safeHrefFromData(value);
+      if (href !== null) resolvedProps.href = href;
       continue;
     }
 

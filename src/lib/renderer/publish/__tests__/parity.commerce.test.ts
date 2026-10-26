@@ -10,7 +10,7 @@
 // surface).
 //
 // ProductList parity is asserted against HeadlessPageRenderer (the published
-// page render path). ProductDetail parity is asserted against
+// page render path), including the `{{product.href}}` link of each card. ProductDetail parity is asserted against
 // HeadlessComponentRenderer with an explicit page-frame scope, because
 // HeadlessPageRenderer does not thread dynamic-route params into the binding
 // scope (the same reason the CMS parity suite asserts Collection but not
@@ -22,7 +22,10 @@
 import React from 'react';
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup, waitFor } from '@testing-library/react';
+import { getSnapshot } from 'mobx-state-tree';
 import PageModel from '@/models/PageModel';
+import ProjectModel from '@/models/ProjectModel';
+import { productPagePath } from '@/lib/pages/slug';
 import ComponentModel from '@/models/ComponentModel';
 import HeadlessPageRenderer from '@/lib/renderer/HeadlessPageRenderer';
 import HeadlessComponentRenderer from '@/lib/renderer/HeadlessComponentRenderer';
@@ -208,6 +211,47 @@ describe('hydrateBindings commerce parity with the live preview render', () => {
 
     expect(nodeTextContent(hydrated)).toBe(previewText);
     expect(previewText).toBe('AlphaBeta');
+  });
+
+  it('ProductList: each card links to the same product page in the preview and on the published page', async () => {
+    const provider = new InMemoryCommerceDataSource(twoProductSeed());
+    const appTree = makeBoundListTree();
+    // The template card is a link bound to {{product.href}}.
+    const card = appTree.children[0].children[0] as Record<string, unknown>;
+    Object.assign(card, {
+      type: 'a',
+      props: { href: '/shop' },
+      bindings: {
+        children: { mode: 'read', expression: '{{product.title}}' },
+        href: { mode: 'read', expression: '{{product.href}}' },
+      },
+    });
+
+    // The preview reaches the product page path through the page's project.
+    const project = ProjectModel.create({ id: 'proj', metadata: { title: 'Shop' }, pages: { 'page-test': getSnapshot(makePage(appTree)) } });
+    project.createPage('Product').setSlug('products/:handle');
+    const { container } = render(
+      React.createElement(
+        CommerceDataSourceContext.Provider,
+        { value: provider },
+        React.createElement(HeadlessPageRenderer, { page: project.pages.get('page-test')!, breakpointId: BP }),
+      ),
+    );
+    await waitFor(() => {
+      expect(container.querySelectorAll('a[data-inner-component-id="tpl-card"]').length).toBe(2);
+    });
+    const previewHrefs = Array.from(container.querySelectorAll('a[data-inner-component-id="tpl-card"]'), (a) => a.getAttribute('href'));
+
+    const hydrated = await hydrateBindings(
+      appTree as unknown as ComponentNode,
+      {},
+      { cmsRepo: makeCmsRepo(), commerceRepo: provider as unknown as CommerceServerRepository },
+      productPagePath(project.pagesArray.map((p) => p.slug)),
+    );
+    const publishedHrefs = hydrated.children![0].children!.map((node) => node.props?.href);
+
+    expect(previewHrefs).toEqual(['/products/alpha', '/products/beta']);
+    expect(publishedHrefs).toEqual(previewHrefs);
   });
 
   it('ProductList: hydrated text content matches the preview of an empty catalog (emptyContent)', async () => {

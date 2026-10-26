@@ -149,10 +149,13 @@ describe('applyBindings: a bound link target', () => {
     for (const ok of ['/contact', 'https://example.com', '#top', 'mailto:hi@example.com']) {
       expect(applyBindings(linkNode, { href: '/' }, withUrl(ok)).resolvedProps.href).toBe(ok);
     }
+    expect(applyBindings(linkNode, { href: '/' }, withUrl('mailto:hi@example.com?subject=Hello there')).resolvedProps.href).toBe(
+      'mailto:hi@example.com?subject=Hello%20there',
+    );
   });
 
   it('keeps its own address when the data holds an unsafe or non-text value', () => {
-    for (const bad of ['javascript:alert(1)', 'data:text/html,x', '//evil.example', '', 42, { a: 1 }]) {
+    for (const bad of ['javascript:alert(1)', 'data:text/html,x', '//evil.example', '/\\evil.example', '', 42, { a: 1 }]) {
       expect(applyBindings(linkNode, { href: '/' }, withUrl(bad)).resolvedProps.href).toBe('/');
     }
   });

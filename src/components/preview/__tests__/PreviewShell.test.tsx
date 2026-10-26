@@ -23,12 +23,17 @@ vi.mock('next/link', () => ({
   __esModule: true,
   default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
 }));
-// The frame's renderer is covered elsewhere; here: which page it shows, and
-// whether it fills the window.
+// The frame's renderer is covered elsewhere; here: which page it shows,
+// whether it fills the window, and what the shell does with a clicked link
+// (`follow` stands in for a click on a link to `followPath`).
+let followPath = '/';
 vi.mock('../PreviewFrame', () => ({
   __esModule: true,
-  default: ({ page, fill }: { page: { id: string }; fill?: boolean }) => (
-    <div data-testid="frame" data-fill={String(Boolean(fill))}>{page.id}</div>
+  default: ({ page, fill, onSitePath }: { page: { id: string }; fill?: boolean; onSitePath?: (path: string) => void }) => (
+    <div>
+      <div data-testid="frame" data-fill={String(Boolean(fill))}>{page.id}</div>
+      <button type="button" onClick={() => onSitePath?.(followPath)}>follow</button>
+    </div>
   ),
 }));
 vi.mock('@/components/EditorCommerceProvider', () => ({
@@ -56,11 +61,33 @@ beforeEach(() => {
   home.setSlug('');
   homeId = home.id;
   bakeryId = p.createPage('Crumb & Hearth Bakery').id;
+  p.createPage('Product').setSlug('products/:handle');
   openProject(store, getSnapshot(p) as ProjectSnapshotOut, bakeryId);
 });
 afterEach(() => {
   cleanup();
   replaceState.mockRestore();
+});
+
+describe('PreviewShell links', () => {
+  it('a link to a page of the site shows that page', () => {
+    render(<PreviewShell />);
+    followPath = '/';
+    fireEvent.click(screen.getByRole('button', { name: 'follow' }));
+    expect(screen.getByTestId('frame').textContent).toBe(homeId);
+  });
+
+  it('a product link stays put and says it opens on the published site; an unknown path says so', () => {
+    render(<PreviewShell />);
+    followPath = '/products/pearl-necklace';
+    fireEvent.click(screen.getByRole('button', { name: 'follow' }));
+    expect(screen.getByTestId('frame').textContent).toBe(bakeryId);
+    expect(screen.getByRole('status').textContent).toContain('opens with its product on the published site');
+
+    followPath = '/nowhere';
+    fireEvent.click(screen.getByRole('button', { name: 'follow' }));
+    expect(screen.getByRole('status').textContent).toContain('no page at /nowhere');
+  });
 });
 
 describe('PreviewShell', () => {

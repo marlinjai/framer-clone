@@ -61,13 +61,13 @@ import {
   PLACEHOLDER_IMAGE_SRC,
   allowedPropKeysFor,
   getGenerationPreset,
-  isSafeHref,
   isSafeSrc,
   listGenerationTags,
   type BreakpointKey,
   type GenerationPreset,
 } from './schema';
 import { EFFECTS_PROP, cleanGeneratedEffects } from './promptSections/effects';
+import { isSafeHref } from '@/lib/links/safeHref';
 import {
   STICKY_CTA_PROP_KEYS,
   cleanStickyCtaProp,

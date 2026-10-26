@@ -2,7 +2,7 @@
 //
 // The payments page against a scripted /api/payments/stripe (fetch stubbed): the status read from the
 // server, both ways to connect for a company not connected, onboarding sends the owner to Stripe, a ready
-// account offers nothing to do, refusals and returns from Stripe are shown as text.
+// account offers nothing to do, test mode is said as such, refusals and returns from Stripe are shown as text.
 
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -55,6 +55,20 @@ describe('PaymentsHome', () => {
     expect(await screen.findByText(/takes real payments into your own Stripe account/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Stripe/ })).toBeNull();
     expect(screen.getByRole('status').textContent).toMatch(/not for this company or has expired/);
+  });
+
+  it('in test mode, neither a ready nor an unconnected account is promised real payments', async () => {
+    respond({ 'GET /api/payments/stripe/account': { status: 200, body: { status: 'ready', testMode: true } } });
+    render(<PaymentsHome returned={null} />);
+    expect(await screen.findByText(/Ready \(test mode\)/)).toBeTruthy();
+    expect(screen.getByText(/Stripe's test cards and no real money moves/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/takes real payments/);
+    cleanup();
+
+    respond({ 'GET /api/payments/stripe/account': { status: 200, body: { status: 'not_connected', testMode: true } } });
+    render(<PaymentsHome returned={null} />);
+    expect(await screen.findByText(/takes test payments only/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/to take real payments/);
   });
 
   it('a refusal of the server is shown, never a blank page', async () => {
