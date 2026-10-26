@@ -21,7 +21,9 @@ async function main(): Promise<void> {
   }
   if (!connectionString) throw new Error('COMMERCE_OWNER_DATABASE_URL is not set (the owner role, from Infisical)');
   const result = await assignCatalogueCompany({ connectionString, tenantGroupId, companyId, validate });
-  console.log(`assigned rows: ${JSON.stringify(result.assigned)}; constraints validated: ${result.validated}`);
+  console.log(
+    `assigned rows: ${JSON.stringify(result.assigned)}; legacy drafts published: ${result.published}; constraints validated: ${result.validated}`,
+  );
 }
 
 main().catch((err) => {

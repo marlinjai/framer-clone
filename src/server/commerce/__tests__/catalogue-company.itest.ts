@@ -32,13 +32,14 @@ import { pricingRepository } from '../repository/pricing';
 import { commerceReadRepository } from '../repository/read';
 import { listStorefrontProducts, resolveOrderLines, UnknownVariantError } from '../repository/storefront';
 import { companyForSite, soleCompany } from '../company';
+import { booksScope } from '@/server/books/scope';
 import { createOrder } from '../order/createOrder';
 import {
   FakeDirectory,
   initCompany,
   openBooksEnv,
+  provisionAnotherGroup,
   rejectionCode,
-  scopeFor,
   type BooksEnv,
 } from '@/server/books/__tests__/booksFixtures';
 
@@ -218,6 +219,8 @@ describe('020_catalogue_company on a schema that already holds rows', () => {
         price: 1,
         order_line_item: 1,
       },
+      // The legacy ring was a draft the old storefront showed anyway: published with its assignment.
+      published: 1,
       validated: true,
     });
     expect((await companiesOf(schema)).line).toEqual([COMPANY_B]);
@@ -229,6 +232,8 @@ describe('020_catalogue_company on a schema that already holds rows', () => {
     const again = await assignCatalogueCompany({ connectionString: ownerUrl, tenantGroupId, companyId: COMPANY_A });
     expect(Object.values(again.assigned).every((n) => n === 0)).toBe(true);
     expect((await companiesOf(schema)).product).toEqual([COMPANY_B]);
+    const ring = await owner`SELECT status::text AS status FROM ${owner(schema)}.product WHERE id = 'p1'`;
+    expect(ring[0].status).toBe('published');
   });
 });
 
@@ -395,13 +400,18 @@ describe('the catalogue per company on a fresh schema', () => {
     ).rejects.toBeInstanceOf(UnknownVariantError);
   });
 
-  it('a site not stamped yet falls back to the sole Books company; a stamped site keeps its own', async () => {
-    // This schema has no Books company yet: no fallback.
-    expect(await soleCompany(env.appDb)).toBeNull();
-    expect(await companyForSite(env.appDb, { companyId: null })).toBeNull();
-    await initCompany(scopeFor(env.appDb, env.tgId, COMPANY_A, new FakeDirectory()), { taxStatus: 'small_business' });
-    expect(await soleCompany(env.appDb)).toBe(COMPANY_A);
-    expect(await companyForSite(env.appDb, { companyId: null })).toBe(COMPANY_A);
-    expect(await companyForSite(env.appDb, { companyId: COMPANY_B })).toBe(COMPANY_B);
+  it('a site not stamped yet falls back to the sole company of the schema; a stamped site keeps its own', async () => {
+    // A tenant group of its own: the other tests here fill this schema with several companies.
+    const group = await provisionAnotherGroup(env, `sole-${randomUUID().slice(0, 8)}`);
+    expect(await soleCompany(group.appDb)).toBeNull();
+    expect(await companyForSite(group.appDb, { companyId: null })).toBeNull();
+    // Only catalogue rows of one company (the demo shop after its legacy rows were assigned): that company.
+    await catalogRepository.createProduct(group.ownerDb, { tenantId: COMPANY_B, title: 'Ring', handle: 'ring', status: 'published' });
+    expect(await soleCompany(group.appDb)).toBe(COMPANY_B);
+    // A second company appears through the Books: no single company any more.
+    await initCompany(booksScope(group.appDb, group.tgId, COMPANY_A, { recipients: new FakeDirectory() }), { taxStatus: 'small_business' });
+    expect(await soleCompany(group.appDb)).toBeNull();
+    expect(await companyForSite(group.appDb, { companyId: null })).toBeNull();
+    expect(await companyForSite(group.appDb, { companyId: COMPANY_A })).toBe(COMPANY_A);
   });
 });

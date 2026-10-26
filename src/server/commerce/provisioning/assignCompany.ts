@@ -9,6 +9,11 @@
 // Parents first, then each child from its parent, exactly as the migration's backfill: a child always ends
 // up with its parent's company, and the composite foreign keys hold. Validation runs last and fails loudly
 // when a row is still unassigned (for example a child whose parent belongs to nobody).
+//
+// The legacy products it assigns are also published: before 020 the storefront showed every live product
+// whatever its status (and the old demo seed left them draft), and since 020 it shows only published ones.
+// Publishing exactly the rows this step assigns keeps such a shop showing what it showed before; a product
+// created after 020 always has its company and is never touched here.
 
 import postgres from 'postgres';
 import { assertTenantGroupId, tenantSchema } from '@marlinjai/tenant-db';
@@ -32,6 +37,8 @@ const CHILDREN = [
 export interface AssignCompanyResult {
   /** Rows assigned per table. */
   assigned: Record<string, number>;
+  /** Legacy draft products published with their assignment. */
+  published: number;
   /** Whether the NOT VALID presence constraints were validated. */
   validated: boolean;
 }
@@ -54,9 +61,21 @@ export async function assignCatalogueCompany(opts: {
   try {
     return await sql.begin(async (tx) => {
       const assigned: Record<string, number> = {};
+      // The legacy drafts that become visible again (see the header), published in the same statement that
+      // assigns them: a row is only ever written with its company.
+      const [drafts] = await tx<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM ${tx(schema)}.${tx('product')}
+         WHERE tenant_id IS NULL AND status = 'draft' AND deleted_at IS NULL`;
+      const published = drafts?.n ?? 0;
       for (const table of PARENTS) {
-        const result = await tx`
-          UPDATE ${tx(schema)}.${tx(table)} SET tenant_id = ${opts.companyId} WHERE tenant_id IS NULL`;
+        const result =
+          table === 'product'
+            ? await tx`
+                UPDATE ${tx(schema)}.${tx(table)}
+                   SET tenant_id = ${opts.companyId},
+                       status = CASE WHEN status = 'draft' AND deleted_at IS NULL THEN 'published' ELSE status END
+                 WHERE tenant_id IS NULL`
+            : await tx`UPDATE ${tx(schema)}.${tx(table)} SET tenant_id = ${opts.companyId} WHERE tenant_id IS NULL`;
         assigned[table] = result.count;
       }
       for (const [table, parent, column] of CHILDREN) {
@@ -72,7 +91,7 @@ export async function assignCatalogueCompany(opts: {
           await tx`ALTER TABLE ${tx(schema)}.${tx(table)} VALIDATE CONSTRAINT ${tx(`${table}_tenant_id_present`)}`;
         }
       }
-      return { assigned, validated: Boolean(opts.validate) };
+      return { assigned, published, validated: Boolean(opts.validate) };
     });
   } finally {
     await sql.end();
