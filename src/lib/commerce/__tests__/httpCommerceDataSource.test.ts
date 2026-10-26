@@ -315,6 +315,39 @@ describe('HttpCommerceDataSource (contract parity over /api/commerce/*)', () => 
     });
   });
 
+  describe('catalog reads in flight are shared', () => {
+    const listCalls = () =>
+      (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(([input]) =>
+        new URL(String(input)).pathname.endsWith('/products'),
+      ).length;
+
+    it('reads issued together page the catalog once; a later read fetches again', async () => {
+      (fetch as unknown as ReturnType<typeof vi.fn>).mockClear();
+      const [variant, prices, product] = await Promise.all([
+        ds.getVariant('var_s_red'),
+        ds.getPrices('var_s_red'),
+        ds.getProduct('prod_tee'),
+      ]);
+      expect(variant?.id).toBe('var_s_red');
+      expect(prices).toHaveLength(1);
+      expect(product?.title).toBeTruthy();
+      // Two products at one per page: two page fetches for all three reads.
+      expect(listCalls()).toBe(2);
+
+      await ds.getVariant('var_s_red');
+      expect(listCalls()).toBe(4);
+    });
+
+    it('a failed read fails every read that shared it, and the next read tries again', async () => {
+      installFetch({ listStatus: 503 });
+      const shared = await Promise.allSettled([ds.getVariant('var_s_red'), ds.getProduct('prod_tee')]);
+      expect(shared.map((r) => r.status)).toEqual(['rejected', 'rejected']);
+
+      installFetch();
+      expect((await ds.getVariant('var_s_red'))?.id).toBe('var_s_red');
+    });
+  });
+
   describe('getProduct / getProductByHandle', () => {
     it('returns the product by id', async () => {
       const product = await ds.getProduct('prod_tee');

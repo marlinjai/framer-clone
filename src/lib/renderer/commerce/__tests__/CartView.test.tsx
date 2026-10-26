@@ -1,4 +1,4 @@
-// CartView: renders lines, resolves variant + price DTOs for DISPLAY, shows a
+// CartView: renders lines named by product and variant, resolves variant + price DTOs for DISPLAY, shows a
 // DISPLAY-ONLY estimated subtotal, supports quantity change + line removal, and
 // shows an ADVISORY-availability warning (never auto-removing the line). No
 // server write happens from any interaction.
@@ -13,7 +13,7 @@ import { CommerceDataSourceContext } from '@/lib/commerce/context';
 import { InMemoryCommerceDataSource } from '@/lib/commerce/inMemoryCommerceDataSource';
 import type { CommerceDataSource } from '@/lib/commerce/provider';
 import { CartProvider, CART_STORAGE_KEY, type CartLine } from '@/lib/commerce/cart';
-import CartView from '../CartView';
+import CartView, { cartLineTitle } from '../CartView';
 
 function makeNode(props: Record<string, unknown> = {}): ComponentInstance {
   return { props } as unknown as ComponentInstance;
@@ -39,7 +39,38 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('cartLineTitle', () => {
+  it('names a line by its product and variant, never by an internal id', () => {
+    expect(cartLineTitle('Stacking ring', { title: '54 / Silver', sku: 'RING-54-S' })).toBe('Stacking ring, 54 / Silver');
+    expect(cartLineTitle('Ring sizing', { title: null, sku: undefined })).toBe('Ring sizing');
+    expect(cartLineTitle('Ring sizing', { title: '  ', sku: undefined })).toBe('Ring sizing');
+    // The product could not be read: the variant names the line, then its SKU, then a plain word.
+    expect(cartLineTitle(null, { title: '54 / Silver', sku: 'RING-54-S' })).toBe('54 / Silver');
+    expect(cartLineTitle(null, { title: null, sku: 'RING-54-S' })).toBe('RING-54-S');
+    expect(cartLineTitle(null, { title: null, sku: undefined })).toBe('Item');
+  });
+});
+
 describe('CartView display', () => {
+  it('shows each line with its product and variant', async () => {
+    seedCart([{ variantId: 'var_s_red', quantity: 1 }]);
+    const { container } = renderCart(new InMemoryCommerceDataSource());
+    await waitFor(() => {
+      expect(container.querySelector('[data-cart-line="var_s_red"] [data-cart-line-title]')?.textContent).toBe('Classic Tee, Small / Red');
+    });
+  });
+
+  it('keeps a line whose product cannot be read, named by its variant', async () => {
+    seedCart([{ variantId: 'var_s_red', quantity: 1 }]);
+    const ds = new InMemoryCommerceDataSource();
+    vi.spyOn(ds, 'getProduct').mockRejectedValue(new Error('down'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container } = renderCart(ds);
+    await waitFor(() => {
+      expect(container.querySelector('[data-cart-line="var_s_red"] [data-cart-line-title]')?.textContent).toBe('Small / Red');
+    });
+  });
+
   it('shows an empty-cart note when there are no lines', async () => {
     const { container } = renderCart(new InMemoryCommerceDataSource());
     await waitFor(() => {

@@ -83,6 +83,8 @@ type LineData =
   | {
       status: 'ready';
       variant: ProductVariantDTO;
+      /** The product's title, or null when the product could not be read (the line still shows). */
+      productTitle: string | null;
       price: PriceDTO | undefined;
       availability: AvailabilityDTO;
     }
@@ -115,6 +117,17 @@ function formatDisplayMoney(amountCents: number, currency: string): string {
   } catch {
     return `${(amountCents / 100).toFixed(2)} ${currency.toUpperCase()}`;
   }
+}
+
+/**
+ * What a cart line is called: the product and its variant ("Stacking ring, 54 / Silver"), the product
+ * alone when it has a single variant without a title, and never an internal id.
+ */
+export function cartLineTitle(productTitle: string | null, variant: Pick<ProductVariantDTO, 'title' | 'sku'>): string {
+  const variantTitle = variant.title?.trim() || null;
+  const product = productTitle?.trim() || null;
+  if (product && variantTitle) return `${product}, ${variantTitle}`;
+  return product ?? variantTitle ?? variant.sku ?? 'Item';
 }
 
 /** Read a string node prop, falling back when absent or empty. */
@@ -155,14 +168,20 @@ const CartView = observer(
         return next;
       });
 
-      // Read variant + price + advisory availability for one line. A missing
-      // variant is the EMPTY path; a thrown fetch is the ERROR path (surfaced,
-      // never a silent success). All three calls are READS.
+      // Read variant + product + price + advisory availability for one line. A
+      // missing variant is the EMPTY path; a thrown fetch is the ERROR path
+      // (surfaced, never a silent success). All four calls are READS. The product
+      // only names the line, so a product that cannot be read leaves the line
+      // named by its variant instead of failing it.
       const loadOne = async (id: string): Promise<{ id: string; data: LineData }> => {
         try {
           const variant = await dataSource.getVariant(id);
           if (!variant) return { id, data: { status: 'empty' } };
-          const [prices, availability] = await Promise.all([
+          const [product, prices, availability] = await Promise.all([
+            dataSource.getProduct(variant.productId).catch((err: unknown) => {
+              console.error(`CartView: the product of variant ${id} could not be read; the line is named by its variant`, err);
+              return null;
+            }),
             dataSource.getPrices(id),
             dataSource.getAvailability(id),
           ]);
@@ -171,6 +190,7 @@ const CartView = observer(
             data: {
               status: 'ready',
               variant,
+              productTitle: product?.title ?? null,
               price: prices.length > 0 ? prices[0] : undefined,
               availability,
             },
@@ -316,7 +336,7 @@ const CartView = observer(
         return <div key={line.variantId} data-cart-line={line.variantId} style={LINE_STYLE} />;
       }
 
-      const title = data.variant.title ?? data.variant.id;
+      const title = cartLineTitle(data.productTitle, data.variant);
       const priceLabel = data.price
         ? formatDisplayMoney(data.price.amountCents, data.price.currency)
         : 'Price unavailable';
