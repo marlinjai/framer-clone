@@ -214,7 +214,7 @@ describe('paying an order and its receipt', () => {
     // The service date is the Berlin day the order was placed. The order's created_at comes from the
     // database clock, not the fake one, so the expectation is read from the row rather than hardcoded.
     // A DATE column reads back as a local-midnight Date: compare its calendar day.
-    const placed = await env.ownerDb.selectFrom('sales_order').select('created_at').where('id', '=', orderId).executeTakeFirstOrThrow();
+    const placed = await env.ownerDb.selectFrom('order').select('created_at').where('id', '=', orderId).executeTakeFirstOrThrow();
     const day = receipt.service_date as unknown as Date;
     const pad = (n: number) => String(n).padStart(2, '0');
     expect(`${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`).toBe(berlinDay(new Date(placed.created_at)));
