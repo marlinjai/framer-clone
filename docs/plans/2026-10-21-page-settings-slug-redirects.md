@@ -43,8 +43,10 @@ behind both `POST /api/projects/save` and `/publish`) call it.
 
 - Each segment: lowercase a to z, 0 to 9 and single hyphens, no hyphen at either end.
 - Nested paths with `/` are allowed, because the published router already matches multi-segment
-  slugs. Dynamic segments (`:handle`) are matched by the router but are not authorable: an
-  existing page that has one keeps it.
+  slugs. Dynamic segments are matched by the router but are not authorable, with one exception
+  (decided 2026-10-26, when the shop needed product pages): `:handle` as the last segment after a
+  fixed one (`products/:handle`), the parameter the product detail reads. Any other dynamic segment
+  stays refused; an existing page that has one keeps it.
 - 1 to 80 characters in total.
 - Unique within the project, compared case-insensitively (dynamic segments count as equal).
 - Reserved first segments: `api`, `projects`, `preview` (routes in `src/app`), `_next`,

@@ -132,7 +132,14 @@ connections to the suite. The four lines below are in that order.
   Infisical (project framer-clone), register the webhook endpoint `/api/payments/stripe/webhook` for
   connected accounts, then connect the test shop and pay with a test card. Built against a fake Stripe on
   2026-10-26; see [catalogue design](docs/plans/2026-10-25-catalogue-design.md), "Decided while building
-  slice 5". (2026-10-26)
+  slice 5". Progress 2026-10-26: the sandbox "Lumitra Sites" in the Lumitra Stripe account has Connect
+  (Standard accounts, OAuth) and the webhook; the three keys are in Infisical prod and dev; the test shop's
+  Stripe account finished onboarding and reads "Ready". Open: the test purchases. (2026-10-26)
+- [ ] 3g. Shop pages that link up: a product list cannot link each item to its product page today (a binding
+  is a single `{{path}}`, so `/products/{{product.handle}}` is refused), and the payments page says "real
+  payments" while the platform runs on Stripe test keys. Found while building the test shop on 2026-10-26;
+  product pages themselves became authorable the same day (`products/:handle`, `src/lib/pages/slug.ts`).
+  (2026-10-26)
 - [ ] 3e. Customer email from the shop: an order confirmation with the receipt, and the notice when a late
   payment had to be refunded (the payment handler logs it today; the app sends no email yet). See
   [catalogue design](docs/plans/2026-10-25-catalogue-design.md), "Decided while building slice 4". (2026-10-26)
