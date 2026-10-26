@@ -21,6 +21,7 @@ import { booksTextFormat } from './018_books_text_format';
 import { booksDraftDelete } from './019_books_draft_delete';
 import { catalogueCompany } from './020_catalogue_company';
 import { orderPayment } from './021_order_payment';
+import { paymentAccount } from './022_payment_account';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -114,6 +115,9 @@ import { orderPayment } from './021_order_payment';
  *                            cancelled, expired, refunded; BK018), its 1% platform
  *                            fee and receipt, one receipt per order, provider
  *                            events recorded once (append-only, BK019)
+ *   022_payment_account    : the company's connected payment account (Stripe
+ *                            Connect), one per company and provider, its account
+ *                            id fixed once set (BK020)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -138,4 +142,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   booksDraftDelete,
   catalogueCompany,
   orderPayment,
+  paymentAccount,
 ];

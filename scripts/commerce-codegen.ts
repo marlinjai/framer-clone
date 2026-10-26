@@ -140,6 +140,7 @@ const TABLE_DOCS: Record<string, string> = {
   order_payment:
     '021_order_payment: the payment of one order (pending, paid, failed, cancelled, expired, refunded), its\n1% platform fee and its receipt in the Books. Guarded state machine (BK018).',
   payment_event: '021_order_payment: a provider event, recorded once (append-only, BK019).',
+  payment_account: '022_payment_account: the company\'s connected payment account (Stripe Connect); the account id is fixed (BK020).',
   price_rule: '004_pricing_and_tax: price rule (attribute match).',
   price_list: '004_pricing_and_tax: price list (override / sale window).',
   credit_note:

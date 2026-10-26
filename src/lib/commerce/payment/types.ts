@@ -28,6 +28,8 @@ export interface PaymentRequest {
    * adapter ignores this field (the provider decides the outcome).
    */
   simulateDecline?: boolean;
+  /** Where a hosted checkout returns the buyer: a path on this storefront (defaults to the current page). */
+  returnPath?: string;
   /**
    * The buyer the receipt is made out to (name, email, postal address). The server keeps it with the payment
    * and makes the receipt's contact from it; the fake gateway ignores it.
@@ -58,6 +60,8 @@ export interface PaymentSuccess {
   transactionId: string;
   /** The receipt's number in the seller's Books once issued; null while it is still being issued. */
   receiptNumber?: string | null;
+  /** A hosted checkout (Stripe): send the buyer here; the outcome arrives at the shop by webhook. */
+  redirectUrl?: string;
 }
 
 /** A failed authorization. `code` lets the UI distinguish a decline from a fault. */

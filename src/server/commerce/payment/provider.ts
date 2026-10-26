@@ -41,6 +41,8 @@ export interface StartPaymentArgs {
   buyerEmail: string;
   /** Where a hosted checkout returns the buyer (success and cancel). */
   returnUrl?: string;
+  /** When the payment window closes (a hosted checkout expires no earlier than its provider allows). */
+  expiresAt?: Date;
   /** The company's connected account (Stripe Connect); absent for the demo provider. */
   connectedAccountId?: string;
   /** Demo only: the provider declines. A real provider ignores it. */

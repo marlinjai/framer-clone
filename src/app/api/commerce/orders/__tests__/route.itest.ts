@@ -156,7 +156,7 @@ describe('POST /api/commerce/orders on the tenant schema (Dockerized Postgres)',
 });
 
 describe('source contract', () => {
-  it('gates on the request host -> published site and STOPS at order-created (no payment)', () => {
+  it('gates on the request host -> published site and STOPS at order-created (no charge)', () => {
     const src = readFileSync(path.resolve(__dirname, '../route.ts'), 'utf8');
     const edge = readFileSync(
       path.resolve(__dirname, '../../../../../server/commerce/storefrontTenant.ts'),
@@ -171,9 +171,10 @@ describe('source contract', () => {
     // The removed seams must be gone.
     expect(src).not.toMatch(/from\s+['"]@\/server\/auth\/guard['"]/);
     expect(src).not.toMatch(/withTenant|getPrismaClient|cookies\(/);
-    // checkout STOPS at order-created: no payment integration code.
+    // Placing STOPS at order-created: the order's payment is only opened (pending); charging happens in the
+    // pay route (demo) or on Stripe's page, never here. The route may read which provider the company uses.
     expect(src).toMatch(/STOPS at order-created/);
-    expect(src).not.toMatch(/from\s+['"][^'"]*stripe[^'"]*['"]/i);
-    expect(src).not.toMatch(/redirectToCheckout|payment_intent|createPaymentIntent/i);
+    expect(src).not.toMatch(/from\s+['"]stripe['"]|@stripe\//i);
+    expect(src).not.toMatch(/redirectToCheckout|payment_intent|createPaymentIntent|createCheckoutSession|\.start\(/i);
   });
 });

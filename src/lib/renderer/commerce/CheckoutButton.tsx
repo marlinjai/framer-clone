@@ -51,6 +51,8 @@ interface PlacedOrder {
   orderId: string;
   totalCents: number;
   currency: string;
+  /** Who takes the payment: the demo provider (no real money) or Stripe (a hosted checkout page). */
+  provider: 'demo' | 'stripe';
 }
 
 type CheckoutState =
@@ -68,7 +70,9 @@ type CheckoutState =
       /** The buyer the receipt is made out to, as typed so far. */
       buyer: CheckoutBuyer;
     }
-  | { status: 'confirmed'; order: PlacedOrder; transactionId: string; receiptNumber: string | null };
+  | { status: 'confirmed'; order: PlacedOrder; transactionId: string; receiptNumber: string | null }
+  | { status: 'redirecting' }
+  | { status: 'returned'; outcome: 'paid' | 'cancelled'; orderId: string };
 
 const EMPTY_BUYER: CheckoutBuyer = {
   name: '',
@@ -182,6 +186,21 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
   // The buyer as last typed, kept across "Back to cart" and a new checkout after a decline.
   const buyerRef = React.useRef<CheckoutBuyer>(EMPTY_BUYER);
 
+  // Back from a hosted checkout (Stripe appends checkout=paid|cancelled and the order id to the return
+  // address): paid clears the cart and thanks the buyer (the receipt follows once Stripe's webhook arrived);
+  // cancelled keeps the cart, and the order's stock goes back when its payment window closes.
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const outcome = params.get('checkout');
+    const orderId = params.get('order');
+    if ((outcome === 'paid' || outcome === 'cancelled') && orderId) {
+      if (outcome === 'paid') cart.clear();
+      setState({ status: 'returned', outcome, orderId });
+    }
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const label = stringProp(node.props as Record<string, unknown> | undefined, 'label', 'Checkout');
   const payLabel = stringProp(node.props as Record<string, unknown> | undefined, 'payLabel', 'Pay');
 
@@ -244,6 +263,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
           orderId: data.orderId,
           totalCents: data.totalCents,
           currency: data.currency,
+          provider: data.provider === 'stripe' ? 'stripe' : 'demo',
         };
         placedRef.current = { signature, order };
         goToPayment(order);
@@ -299,9 +319,18 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
         orderId: order.orderId,
         amountCents: order.totalCents,
         currency: order.currency,
-        simulateDecline,
+        simulateDecline: order.provider === 'demo' ? simulateDecline : false,
         buyer,
+        returnPath: `${window.location.pathname}${window.location.search}`,
       });
+
+      if (result.ok && result.redirectUrl) {
+        // A hosted checkout (Stripe): the buyer pays there; the shop hears of it by webhook. The cart is
+        // cleared when the buyer comes back paid (see the checkout=paid return below).
+        setState({ status: 'redirecting' });
+        window.location.assign(result.redirectUrl);
+        return;
+      }
 
       if (result.ok) {
         // Paid: clear the cart and the attempt so a fresh checkout starts clean.
@@ -360,7 +389,8 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
 
   // The primary checkout button is hidden once the payment step / confirmation is
   // shown (the flow has moved on); the shortage/error states keep it for retry.
-  const showCheckoutButton = !inPayment && state.status !== 'confirmed';
+  const showCheckoutButton =
+    !inPayment && state.status !== 'confirmed' && state.status !== 'redirecting' && !(state.status === 'returned' && state.outcome === 'paid');
 
   return React.createElement(
     hostType,
@@ -388,7 +418,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
     ) : null,
     renderOutcome(state, {
       payLabel,
-      isDemo: activeGateway.isDemo,
+      isDemo: activeGateway.isDemo && !(state.status === 'payment' && state.order.provider === 'stripe'),
       onPay: pay,
       onToggleDecline: (next) =>
         setState((prev) => (prev.status === 'payment' ? { ...prev, simulateDecline: next } : prev)),
@@ -514,6 +544,24 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
             Back to cart
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (state.status === 'redirecting') {
+    return (
+      <div data-checkout-redirecting style={PANEL_STYLE}>
+        Taking you to the secure payment page...
+      </div>
+    );
+  }
+
+  if (state.status === 'returned') {
+    return (
+      <div data-checkout-returned={state.outcome} style={{ ...PANEL_STYLE, color: state.outcome === 'paid' ? '#065f46' : '#b45309' }}>
+        {state.outcome === 'paid'
+          ? `Thank you: the payment for order ${state.orderId} went through. Your receipt follows by email.`
+          : 'The payment was cancelled. Your cart is kept: check out again whenever you are ready.'}
       </div>
     );
   }

@@ -58,6 +58,8 @@ import { z } from 'zod';
 import { createOrder, type Cart } from '@/server/commerce/order/createOrder';
 import { buyerSchema } from '@/server/commerce/payment/buyer';
 import { shopTaxProfile } from '@/server/commerce/payment/shopTax';
+import { configuredStripeApi } from '@/server/commerce/payment/deps';
+import { readAccount } from '@/server/commerce/payment/stripe/connect';
 import {
   readOrderTotal,
   resolveOrderLines,
@@ -168,6 +170,9 @@ export async function POST(req: Request): Promise<Response> {
     // The company's tax status (its Books settings) decides whether VAT is charged at all, so the receipt the
     // Books issue for the order adds up to what was paid.
     const tax = await shopTaxProfile(db, companyId);
+    // Stripe once it is configured and the company's account can take payments; the demo provider otherwise.
+    const provider =
+      configuredStripeApi() && (await readAccount(db, companyId)).status === 'ready' ? ('stripe' as const) : ('demo' as const);
 
     const cart: Cart = {
       // The client-owned idempotency key when present (so a re-submit dedupes to
@@ -187,9 +192,8 @@ export async function POST(req: Request): Promise<Response> {
         variantRef: line.variantId,
         variantRefSource: 'owned' as const,
       })),
-      // The payment, pending for the payment window (021_order_payment). The demo provider until the company
-      // connects a payment account.
-      payment: { provider: 'demo', buyer: buyer ?? null },
+      // The payment, pending for the payment window (021_order_payment).
+      payment: { provider, buyer: buyer ?? null },
     };
 
     // b6 createOrder runs the whole order inside ONE READ COMMITTED
@@ -227,7 +231,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     return Response.json(
-      { orderId: result.orderId, totalCents: order.totalCents, currency: order.currency },
+      { orderId: result.orderId, totalCents: order.totalCents, currency: order.currency, provider },
       { status: 201 },
     );
   } catch (err) {

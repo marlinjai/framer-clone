@@ -2,17 +2,19 @@
 //
 // POST /api/commerce/orders/<orderId>/pay  { buyer?, simulateDecline? }
 //
-// Pays an order placed on this storefront with the DEMO provider, which moves no money and decides at once
-// (docs/plans/2026-10-25-catalogue-design.md, slice 4). Its answer goes through the same handler a real
-// provider's webhook uses (src/server/commerce/payment/payments.ts), so a paid order gets its receipt in the
-// company's Books exactly as it will with Stripe.
+// Pays an order placed on this storefront (docs/plans/2026-10-25-catalogue-design.md, slices 4 and 5).
+//   - DEMO provider: moves no money and decides at once; its answer goes through the same handler a real
+//     provider's webhook uses (src/server/commerce/payment/payments.ts), so a paid order gets its receipt in
+//     the company's Books exactly as with Stripe.
+//   - Stripe: a hosted Checkout Session on the company's own Stripe account (a direct charge with the 1%
+//     platform fee); the buyer is sent there and the outcome arrives through the webhook.
 //
 //   200 { status: 'paid', receipt: { documentId, number } | null, receiptError }
 //         paid; the receipt, or why it could not be issued yet (the payment stands)
+//   200 { status: 'redirect', redirectUrl }   Stripe: send the buyer to its checkout page
 //   402 payment_declined     the (simulated) card was declined: the order is closed and its stock released
 //   404 not_found            no such order on this storefront (another shop's id answers the same)
 //   409 payment_closed       the order is no longer waiting for a payment (paid, failed, expired, ...)
-//   409 hosted_checkout      the order is paid through a hosted checkout, not here
 //   422 buyer_required       neither the order nor this request carries the buyer's name and address
 //
 // The tenant, the company and the site come from the request host only, as for every storefront route.
@@ -35,6 +37,8 @@ const payBody = z
   .object({
     buyer: buyerSchema.optional(),
     simulateDecline: z.boolean().optional(),
+    // Where a hosted checkout returns the buyer: a path on this storefront.
+    returnPath: z.string().startsWith('/').max(500).optional(),
   })
   .strict();
 
@@ -53,7 +57,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
 
   const parsed = await parseBody(req, payBody);
   if (!parsed.ok) return parsed.response;
-  const { buyer, simulateDecline } = parsed.data;
+  const { buyer, simulateDecline, returnPath } = parsed.data;
 
   try {
     const deps = paymentDeps(db, tenantGroupId, companyId);
@@ -72,6 +76,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
         'order_payment.currency_code as currency',
         'order_payment.application_fee_amount as fee',
         'order_payment.buyer as buyer',
+        'order_payment.expires_at as expiresAt',
         'order.order_number as orderNumber',
       ])
       .where('order_payment.tenant_id', '=', companyId)
@@ -83,10 +88,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
         status: payment.status,
       });
     }
-    if (payment.provider !== 'demo') {
-      return jsonError('hosted_checkout', 'this order is paid through the hosted checkout', 409);
-    }
-
     if (buyer) {
       await db
         .updateTable('order_payment')
@@ -99,6 +100,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
     const stored = buyer ?? readBuyer(payment.buyer as Record<string, unknown>);
     if (!stored) {
       return jsonError('buyer_required', 'enter the name and address the receipt is made out to', 422);
+    }
+
+    if (payment.provider === 'stripe') {
+      const host = req.headers.get('host') ?? '';
+      const proto = req.headers.get('x-forwarded-proto') ?? 'https';
+      const started = await deps.provider('stripe').start(
+        {
+          tenantId: companyId,
+          orderId,
+          orderNumber: payment.orderNumber,
+          amount: payment.amount,
+          currency: payment.currency,
+          applicationFeeAmount: payment.fee,
+          buyerEmail: stored.email,
+          returnUrl: `${proto}://${host}${returnPath ?? '/'}`,
+          expiresAt: new Date(payment.expiresAt),
+        },
+        async () => {},
+      );
+      if (!started.redirectUrl) throw new Error(`Stripe answered no checkout page for order ${orderId}`);
+      return Response.json({ status: 'redirect', redirectUrl: started.redirectUrl });
     }
 
     let outcome: PaymentOutcome | undefined;
