@@ -163,7 +163,8 @@ export async function getStorefrontProductByHandle(
 /** A client order line after the server resolved its inventory identity. */
 export interface ResolvedOrderLine {
   variantId: string;
-  inventoryItemId: string;
+  /** Absent for an untracked variant (manage_inventory = false): it holds no stock, so reserve has nothing to decrement. */
+  inventoryItemId?: string;
   quantity: number;
   /** The product's price basis: whether its prices include VAT (020_catalogue_company). */
   priceBasis: 'net' | 'gross';
@@ -176,7 +177,8 @@ export interface ResolvedOrderLine {
  * group throws UnknownVariantError (the client's problem, a 422). A known
  * variant with no SKU or no live inventory item is a catalog misconfiguration
  * and throws a plain Error (a server fault, a logged 500), never a silent
- * zero-stock success.
+ * zero-stock success. An untracked variant (manage_inventory = false) is always
+ * sellable and needs neither a SKU nor an inventory item (the reserve policy).
  */
 export async function resolveOrderLines(
   db: Kysely<CommerceDB>,
@@ -193,13 +195,23 @@ export async function resolveOrderLines(
           .onRef('product.id', '=', 'product_variant.product_id')
           .onRef('product.tenant_id', '=', 'product_variant.tenant_id'),
       )
-      .select(['product_variant.id as id', 'product_variant.sku as sku', 'product.price_basis as priceBasis'])
+      .select([
+        'product_variant.id as id',
+        'product_variant.sku as sku',
+        'product_variant.manage_inventory as manageInventory',
+        'product.price_basis as priceBasis',
+      ])
       .where('product_variant.id', '=', line.variantId)
       .where('product_variant.deleted_at', 'is', null)
       .where((eb) => eb.and(visibleProductConditions(eb, view)))
       .executeTakeFirst();
     if (!variant) {
       throw new UnknownVariantError(line.variantId);
+    }
+    const priceBasis = variant.priceBasis === 'net' ? 'net' : 'gross';
+    if (!variant.manageInventory) {
+      resolved.push({ variantId: line.variantId, quantity: line.quantity, priceBasis });
+      continue;
     }
     if (!variant.sku) {
       throw new Error(`variant ${line.variantId} has no sku; cannot resolve inventory`);
@@ -217,7 +229,7 @@ export async function resolveOrderLines(
       variantId: line.variantId,
       inventoryItemId: item.id,
       quantity: line.quantity,
-      priceBasis: variant.priceBasis === 'net' ? 'net' : 'gross',
+      priceBasis,
     });
   }
   return resolved;

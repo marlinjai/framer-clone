@@ -203,7 +203,7 @@ export async function POST(req: Request): Promise<Response> {
       // A guarded-reserve rejection. Map the inventory-item-keyed shortages back
       // to the client's variant vocabulary so the visitor sees WHICH lines failed.
       const variantByItem = new Map(
-        resolved.map((line) => [line.inventoryItemId, line.variantId]),
+        resolved.flatMap((line) => (line.inventoryItemId ? [[line.inventoryItemId, line.variantId] as const] : [])),
       );
       const shortages = result.shortages.map((shortage) => ({
         variantId: variantByItem.get(shortage.inventoryItemId) ?? shortage.inventoryItemId,
