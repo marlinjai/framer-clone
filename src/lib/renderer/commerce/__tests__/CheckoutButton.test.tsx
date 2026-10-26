@@ -58,6 +58,22 @@ function renderCheckout(
   );
 }
 
+/** Fill in the buyer the receipt is made out to (the payment step requires it). */
+function fillBuyer(container: HTMLElement) {
+  const values: Record<string, string> = {
+    name: 'Alex Example',
+    email: 'alex@example.com',
+    addressLine1: 'Beispielweg 2',
+    postalCode: '20095',
+    city: 'Hamburg',
+  };
+  act(() => {
+    for (const [key, value] of Object.entries(values)) {
+      fireEvent.change(container.querySelector(`input[data-checkout-buyer-field="${key}"]`)!, { target: { value } });
+    }
+  });
+}
+
 /** A minimal fake Response carrying a status + json/text bodies. */
 function fakeResponse(status: number, body: unknown): Response {
   return {
@@ -127,6 +143,7 @@ describe('CheckoutButton pay (demo, simulated success)', () => {
 
     clickCheckout(container);
     await waitFor(() => expect(container.querySelector('[data-checkout-pay]')).not.toBeNull());
+    fillBuyer(container);
 
     await act(async () => {
       fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
@@ -147,15 +164,16 @@ describe('CheckoutButton pay (demo, simulated success)', () => {
 });
 
 describe('CheckoutButton pay declined (demo decline toggle)', () => {
-  it('surfaces the decline, keeps the cart, and a retry succeeds', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      fakeResponse(201, { orderId: 'order_123', totalCents: 4760, currency: 'EUR' }),
-    );
+  it('surfaces the decline, keeps the cart, and a new checkout places a new order that pays', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(fakeResponse(201, { orderId: 'order_123', totalCents: 4760, currency: 'EUR' }))
+      .mockResolvedValueOnce(fakeResponse(201, { orderId: 'order_124', totalCents: 4760, currency: 'EUR' }));
     const { container, getByTestId } = renderCheckout();
     await waitForHydratedCart(getByTestId);
 
     clickCheckout(container);
     await waitFor(() => expect(container.querySelector('[data-checkout-decline-toggle]')).not.toBeNull());
+    fillBuyer(container);
 
     // Turn on the demo decline, then pay -> the failure is surfaced.
     act(() => {
@@ -165,25 +183,42 @@ describe('CheckoutButton pay declined (demo decline toggle)', () => {
       fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
     });
 
+    // The declined order is closed on the server: the checkout says so and offers a new one.
     await waitFor(() => {
-      expect(container.querySelector('[data-checkout-payment-declined]')?.textContent).toMatch(/declined/i);
+      expect(container.querySelector('[data-checkout-error]')?.textContent).toMatch(/declined.*check out again/i);
     });
-    // Declined is NOT a success: no confirmation, cart intact.
     expect(container.querySelector('[data-checkout-confirmation]')).toBeNull();
     expect(getByTestId('lines').textContent).toBe(JSON.stringify(SEEDED_LINES));
 
-    // Untoggle the decline and retry -> success (no second order POST).
-    act(() => {
-      fireEvent.click(container.querySelector('input[data-checkout-decline-toggle]')!);
-    });
+    // Check out again: a NEW order (a new idempotency key), the buyer kept, and this time it pays.
+    clickCheckout(container);
+    await waitFor(() => expect(container.querySelector('[data-checkout-pay]')).not.toBeNull());
+    expect((container.querySelector('input[data-checkout-buyer-field="name"]') as HTMLInputElement).value).toBe('Alex Example');
     await act(async () => {
       fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
     });
     await waitFor(() => {
-      expect(container.querySelector('[data-checkout-confirmation]')?.textContent).toContain('order_123');
+      expect(container.querySelector('[data-checkout-confirmation]')?.textContent).toContain('order_124');
     });
-    // The order was placed ONCE; the retry only re-attempted payment.
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const posts = vi.mocked(globalThis.fetch).mock.calls.map(([, init]) => JSON.parse(String(init?.body)).idempotencyKey);
+    expect(posts).toHaveLength(2);
+    expect(posts[0]).not.toBe(posts[1]);
+  });
+
+  it('asks for the buyer before paying and calls no gateway without it', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      fakeResponse(201, { orderId: 'order_123', totalCents: 4760, currency: 'EUR' }),
+    );
+    const authorize = vi.fn();
+    const { container, getByTestId } = renderCheckout(makeNode(), { id: 'demo', isDemo: true, authorize });
+    await waitForHydratedCart(getByTestId);
+    clickCheckout(container);
+    await waitFor(() => expect(container.querySelector('[data-checkout-pay]')).not.toBeNull());
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
+    });
+    expect(container.querySelector('[data-checkout-payment-declined]')?.textContent).toMatch(/name, email and address/);
+    expect(authorize).not.toHaveBeenCalled();
   });
 });
 
@@ -291,6 +326,7 @@ describe('CheckoutButton gateway fault', () => {
 
     clickCheckout(container);
     await waitFor(() => expect(container.querySelector('[data-checkout-pay]')).not.toBeNull());
+    fillBuyer(container);
     await act(async () => {
       fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
     });

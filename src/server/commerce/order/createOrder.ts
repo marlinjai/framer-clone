@@ -51,6 +51,10 @@ import { RESERVE_ISOLATION_LEVEL, reserve, type Shortage } from '../inventory/re
 import { pricingRepository } from '../repository/pricing';
 import { orderRepository } from '../repository/order';
 import { UnknownVariantError } from '../repository/storefront';
+import { toJsonb } from '../../books/snapshots';
+import type { Buyer } from '../payment/buyer';
+import { PAYMENT_WINDOW_MS, platformFee } from '../payment/payments';
+import type { ProviderId } from '../payment/provider';
 import type { CreateOrderLineItemInput } from '../repository/types';
 import type { CommerceDB } from '../db-types';
 import {
@@ -126,6 +130,12 @@ export interface Cart {
   clientTotal?: number;
   /** Injectable clock for deterministic price-window evaluation in tests. */
   now?: Date;
+  /**
+   * Open the order's payment in the same transaction (021_order_payment): pending, holding the reserved stock
+   * for the payment window, with the 1% platform fee recorded once. The buyer may follow later (while
+   * pending). Omitted: no payment row (the order is not paid online, e.g. a test or an import).
+   */
+  payment?: { provider: ProviderId; buyer?: Buyer | null; windowMs?: number };
 }
 
 export type CreateOrderResult =
@@ -410,6 +420,25 @@ function runOrderTransaction(
           // reservation atomically (zero reservations on a shortage).
           throw new OrderShortageError(result.shortages);
         }
+      }
+
+      // (7) the payment, pending until the provider reports (a free order needs none).
+      if (cart.payment && total > 0) {
+        const opened = cart.now ?? new Date();
+        await trx
+          .insertInto('order_payment')
+          .values({
+            tenant_id: cart.tenantId,
+            order_id: order.id,
+            provider: cart.payment.provider,
+            amount: total,
+            currency_code: cart.currency,
+            application_fee_amount: platformFee(total),
+            buyer: toJsonb(cart.payment.buyer ?? {}),
+            expires_at: new Date(opened.getTime() + (cart.payment.windowMs ?? PAYMENT_WINDOW_MS)),
+            updated_at: opened,
+          })
+          .execute();
       }
 
       return { ok: true, orderId: order.id };

@@ -119,7 +119,10 @@ describe('020_catalogue_company on a schema that already holds rows', () => {
   it('assigns every existing row to the sole company and moves the Books list in with its prices', async () => {
     const schema = await legacySchema([COMPANY_A]);
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((s) => s.schema === schema)?.applied).toEqual(['020_catalogue_company']);
+    // 020 and every migration after it.
+    expect(result.schemas.find((s) => s.schema === schema)?.applied).toEqual(
+      COMMERCE_TENANT_MIGRATIONS.filter((m) => m.id >= '020').map((m) => m.id),
+    );
 
     expect(await companiesOf(schema)).toEqual({
       product: [COMPANY_A],

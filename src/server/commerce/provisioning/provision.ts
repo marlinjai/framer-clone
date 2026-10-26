@@ -96,6 +96,7 @@ export const APPEND_ONLY_TABLES = [
   'sales_document_event',
   'sales_document_file',
   'document_template_version',
+  'payment_event',
 ] as const;
 
 /**
@@ -138,7 +139,12 @@ export const COMMERCE_APP_ROLE_BOOTSTRAP = 'verify' as const satisfies AppRoleBo
  * one would restart a document series; the 007 trigger refuses it for every
  * role (BK003), this REVOKE refuses it for the app role before it gets there.
  */
-export const NO_DELETE_TABLES = ['document_number_counter', 'historical_import_extraction', 'historical_import_item'] as const;
+export const NO_DELETE_TABLES = [
+  'document_number_counter',
+  'historical_import_extraction',
+  'historical_import_item',
+  'order_payment',
+] as const;
 
 /**
  * The tables commerce_app may read, insert and delete from but never UPDATE:

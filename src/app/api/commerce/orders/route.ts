@@ -56,6 +56,8 @@
 import { z } from 'zod';
 
 import { createOrder, type Cart } from '@/server/commerce/order/createOrder';
+import { buyerSchema } from '@/server/commerce/payment/buyer';
+import { shopTaxProfile } from '@/server/commerce/payment/shopTax';
 import {
   readOrderTotal,
   resolveOrderLines,
@@ -93,6 +95,9 @@ const orderBodySchema = z
     // a malformed/oversized value is a 400, never trusted as a request_id. Stays
     // `.strict()`-compatible: a price/stock/total key is still rejected.
     idempotencyKey: z.string().min(8).max(200).optional(),
+    // The buyer, when the checkout already has it; else it is given when paying
+    // (POST /api/commerce/orders/<id>/pay). The receipt is made from it.
+    buyer: buyerSchema.optional(),
   })
   .strict();
 
@@ -127,7 +132,7 @@ export async function POST(req: Request): Promise<Response> {
 
   const parsed = await parseBody(req, orderBodySchema);
   if (!parsed.ok) return parsed.response;
-  const { lines, idempotencyKey } = parsed.data;
+  const { lines, idempotencyKey, buyer } = parsed.data;
 
   try {
     // Server-side identity resolution: variant -> inventory item (the client
@@ -151,6 +156,19 @@ export async function POST(req: Request): Promise<Response> {
     // The server authors the cart: idempotency key, currency, tax region, and
     // the inventory identity. createOrder ignores any client total; here
     // the client never sends one at all.
+    // One price basis per order: every product's prices include VAT, or none do.
+    const bases = new Set(resolved.map((line) => line.priceBasis));
+    if (bases.size > 1) {
+      return jsonError(
+        'mixed_price_basis',
+        'some items are priced with VAT and some without; the shop owner has to align them before they can be bought together',
+        422,
+      );
+    }
+    // The company's tax status (its Books settings) decides whether VAT is charged at all, so the receipt the
+    // Books issue for the order adds up to what was paid.
+    const tax = await shopTaxProfile(db, companyId);
+
     const cart: Cart = {
       // The client-owned idempotency key when present (so a re-submit dedupes to
       // the same order), else a fresh server-owned key.
@@ -159,11 +177,19 @@ export async function POST(req: Request): Promise<Response> {
       siteId: site.siteId,
       currency: DEFAULT_CURRENCY,
       taxRegion: ORDER_TAX_REGION,
+      netOrGross: bases.has('net') ? 'net' : 'gross',
+      kleinunternehmer: tax.kleinunternehmer,
       lines: resolved.map((line) => ({
         inventoryItemId: line.inventoryItemId,
         variantId: line.variantId,
         quantity: line.quantity,
+        // The variant is the line's reference (a late payment re-reserves it, the receipt line points at it).
+        variantRef: line.variantId,
+        variantRefSource: 'owned' as const,
       })),
+      // The payment, pending for the payment window (021_order_payment). The demo provider until the company
+      // connects a payment account.
+      payment: { provider: 'demo', buyer: buyer ?? null },
     };
 
     // b6 createOrder runs the whole order inside ONE READ COMMITTED

@@ -20,6 +20,7 @@ import { formSubmissions } from './017_form_submissions';
 import { booksTextFormat } from './018_books_text_format';
 import { booksDraftDelete } from './019_books_draft_delete';
 import { catalogueCompany } from './020_catalogue_company';
+import { orderPayment } from './021_order_payment';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -109,6 +110,10 @@ import { catalogueCompany } from './020_catalogue_company';
  *                            (backfilled to the schema's sole company), product
  *                            kind and shop fields, images, collections, per-site
  *                            visibility, the Books' list moved in (BK017)
+ *   021_order_payment      : the payment of an order (pending to paid, failed,
+ *                            cancelled, expired, refunded; BK018), its 1% platform
+ *                            fee and receipt, one receipt per order, provider
+ *                            events recorded once (append-only, BK019)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -132,4 +137,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   booksTextFormat,
   booksDraftDelete,
   catalogueCompany,
+  orderPayment,
 ];
