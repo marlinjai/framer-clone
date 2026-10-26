@@ -18,7 +18,7 @@ import 'server-only';
 // with the route family that owns it.
 //
 // Errors surface, never swallowed: bad query input is a `bad_request` 400, an
-// unknown product or level row a `not_found` 404, and any read or resolution
+// unknown product or variant a `not_found` 404, and any read or resolution
 // failure a `commerce_read_failed` 500 envelope whose message is GENERIC; the
 // full error goes to the server log only (faults.ts), never to the client.
 
@@ -34,12 +34,9 @@ import {
   toAvailabilityDTO,
 } from '@/lib/commerce/dto';
 import type { CommerceDB } from './db';
-import type { CatalogueView } from './repository/read';
-import {
-  getStorefrontProductByHandle,
-  listStorefrontProducts,
-  readInventoryAvailable,
-} from './repository/storefront';
+import { commerceReadRepository, type CatalogueView } from './repository/read';
+import { UnknownVariantError } from './repository/errors';
+import { getStorefrontProductByHandle, listStorefrontProducts } from './repository/storefront';
 
 /** The tenant decision of one request: the scoped handle, or the response to return. */
 export type CommerceReadContext =
@@ -47,6 +44,9 @@ export type CommerceReadContext =
   | { ok: false; response: Response };
 
 export type CommerceReadResolver = () => Promise<CommerceReadContext>;
+
+/** Variant and location ids are uuids; anything else is refused before a read. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
@@ -124,37 +124,36 @@ export async function handleProductByHandle(
   }
 }
 
-/** GET inventory: the advisory available quantity for one (item, location) pair. */
+/**
+ * GET inventory: the advisory available quantity of one variant, summed over every location
+ * (`locationId` omitted, what the storefront cart and add to cart ask) or at one location.
+ * `limited: false` says the quantity is no limit (stock not tracked, or back-orders allowed).
+ */
 export async function handleInventory(
   req: Request,
   resolve: CommerceReadResolver,
 ): Promise<Response> {
   const url = new URL(req.url);
   const variantId = url.searchParams.get('variantId');
-  const locationId = url.searchParams.get('locationId');
-  if (!variantId || !locationId) {
-    return jsonError(
-      'bad_request',
-      'variantId and locationId query params are both required',
-      400,
-    );
+  const locationId = url.searchParams.get('locationId') ?? undefined;
+  if (!variantId || !UUID.test(variantId)) {
+    return jsonError('bad_request', 'the variantId query param must be a variant id', 400);
+  }
+  if (locationId !== undefined && !UUID.test(locationId)) {
+    return jsonError('bad_request', 'the locationId query param must be a location id', 400);
   }
 
   try {
     const context = await resolve();
     if (!context.ok) return context.response;
 
-    const availableQuantity = await readInventoryAvailable(context.db, variantId, locationId);
-    if (availableQuantity === null) {
-      return jsonError(
-        'not_found',
-        `no inventory level for variant ${variantId} at location ${locationId}`,
-        404,
-      );
-    }
-    const dto = toAvailabilityDTO({ variantId, locationId, availableQuantity });
+    const availability = await commerceReadRepository.getAvailability(context.db, context.view, variantId, locationId);
+    const dto = toAvailabilityDTO(availability);
     return Response.json(availabilityDTOSchema.parse(dto));
   } catch (err) {
+    if (err instanceof UnknownVariantError) {
+      return jsonError('not_found', `no variant ${variantId}`, 404);
+    }
     return commerceServerFault(
       'commerce_read_failed',
       'the catalog could not be read',

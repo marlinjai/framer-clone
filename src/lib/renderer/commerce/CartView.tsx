@@ -323,7 +323,7 @@ const CartView = observer(
 
       // ADVISORY warning: advertised availability is below the wanted quantity.
       // Advisory only, never authoritative; the line is NOT auto-removed.
-      const advisoryShort = data.availability.availableQuantity < line.quantity;
+      const advisoryShort = data.availability.limited && data.availability.availableQuantity < line.quantity;
 
       return (
         <div key={line.variantId} data-cart-line={line.variantId} style={LINE_STYLE}>

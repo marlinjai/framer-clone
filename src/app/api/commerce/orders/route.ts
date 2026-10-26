@@ -60,11 +60,8 @@ import { buyerSchema } from '@/server/commerce/payment/buyer';
 import { shopTaxProfile } from '@/server/commerce/payment/shopTax';
 import { configuredStripeApi } from '@/server/commerce/payment/deps';
 import { readAccount } from '@/server/commerce/payment/stripe/connect';
-import {
-  readOrderTotal,
-  resolveOrderLines,
-  UnknownVariantError,
-} from '@/server/commerce/repository/storefront';
+import { UnknownVariantError } from '@/server/commerce/repository/errors';
+import { readOrderTotal, resolveOrderLines } from '@/server/commerce/repository/storefront';
 import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
 import { commerceServerFault } from '@/server/commerce/faults';
 import { jsonError, parseBody } from '@/lib/api/respond';
@@ -206,7 +203,7 @@ export async function POST(req: Request): Promise<Response> {
       // A guarded-reserve rejection. Map the inventory-item-keyed shortages back
       // to the client's variant vocabulary so the visitor sees WHICH lines failed.
       const variantByItem = new Map(
-        resolved.map((line) => [line.inventoryItemId, line.variantId]),
+        resolved.flatMap((line) => (line.inventoryItemId ? [[line.inventoryItemId, line.variantId] as const] : [])),
       );
       const shortages = result.shortages.map((shortage) => ({
         variantId: variantByItem.get(shortage.inventoryItemId) ?? shortage.inventoryItemId,

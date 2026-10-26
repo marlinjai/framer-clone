@@ -131,6 +131,8 @@ export const availabilityDTOSchema = z.object({
   variantId: z.string(),
   locationId: z.string(),
   availableQuantity: z.number().int(),
+  /** False when the quantity is no limit (stock not tracked, or back-orders allowed). */
+  limited: z.boolean(),
   advisoryOnly: z.literal(true),
 });
 
@@ -197,11 +199,13 @@ export function toAvailabilityDTO(input: {
   variantId: string;
   locationId: string;
   availableQuantity: number;
+  limited: boolean;
 }): AvailabilityDTO {
   return {
     variantId: input.variantId,
     locationId: input.locationId,
     availableQuantity: input.availableQuantity,
+    limited: input.limited,
     advisoryOnly: true,
   };
 }

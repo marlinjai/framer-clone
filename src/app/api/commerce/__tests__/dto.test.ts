@@ -108,8 +108,8 @@ describe('toProductDTO (commerce graph -> ProductDTO)', () => {
 
 describe('toAvailabilityDTO (advisory-only marker)', () => {
   it('always stamps advisoryOnly: true', () => {
-    const dto = toAvailabilityDTO({ variantId: 'var-1', locationId: 'loc-1', availableQuantity: 7 });
-    expect(dto).toEqual({ variantId: 'var-1', locationId: 'loc-1', availableQuantity: 7, advisoryOnly: true });
+    const dto = toAvailabilityDTO({ variantId: 'var-1', locationId: 'loc-1', availableQuantity: 7, limited: true });
+    expect(dto).toEqual({ variantId: 'var-1', locationId: 'loc-1', availableQuantity: 7, limited: true, advisoryOnly: true });
     expect(() => availabilityDTOSchema.parse(dto)).not.toThrow();
   });
 

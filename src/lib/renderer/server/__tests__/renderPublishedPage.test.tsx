@@ -40,6 +40,7 @@ function fakeCommerceRepo(): CommerceServerRepository {
       variantId: 'x',
       locationId: 'all',
       availableQuantity: 0,
+      limited: true,
       stale: false,
     }),
   };

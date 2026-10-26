@@ -202,6 +202,7 @@ const TEE_AVAILABILITY: AvailabilityDTO = {
   variantId: 'var_s_red',
   locationId: 'all',
   availableQuantity: 40,
+  limited: true,
   // ADVISORY: a value the future HTTP provider may flag as stale. Display-only.
   stale: true,
 };

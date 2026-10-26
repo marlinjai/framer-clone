@@ -81,7 +81,9 @@ export const LOW_STOCK_THRESHOLD = 5;
  * guarded reserve-at-checkout is the SOLE authority on whether stock can be
  * taken. This text never gates the sale.
  */
-export function advisoryAvailabilityText(availableQuantity: number): string {
+export function advisoryAvailabilityText(availableQuantity: number, limited = true): string {
+  // Untracked stock (a service) or an allowed back-order: the quantity is no limit.
+  if (!limited) return 'Available';
   if (availableQuantity <= 0) return 'Out of stock';
   if (availableQuantity <= LOW_STOCK_THRESHOLD) return `Only ${availableQuantity} left`;
   return 'In stock';
@@ -263,7 +265,7 @@ const VariantSelector = observer(
     } else if (availability.status === 'ready') {
       availabilityNode = (
         <span data-variant-availability="ready" style={NOTE_STYLE}>
-          {advisoryAvailabilityText(availability.availability.availableQuantity)}
+          {advisoryAvailabilityText(availability.availability.availableQuantity, availability.availability.limited)}
         </span>
       );
     }

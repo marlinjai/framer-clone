@@ -170,7 +170,7 @@ function makeFakeDS(
       if (qty === undefined) {
         throw new Error(`fake getAvailability: no record for "${variantId}"`);
       }
-      return { variantId, locationId: 'all', availableQuantity: qty, stale: false };
+      return { variantId, locationId: 'all', availableQuantity: qty, limited: true, stale: false };
     },
     subscribe: () => () => {},
   };
@@ -223,6 +223,11 @@ describe('advisoryAvailabilityText (advisory only, never permission to sell)', (
     expect(advisoryAvailabilityText(0)).toBe('Out of stock');
     expect(advisoryAvailabilityText(LOW_STOCK_THRESHOLD)).toBe(`Only ${LOW_STOCK_THRESHOLD} left`);
     expect(advisoryAvailabilityText(LOW_STOCK_THRESHOLD + 100)).toBe('In stock');
+  });
+
+  it('never says out of stock when the quantity is no limit (untracked stock or back-orders)', () => {
+    expect(advisoryAvailabilityText(0, false)).toBe('Available');
+    expect(advisoryAvailabilityText(3, false)).toBe('Available');
   });
 });
 

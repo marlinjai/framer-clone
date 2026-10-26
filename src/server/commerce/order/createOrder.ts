@@ -50,7 +50,7 @@ import type { Kysely } from 'kysely';
 import { RESERVE_ISOLATION_LEVEL, reserve, type Shortage } from '../inventory/reserve';
 import { pricingRepository } from '../repository/pricing';
 import { orderRepository } from '../repository/order';
-import { UnknownVariantError } from '../repository/storefront';
+import { UnknownVariantError } from '../repository/errors';
 import { toJsonb } from '../../books/snapshots';
 import type { Buyer } from '../payment/buyer';
 import { PAYMENT_WINDOW_MS, platformFee } from '../payment/payments';
@@ -82,8 +82,8 @@ export {
 
 /** One cart line: the client's SELECTION intent. The server authors the rest. */
 export interface CartLine {
-  /** The inventory item to reserve stock against (b3). */
-  inventoryItemId: string;
+  /** The inventory item to reserve stock against (b3). Omitted for an untracked variant, which holds no stock. */
+  inventoryItemId?: string;
   /** The variant whose price is resolved via b5 resolvePrice. */
   variantId: string;
   quantity: number;
@@ -196,7 +196,6 @@ export function validateCart(cart: Cart): void {
     assertReverseChargeAllowed({ customerType: cart.customerType ?? 'b2c', vatId: cart.vatId });
   }
   for (const line of cart.lines) {
-    if (!line.inventoryItemId) throw new Error('createOrder: line.inventoryItemId is required');
     if (!line.variantId) throw new Error('createOrder: line.variantId is required');
     assertPositiveInt(line.quantity, 'line.quantity');
   }

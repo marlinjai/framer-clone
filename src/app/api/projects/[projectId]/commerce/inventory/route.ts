@@ -1,6 +1,6 @@
 // src/app/api/projects/[projectId]/commerce/inventory/route.ts
 //
-// GET /api/projects/<projectId>/commerce/inventory?variantId=&locationId=
+// GET /api/projects/<projectId>/commerce/inventory?variantId=[&locationId=] (no location: summed over all)
 //   -> AvailabilityDTO (advisory only, never permission to sell)
 //
 // The EDITOR read route for one project (CM-10 follow-up). The editor and its
