@@ -320,6 +320,18 @@ describe('paying an order and its receipt', () => {
     expect(shop.refunds).toEqual([]);
   });
 
+  it('declined, then paid in the same checkout: the paid payment keeps no closing time or decline code', async () => {
+    const ring = await stockedRing(2);
+    const orderId = await placeOrder(ring);
+    await handlePaymentEvent(shop.deps, event(orderId, 'payment_failed', { failureCode: 'card_declined' }));
+    expect(await payment(orderId)).toMatchObject({ status: 'failed', failure_code: 'card_declined' });
+    expect((await payment(orderId)).closed_at).not.toBeNull();
+
+    expect((await handlePaymentEvent(shop.deps, event(orderId, 'payment_succeeded'))).status).toBe('paid');
+    expect(await payment(orderId)).toMatchObject({ status: 'paid', failure_code: null, closed_at: null });
+    expect(await reserved(ring.item)).toBe(1);
+  });
+
   it('late with the stock gone: refunded in full, the order stays closed, no receipt', async () => {
     const ring = await stockedRing(1);
     const orderId = await placeOrder(ring);

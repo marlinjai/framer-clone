@@ -93,15 +93,19 @@ Parent: [one business platform](2026-10-25-business-platform-architecture.md), s
   clear message).
 - **A declined order is closed** (its stock goes back); paying again places a new order.
 - **Expiry** is swept when a payment is attempted; a late success re-reserves the stock or is refunded.
+- **The order's own `status` stays `confirmed`, meaning "placed"** (2026-10-26, after the Stripe test showed
+  a declined order 2 still reading `confirmed`): the order row cannot change (the app role has no UPDATE on
+  it), so where an order stands is always read from its `order_payment`. A late success clears the payment's
+  closing time and decline code; `payment_event` keeps the history.
 - **The refund email to the customer** is not sent: the app has no outgoing mail yet. Logged and on the
   roadmap.
 
 ## Decided while building slice 5 (2026-10-26, say so if you disagree)
 
 - **Stripe through plain HTTPS, no SDK**: a small typed client (`stripe/client.ts`) every test replaces with
-  a fake. The whole Stripe path is **unproven against Stripe itself** until an account exists; the three
-  keys in Infisical (project framer-clone, dev and prod) are `PLACEHOLDER_REPLACE_ME`, which the app reads as
-  "Stripe not configured": the shop keeps the demo provider and the payments page says so.
+  a fake. Proven against Stripe's sandbox on 2026-10-26 (account "Lumitra Sites"; four test purchases on
+  production, see the test company section). Unset or placeholder keys read as "Stripe not configured": the
+  shop keeps the demo provider and the payments page says so; test keys make the page say "test mode".
 - **Two ways to connect** on `/projects/payments`: Stripe's hosted onboarding for a new Standard account,
   or OAuth for an account the business already has (the Connect client id). The OAuth state is signed,
   bound to the company and expires after 15 minutes. One account per company, fixed once set (migration
