@@ -864,3 +864,58 @@ describe('BooksHome', () => {
     expect(screen.queryByRole('button', { name: 'New invoice' })).toBeNull();
   });
 });
+
+describe('DocumentEditor: deleting a draft', () => {
+  it('forward: Delete draft asks first, sends the version on screen and goes back to the Books', async () => {
+    server({
+      ...base(() => detail()),
+      'DELETE /api/books/documents/doc-1': () => ({ status: 204, body: null }),
+    });
+    render(<DocumentEditor id="doc-1" />);
+    fireEvent.click(within(await openMore()).getByRole('menuitem', { name: 'Delete draft…' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog.textContent).toMatch(/its line are removed for good/);
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete draft' }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/projects/books'));
+    expect(calls.find((c) => c.method === 'DELETE')?.url).toBe('/api/books/documents/doc-1?expectedVersion=3');
+  });
+
+  it('backtrack: Keep it closes the question and deletes nothing', async () => {
+    server(base(() => detail()));
+    render(<DocumentEditor id="doc-1" />);
+    fireEvent.click(within(await openMore()).getByRole('menuitem', { name: 'Delete draft…' }));
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Keep it' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('re-entry: a draft changed elsewhere is not deleted; the editor reloads and says why', async () => {
+    let gets = 0;
+    server({
+      ...base(() => {
+        gets += 1;
+        return detail();
+      }),
+      'DELETE /api/books/documents/doc-1': () => ({
+        status: 409,
+        body: { error: { code: 'concurrent_edit', message: 'the document was changed elsewhere; reload it' } },
+      }),
+    });
+    render(<DocumentEditor id="doc-1" />);
+    fireEvent.click(within(await openMore()).getByRole('menuitem', { name: 'Delete draft…' }));
+    const before = gets;
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete draft' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/changed in another window/);
+    await waitFor(() => expect(gets).toBeGreaterThan(before));
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('an issued invoice offers no Delete draft', async () => {
+    server(base(() => detail({ document: { status: 'issued', documentNumber: '62', issueDate: '2026-10-14' } })));
+    render(<DocumentEditor id="doc-1" />);
+    const menu = await openMore();
+    expect(within(menu).queryByRole('menuitem', { name: 'Delete draft…' })).toBeNull();
+  });
+});

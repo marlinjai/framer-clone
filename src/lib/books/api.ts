@@ -427,6 +427,9 @@ export const booksApi = {
     request<DocumentDetail>('PATCH', `/api/books/documents/${id}/lines/${lineId}`, body),
   removeLine: (id: string, lineId: string, expectedVersion: number) =>
     request<DocumentDetail>('DELETE', `/api/books/documents/${id}/lines/${lineId}?expectedVersion=${expectedVersion}`),
+  /** Delete a draft without a number, with its lines (204). An issued document answers 409 `not_draft`. */
+  deleteDraft: (id: string, expectedVersion: number) =>
+    request<void>('DELETE', `/api/books/documents/${id}?expectedVersion=${expectedVersion}`),
   reorderLines: (id: string, lineIds: string[], expectedVersion: number) =>
     request<DocumentDetail>('POST', `/api/books/documents/${id}/lines/reorder`, { lineIds, expectedVersion }),
   issue: (id: string, expectedVersion: number) =>

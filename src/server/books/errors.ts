@@ -6,11 +6,11 @@
 // other personal value.
 //
 // Trigger errors from 007_books, 009_books_import, 011_books_replacement and
-// 014_books_asset_delete are mapped by SQLSTATE
+// 014_books_asset_delete, 019_books_draft_delete are mapped by SQLSTATE
 // (BK001 -> NOT_DRAFT, BK004 -> INVALID_TRANSITION, BK005 -> TOTALS_MISMATCH,
 // BK007 -> IMPORT_INCOMPLETE, BK008 -> INVALID_LINE,
 // BK009 -> CURRENCY_NOT_SUPPORTED, BK011 -> NOT_CORRECTABLE,
-// BK013 -> REPLACEMENT_INCOMPLETE, BK015 -> ASSET_IN_USE); every other database error propagates
+// BK013 -> REPLACEMENT_INCOMPLETE, BK015 -> ASSET_IN_USE, BK016 -> NOT_DELETABLE); every other database error propagates
 // unchanged. Errors surface, never swallowed.
 
 export type BooksErrorCode =
@@ -82,7 +82,9 @@ export type BooksErrorCode =
   | 'ASSET_BUSY'
   | 'LOGO_ASSET_MISSING'
   // The product and service list (015_books_products, repository/products.ts).
-  | 'DUPLICATE_PRODUCT';
+  | 'DUPLICATE_PRODUCT'
+  // Deleting a draft (019_books_draft_delete, repository/documents.ts deleteDraft).
+  | 'NOT_DELETABLE';
 
 export class BooksError extends Error {
   readonly code: BooksErrorCode;
@@ -133,6 +135,7 @@ const TRIGGER_CODES: Record<string, BooksErrorCode> = {
   BK011: 'NOT_CORRECTABLE',
   BK013: 'REPLACEMENT_INCOMPLETE',
   BK015: 'ASSET_IN_USE',
+  BK016: 'NOT_DELETABLE',
 };
 
 /**

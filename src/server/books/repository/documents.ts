@@ -396,3 +396,31 @@ export async function setCustomer(scope: BooksScope, id: string, input: SetCusto
     return readPersistedView(trx, scope, id);
   });
 }
+
+const deleteInput = z.object({ expectedVersion }).strict();
+export type DeleteDraftInput = z.input<typeof deleteInput>;
+
+/**
+ * Delete a draft of the company with its lines and events (019_books_draft_delete; ROADMAP 3d). Only a draft
+ * that never had a number goes: NOT_FOUND (also for another company's id, or a draft already deleted),
+ * NOT_DRAFT for an issued document, CONCURRENT_EDIT for a stale `expectedVersion`, NOT_DELETABLE for an offer
+ * that was issued once and went back to draft (its number is spent). The database trigger enforces the same
+ * rules for every caller; this function answers them as the domain errors first, under the row lock.
+ */
+export async function deleteDraft(scope: BooksScope, id: string, input: DeleteDraftInput = {}): Promise<void> {
+  const parsed = deleteInput.safeParse(input);
+  if (!parsed.success) throw invalid('INVALID_INPUT', parsed.error.issues);
+  await inDraftTransaction(scope, async (trx) => {
+    await lockDraft(trx, scope, id, parsed.data.expectedVersion);
+    const issuedOnce = await trx
+      .selectFrom('sales_document_event')
+      .select('id')
+      .where('tenant_id', '=', scope.tenantId)
+      .where('document_id', '=', id)
+      .where('event_type', '=', 'issued')
+      .executeTakeFirst();
+    if (issuedOnce) throw new BooksError('NOT_DELETABLE', 'NOT_DELETABLE: the draft was issued once', { documentId: id });
+    // One statement: the trigger removes the lines and events first (every foreign key is RESTRICT).
+    await trx.deleteFrom('sales_document').where('tenant_id', '=', scope.tenantId).where('id', '=', id).execute();
+  });
+}

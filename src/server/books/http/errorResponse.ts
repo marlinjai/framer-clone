@@ -91,6 +91,7 @@ const STATUS: Record<BooksErrorCode, number> = {
   ASSET_BUSY: 409,
   LOGO_ASSET_MISSING: 422,
   DUPLICATE_PRODUCT: 409,
+  NOT_DELETABLE: 409,
 };
 
 /** The two codes that mean "this company was never set up for the Books". */
@@ -123,6 +124,8 @@ const MESSAGES: Partial<Record<BooksErrorCode, string>> = {
   LOGO_ASSET_MISSING: "the template's logo is not stored for this company; choose the logo in the template again (nothing was issued)",
   DUPLICATE_PRODUCT:
     'another live item of the list has this name (case and accents do not count); choose another name or archive that item (nothing was saved)',
+  NOT_DELETABLE:
+    'this draft was issued once, so its number is spent and it stays (nothing was deleted)',
 };
 
 /** Lower snake case of a domain code, as the API answers it. */

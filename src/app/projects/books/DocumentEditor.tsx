@@ -213,6 +213,7 @@ export default function DocumentEditor({ id }: { id: string }) {
   const [editing, setEditing] = useState<{ id: string; value: LineDraft } | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [cancelReason, setCancelReason] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   // The issue just done: its number, whether the PDF is stored, and the invoice it cancelled (the success dialog).
   const [issued, setIssued] = useState<{ number: string; stored: boolean; replaced: string | null } | null>(null);
@@ -372,6 +373,21 @@ export default function DocumentEditor({ id }: { id: string }) {
     }
   }
 
+  async function deleteDraft() {
+    setBusy(true);
+    setError(null);
+    try {
+      await booksApi.deleteDraft(id, doc.version);
+      router.push('/projects/books');
+    } catch (err) {
+      setDeleting(false);
+      setError(errorText(err));
+      // Changed elsewhere or no longer a draft: show what is there now.
+      if (err instanceof BooksApiError && (err.code === 'concurrent_edit' || err.code === 'not_draft')) await load();
+      setBusy(false);
+    }
+  }
+
   async function cancel(e: React.FormEvent) {
     e.preventDefault();
     if (!cancelReason || cancelReason.trim() === '') return setError('Enter a short reason for the cancellation.');
@@ -403,7 +419,7 @@ export default function DocumentEditor({ id }: { id: string }) {
     : imported
       ? `${recipientName ? `${recipientName} · ` : ''}imported, the original PDF is the document of record`
       : `${recipientName ? `${recipientName} · ` : ''}${STATUS_LABELS[doc.status]}${doc.issueDate ? ` on ${date(doc.issueDate)}` : ''}${doc.dueDate ? ` · due ${date(doc.dueDate)}` : ''}`;
-  const moreItems = cancellable || (draft && pageCapable);
+  const moreItems = cancellable || draft;
 
   async function newInvoice() {
     setBusy(true);
@@ -508,9 +524,19 @@ export default function DocumentEditor({ id }: { id: string }) {
                   </DropdownMenuItem>
                 </>
               ) : (
-                <DropdownMenuItem onSelect={() => chooseForm(!preferForm)}>
-                  <FileText aria-hidden /> {preferForm ? 'Edit on the page' : 'Edit in the form'}
-                </DropdownMenuItem>
+                <>
+                  {pageCapable ? (
+                    <>
+                      <DropdownMenuItem onSelect={() => chooseForm(!preferForm)}>
+                        <FileText aria-hidden /> {preferForm ? 'Edit on the page' : 'Edit in the form'}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  ) : null}
+                  <DropdownMenuItem variant="destructive" disabled={busy} onSelect={() => setDeleting(true)}>
+                    <Trash2 aria-hidden /> Delete draft…
+                  </DropdownMenuItem>
+                </>
               )}
             </DropdownMenuContent>
           </DropdownMenu>
@@ -837,6 +863,26 @@ export default function DocumentEditor({ id }: { id: string }) {
             <AlertDialogCancel disabled={busy}>Back</AlertDialogCancel>
             <Button size="sm" disabled={busy} onClick={() => void issue()}>
               {busy ? 'Issuing…' : 'Issue invoice'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={deleting} onOpenChange={(open) => !busy && setDeleting(open)}>
+        <AlertDialogContent className={`max-w-[420px] rounded-2xl ${GLASS_SURFACE}`}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this draft?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {detail.lines.length === 0
+                ? 'The draft is removed for good.'
+                : `The draft and its ${detail.lines.length === 1 ? 'line' : `${detail.lines.length} lines`} are removed for good.`}{' '}
+              It never had a number, so no number of the series is lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Keep it</AlertDialogCancel>
+            <Button size="sm" variant="destructive" disabled={busy} onClick={() => void deleteDraft()}>
+              {busy ? 'Deleting…' : 'Delete draft'}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

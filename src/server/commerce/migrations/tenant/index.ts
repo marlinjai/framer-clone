@@ -18,6 +18,7 @@ import { booksProducts } from './015_books_products';
 import { booksSubject } from './016_books_subject';
 import { formSubmissions } from './017_form_submissions';
 import { booksTextFormat } from './018_books_text_format';
+import { booksDraftDelete } from './019_books_draft_delete';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -98,6 +99,10 @@ import { booksTextFormat } from './018_books_text_format';
  *   018_books_text_format  : the formatting of the intro and closing texts
  *                            (intro_format / outro_format, nullable JSONB of
  *                            version 1; the plain text is derived from it)
+ *   019_books_draft_delete : a draft without a number is deleted with its lines
+ *                            and events in one statement (BEFORE DELETE trigger,
+ *                            SECURITY DEFINER); issued documents stay
+ *                            undeletable (BK001), a once-issued draft too (BK016)
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -119,4 +124,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   booksSubject,
   formSubmissions,
   booksTextFormat,
+  booksDraftDelete,
 ];

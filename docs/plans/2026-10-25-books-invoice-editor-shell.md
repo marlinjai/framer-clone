@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: completed
 date: 2026-10-25
 title: "Books: the invoice editor in the app's editor shell"
 summary: "Redesign the invoice editor (the draft written on its PDF page, the form, the issued view) so it meets the app's design bar: the site editor's shell (fixed top bar with a brand primary action, a floating bottom toolbar, a full-bleed canvas), no placeholders on the invoice (an Add-to-page menu instead), the app's tokens and shared components everywhere, a designed issue moment, and the same palette and menu fixes in the template composer."
@@ -122,3 +122,9 @@ Set aside, with the reason:
   as cancelling the invoice;
 - collapsing the always-open "Add line" form on a phone: adding lines is the main job of a draft there.
 
+
+## Outcome (2026-10-26)
+
+Merged as pull request #164, deployed with deploy run 40202044416 and proven live on the Books Testfirma
+company on 2026-10-25. The composer's template name field now sizes to the name (up to a maximum width)
+instead of cutting long names off.
