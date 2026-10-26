@@ -144,6 +144,7 @@ export const NO_DELETE_TABLES = [
   'historical_import_extraction',
   'historical_import_item',
   'order_payment',
+  'payment_account',
 ] as const;
 
 /**

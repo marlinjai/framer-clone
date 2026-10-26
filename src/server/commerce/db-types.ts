@@ -819,6 +819,20 @@ export interface PaymentEventTable {
   created_at: Generated<Timestamp>;
 }
 
+/**
+ * 022_payment_account: the company's connected payment account (Stripe Connect); the account id is fixed (BK020).
+ */
+export interface PaymentAccountTable {
+  tenant_id: string;
+  provider: string;
+  account_id: string;
+  status: Generated<string>;
+  charges_enabled: Generated<boolean>;
+  details_submitted: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
+}
+
 // =============================================================================
 // The Database interface. GLOBAL keys are `public.`-qualified; tenant tables
 // are BARE. The two namespaces are disjoint by construction.
@@ -869,6 +883,7 @@ export interface CommerceDB {
   product_site_hidden: ProductSiteHiddenTable;
   order_payment: OrderPaymentTable;
   payment_event: PaymentEventTable;
+  payment_account: PaymentAccountTable;
 }
 
 // --- compile-time discipline guards (the package's brand types) --------------

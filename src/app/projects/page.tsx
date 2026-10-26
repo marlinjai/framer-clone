@@ -147,12 +147,18 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {/* The catalogue comes with the `sites` grant every company on this page holds. */}
+          {/* The catalogue and payments come with the `sites` grant every company on this page holds. */}
           <Link
             href="/projects/catalog"
             className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
           >
             Catalog
+          </Link>
+          <Link
+            href="/projects/payments"
+            className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
+          >
+            Payments
           </Link>
           {booksEnabled ? (
             <Link

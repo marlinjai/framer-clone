@@ -113,6 +113,8 @@ describe('POST /api/commerce/orders tenancy (D4: tenant from the HOST)', () => {
       orderId: 'order_created',
       totalCents: 4760,
       currency: 'EUR',
+      // Stripe is not configured in tests: the demo provider takes the payment.
+      provider: 'demo',
     });
 
     expect(resolveSiteMock).toHaveBeenCalledWith('store-a.example.com');

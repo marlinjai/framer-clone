@@ -5,6 +5,7 @@
 //
 // Answers, mapped to the PaymentResult the checkout renders:
 //   200 paid                    -> ok, with the receipt number when it is already issued
+//   200 redirect                -> ok with the hosted checkout page (Stripe) to send the buyer to
 //   402 payment_declined        -> declined (the order is closed: the checkout starts a new one)
 //   409 payment_closed          -> closed (paid or closed elsewhere, or expired: check out again)
 //   422 buyer_required / 400    -> invalid (the buyer's details are missing or malformed)
@@ -36,13 +37,24 @@ export class StorefrontPaymentGateway implements PaymentGateway {
       res = await this.fetchImpl(`/api/commerce/orders/${encodeURIComponent(request.orderId)}/pay`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ buyer: request.buyer, simulateDecline: request.simulateDecline ?? false }),
+        body: JSON.stringify({
+          buyer: request.buyer,
+          simulateDecline: request.simulateDecline ?? false,
+          ...(request.returnPath ? { returnPath: request.returnPath } : {}),
+        }),
       });
     } catch (err) {
       return { ok: false, code: 'gateway_error', message: err instanceof Error ? err.message : 'the shop did not answer' };
     }
     if (res.ok) {
-      const body = (await res.json()) as { status: string; receipt: { number: string | null } | null };
+      const body = (await res.json()) as {
+        status: string;
+        receipt?: { number: string | null } | null;
+        redirectUrl?: string;
+      };
+      if (body.status === 'redirect' && body.redirectUrl) {
+        return { ok: true, provider: 'stripe', transactionId: request.orderId, redirectUrl: body.redirectUrl };
+      }
       return { ok: true, provider: this.id, transactionId: request.orderId, receiptNumber: body.receipt?.number ?? null };
     }
     const error = await errorOf(res);

@@ -67,7 +67,7 @@ describe('APPEND_ONLY_TABLES', () => {
 
   it('NO_DELETE_TABLES lists exactly the tables the tenant migrations leave without DELETE only', () => {
     const revoked = tablesWhere((r) => r.has('DELETE') && !r.has('UPDATE'));
-    expect(revoked).toEqual(['document_number_counter', 'historical_import_extraction', 'historical_import_item', 'order_payment']);
+    expect(revoked).toEqual(['document_number_counter', 'historical_import_extraction', 'historical_import_item', 'order_payment', 'payment_account']);
     expect([...NO_DELETE_TABLES].sort()).toEqual(revoked);
   });
 

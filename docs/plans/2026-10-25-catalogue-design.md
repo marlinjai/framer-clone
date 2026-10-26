@@ -96,6 +96,28 @@ Parent: [one business platform](2026-10-25-business-platform-architecture.md), s
 - **The refund email to the customer** is not sent: the app has no outgoing mail yet. Logged and on the
   roadmap.
 
+## Decided while building slice 5 (2026-10-26, say so if you disagree)
+
+- **Stripe through plain HTTPS, no SDK**: a small typed client (`stripe/client.ts`) every test replaces with
+  a fake. The whole Stripe path is **unproven against Stripe itself** until an account exists; the three
+  keys in Infisical (project framer-clone, dev and prod) are `PLACEHOLDER_REPLACE_ME`, which the app reads as
+  "Stripe not configured": the shop keeps the demo provider and the payments page says so.
+- **Two ways to connect** on `/projects/payments`: Stripe's hosted onboarding for a new Standard account,
+  or OAuth for an account the business already has (the Connect client id). The OAuth state is signed,
+  bound to the company and expires after 15 minutes. One account per company, fixed once set (migration
+  `022_payment_account`, BK020).
+- **Readiness is asked of Stripe** on return from onboarding and when a payment starts on an account not
+  ready yet; `account.updated` is not used (it names no tenant group, and the platform keeps no registry
+  outside the tenant schemas).
+- **A hosted Checkout Session** per order, a direct charge on the company's account with
+  `application_fee_amount` = the recorded 1%; it lives at least Stripe's 30 minutes, so a payment after the
+  window closes takes the late-success path. One session per order (idempotency key), one refund per
+  payment, the fee refunded with it.
+- **The webhook trusts only the signature**: the order, company and tenant group come from the metadata the
+  platform set, the connected account from the event, and it must be the company's own. A receipt that
+  cannot be issued yet answers 500 so Stripe delivers again.
+- **Cancelling on Stripe's page** keeps the cart; the order's stock goes back when its window closes.
+
 ## Data model (additions to the commerce engine)
 
 - `product`: `tenant_id`, `kind`, `product_type`, `tags text[]`, `seo_title`, `seo_description`, `tax_class`
