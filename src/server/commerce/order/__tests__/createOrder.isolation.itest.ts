@@ -46,6 +46,7 @@ import postgres from 'postgres';
 import type { CommerceDB } from '../../db-types';
 import { commerceProvisionOptions } from '../../provisioning/provision';
 import { createOrder, type Cart } from '../createOrder';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 const DB_NAME = 'framer_clone_test';
 const APP_ROLE = 'commerce_app';
@@ -84,7 +85,7 @@ async function seedPriced(
   const productId = randomUUID();
   await db
     .insertInto('product')
-    .values({
+    .values({ tenant_id: DEMO_COMPANY_ID, status: 'published',
       id: productId,
       title: 'P',
       handle: `h-${randomUUID()}`,
@@ -97,7 +98,7 @@ async function seedPriced(
   const sku = `SKU-${randomUUID()}`;
   await db
     .insertInto('product_variant')
-    .values({
+    .values({ tenant_id: DEMO_COMPANY_ID,
       id: variantId,
       product_id: productId,
       title: 'V',
@@ -112,12 +113,12 @@ async function seedPriced(
   const priceSetId = randomUUID();
   await db
     .insertInto('price_set')
-    .values({ id: priceSetId, variant_id: variantId, updated_at: new Date() })
+    .values({ tenant_id: DEMO_COMPANY_ID, id: priceSetId, variant_id: variantId, updated_at: new Date() })
     .execute();
   const priceId = randomUUID();
   await db
     .insertInto('price')
-    .values({
+    .values({ tenant_id: DEMO_COMPANY_ID,
       id: priceId,
       price_set_id: priceSetId,
       currency_code: opts.currency ?? 'EUR',
@@ -210,6 +211,7 @@ describe('CM-09 createOrder isolation: atomic order WRITE (tenant schema)', () =
     const seed = await seedPriced(dbA, { amountCents: 1000, stocked: 10 });
 
     const cart: Cart = {
+      tenantId: DEMO_COMPANY_ID,
       requestId: `iso-ok-${randomUUID()}`,
       currency: 'EUR',
       taxRegion: 'DE',
@@ -269,6 +271,7 @@ describe('CM-09 createOrder isolation: atomic order WRITE (tenant schema)', () =
 
     const requestId = `iso-short-${randomUUID()}`;
     const cart: Cart = {
+      tenantId: DEMO_COMPANY_ID,
       requestId,
       currency: 'EUR',
       taxRegion: 'DE',
@@ -319,6 +322,7 @@ describe('CM-09 createOrder isolation: atomic order WRITE (tenant schema)', () =
 
     const requestId = `iso-conc-${randomUUID()}`;
     const cart: Cart = {
+      tenantId: DEMO_COMPANY_ID,
       requestId,
       currency: 'EUR',
       taxRegion: 'DE',
@@ -364,6 +368,7 @@ describe('CM-09 createOrder isolation: atomic order WRITE (tenant schema)', () =
     const b = await seedPriced(dbA, { amountCents: 2000, stocked: 10, taxClass: 'reduced' }); // 7%
 
     const cart: Cart = {
+      tenantId: DEMO_COMPANY_ID,
       requestId: `iso-identity-${randomUUID()}`,
       currency: 'EUR',
       taxRegion: 'DE',
@@ -392,7 +397,7 @@ describe('CM-09 createOrder isolation: atomic order WRITE (tenant schema)', () =
     await expect(
       dbA
         .insertInto('order')
-        .values({
+        .values({ tenant_id: DEMO_COMPANY_ID,
           id: randomUUID(),
           order_number: `ORD-BAD-${randomUUID()}`,
           request_id: `iso-badcheck-${randomUUID()}`,
@@ -419,6 +424,7 @@ describe('CM-09 createOrder isolation: atomic order WRITE (tenant schema)', () =
 
     const requestId = `iso-backorder-${randomUUID()}`;
     const cart: Cart = {
+      tenantId: DEMO_COMPANY_ID,
       requestId,
       currency: 'EUR',
       taxRegion: 'DE',

@@ -50,6 +50,7 @@ import type { Kysely } from 'kysely';
 import { RESERVE_ISOLATION_LEVEL, reserve, type Shortage } from '../inventory/reserve';
 import { pricingRepository } from '../repository/pricing';
 import { orderRepository } from '../repository/order';
+import { UnknownVariantError } from '../repository/storefront';
 import type { CreateOrderLineItemInput } from '../repository/types';
 import type { CommerceDB } from '../db-types';
 import {
@@ -100,6 +101,13 @@ export interface CartLine {
 
 /** The cart payload createOrder consumes. clientTotal is accepted but IGNORED. */
 export interface Cart {
+  /**
+   * The selling company (the site's company, 020_catalogue_company). Every line's variant must belong to it:
+   * a variant of another company of the tenant group is refused as unknown (UnknownVariantError, a 422).
+   */
+  tenantId: string;
+  /** The site the order is placed on (stored on the order). */
+  siteId?: string | null;
   /** The ORDER-level idempotency key (UNIQUE on order.request_id). */
   requestId: string;
   /** ISO-4217 alpha-3 currency, uppercase (matches the b5 currency CHECK). */
@@ -161,6 +169,7 @@ export function isReserveDuplicate(error: unknown): boolean {
 
 /** Boundary validation: a malformed cart is a programming error, surfaced loudly. */
 export function validateCart(cart: Cart): void {
+  if (!cart.tenantId) throw new Error('createOrder: cart.tenantId (the selling company) is required');
   if (!cart.requestId) throw new Error('createOrder: cart.requestId is required');
   if (!cart.currency) throw new Error('createOrder: cart.currency is required');
   if (!cart.taxRegion) throw new Error('createOrder: cart.taxRegion is required');
@@ -264,6 +273,15 @@ function runOrderTransaction(
       let total = 0;
 
       for (const line of cart.lines) {
+        // The variant must be one of the selling company's (live or not: a reprint reads the snapshot).
+        const owned = await trx
+          .selectFrom('product_variant')
+          .select('id')
+          .where('id', '=', line.variantId)
+          .where('tenant_id', '=', cart.tenantId)
+          .executeTakeFirst();
+        if (!owned) throw new UnknownVariantError(line.variantId);
+
         const unitPrice = await pricingRepository.resolvePrice(trx, line.variantId, {
           currency: cart.currency,
           priceListIds: line.priceListIds ?? [],
@@ -284,7 +302,11 @@ function runOrderTransaction(
         // snapshot is what a reprint reads, even for a since-deleted variant.
         const variant = await trx
           .selectFrom('product_variant')
-          .leftJoin('product', 'product.id', 'product_variant.product_id')
+          .leftJoin('product', (join) =>
+            join
+              .onRef('product.id', '=', 'product_variant.product_id')
+              .onRef('product.tenant_id', '=', 'product_variant.tenant_id'),
+          )
           .select([
             'product_variant.title as title',
             'product_variant.sku as sku',
@@ -308,6 +330,7 @@ function runOrderTransaction(
         });
 
         lines.push({
+          tenantId: cart.tenantId,
           orderId: '', // filled after the order row is created
           variantTitle: line.variantTitle ?? variant?.title ?? null,
           variantSku: line.variantSku ?? variant?.sku ?? null,
@@ -341,6 +364,8 @@ function runOrderTransaction(
       // (5) insert the order, then its snapshot line items.
       const orderNumber = await orderRepository.nextOrderNumber(trx, tgId);
       const order = await orderRepository.insertOrder(trx, {
+        tenantId: cart.tenantId,
+        siteId: cart.siteId ?? null,
         orderNumber,
         requestId: cart.requestId,
         status: 'confirmed',

@@ -18,3 +18,8 @@
 // tenant-group.
 export const DEMO_TENANT_GROUP_ID =
   process.env.DEMO_TENANT_GROUP_ID ?? '018f9c10-0000-7000-8000-0000000000de';
+
+// The demo company (an auth-brain company id of the demo tenant group): the catalogue is split per company
+// (020_catalogue_company), so the demo products and the demo site belong to this one.
+export const DEMO_COMPANY_ID =
+  process.env.DEMO_COMPANY_ID ?? '018f9c10-0000-7000-8000-0000000000dc';

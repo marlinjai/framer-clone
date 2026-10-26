@@ -30,6 +30,7 @@ import type { Kysely } from 'kysely';
 
 import type { CommerceDB } from '../../db-types';
 import { pricingRepository, selectPrice, type PriceCandidate } from '../pricing';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 /** A db that fails the test if anything touches it (the guard must fire first). */
 const untouchableDb = new Proxy(
@@ -93,19 +94,19 @@ describe('addPrice money guard (assertIntegerCents at the boundary)', () => {
   // so a bad amount throws at the call site, before any I/O.
   it('rejects a float amount (euros instead of cents) before any insert', () => {
     expect(() =>
-      pricingRepository.addPrice(untouchableDb, { priceSetId: 'pset-1', currency: 'EUR', amount: 19.99 }),
+      pricingRepository.addPrice(untouchableDb, { tenantId: DEMO_COMPANY_ID, priceSetId: 'pset-1', currency: 'EUR', amount: 19.99 }),
     ).toThrow(/integer number of minor units/);
   });
 
   it('rejects a NEGATIVE amount (money-losing) before any insert', () => {
     expect(() =>
-      pricingRepository.addPrice(untouchableDb, { priceSetId: 'pset-1', currency: 'EUR', amount: -1999 }),
+      pricingRepository.addPrice(untouchableDb, { tenantId: DEMO_COMPANY_ID, priceSetId: 'pset-1', currency: 'EUR', amount: -1999 }),
     ).toThrow(/non-negative number of minor units/);
   });
 
   it('also rejects a negative or fractional minQuantity / maxQuantity (band guard at the boundary)', () => {
     expect(() =>
-      pricingRepository.addPrice(untouchableDb, {
+      pricingRepository.addPrice(untouchableDb, { tenantId: DEMO_COMPANY_ID,
         priceSetId: 'pset-1',
         currency: 'EUR',
         amount: 1000,
@@ -113,7 +114,7 @@ describe('addPrice money guard (assertIntegerCents at the boundary)', () => {
       }),
     ).toThrow(/non-negative number of minor units/);
     expect(() =>
-      pricingRepository.addPrice(untouchableDb, {
+      pricingRepository.addPrice(untouchableDb, { tenantId: DEMO_COMPANY_ID,
         priceSetId: 'pset-1',
         currency: 'EUR',
         amount: 1000,
@@ -124,7 +125,7 @@ describe('addPrice money guard (assertIntegerCents at the boundary)', () => {
 
   it('accepts a non-negative integer amount and forwards it, unchanged, to the insert', async () => {
     const { db, inserted } = fakeDb();
-    const created = await pricingRepository.addPrice(db, {
+    const created = await pricingRepository.addPrice(db, { tenantId: DEMO_COMPANY_ID,
       priceSetId: 'pset-1',
       currency: 'EUR',
       amount: 1999,

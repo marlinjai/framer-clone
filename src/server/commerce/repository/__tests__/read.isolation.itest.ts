@@ -17,7 +17,7 @@
 //   - THE GRANT PROOF (the auditable control): a `commerce_app`-scoped connection
 //     reading a schema it was NOT granted (tg_b) raises `permission denied for
 //     schema` — the wall is enforced by Postgres GRANTs, not app discipline;
-//   - PLUS a structural proof that `getCommerceServerRepository(db)` satisfies
+//   - PLUS a structural proof that `getCommerceServerRepository(db, VIEW)` satisfies
 //     the `CommerceServerRepository` contract the hydrator expects (compile-time
 //     via the typed annotations below + a runtime shape assertion).
 //
@@ -55,6 +55,10 @@ import {
   commerceReadRepository,
   getCommerceServerRepository,
 } from '../read';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
+
+/** The catalogue view the reads use: the demo company, one site (020_catalogue_company). */
+const VIEW = { companyId: DEMO_COMPANY_ID, siteId: 'site-under-test' };
 
 const DB_NAME = 'framer_clone_test';
 const APP_ROLE = 'commerce_app';
@@ -95,24 +99,24 @@ async function seedTenant(
     reserved?: number;
   },
 ): Promise<{ productId: string; variantId: string }> {
-  const product = await catalogRepository.createProduct(db, {
+  const product = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, status: 'published',
     title: opts.productTitle,
     handle: opts.handle,
   });
-  const option = await catalogRepository.addOption(db, {
+  const option = await catalogRepository.addOption(db, { tenantId: DEMO_COMPANY_ID,
     productId: product.id,
     title: 'Size',
   });
-  const value = await catalogRepository.addOptionValue(db, {
+  const value = await catalogRepository.addOptionValue(db, { tenantId: DEMO_COMPANY_ID,
     optionId: option.id,
     value: 'Small',
   });
-  const variant = await catalogRepository.addVariant(db, {
+  const variant = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID,
     productId: product.id,
     title: 'Small',
     sku: opts.sku,
   });
-  await catalogRepository.setVariantOptions(db, variant.id, [
+  await catalogRepository.setVariantOptions(db, DEMO_COMPANY_ID, variant.id, [
     { optionId: option.id, optionValueId: value.id },
   ]);
 
@@ -120,11 +124,11 @@ async function seedTenant(
   const priceSetId = randomUUID();
   await db
     .insertInto('price_set')
-    .values({ id: priceSetId, variant_id: variant.id, updated_at: new Date() })
+    .values({ tenant_id: DEMO_COMPANY_ID, id: priceSetId, variant_id: variant.id, updated_at: new Date() })
     .execute();
   await db
     .insertInto('price')
-    .values({
+    .values({ tenant_id: DEMO_COMPANY_ID,
       id: randomUUID(),
       price_set_id: priceSetId,
       currency_code: 'EUR',
@@ -272,7 +276,7 @@ describe('CM-07 read isolation: schema-per-tenant wall (tenant schema)', () => {
 
   it('listProducts scoped to tg_a sees ONLY tg_a (zero tg_b, zero decoy)', async () => {
     const dbA = tenantDb(ownerBase!, TG_A);
-    const page = await commerceReadRepository.listProducts(dbA);
+    const page = await commerceReadRepository.listProducts(dbA, VIEW);
     expect(page.total).toBe(1);
     expect(page.products).toHaveLength(1);
     expect(page.products[0]!.title).toBe('Widget A');
@@ -286,7 +290,7 @@ describe('CM-07 read isolation: schema-per-tenant wall (tenant schema)', () => {
 
   it('getProductByHandle scoped to tg_a returns the live product, never the public decoy', async () => {
     const dbA = tenantDb(ownerBase!, TG_A);
-    const product = await commerceReadRepository.getProductByHandle(dbA, 'widget-a');
+    const product = await commerceReadRepository.getProductByHandle(dbA, VIEW, 'widget-a');
     expect(product).not.toBeNull();
     expect(product!.id).toBe(productIdA);
     expect(product!.title).toBe('Widget A'); // not 'DECOY_PUBLIC'
@@ -295,20 +299,20 @@ describe('CM-07 read isolation: schema-per-tenant wall (tenant schema)', () => {
   it('listVariants / getPrices / getAvailability scoped to tg_a read tg_a data', async () => {
     const dbA = tenantDb(ownerBase!, TG_A);
 
-    const variants = await commerceReadRepository.listVariants(dbA, productIdA);
+    const variants = await commerceReadRepository.listVariants(dbA, VIEW, productIdA);
     expect(variants).toHaveLength(1);
     expect(variants[0]!.id).toBe(variantIdA);
     expect(variants[0]!.sku).toBe('WIDGET-A-S');
     expect(variants[0]!.optionValues.map((o) => o.label)).toEqual(['Small']);
 
-    const prices = await commerceReadRepository.getPrices(dbA, variantIdA);
+    const prices = await commerceReadRepository.getPrices(dbA, VIEW, variantIdA);
     expect(prices).toHaveLength(1);
     expect(prices[0]!.amountCents).toBe(PRICE_A);
     expect(Number.isInteger(prices[0]!.amountCents)).toBe(true);
     expect(prices[0]!.currency).toBe('EUR');
 
     // available_quantity is read DIRECTLY from the GENERATED column and aggregated.
-    const availability = await commerceReadRepository.getAvailability(dbA, variantIdA);
+    const availability = await commerceReadRepository.getAvailability(dbA, VIEW, variantIdA);
     expect(availability).toEqual({
       variantId: variantIdA,
       locationId: ALL_LOCATIONS,
@@ -321,14 +325,14 @@ describe('CM-07 read isolation: schema-per-tenant wall (tenant schema)', () => {
     const dbB = tenantDb(ownerBase!, TG_B);
 
     // tg_b has no product with tg_a's handle.
-    expect(await commerceReadRepository.getProductByHandle(dbB, 'widget-a')).toBeNull();
+    expect(await commerceReadRepository.getProductByHandle(dbB, VIEW, 'widget-a')).toBeNull();
     // tg_b has no variants under tg_a's product id.
-    expect(await commerceReadRepository.listVariants(dbB, productIdA)).toEqual([]);
+    expect(await commerceReadRepository.listVariants(dbB, VIEW, productIdA)).toEqual([]);
     // tg_b has no price_set for tg_a's variant.
-    expect(await commerceReadRepository.getPrices(dbB, variantIdA)).toEqual([]);
+    expect(await commerceReadRepository.getPrices(dbB, VIEW, variantIdA)).toEqual([]);
     // tg_b has no such variant -> getAvailability throws (advisory contract).
     await expect(
-      commerceReadRepository.getAvailability(dbB, variantIdA),
+      commerceReadRepository.getAvailability(dbB, VIEW, variantIdA),
     ).rejects.toThrow(/no variant with id/);
   });
 
@@ -336,14 +340,14 @@ describe('CM-07 read isolation: schema-per-tenant wall (tenant schema)', () => {
     const dbA = tenantDb(ownerBase!, TG_A);
     const dbB = tenantDb(ownerBase!, TG_B);
 
-    const pageB = await commerceReadRepository.listProducts(dbB);
+    const pageB = await commerceReadRepository.listProducts(dbB, VIEW);
     expect(pageB.total).toBe(1);
     expect(pageB.products[0]!.title).toBe('Widget B');
     expect(pageB.products.some((p) => p.title === 'DECOY_PUBLIC')).toBe(false);
 
-    expect(await commerceReadRepository.getPrices(dbB, variantIdB)).toHaveLength(1);
+    expect(await commerceReadRepository.getPrices(dbB, VIEW, variantIdB)).toHaveLength(1);
     // tg_a cannot see tg_b's variant/price either.
-    expect(await commerceReadRepository.getPrices(dbA, variantIdB)).toEqual([]);
+    expect(await commerceReadRepository.getPrices(dbA, VIEW, variantIdB)).toEqual([]);
     // The seeded ids are distinct and live only in their own schema.
     expect(productIdA).not.toBe(productIdB);
     expect(variantIdA).not.toBe(variantIdB);
@@ -352,25 +356,23 @@ describe('CM-07 read isolation: schema-per-tenant wall (tenant schema)', () => {
   it('GRANT PROOF: commerce_app may read its granted schema but is DENIED a non-granted one', async () => {
     // commerce_app WAS granted on tg_a -> the scoped read succeeds.
     const appDbA = tenantDb(appBase!, TG_A);
-    const page = await commerceReadRepository.listProducts(appDbA);
+    const page = await commerceReadRepository.listProducts(appDbA, VIEW);
     expect(page.total).toBe(1);
 
     // commerce_app was NOT granted on tg_b -> Postgres refuses at the grant layer,
     // not the app layer: `permission denied for schema tg_<b>`.
     const appDbB = tenantDb(appBase!, TG_B);
-    await expect(commerceReadRepository.listProducts(appDbB)).rejects.toThrow(
+    await expect(commerceReadRepository.listProducts(appDbB, VIEW)).rejects.toThrow(
       /permission denied for schema/,
     );
   });
 
-  it('getCommerceServerRepository(db) satisfies the CommerceServerRepository contract', async () => {
+  it('getCommerceServerRepository(db, VIEW) satisfies the CommerceServerRepository contract', async () => {
     // Compile-time: the annotation pins the factory's return to the hydrator's
     // contract (the in-loop `tsc` enforces this whole-program). Runtime: the five
     // methods exist as functions and the wired factory delegates to the Kysely
     // read repo against the scoped handle.
-    const repo: CommerceServerRepository = getCommerceServerRepository(
-      tenantDb(ownerBase!, TG_A),
-    );
+    const repo: CommerceServerRepository = getCommerceServerRepository(tenantDb(ownerBase!, TG_A), VIEW);
     expect(typeof repo.listProducts).toBe('function');
     expect(typeof repo.getProductByHandle).toBe('function');
     expect(typeof repo.listVariants).toBe('function');

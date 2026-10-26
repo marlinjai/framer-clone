@@ -231,7 +231,7 @@ export class SiteRepository {
   async saveProject(
     scope: TenantScope,
     project: ProjectModelType | Parameters<typeof projectToPersisted>[0],
-    options: { mustExist?: boolean } = {},
+    options: { mustExist?: boolean; companyId?: string } = {},
   ): Promise<void> {
     assertScope(scope);
     const persisted: PersistedSite = projectToPersisted(project);
@@ -339,6 +339,7 @@ export class SiteRepository {
             projectCreatedAt: new Date(persisted.projectCreatedAt),
             projectUpdatedAt: new Date(persisted.projectUpdatedAt),
             redirects: redirects as unknown as Prisma.InputJsonValue,
+            companyId: options.companyId ?? null,
           },
           // `name` is written on create only. After that the rename action
           // (renameSite, PATCH /api/projects/<id>) is its only writer: an editor
@@ -346,6 +347,15 @@ export class SiteRepository {
           // snapshot, and a later Save or Publish from it must not silently undo
           // the rename.
           update: updateData,
+        });
+      }
+
+      // The site's company (sites.company_id, read by the storefront's catalogue): filled from the
+      // server-verified session when still empty, never overwritten (a company keeps its workspace).
+      if (options.companyId) {
+        await tx.site.updateMany({
+          where: { id: persisted.siteId, workspaceId: scope.workspaceId, companyId: null },
+          data: { companyId: options.companyId },
         });
       }
 

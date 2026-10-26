@@ -44,7 +44,8 @@ import {
   isCommerceTenantNotProvisioned,
   type CommerceDB,
 } from './db';
-import { getCommerceServerRepository } from './repository/read';
+import { companyForSite } from './company';
+import { getCommerceServerRepository, type CatalogueView } from './repository/read';
 import { isTenantSchemaError, resolveTenantGroupForSite } from './tenant';
 
 /** The error code every storefront route answers with when commerce is not provisioned. */
@@ -55,6 +56,13 @@ export type StorefrontCommerce =
       ok: true;
       site: PublishedSite;
       tenantGroupId: TenantGroupId;
+      /**
+       * The company whose catalogue this site sells (company.ts companyForSite). Every catalogue read and
+       * the order are scoped to it.
+       */
+      companyId: string;
+      /** The company and site every catalogue read of this request is scoped to. */
+      view: CatalogueView;
       /** The scoped handle for THIS request; derive once, thread everywhere. */
       db: Kysely<CommerceDB>;
     }
@@ -91,8 +99,9 @@ export async function resolveStorefrontCommerce(
     throw err;
   }
 
+  let db: Kysely<CommerceDB>;
   try {
-    return { ok: true, site, tenantGroupId, db: await commerceTenantDbChecked(tenantGroupId) };
+    db = await commerceTenantDbChecked(tenantGroupId);
   } catch (err) {
     // A valid tenant group UUID whose tg_<id> schema does not exist: the SAME
     // not-provisioned answer as an invalid id (never a 500 with internals).
@@ -102,6 +111,15 @@ export async function resolveStorefrontCommerce(
     }
     throw err;
   }
+
+  // The site's company: stamped by the editor, else the schema's sole company. Neither: the site sells
+  // nothing yet (the same answer as an unprovisioned schema; the owner opens the site once to stamp it).
+  const companyId = await companyForSite(db, site);
+  if (!companyId) {
+    console.error(`[commerce] site ${site.siteId} has no company yet; open it in the editor once to link it`);
+    return notProvisioned;
+  }
+  return { ok: true, site, tenantGroupId, companyId, view: { companyId, siteId: site.siteId }, db };
 }
 
 /**
@@ -114,7 +132,10 @@ export async function resolveStorefrontCommerce(
  *     page still renders its CMS content and every commerce binding resolves to
  *     the hydrator's unbound placeholder, so no commerce data from any schema is
  *     shown).
- *   - Otherwise: the scoped repository, built only after the startup backstop
+ *   - The site has no company (not stamped, and the tenant group has no sole
+ *     company): returns undefined, logged, as for an invalid tenant group.
+ *   - Otherwise: the repository scoped to the site's company and the site
+ *     (published, unarchived products not hidden for it), built only after the startup backstop
  *     passed. A misconfigured connection (unset, unreachable, placeholder, or
  *     the owner role) REJECTS here, so the render fails loudly instead of the
  *     hydrator's per-slot swallow turning it into silently empty shop slots.
@@ -122,11 +143,19 @@ export async function resolveStorefrontCommerce(
  * `build` is injectable for tests.
  */
 export async function commerceRepoForSite(
-  site: Pick<PublishedSite, 'siteId' | 'tenantGroupId'>,
+  site: Pick<PublishedSite, 'siteId' | 'tenantGroupId' | 'companyId'>,
   root: ComponentNode,
-  build: (tenantGroupId: TenantGroupId) => Promise<CommerceServerRepository> = async (
+  build: (tenantGroupId: TenantGroupId) => Promise<CommerceServerRepository | undefined> = async (
     tenantGroupId,
-  ) => getCommerceServerRepository(await commerceTenantDbChecked(tenantGroupId)),
+  ) => {
+    const db = await commerceTenantDbChecked(tenantGroupId);
+    const companyId = await companyForSite(db, site);
+    if (!companyId) {
+      console.error(`[commerce] site ${site.siteId} has no company yet; rendering without commerce data`);
+      return undefined;
+    }
+    return getCommerceServerRepository(db, { companyId, siteId: site.siteId });
+  },
 ): Promise<CommerceServerRepository | undefined> {
   if (!treeNeedsCommerceRepo(root)) return undefined;
 

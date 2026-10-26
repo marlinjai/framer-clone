@@ -158,7 +158,8 @@ describe('POST /api/projects/save (authorized)', () => {
     expect(save).toHaveBeenCalledWith(
       SCOPE,
       expect.objectContaining({ id: 'site_1' }),
-      { mustExist: true },
+      // The company comes from the session too, and is stamped on the site (sites.company_id).
+      { mustExist: true, companyId: 'tenant-1' },
     );
     // Save is non-destructive: it must NEVER flip the site to published.
     expect(publish).not.toHaveBeenCalled();

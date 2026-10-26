@@ -35,6 +35,7 @@ import {
 } from '../../__tests__/storefrontFixtures';
 import { catalogRepository } from '../catalog';
 import { pricingRepository } from '../pricing';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 let fx: StorefrontFixtures;
 let db: Kysely<CommerceDB>;
@@ -56,8 +57,8 @@ afterAll(async () => {
 
 /** Create a product + a single variant through the catalog repo; returns the variant id. */
 async function makeVariant(handle: string, sku: string): Promise<string> {
-  const product = await catalogRepository.createProduct(db, { title: handle, handle });
-  const variant = await catalogRepository.addVariant(db, { productId: product.id, sku });
+  const product = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, title: handle, handle });
+  const variant = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku });
   return variant.id;
 }
 
@@ -73,9 +74,9 @@ async function makeList(status: 'draft' | 'active', type: 'override' | 'sale'): 
 describe('pricing graph + tax_class + credit note (tenant schema, Dockerized Postgres)', () => {
   it('price amounts round-trip as integer cents and a float amount is rejected', async () => {
     const variantId = await makeVariant('tee-cents', 'TEE-CENTS-1');
-    const priceSet = await pricingRepository.createPriceSet(db, { variantId });
+    const priceSet = await pricingRepository.createPriceSet(db, { tenantId: DEMO_COMPANY_ID, variantId });
 
-    const created = await pricingRepository.addPrice(db, {
+    const created = await pricingRepository.addPrice(db, { tenantId: DEMO_COMPANY_ID,
       priceSetId: priceSet.id,
       currency: 'EUR',
       amount: 1999,
@@ -91,17 +92,17 @@ describe('pricing graph + tax_class + credit note (tenant schema, Dockerized Pos
     expect(Number.isInteger(reread.amount)).toBe(true);
 
     expect(() =>
-      pricingRepository.addPrice(db, { priceSetId: priceSet.id, currency: 'EUR', amount: 19.99 }),
+      pricingRepository.addPrice(db, { tenantId: DEMO_COMPANY_ID, priceSetId: priceSet.id, currency: 'EUR', amount: 19.99 }),
     ).toThrow(/integer number of minor units/);
   });
 
   it('resolvePrice returns integer cents and prefers an active requested price-list price over the base', async () => {
     const variantId = await makeVariant('hoodie-resolve', 'HOOD-RES-1');
-    const priceSet = await pricingRepository.createPriceSet(db, { variantId });
-    await pricingRepository.addPrice(db, { priceSetId: priceSet.id, currency: 'EUR', amount: 2000 });
+    const priceSet = await pricingRepository.createPriceSet(db, { tenantId: DEMO_COMPANY_ID, variantId });
+    await pricingRepository.addPrice(db, { tenantId: DEMO_COMPANY_ID, priceSetId: priceSet.id, currency: 'EUR', amount: 2000 });
 
     const sale = await makeList('active', 'sale');
-    await pricingRepository.addPrice(db, {
+    await pricingRepository.addPrice(db, { tenantId: DEMO_COMPANY_ID,
       priceSetId: priceSet.id,
       currency: 'EUR',
       amount: 1500,
@@ -120,7 +121,7 @@ describe('pricing graph + tax_class + credit note (tenant schema, Dockerized Pos
 
     // A draft list is invisible even when requested: its 1000 override is ignored.
     const draft = await makeList('draft', 'override');
-    await pricingRepository.addPrice(db, {
+    await pricingRepository.addPrice(db, { tenantId: DEMO_COMPANY_ID,
       priceSetId: priceSet.id,
       currency: 'EUR',
       amount: 1000,
@@ -144,7 +145,7 @@ describe('pricing graph + tax_class + credit note (tenant schema, Dockerized Pos
         updated_at: new Date(),
       })
       .execute();
-    await pricingRepository.addPrice(db, {
+    await pricingRepository.addPrice(db, { tenantId: DEMO_COMPANY_ID,
       priceSetId: priceSet.id,
       currency: 'EUR',
       amount: 900,
@@ -164,11 +165,11 @@ describe('pricing graph + tax_class + credit note (tenant schema, Dockerized Pos
 
   it('the database CHECKs bite with the repository guard bypassed; a well-formed row still inserts', async () => {
     const variantId = await makeVariant('tee-checks', 'TEE-CHECKS-1');
-    const priceSet = await pricingRepository.createPriceSet(db, { variantId });
+    const priceSet = await pricingRepository.createPriceSet(db, { tenantId: DEMO_COMPANY_ID, variantId });
     const rawPrice = (over: { amount?: number; currency?: string; min?: number; max?: number }) =>
       db
         .insertInto('price')
-        .values({
+        .values({ tenant_id: DEMO_COMPANY_ID,
           id: randomUUID(),
           price_set_id: priceSet.id,
           currency_code: over.currency ?? 'EUR',
@@ -190,7 +191,7 @@ describe('pricing graph + tax_class + credit note (tenant schema, Dockerized Pos
         .execute(),
     ).rejects.toThrow(/credit_note_amount_nonneg_check/);
 
-    const ok = await pricingRepository.addPrice(db, {
+    const ok = await pricingRepository.addPrice(db, { tenantId: DEMO_COMPANY_ID,
       priceSetId: priceSet.id,
       currency: 'EUR',
       amount: 1000,
@@ -201,13 +202,13 @@ describe('pricing graph + tax_class + credit note (tenant schema, Dockerized Pos
   });
 
   it('tax_class is set and read on product and variant (nullable)', async () => {
-    const product = await catalogRepository.createProduct(db, { title: 'Book', handle: 'book-tax' });
-    const variant = await catalogRepository.addVariant(db, { productId: product.id, sku: 'BOOK-TAX-1' });
+    const product = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, title: 'Book', handle: 'book-tax' });
+    const variant = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'BOOK-TAX-1' });
 
-    await db.updateTable('product').set({ tax_class: 'de_reduced_7' }).where('id', '=', product.id).execute();
+    await db.updateTable('product').set({ tax_class: 'reduced' }).where('id', '=', product.id).execute();
     await db
       .updateTable('product_variant')
-      .set({ tax_class: 'de_standard_19' })
+      .set({ tax_class: 'standard' })
       .where('id', '=', variant.id)
       .execute();
 
@@ -217,10 +218,10 @@ describe('pricing graph + tax_class + credit note (tenant schema, Dockerized Pos
       .select('tax_class')
       .where('id', '=', variant.id)
       .executeTakeFirstOrThrow();
-    expect(p.tax_class).toBe('de_reduced_7');
-    expect(v.tax_class).toBe('de_standard_19');
+    expect(p.tax_class).toBe('reduced');
+    expect(v.tax_class).toBe('standard');
 
-    const bare = await catalogRepository.addVariant(db, { productId: product.id, sku: 'BOOK-TAX-2' });
+    const bare = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'BOOK-TAX-2' });
     expect(bare.tax_class).toBeNull();
   });
 

@@ -29,6 +29,7 @@ function site(pages: Array<{ pageId: string; slug: string; tree: unknown; noInde
     siteId: 's',
     workspaceId: 'ws',
     tenantGroupId: 'tg',
+    companyId: null,
     name: 'S',
     analyticsProjectId: null,
     ingestionEndpoint: null,

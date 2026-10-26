@@ -147,6 +147,7 @@ export const pricingRepository: PricingRepository = {
       .insertInto('price_set')
       .values({
         id: randomUUID(),
+        tenant_id: input.tenantId,
         variant_id: input.variantId ?? null,
         updated_at: new Date(),
       })
@@ -165,6 +166,7 @@ export const pricingRepository: PricingRepository = {
       .insertInto('price')
       .values({
         id: randomUUID(),
+        tenant_id: input.tenantId,
         price_set_id: input.priceSetId,
         price_list_id: input.priceListId ?? null,
         currency_code: input.currency,

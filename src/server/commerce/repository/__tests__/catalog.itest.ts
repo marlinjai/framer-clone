@@ -35,6 +35,7 @@ import {
   type StorefrontFixtures,
 } from '../../__tests__/storefrontFixtures';
 import { catalogRepository } from '../catalog';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 let fx: StorefrontFixtures;
 let db: Kysely<CommerceDB>;
@@ -66,11 +67,11 @@ async function softDeleteVariant(id: string): Promise<void> {
 
 /** A product with one option and the given values. */
 async function productWithOption(handle: string, values: string[]) {
-  const product = await catalogRepository.createProduct(db, { title: handle, handle });
-  const option = await catalogRepository.addOption(db, { productId: product.id, title: 'Color' });
+  const product = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, title: handle, handle });
+  const option = await catalogRepository.addOption(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, title: 'Color' });
   const optionValues = [];
   for (const value of values) {
-    optionValues.push(await catalogRepository.addOptionValue(db, { optionId: option.id, value }));
+    optionValues.push(await catalogRepository.addOptionValue(db, { tenantId: DEMO_COMPANY_ID, optionId: option.id, value }));
   }
   return { product, option, values: optionValues };
 }
@@ -79,17 +80,17 @@ describe('catalog repository + 003_catalog guarantees (tenant schema, Dockerized
   it('the composite FK rejects a product_variant_option with a mismatched option_id', async () => {
     const { product, option: color, values } = await productWithOption('tee-fk', ['Red']);
     const red = values[0];
-    const size = await catalogRepository.addOption(db, { productId: product.id, title: 'Size' });
-    const variant = await catalogRepository.addVariant(db, { productId: product.id, sku: 'TEE-FK-1' });
+    const size = await catalogRepository.addOption(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, title: 'Size' });
+    const variant = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'TEE-FK-1' });
 
     // 'Red' belongs to Color, attached under Size: (red.id, size.id) is not a real
     // (id, option_id) pair, so the composite FK rejects it (SQLSTATE 23503).
     await expect(
-      catalogRepository.setVariantOptions(db, variant.id, [{ optionId: size.id, optionValueId: red.id }]),
+      catalogRepository.setVariantOptions(db, DEMO_COMPANY_ID, variant.id, [{ optionId: size.id, optionValueId: red.id }]),
     ).rejects.toThrow(/product_variant_option_option_value_id_option_id_fkey|foreign key/);
 
     // The correct pairing is accepted: the FK rejects ONLY the mismatch.
-    await catalogRepository.setVariantOptions(db, variant.id, [{ optionId: color.id, optionValueId: red.id }]);
+    await catalogRepository.setVariantOptions(db, DEMO_COMPANY_ID, variant.id, [{ optionId: color.id, optionValueId: red.id }]);
     const rows = await db
       .selectFrom('product_variant_option')
       .select('option_id')
@@ -101,14 +102,14 @@ describe('catalog repository + 003_catalog guarantees (tenant schema, Dockerized
   it('two variants with the same option combination collide on option_signature', async () => {
     const { product, option: color, values } = await productWithOption('hoodie-sig', ['Red']);
     const red = values[0];
-    const v1 = await catalogRepository.addVariant(db, { productId: product.id, sku: 'HOOD-SIG-1' });
-    const v2 = await catalogRepository.addVariant(db, { productId: product.id, sku: 'HOOD-SIG-2' });
+    const v1 = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'HOOD-SIG-1' });
+    const v2 = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'HOOD-SIG-2' });
 
-    await catalogRepository.setVariantOptions(db, v1.id, [{ optionId: color.id, optionValueId: red.id }]);
+    await catalogRepository.setVariantOptions(db, DEMO_COMPANY_ID, v1.id, [{ optionId: color.id, optionValueId: red.id }]);
     expect(await readSignature(v1.id)).toBe(red.id);
 
     await expect(
-      catalogRepository.setVariantOptions(db, v2.id, [{ optionId: color.id, optionValueId: red.id }]),
+      catalogRepository.setVariantOptions(db, DEMO_COMPANY_ID, v2.id, [{ optionId: color.id, optionValueId: red.id }]),
     ).rejects.toThrow(SIGNATURE_COLLISION);
     // The rejected transaction rolled back: v2 has no signature and no matrix row.
     expect(await readSignature(v2.id)).toBeNull();
@@ -117,26 +118,26 @@ describe('catalog repository + 003_catalog guarantees (tenant schema, Dockerized
   it('editing a variant options recomputes the signature and frees the old combination', async () => {
     const { product, option: color, values } = await productWithOption('cap-recompute', ['Red', 'Blue']);
     const [red, blue] = values;
-    const v = await catalogRepository.addVariant(db, { productId: product.id, sku: 'CAP-RC-1' });
+    const v = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'CAP-RC-1' });
 
-    await catalogRepository.setVariantOptions(db, v.id, [{ optionId: color.id, optionValueId: red.id }]);
+    await catalogRepository.setVariantOptions(db, DEMO_COMPANY_ID, v.id, [{ optionId: color.id, optionValueId: red.id }]);
     expect(await readSignature(v.id)).toBe(red.id);
-    await catalogRepository.setVariantOptions(db, v.id, [{ optionId: color.id, optionValueId: blue.id }]);
+    await catalogRepository.setVariantOptions(db, DEMO_COMPANY_ID, v.id, [{ optionId: color.id, optionValueId: blue.id }]);
     expect(await readSignature(v.id)).toBe(blue.id);
 
-    const other = await catalogRepository.addVariant(db, { productId: product.id, sku: 'CAP-RC-2' });
-    await catalogRepository.setVariantOptions(db, other.id, [{ optionId: color.id, optionValueId: red.id }]);
+    const other = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'CAP-RC-2' });
+    await catalogRepository.setVariantOptions(db, DEMO_COMPANY_ID, other.id, [{ optionId: color.id, optionValueId: red.id }]);
     expect(await readSignature(other.id)).toBe(red.id);
   });
 
   it('a soft-deleted handle frees the partial-unique', async () => {
-    const first = await catalogRepository.createProduct(db, { title: 'Shoes', handle: 'shoes' });
-    await expect(catalogRepository.createProduct(db, { title: 'Shoes 2', handle: 'shoes' })).rejects.toThrow(
-      /product_handle_active_key|duplicate key/,
+    const first = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, title: 'Shoes', handle: 'shoes' });
+    await expect(catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, title: 'Shoes 2', handle: 'shoes' })).rejects.toThrow(
+      /product_tenant_handle_active_key/,
     );
 
     await db.updateTable('product').set({ deleted_at: new Date() }).where('id', '=', first.id).execute();
-    const reused = await catalogRepository.createProduct(db, { title: 'Shoes 3', handle: 'shoes' });
+    const reused = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, title: 'Shoes 3', handle: 'shoes' });
     expect(reused.id).not.toBe(first.id);
   });
 
@@ -146,21 +147,21 @@ describe('catalog repository + 003_catalog guarantees (tenant schema, Dockerized
     // rule is a DATABASE guarantee whichever table is written.
     const { product, option: color, values } = await productWithOption('sock-pathindep', ['Green']);
     const green = values[0];
-    const v1 = await catalogRepository.addVariant(db, { productId: product.id, sku: 'SOCK-PI-1' });
-    const v2 = await catalogRepository.addVariant(db, { productId: product.id, sku: 'SOCK-PI-2' });
+    const v1 = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'SOCK-PI-1' });
+    const v2 = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'SOCK-PI-2' });
     expect(await readSignature(v1.id)).toBeNull();
     expect(await readSignature(v2.id)).toBeNull();
 
     await db
       .insertInto('product_variant_option')
-      .values({ variant_id: v1.id, option_id: color.id, option_value_id: green.id })
+      .values({ tenant_id: DEMO_COMPANY_ID, variant_id: v1.id, option_id: color.id, option_value_id: green.id })
       .execute();
     expect(await readSignature(v1.id)).toBe(green.id);
 
     await expect(
       db
         .insertInto('product_variant_option')
-        .values({ variant_id: v2.id, option_id: color.id, option_value_id: green.id })
+        .values({ tenant_id: DEMO_COMPANY_ID, variant_id: v2.id, option_id: color.id, option_value_id: green.id })
         .execute(),
     ).rejects.toThrow(SIGNATURE_COLLISION);
 
@@ -174,22 +175,22 @@ describe('catalog repository + 003_catalog guarantees (tenant schema, Dockerized
   });
 
   it('a two-axis combination written in opposite order collides (signature is order-canonical)', async () => {
-    const product = await catalogRepository.createProduct(db, { title: 'Shirt', handle: 'shirt-canon' });
-    const color = await catalogRepository.addOption(db, { productId: product.id, title: 'Color' });
-    const size = await catalogRepository.addOption(db, { productId: product.id, title: 'Size' });
-    const red = await catalogRepository.addOptionValue(db, { optionId: color.id, value: 'Red' });
-    const small = await catalogRepository.addOptionValue(db, { optionId: size.id, value: 'Small' });
-    const v1 = await catalogRepository.addVariant(db, { productId: product.id, sku: 'SHIRT-CN-1' });
-    const v2 = await catalogRepository.addVariant(db, { productId: product.id, sku: 'SHIRT-CN-2' });
+    const product = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, title: 'Shirt', handle: 'shirt-canon' });
+    const color = await catalogRepository.addOption(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, title: 'Color' });
+    const size = await catalogRepository.addOption(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, title: 'Size' });
+    const red = await catalogRepository.addOptionValue(db, { tenantId: DEMO_COMPANY_ID, optionId: color.id, value: 'Red' });
+    const small = await catalogRepository.addOptionValue(db, { tenantId: DEMO_COMPANY_ID, optionId: size.id, value: 'Small' });
+    const v1 = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'SHIRT-CN-1' });
+    const v2 = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'SHIRT-CN-2' });
 
-    await catalogRepository.setVariantOptions(db, v1.id, [
+    await catalogRepository.setVariantOptions(db, DEMO_COMPANY_ID, v1.id, [
       { optionId: color.id, optionValueId: red.id },
       { optionId: size.id, optionValueId: small.id },
     ]);
     expect(await readSignature(v1.id)).toBe([red.id, small.id].sort().join(','));
 
     await expect(
-      catalogRepository.setVariantOptions(db, v2.id, [
+      catalogRepository.setVariantOptions(db, DEMO_COMPANY_ID, v2.id, [
         { optionId: size.id, optionValueId: small.id },
         { optionId: color.id, optionValueId: red.id },
       ]),
@@ -198,52 +199,52 @@ describe('catalog repository + 003_catalog guarantees (tenant schema, Dockerized
   });
 
   it('the sku partial-unique rejects a duplicate live value and frees it on soft-delete', async () => {
-    const product = await catalogRepository.createProduct(db, { title: 'Mug', handle: 'mug-sku' });
-    const v1 = await catalogRepository.addVariant(db, { productId: product.id, sku: 'SKU-DUP' });
-    await expect(catalogRepository.addVariant(db, { productId: product.id, sku: 'SKU-DUP' })).rejects.toThrow(
+    const product = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, title: 'Mug', handle: 'mug-sku' });
+    const v1 = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'SKU-DUP' });
+    await expect(catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'SKU-DUP' })).rejects.toThrow(
       /product_variant_sku_active_key|duplicate key/,
     );
 
     await softDeleteVariant(v1.id);
-    const v3 = await catalogRepository.addVariant(db, { productId: product.id, sku: 'SKU-DUP' });
+    const v3 = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'SKU-DUP' });
     expect(v3.id).not.toBe(v1.id);
   });
 
   it('the barcode partial-unique rejects a duplicate live value and frees it on soft-delete', async () => {
-    const product = await catalogRepository.createProduct(db, { title: 'Bottle', handle: 'bottle-barcode' });
-    const v1 = await catalogRepository.addVariant(db, { productId: product.id, barcode: 'BC-DUP' });
+    const product = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, title: 'Bottle', handle: 'bottle-barcode' });
+    const v1 = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, barcode: 'BC-DUP' });
     await expect(
-      catalogRepository.addVariant(db, { productId: product.id, barcode: 'BC-DUP' }),
+      catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, barcode: 'BC-DUP' }),
     ).rejects.toThrow(/product_variant_barcode_active_key|duplicate key/);
 
     await softDeleteVariant(v1.id);
-    const v3 = await catalogRepository.addVariant(db, { productId: product.id, barcode: 'BC-DUP' });
+    const v3 = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, barcode: 'BC-DUP' });
     expect(v3.id).not.toBe(v1.id);
   });
 
   it('soft-deleting a variant frees its option combination for a new variant', async () => {
     const { product, option: color, values } = await productWithOption('glove-sigfree', ['Red']);
     const red = values[0];
-    const v1 = await catalogRepository.addVariant(db, { productId: product.id, sku: 'GLOVE-SF-1' });
-    await catalogRepository.setVariantOptions(db, v1.id, [{ optionId: color.id, optionValueId: red.id }]);
+    const v1 = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'GLOVE-SF-1' });
+    await catalogRepository.setVariantOptions(db, DEMO_COMPANY_ID, v1.id, [{ optionId: color.id, optionValueId: red.id }]);
     expect(await readSignature(v1.id)).toBe(red.id);
 
     await softDeleteVariant(v1.id);
-    const v2 = await catalogRepository.addVariant(db, { productId: product.id, sku: 'GLOVE-SF-2' });
-    await catalogRepository.setVariantOptions(db, v2.id, [{ optionId: color.id, optionValueId: red.id }]);
+    const v2 = await catalogRepository.addVariant(db, { tenantId: DEMO_COMPANY_ID, productId: product.id, sku: 'GLOVE-SF-2' });
+    await catalogRepository.setVariantOptions(db, DEMO_COMPANY_ID, v2.id, [{ optionId: color.id, optionValueId: red.id }]);
     expect(await readSignature(v2.id)).toBe(red.id);
   });
 
   it('count() counts the products of this schema; createProduct defaults status to draft', async () => {
-    const before = await catalogRepository.count(db);
-    const product = await catalogRepository.createProduct(db, { title: 'Counted', handle: 'counted' });
+    const before = await catalogRepository.count(db, DEMO_COMPANY_ID);
+    const product = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, title: 'Counted', handle: 'counted' });
     expect(product.status).toBe('draft');
-    const published = await catalogRepository.createProduct(db, {
+    const published = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID,
       title: 'Live',
       handle: 'live',
       status: 'published',
     });
     expect(published.status).toBe('published');
-    expect(await catalogRepository.count(db)).toBe(before + 2);
+    expect(await catalogRepository.count(db, DEMO_COMPANY_ID)).toBe(before + 2);
   });
 });

@@ -120,9 +120,11 @@ connections to the suite. The four lines below are in that order.
   engine (replacing the Books' own list), first proven on the owner's test jewellery shop (sample products,
   checkout through Stripe Connect in test mode, receipt in the Books), then instant booking for one
   practitioner (paid online, receipt in the Books), then quotes, then team dispatch; lumitra-booking's slot engine and calendar sync
-  reused as packages. Architecture decided; the catalogue design is drafted, its implementation plan comes
-  next. See [plan](docs/plans/2026-10-25-business-platform-architecture.md) and
-  [catalogue design](docs/plans/2026-10-25-catalogue-design.md). (2026-10-25)
+  reused as packages. Architecture decided; the catalogue is being built in slices (2026-10-26: slice 1, the
+  company column, migration `020_catalogue_company` and `sites.company_id`; open: the catalogue area, Books
+  lines from the catalogue, the receipt from a paid order, Stripe Connect, the test shop, and rolling 020 out).
+  See [plan](docs/plans/2026-10-25-business-platform-architecture.md) and
+  [catalogue design](docs/plans/2026-10-25-catalogue-design.md). (2026-10-26)
 - [ ] 3d. Deletable invoice drafts: a draft (no number, not a bookkeeping record) can be deleted with its
   lines and events (hard delete, no tombstone, migration relaxing the 007 guards for drafts only);
   issued documents stay undeletable. Reverses decision 8 of the Books integration plan for drafts

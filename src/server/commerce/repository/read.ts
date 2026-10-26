@@ -60,8 +60,39 @@ function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
+/** The products a view shows: the company's, live, published, unarchived, not hidden for the site. */
+export function visibleProductConditions(eb: ExpressionBuilder<CommerceDB, 'product'>, view: CatalogueView) {
+  return [
+    eb('product.tenant_id', '=', view.companyId),
+    eb('product.deleted_at', 'is', null),
+    eb('product.archived_at', 'is', null),
+    eb('product.status', '=', 'published'),
+    eb.not(
+      eb.exists(
+        eb
+          .selectFrom('product_site_hidden')
+          .select('product_site_hidden.product_id')
+          .whereRef('product_site_hidden.tenant_id', '=', 'product.tenant_id')
+          .whereRef('product_site_hidden.product_id', '=', 'product.id')
+          .where('product_site_hidden.site_id', '=', view.siteId),
+      ),
+    ),
+  ];
+}
+
 /**
- * Build the product WHERE expression: always `deleted_at IS NULL`, plus one
+ * Whose catalogue a read shows, and for which site (020_catalogue_company): the company's live, published,
+ * unarchived products that are not switched off for the site. The editor's canvas reads with the same view
+ * as the published site, so a page shows in the editor exactly what it will show live.
+ */
+export interface CatalogueView {
+  companyId: string;
+  siteId: string;
+}
+
+/**
+ * Build the product WHERE expression: always the view (company, live, published, unarchived, not hidden
+ * for the site), plus one
  * ANDed, case-insensitive clause per filter (multiple clauses AND together).
  * Case-insensitivity uses ILIKE on the escaped value, mirroring the in-memory
  * lowercase-both comparison: `eq` -> exact ILIKE, `ne` -> NOT ILIKE,
@@ -69,9 +100,10 @@ function escapeLike(value: string): string {
  */
 function buildProductConditions(
   eb: ExpressionBuilder<CommerceDB, 'product'>,
+  view: CatalogueView,
   query?: CommerceQuery,
 ) {
-  const conditions = [eb('product.deleted_at', 'is', null)];
+  const conditions = visibleProductConditions(eb, view);
   for (const clause of query?.filter ?? []) {
     const column = clause.field === 'handle' ? 'product.handle' : 'product.title';
     const escaped = escapeLike(clause.value);
@@ -231,28 +263,29 @@ function mapPriceRow(
  * PURE READ returning the client-facing DTOs.
  */
 export interface CommerceReadRepository {
-  listProducts(db: Kysely<CommerceDB>, query?: CommerceQuery): Promise<ProductPage>;
-  getProductByHandle(db: Kysely<CommerceDB>, handle: string): Promise<ProductDTO | null>;
-  listVariants(db: Kysely<CommerceDB>, productId: string): Promise<ProductVariantDTO[]>;
-  getPrices(db: Kysely<CommerceDB>, variantId: string): Promise<PriceDTO[]>;
+  listProducts(db: Kysely<CommerceDB>, view: CatalogueView, query?: CommerceQuery): Promise<ProductPage>;
+  getProductByHandle(db: Kysely<CommerceDB>, view: CatalogueView, handle: string): Promise<ProductDTO | null>;
+  listVariants(db: Kysely<CommerceDB>, view: CatalogueView, productId: string): Promise<ProductVariantDTO[]>;
+  getPrices(db: Kysely<CommerceDB>, view: CatalogueView, variantId: string): Promise<PriceDTO[]>;
   getAvailability(
     db: Kysely<CommerceDB>,
+    view: CatalogueView,
     variantId: string,
     locationId?: string,
   ): Promise<AvailabilityDTO>;
 }
 
 export const commerceReadRepository: CommerceReadRepository = {
-  async listProducts(db, query) {
+  async listProducts(db, view, query) {
     // total is the count matching the filter, IGNORING the limit.
     const countRow = await db
       .selectFrom('product')
       .select((eb) => eb.fn.countAll().as('count'))
-      .where((eb) => buildProductConditions(eb, query))
+      .where((eb) => buildProductConditions(eb, view, query))
       .executeTakeFirstOrThrow();
     const total = Number(countRow.count);
 
-    let listQuery = selectProductGraph(db).where((eb) => buildProductConditions(eb, query));
+    let listQuery = selectProductGraph(db).where((eb) => buildProductConditions(eb, view, query));
     for (const sort of query?.sort ?? []) {
       listQuery = listQuery.orderBy(
         sort.field === 'handle' ? 'product.handle' : 'product.title',
@@ -268,17 +301,17 @@ export const commerceReadRepository: CommerceReadRepository = {
     return { products: rows.map(mapProductGraph), total };
   },
 
-  async getProductByHandle(db, handle) {
-    // handle is partial-unique (UNIQUE WHERE deleted_at IS NULL), so the FIRST
-    // live match is correct (findFirst semantics, not findUnique).
+  async getProductByHandle(db, view, handle) {
+    // handle is partial-unique per company (UNIQUE (tenant_id, handle) WHERE deleted_at IS NULL), so the
+    // FIRST visible match is correct (findFirst semantics, not findUnique).
     const row = await selectProductGraph(db)
       .where('product.handle', '=', handle)
-      .where('product.deleted_at', 'is', null)
+      .where((eb) => eb.and(visibleProductConditions(eb, view)))
       .executeTakeFirst();
     return row ? mapProductGraph(row) : null;
   },
 
-  async listVariants(db, productId) {
+  async listVariants(db, view, productId) {
     const rows = await db
       .selectFrom('product_variant')
       .select((eb) => [
@@ -292,7 +325,8 @@ export const commerceReadRepository: CommerceReadRepository = {
           eb
             .selectFrom('product')
             .select('product.tax_class as tax_class')
-            .whereRef('product.id', '=', 'product_variant.product_id'),
+            .whereRef('product.id', '=', 'product_variant.product_id')
+            .whereRef('product.tenant_id', '=', 'product_variant.tenant_id'),
         ).as('product'),
         jsonArrayFrom(
           eb
@@ -318,12 +352,13 @@ export const commerceReadRepository: CommerceReadRepository = {
         ).as('options'),
       ])
       .where('product_variant.product_id', '=', productId)
+      .where('product_variant.tenant_id', '=', view.companyId)
       .where('product_variant.deleted_at', 'is', null)
       .execute();
     return rows.map(mapVariantGraph);
   },
 
-  async getPrices(db, variantId) {
+  async getPrices(db, view, variantId) {
     // The variant (and its product) supply the resolved catalog tax classification
     // folded onto each price row, mirroring the in-memory double.
     const variant = await db
@@ -334,7 +369,10 @@ export const commerceReadRepository: CommerceReadRepository = {
         'product.tax_class as product_tax_class',
       ])
       .where('product_variant.id', '=', variantId)
+      .where('product_variant.tenant_id', '=', view.companyId)
       .executeTakeFirst();
+    // Another company's variant (or none): no prices.
+    if (!variant) return [];
     const resolvedTaxClass = variant?.variant_tax_class ?? variant?.product_tax_class ?? null;
 
     // variant -> price_set -> price. A variant with no price_set has no prices.
@@ -342,6 +380,7 @@ export const commerceReadRepository: CommerceReadRepository = {
       .selectFrom('price')
       .innerJoin('price_set', 'price_set.id', 'price.price_set_id')
       .where('price_set.variant_id', '=', variantId)
+      .where('price_set.tenant_id', '=', view.companyId)
       .select([
         'price.amount as amount',
         'price.currency_code as currency_code',
@@ -352,7 +391,7 @@ export const commerceReadRepository: CommerceReadRepository = {
     return prices.map((price) => mapPriceRow(price, variantId, resolvedTaxClass));
   },
 
-  async getAvailability(db, variantId, locationId) {
+  async getAvailability(db, view, variantId, locationId) {
     // A missing (or soft-deleted) variant is an error, never a silent zero-stock
     // success. The hydrator's documented per-slot swallow turns this throw into an
     // empty slot, never a failed build.
@@ -360,6 +399,7 @@ export const commerceReadRepository: CommerceReadRepository = {
       .selectFrom('product_variant')
       .select(['product_variant.id as id', 'product_variant.sku as sku', 'product_variant.deleted_at as deleted_at'])
       .where('product_variant.id', '=', variantId)
+      .where('product_variant.tenant_id', '=', view.companyId)
       .executeTakeFirst();
     if (!variant || variant.deleted_at !== null) {
       throw new Error(`getAvailability: no variant with id "${variantId}"`);
@@ -415,14 +455,15 @@ export const commerceReadRepository: CommerceReadRepository = {
  */
 export function getCommerceServerRepository(
   db: Kysely<CommerceDB>,
+  view: CatalogueView,
 ): CommerceServerRepository {
   return {
-    listProducts: (query) => commerceReadRepository.listProducts(db, query),
+    listProducts: (query) => commerceReadRepository.listProducts(db, view, query),
     getProductByHandle: (handle) =>
-      commerceReadRepository.getProductByHandle(db, handle),
-    listVariants: (productId) => commerceReadRepository.listVariants(db, productId),
-    getPrices: (variantId) => commerceReadRepository.getPrices(db, variantId),
+      commerceReadRepository.getProductByHandle(db, view, handle),
+    listVariants: (productId) => commerceReadRepository.listVariants(db, view, productId),
+    getPrices: (variantId) => commerceReadRepository.getPrices(db, view, variantId),
     getAvailability: (variantId, locationId) =>
-      commerceReadRepository.getAvailability(db, variantId, locationId),
+      commerceReadRepository.getAvailability(db, view, variantId, locationId),
   };
 }

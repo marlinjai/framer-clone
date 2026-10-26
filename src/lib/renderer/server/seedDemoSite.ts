@@ -60,8 +60,8 @@ const DEMO_WORKSPACE_ID = CMS_WORKSPACE_ID;
 // globalSetup (plain Node, no server-only/@ aliases) can import it without
 // pulling this module's server-only repo graph. Re-exported here so existing
 // importers (backfill, tests, scripts) keep one canonical import site.
-export { DEMO_TENANT_GROUP_ID } from './demoTenant';
-import { DEMO_TENANT_GROUP_ID } from './demoTenant';
+export { DEMO_COMPANY_ID, DEMO_TENANT_GROUP_ID } from './demoTenant';
+import { DEMO_COMPANY_ID, DEMO_TENANT_GROUP_ID } from './demoTenant';
 
 /** The hostname base the published storefront is served under (the smoke uses a
  *  three-label host `demo.<base>` so parseSubdomain yields `demo`). */
@@ -138,39 +138,48 @@ export interface SeededDemo {
  */
 async function seedProduct(
   db: Kysely<CommerceDB>,
+  tenantId: string,
   spec: ProductSpec,
   locationId: string,
 ): Promise<void> {
   const product = await catalogRepository.createProduct(db, {
+    tenantId,
     title: spec.title,
     handle: spec.handle,
+    // Published: the storefront shows only published products (020_catalogue_company).
+    status: 'published',
   });
   const option = await catalogRepository.addOption(db, {
+    tenantId,
     productId: product.id,
     title: spec.optionTitle,
   });
 
   for (const entry of spec.values) {
     const optionValue = await catalogRepository.addOptionValue(db, {
+      tenantId,
       optionId: option.id,
       value: entry.value,
     });
     const variant = await catalogRepository.addVariant(db, {
+      tenantId,
       productId: product.id,
       title: `${spec.title} / ${entry.value}`,
       sku: entry.sku,
     });
     // Assign the variant its single option value (the AFTER-trigger recompute
     // makes the combination unique per product at the database level).
-    await catalogRepository.setVariantOptions(db, variant.id, [
+    await catalogRepository.setVariantOptions(db, tenantId, variant.id, [
       { optionId: option.id, optionValueId: optionValue.id },
     ]);
 
     // Price: a base price in integer minor units (cents).
     const priceSet = await pricingRepository.createPriceSet(db, {
+      tenantId,
       variantId: variant.id,
     });
     await pricingRepository.addPrice(db, {
+      tenantId,
       priceSetId: priceSet.id,
       currency: 'EUR',
       amount: entry.amountCents,
@@ -383,6 +392,8 @@ function buildHomeSnapshot(args: {
 
 /** Options for {@link seedDemoSite}. */
 export interface SeedDemoOptions {
+  /** The demo company the products and sites belong to. Defaults to {@link DEMO_COMPANY_ID}. */
+  companyId?: string;
   /**
    * The scoped commerce handle EVERY commerce write routes through. Defaults to
    * `commerceTenantDb(tenantGroupId)` (built from COMMERCE_APP_DATABASE_URL).
@@ -411,6 +422,7 @@ export async function seedDemoSite(
   opts: SeedDemoOptions = {},
 ): Promise<SeededDemo> {
   const tenantGroupId = opts.tenantGroupId ?? DEMO_TENANT_GROUP_ID;
+  const companyId = opts.companyId ?? DEMO_COMPANY_ID;
   // The ONE scoped commerce handle. EVERY commerce write below routes through it
   // (each bare table resolves to `tg_<id>.<table>`); nothing bypasses it.
   const db = opts.commerceDb ?? commerceTenantDb(tenantGroupId);
@@ -426,7 +438,7 @@ export async function seedDemoSite(
   // checkout fail with "no default fulfillment location configured".
   const warehouseId = await seedDemoWarehouse(db);
   for (const spec of PRODUCT_SPECS) {
-    await seedProduct(db, spec, warehouseId);
+    await seedProduct(db, companyId, spec, warehouseId);
   }
 
   // 2) CMS Events collection (through the adapter the read path uses).
@@ -443,6 +455,7 @@ export async function seedDemoSite(
       status: 'published',
       workspaceId: DEMO_WORKSPACE_ID,
       tenantGroupId,
+      companyId,
       lumitraEnabled: false,
       projectCreatedAt: now,
       projectUpdatedAt: now,
@@ -483,6 +496,7 @@ export async function seedDemoSite(
       status: 'draft',
       workspaceId: DEMO_WORKSPACE_ID,
       tenantGroupId,
+      companyId,
       lumitraEnabled: false,
       projectCreatedAt: now,
       projectUpdatedAt: now,

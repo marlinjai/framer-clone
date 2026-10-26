@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: in-progress
 date: 2026-10-25
 title: "The catalogue: products and services per company, sold through the shop and invoiced in the Books"
 summary: "Design for step 1 and 2 of the business platform plan: a company-level catalogue of products (options, variants, stock, collections) and services on the commerce engine, in a glass table with a side panel, replacing the Books' own product list; first proven on the owner's test jewellery company with sample products, checkout paid through Stripe Connect in test mode with a 1% platform fee, and the receipt created in the Books."
@@ -41,6 +41,36 @@ Parent: [one business platform](2026-10-25-business-platform-architecture.md), s
 - **Navigation.** A company-level area `/projects/catalog` next to Sites and Books, behind the existing `sites`
   grant, the same one that opens the shop on a site; no new grant is added, so the parent plan's list
   (`sites`, `books`, `booking`) stays as it is.
+
+## Decided while building slice 1 (2026-10-26, say so if you disagree)
+
+- **Migration number.** The catalogue is `020_catalogue_company`; `019` went to deletable invoice drafts (roadmap
+  3d), which landed first.
+- **Existing rows are backfilled, not re-seeded.** The overnight rules forbid destructive steps, so the "re-seed,
+  no back-compat" line above gave way: existing products and orders go to the schema's sole company (the one
+  company id the Books tables know); a schema with none or several leaves them unassigned. A `NOT VALID`
+  "names its company" constraint refuses every new or edited row without a company and spares the old ones,
+  and `pnpm catalogue:assign-company <tenant group> <company> [--validate]` assigns the rest and validates.
+- **The site knows its company.** The storefront reaches only the tenant group from the host, and a tenant
+  group holds several companies, so `sites.company_id` (a Prisma column, not part of 020: the tenant schema
+  cannot map public sites) is stamped from the session when a site is created, saved, published or read in
+  the editor. A site not stamped yet falls back to the sole company; with none, its shop answers
+  `commerce_not_provisioned` until the owner opens it once.
+- **The Books list keeps its kinds.** A Books service becomes a catalogue `service`, a Books product a
+  `physical` product with stock tracking off (rather than everything as a service), so invoice lines keep
+  their kind. Each gets one variant with its price in a EUR price set, status draft, its unit label, price
+  basis, tax class, default discount and archive state. `books_product` itself stays until a later migration
+  retires it.
+- **Archive is a column.** `archived_at` on the product; the status enum stays draft and published (a new enum
+  value cannot be used in the migration that adds it). The storefront shows a product when it is the
+  site's company's, published, not archived, not deleted and not hidden for the site; the editor's canvas
+  reads with the same rule.
+- **Stock tracking reuses the engine's flags** (`manage_inventory`, `allow_backorder` of 006) instead of a new
+  `track_stock` column; the stock ledger stays keyed by SKU, so SKUs stay unique per tenant group, while
+  handles are unique per company.
+- **Images live beside the documents** (`catalog_image` bytes, PNG, JPEG or WebP up to 2 MB, one per company
+  and hash), as 008 and 013 do, until a storage-brain client exists in this repository.
+- **What an invoice line copies** is on the product too: `unit_label` and `discount_bp`.
 
 ## Data model (additions to the commerce engine)
 

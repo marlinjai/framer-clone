@@ -49,7 +49,7 @@ import { renderComponentNode } from '../renderComponentNode';
 import CommercePageProviders from '../CommercePageProviders';
 import { createScope, pushPageFrame } from '@/lib/bindings/resolver/scope';
 import { seedDemoSite, type SeededDemo } from '../seedDemoSite';
-import { DEMO_TENANT_GROUP_ID } from '../demoTenant';
+import { DEMO_COMPANY_ID, DEMO_TENANT_GROUP_ID } from '../demoTenant';
 
 let prisma: PrismaClient;
 let seeded: SeededDemo;
@@ -250,7 +250,7 @@ describe('published-site render smoke (real Postgres, real seeded data)', () => 
   describe('demo checkout end to end through the storefront orders route', () => {
     it('places one order on the demo host: 201, the order lands in tg_<demo>, stock is reserved', async () => {
       const db = await commerceTenantDbChecked(DEMO_TENANT_GROUP_ID);
-      const repo = getCommerceServerRepository(db);
+      const repo = getCommerceServerRepository(db, { companyId: DEMO_COMPANY_ID, siteId: seeded.siteId });
       const page = await repo.listProducts();
       const variantId = page.products[0]!.variantIds[0]!;
       const before = await repo.getAvailability(variantId);

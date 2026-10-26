@@ -42,6 +42,7 @@ import {
   type StorefrontFixtures,
 } from '../../__tests__/storefrontFixtures';
 import { createOrder, type Cart } from '../createOrder';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 let fx: StorefrontFixtures;
 let db: Kysely<CommerceDB>;
@@ -72,12 +73,12 @@ async function seedPricedVariant(
   const productId = randomUUID();
   await db
     .insertInto('product')
-    .values({ id: productId, title: 'P', handle: `p-${randomUUID()}`, updated_at: now })
+    .values({ tenant_id: DEMO_COMPANY_ID, status: 'published', id: productId, title: 'P', handle: `p-${randomUUID()}`, updated_at: now })
     .execute();
   const variantId = randomUUID();
   await db
     .insertInto('product_variant')
-    .values({
+    .values({ tenant_id: DEMO_COMPANY_ID,
       id: variantId,
       product_id: productId,
       title: `V-${variantId.slice(0, 6)}`,
@@ -87,11 +88,11 @@ async function seedPricedVariant(
     })
     .execute();
   const priceSetId = randomUUID();
-  await db.insertInto('price_set').values({ id: priceSetId, variant_id: variantId, updated_at: now }).execute();
+  await db.insertInto('price_set').values({ tenant_id: DEMO_COMPANY_ID, id: priceSetId, variant_id: variantId, updated_at: now }).execute();
   const priceId = randomUUID();
   await db
     .insertInto('price')
-    .values({
+    .values({ tenant_id: DEMO_COMPANY_ID,
       id: priceId,
       price_set_id: priceSetId,
       currency_code: opts.currency ?? 'EUR',
@@ -134,6 +135,7 @@ async function placeOneLine(
   const { variantId } = await seedPricedVariant(line.amountCents, { taxClass: line.taxClass });
   const { itemId, locationId } = await seedStock(10);
   const result = await createOrder(db, tgId, {
+    tenantId: DEMO_COMPANY_ID,
     requestId: `order-${randomUUID()}`,
     currency: 'EUR',
     taxRegion: 'DE',
@@ -181,6 +183,7 @@ describe('createOrder (tenant schema, Dockerized Postgres)', () => {
     const { variantId, priceId } = await seedPricedVariant(1000);
     const { itemId, locationId } = await seedStock(10);
     const result = await createOrder(db, tgId, {
+      tenantId: DEMO_COMPANY_ID,
       requestId: `snap-${randomUUID()}`,
       currency: 'EUR',
       taxRegion: 'DE',
@@ -215,6 +218,7 @@ describe('createOrder (tenant schema, Dockerized Postgres)', () => {
     const requestId = `short-${randomUUID()}`;
 
     const result = await createOrder(db, tgId, {
+      tenantId: DEMO_COMPANY_ID,
       requestId,
       currency: 'EUR',
       taxRegion: 'DE',
@@ -240,6 +244,7 @@ describe('createOrder (tenant schema, Dockerized Postgres)', () => {
     const { variantId } = await seedPricedVariant(1000);
     const { itemId, locationId } = await seedStock(10);
     const result = await createOrder(db, tgId, {
+      tenantId: DEMO_COMPANY_ID,
       requestId: `ref-${randomUUID()}`,
       currency: 'EUR',
       taxRegion: 'DE',
@@ -263,7 +268,7 @@ describe('createOrder (tenant schema, Dockerized Postgres)', () => {
     await expect(
       db
         .insertInto('order_line_item')
-        .values({
+        .values({ tenant_id: DEMO_COMPANY_ID,
           id: randomUUID(),
           order_id: result.orderId,
           unit_price: 1,
@@ -342,6 +347,7 @@ describe('createOrder (tenant schema, Dockerized Postgres)', () => {
     const { itemId, locationId } = await seedStock(10);
     const requestId = `idem-seq-${randomUUID()}`;
     const cart: Cart = {
+      tenantId: DEMO_COMPANY_ID,
       requestId,
       currency: 'EUR',
       taxRegion: 'DE',
@@ -363,6 +369,7 @@ describe('createOrder (tenant schema, Dockerized Postgres)', () => {
     const { itemId, locationId } = await seedStock(50);
     const requestId = `idem-conc-${randomUUID()}`;
     const cart: Cart = {
+      tenantId: DEMO_COMPANY_ID,
       requestId,
       currency: 'EUR',
       taxRegion: 'DE',
@@ -399,6 +406,7 @@ describe('createOrder (tenant schema, Dockerized Postgres)', () => {
     const { variantId } = await seedPricedVariant(1500);
     const { itemId, locationId } = await seedStock(4);
     const result = await createOrder(appDb, tgId, {
+      tenantId: DEMO_COMPANY_ID,
       requestId: `app-${randomUUID()}`,
       currency: 'EUR',
       taxRegion: 'DE',
@@ -450,6 +458,7 @@ describe('createOrder (tenant schema, Dockerized Postgres)', () => {
     const stockA = await seedStock(10);
     const stockB = await seedStock(10);
     const result = await createOrder(db, tgId, {
+      tenantId: DEMO_COMPANY_ID,
       requestId: `two-line-${randomUUID()}`,
       currency: 'EUR',
       taxRegion: 'DE',

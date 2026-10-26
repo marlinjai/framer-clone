@@ -57,6 +57,11 @@ export interface PublishedSite {
   siteId: string;
   workspaceId: string;
   tenantGroupId: string;
+  /**
+   * The company the site belongs to (sites.company_id), or null for a site not stamped yet; the storefront's
+   * catalogue reads then fall back to the tenant group's sole company (storefrontTenant.ts).
+   */
+  companyId: string | null;
   name: string;
   analyticsProjectId: string | null;
   ingestionEndpoint: string | null;
@@ -205,6 +210,7 @@ export async function resolvePublishedSiteByKey(
       id: true,
       workspaceId: true,
       tenantGroupId: true,
+      companyId: true,
       name: true,
       analyticsProjectId: true,
       ingestionEndpoint: true,
@@ -221,6 +227,7 @@ export async function resolvePublishedSiteByKey(
     siteId: site.id,
     workspaceId: site.workspaceId,
     tenantGroupId: site.tenantGroupId,
+    companyId: site.companyId,
     name: site.name,
     analyticsProjectId: site.analyticsProjectId,
     ingestionEndpoint: site.ingestionEndpoint,

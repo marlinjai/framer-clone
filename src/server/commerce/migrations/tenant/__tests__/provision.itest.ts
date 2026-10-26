@@ -58,6 +58,7 @@ const EXPECTED_MIGRATION_IDS = [
   '017_form_submissions',
   '018_books_text_format',
   '019_books_draft_delete',
+  '020_catalogue_company',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {
@@ -83,6 +84,9 @@ const EXPECTED_TABLES = [
   'books_asset',
   'books_company_settings',
   'books_product',
+  'catalog_image',
+  'collection',
+  'collection_product',
   'credit_note',
   'credit_note_ref',
   'customer',
@@ -102,8 +106,10 @@ const EXPECTED_TABLES = [
   'price_rule',
   'price_set',
   'product',
+  'product_image',
   'product_option',
   'product_option_value',
+  'product_site_hidden',
   'product_variant',
   'product_variant_option',
   'reservation',
@@ -217,7 +223,7 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
   });
 
   // --- tables -------------------------------------------------------------
-  it('creates exactly the 19 commerce, 11 Books and 1 forms tables in the schema', async () => {
+  it('creates exactly the 24 commerce, 13 Books and 1 forms tables in the schema', async () => {
     const rows = await owner!`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = ${SCHEMA} AND table_type = 'BASE TABLE'
@@ -304,10 +310,10 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
   // --- option_signature triggers -----------------------------------------
   it('option_signature is trigger-maintained (BEFORE bare-variant + AFTER matrix refresh)', async () => {
     await inSchema(async (tx) => {
-      await tx`INSERT INTO product (id, title, handle, updated_at) VALUES ('sig_p', 'SigProd', 'sig-handle', now())`;
-      await tx`INSERT INTO product_option (id, product_id, title, updated_at) VALUES ('sig_o', 'sig_p', 'Size', now())`;
-      await tx`INSERT INTO product_option_value (id, option_id, value, updated_at) VALUES ('sig_v', 'sig_o', 'S', now())`;
-      await tx`INSERT INTO product_variant (id, product_id, updated_at) VALUES ('sig_va1', 'sig_p', now())`;
+      await tx`INSERT INTO product (tenant_id, id, title, handle, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'sig_p', 'SigProd', 'sig-handle', now())`;
+      await tx`INSERT INTO product_option (tenant_id, id, product_id, title, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'sig_o', 'sig_p', 'Size', now())`;
+      await tx`INSERT INTO product_option_value (tenant_id, id, option_id, value, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'sig_v', 'sig_o', 'S', now())`;
+      await tx`INSERT INTO product_variant (tenant_id, id, product_id, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'sig_va1', 'sig_p', now())`;
     });
 
     // BEFORE trigger: a bare variant with no matrix rows gets a NULL signature.
@@ -315,7 +321,7 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
     expect(bare[0]!.option_signature).toBeNull();
 
     // AFTER trigger: writing the matrix populates the variant's signature.
-    await inSchema((tx) => tx`INSERT INTO product_variant_option (variant_id, option_id, option_value_id) VALUES ('sig_va1', 'sig_o', 'sig_v')`);
+    await inSchema((tx) => tx`INSERT INTO product_variant_option (tenant_id, variant_id, option_id, option_value_id) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'sig_va1', 'sig_o', 'sig_v')`);
     const populated = await inSchema((tx) => tx`SELECT option_signature FROM product_variant WHERE id = 'sig_va1'`);
     expect(populated[0]!.option_signature).toBe('sig_v');
 
@@ -377,8 +383,8 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
   // FALSE — Medusa parity).
   it('product_variant.manage_inventory / allow_backorder exist with defaults true / false', async () => {
     await inSchema(async (tx) => {
-      await tx`INSERT INTO product (id, title, handle, updated_at) VALUES ('pol_p', 'PolProd', 'pol-handle', now())`;
-      await tx`INSERT INTO product_variant (id, product_id, updated_at) VALUES ('pol_va', 'pol_p', now())`;
+      await tx`INSERT INTO product (tenant_id, id, title, handle, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'pol_p', 'PolProd', 'pol-handle', now())`;
+      await tx`INSERT INTO product_variant (tenant_id, id, product_id, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'pol_va', 'pol_p', now())`;
     });
     const row = await inSchema(
       (tx) => tx`SELECT manage_inventory, allow_backorder FROM product_variant WHERE id = 'pol_va'`,
@@ -389,7 +395,7 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
     // Both are explicitly overridable (digital/unlimited opts out of tracking;
     // pre-order opts into backorder).
     await inSchema(
-      (tx) => tx`INSERT INTO product_variant (id, product_id, manage_inventory, allow_backorder, updated_at) VALUES ('pol_va2', 'pol_p', false, true, now())`,
+      (tx) => tx`INSERT INTO product_variant (tenant_id, id, product_id, manage_inventory, allow_backorder, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'pol_va2', 'pol_p', false, true, now())`,
     );
     const overridden = await inSchema(
       (tx) => tx`SELECT manage_inventory, allow_backorder FROM product_variant WHERE id = 'pol_va2'`,
@@ -399,18 +405,18 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
   });
 
   it('pricing CHECKs reject negative money, inverted band, mis-cased currency', async () => {
-    await inSchema((tx) => tx`INSERT INTO price_set (id, updated_at) VALUES ('chk_ps', now())`);
+    await inSchema((tx) => tx`INSERT INTO price_set (tenant_id, id, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'chk_ps', now())`);
     // amount < 0
     await expect(
-      inSchema((tx) => tx`INSERT INTO price (id, price_set_id, currency_code, amount, updated_at) VALUES ('chk_pr1', 'chk_ps', 'EUR', -1, now())`),
+      inSchema((tx) => tx`INSERT INTO price (tenant_id, id, price_set_id, currency_code, amount, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'chk_pr1', 'chk_ps', 'EUR', -1, now())`),
     ).rejects.toThrow(/price_amount_nonneg_check/);
     // inverted quantity band (min > max)
     await expect(
-      inSchema((tx) => tx`INSERT INTO price (id, price_set_id, currency_code, amount, min_quantity, max_quantity, updated_at) VALUES ('chk_pr2', 'chk_ps', 'EUR', 100, 5, 3, now())`),
+      inSchema((tx) => tx`INSERT INTO price (tenant_id, id, price_set_id, currency_code, amount, min_quantity, max_quantity, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'chk_pr2', 'chk_ps', 'EUR', 100, 5, 3, now())`),
     ).rejects.toThrow(/price_quantity_band_check/);
     // mis-cased currency
     await expect(
-      inSchema((tx) => tx`INSERT INTO price (id, price_set_id, currency_code, amount, updated_at) VALUES ('chk_pr3', 'chk_ps', 'eur', 100, now())`),
+      inSchema((tx) => tx`INSERT INTO price (tenant_id, id, price_set_id, currency_code, amount, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'chk_pr3', 'chk_ps', 'eur', 100, now())`),
     ).rejects.toThrow(/price_currency_code_iso4217_check/);
     // credit_note amount < 0
     await expect(
@@ -421,36 +427,36 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
   it('order CHECKs enforce money floor, currency shape, and the accounting identity', async () => {
     // subtotal < 0 (isolated: tax=1, total=0 keeps total=subtotal+tax and total>=0)
     await expect(
-      inSchema((tx) => tx`INSERT INTO "order" (id, order_number, request_id, currency_code, tax_region, subtotal, tax_amount, total, updated_at) VALUES ('chk_o1', 'ON-1', 'RQ-1', 'EUR', 'DE', -1, 1, 0, now())`),
+      inSchema((tx) => tx`INSERT INTO "order" (tenant_id, id, order_number, request_id, currency_code, tax_region, subtotal, tax_amount, total, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'chk_o1', 'ON-1', 'RQ-1', 'EUR', 'DE', -1, 1, 0, now())`),
     ).rejects.toThrow(/order_subtotal_nonneg_check/);
     // tax_amount < 0 (isolated)
     await expect(
-      inSchema((tx) => tx`INSERT INTO "order" (id, order_number, request_id, currency_code, tax_region, subtotal, tax_amount, total, updated_at) VALUES ('chk_o2', 'ON-2', 'RQ-2', 'EUR', 'DE', 1, -1, 0, now())`),
+      inSchema((tx) => tx`INSERT INTO "order" (tenant_id, id, order_number, request_id, currency_code, tax_region, subtotal, tax_amount, total, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'chk_o2', 'ON-2', 'RQ-2', 'EUR', 'DE', 1, -1, 0, now())`),
     ).rejects.toThrow(/order_tax_amount_nonneg_check/);
     // accounting identity total = subtotal + tax_amount
     await expect(
-      inSchema((tx) => tx`INSERT INTO "order" (id, order_number, request_id, currency_code, tax_region, subtotal, tax_amount, total, updated_at) VALUES ('chk_o3', 'ON-3', 'RQ-3', 'EUR', 'DE', 2, 2, 5, now())`),
+      inSchema((tx) => tx`INSERT INTO "order" (tenant_id, id, order_number, request_id, currency_code, tax_region, subtotal, tax_amount, total, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'chk_o3', 'ON-3', 'RQ-3', 'EUR', 'DE', 2, 2, 5, now())`),
     ).rejects.toThrow(/order_total_sum_check/);
     // mis-cased currency
     await expect(
-      inSchema((tx) => tx`INSERT INTO "order" (id, order_number, request_id, currency_code, tax_region, subtotal, tax_amount, total, updated_at) VALUES ('chk_o4', 'ON-4', 'RQ-4', 'eur', 'DE', 0, 0, 0, now())`),
+      inSchema((tx) => tx`INSERT INTO "order" (tenant_id, id, order_number, request_id, currency_code, tax_region, subtotal, tax_amount, total, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'chk_o4', 'ON-4', 'RQ-4', 'eur', 'DE', 0, 0, 0, now())`),
     ).rejects.toThrow(/order_currency_code_iso4217_check/);
   });
 
   it('order_line_item CHECKs enforce tax-rate ceiling and positive quantity', async () => {
     // a valid parent order
-    await inSchema((tx) => tx`INSERT INTO "order" (id, order_number, request_id, currency_code, tax_region, subtotal, tax_amount, total, updated_at) VALUES ('li_o', 'ON-LI', 'RQ-LI', 'EUR', 'DE', 0, 0, 0, now())`);
+    await inSchema((tx) => tx`INSERT INTO "order" (tenant_id, id, order_number, request_id, currency_code, tax_region, subtotal, tax_amount, total, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'li_o', 'ON-LI', 'RQ-LI', 'EUR', 'DE', 0, 0, 0, now())`);
     // tax_rate > 10000 (basis points ceiling)
     await expect(
-      inSchema((tx) => tx`INSERT INTO order_line_item (id, order_id, unit_price, quantity, subtotal, tax_rate, tax_amount, tax_treatment) VALUES ('li_1', 'li_o', 100, 1, 100, 10001, 19, 'standard')`),
+      inSchema((tx) => tx`INSERT INTO order_line_item (tenant_id, id, order_id, unit_price, quantity, subtotal, tax_rate, tax_amount, tax_treatment) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'li_1', 'li_o', 100, 1, 100, 10001, 19, 'standard')`),
     ).rejects.toThrow(/order_line_item_tax_rate_ceiling_check/);
     // quantity <= 0
     await expect(
-      inSchema((tx) => tx`INSERT INTO order_line_item (id, order_id, unit_price, quantity, subtotal, tax_rate, tax_amount, tax_treatment) VALUES ('li_2', 'li_o', 100, 0, 0, 1900, 0, 'standard')`),
+      inSchema((tx) => tx`INSERT INTO order_line_item (tenant_id, id, order_id, unit_price, quantity, subtotal, tax_rate, tax_amount, tax_treatment) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'li_2', 'li_o', 100, 0, 0, 1900, 0, 'standard')`),
     ).rejects.toThrow(/order_line_item_quantity_pos_check/);
     // unit_price < 0
     await expect(
-      inSchema((tx) => tx`INSERT INTO order_line_item (id, order_id, unit_price, quantity, subtotal, tax_rate, tax_amount, tax_treatment) VALUES ('li_3', 'li_o', -1, 1, 0, 1900, 0, 'standard')`),
+      inSchema((tx) => tx`INSERT INTO order_line_item (tenant_id, id, order_id, unit_price, quantity, subtotal, tax_rate, tax_amount, tax_treatment) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'li_3', 'li_o', -1, 1, 0, 1900, 0, 'standard')`),
     ).rejects.toThrow(/order_line_item_unit_price_nonneg_check/);
   });
 
@@ -470,64 +476,64 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
 
   it('catalog partial-unique indexes reject live duplicates (handle, option, value, sku, barcode)', async () => {
     await inSchema(async (tx) => {
-      await tx`INSERT INTO product (id, title, handle, updated_at) VALUES ('pu_p1', 'P1', 'dup-handle', now())`;
-      await tx`INSERT INTO product_option (id, product_id, title, updated_at) VALUES ('pu_o1', 'pu_p1', 'Color', now())`;
-      await tx`INSERT INTO product_option_value (id, option_id, value, updated_at) VALUES ('pu_ov1', 'pu_o1', 'Red', now())`;
-      await tx`INSERT INTO product_variant (id, product_id, sku, barcode, updated_at) VALUES ('pu_va1', 'pu_p1', 'VSKU', 'VBAR', now())`;
+      await tx`INSERT INTO product (tenant_id, id, title, handle, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'pu_p1', 'P1', 'dup-handle', now())`;
+      await tx`INSERT INTO product_option (tenant_id, id, product_id, title, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'pu_o1', 'pu_p1', 'Color', now())`;
+      await tx`INSERT INTO product_option_value (tenant_id, id, option_id, value, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'pu_ov1', 'pu_o1', 'Red', now())`;
+      await tx`INSERT INTO product_variant (tenant_id, id, product_id, sku, barcode, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'pu_va1', 'pu_p1', 'VSKU', 'VBAR', now())`;
     });
     // product.handle
     await expect(
-      inSchema((tx) => tx`INSERT INTO product (id, title, handle, updated_at) VALUES ('pu_p2', 'P2', 'dup-handle', now())`),
-    ).rejects.toThrow(/product_handle_active_key/);
+      inSchema((tx) => tx`INSERT INTO product (tenant_id, id, title, handle, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'pu_p2', 'P2', 'dup-handle', now())`),
+    ).rejects.toThrow(/product_tenant_handle_active_key/);
     // product_option (product_id, title)
     await expect(
-      inSchema((tx) => tx`INSERT INTO product_option (id, product_id, title, updated_at) VALUES ('pu_o2', 'pu_p1', 'Color', now())`),
+      inSchema((tx) => tx`INSERT INTO product_option (tenant_id, id, product_id, title, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'pu_o2', 'pu_p1', 'Color', now())`),
     ).rejects.toThrow(/product_option_product_id_title_active_key/);
     // product_option_value (option_id, value)
     await expect(
-      inSchema((tx) => tx`INSERT INTO product_option_value (id, option_id, value, updated_at) VALUES ('pu_ov2', 'pu_o1', 'Red', now())`),
+      inSchema((tx) => tx`INSERT INTO product_option_value (tenant_id, id, option_id, value, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'pu_ov2', 'pu_o1', 'Red', now())`),
     ).rejects.toThrow(/product_option_value_option_id_value_active_key/);
     // product_variant.sku
     await expect(
-      inSchema((tx) => tx`INSERT INTO product_variant (id, product_id, sku, updated_at) VALUES ('pu_va2', 'pu_p1', 'VSKU', now())`),
+      inSchema((tx) => tx`INSERT INTO product_variant (tenant_id, id, product_id, sku, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'pu_va2', 'pu_p1', 'VSKU', now())`),
     ).rejects.toThrow(/product_variant_sku_active_key/);
     // product_variant.barcode
     await expect(
-      inSchema((tx) => tx`INSERT INTO product_variant (id, product_id, barcode, updated_at) VALUES ('pu_va3', 'pu_p1', 'VBAR', now())`),
+      inSchema((tx) => tx`INSERT INTO product_variant (tenant_id, id, product_id, barcode, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'pu_va3', 'pu_p1', 'VBAR', now())`),
     ).rejects.toThrow(/product_variant_barcode_active_key/);
   });
 
   it('option_signature partial-unique rejects two LIVE variants sharing one combination', async () => {
     await inSchema(async (tx) => {
-      await tx`INSERT INTO product (id, title, handle, updated_at) VALUES ('dup_p', 'DupCombo', 'dup-combo', now())`;
-      await tx`INSERT INTO product_option (id, product_id, title, updated_at) VALUES ('dup_o', 'dup_p', 'Size', now())`;
-      await tx`INSERT INTO product_option_value (id, option_id, value, updated_at) VALUES ('dup_v', 'dup_o', 'M', now())`;
-      await tx`INSERT INTO product_variant (id, product_id, updated_at) VALUES ('dup_va1', 'dup_p', now())`;
-      await tx`INSERT INTO product_variant (id, product_id, updated_at) VALUES ('dup_va2', 'dup_p', now())`;
+      await tx`INSERT INTO product (tenant_id, id, title, handle, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'dup_p', 'DupCombo', 'dup-combo', now())`;
+      await tx`INSERT INTO product_option (tenant_id, id, product_id, title, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'dup_o', 'dup_p', 'Size', now())`;
+      await tx`INSERT INTO product_option_value (tenant_id, id, option_id, value, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'dup_v', 'dup_o', 'M', now())`;
+      await tx`INSERT INTO product_variant (tenant_id, id, product_id, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'dup_va1', 'dup_p', now())`;
+      await tx`INSERT INTO product_variant (tenant_id, id, product_id, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'dup_va2', 'dup_p', now())`;
     });
     // first variant gets the combination
-    await inSchema((tx) => tx`INSERT INTO product_variant_option (variant_id, option_id, option_value_id) VALUES ('dup_va1', 'dup_o', 'dup_v')`);
+    await inSchema((tx) => tx`INSERT INTO product_variant_option (tenant_id, variant_id, option_id, option_value_id) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'dup_va1', 'dup_o', 'dup_v')`);
     // second variant with the SAME combination → its refreshed signature collides
     await expect(
-      inSchema((tx) => tx`INSERT INTO product_variant_option (variant_id, option_id, option_value_id) VALUES ('dup_va2', 'dup_o', 'dup_v')`),
+      inSchema((tx) => tx`INSERT INTO product_variant_option (tenant_id, variant_id, option_id, option_value_id) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'dup_va2', 'dup_o', 'dup_v')`),
     ).rejects.toThrow(/product_variant_option_signature_active_key/);
   });
 
   // --- composite FK ON UPDATE RESTRICT -----------------------------------
   it('composite FK ties option_value to its option and is ON UPDATE RESTRICT', async () => {
     await inSchema(async (tx) => {
-      await tx`INSERT INTO product (id, title, handle, updated_at) VALUES ('fk_p', 'FKProd', 'fk-handle', now())`;
-      await tx`INSERT INTO product_option (id, product_id, title, updated_at) VALUES ('fk_o1', 'fk_p', 'OptOne', now())`;
-      await tx`INSERT INTO product_option (id, product_id, title, updated_at) VALUES ('fk_o2', 'fk_p', 'OptTwo', now())`;
-      await tx`INSERT INTO product_option_value (id, option_id, value, updated_at) VALUES ('fk_v', 'fk_o1', 'X', now())`;
-      await tx`INSERT INTO product_variant (id, product_id, updated_at) VALUES ('fk_va', 'fk_p', now())`;
+      await tx`INSERT INTO product (tenant_id, id, title, handle, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'fk_p', 'FKProd', 'fk-handle', now())`;
+      await tx`INSERT INTO product_option (tenant_id, id, product_id, title, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'fk_o1', 'fk_p', 'OptOne', now())`;
+      await tx`INSERT INTO product_option (tenant_id, id, product_id, title, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'fk_o2', 'fk_p', 'OptTwo', now())`;
+      await tx`INSERT INTO product_option_value (tenant_id, id, option_id, value, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'fk_v', 'fk_o1', 'X', now())`;
+      await tx`INSERT INTO product_variant (tenant_id, id, product_id, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'fk_va', 'fk_p', now())`;
     });
     // mismatched option_id: (fk_v, fk_o2) is not a real (id, option_id) pair → reject
     await expect(
-      inSchema((tx) => tx`INSERT INTO product_variant_option (variant_id, option_id, option_value_id) VALUES ('fk_va', 'fk_o2', 'fk_v')`),
+      inSchema((tx) => tx`INSERT INTO product_variant_option (tenant_id, variant_id, option_id, option_value_id) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'fk_va', 'fk_o2', 'fk_v')`),
     ).rejects.toThrow(/product_variant_option_option_value_id_option_id_fkey|foreign key/i);
     // a correct matrix row, then ON UPDATE RESTRICT blocks rewriting the referenced id
-    await inSchema((tx) => tx`INSERT INTO product_variant_option (variant_id, option_id, option_value_id) VALUES ('fk_va', 'fk_o1', 'fk_v')`);
+    await inSchema((tx) => tx`INSERT INTO product_variant_option (tenant_id, variant_id, option_id, option_value_id) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'fk_va', 'fk_o1', 'fk_v')`);
     await expect(
       inSchema((tx) => tx`UPDATE product_option_value SET id = 'fk_v_new' WHERE id = 'fk_v'`),
     ).rejects.toThrow(/product_variant_option_option_value_id_option_id_fkey|foreign key|update or delete/i);

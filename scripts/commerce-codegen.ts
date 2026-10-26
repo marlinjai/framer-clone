@@ -102,6 +102,9 @@ const JSON_COLUMNS: Record<string, string> = {
   'historical_import_item.problems': 'Array<Record<string, unknown>>',
   // 017_form_submissions: parsed with zod on read (src/server/forms/repository.ts).
   'form_submission.fields': 'Array<Record<string, unknown>>',
+  // 020_catalogue_company: the formatted descriptions, the run model of render/richText.ts.
+  'product.description_format': 'RichText',
+  'collection.description_format': 'RichText',
 };
 
 /** The type-only imports the JSON shapes need. */
@@ -118,14 +121,20 @@ const TABLE_DOCS: Record<string, string> = {
   stock_movement: '001_inventory_ledger: append-only stock movement ledger (no updated_at).',
   reservation: '002_guarded_reservation: soft stock reservation.',
   fulfillment_location_default: '002_guarded_reservation: per-workspace default fulfillment location.',
-  product: '003_catalog (+ 004 tax_class): product.',
+  product:
+    '003_catalog (+ 004 tax_class, 020 company and shop fields): product or service of one company.\nA service has exactly one variant and no options (BK017).',
   product_option: '003_catalog: product option (e.g. "Size").',
   product_option_value: '003_catalog: product option value (e.g. "Large").',
   product_variant:
     '003_catalog (+ 004 tax_class, 006 policy flags): product variant.\n`option_signature` is NULLABLE and maintained EXCLUSIVELY by triggers.',
   product_variant_option: '003_catalog: the variant<->option-value matrix (composite PK).',
   price_set: '004_pricing_and_tax: one price set per variant.',
-  price: '004_pricing_and_tax: a price (amount = INTEGER minor units / cents).',
+  price: '004_pricing_and_tax (+ 020 company, compare_at_amount): a price (amount = INTEGER minor units / cents).',
+  catalog_image: '020_catalogue_company: an image of the catalogue (bytes beside the documents, one per company and hash).',
+  product_image: '020_catalogue_company: the ordered images of a product, optionally tied to one variant.',
+  collection: '020_catalogue_company: a manual collection of products.',
+  collection_product: '020_catalogue_company: the ordered products of a collection.',
+  product_site_hidden: '020_catalogue_company: a product switched off for one site of its company.',
   price_rule: '004_pricing_and_tax: price rule (attribute match).',
   price_list: '004_pricing_and_tax: price list (override / sale window).',
   credit_note:
@@ -259,6 +268,8 @@ const SCALARS: Record<string, string> = {
   date: 'DateString',
   // postgres.js reads BYTEA as a Node Buffer and writes a Buffer (or Uint8Array) as BYTEA.
   bytea: 'Buffer',
+  // postgres.js reads TEXT[] as a string array (020_catalogue_company: product.tags).
+  _text: 'string[]',
 };
 
 function pascal(name: string): string {

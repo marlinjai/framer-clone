@@ -38,6 +38,7 @@ import postgres from 'postgres';
 import type { CommerceDB } from '../db-types';
 import { DEFAULT_WORKSPACE_ID } from '../inventory/reserve';
 import { COMMERCE_PROVISION_LOCK_KEY as PROVISION_LOCK_KEY, commerceProvisionOptions } from '../provisioning/provision';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 export interface StorefrontFixtures {
   /** Owner-role postgres.js connection (raw counts, provisioning). */
@@ -128,6 +129,8 @@ export async function createPublishedSite(
     data: {
       workspaceId,
       tenantGroupId,
+      // The company the site sells for (sites.company_id): the fixtures seed the demo company's catalogue.
+      companyId: DEMO_COMPANY_ID,
       name: `Store ${label}`,
       status: 'published',
       projectCreatedAt: new Date(),
@@ -170,39 +173,39 @@ export async function seedBuyableProduct(
   const productId = randomUUID();
   await db
     .insertInto('product')
-    .values({ id: productId, title: opts.title, handle: opts.handle, updated_at: now })
+    .values({ tenant_id: DEMO_COMPANY_ID, status: 'published', id: productId, title: opts.title, handle: opts.handle, updated_at: now })
     .execute();
 
   const optionId = randomUUID();
   await db
     .insertInto('product_option')
-    .values({ id: optionId, product_id: productId, title: 'Color', updated_at: now })
+    .values({ tenant_id: DEMO_COMPANY_ID, id: optionId, product_id: productId, title: 'Color', updated_at: now })
     .execute();
   const valueId = randomUUID();
   await db
     .insertInto('product_option_value')
-    .values({ id: valueId, option_id: optionId, value: 'Red', updated_at: now })
+    .values({ tenant_id: DEMO_COMPANY_ID, id: valueId, option_id: optionId, value: 'Red', updated_at: now })
     .execute();
 
   const variantId = randomUUID();
   const sku = `SKU-${randomUUID()}`;
   await db
     .insertInto('product_variant')
-    .values({ id: variantId, product_id: productId, title: 'Red', sku, updated_at: now })
+    .values({ tenant_id: DEMO_COMPANY_ID, id: variantId, product_id: productId, title: 'Red', sku, updated_at: now })
     .execute();
   await db
     .insertInto('product_variant_option')
-    .values({ variant_id: variantId, option_id: optionId, option_value_id: valueId })
+    .values({ tenant_id: DEMO_COMPANY_ID, variant_id: variantId, option_id: optionId, option_value_id: valueId })
     .execute();
 
   const priceSetId = randomUUID();
   await db
     .insertInto('price_set')
-    .values({ id: priceSetId, variant_id: variantId, updated_at: now })
+    .values({ tenant_id: DEMO_COMPANY_ID, id: priceSetId, variant_id: variantId, updated_at: now })
     .execute();
   await db
     .insertInto('price')
-    .values({
+    .values({ tenant_id: DEMO_COMPANY_ID,
       id: randomUUID(),
       price_set_id: priceSetId,
       currency_code: opts.currency ?? 'EUR',

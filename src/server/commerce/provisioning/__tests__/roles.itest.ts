@@ -45,6 +45,7 @@ import type { CommerceDB } from '../../db-types';
 import { createOrder } from '../../order/createOrder';
 import { APPEND_ONLY_TABLES, provisionCommerceTenant } from '../provision';
 import { runCommerceDeployMigrations } from '../deploy';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 const DB_NAME = 'framer_clone_roles_test';
 const ROLES_SQL_PATH = path.resolve(__dirname, '../../../../../prisma/sql/commerce-roles.sql');
@@ -256,17 +257,17 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
     // Seed a priced, stocked variant through the app role (catalog and stock
     // tables are ordinary DML for it).
     const productId = randomUUID();
-    await db.insertInto('product').values({ id: productId, title: 'P', handle: `p-${productId}`, updated_at: now }).execute();
+    await db.insertInto('product').values({ tenant_id: DEMO_COMPANY_ID, status: 'published', id: productId, title: 'P', handle: `p-${productId}`, updated_at: now }).execute();
     const variantId = randomUUID();
     await db
       .insertInto('product_variant')
-      .values({ id: variantId, product_id: productId, title: 'V', sku: `SKU-${variantId}`, updated_at: now })
+      .values({ tenant_id: DEMO_COMPANY_ID, id: variantId, product_id: productId, title: 'V', sku: `SKU-${variantId}`, updated_at: now })
       .execute();
     const priceSetId = randomUUID();
-    await db.insertInto('price_set').values({ id: priceSetId, variant_id: variantId, updated_at: now }).execute();
+    await db.insertInto('price_set').values({ tenant_id: DEMO_COMPANY_ID, id: priceSetId, variant_id: variantId, updated_at: now }).execute();
     await db
       .insertInto('price')
-      .values({ id: randomUUID(), price_set_id: priceSetId, currency_code: 'EUR', amount: 1500, updated_at: now })
+      .values({ tenant_id: DEMO_COMPANY_ID, id: randomUUID(), price_set_id: priceSetId, currency_code: 'EUR', amount: 1500, updated_at: now })
       .execute();
     const itemId = randomUUID();
     await db.insertInto('inventory_item').values({ id: itemId, sku: `INV-${itemId}`, updated_at: now }).execute();
@@ -285,6 +286,7 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
       .execute();
 
     const result = await createOrder(db, tgId, {
+      tenantId: DEMO_COMPANY_ID,
       requestId: `roles-${randomUUID()}`,
       currency: 'EUR',
       taxRegion: 'DE',

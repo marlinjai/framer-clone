@@ -43,6 +43,7 @@ import type { CommerceDB } from '../../db-types';
 import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
 import { commerceProvisionOptions } from '../../provisioning/provision';
 import { catalogRepository } from '../catalog';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 const DB_NAME = 'framer_clone_test';
 const APP_ROLE = 'commerce_app';
@@ -112,33 +113,33 @@ beforeAll(async () => {
 
   // Seed DISTINCT catalog data per schema THROUGH the catalog repo (also
   // proves the write path lands in the right schema).
-  const prodA = await catalogRepository.createProduct(dbA, {
+  const prodA = await catalogRepository.createProduct(dbA, { tenantId: DEMO_COMPANY_ID,
     title: 'Widget A',
     handle: 'widget-a',
   });
   productIdA = prodA.id;
-  const optA = await catalogRepository.addOption(dbA, {
+  const optA = await catalogRepository.addOption(dbA, { tenantId: DEMO_COMPANY_ID,
     productId: prodA.id,
     title: 'Size',
   });
-  const valA = await catalogRepository.addOptionValue(dbA, {
+  const valA = await catalogRepository.addOptionValue(dbA, { tenantId: DEMO_COMPANY_ID,
     optionId: optA.id,
     value: 'S',
   });
-  const varA = await catalogRepository.addVariant(dbA, {
+  const varA = await catalogRepository.addVariant(dbA, { tenantId: DEMO_COMPANY_ID,
     productId: prodA.id,
     sku: 'WIDGET-A-S',
   });
-  await catalogRepository.setVariantOptions(dbA, varA.id, [
+  await catalogRepository.setVariantOptions(dbA, DEMO_COMPANY_ID, varA.id, [
     { optionId: optA.id, optionValueId: valA.id },
   ]);
 
-  const prodB = await catalogRepository.createProduct(dbB, {
+  const prodB = await catalogRepository.createProduct(dbB, { tenantId: DEMO_COMPANY_ID,
     title: 'Widget B',
     handle: 'widget-b',
   });
   productIdB = prodB.id;
-  await catalogRepository.addVariant(dbB, { productId: prodB.id, sku: 'WIDGET-B-1' });
+  await catalogRepository.addVariant(dbB, { tenantId: DEMO_COMPANY_ID, productId: prodB.id, sku: 'WIDGET-B-1' });
 
   // THE DECOY: a same-named `public.product` holding a DECOY row that reuses
   // tg_a's handle. Any unqualified query that fell back to the default path would
@@ -182,7 +183,7 @@ describe('CM-06 catalog isolation: schema-per-tenant wall (tenant schema)', () =
 
   it('count() scoped to tg_a sees ONLY tg_a products (zero tg_b, zero decoy)', async () => {
     const dbA = tenantDb(ownerBase!, TG_A);
-    expect(await catalogRepository.count(dbA)).toBe(1);
+    expect(await catalogRepository.count(dbA, DEMO_COMPANY_ID)).toBe(1);
   });
 
   it('a scoped read returns ONLY tg_a rows, never tg_b or the public decoy', async () => {
@@ -207,7 +208,7 @@ describe('CM-06 catalog isolation: schema-per-tenant wall (tenant schema)', () =
   it('symmetry: tg_b sees only tg_b, and the cross-schema total has zero decoys', async () => {
     const dbA = tenantDb(ownerBase!, TG_A);
     const dbB = tenantDb(ownerBase!, TG_B);
-    expect(await catalogRepository.count(dbB)).toBe(1);
+    expect(await catalogRepository.count(dbB, DEMO_COMPANY_ID)).toBe(1);
 
     const a = await dbA.selectFrom('product').select(['title']).execute();
     const b = await dbB.selectFrom('product').select(['title']).execute();
@@ -222,12 +223,12 @@ describe('CM-06 catalog isolation: schema-per-tenant wall (tenant schema)', () =
   it('GRANT PROOF: commerce_app may read its granted schema but is DENIED a non-granted one', async () => {
     // commerce_app WAS granted on tg_a -> the scoped read succeeds.
     const appDbA = tenantDb(appBase!, TG_A);
-    expect(await catalogRepository.count(appDbA)).toBe(1);
+    expect(await catalogRepository.count(appDbA, DEMO_COMPANY_ID)).toBe(1);
 
     // commerce_app was NOT granted on tg_b -> Postgres refuses at the grant layer,
     // not the app layer: `permission denied for schema tg_<b>`.
     const appDbB = tenantDb(appBase!, TG_B);
-    await expect(catalogRepository.count(appDbB)).rejects.toThrow(
+    await expect(catalogRepository.count(appDbB, DEMO_COMPANY_ID)).rejects.toThrow(
       /permission denied for schema/,
     );
   });

@@ -56,6 +56,7 @@
 import postgres from 'postgres';
 import { assertTenantGroupId, tenantSchema } from '@marlinjai/tenant-db';
 
+import { DEMO_COMPANY_ID } from '../../../lib/renderer/server/demoTenant';
 import { provisionCommerceTenant } from './provision';
 
 /**
@@ -174,6 +175,7 @@ async function copyableColumns(
   sql: postgres.Sql,
   targetSchema: string,
   table: string,
+  companyId: string,
 ): Promise<CopyColumn[]> {
   const targetRows = await sql<
     { column_name: string; data_type: string; udt_schema: string; udt_name: string }[]
@@ -192,6 +194,13 @@ async function copyableColumns(
       AND table_name = ${table}
   `;
   const sourceSet = new Set(sourceRows.map((row) => row.column_name));
+  if (sourceSet.size === 0) return [];
+  // The legacy shared schema predates the company column (020_catalogue_company): every copied row of a
+  // table that has it in the target belongs to the demo company. companyId is a validated uuid.
+  const company: CopyColumn[] =
+    targetRows.some((row) => row.column_name === 'tenant_id') && !sourceSet.has('tenant_id')
+      ? [{ column: 'tenant_id', select: `'${companyId}'::text` }]
+      : [];
   return targetRows
     .filter((row) => !NEVER_COPY.has(row.column_name) && sourceSet.has(row.column_name))
     .map((row) => ({
@@ -200,7 +209,8 @@ async function copyableColumns(
         row.data_type === 'USER-DEFINED'
           ? `"${row.column_name}"::text::"${row.udt_schema}"."${row.udt_name}"`
           : `"${row.column_name}"`,
-    }));
+    }))
+    .concat(company);
 }
 
 /**
@@ -261,6 +271,8 @@ async function assertBackfillCoversAllSharedTables(
  */
 export async function backfillDemoTenant(opts: {
   tenantGroupId: string;
+  /** The company the copied catalogue and orders belong to (a uuid). Defaults to DEMO_COMPANY_ID. */
+  companyId?: string;
   slug?: string;
   connectionString?: string;
 }): Promise<void> {
@@ -269,6 +281,10 @@ export async function backfillDemoTenant(opts: {
   // `tg_<hex32>`); never hand-build it.
   const tgId = assertTenantGroupId(opts.tenantGroupId);
   const targetSchema = tenantSchema(tgId);
+  const companyId = opts.companyId ?? DEMO_COMPANY_ID;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(companyId)) {
+    throw new Error(`backfillDemoTenant: companyId must be a lowercase uuid, got ${companyId}`);
+  }
 
   // (1) Ensure `tg_<demo>` exists with the commerce tables + grants + ext-backstop.
   // Advisory-locked + idempotent: a no-op if it is already provisioned.
@@ -289,7 +305,7 @@ export async function backfillDemoTenant(opts: {
 
     // (3) Copy each table commerce.<t> -> tg_<demo>.<t>, FK order, owner role.
     for (const table of BACKFILL_TABLES) {
-      const columns = await copyableColumns(sql, targetSchema, table);
+      const columns = await copyableColumns(sql, targetSchema, table, companyId);
       if (columns.length === 0) continue; // table absent in source or target
 
       const insertList = columns.map((c) => `"${c.column}"`).join(', ');

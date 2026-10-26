@@ -34,6 +34,7 @@ import {
   toAvailabilityDTO,
 } from '@/lib/commerce/dto';
 import type { CommerceDB } from './db';
+import type { CatalogueView } from './repository/read';
 import {
   getStorefrontProductByHandle,
   listStorefrontProducts,
@@ -42,7 +43,7 @@ import {
 
 /** The tenant decision of one request: the scoped handle, or the response to return. */
 export type CommerceReadContext =
-  | { ok: true; db: Kysely<CommerceDB> }
+  | { ok: true; db: Kysely<CommerceDB>; view: CatalogueView }
   | { ok: false; response: Response };
 
 export type CommerceReadResolver = () => Promise<CommerceReadContext>;
@@ -83,7 +84,7 @@ export async function handleListProducts(
     const context = await resolve();
     if (!context.ok) return context.response;
 
-    const result = await listStorefrontProducts(context.db, { limit, cursor, currency });
+    const result = await listStorefrontProducts(context.db, context.view, { limit, cursor, currency });
     // Validate the outgoing shape: a response that does not satisfy the DTO schema
     // is a server bug, surfaced as a 500 rather than shipped malformed.
     return Response.json(productListResponseSchema.parse(result));
@@ -108,7 +109,7 @@ export async function handleProductByHandle(
     const context = await resolve();
     if (!context.ok) return context.response;
 
-    const dto = await getStorefrontProductByHandle(context.db, handle, currency);
+    const dto = await getStorefrontProductByHandle(context.db, context.view, handle, currency);
     if (!dto) {
       return jsonError('not_found', `no product with handle ${handle}`, 404);
     }

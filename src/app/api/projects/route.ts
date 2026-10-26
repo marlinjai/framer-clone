@@ -353,7 +353,7 @@ async function handlePOST(req: Request): Promise<Response> {
 
   try {
     const repo = getSiteRepository();
-    await repo.saveProject(scope, snapshot);
+    await repo.saveProject(scope, snapshot, { companyId });
   } catch (err) {
     if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
     return jsonError(

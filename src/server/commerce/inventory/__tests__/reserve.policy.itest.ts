@@ -43,6 +43,7 @@ import postgres from 'postgres';
 import type { CommerceDB } from '../../db-types';
 import { commerceProvisionOptions } from '../../provisioning/provision';
 import { reserveWithRetry } from '../reserve';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 const DB_NAME = 'framer_clone_test';
 const TG = assertTenantGroupId('018f9c10-0000-7000-8000-0000000008c8');
@@ -93,13 +94,13 @@ async function seedVariant(
   const productId = randomUUID();
   await db
     .insertInto('product')
-    .values({ id: productId, title: 'P', handle: `h-${randomUUID()}`, updated_at: new Date() })
+    .values({ tenant_id: DEMO_COMPANY_ID, status: 'published', id: productId, title: 'P', handle: `h-${randomUUID()}`, updated_at: new Date() })
     .execute();
   const variantId = randomUUID();
   const sku = `SKU-${randomUUID()}`;
   await db
     .insertInto('product_variant')
-    .values({
+    .values({ tenant_id: DEMO_COMPANY_ID,
       id: variantId,
       product_id: productId,
       sku,

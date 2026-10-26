@@ -63,7 +63,7 @@ async function handlePOST(req: Request): Promise<Response> {
     const denial = activeScopeDenial(scopeResult.error);
     return jsonError(denial.code, denial.message, 403);
   }
-  const { scope } = scopeResult;
+  const { scope, companyId } = scopeResult;
 
   // 3. Admin guard: the real auth-brain `publishSite` permission (workspace.admin)
   //    on the resolved workspace. 401 (no session) / 403 (not an admin).
@@ -90,7 +90,7 @@ async function handlePOST(req: Request): Promise<Response> {
   let subdomain: string;
   try {
     const repo = getSiteRepository();
-    await repo.saveProject(scope, project, { mustExist: true });
+    await repo.saveProject(scope, project, { mustExist: true, companyId });
     await repo.publishProject(scope, project.id);
     // ensureSiteDomain is idempotent: a re-publish returns the SAME slug, so the
     // live URL is stable across publish/unpublish/re-publish cycles.

@@ -36,6 +36,7 @@ import type { CommerceDB } from '../../db-types';
 import { COMMERCE_TENANT_MIGRATIONS } from '../../migrations/tenant/index';
 import { commerceProvisionOptions } from '../../provisioning/provision';
 import { reserveWithRetry } from '../reserve';
+import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 const DB_NAME = 'framer_clone_test';
 const APP_ROLE = 'commerce_app';
@@ -61,13 +62,13 @@ async function seedManaged(
   const productId = randomUUID();
   await db
     .insertInto('product')
-    .values({ id: productId, title: 'P', handle: `h-${randomUUID()}`, updated_at: new Date() })
+    .values({ tenant_id: DEMO_COMPANY_ID, status: 'published', id: productId, title: 'P', handle: `h-${randomUUID()}`, updated_at: new Date() })
     .execute();
   const variantId = randomUUID();
   const sku = `SKU-${randomUUID()}`;
   await db
     .insertInto('product_variant')
-    .values({
+    .values({ tenant_id: DEMO_COMPANY_ID,
       id: variantId,
       product_id: productId,
       sku,
