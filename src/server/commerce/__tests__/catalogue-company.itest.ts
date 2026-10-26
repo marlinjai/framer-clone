@@ -30,7 +30,8 @@ import { assignCatalogueCompany } from '../provisioning/assignCompany';
 import { catalogRepository } from '../repository/catalog';
 import { pricingRepository } from '../repository/pricing';
 import { commerceReadRepository } from '../repository/read';
-import { listStorefrontProducts, resolveOrderLines, UnknownVariantError } from '../repository/storefront';
+import { listStorefrontProducts, resolveOrderLines } from '../repository/storefront';
+import { UnknownVariantError } from '../repository/errors';
 import { companyForSite, soleCompany } from '../company';
 import { booksScope } from '@/server/books/scope';
 import { createOrder } from '../order/createOrder';
@@ -348,6 +349,23 @@ describe('the catalogue per company on a fresh schema', () => {
         resolveOrderLines(env.appDb, { companyId: company, siteId: 'site-1' }, [{ variantId: v.variantId, quantity: 1 }]),
       ).rejects.toBeInstanceOf(UnknownVariantError);
     }
+  });
+
+  it('an untracked variant resolves for an order without a SKU or inventory item; a tracked one still needs both', async () => {
+    const company = randomUUID();
+    const view = { companyId: company, siteId: 'site-1' };
+    const tracked = await product(company);
+    const untracked = await product(company);
+    await db.updateTable('product_variant').set({ manage_inventory: false, sku: null }).where('id', '=', untracked.variantId).execute();
+
+    const [line] = await resolveOrderLines(env.appDb, view, [{ variantId: untracked.variantId, quantity: 2 }]);
+    expect(line).toMatchObject({ variantId: untracked.variantId, quantity: 2 });
+    expect(line.inventoryItemId).toBeUndefined();
+
+    // A tracked variant whose SKU has no inventory item is still a catalog misconfiguration.
+    await expect(
+      resolveOrderLines(env.appDb, view, [{ variantId: tracked.variantId, quantity: 1 }]),
+    ).rejects.toThrow(/no inventory item/);
   });
 
   it("an order records its company and site, and is refused another company's variant", async () => {

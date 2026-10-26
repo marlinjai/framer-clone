@@ -24,7 +24,7 @@ const VARIANT: ProductVariantDTO = {
 
 // A fake data source whose ONLY relevant method is getAvailability. An unknown
 // variant throws (a missing record is never a silent zero-stock success).
-function makeDS(availabilityByVariant: Record<string, number>): CommerceDataSource {
+function makeDS(availabilityByVariant: Record<string, number>, limited = true): CommerceDataSource {
   return {
     listProducts: async () => ({ products: [], total: 0 }),
     getProduct: async () => null,
@@ -35,7 +35,7 @@ function makeDS(availabilityByVariant: Record<string, number>): CommerceDataSour
     getAvailability: async (variantId: string) => {
       const qty = availabilityByVariant[variantId];
       if (qty === undefined) throw new Error(`no availability for "${variantId}"`);
-      return { variantId, locationId: 'all', availableQuantity: qty, stale: false };
+      return { variantId, locationId: 'all', availableQuantity: qty, limited, stale: false };
     },
     subscribe: () => () => {},
   };
@@ -105,6 +105,14 @@ describe('AddToCartButton disable (UX hint, NOT the authority)', () => {
     await new Promise((r) => setTimeout(r, 0));
     const button = container.querySelector('button[data-add-to-cart]') as HTMLButtonElement;
     expect(button.disabled).toBe(true);
+  });
+
+  it('enables at zero when the quantity is no limit (untracked stock or back-orders)', async () => {
+    const { container } = renderButton({ variant: VARIANT, ds: makeDS({ var_s_red: 0 }, false) });
+    await waitFor(() => {
+      const button = container.querySelector('button[data-add-to-cart]') as HTMLButtonElement;
+      expect(button.disabled).toBe(false);
+    });
   });
 
   it('stays disabled and surfaces the error when the availability fetch throws (editor)', async () => {

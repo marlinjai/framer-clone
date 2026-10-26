@@ -389,10 +389,7 @@ export class HttpCommerceDataSource implements CommerceDataSource {
     variantId: string,
     locationId?: string,
   ): Promise<AvailabilityDTO> {
-    // locationId omitted -> the seam aggregates across every location. b7's
-    // inventory route cannot aggregate today, so this calls the REQUESTED
-    // additive b7 aggregate mode (variantId only). Until b7 ships it, b7 returns
-    // a 400 here, which surfaces as a well-formed error below (never a number).
+    // locationId omitted -> the inventory route sums every location (variantId only).
     const params = new URLSearchParams({ variantId });
     if (locationId !== undefined) params.set('locationId', locationId);
 
@@ -423,6 +420,7 @@ export class HttpCommerceDataSource implements CommerceDataSource {
       // sentinel; carry whatever b7 returns through unchanged.
       locationId: locationId === undefined ? ALL_LOCATIONS : b7.locationId,
       availableQuantity: b7.availableQuantity,
+      limited: b7.limited,
       // A fresh network read is never stale; this provider does not cache reads.
       stale: false,
     };

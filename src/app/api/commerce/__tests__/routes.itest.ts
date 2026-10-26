@@ -155,24 +155,33 @@ describe('b7 commerce REST read routes on the tenant schema (Dockerized Postgres
       .executeTakeFirstOrThrow();
     expect(level.available_quantity).toBe(7); // 10 stocked - 3 reserved
 
-    // UNAUTHENTICATED read; variantId is the inventory_item_id at the v1 boundary.
+    // UNAUTHENTICATED read of the variant at its location.
     const res = await inventoryGET(
-      get(
-        `/api/commerce/inventory?variantId=${seeded.inventoryItemId}&locationId=${seeded.locationId}`,
-      ),
+      get(`/api/commerce/inventory?variantId=${seeded.variantId}&locationId=${seeded.locationId}`),
     );
     expect(res.status).toBe(200);
     const dto = await res.json();
     expect(dto.availableQuantity).toBe(level.available_quantity);
-    expect(dto.variantId).toBe(seeded.inventoryItemId);
+    expect(dto.variantId).toBe(seeded.variantId);
     expect(dto.locationId).toBe(seeded.locationId);
+    expect(dto.limited).toBe(true);
     expect(dto.advisoryOnly).toBe(true);
 
-    // An (item, location) pair with no level row is a real 404 envelope.
-    const missing = await inventoryGET(
-      get(`/api/commerce/inventory?variantId=${seeded.inventoryItemId}&locationId=does-not-exist`),
+    // No location: the sum over every location, what the cart and add to cart ask.
+    const all = await (await inventoryGET(get(`/api/commerce/inventory?variantId=${seeded.variantId}`))).json();
+    expect(all).toMatchObject({ locationId: 'all', availableQuantity: 7 });
+
+    // A location that holds none of it legitimately reads zero.
+    const elsewhere = await inventoryGET(
+      get(`/api/commerce/inventory?variantId=${seeded.variantId}&locationId=${randomUUID()}`),
     );
+    expect((await elsewhere.json()).availableQuantity).toBe(0);
+
+    // A variant this company does not have is a real 404 envelope; a malformed id a 400.
+    const missing = await inventoryGET(get(`/api/commerce/inventory?variantId=${randomUUID()}`));
     expect(missing.status).toBe(404);
+    const malformed = await inventoryGET(get('/api/commerce/inventory?variantId=does-not-exist'));
+    expect(malformed.status).toBe(400);
     expect((await missing.json()).error.code).toBe('not_found');
   });
 
@@ -183,7 +192,7 @@ describe('b7 commerce REST read routes on the tenant schema (Dockerized Postgres
       params: Promise.resolve({ handle: 'x' }),
     });
     const inventory = await inventoryGET(
-      get('/api/commerce/inventory?variantId=a&locationId=b', stranger),
+      get(`/api/commerce/inventory?variantId=${randomUUID()}&locationId=${randomUUID()}`, stranger),
     );
     for (const res of [list, detail, inventory]) {
       expect(res.status).toBe(403);

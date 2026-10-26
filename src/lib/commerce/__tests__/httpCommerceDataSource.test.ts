@@ -220,7 +220,7 @@ function makeFetchStub(overrides: StubOverrides = {}) {
       let availableQuantity: number;
       let resolvedLocation: string;
       if (locationId === null) {
-        // Aggregate mode (REQUESTED additive b7 route): sum across locations.
+        // Aggregate mode: the route sums every location.
         availableQuantity = Object.values(byLocation).reduce((s, n) => s + n, 0);
         resolvedLocation = ALL_LOCATIONS;
       } else {
@@ -238,6 +238,7 @@ function makeFetchStub(overrides: StubOverrides = {}) {
         variantId,
         locationId: resolvedLocation,
         availableQuantity,
+        limited: true,
         ...(overrides.dropAdvisoryMarker ? {} : { advisoryOnly: true }),
       });
     }

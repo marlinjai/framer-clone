@@ -317,6 +317,7 @@ describe('CM-07 read isolation: schema-per-tenant wall (tenant schema)', () => {
       variantId: variantIdA,
       locationId: ALL_LOCATIONS,
       availableQuantity: AVAILABLE_A,
+      limited: true,
       stale: false,
     });
   });
@@ -333,7 +334,7 @@ describe('CM-07 read isolation: schema-per-tenant wall (tenant schema)', () => {
     // tg_b has no such variant -> getAvailability throws (advisory contract).
     await expect(
       commerceReadRepository.getAvailability(dbB, VIEW, variantIdA),
-    ).rejects.toThrow(/no variant with id/);
+    ).rejects.toThrow(/unknown variant/);
   });
 
   it('symmetry: tg_b sees only tg_b, with zero decoys on any path', async () => {

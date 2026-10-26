@@ -55,6 +55,10 @@ interface VariantRow {
   sku: string | null;
   barcode: string | null;
   taxClass: string | null;
+  /** Stock is tracked (default true), as `product_variant.manage_inventory`. */
+  manageInventory?: boolean;
+  /** Back-orders allowed (default false), as `product_variant.allow_backorder`. */
+  allowBackorder?: boolean;
 }
 
 interface VariantOptionRow {
@@ -345,6 +349,8 @@ export class InMemoryCommerceDataSource implements CommerceDataSource {
       throw new Error(`getAvailability: no variant with id "${variantId}"`);
     }
 
+    // The reserve's policy: untracked stock or an allowed back-order means the quantity is no limit.
+    const limited = (variant.manageInventory ?? true) && !(variant.allowBackorder ?? false);
     const item = this.seed.inventoryItems.find((i) => i.variantId === variantId);
     const levels = item
       ? this.seed.inventoryLevels.filter((l) => l.inventoryItemId === item.id)
@@ -360,6 +366,7 @@ export class InMemoryCommerceDataSource implements CommerceDataSource {
         variantId,
         locationId: ALL_LOCATIONS,
         availableQuantity,
+        limited,
         stale: false,
       };
     }
@@ -370,6 +377,7 @@ export class InMemoryCommerceDataSource implements CommerceDataSource {
       locationId,
       // A valid location with no level row legitimately holds zero stock.
       availableQuantity: level ? availableOf(level) : 0,
+      limited,
       stale: false,
     };
   }

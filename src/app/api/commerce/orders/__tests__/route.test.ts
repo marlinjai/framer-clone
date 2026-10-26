@@ -33,9 +33,7 @@ vi.mock('@/server/commerce/db', () => ({
     (err as { code?: string } | null)?.code === 'COMMERCE_TENANT_NOT_PROVISIONED',
 }));
 
-vi.mock('@/server/commerce/repository/storefront', async (importOriginal) => ({
-  // Keep the real UnknownVariantError class (the route branches on it).
-  ...(await importOriginal<typeof import('@/server/commerce/repository/storefront')>()),
+vi.mock('@/server/commerce/repository/storefront', () => ({
   resolveOrderLines: vi.fn(),
   readOrderTotal: vi.fn(),
 }));
@@ -49,11 +47,8 @@ vi.mock('@/server/commerce/order/createOrder', () => ({
 
 import { createOrder } from '@/server/commerce/order/createOrder';
 import { commerceTenantDbChecked } from '@/server/commerce/db';
-import {
-  readOrderTotal,
-  resolveOrderLines,
-  UnknownVariantError,
-} from '@/server/commerce/repository/storefront';
+import { UnknownVariantError } from '@/server/commerce/repository/errors';
+import { readOrderTotal, resolveOrderLines } from '@/server/commerce/repository/storefront';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
 import { POST } from '../route';
 

@@ -35,6 +35,7 @@ import 'server-only';
 import type { ExpressionBuilder, Kysely } from 'kysely';
 import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/postgres';
 import type { CommerceDB } from '../db-types';
+import { UnknownVariantError } from './errors';
 
 import {
   ALL_LOCATIONS,
@@ -397,15 +398,24 @@ export const commerceReadRepository: CommerceReadRepository = {
     // empty slot, never a failed build.
     const variant = await db
       .selectFrom('product_variant')
-      .select(['product_variant.id as id', 'product_variant.sku as sku', 'product_variant.deleted_at as deleted_at'])
+      .select([
+        'product_variant.id as id',
+        'product_variant.sku as sku',
+        'product_variant.deleted_at as deleted_at',
+        'product_variant.manage_inventory as manage_inventory',
+        'product_variant.allow_backorder as allow_backorder',
+      ])
       .where('product_variant.id', '=', variantId)
       .where('product_variant.tenant_id', '=', view.companyId)
       .executeTakeFirst();
     if (!variant || variant.deleted_at !== null) {
-      throw new Error(`getAvailability: no variant with id "${variantId}"`);
+      throw new UnknownVariantError(variantId);
     }
 
     const reportedLocationId = locationId === undefined ? ALL_LOCATIONS : locationId;
+    // The same policy the reserve applies (inventory/reserve.ts): untracked stock or an allowed
+    // back-order means the quantity is no limit.
+    const limited = variant.manage_inventory && !variant.allow_backorder;
 
     // Variant -> inventory linkage is by SKU (the inventory ledger keys an
     // inventory_item on `sku`; there is intentionally NO variant_id relation). A
@@ -413,7 +423,7 @@ export const commerceReadRepository: CommerceReadRepository = {
     // tracked stock: advisory availability is 0 (display-only, never permission to
     // sell).
     if (!variant.sku) {
-      return { variantId, locationId: reportedLocationId, availableQuantity: 0, stale: false };
+      return { variantId, locationId: reportedLocationId, availableQuantity: 0, limited, stale: false };
     }
 
     const item = await db
@@ -423,7 +433,7 @@ export const commerceReadRepository: CommerceReadRepository = {
       .where('inventory_item.deleted_at', 'is', null)
       .executeTakeFirst();
     if (!item) {
-      return { variantId, locationId: reportedLocationId, availableQuantity: 0, stale: false };
+      return { variantId, locationId: reportedLocationId, availableQuantity: 0, limited, stale: false };
     }
 
     // Read the GENERATED `available_quantity` column DIRECTLY and SUM it in SQL —
@@ -440,7 +450,7 @@ export const commerceReadRepository: CommerceReadRepository = {
     const aggregate = await levelQuery.executeTakeFirst();
     const availableQuantity = Number(aggregate?.available ?? 0);
 
-    return { variantId, locationId: reportedLocationId, availableQuantity, stale: false };
+    return { variantId, locationId: reportedLocationId, availableQuantity, limited, stale: false };
   },
 };
 

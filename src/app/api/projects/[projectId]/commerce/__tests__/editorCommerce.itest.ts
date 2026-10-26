@@ -139,7 +139,7 @@ describe('editor commerce reads: /api/projects/<id>/commerce/*', () => {
 
     const stock = await inventoryGET(
       editorReq(
-        `/api/projects/${projectA.siteId}/commerce/inventory?variantId=${productA.inventoryItemId}&locationId=${productA.locationId}`,
+        `/api/projects/${projectA.siteId}/commerce/inventory?variantId=${productA.variantId}&locationId=${productA.locationId}`,
       ),
       { params: Promise.resolve({ projectId: projectA.siteId }) },
     );
@@ -186,7 +186,7 @@ describe('editor commerce reads: /api/projects/<id>/commerce/*', () => {
 
     const crossStock = await inventoryGET(
       editorReq(
-        `/api/projects/${projectA.siteId}/commerce/inventory?variantId=${productB.inventoryItemId}&locationId=${productB.locationId}`,
+        `/api/projects/${projectA.siteId}/commerce/inventory?variantId=${productB.variantId}&locationId=${productB.locationId}`,
       ),
       { params: Promise.resolve({ projectId: projectA.siteId }) },
     );
