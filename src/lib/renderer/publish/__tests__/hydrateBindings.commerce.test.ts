@@ -364,6 +364,36 @@ describe('hydrateBindings commerce', () => {
     expect(commerceRepo.calls.getProductByHandle).toEqual([]);
   });
 
+  it('records the product detail frames on an island inside it, so the island finds its product', async () => {
+    const detail = productDetailNode();
+    const addToCart: ComponentNode = { id: 'atc', type: 'div', props: { 'data-component-kind': 'add-to-cart' } };
+    const selector: ComponentNode = {
+      id: 'vs',
+      type: 'div',
+      props: { 'data-component-kind': 'variant-selector' },
+      children: [addToCart],
+    };
+    detail.children = [...(detail.children ?? []), selector];
+    const root: ComponentNode = {
+      id: 'root',
+      type: 'div',
+      children: [detail, { id: 'cart', type: 'div', props: { 'data-component-kind': 'cart-view' } }],
+    };
+
+    const tree = await hydrateBindings(root, { handle: 'classic-tee' }, {
+      cmsRepo: makeCmsRepo(),
+      commerceRepo: detailRepo(),
+    });
+
+    const island = findById(tree, 'vs');
+    expect(island?.islandFrames?.map((f) => f.kind)).toEqual(['product', 'variant', 'availability']);
+    expect(island?.islandFrames?.[0]).toMatchObject({ kind: 'product', product: { id: 'prod_tee', title: 'Classic Tee' } });
+    // The island itself stays verbatim: its nested add-to-cart is not baked and carries nothing extra.
+    expect(island?.children).toEqual([addToCart]);
+    // An island outside any commerce source carries no frames.
+    expect(findById(tree, 'cart')).not.toHaveProperty('islandFrames');
+  });
+
   it('leaves the four INTERACTIVE commerce kinds VERBATIM as runtime islands (NOT baked)', async () => {
     const commerceRepo = detailRepo();
     // A root containing each interactive kind, all with bindings + children that

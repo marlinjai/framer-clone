@@ -215,4 +215,32 @@ describe('renderComponentNode: interactive commerce islands', () => {
       expect(button.disabled).toBe(false);
     });
   });
+
+  it('gives an island the product the hydrator recorded on it, with only the page scope passed in', async () => {
+    // The published page renders from the page scope alone; the product of the surrounding
+    // product detail reaches the island through `islandFrames` (set by hydrateBindings).
+    const product: ProductDTO = {
+      id: 'p1',
+      handle: 'h',
+      title: 'T',
+      description: null,
+      options: [],
+      variantIds: ['v1'],
+    };
+    const node: ComponentNode = {
+      type: 'div',
+      id: 'vs',
+      props: { 'data-component-kind': 'variant-selector' },
+      islandFrames: pushProductFrame(createScope(), product).frames,
+      children: [{ type: 'div', id: 'atc', props: { 'data-component-kind': 'add-to-cart', label: 'Add' } }],
+    };
+    const { container } = renderWithProviders(node);
+
+    expect(container.textContent).not.toContain('no product in scope');
+    await waitFor(() => {
+      const button = container.querySelector('[data-add-to-cart]') as HTMLButtonElement;
+      expect(button).not.toBeNull();
+      expect(button.disabled).toBe(false);
+    });
+  });
 });

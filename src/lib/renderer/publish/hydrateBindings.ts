@@ -63,6 +63,7 @@ import {
   pushProductFrame,
   pushRowFrame,
   pushVariantFrame,
+  type BindingFrame,
   type BindingScope,
 } from '@/lib/bindings/resolver/scope';
 import {
@@ -99,6 +100,13 @@ export interface ComponentNode {
   children?: ComponentNode[];
   /** Optional stable id, preserved verbatim when present. */
   id?: string;
+  /**
+   * On an interactive commerce island only: the commerce frames (product, variant, availability) of the
+   * source it sits in, as the hydrator resolved them. The island is shipped verbatim and rendered later
+   * from the page scope alone, so without these a variant selector inside a product detail would find no
+   * product. Plain DTO data, so it crosses the client boundary with the node.
+   */
+  islandFrames?: BindingFrame[];
 }
 
 /**
@@ -151,6 +159,11 @@ const INTERACTIVE_COMMERCE_KINDS: ReadonlySet<string> = new Set([
   'cart-view',
   'checkout-button',
 ]);
+
+/** The commerce frames of a scope (product, variant, availability), in order: what an island needs to see. */
+function commerceFramesOf(scope: BindingScope): BindingFrame[] {
+  return scope.frames.filter((f) => f.kind === 'product' || f.kind === 'variant' || f.kind === 'availability');
+}
 
 // The two commerce SOURCE (catalog READ) kinds the hydrator bakes.
 const COMMERCE_SOURCE_KINDS: ReadonlySet<string> = new Set([
@@ -233,7 +246,8 @@ async function hydrateNode(
   // bindings, and we do NOT recurse into their subtree: the whole island is
   // shipped as-is for client-side hydration.
   if (typeof dataKind === 'string' && INTERACTIVE_COMMERCE_KINDS.has(dataKind)) {
-    return node;
+    const islandFrames = commerceFramesOf(scope);
+    return islandFrames.length > 0 ? { ...node, islandFrames } : node;
   }
   if (typeof dataKind === 'string' && COMMERCE_SOURCE_KINDS.has(dataKind)) {
     return hydrateCommerceSource(node, scope, repos, dataKind, hasBindings);
