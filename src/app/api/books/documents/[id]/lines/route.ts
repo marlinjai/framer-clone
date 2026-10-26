@@ -6,8 +6,9 @@
 // product or text), `title`, optional `description`, `quantity` in THOUSANDTHS
 // (1.5 hours = 1500), `unitLabel`, `unitPrice` in cents, `discountBp` in basis
 // points, `taxClass` (standard, reduced, zero) or `taxRateOverride` in basis
-// points, or a catalog `variantRef` that fills the title, price and tax class
-// the body leaves out; `priceBasis` ('net' or 'gross', a product list item's)
+// points, or a catalogue `variantRef` (kept as the line's reference) that fills
+// the title, price and tax class the body leaves out; `priceBasis` ('net' or
+// 'gross', a catalogue item's)
 // when the price is quoted in another basis than the draft's: the server then
 // converts it under the draft's tax profile and stores it in the draft's basis;
 // plus `expectedVersion`. The line's tax and the document

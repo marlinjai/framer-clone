@@ -8,7 +8,8 @@
 // engine and pdf.js are proven in the browser. The four stateful-flow paths:
 //   1. forward: a field opens in place, a typed value is sent in the Books'
 //      units with the version on screen, the page reads the server's answer;
-//      a line is added on the page, one is picked from the product list;
+//      a line is added on the page, one is picked from the company's catalogue
+//      (the copied values and the variant as the line's reference);
 //   2. backtrack and revise: a bad value is named and nothing is sent; Escape
 //      leaves the value; undo sends the value before, redo the value after;
 //      a removed line comes back at its place;
@@ -151,9 +152,9 @@ function server(extra: Record<string, Handler> = {}) {
       current = detail({ document: { ...current.document, customerId: b!.customerId, version: current.document.version + 1 } });
       return { status: 200, body: current };
     },
-    'GET /api/books/products': () => ({
+    'GET /api/books/catalogue': () => ({
       status: 200,
-      body: { items: [{ id: 'p1', kind: 'service', name: 'Beratung', description: 'Strategie', unitLabel: 'Std', unitPrice: 9900, priceBasis: 'gross', taxClass: 'standard', discountBp: 0, archivedAt: null }], nextCursor: null, total: 1 },
+      body: { items: [item({ variantId: 'v1', title: 'Beratung', description: 'Strategie', unitLabel: 'Std', unitPrice: 9900, priceBasis: 'gross' })] },
     }),
     ...extra,
   };
@@ -169,6 +170,11 @@ function server(extra: Record<string, Handler> = {}) {
       return new Response(JSON.stringify(res.body), { status: res.status });
     }),
   );
+}
+
+/** A catalogue item as GET /api/books/catalogue answers it. */
+function item(over: Json): Json {
+  return { variantId: 'v0', productId: `p-${over.variantId ?? 'v0'}`, kind: 'service', title: 'Item', description: null, unitLabel: 'Stk', unitPrice: 100, priceBasis: 'net', taxClass: 'standard', discountBp: 0, status: 'draft', ...over };
 }
 
 function stripVersion(b: Json | null): Json {
@@ -273,14 +279,15 @@ describe('the invoice page: forward', () => {
     await waitFor(() => expect((screen.getByLabelText('New line, description') as HTMLInputElement).value).toBe(''));
   });
 
-  it('picks a line from the product list, with its price basis for the server to convert', async () => {
+  it('picks a line from the catalogue, with its price basis for the server to convert and the variant as reference', async () => {
     server();
     await opened();
     fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
     fireEvent.click(await screen.findByRole('option', { name: /Beratung/ }));
+    expect(calls.some((c) => c.url.startsWith('/api/books/catalogue'))).toBe(true);
     await waitFor(() =>
       expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
-        kind: 'service', title: 'Beratung', description: 'Strategie', unitLabel: 'Std', unitPrice: 9900, priceBasis: 'gross', taxClass: 'standard', discountBp: 0, quantity: 1000, expectedVersion: 3,
+        kind: 'service', title: 'Beratung', description: 'Strategie', unitLabel: 'Std', unitPrice: 9900, priceBasis: 'gross', taxClass: 'standard', discountBp: 0, variantRef: 'v1', quantity: 1000, expectedVersion: 3,
       }),
     );
   });
@@ -456,43 +463,41 @@ describe('the invoice page: review fixes', () => {
   it('Enter in the product search waits for the answer to what was typed', async () => {
     const answered: string[] = [];
     server({
-      'GET /api/books/products': (_b, url) => {
+      'GET /api/books/catalogue': (_b, url) => {
         const q = new URL(url, 'http://x').searchParams.get('q') ?? '';
         answered.push(q);
         const all = [
-          { id: 'p0', kind: 'goods', name: 'Aaa first', description: null, unitLabel: 'Stk', unitPrice: 100, priceBasis: 'net', taxClass: 'standard', discountBp: 0, archivedAt: null },
-          { id: 'p1', kind: 'service', name: 'Beratung', description: null, unitLabel: 'Std', unitPrice: 9900, priceBasis: 'net', taxClass: 'standard', discountBp: 0, archivedAt: null },
+          item({ variantId: 'v0', kind: 'product', title: 'Aaa first' }),
+          item({ variantId: 'v1', title: 'Beratung', unitLabel: 'Std', unitPrice: 9900 }),
         ];
-        return { status: 200, body: { items: all.filter((p) => p.name.toLowerCase().includes(q.toLowerCase())), nextCursor: null, total: 2 } };
+        return { status: 200, body: { items: all.filter((p) => p.title.toLowerCase().includes(q.toLowerCase())) } };
       },
     });
     await opened();
     fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
     await screen.findByRole('option', { name: /Aaa first/ });
-    const search = screen.getByRole('combobox', { name: 'Search your products and services' });
+    const search = screen.getByRole('combobox', { name: 'Search products and services in the catalogue' });
     fireEvent.change(search, { target: { value: 'Bera' } });
     fireEvent.keyDown(search, { key: 'Enter' });
-    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body?.title).toBe('Beratung'));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toMatchObject({ title: 'Beratung', variantRef: 'v1' }));
   });
 
   it('the arrow keys move through the products and Enter picks the highlighted one', async () => {
     server({
-      'GET /api/books/products': () => ({
+      'GET /api/books/catalogue': () => ({
         status: 200,
         body: {
           items: [
-            { id: 'p0', kind: 'goods', name: 'Aaa first', description: null, unitLabel: 'Stk', unitPrice: 100, priceBasis: 'net', taxClass: 'standard', discountBp: 0, archivedAt: null },
-            { id: 'p1', kind: 'service', name: 'Beratung', description: null, unitLabel: 'Std', unitPrice: 9900, priceBasis: 'net', taxClass: 'standard', discountBp: 0, archivedAt: null },
+            item({ variantId: 'v0', kind: 'product', title: 'Aaa first' }),
+            item({ variantId: 'v1', title: 'Beratung', unitLabel: 'Std', unitPrice: 9900 }),
           ],
-          nextCursor: null,
-          total: 2,
         },
       }),
     });
     await opened();
     fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
     const first = await screen.findByRole('option', { name: /Aaa first/ });
-    const search = screen.getByRole('combobox', { name: 'Search your products and services' });
+    const search = screen.getByRole('combobox', { name: 'Search products and services in the catalogue' });
     expect(search.getAttribute('aria-activedescendant')).toBe(first.id);
     fireEvent.keyDown(search, { key: 'ArrowDown' });
     const second = screen.getByRole('option', { name: /Beratung/ });
@@ -523,15 +528,34 @@ describe('the invoice page: the floating toolbar', () => {
     expect(percent().textContent).toBe('90%');
   });
 
-  it('the product picker with nothing to offer says so and leads to where products are added', async () => {
-    server({ 'GET /api/books/products': () => ({ status: 200, body: { items: [], nextCursor: null, total: 0 } }) });
+  it('the product picker with nothing to offer says so and leads to the Catalog, where products are added', async () => {
+    server({ 'GET /api/books/catalogue': () => ({ status: 200, body: { items: [] } }) });
     await opened();
     fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
     const picker = screen.getByRole('dialog', { name: 'Choose a product or service' });
-    await within(picker).findByText('No products or services yet.');
-    expect(within(picker).getByRole('link', { name: /Add them in Products and services/ }).getAttribute('href')).toBe('/projects/books?tab=products');
-    fireEvent.change(within(picker).getByRole('combobox', { name: 'Search your products and services' }), { target: { value: 'xyz' } });
-    await within(picker).findByText('Nothing matches “xyz”.');
+    await within(picker).findByText('No products or services with a price in the catalogue yet.');
+    expect(within(picker).getByRole('link', { name: /Add them in the Catalog/ }).getAttribute('href')).toBe('/projects/catalog');
+    fireEvent.change(within(picker).getByRole('combobox', { name: 'Search products and services in the catalogue' }), { target: { value: 'xyz' } });
+    await within(picker).findByText('Nothing in the catalogue matches “xyz”.');
+  });
+
+  it('a catalogue that cannot be read says why in the picker, and adds nothing', async () => {
+    server({ 'GET /api/books/catalogue': () => ({ status: 403, body: { error: { code: 'forbidden', message: 'no' } } }) });
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
+    const picker = screen.getByRole('dialog', { name: 'Choose a product or service' });
+    expect((await within(picker).findByRole('alert')).textContent).not.toBe('');
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+  });
+
+  it('a picked item that left the catalogue meanwhile is refused with the reason, and no line is added', async () => {
+    server({
+      'POST /api/books/documents/doc-1/lines': () => ({ status: 404, body: { error: { code: 'variant_not_found', message: 'gone' } } }),
+    });
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
+    fireEvent.click(await screen.findByRole('option', { name: /Beratung/ }));
+    await screen.findByText(/not in the catalogue any more/);
   });
 });
 

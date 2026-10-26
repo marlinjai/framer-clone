@@ -81,8 +81,6 @@ export type BooksErrorCode =
   | 'ASSET_IN_USE'
   | 'ASSET_BUSY'
   | 'LOGO_ASSET_MISSING'
-  // The product and service list (015_books_products, repository/products.ts).
-  | 'DUPLICATE_PRODUCT'
   // Deleting a draft (019_books_draft_delete, repository/documents.ts deleteDraft).
   | 'NOT_DELETABLE';
 

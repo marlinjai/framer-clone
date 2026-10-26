@@ -1,11 +1,11 @@
 // src/lib/books/searchKey.ts
 //
-// The one fold the product and service list compares names and searches with
-// (migration 015_books_products, guarantee 3): lower case, accents removed
-// ("Beratúng" -> "beratung"), compatibility forms decomposed ("ﬁ" -> "fi"),
-// "ß" written "ss", whitespace collapsed to one space and trimmed. The
-// repository stores it as `name_key` (the unique key among live items) and
-// `search_text` (name and description, what the search matches), and folds the
+// The one fold names and searches are compared with: lower case, accents
+// removed ("Beratúng" -> "beratung"), compatibility forms decomposed
+// ("ﬁ" -> "fi"), "ß" written "ss", whitespace collapsed to one space and
+// trimmed. The catalogue stores it as `product.search_text` (title and
+// description; 020_catalogue_company, as 015_books_products did for the old
+// Books list), and the line picker's search (repository/catalogue.ts) folds the
 // typed search the same way, so the database needs no accent extension.
 // Client-safe: no server imports.
 

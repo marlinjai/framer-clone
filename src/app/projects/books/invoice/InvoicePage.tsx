@@ -69,7 +69,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { booksApi, type CustomerView, type DocumentDetail, type LineView, type ProductView } from '@/lib/books/api';
+import { booksApi, type CatalogueItemView, type CustomerView, type DocumentDetail, type LineView } from '@/lib/books/api';
 import { lineFromProduct } from '@/lib/books/products';
 import { money, parseMoney, parseQuantity } from '@/lib/books/units';
 import type { FieldRect, LayoutField } from '@/server/books/render/engine';
@@ -170,7 +170,11 @@ function call(id: string, req: FieldRequest, version: number): Promise<DocumentD
   return booksApi.updateDraft(id, { ...req.body, expectedVersion: version });
 }
 
-/** The fields of a line as an add-line body (duplicating a line, or adding back a removed one). */
+/**
+ * The fields of a line as an add-line body (duplicating a line, or adding back a removed one). The values only,
+ * never the catalogue reference: the copy stands on its own, so adding it back cannot fail because its item was
+ * deleted from the catalogue meanwhile (the reference is informational; the values are what the line says).
+ */
 function copyOfLine(l: LineView): Record<string, unknown> {
   if (l.kind === 'text') return { kind: 'text', title: l.title };
   return {
@@ -521,9 +525,9 @@ export default function InvoicePage({ id, detail, customers, busy, change }: Inv
     );
   }
 
-  async function pickProduct(p: ProductView) {
+  async function pickProduct(p: CatalogueItemView) {
     setPicking(false);
-    await addLineFrom({ ...lineFromProduct(p), quantity: 1000 }, `“${p.name}”`, 'choose-product');
+    await addLineFrom({ ...lineFromProduct(p), quantity: 1000 }, `“${p.title}”`, 'choose-product');
   }
 
   // --- Undo and redo. ---
@@ -1219,10 +1223,13 @@ function LineActions({
   );
 }
 
-function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; onClose: () => void }) {
+// The company's catalogue (GET /api/books/catalogue): every sellable variant of a product or service, drafts
+// included, archived ones never. A pick copies the item's values into a new line that keeps the variant as its
+// only reference (lineFromProduct).
+function ProductSearch({ onPick, onClose }: { onPick: (p: CatalogueItemView) => void; onClose: () => void }) {
   const [q, setQ] = useState('');
   // The answer, with the search it answers: Enter picks only from the answer to what is typed now.
-  const [result, setResult] = useState<{ q: string; items: ProductView[] } | null>(null);
+  const [result, setResult] = useState<{ q: string; items: CatalogueItemView[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pickFirst = useRef(false);
   // The highlighted product (the combobox pattern: the focus stays in the search, the arrows move this).
@@ -1234,8 +1241,8 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; 
     const query = q.trim();
     const t = setTimeout(() => {
       booksApi
-        .products({ q: query || undefined })
-        .then((page) => !cancelled && (setResult({ q: query, items: page.items.filter((p) => !p.archivedAt) }), setError(null)))
+        .catalogue(query || undefined)
+        .then((page) => !cancelled && (setResult({ q: query, items: page.items }), setError(null)))
         .catch((err: unknown) => !cancelled && setError(errorText(err)));
     }, 200);
     return () => {
@@ -1255,7 +1262,7 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; 
     <div role="dialog" aria-label="Choose a product or service" className={`absolute left-0 top-9 z-30 w-80 rounded-xl border p-1.5 text-popover-foreground ${GLASS_SURFACE}`}>
       <label className="glass-inset flex items-center gap-2 rounded-lg px-2.5">
         <Search aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-        <span className="sr-only">Search your products and services</span>
+        <span className="sr-only">Search products and services in the catalogue</span>
         <input
           autoFocus
           role="combobox"
@@ -1294,16 +1301,16 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; 
       ) : null}
       {items?.length === 0 ? (
         <div className="px-2.5 py-3 text-xs text-muted-foreground">
-          {q.trim() ? <p>Nothing matches “{q.trim()}”.</p> : <p>No products or services yet.</p>}
-          <Link href="/projects/books?tab=products" className="mt-1.5 inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline">
-            <Plus aria-hidden className="size-3.5" /> Add them in Products and services
+          {q.trim() ? <p>Nothing in the catalogue matches “{q.trim()}”.</p> : <p>No products or services with a price in the catalogue yet.</p>}
+          <Link href="/projects/catalog" className="mt-1.5 inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline">
+            <Plus aria-hidden className="size-3.5" /> Add them in the Catalog
           </Link>
         </div>
       ) : null}
       <ul id="product-options" role="listbox" aria-label="Products and services" className="mt-1 max-h-64 overflow-y-auto empty:hidden">
         {items?.map((p, i) => (
           <li
-            key={p.id}
+            key={p.variantId}
             id={option(i)}
             role="option"
             aria-selected={i === active}
@@ -1313,7 +1320,7 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: ProductView) => void; 
             onMouseEnter={() => setActive(i)}
             onClick={() => onPick(p)}
           >
-            <span className="truncate font-medium">{p.name}</span>
+            <span className="truncate font-medium">{p.title}</span>
             <span className="shrink-0 tabular-nums text-muted-foreground">
               {money(p.unitPrice)} / {p.unitLabel}
               {p.priceBasis === 'gross' ? ' brutto' : ''}

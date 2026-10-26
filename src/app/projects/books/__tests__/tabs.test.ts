@@ -1,6 +1,7 @@
 // src/app/projects/books/__tests__/tabs.test.ts
 //
 // The tab a link asks for: only a known tab opens, anything else is the documents.
+// The products tab stays (it points to the Catalog), so an old ?tab=products link still lands.
 
 import { describe, expect, it } from 'vitest';
 

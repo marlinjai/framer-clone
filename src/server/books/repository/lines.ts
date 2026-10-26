@@ -6,17 +6,21 @@
 // line is recomputed (taxState.ts). The line guard trigger refuses any write to
 // a line of a non-draft document (BK001 -> NOT_DRAFT) for every role.
 //
-// A line may reference a catalog variant (services as products, amendment item
-// 4): `variant_ref_source = 'owned'`, and every input the caller left out
-// (title, unit price, tax class) is copied from the variant and its product at
-// that moment. A later catalog change never alters a line already added.
+// A line picked from the company's catalogue (catalogue design, "The Books'
+// own list is replaced"; repository/catalogue.ts) carries the copied values
+// AND the variant id as its only reference: `variant_ref`, with
+// `variant_ref_source = 'owned'`. The reference is informational: the copied
+// values stay authoritative, so a later catalogue change never alters a line.
+// Every input the caller left out (title, unit price, tax class) is copied from
+// the variant and its product at that moment; a variant of another company is
+// VARIANT_NOT_FOUND. A change may pick another item into the same line
+// (`variantRef` with its copied values), or drop the reference (`null`).
 //
-// A line filled from the product and service list (015_books_products) is a
-// plain copy of the item's values, never a reference. Its `priceBasis` (net or
-// gross, the basis the item's price is quoted in) may differ from the draft's:
-// the price is then converted here, under the draft's tax profile at that
-// moment (convertUnitPrice in totals.ts), and stored in the draft's basis, so
-// the client never converts a price itself.
+// A picked price comes with its `priceBasis` (net or gross, the basis the item
+// is quoted in), which may differ from the draft's: the price is then converted
+// here, under the draft's tax profile at that moment (convertUnitPrice in
+// totals.ts), and stored in the draft's basis, so the client never converts a
+// price itself.
 
 import { randomUUID } from 'node:crypto';
 import type { Transaction } from 'kysely';
@@ -30,6 +34,7 @@ import { requireSettings } from '../settings';
 import { MAX_AMOUNT_CENTS, convertUnitPrice, deriveLine, lineExceedsLimit, type LineInputs, type TaxClass } from '../totals';
 import { finishDraftMutation, inDraftTransaction, lockDraft } from './documents';
 import { readPersistedView, selectLineRows, type DocumentRowWithSnapshots, type DocumentView } from './read';
+import { lineTaxClass, variantLineTitle } from './catalogue';
 import { profileFor, selectCustomerRow } from './taxState';
 
 const TAX_CLASSES = ['standard', 'reduced', 'zero'] as const;
@@ -57,7 +62,7 @@ const addInput = z.object({
   taxClass: lineFields.taxClass.optional(),
   taxRateOverride: lineFields.taxRateOverride.optional(),
   variantRef: z.string().min(1).optional(),
-  /** The basis `unitPrice` is quoted in, when it may differ from the draft's (a product list item). */
+  /** The basis `unitPrice` is quoted in, when it may differ from the draft's (a catalogue item). */
   priceBasis: z.enum(['net', 'gross']).optional(),
   expectedVersion: z.number().int().min(0).optional(),
 });
@@ -74,6 +79,10 @@ const patchInput = z
     discountBp: lineFields.discountBp.optional(),
     taxClass: lineFields.taxClass.optional(),
     taxRateOverride: lineFields.taxRateOverride.optional(),
+    /** Another catalogue item picked into this line (with its copied values), or null to drop the reference. */
+    variantRef: z.string().min(1).nullable().optional(),
+    /** The basis `unitPrice` is quoted in, when it may differ from the draft's (a catalogue item). */
+    priceBasis: z.enum(['net', 'gross']).optional(),
     expectedVersion: z.number().int().min(0).optional(),
   })
   .strict();
@@ -128,15 +137,14 @@ async function variantDefaults(
     .where('product.deleted_at', 'is', null)
     .executeTakeFirst();
   if (!v) throw new BooksError('VARIANT_NOT_FOUND', 'VARIANT_NOT_FOUND', { variantRef: variantId });
-  const variantTitle = v.variantTitle?.trim() ?? '';
-  const title =
-    variantTitle !== '' && variantTitle !== v.productTitle ? `${v.productTitle} (${variantTitle})` : v.productTitle;
   const unitPrice = await pricingRepository.resolvePrice(trx, variantId, { currency: 'EUR', quantity: 1 });
   // The catalog's tax_class is free text; only the three classes the line table
   // accepts are carried over (anything else rates as standard, as resolveLineRate does).
-  const raw = v.variantTaxClass ?? v.productTaxClass;
-  const taxClass = (TAX_CLASSES as readonly string[]).includes(raw ?? '') ? (raw as TaxClass) : null;
-  return { title: title.slice(0, 300), unitPrice, taxClass };
+  return {
+    title: variantLineTitle(v.productTitle, v.variantTitle),
+    unitPrice,
+    taxClass: lineTaxClass(v.variantTaxClass ?? v.productTaxClass),
+  };
 }
 
 /** The draft's tax profile computed now (company settings and its customer's current tax fields). */
@@ -162,15 +170,47 @@ async function deriveForDraft(trx: Transaction<CommerceDB>, scope: BooksScope, r
   return derived;
 }
 
+/** A quoted price's basis is sent only with the price it describes. */
+function assertBasisHasPrice(args: { priceBasis?: 'net' | 'gross'; unitPrice?: number }): void {
+  if (args.priceBasis !== undefined && args.unitPrice === undefined) {
+    throw invalid('INVALID_LINE', [{ path: ['priceBasis'], message: 'priceBasis is sent only with the unitPrice it describes' }]);
+  }
+}
+
+/**
+ * Store a price quoted in `basis` in the draft's basis, under the draft's
+ * profile now. convertUnitPrice decides when a price changes (the bases differ,
+ * or a gross quote under reverse charge). A text line has no price.
+ */
+async function convertToDraftBasis(
+  trx: Transaction<CommerceDB>,
+  scope: BooksScope,
+  row: DocumentRowWithSnapshots,
+  line: LineDraft,
+  basis: 'net' | 'gross',
+): Promise<void> {
+  if (line.kind === 'text') return;
+  const profile = await draftProfile(trx, scope, row);
+  line.unitPrice = convertUnitPrice(line.unitPrice, basis, row.net_or_gross, {
+    taxClass: line.taxClass,
+    taxRateOverride: line.taxRateOverride,
+    kleinunternehmer: profile.kleinunternehmer,
+    reverseCharge: profile.reverseCharge,
+  });
+  if (line.unitPrice > MAX_AMOUNT_CENTS) {
+    throw invalid('INVALID_LINE', [
+      { path: ['unitPrice'], message: 'the price in the draft\'s basis exceeds the largest amount (21,474,836.47 EUR)' },
+    ]);
+  }
+}
+
 /** Append a line at the end of a draft. */
 export async function addLine(scope: BooksScope, id: string, input: AddLineInput): Promise<DocumentView> {
   const parsed = addInput.safeParse(input);
   if (!parsed.success) throw invalid('INVALID_LINE', parsed.error.issues);
   const args = parsed.data;
   // The basis qualifies the price the caller sends, never a catalog price it leaves out.
-  if (args.priceBasis !== undefined && args.unitPrice === undefined) {
-    throw invalid('INVALID_LINE', [{ path: ['priceBasis'], message: 'priceBasis is sent only with the unitPrice it describes' }]);
-  }
+  assertBasisHasPrice(args);
 
   return inDraftTransaction(scope, async (trx) => {
     const row = await lockDraft(trx, scope, id, args.expectedVersion);
@@ -194,21 +234,7 @@ export async function addLine(scope: BooksScope, id: string, input: AddLineInput
       taxRateOverride: args.taxRateOverride ?? null,
     };
     assertLineRules(line);
-    // convertUnitPrice decides when a price changes (the bases differ, or a gross quote under reverse charge).
-    if (args.priceBasis !== undefined && line.kind !== 'text') {
-      const profile = await draftProfile(trx, scope, row);
-      line.unitPrice = convertUnitPrice(line.unitPrice, args.priceBasis, row.net_or_gross, {
-        taxClass: line.taxClass,
-        taxRateOverride: line.taxRateOverride,
-        kleinunternehmer: profile.kleinunternehmer,
-        reverseCharge: profile.reverseCharge,
-      });
-      if (line.unitPrice > MAX_AMOUNT_CENTS) {
-        throw invalid('INVALID_LINE', [
-          { path: ['unitPrice'], message: 'the price in the draft\'s basis exceeds the largest amount (21,474,836.47 EUR)' },
-        ]);
-      }
-    }
+    if (args.priceBasis !== undefined) await convertToDraftBasis(trx, scope, row, line, args.priceBasis);
     const derived = await deriveForDraft(trx, scope, row, line);
 
     const last = await trx
@@ -259,11 +285,14 @@ export async function updateLine(
   const parsed = patchInput.safeParse(patch);
   if (!parsed.success) throw invalid('INVALID_LINE', parsed.error.issues);
   const args = parsed.data;
+  assertBasisHasPrice(args);
 
   return inDraftTransaction(scope, async (trx) => {
     const row = await lockDraft(trx, scope, id, args.expectedVersion);
     const current = (await selectLineRows(trx, scope, id)).find((l) => l.id === lineId);
     if (!current) throw new BooksError('LINE_NOT_FOUND', 'LINE_NOT_FOUND', { documentId: id, lineId });
+    // Another item picked into the line: only the company's own live variant (VARIANT_NOT_FOUND otherwise).
+    if (args.variantRef) await variantDefaults(trx, scope, args.variantRef);
 
     const kind = args.kind ?? current.kind;
     const line: LineDraft = {
@@ -278,11 +307,16 @@ export async function updateLine(
       taxRateOverride: args.taxRateOverride !== undefined ? args.taxRateOverride : current.tax_rate_override,
     };
     assertLineRules(line);
+    if (args.priceBasis !== undefined) await convertToDraftBasis(trx, scope, row, line, args.priceBasis);
     const derived = await deriveForDraft(trx, scope, row, line);
 
     await trx
       .updateTable('sales_document_line')
       .set({
+        // Reference and source change together (007's variant_ref_check).
+        ...(args.variantRef !== undefined
+          ? { variant_ref: args.variantRef, variant_ref_source: args.variantRef ? ('owned' as const) : ('none' as const) }
+          : {}),
         kind: line.kind,
         title: line.title,
         description: line.description,
