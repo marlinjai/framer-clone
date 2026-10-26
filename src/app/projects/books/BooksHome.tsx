@@ -5,8 +5,7 @@
 // The Books area of the editor (Books plan phase 2): the active company's
 // documents (drafts first, each with its status and, once issued, its number;
 // 50 at a time with "Load more" and a count, findable by number and year),
-// its customers, its product and service list (ProductsPanel) and its
-// templates, plus the company configuration the Books
+// its customers and its templates, plus the company configuration the Books
 // run under (tax status, sender, the next number), read-only because an
 // operator sets it with `pnpm books:init-company`.
 //
@@ -15,6 +14,11 @@
 // that is never issued consumes no number). Every failure is shown with the
 // server's explanation; a company without the Books grant, or not set up yet,
 // gets a page that says so instead of broken buttons.
+//
+// Products and services live in the company's catalogue (the Catalog area,
+// /projects/catalog; catalogue design, "The Books' own list is replaced"):
+// the products tab only points there, so an old ?tab=products link still lands
+// somewhere useful, and invoice lines pick from the catalogue.
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -22,7 +26,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 
 import { useCursorList } from './useCursorList';
 
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import {
   BooksApiError,
   TYPE_LABELS,
@@ -35,7 +39,6 @@ import { date, money } from '@/lib/books/units';
 
 import CustomerForm from './CustomerForm';
 import { FirstPage, MoreRows } from './ListStatus';
-import ProductsPanel from './ProductsPanel';
 import { BOOKS_TABS, type BooksTab } from './tabs';
 import TemplatesPanel from './TemplatesPanel';
 import { ErrorAlert, ImportedBadge, StatusBadge, errorText } from './ui';
@@ -335,7 +338,18 @@ export default function BooksHome({ initialTab = 'documents' }: { initialTab?: T
       ) : null}
 
       {tab === 'products' ? (
-        <ProductsPanel onBlocked={blockOnly} smallBusiness={settings?.settings?.taxStatus === 'small_business'} />
+        <section aria-labelledby="books-products-moved" className="rounded-lg border border-dashed p-10 text-center">
+          <h2 id="books-products-moved" className="text-base font-medium">
+            Products and services are in the Catalog
+          </h2>
+          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+            The company keeps one catalogue for its shop and its invoices. Add and change products and services
+            there; an invoice line picks from it with &ldquo;Product or service&rdquo; and keeps the values it copied.
+          </p>
+          <Link href="/projects/catalog" className={`${buttonVariants({ size: 'sm', variant: 'outline' })} mt-4`}>
+            Open the Catalog
+          </Link>
+        </section>
       ) : null}
 
       {tab === 'templates' ? <TemplatesPanel /> : null}

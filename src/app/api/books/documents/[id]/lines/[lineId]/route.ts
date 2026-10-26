@@ -8,6 +8,10 @@
 // document totals (the other lines are not rewritten); a removal closes the
 // position gap. Both take `expectedVersion` (PATCH in the body, DELETE as a
 // query parameter, since a DELETE carries no body); a stale one answers 409.
+// PATCH may pick another catalogue item into the line: `variantRef` (the
+// company's own variant, else 404 variant_not_found) with the copied values,
+// and `priceBasis` with the `unitPrice` it qualifies (converted to the draft's
+// basis as on POST); `variantRef: null` drops the reference.
 
 import { z } from 'zod';
 
@@ -23,7 +27,9 @@ export const dynamic = 'force-dynamic';
 
 type Params = { id: string; lineId: string };
 
-const patchBody = z.object(lineFieldsBody).strict();
+const patchBody = z
+  .object({ ...lineFieldsBody, variantRef: z.string().min(1).nullable().optional(), priceBasis: z.enum(['net', 'gross']).optional() })
+  .strict();
 
 export const PATCH = booksRoute<Params>('write', async (ctx, req, { params }) => {
   const { id, lineId } = await params;

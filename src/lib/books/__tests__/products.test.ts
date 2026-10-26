@@ -1,12 +1,12 @@
 // src/lib/books/__tests__/products.test.ts
 //
-// The fold the product list compares names and searches with, and the line
-// fields an item gives (invoice editor plan, phase 4). Headless.
+// The fold the catalogue searches with, and the line fields a catalogue item
+// gives (catalogue design, "The Books' own list is replaced"). Headless.
 
 import { describe, expect, it } from 'vitest';
 
-import type { ProductView } from '../api';
-import { lineFromProduct, productNameProblem } from '../products';
+import type { CatalogueItemView } from '../api';
+import { lineFromProduct } from '../products';
 import { foldKey, searchWords } from '../searchKey';
 
 describe('foldKey', () => {
@@ -26,61 +26,49 @@ describe('foldKey', () => {
   });
 });
 
-const product: ProductView = {
-  id: 'p1',
+const item: CatalogueItemView = {
+  variantId: 'v1',
+  productId: 'p1',
   kind: 'product',
-  name: 'Druck A4',
-  description: 'Farbig, beidseitig',
+  title: 'Ring (Gold)',
+  description: 'Handgeschmiedet',
   unitLabel: 'Stk',
-  unitPrice: 1250,
+  unitPrice: 12500,
   priceBasis: 'gross',
   taxClass: 'reduced',
   discountBp: 500,
-  archivedAt: null,
-  createdAt: '2026-10-23T08:00:00.000Z',
-  updatedAt: '2026-10-23T08:00:00.000Z',
+  status: 'draft',
 };
 
-describe('productNameProblem', () => {
-  it('is the one name rule of the form and the server', () => {
-    expect(productNameProblem('Beratung')).toBeNull();
-    expect(productNameProblem('')).toBe('Enter a name.');
-    expect(productNameProblem('-')).toMatch(/letter or digit/);
-    expect(productNameProblem('!!!')).toMatch(/letter or digit/);
-    expect(productNameProblem('x'.repeat(301))).toMatch(/300/);
-    // U+FDFA folds to 18 letters: 300 of them fit the 300 characters but not the stored fold.
-    expect(productNameProblem('ﷺ'.repeat(300))).toMatch(/too long/);
-    expect(productNameProblem('ﷺ'.repeat(10))).toBeNull();
-  });
-});
-
 describe('lineFromProduct', () => {
-  it('copies the item into exactly the fields of a line, with the basis of its price', () => {
-    expect(lineFromProduct(product)).toEqual({
+  it('copies the item into exactly the fields of a line, with the basis of its price and the variant as reference', () => {
+    expect(lineFromProduct(item)).toEqual({
       kind: 'product',
-      title: 'Druck A4',
-      description: 'Farbig, beidseitig',
+      title: 'Ring (Gold)',
+      description: 'Handgeschmiedet',
       unitLabel: 'Stk',
-      unitPrice: 1250,
+      unitPrice: 12500,
       priceBasis: 'gross',
       taxClass: 'reduced',
       discountBp: 500,
+      variantRef: 'v1',
     });
   });
 
-  it('gives no description for a blank one, and never carries the item id', () => {
-    const line = lineFromProduct({ ...product, description: '   ' });
+  it('gives no description for a blank one, keeps a missing tax class missing, and never carries the product id', () => {
+    const line = lineFromProduct({ ...item, description: '   ', taxClass: null });
     expect(line.description).toBeNull();
-    expect(Object.keys(line)).not.toContain('id');
-    expect(JSON.stringify(lineFromProduct(product))).not.toContain('p1');
+    expect(line.taxClass).toBeNull();
+    expect(Object.keys(line)).not.toContain('productId');
+    expect(JSON.stringify(lineFromProduct(item))).not.toContain('p1');
   });
 
   it('is a copy: changing the item afterwards leaves the fields as they were', () => {
-    const p = { ...product };
+    const p = { ...item };
     const line = lineFromProduct(p);
-    p.name = 'Renamed';
+    p.title = 'Renamed';
     p.unitPrice = 1;
-    expect(line.title).toBe('Druck A4');
-    expect(line.unitPrice).toBe(1250);
+    expect(line.title).toBe('Ring (Gold)');
+    expect(line.unitPrice).toBe(12500);
   });
 });

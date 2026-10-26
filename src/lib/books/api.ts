@@ -38,37 +38,26 @@ export interface CustomerView {
 }
 
 /**
- * An item of the company's product and service list. A draft line copies its
- * values when it is picked (src/lib/books/products.ts) and never references it.
+ * A sellable variant of the company's catalogue, as the invoice line picker
+ * offers it (GET /api/books/catalogue). A picked line copies these values and
+ * keeps `variantId` as its only reference (src/lib/books/products.ts).
  */
-export interface ProductView {
-  id: string;
+export interface CatalogueItemView {
+  variantId: string;
+  productId: string;
   kind: 'service' | 'product';
-  name: string;
+  /** The product title, with the variant's in brackets when it says more. */
+  title: string;
   description: string | null;
   unitLabel: string;
   /** Cents, in `priceBasis`. */
   unitPrice: number;
   priceBasis: 'net' | 'gross';
-  taxClass: 'standard' | 'reduced' | 'zero';
+  /** Null rates as standard. */
+  taxClass: 'standard' | 'reduced' | 'zero' | null;
   /** Basis points. */
   discountBp: number;
-  /** Set when archived: out of the search, its name free, restorable. */
-  archivedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** The writable fields of an item (POST creates with them, PATCH changes any of them). */
-export interface ProductInput {
-  kind: ProductView['kind'];
-  name: string;
-  description: string | null;
-  unitLabel: string;
-  unitPrice: number;
-  priceBasis: ProductView['priceBasis'];
-  taxClass: ProductView['taxClass'];
-  discountBp: number;
+  status: 'draft' | 'published';
 }
 
 export interface LineView {
@@ -87,6 +76,8 @@ export interface LineView {
   taxRate: number;
   taxAmount: number;
   taxTreatment: string | null;
+  /** The catalogue variant the line was picked from (informational: the line's values are authoritative). */
+  variantRef: string | null;
   updatedAt: string;
 }
 
@@ -304,8 +295,7 @@ const MESSAGES: Record<string, string> = {
   asset_not_found: 'This logo is not stored for this company.',
   asset_in_use: 'This logo is printed on an issued document or used by a template, so it stays.',
   asset_busy: 'This logo is being used by an invoice being issued or a template being saved. Try again in a moment.',
-  duplicate_product:
-    'Another item of the list already has this name (capitals and accents do not count). Choose another name, or archive that item first.',
+  variant_not_found: 'This item is not in the catalogue any more. Choose another one; nothing was changed.',
 };
 
 export class BooksApiError extends Error {
@@ -396,22 +386,8 @@ export const booksApi = {
   createCustomer: (body: unknown) => request<CustomerView>('POST', '/api/books/customers', body),
   updateCustomer: (id: string, body: unknown) => request<CustomerView>('PATCH', `/api/books/customers/${id}`, body),
   archiveCustomer: (id: string) => request<CustomerView>('DELETE', `/api/books/customers/${id}`),
-  /** One page of the product and service list (100 a page), live items first; `q` searches name and description. */
-  products: (opts: { q?: string; includeArchived?: boolean; cursor?: string | null } = {}) =>
-    request<ListPage<ProductView>>(
-      'GET',
-      `/api/books/products${query({ q: opts.q, includeArchived: opts.includeArchived ? '1' : undefined, cursor: opts.cursor })}`,
-    ),
-  product: (id: string) => request<ProductView>('GET', `/api/books/products/${encodeURIComponent(id)}`),
-  createProduct: (body: Partial<ProductInput> & Pick<ProductInput, 'name' | 'unitPrice'>) =>
-    request<ProductView>('POST', '/api/books/products', body),
-  updateProduct: (id: string, body: Partial<ProductInput>) =>
-    request<ProductView>('PATCH', `/api/books/products/${encodeURIComponent(id)}`, body),
-  /** Archive an item: it leaves the search, its name is free again; drafts that used it keep their lines. */
-  archiveProduct: (id: string) => request<ProductView>('DELETE', `/api/books/products/${encodeURIComponent(id)}`),
-  /** Restore an archived item (duplicate_product when a live item took its name meanwhile). */
-  restoreProduct: (id: string) =>
-    request<ProductView>('PATCH', `/api/books/products/${encodeURIComponent(id)}`, { archived: false }),
+  /** The catalogue's sellable items for a line (at most 50); `q` searches titles and descriptions. */
+  catalogue: (q?: string) => request<{ items: CatalogueItemView[] }>('GET', `/api/books/catalogue${query({ q })}`),
   searchContacts: (search: string) =>
     request<{ items: ContactLabel[] }>('GET', `/api/books/contacts?search=${encodeURIComponent(search)}`),
   /** One page of documents (50 a page), optionally by number (contains) and issue year. */

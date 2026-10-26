@@ -143,3 +143,28 @@ counter payments, the live Stripe account (opened before the first real payment,
 An implementation plan in slices (company column and re-seed; catalogue table and panel; Books lines from the
 catalogue; Stripe Connect test mode and webhook; receipt from order; the test company proof), for the owner's
 approval before building.
+
+## Decided while building slice 3 (2026-10-26, say so if you disagree)
+
+Slice 3: invoice lines pick from the catalogue (`GET /api/books/catalogue`, `repository/catalogue.ts`), and the
+Books' own list (panel, form, routes, writers) is gone.
+
+- **Only priced variants are offered.** A variant without a base price in EUR for one unit (no price list, the
+  quantity-1 tier) is not in the picker: a line needs a price, and adding one without it is refused anyway.
+- **Archived leaves the search, not the line.** An archived product is no longer offered, but its variant is still
+  accepted as a reference on add and on change; only a deleted or another company's variant is
+  `variant_not_found`. The reference is informational, and redoing a pick must not fail because the item was
+  archived meanwhile.
+- **Another item into the same line.** PATCH on a line accepts `variantRef` (or `null`, which drops the reference)
+  and `priceBasis` with its `unitPrice`, converted to the draft's basis as on add. PATCH never fills values from
+  the catalogue: the client sends the copied values (`lineFromProduct`). The editor itself still adds a new line
+  per pick.
+- **Copies carry values only.** Duplicating a line, or undoing its removal, re-adds its values without the
+  reference, so it cannot fail on an item deleted meanwhile.
+- **A missing tax class stays missing.** A picked line's tax class may be null (rated as standard), as the line
+  table allows, instead of being promoted to `standard`.
+- **Search.** Every typed word must occur in the product's folded `search_text`, or in the lower-cased product or
+  variant title (for a product whose search text was never written; that fallback does not fold accents). At most
+  50 items, by product title, no paging: typing narrows.
+- **The products tab stays as a pointer** to the Catalog (`/projects/catalog`), so old `?tab=products` links still
+  land.

@@ -120,19 +120,3 @@ export const CUSTOMER_COLUMNS = [
   'created_at',
   'updated_at',
 ] as const;
-
-/** books_product without the two folded columns (written by repository/products.ts, never shown). */
-export const PRODUCT_COLUMNS = [
-  'id',
-  'kind',
-  'name',
-  'description',
-  'unit_label',
-  'unit_price',
-  'price_basis',
-  'tax_class',
-  'discount_bp',
-  'archived_at',
-  'created_at',
-  'updated_at',
-] as const;
