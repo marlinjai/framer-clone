@@ -1,4 +1,4 @@
-// CartView: renders lines, resolves variant + price DTOs for DISPLAY, shows a
+// CartView: renders lines named by product and variant, resolves variant + price DTOs for DISPLAY, shows a
 // DISPLAY-ONLY estimated subtotal, supports quantity change + line removal, and
 // shows an ADVISORY-availability warning (never auto-removing the line). No
 // server write happens from any interaction.
@@ -40,6 +40,25 @@ afterEach(() => {
 });
 
 describe('CartView display', () => {
+  it('shows each line with its product and variant', async () => {
+    seedCart([{ variantId: 'var_s_red', quantity: 1 }]);
+    const { container } = renderCart(new InMemoryCommerceDataSource());
+    await waitFor(() => {
+      expect(container.querySelector('[data-cart-line="var_s_red"] [data-cart-line-title]')?.textContent).toBe('Classic Tee, Small / Red');
+    });
+  });
+
+  it('keeps a line whose product cannot be read, named by its variant', async () => {
+    seedCart([{ variantId: 'var_s_red', quantity: 1 }]);
+    const ds = new InMemoryCommerceDataSource();
+    vi.spyOn(ds, 'getProduct').mockRejectedValue(new Error('down'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container } = renderCart(ds);
+    await waitFor(() => {
+      expect(container.querySelector('[data-cart-line="var_s_red"] [data-cart-line-title]')?.textContent).toBe('Small / Red');
+    });
+  });
+
   it('shows an empty-cart note when there are no lines', async () => {
     const { container } = renderCart(new InMemoryCommerceDataSource());
     await waitFor(() => {

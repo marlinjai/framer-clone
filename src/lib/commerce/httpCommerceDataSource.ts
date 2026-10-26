@@ -21,15 +21,14 @@
 // (getProduct / listVariants / getVariant / getPrices) have no by-id b7 route, so
 // they page the list and resolve client-side (fine for the v1 catalog size).
 //
-// ONE GENUINE GAP, REQUESTED ADDITIVELY (NOT BUILT HERE). The seam's
-// getAvailability(variantId) with NO location must aggregate across every
-// location (locationId = ALL_LOCATIONS). b7's inventory route requires a
-// locationId and returns a single level, so it cannot aggregate. That aggregate
-// mode is REQUESTED as an additive b7 PR (GET /api/commerce/inventory?variantId=
-// with no locationId -> an advisory AvailabilityDTO whose locationId is "all").
-// Track B owns the route files; this storefront spec adds no route. Until b7
-// ships it, the no-location read surfaces b7's 400 as a well-formed error rather
-// than fabricating a number.
+// AVAILABILITY ACROSS LOCATIONS. getAvailability(variantId) with no location
+// asks the inventory route without a locationId, and the route sums every
+// location (locationId "all"); with a location it answers that one.
+//
+// ONE CATALOG READ AT A TIME. The by-id reads page the catalog, and a cart asks
+// for the variant, product and price of every line at once. Reads issued while a
+// catalog read is in flight share it; once it settles, the next read fetches
+// again, so nothing is ever served from an older read.
 //
 // ADVISORY-ONLY HARD LINE. getAvailability validates that the b7 response asserts
 // `advisoryOnly: true` (availabilityDTOSchema) before mapping it to the seam
@@ -216,6 +215,8 @@ export class HttpCommerceDataSource implements CommerceDataSource {
   private readonly apiPrefix: string;
   private readonly pollMs: number;
   private readonly currency: string;
+  /** The catalog read in flight, shared by the reads issued meanwhile (see the header). */
+  private catalogInFlight: Promise<B7ProductDTO[]> | null = null;
 
   constructor(opts?: { baseUrl?: string; apiPrefix?: string; pollMs?: number }) {
     // Default baseUrl is '' so requests are relative (same-origin) in the
@@ -269,7 +270,16 @@ export class HttpCommerceDataSource implements CommerceDataSource {
    * must strictly advance; a repeated cursor is treated as the end of the list
    * to avoid an unbounded loop on a misbehaving upstream.
    */
-  private async _fetchAllB7Products(): Promise<B7ProductDTO[]> {
+  private _fetchAllB7Products(): Promise<B7ProductDTO[]> {
+    if (!this.catalogInFlight) {
+      this.catalogInFlight = this._pageAllB7Products().finally(() => {
+        this.catalogInFlight = null;
+      });
+    }
+    return this.catalogInFlight;
+  }
+
+  private async _pageAllB7Products(): Promise<B7ProductDTO[]> {
     const all: B7ProductDTO[] = [];
     const seenCursors = new Set<string>();
     let cursor: string | undefined;

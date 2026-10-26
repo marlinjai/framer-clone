@@ -223,7 +223,8 @@ describe('paying an order and its receipt', () => {
       .select(['kind', 'title', 'quantity', 'unit_price', 'tax_rate'])
       .where('document_id', '=', receipt.id)
       .execute();
-    expect(lines).toEqual([{ kind: 'product', title: 'Silber', quantity: 2000, unit_price: 4999, tax_rate: 1900 }]);
+    // Named as the cart names it: the product and its variant.
+    expect(lines).toEqual([{ kind: 'product', title: 'Ring, Silber', quantity: 2000, unit_price: 4999, tax_rate: 1900 }]);
     // The buyer became a contact and a customer of the company.
     expect(shop.contacts.created.map((c) => c.name)).toEqual(['Alex Example']);
     // The document of record is stored.
