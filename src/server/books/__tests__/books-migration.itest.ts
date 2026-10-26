@@ -77,6 +77,8 @@ describe('007_books structure', () => {
     expect(triggers.map((t) => t.tgname)).toEqual([
       'document_number_counter_monotonic',
       'document_number_counter_no_truncate',
+      // A draft that never had a number can be deleted with its lines and events.
+      'sales_document_draft_delete',
       'sales_document_event_append_only',
       'sales_document_event_no_truncate',
       'sales_document_guard',

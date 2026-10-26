@@ -113,9 +113,9 @@ connections to the suite. The four lines below are in that order.
   Whiz-Art Media. Then the first real invoice from the editor closes this line. See
   [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md), sections "Phase 1 build
   specification" and "Phase 2 and 3 build notes (2026-10-20)". (2026-10-20)
-- [ ] 3b. The invoice editor in the app's editor shell (PR #164, the glass redesign of the invoice
-  editor and template composer): built and in review; open are the deploy and a proof run on the
-  Testfirma company. See [plan](docs/plans/2026-10-25-books-invoice-editor-shell.md). (2026-10-25)
+- [x] 3b. The invoice editor in the app's editor shell (PR #164, the glass redesign of the invoice
+  editor and template composer): deployed (deploy run 40202044416) and proven live on the Books
+  Testfirma company. Done 2026-10-25. See [plan](docs/plans/2026-10-25-books-invoice-editor-shell.md). (2026-10-26)
 - [ ] 3c. One business platform: a company-level catalogue of products and services on the commerce
   engine (replacing the Books' own list), first proven on the owner's test jewellery shop (sample products,
   checkout through Stripe Connect in test mode, receipt in the Books), then instant booking for one
@@ -126,8 +126,10 @@ connections to the suite. The four lines below are in that order.
 - [ ] 3d. Deletable invoice drafts: a draft (no number, not a bookkeeping record) can be deleted with its
   lines and events (hard delete, no tombstone, migration relaxing the 007 guards for drafts only);
   issued documents stay undeletable. Reverses decision 8 of the Books integration plan for drafts
-  only. Needs the accounting owner's confirmation that draft data and events are outside the
-  retention duty before it is built. See [plan](docs/plans/2026-10-25-business-platform-architecture.md). (2026-10-25)
+  only. Built on the owner's order of 2026-10-26 (migration `019_books_draft_delete`, the DELETE
+  route, "Delete draft" in the editor's More menu); a draft that was issued once (an offer taken
+  back) keeps its spent number and is not deletable. Open: roll `019` out with the next deploy.
+  See [plan](docs/plans/2026-10-25-business-platform-architecture.md). (2026-10-26)
 - [ ] 4. Existing invoices and the suite. The historical import is DONE: invoices 1 to 61 (the
   full series) were imported live on 2026-10-20 at 15:08 with `pnpm books:import` for Whiz-Art
   Media, 61 imported and 0 errors, the printed yearly totals matching the filed returns 2019 to

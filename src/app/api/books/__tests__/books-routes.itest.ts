@@ -51,6 +51,7 @@ vi.mock('@/server/books/http/dependencies', () => ({
 }));
 
 import { getDocument } from '@/server/books/repository/read';
+import { toJsonb } from '@/server/books/snapshots';
 import { renderIssuedDocument, storeBeforeCommit } from '@/server/books/render/store';
 import { planInvoice } from '@/server/books/importCli';
 import { importHistoricalInvoice } from '@/server/books/importInvoices';
@@ -168,6 +169,13 @@ const api = {
   cancel: (id: string, body: unknown) => call(cancelRoute.POST, 'POST', `/api/books/documents/${id}/cancel`, { id }, body),
   correct: (id: string, body: unknown = {}) =>
     call(correctRoute.POST, 'POST', `/api/books/documents/${id}/correct`, { id }, body),
+  remove: (id: string, expectedVersion?: number) =>
+    call(
+      documentRoute.DELETE,
+      'DELETE',
+      `/api/books/documents/${id}${expectedVersion === undefined ? '' : `?expectedVersion=${expectedVersion}`}`,
+      { id },
+    ),
 };
 
 async function pdf(id: string): Promise<Response> {
@@ -402,6 +410,157 @@ describe('Books routes: the four stateful-flow paths', () => {
     const noLines = await api.issue(id);
     expect(noLines.status).toBe(422);
     expect(noLines.json.error.code).toBe('no_billable_lines');
+  });
+});
+
+describe('Books routes: deleting a draft (019_books_draft_delete)', () => {
+  /** The rows a document leaves behind, read as the owner (nothing hides them). */
+  async function leftovers(id: string) {
+    const count = async (table: 'sales_document' | 'sales_document_line' | 'sales_document_event', column: 'id' | 'document_id') =>
+      Number(
+        (
+          await env.ownerDb
+            .selectFrom(table)
+            .select((eb) => eb.fn.countAll<string>().as('n'))
+            .where('tenant_id', '=', tenantId)
+            .where(column, '=', id)
+            .executeTakeFirstOrThrow()
+        ).n,
+      );
+    return {
+      document: await count('sales_document', 'id'),
+      lines: await count('sales_document_line', 'document_id'),
+      events: await count('sales_document_event', 'document_id'),
+    };
+  }
+
+  it('forward: a draft with lines goes with its lines and events, and the number series is untouched', async () => {
+    const customer = await newCustomer({ customerType: 'b2b' });
+    const created = await api.createDraft({ customerId: customer.id });
+    const id = created.json.document.id as string;
+    await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    const before = await api.get(id);
+    expect((await leftovers(id)).lines).toBe(1);
+
+    const removed = await api.remove(id, before.json.document.version);
+    expect(removed.status).toBe(204);
+    expect(await leftovers(id)).toEqual({ document: 0, lines: 0, events: 0 });
+    expect((await api.get(id)).status).toBe(404);
+    expect(await counter()).toBe(62);
+    // The next invoice still takes the next number: a deleted draft consumed nothing.
+    const next = (await api.createDraft({ customerId: customer.id })).json.document.id;
+    await api.addLine(next, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    expect((await api.issue(next)).json.document.document.documentNumber).toBe('62');
+  });
+
+  it('backtrack and revise: a delete with a stale version is refused and deletes nothing; the fresh one goes', async () => {
+    const id = (await api.createDraft({})).json.document.id as string;
+    const read = await api.get(id);
+    await api.addLine(id, { kind: 'service', title: 'Changed meanwhile', quantity: 1000, unitPrice: 100 });
+    const stale = await api.remove(id, read.json.document.version);
+    expect(stale.status).toBe(409);
+    expect(stale.json.error.code).toBe('concurrent_edit');
+    expect(await leftovers(id)).toEqual({ document: 1, lines: 1, events: 1 });
+
+    const fresh = await api.get(id);
+    expect((await api.remove(id, fresh.json.document.version)).status).toBe(204);
+  });
+
+  it('resume: after a delete, a reload of the list and of the draft no longer finds it; other drafts stay', async () => {
+    const kept = (await api.createDraft({})).json.document.id as string;
+    const gone = (await api.createDraft({})).json.document.id as string;
+    expect((await api.remove(gone)).status).toBe(204);
+    const ids = ((await api.listDocuments()).json.items as Json[]).map((d) => d.id);
+    expect(ids).toContain(kept);
+    expect(ids).not.toContain(gone);
+    expect((await api.get(gone)).status).toBe(404);
+    expect((await api.get(kept)).json.document.status).toBe('draft');
+  });
+
+  it('re-entry: a second delete is a 404, an issued document is refused for every role and keeps everything', async () => {
+    const draft = (await api.createDraft({})).json.document.id as string;
+    expect((await api.remove(draft)).status).toBe(204);
+    const again = await api.remove(draft);
+    expect(again.status).toBe(404);
+
+    const customer = await newCustomer({ customerType: 'b2b' });
+    const id = (await api.createDraft({ customerId: customer.id })).json.document.id as string;
+    await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    await api.issue(id);
+    const before = await leftovers(id);
+    const refused = await api.remove(id);
+    expect(refused.status).toBe(409);
+    expect(refused.json.error.code).toBe('not_draft');
+    // Below the application: the trigger refuses the owner too, and the app role may not touch an event row.
+    expect(await rejectionCode(env.ownerDb.deleteFrom('sales_document').where('id', '=', id).execute())).toBe('BK001');
+    expect(
+      await rejectionCode(env.appDb.deleteFrom('sales_document_event').where('document_id', '=', id).execute()),
+    ).toBe('42501');
+    expect(
+      await rejectionCode(env.ownerDb.deleteFrom('sales_document_event').where('document_id', '=', id).execute()),
+    ).toBe('BK002');
+    expect(await leftovers(id)).toEqual(before);
+  });
+
+  it('a draft that was issued once (an offer gone back to draft) keeps its spent number and is not deleted', async () => {
+    const id = (await api.createDraft({})).json.document.id as string;
+    // The trail an offer leaves when it is issued and taken back while unsent (007's issued>draft).
+    await env.ownerDb
+      .insertInto('sales_document_event')
+      .values({
+        id: randomUUID(),
+        tenant_id: tenantId,
+        document_id: id,
+        event_type: 'issued',
+        from_status: 'draft',
+        to_status: 'issued',
+        actor_user_id: 'user-books',
+        payload: toJsonb({}),
+        created_at: new Date(),
+      })
+      .execute();
+    const refused = await api.remove(id);
+    expect(refused.status).toBe(409);
+    expect(refused.json.error.code).toBe('not_deletable');
+    expect(await rejectionCode(env.ownerDb.deleteFrom('sales_document').where('id', '=', id).execute())).toBe('BK016');
+    expect((await leftovers(id)).document).toBe(1);
+  });
+
+  it('a draft another document refers to stays, with its lines and events, until that document goes', async () => {
+    const id = (await api.createDraft({})).json.document.id as string;
+    await api.addLine(id, { kind: 'service', title: 'Workshop', quantity: 1000, unitPrice: 5000 });
+    const row = await env.ownerDb.selectFrom('sales_document').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
+    const creditId = randomUUID();
+    await env.ownerDb
+      .insertInto('sales_document')
+      .values({ ...row, id: creditId, doc_type: 'credit_note', corrects_document_id: id, version: 0 } as never)
+      .execute();
+    const before = await leftovers(id);
+    const refused = await api.remove(id);
+    expect(refused.status).toBe(409);
+    expect(refused.json.error.code).toBe('not_deletable');
+    expect(await leftovers(id)).toEqual(before);
+    // Once the referencing draft is gone, the draft can go too.
+    expect((await api.remove(creditId)).status).toBe(204);
+    expect((await api.remove(id)).status).toBe(204);
+  });
+
+  it('another company cannot delete a draft by its id', async () => {
+    const id = (await api.createDraft({})).json.document.id as string;
+    const owner = tenantId;
+    await company();
+    expect((await api.remove(id)).status).toBe(404);
+    tenantId = owner;
+    expect((await leftovers(id)).document).toBe(1);
+  });
+
+  it('a malformed expectedVersion is a 400 and deletes nothing', async () => {
+    const id = (await api.createDraft({})).json.document.id as string;
+    const res = await documentRoute.DELETE(request('DELETE', `/api/books/documents/${id}?expectedVersion=-1`), {
+      params: Promise.resolve({ id }),
+    });
+    expect(res.status).toBe(400);
+    expect((await leftovers(id)).document).toBe(1);
   });
 });
 

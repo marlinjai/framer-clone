@@ -57,6 +57,7 @@ const EXPECTED_MIGRATION_IDS = [
   '016_books_subject',
   '017_form_submissions',
   '018_books_text_format',
+  '019_books_draft_delete',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {

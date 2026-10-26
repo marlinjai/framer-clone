@@ -604,11 +604,20 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
         <label className="sr-only" htmlFor="composer-name">
           Template name
         </label>
+        {/* Sized to its content up to a maximum: an invisible copy of the name widens the one grid cell both share
+            (field-sizing is not in every browser yet), so a long name is shown whole instead of cut at a fixed width. */}
+        <span className="inline-grid min-w-0 max-w-[min(32rem,100%)]">
+          <span
+            aria-hidden
+            className="invisible col-start-1 row-start-1 overflow-hidden whitespace-pre border border-transparent px-2 py-1 text-[15px] font-semibold"
+          >
+            {name || ' '}
+          </span>
         <input
           id="composer-name"
           value={name}
           maxLength={80}
-          className="min-w-0 rounded-lg border border-transparent bg-transparent px-2 py-1 text-[15px] font-semibold outline-none hover:bg-foreground/[0.04] focus-visible:border-brand focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-brand/25"
+          className="col-start-1 row-start-1 w-full min-w-[6ch] text-ellipsis rounded-lg border border-transparent bg-transparent px-2 py-1 text-[15px] font-semibold outline-none hover:bg-foreground/[0.04] focus-visible:border-brand focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-brand/25"
           ref={nameRef}
           onChange={(e) => setName(e.target.value)}
           onBlur={(e) => {
@@ -628,6 +637,7 @@ function Composer({ template, onReload, focusOnMount }: { template: TemplateView
             }
           }}
         />
+        </span>
         <span className="text-xs text-muted-foreground">
           Version {base.version}
           {dirty ? ', unsaved changes' : ''}

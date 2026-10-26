@@ -102,12 +102,22 @@ describe.each(roles)('an issued document is frozen (as %s)', (_role, db) => {
     ).toBe('BK001');
   });
 
-  it('DELETE of a document raises BK001, for an issued one and for a draft', async () => {
+  it('DELETE of an issued document raises BK001; a draft without a number goes with its lines and events (019)', async () => {
     const { scope, issued, draft } = await company();
-    for (const id of [issued.document.id, draft.document.id]) {
-      expect(
-        await rejectionCode(db().deleteFrom('sales_document').where('tenant_id', '=', scope.tenantId).where('id', '=', id).execute()),
-      ).toBe('BK001');
+    expect(
+      await rejectionCode(
+        db().deleteFrom('sales_document').where('tenant_id', '=', scope.tenantId).where('id', '=', issued.document.id).execute(),
+      ),
+    ).toBe('BK001');
+    await db().deleteFrom('sales_document').where('tenant_id', '=', scope.tenantId).where('id', '=', draft.document.id).execute();
+    for (const table of ['sales_document_line', 'sales_document_event'] as const) {
+      const left = await db()
+        .selectFrom(table)
+        .select('id')
+        .where('tenant_id', '=', scope.tenantId)
+        .where('document_id', '=', draft.document.id)
+        .execute();
+      expect(left).toEqual([]);
     }
   });
 
