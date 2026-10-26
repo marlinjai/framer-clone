@@ -164,7 +164,9 @@ export function renderComponentNode(
         key={key}
         kind={dataKind as CommerceIslandProps['kind']}
         node={node}
-        scope={scope}
+        // The product, variant and availability of the source the island sits in (hydrateBindings
+        // records them on the node): a variant selector inside a product detail reads its product here.
+        scope={node.islandFrames ? createScope([...scope.frames, ...node.islandFrames]) : scope}
       />
     );
   }
