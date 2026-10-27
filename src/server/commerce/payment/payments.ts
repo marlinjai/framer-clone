@@ -286,6 +286,9 @@ async function refundLatePayment(deps: PaymentDeps, event: PaymentEvent, at: Dat
     }
     const providerPaymentId = payment.provider_payment_id ?? event.providerPaymentId;
     if (!providerPaymentId) throw new Error(`late payment of order ${event.orderId} carries no provider payment id`);
+    // The buyer's refund notice (when the shop sends mail) is written before any money moves, so a failure to
+    // write it stops here instead of after the refund.
+    await enqueueShopMail(trx, event.tenantId, event.orderId, 'late_refund', at);
     const { refundId } = await deps
       .provider(payment.provider as ProviderId)
       .refund({ providerPaymentId, amount: payment.amount, connectedAccountId: deps.connectedAccountId });
@@ -303,8 +306,6 @@ async function refundLatePayment(deps: PaymentDeps, event: PaymentEvent, at: Dat
       .where('tenant_id', '=', event.tenantId)
       .where('order_id', '=', event.orderId)
       .execute();
-    // The buyer's refund notice, with the refund (when the shop sends mail).
-    await enqueueShopMail(trx, event.tenantId, event.orderId, 'late_refund', at);
     console.error(`[payments] order ${event.orderId}: paid after it closed and its stock was gone; refunded ${refundId}`);
     return 'refunded';
   });

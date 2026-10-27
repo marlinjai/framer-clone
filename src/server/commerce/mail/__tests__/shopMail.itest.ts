@@ -369,17 +369,26 @@ describe('the buyer hears of a paid order', () => {
     expect(shop.mail.sent[0]).toMatchObject({ locale: 'de', merge: { shop_name: 'Schmuck Testshop' } });
   });
 
-  it('resume: two overlapping attempts at one letter send it once', async () => {
+  it('resume: two overlapping attempts at one letter send it once, and the refused one never overwrites sent', async () => {
+    // Lumitra Mail takes a moment to send: the second attempt arrives while the first is still running.
+    shop.mail = fakeMail({
+      workspaces: [{ id: shop.workspaceId, name: 'Schmuck', role: 'owner', companyId: shop.company, locales: ['de'] }],
+      senders: { [shop.workspaceId]: [{ id: shop.providerId, label: 'Schmuck Testshop <shop@testshop.example>' }] },
+      sendDelayMs: 50,
+    });
+    shop.outbox = { ...shop.outbox, mail: shop.mail };
     await connect();
     const orderId = await placeOrder(await stockedRing(2));
     await handlePaymentEvent({ ...shop.deps, deliverMail: undefined }, paid(orderId));
-    const outcomes = await Promise.all([
+    const [first, second] = await Promise.all([
       deliverShopMail(shop.outbox, shop.company, orderId, 'order_confirmation'),
       deliverShopMail(shop.outbox, shop.company, orderId, 'order_confirmation'),
     ]);
-    expect(outcomes).toContain('sent');
+    // One went through; the other met the conflict and would retry, but its write cannot touch a sent row.
+    expect([first, second].sort()).toEqual(['pending', 'sent']);
+    expect(shop.mail.calls.filter((c) => c.op === 'send')).toHaveLength(2);
     expect(shop.mail.sent).toHaveLength(1);
-    expect(await mailRow(orderId)).toMatchObject({ status: 'sent' });
+    expect(await mailRow(orderId)).toMatchObject({ status: 'sent', mailing_id: 'mailing-1' });
   });
 
   it('re-entry: three days of failures end the letter as failed', async () => {

@@ -17,13 +17,15 @@ export interface FakeMail extends LumitraMail {
   blocked: Set<string>;
 }
 
-export function fakeMail(opts: { workspaces: MailWorkspace[]; senders?: Record<string, MailSender[]> }): FakeMail {
+export function fakeMail(opts: { workspaces: MailWorkspace[]; senders?: Record<string, MailSender[]>; sendDelayMs?: number }): FakeMail {
   const calls: FakeMail['calls'] = [];
   const failures = new Map<string, MailRetryLater | MailRefused>();
   const sent: Letter[] = [];
   const revoked: string[] = [];
   const blocked = new Set<string>();
   const keys = new Map<string, { id: string; key: string }>();
+  const inFlight = new Set<string>();
+  const sendDelayMs = opts.sendDelayMs ?? 0;
   let n = 0;
   const step = (op: string, args: unknown[]) => {
     calls.push({ op, args });
@@ -69,11 +71,20 @@ export function fakeMail(opts: { workspaces: MailWorkspace[]; senders?: Record<s
     },
     async send(apiKey, letter) {
       step('send', [apiKey, letter]);
-      // Lumitra Mail answers a repeated letter key with the same mailing and sends it once (idempotency).
-      const earlier = sent.findIndex((l) => l.key === letter.key);
-      if (earlier < 0) sent.push(letter);
-      const index = earlier < 0 ? sent.length : earlier + 1;
-      return { mailingId: `mailing-${index}`, delivery: blocked.has(letter.to) ? 'blocked' : 'sent' };
+      // As Lumitra Mail does with an idempotency key: a second call while the first is still running is
+      // refused with `conflict` (the shop retries later); once the first finished, a repeat gets its answer and
+      // nothing is sent again.
+      if (inFlight.has(letter.key)) throw new MailRetryLater(`Lumitra Mail refused sending: conflict (409).`);
+      inFlight.add(letter.key);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, sendDelayMs));
+        const earlier = sent.findIndex((l) => l.key === letter.key);
+        if (earlier < 0) sent.push(letter);
+        const index = earlier < 0 ? sent.length : earlier + 1;
+        return { mailingId: `mailing-${index}`, delivery: blocked.has(letter.to) ? 'blocked' : 'sent' };
+      } finally {
+        inFlight.delete(letter.key);
+      }
     },
   };
 }
