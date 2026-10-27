@@ -10,11 +10,15 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 
 import PaymentsHome from '../PaymentsHome';
 
+/** The receipt email card's status when a test does not script it: not available on this platform. */
+const MAIL_OFF = { status: 200, body: { configured: false, connection: null, workspaces: [], otherCompanies: 0 } };
+
 function respond(routes: Record<string, { status: number; body: unknown }>) {
+  const all: Record<string, { status: number; body: unknown }> = { 'GET /api/payments/mail': MAIL_OFF, ...routes };
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
-      const route = routes[`${init?.method ?? 'GET'} ${url}`];
+      const route = all[`${init?.method ?? 'GET'} ${url}`];
       if (!route) throw new Error(`unexpected ${url}`);
       return new Response(JSON.stringify(route.body), { status: route.status });
     }),

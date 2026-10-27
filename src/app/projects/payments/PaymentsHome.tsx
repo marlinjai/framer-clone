@@ -13,6 +13,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ChevronLeft, CreditCard, ExternalLink, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import ReceiptEmailCard from './ReceiptEmailCard';
 
 type AccountStatus = 'not_connected' | 'pending' | 'ready' | 'restricted';
 
@@ -171,6 +172,8 @@ export default function PaymentsHome({ returned }: { returned: string | null }) 
             1% too.
           </p>
         </section>
+
+        <ReceiptEmailCard />
       </main>
     </div>
   );

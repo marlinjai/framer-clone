@@ -833,6 +833,40 @@ export interface PaymentAccountTable {
   updated_at: Timestamp;
 }
 
+/**
+ * 023_shop_mail: the company's Lumitra Mail workspace for the receipt email (the send key sealed).
+ */
+export interface ShopMailConnectionTable {
+  tenant_id: string;
+  workspace_id: string;
+  workspace_name: string;
+  provider_id: string;
+  sender: string;
+  api_key_id: string;
+  api_key_sealed: string;
+  template_ids: JsonColumn<Record<string, string>>;
+  templates_version: string;
+  connected_by: string;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
+}
+
+/** 023_shop_mail: the outbox, one row per order and kind of mail. */
+export interface ShopMailTable {
+  tenant_id: string;
+  order_id: string;
+  kind: 'order_confirmation' | 'late_refund';
+  status: Generated<'pending' | 'sent' | 'blocked' | 'failed'>;
+  attempts: Generated<number>;
+  next_attempt_at: Timestamp;
+  last_error: string | null;
+  mailing_id: string | null;
+  // The letter as built at its first attempt (outbox.ts FrozenLetter), sent unchanged on every retry.
+  letter: ColumnType<Record<string, unknown> | null, JsonbWrite | null, JsonbWrite | null>;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
+}
+
 // =============================================================================
 // The Database interface. GLOBAL keys are `public.`-qualified; tenant tables
 // are BARE. The two namespaces are disjoint by construction.
@@ -884,6 +918,8 @@ export interface CommerceDB {
   order_payment: OrderPaymentTable;
   payment_event: PaymentEventTable;
   payment_account: PaymentAccountTable;
+  shop_mail_connection: ShopMailConnectionTable;
+  shop_mail: ShopMailTable;
 }
 
 // --- compile-time discipline guards (the package's brand types) --------------

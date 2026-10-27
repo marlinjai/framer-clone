@@ -14,6 +14,7 @@ import type { CommerceDB } from '../db-types';
 import type { PaymentDeps } from './payments';
 import { demoProvider, type PaymentProvider, type ProviderId } from './provider';
 import { ensureReceipt } from './receipt';
+import { deliverShopMailSoon } from '../mail/runtime';
 import { httpStripeApi, stripeConfig, type StripeApi } from './stripe/client';
 import { stripeProvider } from './stripe/connect';
 
@@ -43,5 +44,6 @@ export function paymentDeps(
       const { recipients, contactBook } = booksDependencies();
       return ensureReceipt(booksScope(db, tgId, companyId, { recipients }), contactBook, orderId);
     },
+    deliverMail: (tenantId, orderId, kind) => deliverShopMailSoon(db, tgId, tenantId, orderId, kind),
   };
 }

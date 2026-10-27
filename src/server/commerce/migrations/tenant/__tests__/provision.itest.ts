@@ -61,6 +61,7 @@ const EXPECTED_MIGRATION_IDS = [
   '020_catalogue_company',
   '021_order_payment',
   '022_payment_account',
+  '023_shop_mail',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {
@@ -122,6 +123,8 @@ const EXPECTED_TABLES = [
   'sales_document_event',
   'sales_document_file',
   'sales_document_line',
+  'shop_mail',
+  'shop_mail_connection',
   'stock_location',
   'stock_movement',
 ];

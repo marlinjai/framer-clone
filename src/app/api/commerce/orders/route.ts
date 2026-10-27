@@ -1,6 +1,8 @@
 // src/app/api/commerce/orders/route.ts
 //
-// POST /api/commerce/orders -> 201 { orderId, orderNumber, totalCents, currency, provider }
+// POST /api/commerce/orders -> 201 { orderId, orderNumber, totalCents, currency, provider, confirmationEmail }
+//                              (confirmationEmail: the shop sends the buyer an order confirmation, being
+//                              connected to Lumitra Mail; the thank-you says so only then)
 //                           -> 409 { ok: false, shortages: { variantId, needed, available }[] }
 //
 // The ONE storefront-side WRITE seam into the server-authoritative commerce
@@ -62,6 +64,7 @@ import { configuredStripeApi } from '@/server/commerce/payment/deps';
 import { readAccount } from '@/server/commerce/payment/stripe/connect';
 import { UnknownVariantError } from '@/server/commerce/repository/errors';
 import { readOrderTotal, resolveOrderLines } from '@/server/commerce/repository/storefront';
+import { hasShopMail } from '@/server/commerce/mail/connection';
 import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
 import { commerceServerFault } from '@/server/commerce/faults';
 import { jsonError, parseBody } from '@/lib/api/respond';
@@ -227,8 +230,23 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
 
+    // The receipt-email flag is a courtesy: the order is already committed, so a failed lookup
+    // (for example a tenant schema not yet migrated to 023_shop_mail) is logged and answered
+    // as "no email" instead of turning a placed order into a checkout error.
+    const confirmationEmail = await hasShopMail(db, companyId).catch((err: unknown) => {
+      console.error(`[shop-mail] receipt-email lookup failed for order ${result.orderId}:`, err);
+      return false;
+    });
+
     return Response.json(
-      { orderId: result.orderId, orderNumber: order.orderNumber, totalCents: order.totalCents, currency: order.currency, provider },
+      {
+        orderId: result.orderId,
+        orderNumber: order.orderNumber,
+        totalCents: order.totalCents,
+        currency: order.currency,
+        provider,
+        confirmationEmail,
+      },
       { status: 201 },
     );
   } catch (err) {
