@@ -23,6 +23,7 @@ import { catalogueCompany } from './020_catalogue_company';
 import { orderPayment } from './021_order_payment';
 import { paymentAccount } from './022_payment_account';
 import { shopMail } from './023_shop_mail';
+import { receiptPaidOn } from './024_receipt_paid_on';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -145,4 +146,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   orderPayment,
   paymentAccount,
   shopMail,
+  receiptPaidOn,
 ];

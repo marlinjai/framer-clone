@@ -62,6 +62,7 @@ const EXPECTED_MIGRATION_IDS = [
   '021_order_payment',
   '022_payment_account',
   '023_shop_mail',
+  '024_receipt_paid_on',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {

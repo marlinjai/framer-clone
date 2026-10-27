@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: completed
 date: 2026-10-27
 title: "The shop's receipt email through Lumitra Mail"
 summary: "A paid shop order emails the buyer an order confirmation with a link to the receipt invoice, and a late payment that had to be refunded emails a notice, sent from the shop company's own Lumitra Mail workspace. framer-clone becomes Lumitra Mail's third trusted application, the owner connects the workspace once on the payments page, and an outbox retries until Lumitra Mail took the letter."
@@ -67,6 +67,14 @@ app had no way to send any.
    payments page card, thank-you text, tests for every path (connected, not connected, Lumitra Mail down then
    back, suppressed recipient, disconnect, a foreign company's workspace refused).
 3. Proof on production with the test company: connect, buy, receive the email, open the receipt link.
+
+## Proof (2026-10-27)
+
+On production: the test company's workspace connected on the payments page (sender "Schmuck Testshop (Testdaten)
+<bestellung@testshop.lumitra.co>"), order ORD-000005 paid through Stripe's test mode, the shop_mail row `sent`
+after one attempt, the German confirmation in the buyer's Gmail inbox, and its link served the PDF of RE-4 (a
+tampered link and the same link on the shop's host answer 404). Opening RE-4 found two receipt errors, fixed in
+framer-clone pull request 186.
 
 ## Open
 

@@ -88,7 +88,7 @@ export interface ModelLine {
 }
 
 /** What a payment line shows (the in-place editor's fields). */
-export type PaymentLineField = 'terms' | 'dueBy' | 'reference' | 'bank';
+export type PaymentLineField = 'terms' | 'dueBy' | 'reference' | 'bank' | 'paid';
 
 /**
  * The recipient property a printed address line shows (the in-place editor's
@@ -419,7 +419,13 @@ export function buildRenderModel(input: RenderInput): RenderModel {
 
   const payment: string[] = [];
   const paymentFields: PaymentLineField[] = [];
-  if (doc.docType === 'invoice') {
+  if (doc.docType === 'invoice' && doc.sourceOrderId && doc.issueDate) {
+    // The receipt of a paid shop order (payment/receipt.ts issues it only once the payment is confirmed):
+    // paid on the day recorded with the payment (its issue day when none is), so no due date, no transfer
+    // reference and no bank details to pay into.
+    payment.push(`${label('payment.paidOn')} ${formatDate(doc.paidOn ?? doc.issueDate)}. ${label('payment.paidSuffix')}`);
+    paymentFields.push('paid');
+  } else if (doc.docType === 'invoice') {
     if (doc.dueDate) {
       payment.push(`${label('payment.dueBy')} ${formatDate(doc.dueDate)}.`);
       paymentFields.push('dueBy');

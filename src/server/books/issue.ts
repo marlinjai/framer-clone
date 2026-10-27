@@ -80,6 +80,7 @@ import {
   recipientMissingFields,
   senderMissingFields,
   toJsonb,
+  type RecipientContact,
 } from './snapshots';
 
 const issueInput = z.object({
@@ -125,6 +126,12 @@ export interface IssueOptions {
    * an invoice is never issued without a complete document of record.
    */
   beforeCommit?: (trx: Transaction<CommerceDB>, view: DocumentView) => Promise<void>;
+  /**
+   * The recipient to freeze instead of the customer's contact as it reads now: the shop's receipt is made out
+   * to the buyer exactly as entered for that order (payment/receipt.ts), while the shared contact keeps whatever
+   * an earlier order or a person wrote there. Checked like a contact (section 14 (4) UStG fields required).
+   */
+  recipient?: RecipientContact;
 }
 
 /**
@@ -201,7 +208,7 @@ export async function issue(
   // (2) The customer, then the contact, before the transaction.
   const customerBefore = await selectCustomerRow(scope.db, scope, before.customer_id);
   if (!customerBefore) throw new BooksError('CUSTOMER_NOT_FOUND', 'CUSTOMER_NOT_FOUND', { customerId: before.customer_id });
-  const contact = await readRecipient(scope, customerBefore.contact_id);
+  const contact = options.recipient ?? (await readRecipient(scope, customerBefore.contact_id));
   if (!contact) throw new BooksError('RECIPIENT_NOT_FOUND', 'RECIPIENT_NOT_FOUND', { customerId: customerBefore.id });
   if (contact.archived) throw new BooksError('RECIPIENT_ARCHIVED', 'RECIPIENT_ARCHIVED', { customerId: customerBefore.id });
   const missingRecipient = recipientMissingFields(contact);
