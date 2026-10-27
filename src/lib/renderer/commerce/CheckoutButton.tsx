@@ -36,7 +36,7 @@ import React from 'react';
 
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
-import { useCart, type CartLine } from '@/lib/commerce/cart';
+import { useCart, useCheckoutUnavailableReason, type CartLine } from '@/lib/commerce/cart';
 import { getPaymentGateway, type CheckoutBuyer, type PaymentGateway } from '@/lib/commerce/payment';
 
 /** A single per-line shortage, in the client's variant vocabulary. */
@@ -197,6 +197,7 @@ const PANEL_STYLE: React.CSSProperties = {
 
 function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: CheckoutButtonProps) {
   const cart = useCart();
+  const unavailableReason = useCheckoutUnavailableReason();
   const [state, setState] = React.useState<CheckoutState>({ status: 'idle' });
 
   // The payment gateway is resolved once (the seam). Tests inject a fake.
@@ -258,7 +259,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
   // STEP 1: place the order (server authors money + stock). Out-of-stock and
   // faults are handled HERE, before any payment is attempted.
   const placeOrder = async () => {
-    if (cart.lines.length === 0) return;
+    if (cart.lines.length === 0 || unavailableReason !== null) return;
     if (state.status === 'placing') return;
 
     const signature = cartSignature(cart.lines);
@@ -421,7 +422,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
 
   const placing = state.status === 'placing';
   const inPayment = state.status === 'payment';
-  const idleDisabled = placing || cart.lines.length === 0;
+  const idleDisabled = placing || cart.lines.length === 0 || unavailableReason !== null;
 
   // The primary checkout button is hidden once the payment step / confirmation is
   // shown (the flow has moved on); the shortage/error states keep it for retry.
@@ -451,6 +452,11 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
       >
         {placing ? 'Placing order...' : label}
       </button>
+    ) : null,
+    unavailableReason ? (
+      <div data-checkout-unavailable style={PANEL_STYLE}>
+        {unavailableReason}
+      </div>
     ) : null,
     renderOutcome(state, {
       payLabel,

@@ -19,7 +19,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, cleanup, waitFor, act, fireEvent } from '@testing-library/react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { createScope } from '@/lib/bindings/resolver/scope';
-import { CartProvider, useCart, CART_STORAGE_KEY } from '@/lib/commerce/cart';
+import { CartProvider, CheckoutUnavailableContext, useCart, CART_STORAGE_KEY } from '@/lib/commerce/cart';
 import { FakePaymentGateway } from '@/lib/commerce/payment';
 import type { PaymentGateway, PaymentResult } from '@/lib/commerce/payment';
 import CheckoutButton, { RETURN_NOTE_KEY } from '../CheckoutButton';
@@ -484,3 +484,26 @@ describe('CheckoutButton unknown variant (422)', () => {
   });
 });
 
+
+describe('CheckoutButton where checkout is unavailable (the editor preview)', () => {
+  afterEach(cleanup);
+
+  it('disables the button, says why, and never posts an order', () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify([{ variantId: 'var_a', quantity: 1 }]));
+    const { container } = render(
+      <CheckoutUnavailableContext.Provider value="Checkout is not available in the editor preview.">
+        <CartProvider>
+          <CheckoutButton node={makeNode()} scope={createScope()} />
+        </CartProvider>
+      </CheckoutUnavailableContext.Provider>,
+    );
+    const button = container.querySelector('[data-checkout]') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(container.querySelector('[data-checkout-unavailable]')?.textContent).toContain('editor preview');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    window.localStorage.clear();
+  });
+});

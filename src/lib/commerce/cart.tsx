@@ -92,6 +92,18 @@ export function useCart(): CartStore {
   return ctx;
 }
 
+/**
+ * Why checkout is unavailable where the cart lives, or null when it works. The editor sets it: the order route
+ * resolves a published storefront from the request host, so an order from the editor host could never be placed.
+ */
+export const CheckoutUnavailableContext = createContext<string | null>(null);
+CheckoutUnavailableContext.displayName = 'CheckoutUnavailableContext';
+
+export function useCheckoutUnavailableReason(): string | null {
+  return useContext(CheckoutUnavailableContext);
+}
+
+
 // ---------------------------------------------------------------------------
 // localStorage persistence. Pure helpers, guarded for a server (no `window`)
 // environment so the module is import-safe during SSR / static emit.
