@@ -32,6 +32,7 @@ import { getDocument } from '@/server/books/repository/read';
 import type { BooksScope } from '@/server/books/scope';
 import { requireSettings } from '@/server/books/settings';
 import { lineTitle } from '@/lib/commerce/lineTitle';
+import type { RecipientContact } from '@/server/books/snapshots';
 import { readBuyer, type Buyer } from './buyer';
 
 /** The actor recorded on the receipt's events: the shop, not a person. */
@@ -68,8 +69,32 @@ function contactFor(buyer: Buyer): NewContactInput {
   };
 }
 
-/** The Books customer for the buyer: the existing one of the contact, or a new one. */
-async function customerFor(scope: BooksScope, contactBook: ContactBook, buyer: Buyer): Promise<string> {
+/**
+ * The recipient the receipt is made out to: the buyer as entered for this order. The shared contact the
+ * customer links to is matched by name (the contacts database's identity), so it can hold another order's
+ * address, or even another person of the same name; the invoice never takes it from there.
+ */
+function recipientFor(buyer: Buyer, contactId: string): RecipientContact {
+  const input = contactFor(buyer);
+  return {
+    id: contactId,
+    kind: input.kind,
+    name: input.name,
+    companyOrRole: input.companyOrRole ?? '',
+    legalForm: null,
+    addressLine1: input.addressLine1 ?? null,
+    addressLine2: input.addressLine2 ?? null,
+    postalCode: input.postalCode ?? null,
+    city: input.city ?? null,
+    country: input.country ?? null,
+    vatId: input.vatId ?? null,
+    customerNumber: null,
+    archived: false,
+  };
+}
+
+/** The Books customer for the buyer (the existing one of the contact, or a new one), and its contact. */
+async function customerFor(scope: BooksScope, contactBook: ContactBook, buyer: Buyer): Promise<{ customerId: string; contactId: string }> {
   const input = contactFor(buyer);
   const contact =
     (await contactBook.findSame(scope.tenantId, { kind: input.kind, name: input.name, companyOrRole: input.companyOrRole })) ??
@@ -77,7 +102,7 @@ async function customerFor(scope: BooksScope, contactBook: ContactBook, buyer: B
   const [existing] = await customersByContactIds(scope, [contact.id]);
   if (existing) {
     if (existing.archivedAt) throw new ReceiptError('CUSTOMER_ARCHIVED');
-    return existing.id;
+    return { customerId: existing.id, contactId: contact.id };
   }
   const created = await createCustomer(scope, {
     contactId: contact.id,
@@ -85,7 +110,7 @@ async function customerFor(scope: BooksScope, contactBook: ContactBook, buyer: B
     countryCode: buyer.country,
     vatId: buyer.vatId ?? null,
   });
-  return created.id;
+  return { customerId: created.id, contactId: contact.id };
 }
 
 /**
@@ -129,7 +154,7 @@ export async function ensureReceipt(
   if (!buyer) throw new ReceiptError('BUYER_MISSING');
   // The Books must be set up for the company before anything is written (SETTINGS_MISSING otherwise).
   await requireSettings(db, scope);
-  const customerId = await customerFor(scope, contactBook, buyer);
+  const { customerId, contactId } = await customerFor(scope, contactBook, buyer);
 
   const draft = await createDraft(scope, {
     docType: 'invoice',
@@ -191,7 +216,12 @@ export async function ensureReceipt(
     throw err;
   }
 
-  const issued = await issue(scope, id, { actorUserId: SHOP_ACTOR }, { beforeCommit: storeBeforeCommit(scope), now: opts.now });
+  const issued = await issue(
+    scope,
+    id,
+    { actorUserId: SHOP_ACTOR },
+    { beforeCommit: storeBeforeCommit(scope), now: opts.now, recipient: recipientFor(buyer, contactId) },
+  );
   if (issued.document.document.status === 'draft') {
     throw new BooksError('INVALID_TRANSITION', 'the receipt stayed a draft', { documentId: id });
   }

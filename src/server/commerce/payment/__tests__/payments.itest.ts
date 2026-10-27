@@ -199,6 +199,29 @@ describe('the platform fee', () => {
 });
 
 describe('paying an order and its receipt', () => {
+  it('each receipt is made out to the buyer as entered for its order, even under a name an earlier order used', async () => {
+    const ring = await stockedRing(3, 4999);
+    const first = await placeOrder(ring, 1);
+    await handlePaymentEvent(shop.deps, event(first, 'payment_succeeded'));
+    // The same name buys again from another address, with another email: the contacts database knows one person
+    // of that name, but this invoice must carry this order's address.
+    const moved: BuyerInput = { ...BUYER, email: 'alex.new@example.com', addressLine1: 'Neue Straße 9', postalCode: '10115', city: 'Berlin' };
+    const second = await placeOrder(ring, 1, moved);
+    await handlePaymentEvent(shop.deps, event(second, 'payment_succeeded'));
+
+    const snapshot = async (orderId: string) => {
+      const row = await env.ownerDb
+        .selectFrom('sales_document')
+        .select('customer_snapshot')
+        .where('tenant_id', '=', shop.company)
+        .where('source_order_id', '=', orderId)
+        .executeTakeFirstOrThrow();
+      return row.customer_snapshot as unknown as { name: string; addressLine1: string; postalCode: string; city: string };
+    };
+    expect(await snapshot(first)).toMatchObject({ name: 'Alex Example', addressLine1: 'Beispielweg 2', postalCode: '20095', city: 'Hamburg' });
+    expect(await snapshot(second)).toMatchObject({ name: 'Alex Example', addressLine1: 'Neue Straße 9', postalCode: '10115', city: 'Berlin' });
+  });
+
   it('forward: paid with its fee, the receipt issued in the series and linked to the order', async () => {
     const ring = await stockedRing(3, 4999);
     const orderId = await placeOrder(ring, 2);

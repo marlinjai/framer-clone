@@ -661,6 +661,7 @@ class Binder {
       case 'terms':
         return this.field(blockId, 'payment.terms', 'number', { source: 'document', documentField: 'paymentTermsDays', valueUnit: 'days' }, style);
       case 'dueBy':
+      case 'paid':
         return this.field(blockId, 'payment.terms', 'readonly', null, style);
       case 'reference':
         return this.field(blockId, 'payment.reference', 'readonly', null, style);

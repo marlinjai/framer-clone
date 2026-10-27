@@ -143,6 +143,12 @@ connections to the suite. The four lines below are in that order.
   to the site's fixed pages. The payments page says "test mode" while the platform runs on Stripe test keys,
   and the buyer's thank-you shows the order number and no longer promises an email. Found while building the
   test shop on 2026-10-26, built the same day. (2026-10-26)
+- [ ] 3h. Shop buyers with the same name share one contact and one Books customer: the shared contacts
+  database's identity is the name (and company or role), so two different buyers called "Anna Müller" (or one
+  buyer who moved) are linked to the same contact. Each receipt is made out correctly since 2026-10-27 (the
+  order's own buyer details are frozen on it), but the customer list mixes their invoices. Needs a decision on
+  the shared contact model (email as part of a person's identity, or a contact per buyer), which spans every
+  app on the contacts database. Found in the receipt email test on 2026-10-27. (2026-10-27)
 - [ ] 3e. Customer email from the shop: an order confirmation with a link to the receipt, and the notice when a
   late payment had to be refunded, sent from the shop company's own Lumitra Mail workspace (framer-clone is
   Lumitra Mail's trusted application `sites`, email-editor pull request 176). Plan

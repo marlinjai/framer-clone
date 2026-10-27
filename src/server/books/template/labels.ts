@@ -60,6 +60,8 @@ const DE = {
   'totals.sumVat': 'Summe Umsatzsteuer',
   // Payment.
   'payment.dueBy': 'Bitte überweisen Sie den Gesamtbetrag bis zum',
+  'payment.paidOn': 'Bezahlt am',
+  'payment.paidSuffix': 'Es ist kein Betrag offen.',
   'payment.termsPrefix': 'Zahlbar innerhalb von',
   'payment.termsSuffix': 'Tagen nach Rechnungsdatum.',
   'payment.reference': 'Verwendungszweck:',
