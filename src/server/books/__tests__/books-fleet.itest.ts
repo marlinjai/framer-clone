@@ -249,8 +249,8 @@ describe('009_books_import over a schema already holding issued documents (as pr
       // 011 adds the nullable column replaces_document_id, 012 the column
       // print_replaces_reference and 016 the nullable subject: compared
       // without them (they did not exist before), and asserted NULL, false
-      // and NULL below.
-      owner`SELECT to_jsonb(d) - 'replaces_document_id' - 'print_replaces_reference' - 'subject' - 'intro_format' - 'outro_format' AS doc, (SELECT jsonb_agg(to_jsonb(l)) FROM ${s}.sales_document_line l WHERE l.document_id = d.id) AS lines
+      // and NULL below. 024 adds the nullable paid_on, likewise left out.
+      owner`SELECT to_jsonb(d) - 'replaces_document_id' - 'print_replaces_reference' - 'subject' - 'intro_format' - 'outro_format' - 'paid_on' AS doc, (SELECT jsonb_agg(to_jsonb(l)) FROM ${s}.sales_document_line l WHERE l.document_id = d.id) AS lines
               FROM ${s}.sales_document d WHERE d.id = ${docId}`;
     const before = await snapshot();
 
@@ -275,9 +275,9 @@ describe('009_books_import over a schema already holding issued documents (as pr
     ]);
 
     expect(await snapshot()).toEqual(before);
-    const [link] = await owner<{ replaces_document_id: string | null; print_replaces_reference: boolean; subject: string | null; intro_format: unknown; outro_format: unknown }[]>`
-      SELECT replaces_document_id, print_replaces_reference, subject, intro_format, outro_format FROM ${s}.sales_document WHERE id = ${docId}`;
-    expect(link).toEqual({ replaces_document_id: null, print_replaces_reference: false, subject: null, intro_format: null, outro_format: null });
+    const [link] = await owner<{ replaces_document_id: string | null; print_replaces_reference: boolean; subject: string | null; intro_format: unknown; outro_format: unknown; paid_on: string | null }[]>`
+      SELECT replaces_document_id, print_replaces_reference, subject, intro_format, outro_format, paid_on FROM ${s}.sales_document WHERE id = ${docId}`;
+    expect(link).toEqual({ replaces_document_id: null, print_replaces_reference: false, subject: null, intro_format: null, outro_format: null, paid_on: null });
     const [fk] = await owner<{ condeferrable: boolean; condeferred: boolean }[]>`
       SELECT c.condeferrable, c.condeferred FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
        WHERE n.nspname = ${schema} AND c.conname = 'sales_document_line_document_fkey'`;
