@@ -25,7 +25,7 @@
 //     aria-busy placeholder in the node's own host element and classes, so the
 //     layout does not jump and nothing claims "your cart is empty" before the
 //     cart was read. Sizes per kind: ISLAND_PENDING_SIZE.
-//   - ERROR: a render failure inside an island is caught by IslandErrorBoundary,
+//   - ERROR: a render failure inside an island is caught by CommerceErrorBoundary,
 //     which shows a visible message with a "Try again" control instead of
 //     blanking the page section (and logs the error).
 'use client';
@@ -38,6 +38,7 @@ import VariantSelector from '@/lib/renderer/commerce/VariantSelector';
 import AddToCartButton from '@/lib/renderer/commerce/AddToCartButton';
 import CartView from '@/lib/renderer/commerce/CartView';
 import CheckoutButton from '@/lib/renderer/commerce/CheckoutButton';
+import { CommerceErrorBoundary } from '@/lib/renderer/commerce/CommerceErrorBoundary';
 import { renderComponentNode, nodeDomProps, nodeHostTag } from './renderComponentNode';
 
 export interface CommerceIslandProps {
@@ -71,46 +72,6 @@ function useMounted(): boolean {
   return mounted;
 }
 
-interface IslandErrorBoundaryProps {
-  kind: CommerceIslandProps['kind'];
-  hostType: string;
-  hostProps: Record<string, unknown>;
-  children: React.ReactNode;
-}
-
-/** Catches a crash inside one island and shows a visible, recoverable message. */
-export class IslandErrorBoundary extends React.Component<IslandErrorBoundaryProps, { failed: boolean }> {
-  state = { failed: false };
-
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-
-  componentDidCatch(error: unknown) {
-    console.error(`CommerceIsland: the ${this.props.kind} island failed to render.`, error);
-  }
-
-  render() {
-    if (!this.state.failed) return this.props.children;
-    const wrapperProps = { ...this.props.hostProps };
-    delete (wrapperProps as any).children;
-    return React.createElement(
-      this.props.hostType as any,
-      { ...wrapperProps, 'data-island-error': this.props.kind },
-      <span role="alert" style={{ display: 'block', color: '#b91c1c', fontFamily: 'inherit', fontSize: '13px' }}>
-        This part of the shop could not be loaded.{' '}
-        <button
-          type="button"
-          onClick={() => this.setState({ failed: false })}
-          style={{ font: 'inherit', textDecoration: 'underline', background: 'none', border: 0, padding: 0, color: 'inherit', cursor: 'pointer' }}
-        >
-          Try again
-        </button>
-      </span>,
-    );
-  }
-}
-
 export default function CommerceIsland({ kind, node, scope }: CommerceIslandProps) {
   const hostType = nodeHostTag(node);
   const hostProps = nodeDomProps(node);
@@ -140,9 +101,9 @@ export default function CommerceIsland({ kind, node, scope }: CommerceIslandProp
     );
   }
   return (
-    <IslandErrorBoundary kind={kind} hostType={hostType} hostProps={hostProps}>
+    <CommerceErrorBoundary kind={kind} hostType={hostType} hostProps={hostProps}>
       <IslandBody kind={kind} node={node} scope={scope} hostType={hostType} hostProps={hostProps} />
-    </IslandErrorBoundary>
+    </CommerceErrorBoundary>
   );
 }
 

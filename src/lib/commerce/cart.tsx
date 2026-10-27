@@ -33,6 +33,14 @@ import type { PriceDTO } from './types';
 export const CART_STORAGE_KEY = 'framer-clone:cart:v1';
 
 /**
+ * The key of a project's cart inside the editor and its preview. Every project is edited on the same
+ * host, so one shared key would carry one shop's variants into another shop's cart.
+ */
+export function editorCartStorageKey(projectId: string): string {
+  return `framer-clone:editor-cart:v1:${projectId}`;
+}
+
+/**
  * One cart line: the visitor wants `quantity` of variant `variantId`. This is
  * selection state only. `quantity` is always a positive integer; a line that
  * would drop to zero is removed rather than stored as a zero-quantity line.
@@ -110,10 +118,10 @@ function normalizeLines(parsed: unknown): CartLine[] {
 }
 
 /** Read the persisted cart, recovering loudly (never silently) from corruption. */
-function readStoredLines(): CartLine[] {
+function readStoredLines(storageKey: string): CartLine[] {
   if (typeof window === 'undefined') return [];
   try {
-    const raw = window.localStorage.getItem(CART_STORAGE_KEY);
+    const raw = window.localStorage.getItem(storageKey);
     if (!raw) return [];
     return normalizeLines(JSON.parse(raw));
   } catch (err) {
@@ -125,10 +133,10 @@ function readStoredLines(): CartLine[] {
 }
 
 /** Persist the cart, surfacing a write failure to the console (never swallowed). */
-function writeStoredLines(lines: CartLine[]): void {
+function writeStoredLines(storageKey: string, lines: CartLine[]): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(lines));
+    window.localStorage.setItem(storageKey, JSON.stringify(lines));
   } catch (err) {
     console.error('CartProvider: failed to persist the cart.', err);
   }
@@ -140,6 +148,8 @@ function writeStoredLines(lines: CartLine[]): void {
 
 export interface CartProviderProps {
   children: ReactNode;
+  /** Where the cart persists; the published site uses CART_STORAGE_KEY, the editor editorCartStorageKey. */
+  storageKey?: string;
 }
 
 /**
@@ -148,7 +158,7 @@ export interface CartProviderProps {
  * initial render) so SSR and the first client render agree on an empty cart and
  * there is no hydration mismatch; the persisted lines arrive on the next tick.
  */
-export function CartProvider({ children }: CartProviderProps) {
+export function CartProvider({ children, storageKey = CART_STORAGE_KEY }: CartProviderProps) {
   const [lines, setLines] = useState<CartLine[]>([]);
 
   // A ref mirror of `lines` so a mutation can compute the next state from the
@@ -160,9 +170,9 @@ export function CartProvider({ children }: CartProviderProps) {
   // Hydrate once from localStorage after mount. A persisted non-empty cart
   // replaces the empty initial state on the next tick.
   useEffect(() => {
-    const stored = readStoredLines();
+    const stored = readStoredLines(storageKey);
     if (stored.length > 0) setLines(stored);
-  }, []);
+  }, [storageKey]);
 
   // Apply a pure transform to the current lines, then persist the result. The
   // localStorage write is the ONLY effect: no fetch, no server write.
@@ -170,8 +180,8 @@ export function CartProvider({ children }: CartProviderProps) {
     const next = fn(linesRef.current);
     linesRef.current = next;
     setLines(next);
-    writeStoredLines(next);
-  }, []);
+    writeStoredLines(storageKey, next);
+  }, [storageKey]);
 
   const add = useCallback(
     (variantId: string, quantity: number) => {

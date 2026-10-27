@@ -15,10 +15,16 @@
 // that does not exist server-side (the unsaved demo project of the standalone
 // `/` dev mount) is answered with a 403 by the server, which the commerce
 // components surface as an error rather than as data.
+//
+// It also holds the project's cart, so the add-to-cart, cart and checkout
+// blocks render on the canvas and work in the preview. The cart persists per
+// project (every project shares the editor's host) and is remounted when the
+// project changes, so one shop's lines never show in another shop's cart.
 
 import React from 'react';
 import { observer } from 'mobx-react-lite';
 
+import { CartProvider, editorCartStorageKey } from '@/lib/commerce/cart';
 import { CommerceDataSourceContext } from '@/lib/commerce/context';
 import { getEditorCommerceDataSource } from '@/lib/commerce/httpCommerceDataSource';
 import { useStore } from '@/hooks/useStore';
@@ -30,7 +36,9 @@ const EditorCommerceProvider = observer(({ children }: { children: React.ReactNo
   const projectId = rootStore.editorUI.currentProject?.id ?? NO_PROJECT_ID;
   return (
     <CommerceDataSourceContext.Provider value={getEditorCommerceDataSource(projectId)}>
-      {children}
+      <CartProvider key={projectId} storageKey={editorCartStorageKey(projectId)}>
+        {children}
+      </CartProvider>
     </CommerceDataSourceContext.Provider>
   );
 });
