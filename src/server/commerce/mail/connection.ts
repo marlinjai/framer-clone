@@ -13,7 +13,10 @@ import 'server-only';
 //     key sealed. When installing fails, the new key is revoked again. A shop connected before has its old
 //     key revoked once the new one works.
 //   - Disconnecting revokes the key first and forgets the connection only then, so no working key is left
-//     behind; a key already gone counts as revoked.
+//     behind; a key already gone counts as revoked. An owner of the shop who has no admin role in the mail
+//     workspace (the person who connected it left) can still disconnect: the shop stops sending at once, and
+//     the page tells them the key still has to be revoked in Lumitra Mail. Lumitra Mail unreachable keeps the
+//     connection, so trying again revokes it.
 
 import type { Kysely } from 'kysely';
 
@@ -156,14 +159,29 @@ export async function connectShopMail(
   return (await readConnection(db, args.companyId, args.now))!;
 }
 
-export async function disconnectShopMail(db: Kysely<CommerceDB>, mail: LumitraMail, subject: string, companyId: string): Promise<void> {
+/** Answers whether the key was revoked; false means it still works in Lumitra Mail until someone revokes it there. */
+export async function disconnectShopMail(
+  db: Kysely<CommerceDB>,
+  mail: LumitraMail,
+  subject: string,
+  companyId: string,
+): Promise<{ keyRevoked: boolean }> {
   const row = await db.selectFrom('shop_mail_connection').selectAll().where('tenant_id', '=', companyId).executeTakeFirst();
-  if (!row) return;
+  if (!row) return { keyRevoked: true };
+  let keyRevoked = true;
   try {
     await mail.revokeKey(subject, row.workspace_id, row.api_key_id);
   } catch (err) {
-    // Already gone at Lumitra Mail: nothing is left to take back.
-    if (!(err instanceof MailRefused && (err.reason === 'not_found' || err.reason === 'key_revoked'))) throw err;
+    if (!(err instanceof MailRefused)) throw err;
+    if (err.reason === 'not_a_member' || err.reason === 'role_too_low') {
+      // Not this person's to revoke there: the shop still stops sending, and the owner is told what is left.
+      console.error(`[shop-mail] company ${companyId} disconnected by someone who cannot revoke its key (${err.reason})`);
+      keyRevoked = false;
+    } else if (err.reason !== 'not_found' && err.reason !== 'key_revoked') {
+      // Already gone at Lumitra Mail counts as revoked; anything else keeps the connection.
+      throw err;
+    }
   }
   await db.deleteFrom('shop_mail_connection').where('tenant_id', '=', companyId).execute();
+  return { keyRevoked };
 }

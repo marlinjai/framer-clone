@@ -69,8 +69,11 @@ export function fakeMail(opts: { workspaces: MailWorkspace[]; senders?: Record<s
     },
     async send(apiKey, letter) {
       step('send', [apiKey, letter]);
-      sent.push(letter);
-      return { mailingId: `mailing-${sent.length}`, delivery: blocked.has(letter.to) ? 'blocked' : 'sent' };
+      // Lumitra Mail answers a repeated letter key with the same mailing and sends it once (idempotency).
+      const earlier = sent.findIndex((l) => l.key === letter.key);
+      if (earlier < 0) sent.push(letter);
+      const index = earlier < 0 ? sent.length : earlier + 1;
+      return { mailingId: `mailing-${index}`, delivery: blocked.has(letter.to) ? 'blocked' : 'sent' };
     },
   };
 }

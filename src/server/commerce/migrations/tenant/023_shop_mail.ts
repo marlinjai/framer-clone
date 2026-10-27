@@ -12,7 +12,9 @@ import type { Migration } from '@marlinjai/tenant-db';
  *      issued, `late_refund` when a late payment had to be refunded). Written only while the company is
  *      connected; retried until Lumitra Mail took the letter (`sent`), the recipient is blocked there
  *      (`blocked`, never retried), or the attempts ran out (`failed`, with the reason). Kept apart from
- *      `order_payment`, whose guarded state machine is about money, not mail.
+ *      `order_payment`, whose guarded state machine is about money, not mail. `letter` is the letter as built at
+ *      its first attempt (recipient, language, values, template, sending account, workspace): every retry sends
+ *      exactly it, because Lumitra Mail refuses an idempotency key repeated with another body.
  *
  * House style as 007 to 022: BARE names, ids TEXT. Re-runnable.
  */
@@ -50,6 +52,7 @@ export const shopMail: Migration = {
           "next_attempt_at"  TIMESTAMP(3) NOT NULL,
           "last_error"       TEXT,
           "mailing_id"       TEXT,
+          "letter"           JSONB,
           "created_at"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
           "updated_at"       TIMESTAMP(3) NOT NULL,
           CONSTRAINT "shop_mail_pkey" PRIMARY KEY ("tenant_id", "order_id", "kind"),
@@ -57,6 +60,7 @@ export const shopMail: Migration = {
           CONSTRAINT "shop_mail_status_check" CHECK ("status" IN ('pending', 'sent', 'blocked', 'failed')),
           CONSTRAINT "shop_mail_attempts_check" CHECK ("attempts" >= 0),
           CONSTRAINT "shop_mail_error_check" CHECK ("last_error" IS NULL OR length("last_error") <= 1000),
+          CONSTRAINT "shop_mail_letter_check" CHECK ("letter" IS NULL OR jsonb_typeof("letter") = 'object'),
           CONSTRAINT "shop_mail_order_fkey" FOREIGN KEY ("tenant_id", "order_id")
               REFERENCES "order" ("tenant_id", "id") ON DELETE RESTRICT ON UPDATE RESTRICT
       )

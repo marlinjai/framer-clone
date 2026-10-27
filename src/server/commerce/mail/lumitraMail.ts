@@ -161,7 +161,17 @@ export function createLumitraMail(config: ShopMailConfig): LumitraMail {
     dashboard.forUser(workspaceId === undefined ? { subject } : { subject, workspaceId });
   const withKey = (apiKey: string): MailClient =>
     createMailClient({ baseUrl: config.serviceUrl, apiKey, timeoutMs: TIMEOUT_MS, maxRetries: MAX_RETRIES });
+  return lumitraMailOver(asPerson, withKey);
+}
 
+/**
+ * The shop's calls over two SDK clients: one acting for a person (the service token), one for a workspace key.
+ * Tests pass clients that answer like Lumitra Mail to exercise the real calls, keys and error handling.
+ */
+export function lumitraMailOver(
+  asPerson: (subject: string, workspaceId?: string) => MailClient,
+  withKey: (apiKey: string) => MailClient,
+): LumitraMail {
   async function call<T>(what: string, fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
@@ -242,11 +252,15 @@ export function createLumitraMail(config: ShopMailConfig): LumitraMail {
     installTemplates: (apiKey) =>
       call('installing the shop mails', async () => {
         const client = withKey(apiKey);
-        const existing = new Map<string, string[]>();
+        // By name: the live templates, or the archived ones when none is live (an install brings one back).
+        const live = new Map<string, string[]>();
+        const archived = new Map<string, string[]>();
         for await (const summary of client.paginate('templates.list', { query: {} })) {
-          if (summary.archived_at !== null && existing.has(summary.name)) continue;
-          existing.set(summary.name, [...(existing.get(summary.name) ?? []), summary.id]);
+          const into = summary.archived_at === null ? live : archived;
+          into.set(summary.name, [...(into.get(summary.name) ?? []), summary.id]);
         }
+        const existing = new Map<string, string[]>([...archived].map(([name, ids]) => [name, ids.slice(0, 1)]));
+        for (const [name, ids] of live) existing.set(name, ids);
         const ids = {} as Record<ShopMailKind, string>;
         for (const kind of SHOP_MAIL_KINDS) ids[kind] = await installOne(client, kind, existing);
         return ids;

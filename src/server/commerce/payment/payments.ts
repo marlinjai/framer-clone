@@ -28,6 +28,7 @@ import type { Kysely, Transaction } from 'kysely';
 import type { CommerceDB } from '../db-types';
 import { applyInventoryEffect, reserve, RESERVE_ISOLATION_LEVEL } from '../inventory/reserve';
 import type { PaymentEvent, PaymentProvider, ProviderId } from './provider';
+import { enqueueShopMail } from '../mail/outbox';
 
 /** How long a pending payment holds its stock (the design: 30 minutes). */
 export const PAYMENT_WINDOW_MS = 30 * 60 * 1000;
@@ -77,10 +78,12 @@ export interface PaymentDeps {
   /** The company's connected account for refunds (Stripe Connect). */
   connectedAccountId?: string;
   /**
-   * Tell the buyer (the shop's receipt email, mail/runtime.ts): called once the receipt is issued, or a late
-   * payment refunded. It never throws and never changes the payment; absent in tests that send no mail.
+   * Start sending the buyer's letter (the shop's receipt email, mail/runtime.ts) once it is written: the letter
+   * itself is written in the transaction that links the receipt or records the refund, so it can never be lost,
+   * and this only starts the first attempt without waiting for it (the payment never waits for mail; the sweep
+   * sends whatever this attempt could not). Absent in tests that send no mail.
    */
-  mail?: (tenantId: string, orderId: string, kind: 'order_confirmation' | 'late_refund') => Promise<void>;
+  deliverMail?: (tenantId: string, orderId: string, kind: 'order_confirmation' | 'late_refund') => void;
 }
 
 export interface PaymentOutcome {
@@ -254,7 +257,7 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
   } catch (err) {
     if (!(err instanceof LateStockGoneError)) throw err;
     status = await refundLatePayment(deps, event, now());
-    if (status === 'refunded') await deps.mail?.(event.tenantId, event.orderId, 'late_refund');
+    if (status === 'refunded') deps.deliverMail?.(event.tenantId, event.orderId, 'late_refund');
   }
 
   const after = await deps.db
@@ -268,7 +271,7 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
   }
   const receipt = await issueReceipt(deps, event.tenantId, event.orderId, now());
   // The buyer hears once the receipt exists (the letter links it); a retried receipt mails then.
-  if (receipt.receiptDocumentId) await deps.mail?.(event.tenantId, event.orderId, 'order_confirmation');
+  if (receipt.receiptDocumentId) deps.deliverMail?.(event.tenantId, event.orderId, 'order_confirmation');
   return { status, duplicate, ...receipt };
 }
 
@@ -300,6 +303,8 @@ async function refundLatePayment(deps: PaymentDeps, event: PaymentEvent, at: Dat
       .where('tenant_id', '=', event.tenantId)
       .where('order_id', '=', event.orderId)
       .execute();
+    // The buyer's refund notice, with the refund (when the shop sends mail).
+    await enqueueShopMail(trx, event.tenantId, event.orderId, 'late_refund', at);
     console.error(`[payments] order ${event.orderId}: paid after it closed and its stock was gone; refunded ${refundId}`);
     return 'refunded';
   });
@@ -314,13 +319,17 @@ async function issueReceipt(
 ): Promise<{ receiptDocumentId: string | null; receiptError: string | null }> {
   try {
     const { documentId } = await deps.receipt(orderId);
-    await deps.db
-      .updateTable('order_payment')
-      .set({ receipt_document_id: documentId, receipt_error: null, updated_at: at })
-      .where('tenant_id', '=', tenantId)
-      .where('order_id', '=', orderId)
-      .where('receipt_document_id', 'is', null)
-      .execute();
+    // The receipt link and the buyer's letter (when the shop sends mail) commit together.
+    await deps.db.transaction().execute(async (trx) => {
+      await trx
+        .updateTable('order_payment')
+        .set({ receipt_document_id: documentId, receipt_error: null, updated_at: at })
+        .where('tenant_id', '=', tenantId)
+        .where('order_id', '=', orderId)
+        .where('receipt_document_id', 'is', null)
+        .execute();
+      await enqueueShopMail(trx, tenantId, orderId, 'order_confirmation', at);
+    });
     return { receiptDocumentId: documentId, receiptError: null };
   } catch (err) {
     const reason = receiptFailure(err);

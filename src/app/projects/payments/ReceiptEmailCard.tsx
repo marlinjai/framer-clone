@@ -50,6 +50,8 @@ export default function ReceiptEmailCard() {
   const [senders, setSenders] = useState<{ id: string; label: string }[] | null>(null);
   const [providerId, setProviderId] = useState('');
   const [busy, setBusy] = useState(false);
+  // After a disconnect whose key the person could not revoke in Lumitra Mail.
+  const [keyLeft, setKeyLeft] = useState(false);
   // One attempt per opened chooser: a repeated press makes no second key at Lumitra Mail.
   const [attempt, setAttempt] = useState(newAttempt);
 
@@ -125,6 +127,8 @@ export default function ReceiptEmailCard() {
         setError(await readError(res, 'the shop could not be disconnected'));
         return;
       }
+      const body = (await res.json().catch(() => ({}))) as { keyRevoked?: boolean };
+      setKeyLeft(body.keyRevoked === false);
       await load();
     } catch {
       setError('the shop could not be disconnected; check your connection and try again');
@@ -162,6 +166,17 @@ export default function ReceiptEmailCard() {
       {error ? (
         <p role="alert" className="mt-3 text-sm text-destructive">
           {error}
+        </p>
+      ) : null}
+
+      {keyLeft ? (
+        <p role="status" className="mt-3 text-sm text-amber-600 dark:text-amber-400">
+          The shop no longer sends mail. Its key in Lumitra Mail is still there, because you are not an admin of that
+          workspace: ask an admin to revoke &quot;Lumitra Sites shop&quot; under API keys in{' '}
+          <a className="underline" href={MAIL_DASHBOARD} target="_blank" rel="noreferrer">
+            Lumitra Mail
+          </a>
+          .
         </p>
       ) : null}
 

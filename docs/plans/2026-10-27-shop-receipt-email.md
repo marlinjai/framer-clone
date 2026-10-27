@@ -43,9 +43,13 @@ app had no way to send any.
    rotating the key revokes every link. The route answers only the stored document of record of an issued
    invoice, never a draft, with `no-store` and `nosniff`.
 4. **An outbox, retried until Lumitra Mail took the letter.** A row per order and kind (`shop_mail`, migration
-   `023_shop_mail`), written when the receipt is issued or the late refund made; sent right after, and on
-   failure retried after 1, 5, 15 and 60 minutes, then every 6 hours for three days, then left `failed` with its
-   reason. An in-process sweep every minute walks the tenant groups (started in `instrumentation.ts`, the Node
+   `023_shop_mail`), written in the same transaction that links the receipt or records the late refund, so a
+   crash in between loses no letter; the first attempt starts after the payment answered (the payment never
+   waits for mail), and on failure it is retried after 1, 5, 15 and 60 minutes, then every 6 hours for three
+   days, then left `failed` with its reason. The letter is frozen at its first attempt and sent unchanged on
+   every retry, because Lumitra Mail refuses an idempotency key repeated with another body; after a reconnect
+   to another workspace it is built again there. An owner without a role in the mail workspace can still
+   disconnect: the shop stops sending, and the page says the key has to be revoked in Lumitra Mail. An in-process sweep every minute walks the tenant groups (started in `instrumentation.ts`, the Node
    server only). Kept off `order_payment`, whose guarded state machine is about money, not mail. A suppressed
    recipient (bounce, complaint) is recorded as `blocked`, never retried.
 5. **Language** follows the published site's language (German or English); the templates exist in both.

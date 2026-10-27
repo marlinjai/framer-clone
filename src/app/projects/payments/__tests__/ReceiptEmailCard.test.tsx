@@ -113,5 +113,19 @@ describe('ReceiptEmailCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
     expect(await screen.findByRole('combobox', { name: 'Lumitra Mail workspace' })).toBeTruthy();
     expect(calls.some((c) => c.method === 'DELETE')).toBe(true);
+    expect(screen.queryByText(/key in Lumitra Mail is still there/)).toBeNull();
+  });
+
+  it('after a disconnect whose key the person could not revoke, says who has to revoke it', async () => {
+    respond({
+      'GET /api/payments/mail': [
+        { status: 200, body: { ...NOT_CONNECTED, connection: CONNECTION } },
+        { status: 200, body: NOT_CONNECTED },
+      ],
+      'DELETE /api/payments/mail': { status: 200, body: { connection: null, keyRevoked: false } },
+    });
+    render(<ReceiptEmailCard />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }));
+    expect(await screen.findByText(/key in Lumitra Mail is still there/)).toBeTruthy();
   });
 });

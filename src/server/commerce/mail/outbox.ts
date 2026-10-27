@@ -12,11 +12,18 @@ import 'server-only';
 //   failed    Lumitra Mail kept refusing, or the attempts ran out; the reason is kept and shown to the owner
 //   pending   waiting for its next attempt: after 1, 5, 15 and 60 minutes, then every 6 hours, for 3 days
 //
+// The letter is built once, at its first attempt, and kept on the row: every retry sends exactly it, under the
+// same idempotency keys, because Lumitra Mail refuses a key repeated with another body (a site renamed or a
+// language switched between two attempts would otherwise end the letter as failed). A letter is tied to the
+// workspace it was made for: after a reconnect to another workspace it is built again there, under keys of that
+// workspace.
+//
 // Sending never throws into its caller (a payment stands whatever the mail does); every failure is recorded on
 // the row and logged without personal data or secrets.
 
 import type { Kysely } from 'kysely';
 
+import { toJsonb } from '@/server/books/snapshots';
 import type { CommerceDB } from '../db-types';
 import { readBuyer } from '../payment/buyer';
 import type { LumitraMail } from './lumitraMail';
@@ -73,6 +80,21 @@ export async function enqueueShopMail(
     .onConflict((oc) => oc.columns(['tenant_id', 'order_id', 'kind']).doNothing())
     .execute();
   return true;
+}
+
+/** A letter as built at its first attempt. */
+export interface FrozenLetter {
+  workspaceId: string;
+  to: string;
+  locale: ShopMailLocale;
+  templateId: string;
+  providerId: string;
+  merge: Record<string, string>;
+}
+
+function readFrozen(stored: Record<string, unknown> | null): FrozenLetter | null {
+  if (!stored || typeof stored.workspaceId !== 'string' || typeof stored.to !== 'string') return null;
+  return stored as unknown as FrozenLetter;
 }
 
 function localeOf(language: string): ShopMailLocale {
@@ -177,17 +199,28 @@ export async function deliverShopMail(
     if (!deps.mail || !deps.sealKey) throw new MailRetryLater('Lumitra Mail is not configured on this platform');
     const connection = await deps.db.selectFrom('shop_mail_connection').selectAll().where('tenant_id', '=', tenantId).executeTakeFirst();
     if (!connection) throw new MailRefused('other', 'the shop is no longer connected to Lumitra Mail');
-    const templateId = (connection.template_ids as Record<string, string>)[kind];
-    if (!templateId) throw new MailRefused('template_missing', `no ${kind} template is installed: connect the shop again`);
-    const values = await letterValues(deps, tenantId, orderId, kind);
+    let letter = readFrozen(row.letter);
+    if (!letter || letter.workspaceId !== connection.workspace_id) {
+      const templateId = (connection.template_ids as Record<string, string>)[kind];
+      if (!templateId) throw new MailRefused('template_missing', `no ${kind} template is installed: connect the shop again`);
+      const values = await letterValues(deps, tenantId, orderId, kind);
+      letter = { workspaceId: connection.workspace_id, to: values.to, locale: values.locale, templateId, providerId: connection.provider_id, merge: values.merge };
+      await deps.db
+        .updateTable('shop_mail')
+        .set({ letter: toJsonb(letter), updated_at: now })
+        .where('tenant_id', '=', tenantId)
+        .where('order_id', '=', orderId)
+        .where('kind', '=', kind)
+        .execute();
+    }
     const sent = await deps.mail.send(unseal(deps.sealKey, connection.api_key_sealed), {
-      key: `shop:${tenantId}:${orderId}:${kind}`,
+      key: `shop:${tenantId}:${orderId}:${kind}:${letter.workspaceId}`,
       kind,
-      locale: values.locale,
-      templateId,
-      providerId: connection.provider_id,
-      to: values.to,
-      merge: values.merge,
+      locale: letter.locale,
+      templateId: letter.templateId,
+      providerId: letter.providerId,
+      to: letter.to,
+      merge: letter.merge,
     });
     return await record(sent.delivery, { mailing_id: sent.mailingId, last_error: null });
   } catch (err) {

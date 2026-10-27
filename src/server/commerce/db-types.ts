@@ -845,6 +845,8 @@ export interface ShopMailTable {
   next_attempt_at: Timestamp;
   last_error: string | null;
   mailing_id: string | null;
+  /** The letter as built at its first attempt (outbox.ts FrozenLetter), sent unchanged on every retry. */
+  letter: ColumnType<Record<string, unknown> | null, JsonbWrite | null, JsonbWrite | null>;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
 }

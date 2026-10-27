@@ -8,10 +8,12 @@
 //   2. backtrack: a workspace of another company, a role too low or an unknown sender is refused and nothing is
 //      stored; an install that fails takes its new key back; reconnecting revokes the old key; disconnecting
 //      revokes the key first and keeps the connection when Lumitra Mail cannot be reached;
-//   3. resume: Lumitra Mail down, the letter waits and the sweep sends it when due; a repeated webhook sends no
-//      second letter;
-//   4. re-entry: a refusal ends a letter as failed (shown to the owner), a blocked address as blocked, a late
-//      payment refunded sends the refund notice; a shop not connected sends nothing.
+//   3. resume: Lumitra Mail down, the letter waits and the sweep sends it when due, unchanged even when the site
+//      changed meanwhile; a letter whose first attempt never started (a crash after the receipt) is sent by the
+//      sweep; a repeated webhook or two overlapping attempts send one letter;
+//   4. re-entry: a refusal ends a letter as failed (shown to the owner), a blocked address as blocked, three days
+//      of failures end it as failed; a late payment refunded sends the refund notice; a shop not connected sends
+//      nothing; an owner without a role in Lumitra Mail can still disconnect.
 // All data is synthetic.
 
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -30,7 +32,7 @@ import { booksScope } from '@/server/books/scope';
 import { FakeContactBook, FakeDirectory, initCompany, openBooksEnv, type BooksEnv } from '@/server/books/__tests__/booksFixtures';
 import { ConnectRefused, connectShopMail, disconnectShopMail, readConnection } from '../connection';
 import { MailRefused, MailRetryLater } from '../lumitraMail';
-import { deliverShopMail, enqueueShopMail, sweepShopMail, type OutboxDeps } from '../outbox';
+import { deliverShopMail, sweepShopMail, type OutboxDeps } from '../outbox';
 import { readReceiptToken } from '../receiptLink';
 import { serveReceipt } from '../receiptRoute';
 import { mailConnect, mailStatus } from '../ownerHandlers';
@@ -66,8 +68,11 @@ interface Shop {
   providerId: string;
   mail: FakeMail;
   clock: { now: Date };
+  site: { name: string; language: string };
   outbox: OutboxDeps;
   deps: PaymentDeps;
+  /** First attempts the payment handler started (not awaited there, as in production). */
+  attempts: Promise<unknown>[];
 }
 
 let shop: Shop;
@@ -80,6 +85,7 @@ function newShop(): Shop {
   const contacts = new FakeContactBook(dir);
   const scope = booksScope(env.appDb, env.tgId, company, { recipients: dir });
   const clock = { now: new Date('2026-10-27T09:30:00Z') };
+  const site = { name: 'Schmuck Testshop', language: 'de' };
   const mail = fakeMail({
     workspaces: [
       { id: workspaceId, name: 'Schmuck', role: 'owner', companyId: company, locales: ['de'] },
@@ -94,20 +100,21 @@ function newShop(): Shop {
     sealKey: SEAL_KEY,
     linkKey: LINK_KEY,
     linkBase: 'https://app.example',
-    siteInfo: async () => ({ name: 'Schmuck Testshop', language: 'de' }),
+    siteInfo: async () => ({ ...site }),
     now: () => clock.now,
   };
+  const attempts: Promise<unknown>[] = [];
   const deps: PaymentDeps = {
     db: env.appDb,
     tgId: env.tgId,
     provider: () => demoProvider,
     receipt: (orderId) => ensureReceipt(scope, contacts, orderId, { now: clock.now }),
     now: () => clock.now,
-    mail: async (tenantId, orderId, kind) => {
-      if (await enqueueShopMail(env.appDb, tenantId, orderId, kind, clock.now)) await deliverShopMail(outbox, tenantId, orderId, kind);
+    deliverMail: (tenantId, orderId, kind) => {
+      attempts.push(deliverShopMail(outbox, tenantId, orderId, kind));
     },
   };
-  return { company, workspaceId, providerId, mail, clock, outbox, deps };
+  return { company, workspaceId, providerId, mail, clock, site, outbox, deps, attempts };
 }
 
 beforeEach(async () => {
@@ -158,6 +165,13 @@ async function placeOrder(ring: Awaited<ReturnType<typeof stockedRing>>) {
   });
   if (!result.ok) throw new Error('the order was short');
   return result.orderId;
+}
+
+/** Handle a payment event, then wait for the first mail attempts it started. */
+async function pay(event: PaymentEvent) {
+  const outcome = await handlePaymentEvent(shop.deps, event);
+  await Promise.all(shop.attempts.splice(0));
+  return outcome;
 }
 
 function paid(orderId: string, extra: Partial<PaymentEvent> = {}): PaymentEvent {
@@ -227,8 +241,19 @@ describe('connecting the shop to Lumitra Mail', () => {
     // A key already gone at Lumitra Mail counts as revoked.
     await connect();
     shop.mail.failNext('revokeKey', new MailRefused('not_found', 'gone'));
-    await disconnectShopMail(env.appDb, shop.mail, OWNER, shop.company);
+    expect(await disconnectShopMail(env.appDb, shop.mail, OWNER, shop.company)).toEqual({ keyRevoked: true });
     expect(await readConnection(env.appDb, shop.company, shop.clock.now)).toBeNull();
+  });
+
+  it('an owner without a role in the mail workspace can still disconnect, and is told the key is left', async () => {
+    await connect();
+    shop.mail.failNext('revokeKey', new MailRefused('not_a_member', 'not a member'));
+    expect(await disconnectShopMail(env.appDb, shop.mail, 'another-owner', shop.company)).toEqual({ keyRevoked: false });
+    expect(await readConnection(env.appDb, shop.company, shop.clock.now)).toBeNull();
+    // Nothing is sent any more: a paid order writes no letter.
+    const orderId = await placeOrder(await stockedRing(2));
+    await pay(paid(orderId));
+    expect(shop.mail.sent).toEqual([]);
   });
 });
 
@@ -236,7 +261,7 @@ describe('the buyer hears of a paid order', () => {
   it('forward: one confirmation in German with the order, the total and a link that serves exactly that receipt', async () => {
     await connect();
     const orderId = await placeOrder(await stockedRing(2));
-    const outcome = await handlePaymentEvent(shop.deps, paid(orderId));
+    const outcome = await pay(paid(orderId));
     expect(outcome.status).toBe('paid');
 
     expect(shop.mail.sent).toHaveLength(1);
@@ -250,7 +275,7 @@ describe('the buyer hears of a paid order', () => {
       to: 'alex@example.com',
       merge: { shop_name: 'Schmuck Testshop', order_number: order.order_number, total_text: '49,00\u00a0€', first_name: 'Alex', receipt_number: '1' },
     });
-    expect(letter.key).toBe(`shop:${shop.company}:${orderId}:order_confirmation`);
+    expect(letter.key).toBe(`shop:${shop.company}:${orderId}:order_confirmation:${shop.workspaceId}`);
     expect(await mailRow(orderId)).toMatchObject({ status: 'sent', attempts: 1, mailing_id: 'mailing-1', last_error: null });
 
     const token = letter.merge.receipt_url.replace('https://app.example/api/receipts/', '');
@@ -262,14 +287,14 @@ describe('the buyer hears of a paid order', () => {
     expect(Buffer.from(await served.arrayBuffer()).subarray(0, 5).toString()).toBe('%PDF-');
 
     // A repeated webhook sends no second letter.
-    await handlePaymentEvent(shop.deps, paid(orderId, { eventId: `evt-${randomUUID()}` }));
+    await pay(paid(orderId, { eventId: `evt-${randomUUID()}` }));
     expect(shop.mail.sent).toHaveLength(1);
   });
 
   it('a receipt link is refused for another key, another company, or a document that is not a shop receipt', async () => {
     await connect();
     const orderId = await placeOrder(await stockedRing(2));
-    const outcome = await handlePaymentEvent(shop.deps, paid(orderId));
+    const outcome = await pay(paid(orderId));
     const token = shop.mail.sent[0].merge.receipt_url.split('/').pop()!;
     expect((await serveReceipt(token, randomBytes(32), async () => env.appDb)).status).toBe(404);
     expect((await serveReceipt(token, null, async () => env.appDb)).status).toBe(404);
@@ -282,7 +307,7 @@ describe('the buyer hears of a paid order', () => {
 
   it('re-entry: a shop that is not connected sends nothing and keeps no letter', async () => {
     const orderId = await placeOrder(await stockedRing(2));
-    expect((await handlePaymentEvent(shop.deps, paid(orderId))).status).toBe('paid');
+    expect((await pay(paid(orderId))).status).toBe('paid');
     expect(shop.mail.sent).toEqual([]);
     expect(await mailRow(orderId)).toBeUndefined();
   });
@@ -291,7 +316,7 @@ describe('the buyer hears of a paid order', () => {
     await connect();
     const orderId = await placeOrder(await stockedRing(2));
     shop.mail.failNext('send', new MailRetryLater('Lumitra Mail could not be reached'));
-    expect((await handlePaymentEvent(shop.deps, paid(orderId))).status).toBe('paid');
+    expect((await pay(paid(orderId))).status).toBe('paid');
     const waiting = await mailRow(orderId);
     expect(waiting).toMatchObject({ status: 'pending', attempts: 1, last_error: 'Lumitra Mail could not be reached' });
     expect(new Date(waiting!.next_attempt_at).getTime() - shop.clock.now.getTime()).toBe(60_000);
@@ -307,14 +332,84 @@ describe('the buyer hears of a paid order', () => {
     await connect();
     const refused = await placeOrder(await stockedRing(2));
     shop.mail.failNext('send', new MailRefused('template_missing', 'no template'));
-    await handlePaymentEvent(shop.deps, paid(refused));
+    await pay(paid(refused));
     expect(await mailRow(refused)).toMatchObject({ status: 'failed', last_error: 'no template' });
     expect((await readConnection(env.appDb, shop.company, shop.clock.now))!.failed).toEqual({ count: 1, latestReason: 'no template' });
 
     shop.mail.blocked.add('alex@example.com');
     const blocked = await placeOrder(await stockedRing(2));
-    await handlePaymentEvent(shop.deps, paid(blocked));
+    await pay(paid(blocked));
     expect(await mailRow(blocked)).toMatchObject({ status: 'blocked' });
+  });
+
+  it('resume: a letter whose first attempt never started (a crash after the receipt) is written all the same, and the sweep sends it', async () => {
+    await connect();
+    const orderId = await placeOrder(await stockedRing(2));
+    // The process dies before the first attempt: the hand-off is never made.
+    await handlePaymentEvent({ ...shop.deps, deliverMail: undefined }, paid(orderId));
+    expect(await mailRow(orderId)).toMatchObject({ status: 'pending', attempts: 0 });
+    expect(await sweepShopMail(shop.outbox)).toBe(1);
+    expect(await mailRow(orderId)).toMatchObject({ status: 'sent' });
+    expect(shop.mail.sent).toHaveLength(1);
+  });
+
+  it('resume: a retry sends the letter as first built, even after the site was renamed and switched to English', async () => {
+    await connect();
+    const orderId = await placeOrder(await stockedRing(2));
+    shop.mail.failNext('send', new MailRetryLater('down'));
+    await pay(paid(orderId));
+    const first = (await mailRow(orderId))!.letter as Record<string, unknown>;
+    expect(first).toMatchObject({ workspaceId: shop.workspaceId, locale: 'de', merge: { shop_name: 'Schmuck Testshop' } });
+
+    shop.site.name = 'Renamed Shop';
+    shop.site.language = 'en';
+    shop.clock.now = new Date(shop.clock.now.getTime() + 61_000);
+    await sweepShopMail(shop.outbox);
+    expect(shop.mail.sent).toHaveLength(1);
+    expect(shop.mail.sent[0]).toMatchObject({ locale: 'de', merge: { shop_name: 'Schmuck Testshop' } });
+  });
+
+  it('resume: two overlapping attempts at one letter send it once', async () => {
+    await connect();
+    const orderId = await placeOrder(await stockedRing(2));
+    await handlePaymentEvent({ ...shop.deps, deliverMail: undefined }, paid(orderId));
+    const outcomes = await Promise.all([
+      deliverShopMail(shop.outbox, shop.company, orderId, 'order_confirmation'),
+      deliverShopMail(shop.outbox, shop.company, orderId, 'order_confirmation'),
+    ]);
+    expect(outcomes).toContain('sent');
+    expect(shop.mail.sent).toHaveLength(1);
+    expect(await mailRow(orderId)).toMatchObject({ status: 'sent' });
+  });
+
+  it('re-entry: three days of failures end the letter as failed', async () => {
+    await connect();
+    const orderId = await placeOrder(await stockedRing(2));
+    shop.mail.failNext('send', new MailRetryLater('down'));
+    await pay(paid(orderId));
+    shop.clock.now = new Date(shop.clock.now.getTime() + 3 * 24 * 60 * 60 * 1000 + 1000);
+    shop.mail.failNext('send', new MailRetryLater('still down'));
+    await sweepShopMail(shop.outbox);
+    expect(await mailRow(orderId)).toMatchObject({ status: 'failed', last_error: 'still down' });
+  });
+
+  it('re-entry: a reconnect to another workspace builds the letter again there, under that workspace\'s keys', async () => {
+    await connect();
+    const orderId = await placeOrder(await stockedRing(2));
+    shop.mail.failNext('send', new MailRetryLater('down'));
+    await pay(paid(orderId));
+    // The owner moves the shop to a second workspace of the company.
+    const second = randomUUID();
+    const provider2 = randomUUID();
+    const moved = fakeMail({
+      workspaces: [{ id: second, name: 'Schmuck 2', role: 'owner', companyId: shop.company, locales: ['de', 'en'] }],
+      senders: { [second]: [{ id: provider2, label: 'Shop <shop@two.example>' }] },
+    });
+    await connectShopMail(env.appDb, moved, SEAL_KEY, { subject: OWNER, companyId: shop.company, workspaceId: second, providerId: provider2, attempt: 'attempt-move-1', now: shop.clock.now });
+    shop.clock.now = new Date(shop.clock.now.getTime() + 61_000);
+    await sweepShopMail({ ...shop.outbox, mail: moved });
+    expect(moved.sent).toHaveLength(1);
+    expect(moved.sent[0]).toMatchObject({ providerId: provider2, key: `shop:${shop.company}:${orderId}:order_confirmation:${second}` });
   });
 
   it('re-entry: a late payment refunded because the stock was gone sends the refund notice', async () => {
@@ -326,7 +421,7 @@ describe('the buyer hears of a paid order', () => {
     // Someone else buys the last ring meanwhile.
     await placeOrder(ring);
 
-    expect((await handlePaymentEvent(shop.deps, paid(orderId))).status).toBe('refunded');
+    expect((await pay(paid(orderId))).status).toBe('refunded');
     const notice = shop.mail.sent.find((l) => l.kind === 'late_refund');
     expect(notice).toMatchObject({ templateId: 'tpl-refund', to: 'alex@example.com', merge: { total_text: '49,00\u00a0€' } });
     expect(notice!.merge).not.toHaveProperty('receipt_url');

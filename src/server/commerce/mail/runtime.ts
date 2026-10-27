@@ -3,8 +3,8 @@ import 'server-only';
 // src/server/commerce/mail/runtime.ts
 //
 // The shop mail as the running server uses it (docs/plans/2026-10-27-shop-receipt-email.md): the outbox's
-// dependencies for one tenant group, the hand-off after a payment (enqueue, then one attempt, never throwing
-// into the payment), and the sweep every minute over every tenant group that has a site.
+// dependencies for one tenant group, the first attempt after a payment (started, never awaited: the payment
+// never waits for it), and the sweep every minute over every tenant group that has a site.
 
 import type { Kysely } from 'kysely';
 
@@ -14,7 +14,7 @@ import { commerceTenantDb, isCommerceTenantNotProvisioned } from '../db';
 import type { CommerceDB } from '../db-types';
 import { receiptLinkBase, receiptLinkKey, shopMailConfig } from './config';
 import { createLumitraMail, type LumitraMail } from './lumitraMail';
-import { deliverShopMail, enqueueShopMail, sweepShopMail, type OutboxDeps, type SiteInfo } from './outbox';
+import { deliverShopMail, sweepShopMail, type OutboxDeps, type SiteInfo } from './outbox';
 import type { ShopMailKind } from './templates';
 
 const SWEEP_EVERY_MS = 60_000;
@@ -51,22 +51,19 @@ export function outboxDeps(db: Kysely<CommerceDB>, tenantGroupId: string): Outbo
 }
 
 /**
- * After a payment: write the letter when the company is connected, and make the first attempt. Never throws:
- * the payment stands whatever the mail does, and the sweep retries what this attempt could not send.
+ * After a payment: start the first attempt at the letter the payment wrote, and return at once. The payment never
+ * waits for Lumitra Mail; whatever this attempt cannot send, the sweep sends.
  */
-export async function sendShopMailAfterPayment(
+export function deliverShopMailSoon(
   db: Kysely<CommerceDB>,
   tenantGroupId: string,
   tenantId: string,
   orderId: string,
   kind: ShopMailKind,
-): Promise<void> {
-  try {
-    if (!(await enqueueShopMail(db, tenantId, orderId, kind, new Date()))) return;
-    await deliverShopMail(outboxDeps(db, tenantGroupId), tenantId, orderId, kind);
-  } catch (err) {
-    console.error(`[shop-mail] ${kind} of order ${orderId} could not be queued or attempted:`, err);
-  }
+): void {
+  void deliverShopMail(outboxDeps(db, tenantGroupId), tenantId, orderId, kind).catch((err: unknown) => {
+    console.error(`[shop-mail] ${kind} of order ${orderId} could not be attempted:`, err);
+  });
 }
 
 /** One pass over every tenant group that has a site. */

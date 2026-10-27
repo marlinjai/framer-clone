@@ -8,7 +8,7 @@ import 'server-only';
 //   GET    /api/payments/mail          the connection, and the person's workspaces of this company
 //   GET    /api/payments/mail/senders  the sending accounts of one of those workspaces (?workspace=)
 //   POST   /api/payments/mail          connect { workspaceId, providerId, attempt }
-//   DELETE /api/payments/mail          disconnect
+//   DELETE /api/payments/mail          disconnect ({ keyRevoked: false } when the person may not revoke the key)
 //
 // Lumitra Mail's answers become stable codes: 503 mail_not_configured (this platform has no Lumitra Mail
 // connection), 503 mail_unavailable (unreachable or failing; try again), 403/404/409 with the reason when it
@@ -114,8 +114,8 @@ export async function mailDisconnect(ctx: CompanyOwnerContext, deps: MailOwnerDe
   const ready = configured(deps);
   if (!ready) return NOT_CONFIGURED();
   try {
-    await disconnectShopMail(ctx.db, ready.mail, ctx.subject, ctx.companyId);
-    return Response.json({ connection: null });
+    const { keyRevoked } = await disconnectShopMail(ctx.db, ready.mail, ctx.subject, ctx.companyId);
+    return Response.json({ connection: null, keyRevoked });
   } catch (err) {
     return failure(err);
   }
