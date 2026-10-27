@@ -27,6 +27,7 @@ import VariantSelector from '@/lib/renderer/commerce/VariantSelector';
 import AddToCartButton from '@/lib/renderer/commerce/AddToCartButton';
 import CartView from '@/lib/renderer/commerce/CartView';
 import CheckoutButton from '@/lib/renderer/commerce/CheckoutButton';
+import { CommerceErrorBoundary, type CommerceControlKind } from '@/lib/renderer/commerce/CommerceErrorBoundary';
 import { createEditorFormElement, formKindOfComponent } from '@/lib/renderer/forms/editorFormElement';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { createStickyCtaElement } from '@/lib/renderer/stickyCta/stickyCtaElement';
@@ -151,40 +152,52 @@ export function createComponentElement(
       const hostType = component.type as string;
 
       // Context-driven controls: always render (no data-source binding gate).
+      // Each sits in its own error boundary, so a control that fails shows a
+      // message in its place instead of taking down the canvas (or the
+      // preview) around it.
+      const guarded = (kind: CommerceControlKind, control: React.ReactNode) => (
+        <CommerceErrorBoundary kind={kind} hostType={hostType} hostProps={propsWithIdentity}>
+          {control}
+        </CommerceErrorBoundary>
+      );
       if (dataKind === 'cart-view') {
-        return (
+        return guarded(
+          'cart-view',
           <CartView
             node={component}
             scope={scope}
             hostType={hostType}
             hostProps={propsWithIdentity}
             mode={mode}
-          />
+          />,
         );
       }
       if (dataKind === 'checkout-button') {
-        return (
+        return guarded(
+          'checkout-button',
           <CheckoutButton
             node={component}
             scope={scope}
             hostType={hostType}
             hostProps={propsWithIdentity}
-          />
+          />,
         );
       }
       if (dataKind === 'add-to-cart') {
-        return (
+        return guarded(
+          'add-to-cart',
           <AddToCartButton
             node={component}
             scope={scope}
             hostType={hostType}
             hostProps={propsWithIdentity}
             mode={mode}
-          />
+          />,
         );
       }
       if (dataKind === 'variant-selector' && renderNode) {
-        return (
+        return guarded(
+          'variant-selector',
           <VariantSelector
             node={component}
             scope={scope}
@@ -192,7 +205,7 @@ export function createComponentElement(
             hostType={hostType}
             hostProps={propsWithIdentity}
             mode={mode}
-          />
+          />,
         );
       }
 

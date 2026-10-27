@@ -396,7 +396,8 @@ describe('the buyer hears of a paid order', () => {
     const orderId = await placeOrder(await stockedRing(2));
     shop.mail.failNext('send', new MailRetryLater('down'));
     await pay(paid(orderId));
-    shop.clock.now = new Date(shop.clock.now.getTime() + 3 * 24 * 60 * 60 * 1000 + 1000);
+    // The order row is stamped by the database's real clock, so three days are counted from whichever is later.
+    shop.clock.now = new Date(Math.max(Date.now(), shop.clock.now.getTime()) + 3 * 24 * 60 * 60 * 1000 + 1000);
     shop.mail.failNext('send', new MailRetryLater('still down'));
     await sweepShopMail(shop.outbox);
     expect(await mailRow(orderId)).toMatchObject({ status: 'failed', last_error: 'still down' });
