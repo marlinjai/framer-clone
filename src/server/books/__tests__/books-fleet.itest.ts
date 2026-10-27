@@ -140,6 +140,7 @@ async function fleetMigrate(schema: string) {
     '021_order_payment',
     '022_payment_account',
     '023_shop_mail',
+    '024_receipt_paid_on',
   ]);
 }
 
@@ -213,6 +214,7 @@ describe('007_books through the fleet runner', () => {
       '021_order_payment',
       '022_payment_account',
       '023_shop_mail',
+      '024_receipt_paid_on',
     ]);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     expect(await readCommerceTenantState(owner, tgId, schema)).toBe('ready');
@@ -269,6 +271,7 @@ describe('009_books_import over a schema already holding issued documents (as pr
       '021_order_payment',
       '022_payment_account',
       '023_shop_mail',
+      '024_receipt_paid_on',
     ]);
 
     expect(await snapshot()).toEqual(before);
@@ -324,7 +327,7 @@ describe('012_books_template_v2 through the fleet runner', () => {
                 VALUES (${plain}, ${tenantId}, 'Plain', NULL, ${owner.json([{ unexpected: 1 }])}, now())`;
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2', '013_books_assets', '014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions', '018_books_text_format', '019_books_draft_delete', '020_catalogue_company', '021_order_payment', '022_payment_account', '023_shop_mail']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['012_books_template_v2', '013_books_assets', '014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions', '018_books_text_format', '019_books_draft_delete', '020_catalogue_company', '021_order_payment', '022_payment_account', '023_shop_mail', '024_receipt_paid_on']);
 
     const columns = await owner<{ column_name: string }[]>`
       SELECT column_name FROM information_schema.columns WHERE table_schema = ${schema} AND table_name = 'document_template' ORDER BY column_name`;
@@ -410,7 +413,7 @@ describe('013_books_assets (and 014 after it) through the fleet runner', () => {
     // The fleet runner applies the whole set: 013, then 014 (which lets an unused logo be deleted,
     // tested on its own below).
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets', '014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions', '018_books_text_format', '019_books_draft_delete', '020_catalogue_company', '021_order_payment', '022_payment_account', '023_shop_mail']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['013_books_assets', '014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions', '018_books_text_format', '019_books_draft_delete', '020_catalogue_company', '021_order_payment', '022_payment_account', '023_shop_mail', '024_receipt_paid_on']);
     expect(await owner`SELECT * FROM ${s}.document_template_version ORDER BY id`).toEqual(before);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
 
@@ -510,7 +513,7 @@ describe('014_books_asset_delete through the fleet runner', () => {
     });
 
     const result = await migrateAllCommerceTenants({ connectionString: ownerUrl });
-    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions', '018_books_text_format', '019_books_draft_delete', '020_catalogue_company', '021_order_payment', '022_payment_account', '023_shop_mail']);
+    expect(result.schemas.find((x) => x.schema === schema)?.applied).toEqual(['014_books_asset_delete', '015_books_products', '016_books_subject', '017_form_submissions', '018_books_text_format', '019_books_draft_delete', '020_catalogue_company', '021_order_payment', '022_payment_account', '023_shop_mail', '024_receipt_paid_on']);
     expect(await privileges(schema)).toEqual(expectedPrivileges());
     // The frozen logo of a document is found through its own index.
     const [index] = await owner<{ n: number }[]>`
