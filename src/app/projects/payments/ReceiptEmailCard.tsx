@@ -52,7 +52,9 @@ export default function ReceiptEmailCard() {
   const [busy, setBusy] = useState(false);
   // After a disconnect whose key the person could not revoke in Lumitra Mail.
   const [keyLeft, setKeyLeft] = useState(false);
-  // One attempt per opened chooser: a repeated press makes no second key at Lumitra Mail.
+  // One attempt id per press that can still succeed: a press while one is running is blocked (busy), and after a
+  // failed connect the next press gets a new id, because a failed connect revokes the key it made and Lumitra
+  // Mail would answer the same id with that revoked key again.
   const [attempt, setAttempt] = useState(newAttempt);
 
   const load = useCallback(async () => {
@@ -104,14 +106,18 @@ export default function ReceiptEmailCard() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ workspaceId, providerId, attempt }),
       });
+      // Success or failure, this attempt is used up (see above).
+      setAttempt(newAttempt());
       if (!res.ok) {
         setError(await readError(res, 'the shop could not be connected'));
         return;
       }
       setChoosing(false);
-      setAttempt(newAttempt());
       await load();
     } catch {
+      // The answer was lost: the next press is a new attempt too; a key made meanwhile is revoked by the
+      // connect that succeeds (it replaces the connection).
+      setAttempt(newAttempt());
       setError('the shop could not be connected; check your connection and try again');
     } finally {
       setBusy(false);

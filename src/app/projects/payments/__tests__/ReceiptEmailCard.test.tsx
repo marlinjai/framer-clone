@@ -61,7 +61,7 @@ describe('ReceiptEmailCard', () => {
     expect(screen.getByRole('link', { name: /Lumitra Mail/ }).getAttribute('href')).toBe('https://app.mail.lumitra.co');
   });
 
-  it('chooses a workspace and its only sender, connects once with the same attempt, and shows the connection', async () => {
+  it('chooses a workspace and its only sender, retries a failed connect as a new attempt, and shows the connection', async () => {
     respond({
       'GET /api/payments/mail': [
         { status: 200, body: NOT_CONNECTED },
@@ -85,8 +85,8 @@ describe('ReceiptEmailCard', () => {
     const posts = calls.filter((c) => c.method === 'POST');
     expect(posts).toHaveLength(2);
     expect(posts[0].body).toMatchObject({ workspaceId: WS, providerId: SENDER });
-    // A retry of the same choice is the same attempt: Lumitra Mail makes one key.
-    expect((posts[0].body as { attempt: string }).attempt).toBe((posts[1].body as { attempt: string }).attempt);
+    // A failed connect revoked its key: the retry is a new attempt, never a replay of that key.
+    expect((posts[0].body as { attempt: string }).attempt).not.toBe((posts[1].body as { attempt: string }).attempt);
   });
 
   it('a workspace without a sending account says to add one', async () => {
