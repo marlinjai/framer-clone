@@ -49,6 +49,7 @@ vi.mock('@/server/commerce/mail/connection', () => ({
   hasShopMail: vi.fn(async () => false),
 }));
 
+import { hasShopMail } from '@/server/commerce/mail/connection';
 import { createOrder } from '@/server/commerce/order/createOrder';
 import { commerceTenantDbChecked } from '@/server/commerce/db';
 import { UnknownVariantError } from '@/server/commerce/repository/errors';
@@ -166,6 +167,18 @@ describe('POST /api/commerce/orders tenancy (D4: tenant from the HOST)', () => {
     expect(res.status).toBe(500);
     expect((await res.json()).error.code).toBe('commerce_order_failed');
     expect(createOrderMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/commerce/orders receipt-email lookup', () => {
+  it('answers a committed order with confirmationEmail false when the lookup fails, never a 500', async () => {
+    vi.mocked(hasShopMail).mockRejectedValueOnce(new Error('relation "shop_mail_connection" does not exist'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }] }));
+    expect(res.status).toBe(201);
+    expect((await res.json()).confirmationEmail).toBe(false);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });
 

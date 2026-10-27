@@ -121,34 +121,43 @@ export async function connectShopMail(
   if (!sender) throw new ConnectRefused('sender_not_found', 'That sending account is not in the mail workspace.');
   await mail.ensureLanguages(args.subject, workspace);
   const key = await mail.createKey(args.subject, workspace.id, args.attempt);
+  const revokeNewKey = (): Promise<void> =>
+    mail.revokeKey(args.subject, workspace.id, key.id).catch((revokeErr: unknown) => {
+      console.error(`[shop-mail] the key of a failed connect could not be revoked (workspace ${workspace.id}):`, revokeErr);
+    });
   let templateIds: Record<string, string>;
   try {
     templateIds = await mail.installTemplates(key.key);
   } catch (err) {
-    await mail.revokeKey(args.subject, workspace.id, key.id).catch((revokeErr: unknown) => {
-      console.error(`[shop-mail] the key of a failed connect could not be revoked (workspace ${workspace.id}):`, revokeErr);
-    });
+    await revokeNewKey();
     throw err;
   }
 
-  const previous = await db.selectFrom('shop_mail_connection').selectAll().where('tenant_id', '=', args.companyId).executeTakeFirst();
-  const values = {
-    workspace_id: workspace.id,
-    workspace_name: workspace.name,
-    provider_id: sender.id,
-    sender: sender.label,
-    api_key_id: key.id,
-    api_key_sealed: seal(sealKey, key.key),
-    template_ids: toJsonb(templateIds),
-    templates_version: templatesVersion(),
-    connected_by: args.subject,
-    updated_at: args.now,
-  };
-  await db
-    .insertInto('shop_mail_connection')
-    .values({ tenant_id: args.companyId, ...values })
-    .onConflict((oc) => oc.column('tenant_id').doUpdateSet(values))
-    .execute();
+  let previous;
+  try {
+    previous = await db.selectFrom('shop_mail_connection').selectAll().where('tenant_id', '=', args.companyId).executeTakeFirst();
+    const values = {
+      workspace_id: workspace.id,
+      workspace_name: workspace.name,
+      provider_id: sender.id,
+      sender: sender.label,
+      api_key_id: key.id,
+      api_key_sealed: seal(sealKey, key.key),
+      template_ids: toJsonb(templateIds),
+      templates_version: templatesVersion(),
+      connected_by: args.subject,
+      updated_at: args.now,
+    };
+    await db
+      .insertInto('shop_mail_connection')
+      .values({ tenant_id: args.companyId, ...values })
+      .onConflict((oc) => oc.column('tenant_id').doUpdateSet(values))
+      .execute();
+  } catch (err) {
+    // No row stores this key's id, so nothing else could ever revoke it.
+    await revokeNewKey();
+    throw err;
+  }
   // The new key works: the old one (a reconnect) is taken back.
   if (previous && previous.api_key_id !== key.id) {
     await mail.revokeKey(args.subject, previous.workspace_id, previous.api_key_id).catch((err: unknown) => {

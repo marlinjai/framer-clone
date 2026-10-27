@@ -230,6 +230,14 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
 
+    // The receipt-email flag is a courtesy: the order is already committed, so a failed lookup
+    // (for example a tenant schema not yet migrated to 023_shop_mail) is logged and answered
+    // as "no email" instead of turning a placed order into a checkout error.
+    const confirmationEmail = await hasShopMail(db, companyId).catch((err: unknown) => {
+      console.error(`[shop-mail] receipt-email lookup failed for order ${result.orderId}:`, err);
+      return false;
+    });
+
     return Response.json(
       {
         orderId: result.orderId,
@@ -237,7 +245,7 @@ export async function POST(req: Request): Promise<Response> {
         totalCents: order.totalCents,
         currency: order.currency,
         provider,
-        confirmationEmail: await hasShopMail(db, companyId),
+        confirmationEmail,
       },
       { status: 201 },
     );
