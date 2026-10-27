@@ -149,11 +149,12 @@ connections to the suite. The four lines below are in that order.
   order's own buyer details are frozen on it), but the customer list mixes their invoices. Needs a decision on
   the shared contact model (email as part of a person's identity, or a contact per buyer), which spans every
   app on the contacts database. Found in the receipt email test on 2026-10-27. (2026-10-27)
-- [ ] 3e. Customer email from the shop: an order confirmation with a link to the receipt, and the notice when a
+- [x] 3e. Customer email from the shop: an order confirmation with a link to the receipt, and the notice when a
   late payment had to be refunded, sent from the shop company's own Lumitra Mail workspace (framer-clone is
-  Lumitra Mail's trusted application `sites`, email-editor pull request 176). Plan
-  [shop receipt email](docs/plans/2026-10-27-shop-receipt-email.md) : in-progress; built and tested 2026-10-27,
-  open: the proof on production with the test company (connect, buy, receive, open the link). (2026-10-27)
+  Lumitra Mail's trusted application `sites`, email-editor pull request 176; framer-clone pull request 185).
+  Plan [shop receipt email](docs/plans/2026-10-27-shop-receipt-email.md) : completed. Proven on production
+  2026-10-27: the test company connected its workspace (sending domain testshop.lumitra.co), order ORD-000005
+  paid through Stripe, the confirmation arrived in the buyer's inbox and its link served receipt RE-4. (2026-10-27)
 - [ ] 3d. Deletable invoice drafts: a draft (no number, not a bookkeeping record) can be deleted with its
   lines and events (hard delete, no tombstone, migration relaxing the 007 guards for drafts only);
   issued documents stay undeletable. Reverses decision 8 of the Books integration plan for drafts
