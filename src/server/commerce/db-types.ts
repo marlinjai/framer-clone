@@ -819,7 +819,23 @@ export interface PaymentEventTable {
   created_at: Generated<Timestamp>;
 }
 
-/** 023_shop_mail: the company's Lumitra Mail workspace for the receipt email (the send key sealed). */
+/**
+ * 022_payment_account: the company's connected payment account (Stripe Connect); the account id is fixed (BK020).
+ */
+export interface PaymentAccountTable {
+  tenant_id: string;
+  provider: string;
+  account_id: string;
+  status: Generated<string>;
+  charges_enabled: Generated<boolean>;
+  details_submitted: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
+}
+
+/**
+ * 023_shop_mail: the company's Lumitra Mail workspace for the receipt email (the send key sealed).
+ */
 export interface ShopMailConnectionTable {
   tenant_id: string;
   workspace_id: string;
@@ -845,22 +861,8 @@ export interface ShopMailTable {
   next_attempt_at: Timestamp;
   last_error: string | null;
   mailing_id: string | null;
-  /** The letter as built at its first attempt (outbox.ts FrozenLetter), sent unchanged on every retry. */
+  // The letter as built at its first attempt (outbox.ts FrozenLetter), sent unchanged on every retry.
   letter: ColumnType<Record<string, unknown> | null, JsonbWrite | null, JsonbWrite | null>;
-  created_at: Generated<Timestamp>;
-  updated_at: Timestamp;
-}
-
-/**
- * 022_payment_account: the company's connected payment account (Stripe Connect); the account id is fixed (BK020).
- */
-export interface PaymentAccountTable {
-  tenant_id: string;
-  provider: string;
-  account_id: string;
-  status: Generated<string>;
-  charges_enabled: Generated<boolean>;
-  details_submitted: Generated<boolean>;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
 }
@@ -915,9 +917,9 @@ export interface CommerceDB {
   product_site_hidden: ProductSiteHiddenTable;
   order_payment: OrderPaymentTable;
   payment_event: PaymentEventTable;
+  payment_account: PaymentAccountTable;
   shop_mail_connection: ShopMailConnectionTable;
   shop_mail: ShopMailTable;
-  payment_account: PaymentAccountTable;
 }
 
 // --- compile-time discipline guards (the package's brand types) --------------

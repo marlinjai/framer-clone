@@ -77,6 +77,11 @@ const COLUMN_OVERRIDES: Record<string, string> = {
   'books_product.kind': "Generated<'service' | 'product'>",
   'books_product.price_basis': "Generated<'net' | 'gross'>",
   'books_product.tax_class': "Generated<'standard' | 'reduced' | 'zero'>",
+  // 023_shop_mail: TEXT columns with a CHECK vocabulary (no enum type).
+  'shop_mail.kind': "'order_confirmation' | 'late_refund'",
+  'shop_mail.status': "Generated<'pending' | 'sent' | 'blocked' | 'failed'>",
+  // Nullable JSONB, written through toJsonb (or null) and read parsed.
+  'shop_mail.letter': 'ColumnType<Record<string, unknown> | null, JsonbWrite | null, JsonbWrite | null>',
 };
 
 /** Named types the overrides above refer to, emitted with the scalar aliases. */
@@ -107,6 +112,8 @@ const JSON_COLUMNS: Record<string, string> = {
   'collection.description_format': 'RichText',
   // 021_order_payment: the buyer given at checkout, parsed with zod on read (src/server/commerce/payment/buyer.ts).
   'order_payment.buyer': 'Record<string, unknown>',
+  // 023_shop_mail: the template ids of the company's workspace, by name.
+  'shop_mail_connection.template_ids': 'Record<string, string>',
 };
 
 /** The type-only imports the JSON shapes need. */
@@ -175,6 +182,9 @@ const TABLE_DOCS: Record<string, string> = {
     '013_books_assets: an uploaded logo (PNG or JPEG bytes), one per company and\nSHA-256, append-only (no updated_at).',
   form_submission:
     '017_form_submissions: one accepted submission of a form on a published site.\nDeleted for real (owner, project delete, company erasure); `read_at` is the only\ncolumn that changes. No IP address is stored.',
+  shop_mail_connection:
+    "023_shop_mail: the company's Lumitra Mail workspace for the receipt email (the send key sealed).",
+  shop_mail: '023_shop_mail: the outbox, one row per order and kind of mail.',
   books_product:
     '015_books_products: an item of the company\'s product and service list. Mutable,\narchived instead of deleted; draft lines copy its values and never reference it.\n`name_key` and `search_text` are folded by the repository (src/lib/books/searchKey.ts).',
 };
@@ -188,6 +198,7 @@ const COLUMN_NOTES: Record<string, string> = {
   'product_variant.manage_inventory': 'Added in 006_inventory_policy (default TRUE).',
   'product_variant.allow_backorder': 'Added in 006_inventory_policy (default FALSE).',
   'sales_document.intro_format': "The intro text's formatting (017; the run model of render/richText.ts); null prints the plain text.",
+  'shop_mail.letter': 'The letter as built at its first attempt (outbox.ts FrozenLetter), sent unchanged on every retry.',
   'credit_note.order_id': 'Added in 005_minimal_orders (hard FK to "order").',
 };
 
