@@ -511,7 +511,6 @@ export interface SalesDocumentTable {
   number_value: Int8 | null;
   issue_date: DateString | null;
   service_date: DateString | null;
-  paid_on: DateString | null;
   service_period_start: DateString | null;
   service_period_end: DateString | null;
   due_date: DateString | null;
@@ -547,6 +546,7 @@ export interface SalesDocumentTable {
   // The intro text's formatting (017; the run model of render/richText.ts); null prints the plain text.
   intro_format: JsonColumn<RichText> | null;
   outro_format: JsonColumn<RichText> | null;
+  paid_on: DateString | null;
 }
 
 /**
