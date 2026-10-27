@@ -42,7 +42,7 @@ const TAX_CLASSES = new Set(['standard', 'reduced', 'zero']);
 
 /** A receipt that cannot be made from this order (the reason is a stable code, no personal data). */
 export class ReceiptError extends Error {
-  constructor(readonly code: 'ORDER_NOT_FOUND' | 'BUYER_MISSING' | 'NOT_PAID' | 'TOTALS_MISMATCH' | 'CUSTOMER_ARCHIVED') {
+  constructor(readonly code: 'ORDER_NOT_FOUND' | 'BUYER_MISSING' | 'NOT_PAID' | 'TOTALS_MISMATCH' | 'CUSTOMER_ARCHIVED' | 'CONTACT_ARCHIVED' | 'TAX_IDENTITY_MISMATCH') {
     super(code);
     this.name = 'ReceiptError';
   }
@@ -93,15 +93,31 @@ function recipientFor(buyer: Buyer, contactId: string): RecipientContact {
   };
 }
 
-/** The Books customer for the buyer (the existing one of the contact, or a new one), and its contact. */
+/** A VAT id compared as the tax office reads it: no spaces, no case. */
+function normalizedVatId(vatId: string | null | undefined): string | null {
+  const normalized = (vatId ?? '').replace(/\s+/g, '').toUpperCase();
+  return normalized === '' ? null : normalized;
+}
+
+/**
+ * The Books customer for the buyer (the existing one of the contact, or a new one), and its contact. The
+ * receipt freezes the customer's tax identity (type and VAT id) next to the buyer's address, so an existing
+ * customer is reused only when that identity is the buyer's own; another buyer of the same name with another VAT
+ * id is refused instead of getting a receipt that shows the first buyer's tax identity. An archived contact is
+ * refused as well: the recipient override carries no archived flag of its own.
+ */
 async function customerFor(scope: BooksScope, contactBook: ContactBook, buyer: Buyer): Promise<{ customerId: string; contactId: string }> {
   const input = contactFor(buyer);
   const contact =
     (await contactBook.findSame(scope.tenantId, { kind: input.kind, name: input.name, companyOrRole: input.companyOrRole })) ??
     (await contactBook.create(scope.tenantId, input));
+  if (contact.archived) throw new ReceiptError('CONTACT_ARCHIVED');
   const [existing] = await customersByContactIds(scope, [contact.id]);
   if (existing) {
     if (existing.archivedAt) throw new ReceiptError('CUSTOMER_ARCHIVED');
+    if (existing.customerType !== (buyer.vatId ? 'b2b' : 'b2c') || normalizedVatId(existing.vatId) !== normalizedVatId(buyer.vatId)) {
+      throw new ReceiptError('TAX_IDENTITY_MISMATCH');
+    }
     return { customerId: existing.id, contactId: contact.id };
   }
   const created = await createCustomer(scope, {
@@ -134,11 +150,11 @@ export async function ensureReceipt(
   if (!order) throw new ReceiptError('ORDER_NOT_FOUND');
   const payment = await db
     .selectFrom('order_payment')
-    .select(['status', 'buyer'])
+    .select(['status', 'buyer', 'paid_at'])
     .where('tenant_id', '=', scope.tenantId)
     .where('order_id', '=', orderId)
     .executeTakeFirst();
-  if (!payment || payment.status !== 'paid') throw new ReceiptError('NOT_PAID');
+  if (!payment || payment.status !== 'paid' || !payment.paid_at) throw new ReceiptError('NOT_PAID');
 
   // An earlier attempt: issued, answer it; a draft left behind, start over.
   const earlier = await db
@@ -163,6 +179,8 @@ export async function ensureReceipt(
     netOrGross: order.net_or_gross,
     serviceDate: berlinDay(new Date(order.created_at)),
     sourceOrderId: orderId,
+    // The day the buyer paid, frozen with the receipt: a retry after a failed attempt still states it.
+    paidOn: berlinDay(new Date(payment.paid_at)),
   });
   const id = draft.document.id;
 

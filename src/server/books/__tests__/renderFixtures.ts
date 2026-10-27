@@ -99,6 +99,7 @@ export function smallBusinessInvoice(): { document: SalesDocumentWithSnapshots; 
     replacesDocumentId: null,
     printReplacesReference: false,
     sourceOrderId: null,
+    paidOn: null,
     documentNumber: '62',
     numberValue: 62,
     issueDate: '2026-10-19',

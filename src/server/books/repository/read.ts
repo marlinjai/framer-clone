@@ -68,6 +68,8 @@ export interface SalesDocument {
   numberValue: number | null;
   issueDate: string | null;
   serviceDate: string | null;
+  /** The day a shop receipt was paid (024_receipt_paid_on); null for every other document. */
+  paidOn: string | null;
   servicePeriodStart: string | null;
   servicePeriodEnd: string | null;
   dueDate: string | null;
@@ -203,6 +205,7 @@ export type DocumentRow = {
   number_value: string | null;
   issue_date: string | null;
   service_date: string | null;
+  paid_on: string | null;
   service_period_start: string | null;
   service_period_end: string | null;
   due_date: string | null;
@@ -258,6 +261,7 @@ export function mapDocument(row: DocumentRow): SalesDocument {
     numberValue: row.number_value === null ? null : Number(row.number_value),
     issueDate: row.issue_date,
     serviceDate: row.service_date,
+    paidOn: row.paid_on,
     servicePeriodStart: row.service_period_start,
     servicePeriodEnd: row.service_period_end,
     dueDate: row.due_date,

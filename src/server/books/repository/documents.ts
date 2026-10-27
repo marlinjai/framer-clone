@@ -217,6 +217,8 @@ const createInput = z.object({
   outroFormat: optionalFormat,
   /** The shop order this invoice is the receipt of (sales_document.source_order_id; one receipt per order, 021). */
   sourceOrderId: z.string().min(1).max(200).optional(),
+  /** The day that order was paid, printed on its receipt (sales_document.paid_on, 024). */
+  paidOn: isoDate.optional(),
 });
 export type CreateDraftInput = z.input<typeof createInput>;
 
@@ -259,6 +261,7 @@ export async function createDraft(scope: BooksScope, input: CreateDraftInput): P
         contract_reference: args.contractReference ?? null,
         subject: args.subject ?? null,
         source_order_id: args.sourceOrderId ?? null,
+        paid_on: args.paidOn ?? null,
         ...texts(args),
         customer_type: customer?.customer_type ?? null,
         vat_id: customer?.vat_id ?? null,

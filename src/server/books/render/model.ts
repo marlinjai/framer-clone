@@ -421,8 +421,9 @@ export function buildRenderModel(input: RenderInput): RenderModel {
   const paymentFields: PaymentLineField[] = [];
   if (doc.docType === 'invoice' && doc.sourceOrderId && doc.issueDate) {
     // The receipt of a paid shop order (payment/receipt.ts issues it only once the payment is confirmed):
-    // paid on its issue day, so no due date, no transfer reference and no bank details to pay into.
-    payment.push(`${label('payment.paidOn')} ${formatDate(doc.issueDate)}. ${label('payment.paidSuffix')}`);
+    // paid on the day recorded with the payment (its issue day when none is), so no due date, no transfer
+    // reference and no bank details to pay into.
+    payment.push(`${label('payment.paidOn')} ${formatDate(doc.paidOn ?? doc.issueDate)}. ${label('payment.paidSuffix')}`);
     paymentFields.push('paid');
   } else if (doc.docType === 'invoice') {
     if (doc.dueDate) {

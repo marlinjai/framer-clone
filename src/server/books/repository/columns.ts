@@ -30,6 +30,7 @@ export function documentColumns(eb: DocEb) {
     'sales_document.number_value',
     eb.cast<string | null>('sales_document.issue_date', 'text').as('issue_date'),
     eb.cast<string | null>('sales_document.service_date', 'text').as('service_date'),
+    eb.cast<string | null>('sales_document.paid_on', 'text').as('paid_on'),
     eb.cast<string | null>('sales_document.service_period_start', 'text').as('service_period_start'),
     eb.cast<string | null>('sales_document.service_period_end', 'text').as('service_period_end'),
     eb.cast<string | null>('sales_document.due_date', 'text').as('due_date'),

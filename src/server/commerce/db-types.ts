@@ -511,6 +511,7 @@ export interface SalesDocumentTable {
   number_value: Int8 | null;
   issue_date: DateString | null;
   service_date: DateString | null;
+  paid_on: DateString | null;
   service_period_start: DateString | null;
   service_period_end: DateString | null;
   due_date: DateString | null;

@@ -222,6 +222,17 @@ describe('paying an order and its receipt', () => {
     expect(await snapshot(second)).toMatchObject({ name: 'Alex Example', addressLine1: 'Neue Straße 9', postalCode: '10115', city: 'Berlin' });
   });
 
+  it('a buyer of the same name with another VAT id gets no receipt showing the first buyer\'s tax identity', async () => {
+    const ring = await stockedRing(3, 4999);
+    const first = await placeOrder(ring, 1);
+    await handlePaymentEvent(shop.deps, event(first, 'payment_succeeded'));
+    const business: BuyerInput = { ...BUYER, vatId: 'DE123456789' };
+    const second = await placeOrder(ring, 1, business);
+    const outcome = await handlePaymentEvent(shop.deps, event(second, 'payment_succeeded'));
+    expect(outcome).toMatchObject({ status: 'paid', receiptDocumentId: null, receiptError: 'TAX_IDENTITY_MISMATCH' });
+    expect(await receiptsOf(second)).toEqual([]);
+  });
+
   it('forward: paid with its fee, the receipt issued in the series and linked to the order', async () => {
     const ring = await stockedRing(3, 4999);
     const orderId = await placeOrder(ring, 2);
