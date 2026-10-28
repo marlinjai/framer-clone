@@ -108,13 +108,12 @@ connections to the suite. The four lines below are in that order.
   customers, documents, the document editor with issue on confirmation) and phase 3 (2026-10-20,
   templates, the PDF rendered with pdf-lib from the frozen snapshots, checked for the section 34a
   UStDV and section 14 (4) UStG fields and stored once in `sales_document_file`, migration
-  `008_books_files`, download from the editor). Open, all operator steps: register the app
-  `books` in auth-brain and grant it to Whiz-Art Media and Lumitra, set
-  `CONTACTS_DATABASE_URL` in framer-clone's Infisical project (copied from the receipts project
-  with `copy_secret`), roll `008` out with the deploy, and run `pnpm books:init-company` for
-  Whiz-Art Media. Then the first real invoice from the editor closes this line. See
+  `008_books_files`, download from the editor). The operator steps are done: the Books are live
+  for Whiz-Art Media (app grant, contacts database, `008`, the company set up), checked
+  2026-10-28 in the live editor: invoices 1 to 63 listed, counter at 64. Open: the first real
+  invoice from the editor (Nr. 64) closes this line. See
   [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md), sections "Phase 1 build
-  specification" and "Phase 2 and 3 build notes (2026-10-20)". (2026-10-20)
+  specification" and "Phase 2 and 3 build notes (2026-10-20)". (2026-10-28)
 - [x] 3b. The invoice editor in the app's editor shell (PR #164, the glass redesign of the invoice
   editor and template composer): deployed (deploy run 40202044416) and proven live on the Books
   Testfirma company. Done 2026-10-25. See [plan](docs/plans/2026-10-25-books-invoice-editor-shell.md). (2026-10-26)
@@ -174,17 +173,18 @@ connections to the suite. The four lines below are in that order.
   production. Then the receipts app's register rows map to the mirror by invoice number. See the
   Books plan's amendment of 2026-10-15 and "Historical import build notes (2026-10-20)".
   (2026-10-20)
-- [ ] 5. Importing past invoices by uploading PDFs in the Books: a company drops up to 50 invoice
+- [x] 5. Importing past invoices by uploading PDFs in the Books: a company drops up to 50 invoice
   PDFs, Claude Sonnet 5.5 reads each one into the historical-import record, the user checks and
   corrects the rows in a review table beside the PDF, and confirmed rows import through the same
   core as `pnpm books:import` (original PDF as the document of record, counter raised upwards
-  only). Built 2026-10-20 on `feat/books-upload-import`: migration `010_books_upload_import`
-  (staging rows, an extraction ledger for the daily ceiling, printed numbers outside the
-  company format, VAT discount lines), small-business, regular VAT and reverse-charge invoices,
-  the review table beside the PDF. Open, the operator steps: deploy (rolls 010 out), optionally
-  set `AI_INVOICE_EXTRACT_MODEL` and `BOOKS_IMPORT_DAILY_LIMIT`, and prove the first real upload
-  in the editor. See [plan](docs/plans/2026-10-20-books-upload-import.md), "Build notes".
-  (2026-10-20)
+  only). Built 2026-10-20 (migration `010_books_upload_import`). First real upload proven
+  2026-10-28 for Whiz-Art Media: invoices 62 (BCB GmbH, 750 €) and 63 (Schönlau & Rudolph
+  GbR, 387 €) read correctly, imported with "Import all ready", counter raised to 64, the
+  original PDF downloadable from the document. Done 2026-10-28. See
+  [plan](docs/plans/2026-10-20-books-upload-import.md), "Build notes".
+- [ ] 5b. The import page keeps showing the old "Next invoice number" in its header after an
+  import raised the counter (showed 62 after the 2026-10-28 import set it to 64; the Books
+  list was right). Refresh the header from the import result. (2026-10-28)
 - [ ] 6. Domestic reverse charge (section 13b UStG) for Books documents and the import, when a
   company needs it. Not supported now (lead's decision of 2026-10-20): the Books cannot issue such
   documents, so the import refuses them too (`reverse_charge_domestic`, the row says to keep the
