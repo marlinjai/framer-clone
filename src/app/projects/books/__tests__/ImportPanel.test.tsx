@@ -260,7 +260,11 @@ describe('ImportPanel', () => {
     expect(dialog.textContent).toContain('Your next invoice number will become 71. It cannot be lowered later.');
     expect(calls.some((c) => c.url.endsWith('/confirm'))).toBe(false);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Import and set the next number to 71' }));
+    expect(screen.getByText(/Next invoice number: 62\./)).toBeTruthy();
     await screen.findByText(/counter was raised to 71/);
+    // The header follows the raise instead of keeping the number from before the import.
+    expect(screen.getByText(/Next invoice number: 71\./)).toBeTruthy();
+    expect(screen.queryByText(/Next invoice number: 62\./)).toBeNull();
     expect(calls.find((c) => c.url.endsWith('/i1/confirm'))!.body).toEqual({ expectedVersion: 3, confirmCounterRaiseTo: 71 });
   });
 
@@ -274,7 +278,7 @@ describe('ImportPanel', () => {
             item({ id: 'i2', problems: [{ code: 'counter_raised', path: null, blocking: false, count: 71 }] }),
             item({ id: 'i3' }),
           ],
-          counter: null,
+          counter: { format: '{n}', nextValue: 62 },
           limits: LIMITS,
         },
       }),
@@ -290,6 +294,8 @@ describe('ImportPanel', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Import and set the next number to 71' }));
     await waitFor(() => expect(screen.getAllByText('Imported')).toHaveLength(3));
     expect(calls.filter((c) => c.url.endsWith('/confirm')).map((c) => (c.body as Json).confirmCounterRaiseTo)).toEqual([66, 71, null]);
+    // Each raise moves the header; the last row (no raise) leaves it at the highest value.
+    expect(screen.getByText(/Next invoice number: 71\./)).toBeTruthy();
   });
 
   it('a number jumping far ahead is confirmed for exactly that number', async () => {

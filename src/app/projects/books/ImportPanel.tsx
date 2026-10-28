@@ -309,7 +309,14 @@ export default function ImportPanel() {
     try {
       const res = await importsApi.confirm(item.id, item.version, confirmedRaise);
       upsert(res.item);
-      if (res.counterRaisedTo !== null) setNotice(`The invoice counter was raised to ${res.counterRaisedTo}: your next invoice continues after the imported ones.`);
+      const raisedTo = res.counterRaisedTo;
+      if (raisedTo !== null) {
+        // The header shows the next invoice number too: move it with the raise, never down.
+        setList((cur) =>
+          cur?.counter && raisedTo > cur.counter.nextValue ? { ...cur, counter: { ...cur.counter, nextValue: raisedTo } } : cur,
+        );
+        setNotice(`The invoice counter was raised to ${raisedTo}: your next invoice continues after the imported ones.`);
+      }
       return null;
     } catch (err) {
       return errorText(err);
