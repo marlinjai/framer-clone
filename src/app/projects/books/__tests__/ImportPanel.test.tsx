@@ -528,6 +528,29 @@ describe('ImportPanel', () => {
     await waitFor(() => expect(document.activeElement).toBe(heading));
   });
 
+  it('a reload that read the counter before an import raised it never lowers the header', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const stale = {
+      items: [item({ id: 'i1', problems: [{ code: 'counter_raised', path: null, blocking: false, count: 71 }] }), item({ id: 'i9', status: 'extracting', updatedAt: new Date().toISOString() })],
+      counter: { format: '{n}', nextValue: 62 },
+      limits: LIMITS,
+    };
+    server({
+      'GET /api/books/imports': () => ({ status: 200, body: stale }),
+      'POST /api/books/imports/i1/confirm': () => ({ status: 200, body: { item: item({ status: 'imported', documentId: 'd1' }), documentId: 'd1', counterRaisedTo: 71 } }),
+    });
+    render(<ImportPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Import all ready (1)' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Import and set the next number to 71' }));
+    await screen.findByText(/counter was raised to 71/);
+    expect(screen.getByText(/Next invoice number: 71\./)).toBeTruthy();
+    // The refresh while i9 is read answers with the counter from before the raise.
+    await vi.advanceTimersByTimeAsync(10_500);
+    expect(calls.filter((c) => c.method === 'GET').length).toBeGreaterThan(1);
+    expect(screen.getByText(/Next invoice number: 71\./)).toBeTruthy();
+    expect(screen.queryByText(/Next invoice number: 62\./)).toBeNull();
+  });
+
   it('a batch raise that grows while its dialog is open asks again with the new number, nothing imported', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const lists = [

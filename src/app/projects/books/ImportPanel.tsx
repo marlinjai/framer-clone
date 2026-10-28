@@ -136,7 +136,10 @@ export default function ImportPanel() {
     try {
       const next = await importsApi.list();
       if (!mounted.current) return;
-      setList(next);
+      // A response read before an import committed may carry the counter from before its raise: never lower the header.
+      setList((cur) =>
+        cur?.counter && next.counter && cur.counter.nextValue > next.counter.nextValue ? { ...next, counter: cur.counter } : next,
+      );
       return next;
     } catch (err) {
       if (err instanceof BooksApiError && ['books_not_enabled', 'forbidden', 'unauthorized', 'books_not_provisioned', 'sites_not_enabled', 'no_active_company'].includes(err.code)) {
