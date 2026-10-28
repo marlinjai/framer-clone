@@ -182,9 +182,10 @@ connections to the suite. The four lines below are in that order.
   GbR, 387 €) read correctly, imported with "Import all ready", counter raised to 64, the
   original PDF downloadable from the document. Done 2026-10-28. See
   [plan](docs/plans/2026-10-20-books-upload-import.md), "Build notes".
-- [ ] 5b. The import page keeps showing the old "Next invoice number" in its header after an
-  import raised the counter (showed 62 after the 2026-10-28 import set it to 64; the Books
-  list was right). Refresh the header from the import result. (2026-10-28)
+- [x] 5b. The import page kept showing the old "Next invoice number" in its header after an
+  import raised the counter (showed 62 after the 2026-10-28 import set it to 64). The header now
+  moves with every raise the import reports, never down; covered by the single-row and the
+  "Import all ready" tests. Done 2026-10-28.
 - [ ] 6. Domestic reverse charge (section 13b UStG) for Books documents and the import, when a
   company needs it. Not supported now (lead's decision of 2026-10-20): the Books cannot issue such
   documents, so the import refuses them too (`reverse_charge_domestic`, the row says to keep the

@@ -136,7 +136,10 @@ export default function ImportPanel() {
     try {
       const next = await importsApi.list();
       if (!mounted.current) return;
-      setList(next);
+      // A response read before an import committed may carry the counter from before its raise: never lower the header.
+      setList((cur) =>
+        cur?.counter && next.counter && cur.counter.nextValue > next.counter.nextValue ? { ...next, counter: cur.counter } : next,
+      );
       return next;
     } catch (err) {
       if (err instanceof BooksApiError && ['books_not_enabled', 'forbidden', 'unauthorized', 'books_not_provisioned', 'sites_not_enabled', 'no_active_company'].includes(err.code)) {
@@ -309,7 +312,14 @@ export default function ImportPanel() {
     try {
       const res = await importsApi.confirm(item.id, item.version, confirmedRaise);
       upsert(res.item);
-      if (res.counterRaisedTo !== null) setNotice(`The invoice counter was raised to ${res.counterRaisedTo}: your next invoice continues after the imported ones.`);
+      const raisedTo = res.counterRaisedTo;
+      if (raisedTo !== null) {
+        // The header shows the next invoice number too: move it with the raise, never down.
+        setList((cur) =>
+          cur?.counter && raisedTo > cur.counter.nextValue ? { ...cur, counter: { ...cur.counter, nextValue: raisedTo } } : cur,
+        );
+        setNotice(`The invoice counter was raised to ${raisedTo}: your next invoice continues after the imported ones.`);
+      }
       return null;
     } catch (err) {
       return errorText(err);
