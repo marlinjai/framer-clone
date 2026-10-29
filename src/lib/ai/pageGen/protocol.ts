@@ -37,6 +37,17 @@ export interface PageGenRequest {
   existingPageTitles?: string[];
   /** Site language and real contact data from Site settings (promptSections/siteContext.ts). */
   siteContext?: SiteContext;
+  /** The run's id (a UUID), chosen by the browser transport before sending. */
+  runId?: string;
+}
+
+/**
+ * SSE `gen:started`: the first event. The run's id, which the editor keeps so
+ * it can collect the run (GET /api/ai/generate-page/[id]) after losing the
+ * stream, or cancel it (DELETE on the same path).
+ */
+export interface PageGenStarted {
+  generationId: string;
 }
 
 /** SSE `gen:progress`: the model is writing (or the server is checking / repairing). */

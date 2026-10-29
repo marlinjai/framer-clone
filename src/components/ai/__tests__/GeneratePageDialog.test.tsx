@@ -19,7 +19,9 @@ let store: RootStoreType;
 let initialPages = 0;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
-import { GeneratePageDialog } from '../GeneratePageDialog';
+import { GeneratePageButton, GeneratePageDialog } from '../GeneratePageDialog';
+import { DETACH } from '@/lib/ai/resumableRun';
+import { loadPendingRun } from '@/lib/ai/pageGen/flow';
 import { expectBodyScrollsFooterFixed } from '@/components/ui/__tests__/viewportFit';
 
 /** A transport the test drives by hand: each call is captured and resolved later. */
@@ -336,5 +338,140 @@ describe('GeneratePageDialog fits a small window', () => {
   it('scrolls its body between a fixed header and the action footer', () => {
     setup(vi.fn() as unknown as PageGenTransport);
     expectBodyScrollsFooterFixed(screen.getByRole('dialog'), screen.getByLabelText('Brief'));
+  });
+});
+
+describe('GeneratePageDialog survives the tab going away (phone in the background)', () => {
+  function manualResume() {
+    const calls: Array<{ id: string; handlers: PageGenHandlers; signal?: AbortSignal }> = [];
+    const resume = (id: string, handlers: PageGenHandlers, signal?: AbortSignal) =>
+      new Promise<void>(() => {
+        calls.push({ id, handlers, signal });
+      });
+    return { resume, calls };
+  }
+
+  function setupWithResume(transport: PageGenTransport, resume: ReturnType<typeof manualResume>['resume']) {
+    const onOpenChange = vi.fn();
+    const utils = render(
+      <GeneratePageDialog open onOpenChange={onOpenChange} transport={transport} resume={resume} />,
+    );
+    return { ...utils, onOpenChange };
+  }
+
+  it('cancel and close stop the run on the server; leaving the editor only stops following it', () => {
+    const { transport, calls } = manualTransport();
+    const r = manualResume();
+    const first = setupWithResume(transport, r.resume);
+    typeBrief('A bakery');
+    fireEvent.click(screen.getByRole('button', { name: /^Generate$/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(calls[0].signal?.aborted).toBe(true);
+    expect(calls[0].signal?.reason).not.toBe(DETACH);
+
+    fireEvent.click(screen.getByRole('button', { name: /^Generate$/ }));
+    act(() => calls[1].handlers.onStarted?.('gen-2'));
+    first.unmount();
+    expect(calls[1].signal?.aborted).toBe(true);
+    expect(calls[1].signal?.reason).toBe(DETACH);
+    expect(loadPendingRun(project().id)?.generationId).toBe('gen-2');
+  });
+
+  it('after a reload, reopening collects the run and applies it to the target captured at the start', async () => {
+    const { transport, calls } = manualTransport();
+    const r = manualResume();
+    const first = setupWithResume(transport, r.resume);
+    typeBrief('A bakery');
+    fireEvent.click(screen.getByRole('button', { name: /^Generate$/ }));
+    act(() => calls[0].handlers.onStarted?.('gen-1'));
+    const req = calls[0].req;
+    first.unmount(); // iOS discarded the tab
+
+    // Meanwhile the user is on another page: the result still goes where it was asked for.
+    const other = project().createPage('Other');
+    store.editorUI.setCurrentPage(other);
+    setupWithResume(transport, r.resume);
+    expect(r.calls).toHaveLength(1);
+    expect(r.calls[0].id).toBe('gen-1');
+    expect(screen.getByLabelText('Brief')).toHaveValue('A bakery');
+    expect(screen.getByLabelText('Brief')).toBeDisabled();
+
+    act(() => r.calls[0].handlers.onProgress?.({ phase: 'images', receivedChars: 100, attempt: 1 }));
+    expect(screen.getByText('Finding photos...')).toBeInTheDocument();
+    await act(async () => r.calls[0].handlers.onResult?.(resultFor(req, PAGE, 'gen-1')));
+    expect(screen.getByText(/Added 3 components on a new page/)).toBeInTheDocument();
+    expect(store.editorUI.currentPage!.metadata.title).toBe('Bakery');
+    expect(loadPendingRun(project().id)).toBeUndefined();
+  });
+
+  it('a resumed run whose component was deleted meanwhile changes nothing and says why', async () => {
+    const page = store.editorUI.currentPage!;
+    const container = (page.appComponentTree as ComponentInstance).children[0] as ComponentInstance;
+    store.editorUI.selectComponent(container);
+    const { transport, calls } = manualTransport();
+    const r = manualResume();
+    const first = setupWithResume(transport, r.resume);
+    fireEvent.click(screen.getByRole('button', { name: 'Replace selection' }));
+    typeBrief('A hero');
+    fireEvent.click(screen.getByRole('button', { name: /^Generate$/ }));
+    act(() => calls[0].handlers.onStarted?.('gen-1'));
+    const req = calls[0].req;
+    first.unmount();
+
+    const containerId = container.id;
+    expect(page.deleteComponent(containerId)).toBe(true);
+
+    setupWithResume(transport, r.resume);
+    await act(async () => r.calls[0].handlers.onResult?.(resultFor(req, PAGE, 'gen-1')));
+    expect(screen.getByRole('alert')).toHaveTextContent('Nothing was changed');
+    expect((page.appComponentTree as ComponentInstance).children.some((c: ComponentInstance) => c.label === 'Hero')).toBe(false);
+    expect(loadPendingRun(project().id)).toBeUndefined();
+  });
+
+  it('a run the server no longer has ends in an actionable error, and is forgotten', async () => {
+    const { transport, calls } = manualTransport();
+    const r = manualResume();
+    const first = setupWithResume(transport, r.resume);
+    typeBrief('A bakery');
+    fireEvent.click(screen.getByRole('button', { name: /^Generate$/ }));
+    act(() => calls[0].handlers.onStarted?.('gen-1'));
+    first.unmount();
+
+    setupWithResume(transport, r.resume);
+    act(() => r.calls[0].handlers.onError?.({ code: 'run_gone', message: 'This generation is no longer available. Try again.' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('no longer available');
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled();
+    expect(loadPendingRun(project().id)).toBeUndefined();
+  });
+
+  it('cancelling a resumed run stops it on the server and forgets it', () => {
+    const { transport, calls } = manualTransport();
+    const r = manualResume();
+    const first = setupWithResume(transport, r.resume);
+    typeBrief('A bakery');
+    fireEvent.click(screen.getByRole('button', { name: /^Generate$/ }));
+    act(() => calls[0].handlers.onStarted?.('gen-1'));
+    first.unmount();
+
+    setupWithResume(transport, r.resume);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(r.calls[0].signal?.aborted).toBe(true);
+    expect(r.calls[0].signal?.reason).not.toBe(DETACH);
+    expect(loadPendingRun(project().id)).toBeUndefined();
+    expect(screen.getByLabelText('Brief')).toBeEnabled();
+  });
+
+  it('the Generate button reopens its dialog by itself when a run is pending', () => {
+    const { transport, calls } = manualTransport();
+    const r = manualResume();
+    const first = setupWithResume(transport, r.resume);
+    typeBrief('A bakery');
+    fireEvent.click(screen.getByRole('button', { name: /^Generate$/ }));
+    act(() => calls[0].handlers.onStarted?.('gen-1'));
+    first.unmount();
+
+    render(<GeneratePageButton transport={transport} resume={r.resume} />);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(r.calls.map((c) => c.id)).toContain('gen-1');
   });
 });

@@ -23,8 +23,10 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   prompt carries a design brief distilled from the design skills, containers can hold a stock
   photo behind text under a scrim, every stock photo is cropped around its subject (a Haiku vision
   pass), and the properties panel has an Image section for fit, focal point and photo backgrounds
-  (done, recorded in the 2026-10-23 design quality plan linked from the plan below). Phase 4's style references
-  and screenshot loop stay open. See [plan](docs/plans/ai-driven-page-generation.md). (2026-10-23)
+  (done, recorded in the 2026-10-23 design quality plan linked from the plan below). Since
+  2026-10-29 a generation (and the layout review) keeps running when the phone switches apps and
+  is collected when the editor comes back, even after iOS reloaded the tab. Phase 4's style references
+  and screenshot loop stay open. See [plan](docs/plans/ai-driven-page-generation.md). (2026-10-29)
 - [x] Motion and effects: an Effects section in the properties panel (appear on scroll, restrained
   hover states, light scroll-linked transforms such as a small image parallax), stored per
   breakpoint like any style, undoable and generatable by the AI, rendered on published pages with

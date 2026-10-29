@@ -4,6 +4,10 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  clearPendingRun,
+  loadPendingRun,
+  PENDING_RUN_MAX_AGE_MS,
+  savePendingRun,
   EMPTY_INPUTS,
   clearDraft,
   describeError,
@@ -193,5 +197,46 @@ describe('describeImageFallbacks', () => {
     expect(describeImageFallbacks({ requested: 2, resolved: 0, fellBack: { disabled: 2 }, credits: [] })).toEqual([
       '2 images use the placeholder: stock photos are not set up on this server.',
     ]);
+  });
+});
+
+describe('pending run (resume after the tab was reloaded)', () => {
+  const target = {
+    kind: 'newPage' as const,
+    pageId: 'page-1',
+    breakpoints: [{ id: 'bp-1', label: 'Desktop', minWidth: 1280 }],
+    viewports: [],
+  };
+  const run = (startedAt: number) => ({
+    generationId: 'gen-1',
+    requestKey: 'key',
+    inputs: { brief: 'A bakery', targetKind: 'newPage' as const, model: 'SONNET' as const, pageTitle: '' },
+    target,
+    startedAt,
+  });
+
+  beforeEach(() => window.localStorage.clear());
+
+  it('round-trips per project and is cleared', () => {
+    savePendingRun('p1', run(1_000));
+    expect(loadPendingRun('p1', 2_000)).toEqual(run(1_000));
+    expect(loadPendingRun('p2', 2_000)).toBeUndefined();
+    clearPendingRun('p1');
+    expect(loadPendingRun('p1', 2_000)).toBeUndefined();
+  });
+
+  it('a run too old for the server to still have is dropped, not resumed', () => {
+    savePendingRun('p1', run(0));
+    expect(loadPendingRun('p1', PENDING_RUN_MAX_AGE_MS + 1)).toBeUndefined();
+    expect(window.localStorage.getItem('framer-clone:page-gen-pending:p1')).toBeNull();
+  });
+
+  it('a malformed or foreign record is dropped', () => {
+    window.localStorage.setItem('framer-clone:page-gen-pending:p1', JSON.stringify({ v: 1, projectId: 'p1', run: { generationId: 7 } }));
+    expect(loadPendingRun('p1')).toBeUndefined();
+    window.localStorage.setItem('framer-clone:page-gen-pending:p1', JSON.stringify({ v: 1, projectId: 'p2', run: run(Date.now()) }));
+    expect(loadPendingRun('p1')).toBeUndefined();
+    window.localStorage.setItem('framer-clone:page-gen-pending:p1', '{not json');
+    expect(loadPendingRun('p1')).toBeUndefined();
   });
 });

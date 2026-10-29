@@ -19,7 +19,7 @@ import type { PageGenErrorPayload, PageGenModel, PageGenProgress, StockImageSumm
 import { isModelChoice, loadModelChoice } from '@/lib/ai/modelChoice';
 import { GENERATION_LIMITS } from './schema';
 import type { GenerationUndoRecord } from './apply';
-import type { TargetKind } from './editorBridge';
+import type { CapturedTarget, TargetKind } from './editorBridge';
 
 export interface FlowInputs {
   brief: string;
@@ -198,9 +198,9 @@ const DRAFT_PREFIX = 'framer-clone:page-gen-draft:';
 
 /**
  * Persist the unfinished inputs per project, so closing the dialog or
- * reloading keeps the brief. Only inputs are stored (never a run id or a
- * result: nothing derived from a run can be reattached after a reload).
- * Storage may throw (private mode, sandboxed frames): it is a convenience.
+ * reloading keeps the brief. A run in progress is kept separately (see
+ * savePendingRun below). Storage may throw (private mode, sandboxed frames):
+ * it is a convenience.
  */
 export function saveDraft(projectId: string, inputs: FlowInputs): void {
   try {
@@ -242,6 +242,75 @@ function readDraft(projectId: string): FlowInputs {
 export function clearDraft(projectId: string): void {
   try {
     window.localStorage.removeItem(DRAFT_PREFIX + projectId);
+  } catch {
+    // ignore
+  }
+}
+
+// ---------- a run in progress (resume after a reload) ----------
+
+const PENDING_PREFIX = 'framer-clone:page-gen-pending:';
+/**
+ * A pending run older than this is not resumed: the server keeps a finished
+ * run 15 minutes and drops a hung one after 30 (src/lib/ai/jobRegistry.ts).
+ */
+export const PENDING_RUN_MAX_AGE_MS = 30 * 60 * 1000;
+
+/**
+ * A generation that was running when the tab went away. A phone that switches
+ * apps may have its tab discarded and reloaded by iOS; the generation keeps
+ * running on the server, and this record lets the reopened editor collect it
+ * (GET /api/ai/generate-page/[id]) and apply it to the target captured when it
+ * started, never to whatever is selected now.
+ */
+export interface PendingRun {
+  generationId: string;
+  requestKey: string;
+  inputs: FlowInputs;
+  target: CapturedTarget;
+  startedAt: number;
+}
+
+export function savePendingRun(projectId: string, run: PendingRun): void {
+  try {
+    window.localStorage.setItem(PENDING_PREFIX + projectId, JSON.stringify({ v: 1, projectId, run }));
+  } catch {
+    // storage unavailable: resuming after a reload is a nicety
+  }
+}
+
+/** The project's pending run, or undefined (none, foreign, malformed or too old). */
+export function loadPendingRun(projectId: string, now: number = Date.now()): PendingRun | undefined {
+  try {
+    const raw = window.localStorage.getItem(PENDING_PREFIX + projectId);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { v?: number; projectId?: string; run?: Partial<PendingRun> };
+    const run = parsed.run;
+    if (parsed.v !== 1 || parsed.projectId !== projectId || !run) return undefined;
+    const valid =
+      typeof run.generationId === 'string' &&
+      run.generationId.length > 0 &&
+      typeof run.requestKey === 'string' &&
+      typeof run.startedAt === 'number' &&
+      now - run.startedAt < PENDING_RUN_MAX_AGE_MS &&
+      !!run.inputs &&
+      typeof run.inputs.brief === 'string' &&
+      !!run.target &&
+      typeof run.target.pageId === 'string' &&
+      Array.isArray(run.target.breakpoints);
+    if (!valid) {
+      clearPendingRun(projectId);
+      return undefined;
+    }
+    return run as PendingRun;
+  } catch {
+    return undefined;
+  }
+}
+
+export function clearPendingRun(projectId: string): void {
+  try {
+    window.localStorage.removeItem(PENDING_PREFIX + projectId);
   } catch {
     // ignore
   }

@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 type Turn =
-  | { content: unknown[]; stop_reason: string; stop_details?: unknown; inputJson?: string[] }
+  | { content: unknown[]; stop_reason: string; stop_details?: unknown; inputJson?: string[]; wait?: Promise<void> }
   | { throws: unknown };
 
 const anthropicState = vi.hoisted(() => ({
@@ -37,6 +37,18 @@ vi.mock('@/lib/ai/anthropicClient', async (importActual) => {
           },
           finalMessage: async () => {
             if ('throws' in turn) throw turn.throws;
+            if (turn.wait) {
+              // Like the SDK: an aborted signal rejects the pending stream.
+              const signal = (options as { signal?: AbortSignal } | undefined)?.signal;
+              await Promise.race([
+                turn.wait,
+                new Promise((_, reject) =>
+                  signal?.addEventListener('abort', () =>
+                    reject(Object.assign(new Error('aborted'), { name: 'APIUserAbortError' })),
+                  ),
+                ),
+              ]);
+            }
             for (const chunk of turn.inputJson ?? []) handlers.inputJson?.(chunk, {});
             return {
               content: turn.content,
@@ -75,7 +87,9 @@ function sessionA() {
 }
 
 import { POST } from '../review-page/route';
+import { GET as GET_RUN, DELETE as DELETE_RUN } from '../review-page/[id]/route';
 import { __resetReviewRateLimiterForTests, REVIEW_RATE } from '@/lib/ai/review/rateLimit';
+import { __resetReviewJobsForTests } from '@/lib/ai/review/jobs';
 import { parseSseFrames } from '@/lib/ai/parseSse';
 import { REVIEW_LIMITS } from '@/lib/ai/review/protocol';
 
@@ -139,6 +153,7 @@ async function events(res: Response) {
 beforeEach(() => {
   vi.clearAllMocks();
   __resetReviewRateLimiterForTests();
+  __resetReviewJobsForTests();
   mockVerifySession.mockResolvedValue(sessionA());
   mockCan.mockResolvedValue(true);
   anthropicState.turns = [toolTurn({ summary: 'ok', ops: [] })];
@@ -234,13 +249,14 @@ describe('POST /api/ai/review-page review', () => {
     ];
     anthropicState.turns = [toolTurn({ summary: 'Fixed the hero.', ops }, [JSON.stringify({ summary: 'Fixed the hero.', ops })])];
     const evs = await events(await POST(makeRequest(baseBody())));
-    expect(evs.map((e) => e.event)).toEqual(['review:progress', 'review:progress', 'review:result', 'usage']);
-    const result = evs[2].data as { ops: unknown[]; rejected: Array<{ index: number }>; summary: string; model: string };
+    expect(evs.map((e) => e.event)).toEqual(['review:started', 'review:progress', 'review:progress', 'review:result', 'usage']);
+    expect(evs[3].data.reviewId).toBe(evs[0].data.reviewId);
+    const result = evs[3].data as { ops: unknown[]; rejected: Array<{ index: number }>; summary: string; model: string };
     expect(result.summary).toBe('Fixed the hero.');
     expect(result.model).toBe('claude-sonnet-5-5');
     expect(result.ops).toHaveLength(2);
     expect(result.rejected.map((r) => r.index)).toEqual([2, 3, 4]);
-    expect(evs[3].data).toEqual({ inputTokens: 4000, outputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 1200 });
+    expect(evs[4].data).toEqual({ inputTokens: 4000, outputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 1200 });
   });
 
   it('an empty ops list is a valid "nothing to fix"', async () => {
@@ -273,5 +289,53 @@ describe('POST /api/ai/review-page review', () => {
     const second = await POST(makeRequest(baseBody()));
     expect(second.status).toBe(200);
     expect((await events(second)).some((e) => e.event === 'review:result')).toBe(true);
+  });
+});
+
+describe('POST /api/ai/review-page survives its connection', () => {
+  async function startedId(res: Response): Promise<string> {
+    const reader = res.body!.getReader();
+    let buffer = '';
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) throw new Error('stream ended before review:started');
+      buffer += new TextDecoder().decode(chunk.value);
+      const frame = parseSseFrames(buffer).frames.find((f) => f.event === 'review:started');
+      if (frame) {
+        reader.releaseLock();
+        return (JSON.parse(frame.data) as { reviewId: string }).reviewId;
+      }
+    }
+  }
+  const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
+  const req = (id: string, method: string) =>
+    new Request(`http://localhost/api/ai/review-page/${id}`, { method, headers: { cookie: 'lumitra_session=good' } });
+
+  it('keeps reviewing when the client drops the stream; the result is collectable; DELETE stops another', async () => {
+    let release: () => void = () => {};
+    anthropicState.turns = [
+      { ...(toolTurn({ summary: 'Fixed.', ops: [] }) as object), wait: new Promise<void>((r) => (release = r)) } as Turn,
+    ];
+    const res = await POST(makeRequest(baseBody()));
+    const id = await startedId(res);
+    await res.body!.cancel();
+    const signal = (anthropicState.calls[0].options as { signal: AbortSignal }).signal;
+    expect(signal.aborted).toBe(false);
+    expect(await (await GET_RUN(req(id, 'GET'), ctx(id))).json()).toMatchObject({ status: 'running' });
+    release();
+    await vi.waitFor(async () => {
+      const run = (await (await GET_RUN(req(id, 'GET'), ctx(id))).json()) as { status: string; result?: { summary: string } };
+      expect(run.status).toBe('done');
+      expect(run.result?.summary).toBe('Fixed.');
+    });
+
+    anthropicState.turns = [{ ...(toolTurn({ summary: 'x', ops: [] }) as object), wait: new Promise<void>(() => {}) } as Turn];
+    anthropicState.calls = [];
+    const second = await POST(makeRequest(baseBody()));
+    const secondId = await startedId(second);
+    expect((await DELETE_RUN(req(secondId, 'DELETE'), ctx(secondId))).status).toBe(204);
+    expect((anthropicState.calls[0].options as { signal: AbortSignal }).signal.aborted).toBe(true);
+    expect(await (await GET_RUN(req(secondId, 'GET'), ctx(secondId))).json()).toEqual({ status: 'cancelled' });
+    expect((await GET_RUN(req('nope', 'GET'), ctx('nope'))).status).toBe(404);
   });
 });

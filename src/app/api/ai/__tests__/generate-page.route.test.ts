@@ -105,7 +105,9 @@ function sessionA() {
 }
 
 import { POST } from '../generate-page/route';
+import { GET as GET_RUN, DELETE as DELETE_RUN } from '../generate-page/[id]/route';
 import { __resetPageGenRateLimiterForTests, PAGE_GEN_RATE } from '@/lib/ai/pageGen/rateLimit';
+import { __resetPageGenJobsForTests } from '@/lib/ai/pageGen/jobs';
 import { parseSseFrames } from '@/lib/ai/parseSse';
 import { GENERATION_LIMITS } from '@/lib/ai/pageGen/schema';
 
@@ -136,6 +138,35 @@ function baseBody(overrides: Record<string, unknown> = {}) {
     target: { kind: 'newPage' },
     ...overrides,
   };
+}
+
+/** Read the stream only up to its first event (gen:started), leaving it open. */
+async function startedId(res: Response): Promise<string> {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) throw new Error('stream ended before gen:started');
+    buffer += decoder.decode(chunk.value, { stream: true });
+    const frame = parseSseFrames(buffer).frames.find((f) => f.event === 'gen:started');
+    if (frame) {
+      reader.releaseLock();
+      return (JSON.parse(frame.data) as { generationId: string }).generationId;
+    }
+  }
+}
+
+function runRequest(id: string, method: 'GET' | 'DELETE', cookie: string | null = authCookie): [Request, { params: Promise<{ id: string }> }] {
+  return [
+    new Request(`http://localhost/api/ai/generate-page/${id}`, { method, headers: cookie ? { cookie } : {} }),
+    { params: Promise.resolve({ id }) },
+  ];
+}
+
+async function getRun(id: string): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await GET_RUN(...runRequest(id, 'GET'));
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
 }
 
 async function events(res: Response): Promise<Array<{ event: string; data: Record<string, unknown> }>> {
@@ -171,6 +202,7 @@ const VALID_PAGE = {
 beforeEach(() => {
   vi.clearAllMocks();
   __resetPageGenRateLimiterForTests();
+  __resetPageGenJobsForTests();
   mockVerifySession.mockResolvedValue(sessionA());
   mockCan.mockResolvedValue(true);
   anthropicState.turns = [toolTurn(VALID_PAGE)];
@@ -315,7 +347,11 @@ describe('POST /api/ai/generate-page generation', () => {
     expect(res.headers.get('content-type')).toContain('text/event-stream');
     const evs = await events(res);
     const names = evs.map((e) => e.event);
-    expect(names[0]).toBe('gen:progress');
+    // The run's id first, so a client that loses the stream can collect it.
+    expect(names[0]).toBe('gen:started');
+    expect(names[1]).toBe('gen:progress');
+    const generationId = (evs[0].data as { generationId: string }).generationId;
+    expect(evs.find((e) => e.event === 'gen:result')!.data.generationId).toBe(generationId);
     expect(names).toContain('gen:result');
     expect(names.at(-1)).toBe('usage');
     expect(evs.some((e) => e.event === 'gen:progress' && (e.data.receivedChars as number) >= 1500)).toBe(true);
@@ -604,17 +640,82 @@ describe('POST /api/ai/generate-page generation', () => {
   });
 });
 
-describe('POST /api/ai/generate-page cancellation', () => {
-  it('aborts the Anthropic stream when the client cancels the response, and frees the slot', async () => {
-    const never = new Promise<void>(() => {});
-    anthropicState.turns = [{ ...(toolTurn(VALID_PAGE) as object), wait: never } as Turn];
+describe('POST /api/ai/generate-page survives its connection', () => {
+  function hold(): { turn: Turn; release: () => void } {
+    let release: () => void = () => {};
+    const wait = new Promise<void>((r) => (release = r));
+    return { turn: { ...(toolTurn(VALID_PAGE) as object), wait } as Turn, release };
+  }
+
+  it('keeps generating when the client drops the stream, and the result is collectable by id', async () => {
+    const held = hold();
+    anthropicState.turns = [held.turn];
     const res = await POST(makeRequest(baseBody()));
-    expect(res.status).toBe(200);
+    const id = await startedId(res);
     const signal = (anthropicState.calls[0].options as { signal: AbortSignal }).signal;
-    expect(signal.aborted).toBe(false);
     await res.body!.cancel();
+    // The phone went to another app: the model call is NOT stopped.
+    expect(signal.aborted).toBe(false);
+    const running = await getRun(id);
+    expect(running.status).toBe(200);
+    expect(running.body).toMatchObject({ status: 'running', progress: { phase: 'generating', attempt: 1 } });
+    // While it runs the user's slot stays taken (no second spend in parallel).
+    expect((await POST(makeRequest(baseBody()))).status).toBe(429);
+
+    held.release();
+    await vi.waitFor(async () => expect((await getRun(id)).body.status).toBe('done'));
+    const done = await getRun(id);
+    expect(done.body.result).toMatchObject({ generationId: id, title: 'Bakery' });
+    // Finished: the slot is free again.
+    anthropicState.turns = [toolTurn(VALID_PAGE)];
+    anthropicState.calls = [];
+    const next = await POST(makeRequest(baseBody()));
+    expect(next.status).toBe(200);
+    await next.text();
+  });
+
+  it('keeps generating when the request itself is aborted', async () => {
+    const held = hold();
+    anthropicState.turns = [held.turn];
+    const controller = new AbortController();
+    const req = new Request('http://localhost/api/ai/generate-page', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: authCookie },
+      body: JSON.stringify(baseBody()),
+      signal: controller.signal,
+    });
+    const res = await POST(req);
+    const id = await startedId(res);
+    controller.abort();
+    expect((anthropicState.calls[0].options as { signal: AbortSignal }).signal.aborted).toBe(false);
+    held.release();
+    await vi.waitFor(async () => expect((await getRun(id)).body.status).toBe('done'));
+  });
+
+  it('collects a failed run as its error', async () => {
+    anthropicState.turns = [toolTurn({ nodes: 'nope' }), toolTurn({ nodes: 'still nope' })];
+    const res = await POST(makeRequest(baseBody()));
+    const evs = await events(res);
+    const id = (evs[0].data as { generationId: string }).generationId;
+    const run = await getRun(id);
+    expect(run.body).toMatchObject({ status: 'failed', error: { code: 'invalid_output' } });
+  });
+
+  it('DELETE stops the model call and frees the slot; the run then reads as cancelled', async () => {
+    const held = hold();
+    anthropicState.turns = [held.turn];
+    const res = await POST(makeRequest(baseBody()));
+    const id = await startedId(res);
+    const signal = (anthropicState.calls[0].options as { signal: AbortSignal }).signal;
+    const del = await DELETE_RUN(...runRequest(id, 'DELETE'));
+    expect(del.status).toBe(204);
     expect(signal.aborted).toBe(true);
-    // The run winds down and releases the user's slot.
+    expect((await getRun(id)).body).toEqual({ status: 'cancelled' });
+    // Cancelled runs end quietly on the stream: no result, and it still closes.
+    const reader = res.body!.getReader();
+    let rest = '';
+    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) rest += new TextDecoder().decode(chunk.value);
+    expect(parseSseFrames(rest).frames.some((f) => f.event === 'gen:result')).toBe(false);
     await vi.waitFor(async () => {
       anthropicState.turns = [toolTurn(VALID_PAGE)];
       anthropicState.calls = [];
@@ -624,23 +725,37 @@ describe('POST /api/ai/generate-page cancellation', () => {
     });
   });
 
-  it('aborts the Anthropic stream when the request itself is aborted', async () => {
-    const never = new Promise<void>(() => {});
-    anthropicState.turns = [{ ...(toolTurn(VALID_PAGE) as object), wait: never } as Turn];
-    const controller = new AbortController();
-    const req = new Request('http://localhost/api/ai/generate-page', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', cookie: authCookie },
-      body: JSON.stringify(baseBody()),
-      signal: controller.signal,
-    });
-    const res = await POST(req);
-    const signal = (anthropicState.calls[0].options as { signal: AbortSignal }).signal;
-    controller.abort();
-    expect(signal.aborted).toBe(true);
-    const evs = await events(res);
-    // Cancelled runs end quietly: no result, and the stream still closes.
-    expect(evs.some((e) => e.event === 'gen:result')).toBe(false);
+  it('answers 404 for an unknown run and for another user\'s run, 401 without a session', async () => {
+    const res = await POST(makeRequest(baseBody()));
+    const id = ((await events(res))[0].data as { generationId: string }).generationId;
+    expect((await getRun('no-such-run')).status).toBe(404);
+    expect((await DELETE_RUN(...runRequest('no-such-run', 'DELETE'))).status).toBe(404);
+
+    mockVerifySession.mockResolvedValue({ ...sessionA(), user: { id: 'user-b' } });
+    expect((await getRun(id)).status).toBe(404);
+    expect((await DELETE_RUN(...runRequest(id, 'DELETE'))).status).toBe(404);
+
+    expect((await GET_RUN(...runRequest(id, 'GET', null))).status).toBe(401);
+  });
+
+  it('uses the id the browser chose, refuses one already in use, and rejects a malformed one', async () => {
+    const runId = '3f1c2b9e-8d4a-4e7b-9c1d-2a5b6c7d8e9f';
+    const res = await POST(makeRequest(baseBody({ runId })));
+    expect(res.status).toBe(200);
+    expect(((await events(res))[0].data as { generationId: string }).generationId).toBe(runId);
+    expect((await getRun(runId)).body.status).toBe('done');
+
+    const again = await POST(makeRequest(baseBody({ runId })));
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { error: { code: string } }).error.code).toBe('run_exists');
+    expect((await POST(makeRequest(baseBody({ runId: 'not-a-uuid' })))).status).toBe(400);
+  });
+
+  it('a run is not readable without permission to edit the site', async () => {
+    const res = await POST(makeRequest(baseBody()));
+    const id = ((await events(res))[0].data as { generationId: string }).generationId;
+    mockCan.mockResolvedValue(false);
+    expect((await getRun(id)).status).toBe(403);
   });
 });
 
@@ -781,17 +896,34 @@ describe('POST /api/ai/generate-page stock photos', () => {
     expect(result.images).toEqual({ requested: 1, resolved: 0, fellBack: { invalid_query: 1 }, credits: [] });
   });
 
-  it('a client that leaves during the photo search gets no result and triggers no download', async () => {
+  it('a run cancelled during the photo search gets no result and triggers no download', async () => {
     let release: (r: Response) => void = () => {};
     fetchMock.mockImplementation((url: string) =>
       url.includes('/search/photos') ? new Promise<Response>((r) => (release = r)) : Promise.resolve(new Response('{}')),
     );
     const res = await POST(makeRequest(baseBody()));
+    const id = await startedId(res);
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    await res.body!.cancel();
+    expect((await DELETE_RUN(...runRequest(id, 'DELETE'))).status).toBe(204);
     release(new Response(JSON.stringify({ results: [unsplashPhoto('a'), unsplashPhoto('b')] }), { status: 200 }));
     await new Promise((r) => setTimeout(r, 20));
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/download'))).toBe(false);
+    expect((await getRun(id)).body).toEqual({ status: 'cancelled' });
+  });
+
+  it('a client that leaves during the photo search still gets its photos when it collects the run', async () => {
+    let release: (r: Response) => void = () => {};
+    fetchMock.mockImplementation((url: string) =>
+      url.includes('/search/photos') ? new Promise<Response>((r) => (release = r)) : Promise.resolve(new Response('{}')),
+    );
+    const res = await POST(makeRequest(baseBody()));
+    const id = await startedId(res);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await res.body!.cancel();
+    release(new Response(JSON.stringify({ results: [unsplashPhoto('a'), unsplashPhoto('b')] }), { status: 200 }));
+    await vi.waitFor(async () => expect((await getRun(id)).body.status).toBe('done'));
+    const run = await getRun(id);
+    expect((run.body.result as { images: { resolved: number } }).images.resolved).toBeGreaterThan(0);
   });
 
   it('never sends the key to the browser', async () => {

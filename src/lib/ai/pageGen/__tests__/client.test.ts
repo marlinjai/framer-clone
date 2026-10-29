@@ -63,10 +63,16 @@ describe('fetchPageGenTransport', () => {
   });
 
   it('a stream that closes without a result is an error, never a silent stall', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => streamResponse(['event: gen:progress\ndata: {}\n\n'])));
+    // The transport collects the run by id; this server no longer has it.
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? streamResponse(['event: gen:progress\ndata: {}\n\n'])
+        : Response.json({ error: { code: 'not_found', message: 'gone' } }, { status: 404 }),
+    ));
     const h = handlers();
     await fetchPageGenTransport(req, h);
-    expect(h.onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'network_error' }));
+    expect(h.onError).toHaveBeenCalledTimes(1);
+    expect(h.onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'run_gone' }));
   });
 
   it('a network failure and an abort are told apart', async () => {
@@ -75,9 +81,13 @@ describe('fetchPageGenTransport', () => {
     await fetchPageGenTransport(req, h);
     expect(h.onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'network_error' }));
 
-    vi.stubGlobal('fetch', vi.fn(async () => { throw Object.assign(new Error('aborted'), { name: 'AbortError' }); }));
+    const controller = new AbortController();
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      controller.abort();
+      throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+    }));
     h = handlers();
-    await fetchPageGenTransport(req, h);
+    await fetchPageGenTransport(req, h, controller.signal);
     expect(h.onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'aborted' }));
   });
 });

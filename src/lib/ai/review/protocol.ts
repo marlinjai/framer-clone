@@ -74,6 +74,8 @@ export interface ReviewRequest {
   brief?: string;
   /** Problems on the client side the model should know about ("the phone capture failed"). */
   notes?: string[];
+  /** The run's id (a UUID), chosen by the browser transport before sending. */
+  runId?: string;
 }
 
 /**
@@ -98,6 +100,15 @@ export type ReviewOp =
 export interface RejectedOp {
   index: number;
   reason: string;
+}
+
+/**
+ * SSE `review:started`: the first event, the run's id, so the editor can
+ * collect the review (GET /api/ai/review-page/[id]) after losing the stream,
+ * or cancel it (DELETE on the same path).
+ */
+export interface ReviewStarted {
+  reviewId: string;
 }
 
 /** SSE `review:progress`. */

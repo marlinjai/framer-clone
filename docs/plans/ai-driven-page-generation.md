@@ -332,3 +332,38 @@ Before this, every generated image was the placeholder `/images/sample-image.jpg
   reading storage during that render would make server and client HTML differ), so the agent's
   slider can show the default for one frame before the remembered step.
 
+
+## Build notes (2026-10-29): generation survives the phone switching apps
+
+Found on a phone: sending the editor to the background while a page was being generated killed
+the generation. iOS drops the connection of a backgrounded tab, and the route stopped the model
+call on every disconnect (it was built to stop spending on a dead connection). Decided, with the
+reasoning:
+
+- **A run is stopped only by an explicit cancel, never by a disconnect.** A dropped connection on
+  a phone is the app being in the background, not the user changing their mind. Spend stays
+  bounded by the two-attempt cap and the per-user rate limit; the user's in-flight slot stays
+  held until the run ends, so a resuming client can never start a second paid run in parallel.
+- **Runs live in a process-local registry** (`src/lib/ai/jobRegistry.ts`), with the same
+  justification as the rate limiters: one Coolify container. A finished run is collectable for
+  15 minutes; a hung one is aborted after 30. A restart loses runs, and the editor then says the
+  run is gone and offers "Try again".
+- **The browser chooses the run's id** (a UUID sent as `runId`, refused with 409 if already in
+  use) and remembers it before the request leaves, so a phone that goes to the background in the
+  second between tapping Generate and the first byte can still collect the run. A request that
+  fails while the tab stayed in front is reported at once as a network error instead.
+- **The stream's first event confirms the run** (`gen:started`), and
+  `GET /api/ai/generate-page/[id]` returns its progress or outcome, `DELETE` cancels it. Same
+  auth boundary as the POST; another user's or company's run answers 404 like an unknown one.
+- **The browser transport** (`src/lib/ai/resumableRun.ts`) reads the stream as before, and
+  collects the run by id when the stream dies or the tab becomes visible again (a backgrounded
+  stream on iOS can hang without erroring). It pauses while the tab is hidden, rides out short
+  outages, and ends in exactly one result or error. The dialog's Cancel and closing the dialog
+  stop the run on the server; leaving the editor only stops following it.
+- **A run in progress is remembered per project** (`savePendingRun` in `flow.ts`), so when iOS
+  discarded and reloaded the tab, the editor reopens the Generate dialog by itself, collects the
+  run and applies it to the target captured when it started (never to the current selection; a
+  target deleted meanwhile changes nothing and says why).
+- **The layout review pass got the same server and transport treatment** (`review:started`,
+  `/api/ai/review-page/[id]`). It is not resumed after a reload: its fixes refer to node ids of
+  the page as it was measured in that tab, so a reloaded editor runs a fresh review instead.

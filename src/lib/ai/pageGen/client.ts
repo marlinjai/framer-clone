@@ -1,12 +1,14 @@
 // src/lib/ai/pageGen/client.ts
 //
-// Browser transport for POST /api/ai/generate-page: POST + ReadableStream
-// reader + parseSseFrames (the same pattern as cmsAgentClient). Every failure
-// path ends in exactly one onError call (HTTP error envelope, network error, a
-// stream that closes without a result), so the dialog never stalls silently.
-// Injectable into the dialog for tests.
+// Browser transport for POST /api/ai/generate-page. A generation keeps running
+// on the server when the phone switches apps; this transport follows it
+// through that (src/lib/ai/resumableRun.ts): it reads the stream, and when the
+// stream dies or the tab comes back it collects the run from
+// GET /api/ai/generate-page/[id]. `resumePageGen` collects a run started
+// before a reload. Every failure path ends in exactly one onError call, so the
+// dialog never stalls silently. Injectable into the dialog for tests.
 
-import { parseSseFrames } from '@/lib/ai/parseSse';
+import { createResumableRun } from '@/lib/ai/resumableRun';
 import type {
   PageGenErrorPayload,
   PageGenProgress,
@@ -16,6 +18,8 @@ import type {
 } from './protocol';
 
 export interface PageGenHandlers {
+  /** The run's id, once the server registered it (kept so a reload can collect it). */
+  onStarted?: (generationId: string) => void;
   onProgress?: (p: PageGenProgress) => void;
   onResult?: (r: PageGenResultPayload) => void;
   onError?: (e: PageGenErrorPayload) => void;
@@ -28,104 +32,20 @@ export type PageGenTransport = (
   signal?: AbortSignal,
 ) => Promise<void>;
 
-function isAbort(err: unknown): boolean {
-  return !!err && typeof err === 'object' && 'name' in err && (err as { name: unknown }).name === 'AbortError';
-}
+/** Collect a generation by id (started before a reload); aborting the signal cancels it. */
+export type PageGenResume = (generationId: string, handlers: PageGenHandlers, signal?: AbortSignal) => Promise<void>;
 
-export const fetchPageGenTransport: PageGenTransport = async (req, handlers, signal) => {
-  let response: Response;
-  try {
-    response = await fetch('/api/ai/generate-page', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req),
-      signal,
-    });
-  } catch (err) {
-    handlers.onError?.(
-      isAbort(err)
-        ? { code: 'aborted', message: 'Generation was cancelled.' }
-        : { code: 'network_error', message: 'Could not reach the server. Check your connection and try again.' },
-    );
-    return;
-  }
+const run = createResumableRun<PageGenRequest, PageGenProgress, PageGenResultPayload, PageGenErrorPayload, PageGenUsagePayload>({
+  url: '/api/ai/generate-page',
+  events: { started: 'gen:started', progress: 'gen:progress', result: 'gen:result', error: 'gen:error' },
+  messages: {
+    cancelled: 'Generation was cancelled.',
+    unreachable: 'Could not reach the server. Check your connection and try again.',
+    dropped: 'The connection dropped during generation. Try again.',
+    gone: 'This generation is no longer available on the server (it never arrived, the server restarted, or it finished more than 15 minutes ago). Try again.',
+    cancelledElsewhere: 'This generation was cancelled.',
+  },
+});
 
-  if (!response.ok || !response.body) {
-    let payload: PageGenErrorPayload = { code: 'http_error', message: `Request failed (${response.status}).` };
-    try {
-      const body = (await response.json()) as { error?: Partial<PageGenErrorPayload> };
-      if (body.error?.message) {
-        payload = {
-          code: body.error.code ?? 'http_error',
-          message: body.error.message,
-          ...(typeof body.error.retryAfterSec === 'number' ? { retryAfterSec: body.error.retryAfterSec } : {}),
-        };
-      }
-    } catch {
-      // non-JSON body: keep the status message
-    }
-    handlers.onError?.(payload);
-    return;
-  }
-
-  let settled = false;
-  const dispatch = (event: string, data: string): void => {
-    let payload: unknown;
-    try {
-      payload = data ? JSON.parse(data) : {};
-    } catch {
-      return;
-    }
-    switch (event) {
-      case 'gen:progress':
-        handlers.onProgress?.(payload as PageGenProgress);
-        return;
-      case 'gen:result':
-        settled = true;
-        handlers.onResult?.(payload as PageGenResultPayload);
-        return;
-      case 'gen:error':
-        settled = true;
-        handlers.onError?.(payload as PageGenErrorPayload);
-        return;
-      case 'usage':
-        handlers.onUsage?.(payload as PageGenUsagePayload);
-        return;
-      default:
-        return;
-    }
-  };
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  try {
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.value) {
-        buffer += decoder.decode(chunk.value, { stream: true });
-        const parsed = parseSseFrames(buffer);
-        buffer = parsed.rest;
-        for (const f of parsed.frames) dispatch(f.event, f.data);
-      }
-      if (chunk.done) break;
-    }
-    buffer += decoder.decode();
-    if (buffer.trim()) {
-      for (const f of parseSseFrames(`${buffer}\n\n`).frames) dispatch(f.event, f.data);
-    }
-  } catch (err) {
-    if (!settled) {
-      settled = true;
-      handlers.onError?.(
-        isAbort(err)
-          ? { code: 'aborted', message: 'Generation was cancelled.' }
-          : { code: 'network_error', message: 'The connection dropped during generation. Try again.' },
-      );
-    }
-    return;
-  }
-  if (!settled) {
-    handlers.onError?.({ code: 'network_error', message: 'The server closed the connection without a result. Try again.' });
-  }
-};
+export const fetchPageGenTransport: PageGenTransport = run.start;
+export const resumePageGen: PageGenResume = run.resume;
