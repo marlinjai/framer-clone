@@ -100,6 +100,15 @@ export interface RejectedOp {
   reason: string;
 }
 
+/**
+ * SSE `review:started`: the first event, the run's id, so the editor can
+ * collect the review (GET /api/ai/review-page/[id]) after losing the stream,
+ * or cancel it (DELETE on the same path).
+ */
+export interface ReviewStarted {
+  reviewId: string;
+}
+
 /** SSE `review:progress`. */
 export interface ReviewProgress {
   phase: 'reviewing' | 'validating';

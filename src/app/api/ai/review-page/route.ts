@@ -16,13 +16,20 @@
 // detached stream, reading cookies off the Request.
 //
 // Status codes:
-//   200 -> SSE stream: review:progress*, then review:result or review:error,
-//          then usage. Errors after the stream opened are `review:error`.
+//   200 -> SSE stream: review:started { reviewId }, review:progress*, then
+//          review:result or review:error, then usage. Errors after the stream
+//          opened are `review:error`.
 //   400 -> bad JSON / failed validation / tree or images over budget
 //   401 -> no session / missing ANTHROPIC_API_KEY
 //   403 -> no active company / Sites not enabled / not permitted to edit
 //   429 -> a review is already running for this user, or the window limit
 //   503 -> auth-brain (`auth_unavailable`) or OpenFGA (`authz_unavailable`) down
+//
+// Like generate-page, a review survives its connection
+// (src/lib/ai/jobRegistry.ts): a phone switching apps drops the stream but not
+// the model call, the editor collects the outcome from
+// GET /api/ai/review-page/[id] when it comes back, and only a DELETE there
+// stops it. The user's in-flight slot is held until the run ends.
 //
 // Budget per request: tree <= REVIEW_LIMITS.maxTreeChars, at most two JPEGs of
 // at most maxImageBase64Chars each, MAX_OUTPUT_TOKENS of output, ONE attempt
@@ -57,11 +64,16 @@ import {
   REVIEW_LIMITS,
   REVIEW_MODELS,
   type ReviewErrorPayload,
+  type ReviewProgress,
+  type ReviewResultPayload,
+  type ReviewStarted,
   type ReviewTreeNode,
 } from '@/lib/ai/review/protocol';
 import { indexReviewTree, validateReviewOps } from '@/lib/ai/review/ops';
 import { REVIEW_TOOL_NAME, reviewContextText, reviewSystemText, reviewTool, reviewUserContent } from '@/lib/ai/review/prompt';
 import { getReviewRateLimiter } from '@/lib/ai/review/rateLimit';
+import { getReviewJobs } from '@/lib/ai/review/jobs';
+import type { JobHandle } from '@/lib/ai/jobRegistry';
 import type { LayoutFinding } from '@/lib/ai/review/layoutAudit';
 
 export const dynamic = 'force-dynamic';
@@ -194,15 +206,18 @@ async function handlePOST(request: Request): Promise<Response> {
   }
 
   // ---- 5. Stream -------------------------------------------------------------
+  // Registered before the stream opens and not tied to it (see the header).
+  const workspaceId = scopeResult.scope.workspaceId;
+  const job = getReviewJobs().create({ id: globalThis.crypto.randomUUID(), userId, workspaceId });
   const sse = createSseStream();
   void runReview({
     anthropic,
     body,
     tree: tree.tree,
     userId,
-    workspaceId: scopeResult.scope.workspaceId,
+    workspaceId,
     sse,
-    signal: request.signal,
+    job,
     release: slot.release,
   });
   return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
@@ -215,14 +230,15 @@ interface RunArgs {
   userId: string;
   workspaceId: string;
   sse: ReturnType<typeof createSseStream>;
-  signal: AbortSignal;
+  /** The run's record: collectable after a disconnect; its signal is the only stop. */
+  job: JobHandle<ReviewProgress, ReviewResultPayload, ReviewErrorPayload>;
   release: () => void;
 }
 
 async function runReview(args: RunArgs): Promise<void> {
-  const { anthropic, body, sse } = args;
+  const { anthropic, body, sse, job } = args;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
-  const requestId = globalThis.crypto.randomUUID();
+  const requestId = job.id;
   const timer = startAiCallTimer();
   let modelId: string = body.model;
   let inputTokens = 0;
@@ -235,16 +251,25 @@ async function runReview(args: RunArgs): Promise<void> {
   const fail = (payload: ReviewErrorPayload): void => {
     errorCode = payload.code;
     status = payload.code === 'rate_limited' ? 'rate_limited' : payload.code === 'overloaded' ? 'overloaded' : 'error';
+    job.fail(payload);
     sse.send('review:error', payload);
+  };
+  // Every event also goes to the run's record, for a client that lost the stream.
+  const progress = (p: ReviewProgress): void => {
+    job.progress(p);
+    sse.send('review:progress', p);
   };
 
   try {
+    const started: ReviewStarted = { reviewId: requestId };
+    sse.send('review:started', started);
     heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
     const modelFields = modelRequestFields(body.model, REVIEW_EFFORT);
     modelId = modelFields.model;
     const breakpoints = deriveBreakpointKeys(body.breakpoints);
-    const signal = AbortSignal.any([args.signal, sse.signal]);
-    sse.send('review:progress', { phase: 'reviewing', receivedChars: 0 });
+    // Only an explicit cancel stops the model call, never a dropped connection.
+    const signal = job.signal;
+    progress({ phase: 'reviewing', receivedChars: 0 });
 
     const stream = anthropic.beta.messages.stream(
       {
@@ -282,7 +307,7 @@ async function runReview(args: RunArgs): Promise<void> {
       received += partialJson.length;
       if (received - lastReported >= PROGRESS_EVERY_CHARS) {
         lastReported = received;
-        sse.send('review:progress', { phase: 'reviewing', receivedChars: received });
+        progress({ phase: 'reviewing', receivedChars: received });
       }
     });
 
@@ -333,19 +358,21 @@ async function runReview(args: RunArgs): Promise<void> {
         return;
       }
     }
-    sse.send('review:progress', { phase: 'validating', receivedChars: received });
+    progress({ phase: 'validating', receivedChars: received });
     const input = (toolUse.input ?? {}) as { summary?: unknown; ops?: unknown };
     const { ops, rejected } = validateReviewOps(input.ops ?? [], {
       breakpointKeys: breakpoints.map((b) => b.key),
       nodes: indexReviewTree(args.tree),
     });
-    sse.send('review:result', {
+    const result: ReviewResultPayload = {
       reviewId: requestId,
       summary: typeof input.summary === 'string' ? input.summary.slice(0, 1000) : '',
       ops,
       rejected,
       model: modelId,
-    });
+    };
+    job.succeed(result);
+    sse.send('review:result', result);
   } catch (err) {
     const classified = classifyProviderError(err);
     fail(
@@ -354,6 +381,8 @@ async function runReview(args: RunArgs): Promise<void> {
         : { code: String(classified.code), message: classified.message, ...(classified.retryAfterSec ? { retryAfterSec: classified.retryAfterSec } : {}) },
     );
   } finally {
+    // Never leave a polled run "running" (no-op once it has an outcome).
+    job.fail({ code: job.signal.aborted ? 'aborted' : 'review_failed', message: 'The review ended without a result.' });
     sse.send('usage', { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens });
     if (heartbeat) clearInterval(heartbeat);
     args.release();
