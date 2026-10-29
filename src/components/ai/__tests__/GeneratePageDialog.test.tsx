@@ -461,6 +461,34 @@ describe('GeneratePageDialog survives the tab going away (phone in the backgroun
     expect(screen.getByLabelText('Brief')).toBeEnabled();
   });
 
+  it('in the demo editor, whose project gets a new id on every load, the run is still resumed after a reload', async () => {
+    store.editorUI.markUnsavedDemo(project().id);
+    const { transport, calls } = manualTransport();
+    const r = manualResume();
+    const first = setupWithResume(transport, r.resume);
+    typeBrief('A bakery');
+    fireEvent.click(screen.getByRole('button', { name: /^Generate$/ }));
+    act(() => calls[0].handlers.onStarted?.('gen-1'));
+    const req = calls[0].req;
+    first.unmount();
+
+    // The reload: a freshly seeded demo project with a different id.
+    store = createRootStore();
+    store.projectStore.createProject('Framer Clone Demo');
+    const demo = store.projectStore.findProjectByTitle('Framer Clone Demo')!;
+    const home = demo.createPage('Home');
+    store.editorUI.setCurrentProject(demo);
+    store.editorUI.setCurrentPage(home);
+    store.editorUI.markUnsavedDemo(demo.id);
+
+    render(<GeneratePageButton transport={transport} resume={r.resume} />);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(r.calls.map((c) => c.id)).toEqual(['gen-1']);
+    await act(async () => r.calls[0].handlers.onResult?.(resultFor(req, PAGE, 'gen-1')));
+    expect(screen.getByText(/Added 3 components on a new page/)).toBeInTheDocument();
+    expect(demo.pagesArray.some((p) => p.metadata.title === 'Bakery')).toBe(true);
+  });
+
   it('the Generate button reopens its dialog by itself when a run is pending', () => {
     const { transport, calls } = manualTransport();
     const r = manualResume();
