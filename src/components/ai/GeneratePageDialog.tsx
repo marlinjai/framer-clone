@@ -11,6 +11,13 @@
 // inputs and the captured target), so a cancelled or stale run can never land.
 // The transport is injectable for tests.
 //
+// A generation survives the phone switching apps: the server keeps running it,
+// the transport collects it when the tab comes back, and a run in progress is
+// remembered per project (savePendingRun) so that, if iOS reloaded the tab, the
+// editor reopens this dialog and applies the result to the target captured at
+// the start. Cancel and closing the dialog stop the run on the server;
+// unmounting the editor only stops following it.
+//
 // After a generation is applied, one visual review round runs by default
 // (./VisualReview.tsx, plan docs/plans/2026-10-23-ai-design-quality-round-2.md
 // decision 4): the editor measures and captures the rendered page and an AI
@@ -37,26 +44,37 @@ import { useStore } from '@/hooks/useStore';
 import { useControllableOpen, type ControllableOpenProps } from '@/hooks/useControllableOpen';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { PageModelType } from '@/models/PageModel';
-import { fetchPageGenTransport, type PageGenTransport } from '@/lib/ai/pageGen/client';
+import {
+  fetchPageGenTransport,
+  resumePageGen,
+  type PageGenHandlers,
+  type PageGenResume,
+  type PageGenTransport,
+} from '@/lib/ai/pageGen/client';
+import { DETACH } from '@/lib/ai/resumableRun';
 import {
   applyResult,
   buildRequest,
   captureTarget,
   describeTargetAvailability,
   undoGeneration,
+  type CapturedTarget,
   type TargetKind,
 } from '@/lib/ai/pageGen/editorBridge';
 import { ModelSlider } from '@/components/ai/ModelSlider';
 import { saveModelChoice } from '@/lib/ai/modelChoice';
 import {
   clearDraft,
+  clearPendingRun,
   describeError,
   describeImageFallbacks,
   flowReducer,
   initialFlow,
   loadDraft,
+  loadPendingRun,
   makeRequestKey,
   saveDraft,
+  savePendingRun,
   type FlowInputs,
 } from '@/lib/ai/pageGen/flow';
 import { GENERATION_LIMITS } from '@/lib/ai/pageGen/schema';
@@ -104,6 +122,8 @@ export interface GeneratePageDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   transport?: PageGenTransport;
+  /** Collects a run started before a reload (injectable for tests). */
+  resume?: PageGenResume;
   /** The visual review run (injectable for tests). */
   review?: ReviewRunnerOptions;
 }
@@ -112,6 +132,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
   open,
   onOpenChange,
   transport = fetchPageGenTransport,
+  resume = resumePageGen,
   review: reviewRunner,
 }: GeneratePageDialogProps) {
   const { editorUI } = useStore();
@@ -134,21 +155,15 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
   const availability = describeTargetAvailability(inputs.targetKind, page, selected);
   const targetKey = `${page?.id ?? ''}|${inputs.targetKind === 'newPage' ? '' : (selected?.id ?? '')}`;
 
-  // Re-entry / resume: every open starts from the saved draft, never from a
-  // previous run or result.
-  React.useEffect(() => {
-    if (open && projectId) dispatch({ type: 'reset', inputs: loadDraft(projectId) });
-    if (open) setReviewSettings(loadReviewSettings());
-  }, [open, projectId]);
-
   const editReviewSettings = (patch: Partial<ReviewSettings>) => {
     const next = { ...reviewSettingsRef.current, ...patch };
     setReviewSettings(next);
     saveReviewSettings(next);
   };
 
-  // Abort a running generation when the dialog unmounts.
-  React.useEffect(() => () => abortRef.current?.abort(), []);
+  // Unmounting (leaving the editor) only stops following a run: it keeps going
+  // on the server and is resumed from savePendingRun next time.
+  React.useEffect(() => () => abortRef.current?.abort(DETACH), []);
 
   const edit = (patch: Partial<FlowInputs>) => {
     dispatch({ type: 'edit', inputs: patch, targetKey });
@@ -157,8 +172,10 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
   };
 
   const cancel = () => {
+    // A plain abort: the transport also stops the run on the server.
     abortRef.current?.abort();
     abortRef.current = null;
+    if (projectId) clearPendingRun(projectId);
     dispatch({ type: 'cancel' });
   };
 
@@ -168,6 +185,70 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
     onOpenChange(next);
   };
 
+  /**
+   * The handlers that follow one run to its outcome and apply it to the target
+   * captured when it started. Shared by a fresh generation and a resumed one.
+   */
+  const follow = (
+    run: { requestKey: string; target: CapturedTarget; runInputs: FlowInputs; brief: string },
+    controller: AbortController,
+  ): PageGenHandlers => {
+    const { requestKey, target, runInputs, brief } = run;
+    const isCurrent = () =>
+      abortRef.current === controller && stateRef.current.phase === 'running' && stateRef.current.requestKey === requestKey;
+    return {
+      onStarted: (generationId) => {
+        if (!isCurrent() || !projectId) return;
+        savePendingRun(projectId, { generationId, requestKey, inputs: runInputs, target, startedAt: Date.now() });
+      },
+      onProgress: (progress) => {
+        if (isCurrent()) dispatch({ type: 'progress', requestKey, progress });
+      },
+      onResult: (result) => {
+        if (!isCurrent() || !project) return; // cancelled or superseded: never apply
+        if (projectId) clearPendingRun(projectId);
+        const outcome = applyResult(project, target, result, runInputs.targetKind === 'newPage' ? runInputs.pageTitle : undefined);
+        if (!outcome.ok) {
+          dispatch({ type: 'failed', requestKey, error: { code: 'apply_failed', message: `Nothing was changed: ${outcome.reason}` } });
+          return;
+        }
+        const shownPage = project.getPage(outcome.value.pageId);
+        if (shownPage && editorUI.currentPage?.id !== shownPage.id) editorUI.setCurrentPage(shownPage);
+        const toSelect = shownPage && outcome.value.selectId ? findComponent(shownPage, outcome.value.selectId) : undefined;
+        if (toSelect) editorUI.selectComponent(toSelect);
+        clearDraft(projectId);
+        dispatch({
+          type: 'applied',
+          requestKey,
+          record: outcome.value.record,
+          nodeCount: result.stats.nodeCount,
+          warnings: result.warnings,
+          tells: result.tells,
+          images: result.images,
+        });
+        // One review round of what was just applied (fails soft: the page
+        // stays as generated and the dialog says what failed).
+        if (shownPage && reviewSettingsRef.current.auto) {
+          void review.start(shownPage, reviewSettingsRef.current.model, brief);
+        }
+      },
+      onError: (error) => {
+        if (error.code === 'aborted' || !isCurrent()) return;
+        if (projectId) clearPendingRun(projectId);
+        dispatch({ type: 'failed', requestKey, error: describeError(error) });
+      },
+    };
+  };
+
+  const begin = (requestKey: string): AbortController => {
+    const controller = new AbortController();
+    abortRef.current?.abort(DETACH);
+    abortRef.current = controller;
+    dispatch({ type: 'start', requestKey });
+    review.reset();
+    return controller;
+  };
+
   const generate = async () => {
     if (!project || !page || !availability.ok) return;
     const brief = inputs.brief.trim();
@@ -175,58 +256,37 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
     const target = captureTarget(inputs.targetKind, page, selected);
     const requestKey = makeRequestKey(inputs, targetKey);
     const request = buildRequest({ brief, model: inputs.model, pageTitle: inputs.pageTitle, target, project });
-    const controller = new AbortController();
-    abortRef.current?.abort();
-    abortRef.current = controller;
-    dispatch({ type: 'start', requestKey });
-    review.reset();
+    const controller = begin(requestKey);
     lastBriefRef.current = brief;
-
-    const isCurrent = () =>
-      abortRef.current === controller && stateRef.current.phase === 'running' && stateRef.current.requestKey === requestKey;
-
-    await transport(
-      request,
-      {
-        onProgress: (progress) => {
-          if (isCurrent()) dispatch({ type: 'progress', requestKey, progress });
-        },
-        onResult: (result) => {
-          if (!isCurrent()) return; // cancelled or superseded: never apply
-          const outcome = applyResult(project, target, result, inputs.targetKind === 'newPage' ? inputs.pageTitle : undefined);
-          if (!outcome.ok) {
-            dispatch({ type: 'failed', requestKey, error: { code: 'apply_failed', message: `Nothing was changed: ${outcome.reason}` } });
-            return;
-          }
-          const shownPage = project.getPage(outcome.value.pageId);
-          if (shownPage && editorUI.currentPage?.id !== shownPage.id) editorUI.setCurrentPage(shownPage);
-          const toSelect = shownPage && outcome.value.selectId ? findComponent(shownPage, outcome.value.selectId) : undefined;
-          if (toSelect) editorUI.selectComponent(toSelect);
-          clearDraft(projectId);
-          dispatch({
-            type: 'applied',
-            requestKey,
-            record: outcome.value.record,
-            nodeCount: result.stats.nodeCount,
-            warnings: result.warnings,
-            tells: result.tells,
-            images: result.images,
-          });
-          // One review round of what was just applied (fails soft: the page
-          // stays as generated and the dialog says what failed).
-          if (shownPage && reviewSettingsRef.current.auto) {
-            void review.start(shownPage, reviewSettingsRef.current.model, lastBriefRef.current);
-          }
-        },
-        onError: (error) => {
-          if (error.code === 'aborted' || !isCurrent()) return;
-          dispatch({ type: 'failed', requestKey, error: describeError(error) });
-        },
-      },
-      controller.signal,
-    );
+    await transport(request, follow({ requestKey, target, runInputs: inputs, brief }, controller), controller.signal);
     if (abortRef.current === controller) abortRef.current = null;
   };
+
+  // Re-entry / resume: an open starts from the saved draft, never from a
+  // previous result; or, when a run was still going as the tab went away (iOS
+  // reloaded it), follows that run to its outcome.
+  React.useEffect(() => {
+    if (open) setReviewSettings(loadReviewSettings());
+    if (!open || !projectId) return;
+    const pending = loadPendingRun(projectId);
+    if (!pending) {
+      dispatch({ type: 'reset', inputs: loadDraft(projectId) });
+      return;
+    }
+    dispatch({ type: 'reset', inputs: pending.inputs });
+    const controller = begin(pending.requestKey);
+    const brief = pending.inputs.brief.trim();
+    lastBriefRef.current = brief;
+    void resume(
+      pending.generationId,
+      follow({ requestKey: pending.requestKey, target: pending.target, runInputs: pending.inputs, brief }, controller),
+      controller.signal,
+    ).then(() => {
+      if (abortRef.current === controller) abortRef.current = null;
+    });
+    // Runs on open only: `begin` and `follow` read the latest state through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, projectId]);
 
   const undo = () => {
     if (!project || state.phase !== 'applied') return;
@@ -499,16 +559,26 @@ function StockImageNote({ images }: { images?: StockImageSummary }) {
 /** The top-bar entry point. */
 export const GeneratePageButton = observer(function GeneratePageButton({
   transport,
+  resume,
   open: openProp,
   onOpenChange,
   triggerClassName = '',
 }: {
   transport?: PageGenTransport;
+  resume?: PageGenResume;
   /** Extra classes for the trigger (the compact top bar hides it and opens the dialog from its More menu). */
   triggerClassName?: string;
 } & ControllableOpenProps) {
   const { editorUI } = useStore();
   const [open, setOpen] = useControllableOpen({ open: openProp, onOpenChange });
+  const projectId = editorUI.currentProject?.id;
+  // A generation was still running when the tab went away (iOS reloads a tab it
+  // discarded in the background): reopen the dialog, which collects and applies it.
+  React.useEffect(() => {
+    if (projectId && loadPendingRun(projectId)) setOpen(true);
+    // Once per project: setOpen's identity does not matter here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
   return (
     <>
       <Button
@@ -523,7 +593,7 @@ export const GeneratePageButton = observer(function GeneratePageButton({
         <Sparkles size={16} />
         Generate
       </Button>
-      <GeneratePageDialog open={open} onOpenChange={setOpen} transport={transport} />
+      <GeneratePageDialog open={open} onOpenChange={setOpen} transport={transport} resume={resume} />
     </>
   );
 });

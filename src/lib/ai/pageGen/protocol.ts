@@ -39,6 +39,15 @@ export interface PageGenRequest {
   siteContext?: SiteContext;
 }
 
+/**
+ * SSE `gen:started`: the first event. The run's id, which the editor keeps so
+ * it can collect the run (GET /api/ai/generate-page/[id]) after losing the
+ * stream, or cancel it (DELETE on the same path).
+ */
+export interface PageGenStarted {
+  generationId: string;
+}
+
 /** SSE `gen:progress`: the model is writing (or the server is checking / repairing). */
 export interface PageGenProgress {
   phase: 'generating' | 'validating' | 'repairing' | 'images';

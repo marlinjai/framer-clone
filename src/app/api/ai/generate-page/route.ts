@@ -16,14 +16,22 @@
 // detached stream, reading cookies off the Request (never next/headers).
 //
 // Status codes:
-//   200 -> SSE stream: gen:progress*, then gen:result or gen:error, then usage.
-//          Errors after the stream opened are `gen:error` events, never a
-//          silent close.
+//   200 -> SSE stream: gen:started { generationId }, gen:progress*, then
+//          gen:result or gen:error, then usage. Errors after the stream opened
+//          are `gen:error` events, never a silent close.
 //   400 -> bad JSON / failed validation / brief or context over budget
 //   401 -> no session / missing ANTHROPIC_API_KEY
 //   403 -> no active company / Sites not enabled / not permitted to edit
 //   429 -> this user already has a generation running, or hit the window limit
 //   503 -> auth-brain (`auth_unavailable`) or OpenFGA (`authz_unavailable`) down
+//
+// A generation survives its connection (src/lib/ai/jobRegistry.ts): a phone
+// that switches to another app drops the stream, but the model call carries on
+// and the outcome is kept for the editor to collect through
+// GET /api/ai/generate-page/[id], even after iOS reloaded the tab. Only an
+// explicit DELETE on that route stops it. The spend stays bounded by the
+// attempt cap and the per-user rate limit below; the user's in-flight slot is
+// held until the run ends, connected or not.
 //
 // Every valid output goes through the design-tells screen
 // (src/lib/ai/pageGen/tells.ts): the safe fixes (dashes, emoji, banned fonts,
@@ -91,11 +99,16 @@ import {
   DEFAULT_PAGE_GEN_MODEL,
   PAGE_GEN_MODELS,
   type PageGenErrorPayload,
+  type PageGenProgress,
+  type PageGenResultPayload,
+  type PageGenStarted,
   type PageGenTarget,
   type StockImageSummary,
 } from '@/lib/ai/pageGen/protocol';
 import { classifyProviderError } from '@/lib/ai/pageGen/providerError';
 import { getPageGenRateLimiter } from '@/lib/ai/pageGen/rateLimit';
+import { getPageGenJobs } from '@/lib/ai/pageGen/jobs';
+import type { JobHandle } from '@/lib/ai/jobRegistry';
 import {
   applyStockPhotos,
   resolveStockImages,
@@ -226,14 +239,18 @@ async function handlePOST(request: Request): Promise<Response> {
   }
 
   // ---- 5. Stream -----------------------------------------------------------
+  // The run is registered before the stream opens and is not tied to it: a
+  // dropped connection leaves it running (see the header).
+  const workspaceId = scopeResult.scope.workspaceId;
+  const job = getPageGenJobs().create({ id: newRequestId(), userId, workspaceId });
   const sse = createSseStream();
   void runGeneration({
     anthropic,
     body,
     userId,
-    workspaceId: scopeResult.scope.workspaceId,
+    workspaceId,
     sse,
-    signal: request.signal,
+    job,
     release: slot.release,
   });
   return new Response(sse.stream, { status: 200, headers: SSE_HEADERS });
@@ -245,7 +262,8 @@ interface RunArgs {
   userId: string;
   workspaceId: string;
   sse: ReturnType<typeof createSseStream>;
-  signal: AbortSignal;
+  /** The run's record: its outcome stays collectable after a disconnect, and its signal is the only stop. */
+  job: JobHandle<PageGenProgress, PageGenResultPayload, PageGenErrorPayload>;
   /** Frees the user's in-flight slot; called before the stream closes. */
   release: () => void;
 }
@@ -255,11 +273,12 @@ function newRequestId(): string {
 }
 
 async function runGeneration(args: RunArgs): Promise<void> {
-  const { anthropic, body, userId, sse } = args;
+  const { anthropic, body, userId, sse, job } = args;
   // Nothing that can throw runs before the try: whatever happens, the finally
-  // below closes the stream, logs the call and releases the user's slot.
+  // below closes the stream, settles the run, logs the call and releases the
+  // user's slot.
   let heartbeat: ReturnType<typeof setInterval> | undefined;
-  const requestId = newRequestId();
+  const requestId = job.id;
   const timer = startAiCallTimer();
   let modelId: string = body.model;
 
@@ -274,21 +293,30 @@ async function runGeneration(args: RunArgs): Promise<void> {
   // stream runs (returns false while there is none).
   let deliverBest: (reason: string) => Promise<boolean> = async () => false;
 
+  // Every event goes to the run's record as well as to the stream, so a client
+  // that lost the stream collects the same thing.
+  const progress = (p: PageGenProgress): void => {
+    job.progress(p);
+    sse.send('gen:progress', p);
+  };
   const fail = (payload: PageGenErrorPayload): void => {
     errorCode = String(payload.code);
     status = payload.code === 'rate_limited' ? 'rate_limited' : payload.code === 'overloaded' ? 'overloaded' : 'error';
+    job.fail(payload);
     sse.send('gen:error', payload);
   };
 
   try {
+    const started: PageGenStarted = { generationId: requestId };
+    sse.send('gen:started', started);
     heartbeat = setInterval(() => sse.heartbeat(), SSE_HEARTBEAT_MS);
     const modelFields = modelRequestFields(body.model, PAGE_GEN_EFFORT[body.model]);
     modelId = modelFields.model;
     const breakpoints: BreakpointKey[] = deriveBreakpointKeys(body.breakpoints);
-    // Stop the Anthropic stream (and the spend) when the client disconnects:
-    // the request is aborted, or the SSE stream was cancelled / a write hit a
-    // closed connection.
-    const signal = AbortSignal.any([args.signal, sse.signal]);
+    // Stop the Anthropic stream (and the spend) only on an explicit cancel
+    // (DELETE /api/ai/generate-page/[id]). A dropped connection is a phone in
+    // the background, not a user who changed their mind.
+    const signal = job.signal;
 
     const system = buildSystemPrompt([
       { type: 'text', text: stableSystemText(), cache: true },
@@ -336,7 +364,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
       const unfilledAlt = new Set(alt.unfilled);
       const remaining = c.remaining.filter((f) => f.tell !== 'alt-text' || unfilledAlt.has(f.path));
       if (imageRequests.length > 0) {
-        sse.send('gen:progress', { phase: 'images', receivedChars: received, attempt });
+        progress({ phase: 'images', receivedChars: received, attempt });
       }
       const stock = await resolveStockImagesSafely(imageRequests, signal);
       if (signal.aborted) return;
@@ -357,7 +385,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
       console.info(
         `[generate-page] tells fixed=${c.fixCount} remaining=${c.remaining.length} repaired=${repaired} attempts=${attempt} altFilled=${alt.filled} altMissing=${alt.unfilled.length}`,
       );
-      sse.send('gen:result', {
+      const payload: PageGenResultPayload = {
         generationId: requestId,
         ...result,
         warnings: [...result.warnings, ...c.fixLines, ...alt.notes, ...repairNote, ...notes],
@@ -365,9 +393,11 @@ async function runGeneration(args: RunArgs): Promise<void> {
         nodes: applyStockPhotos(result.nodes, placed),
         model: modelId,
         images: withInvalidQueries(stock.summary, invalidImageQueries),
-      });
+      };
+      job.succeed(payload);
+      sse.send('gen:result', payload);
       // The photos are now in a result the editor applies: tell Unsplash
-      // (its download tracking), unless the client already went away.
+      // (its download tracking), unless the run was cancelled.
       if (!signal.aborted) triggerStockDownloads(stock.placed);
     };
     deliverBest = async (reason: string) => {
@@ -379,7 +409,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
     while (attempts < MAX_ATTEMPTS) {
       attempts += 1;
       const attempt = attempts;
-      sse.send('gen:progress', { phase: attempt === 1 ? 'generating' : 'repairing', receivedChars: 0, attempt });
+      progress({ phase: attempt === 1 ? 'generating' : 'repairing', receivedChars: 0, attempt });
 
       // Sonnet 5.5 carries the server-side fallback opt-in (modelRequestFields);
       // Haiku 5.5 has none.
@@ -406,7 +436,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
         received += partialJson.length;
         if (received - lastReported >= PROGRESS_EVERY_CHARS) {
           lastReported = received;
-          sse.send('gen:progress', { phase: attempt === 1 ? 'generating' : 'repairing', receivedChars: received, attempt });
+          progress({ phase: attempt === 1 ? 'generating' : 'repairing', receivedChars: received, attempt });
         }
       });
 
@@ -466,7 +496,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
       const toolUse = final.content.find(
         (b): b is BetaToolUseBlock => b.type === 'tool_use' && b.name === EMIT_TOOL_NAME,
       );
-      sse.send('gen:progress', { phase: 'validating', receivedChars: received, attempt });
+      progress({ phase: 'validating', receivedChars: received, attempt });
 
       let problems: string[];
       let repairText = repairMessage;
@@ -537,6 +567,9 @@ async function runGeneration(args: RunArgs): Promise<void> {
     }
     if (!delivered) fail(classifyProviderError(err));
   } finally {
+    // A run that ended without an outcome (cancelled mid-way, an early return)
+    // must not stay "running" for a client that polls it. No-op once settled.
+    job.fail({ code: job.signal.aborted ? 'aborted' : 'generation_failed', message: 'The generation ended without a result.' });
     sse.send('usage', { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, attempts });
     if (heartbeat) clearInterval(heartbeat);
     // Release before closing, so a client that starts the next generation the

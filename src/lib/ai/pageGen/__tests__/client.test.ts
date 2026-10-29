@@ -75,9 +75,13 @@ describe('fetchPageGenTransport', () => {
     await fetchPageGenTransport(req, h);
     expect(h.onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'network_error' }));
 
-    vi.stubGlobal('fetch', vi.fn(async () => { throw Object.assign(new Error('aborted'), { name: 'AbortError' }); }));
+    const controller = new AbortController();
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      controller.abort();
+      throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+    }));
     h = handlers();
-    await fetchPageGenTransport(req, h);
+    await fetchPageGenTransport(req, h, controller.signal);
     expect(h.onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'aborted' }));
   });
 });
