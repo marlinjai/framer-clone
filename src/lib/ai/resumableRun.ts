@@ -282,7 +282,13 @@ export function createResumableRun<Req, P, R, E extends RunErrorPayload, U>(conf
             return;
           case config.events.error:
             settled = true;
-            handlers.onError?.(payload as E);
+            // The server aborts when any client sends DELETE. If this one did
+            // not cancel, the run was cancelled elsewhere.
+            if ((payload as RunErrorPayload | null)?.code === 'aborted' && !userSignal.aborted) {
+              handlers.onError?.({ code: 'cancelled', message: config.messages.cancelledElsewhere });
+            } else {
+              handlers.onError?.(payload as E);
+            }
             return;
           case 'usage':
             handlers.onUsage?.(payload as U);
