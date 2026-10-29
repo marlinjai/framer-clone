@@ -106,6 +106,16 @@ function progressText(p: PageGenProgress): string {
   return p.receivedChars > 0 ? `Designing (${kb} KB written)...` : 'Designing...';
 }
 
+/**
+ * Where a project's draft and run in progress are stored. The unsaved demo
+ * project of the standalone editor (`/`) is seeded again, with a new id, on
+ * every load, so it has one fixed key; a saved project keeps its server id.
+ */
+export function storageKeyFor(projectId: string | undefined, isUnsavedDemo: boolean): string {
+  if (!projectId) return '';
+  return isUnsavedDemo ? 'unsaved-demo' : projectId;
+}
+
 function findComponent(page: PageModelType, id: string): ComponentInstance | undefined {
   const walk = (n: ComponentInstance): ComponentInstance | undefined => {
     if (n.id === id) return n;
@@ -139,7 +149,8 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
   const project = editorUI.currentProject;
   const page = editorUI.currentPage;
   const selected = editorUI.selectedComponent as ComponentInstance | undefined;
-  const projectId = project?.id ?? '';
+  // The key the draft and a run in progress are stored under (storageKeyFor).
+  const projectId = storageKeyFor(project?.id, editorUI.isUnsavedDemo);
 
   const [state, dispatch] = React.useReducer(flowReducer, undefined, () => initialFlow());
   const abortRef = React.useRef<AbortController | null>(null);
@@ -573,7 +584,7 @@ export const GeneratePageButton = observer(function GeneratePageButton({
 } & ControllableOpenProps) {
   const { editorUI } = useStore();
   const [open, setOpen] = useControllableOpen({ open: openProp, onOpenChange });
-  const projectId = editorUI.currentProject?.id;
+  const projectId = storageKeyFor(editorUI.currentProject?.id, editorUI.isUnsavedDemo);
   // A generation was still running when the tab went away (iOS reloads a tab it
   // discarded in the background): reopen the dialog, which collects and applies it.
   React.useEffect(() => {
