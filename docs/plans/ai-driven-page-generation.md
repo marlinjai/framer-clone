@@ -348,7 +348,11 @@ reasoning:
   justification as the rate limiters: one Coolify container. A finished run is collectable for
   15 minutes; a hung one is aborted after 30. A restart loses runs, and the editor then says the
   run is gone and offers "Try again".
-- **The stream's first event names the run** (`gen:started`), and
+- **The browser chooses the run's id** (a UUID sent as `runId`, refused with 409 if already in
+  use) and remembers it before the request leaves, so a phone that goes to the background in the
+  second between tapping Generate and the first byte can still collect the run. A request that
+  fails while the tab stayed in front is reported at once as a network error instead.
+- **The stream's first event confirms the run** (`gen:started`), and
   `GET /api/ai/generate-page/[id]` returns its progress or outcome, `DELETE` cancels it. Same
   auth boundary as the POST; another user's or company's run answers 404 like an unknown one.
 - **The browser transport** (`src/lib/ai/resumableRun.ts`) reads the stream as before, and

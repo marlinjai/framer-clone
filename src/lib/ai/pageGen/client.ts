@@ -42,8 +42,7 @@ const run = createResumableRun<PageGenRequest, PageGenProgress, PageGenResultPay
     cancelled: 'Generation was cancelled.',
     unreachable: 'Could not reach the server. Check your connection and try again.',
     dropped: 'The connection dropped during generation. Try again.',
-    closedWithoutResult: 'The server closed the connection without a result. Try again.',
-    gone: 'This generation is no longer available (the server restarted, or it finished more than 15 minutes ago). Try again.',
+    gone: 'This generation is no longer available on the server (it never arrived, the server restarted, or it finished more than 15 minutes ago). Try again.',
     cancelledElsewhere: 'This generation was cancelled.',
   },
 });

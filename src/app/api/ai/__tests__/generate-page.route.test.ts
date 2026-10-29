@@ -738,6 +738,19 @@ describe('POST /api/ai/generate-page survives its connection', () => {
     expect((await GET_RUN(...runRequest(id, 'GET', null))).status).toBe(401);
   });
 
+  it('uses the id the browser chose, refuses one already in use, and rejects a malformed one', async () => {
+    const runId = '3f1c2b9e-8d4a-4e7b-9c1d-2a5b6c7d8e9f';
+    const res = await POST(makeRequest(baseBody({ runId })));
+    expect(res.status).toBe(200);
+    expect(((await events(res))[0].data as { generationId: string }).generationId).toBe(runId);
+    expect((await getRun(runId)).body.status).toBe('done');
+
+    const again = await POST(makeRequest(baseBody({ runId })));
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { error: { code: string } }).error.code).toBe('run_exists');
+    expect((await POST(makeRequest(baseBody({ runId: 'not-a-uuid' })))).status).toBe(400);
+  });
+
   it('a run is not readable without permission to edit the site', async () => {
     const res = await POST(makeRequest(baseBody()));
     const id = ((await events(res))[0].data as { generationId: string }).generationId;

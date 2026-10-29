@@ -37,6 +37,8 @@ export interface PageGenRequest {
   existingPageTitles?: string[];
   /** Site language and real contact data from Site settings (promptSections/siteContext.ts). */
   siteContext?: SiteContext;
+  /** The run's id (a UUID), chosen by the browser transport before sending. */
+  runId?: string;
 }
 
 /**

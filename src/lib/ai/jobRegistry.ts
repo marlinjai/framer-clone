@@ -49,6 +49,8 @@ export interface JobHandle<P, R, E> {
 }
 
 export interface JobRegistry<P, R, E> {
+  /** Whether any run (anyone's) holds this id: a client-chosen id must be new. */
+  has(id: string, now?: number): boolean;
   create(owner: { id: string; userId: string; workspaceId: string }, now?: number): JobHandle<P, R, E>;
   /** The run's state, or undefined when it is unknown, expired or someone else's. */
   get(id: string, owner: { userId: string; workspaceId: string }, now?: number): JobSnapshot<P, R, E> | undefined;
@@ -83,6 +85,10 @@ export function createJobRegistry<P, R, E>(limits: typeof JOB_LIMITS = JOB_LIMIT
   };
 
   return {
+    has(id, now = Date.now()) {
+      sweep(now);
+      return jobs.has(id);
+    },
     create({ id, userId, workspaceId }, now = Date.now()) {
       sweep(now);
       const mine = [...jobs.values()]

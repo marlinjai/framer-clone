@@ -32,8 +32,7 @@ const run = createResumableRun<ReviewRequest, ReviewProgress, ReviewResultPayloa
     cancelled: 'The review was cancelled.',
     unreachable: 'Could not reach the server for the review.',
     dropped: 'The connection dropped during the review.',
-    closedWithoutResult: 'The server closed the connection without a review result.',
-    gone: 'This review is no longer available (the server restarted, or it finished more than 15 minutes ago).',
+    gone: 'This review is no longer available on the server (it never arrived, the server restarted, or it finished more than 15 minutes ago).',
     cancelledElsewhere: 'This review was cancelled.',
   },
 });

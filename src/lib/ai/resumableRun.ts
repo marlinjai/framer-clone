@@ -1,11 +1,12 @@
 // src/lib/ai/resumableRun.ts
 //
 // Browser transport for an AI run that survives the tab going to the
-// background (the server side is src/lib/ai/jobRegistry.ts). It POSTs and
-// reads the SSE stream like before; the first event names the run's id. When
-// the stream dies (iOS drops the connection of a backgrounded tab) or the tab
+// background (the server side is src/lib/ai/jobRegistry.ts). It chooses the
+// run's id (`runId`, announced through onStarted before anything is sent),
+// POSTs and reads the SSE stream like before. When the stream dies (iOS drops the connection of a backgrounded tab) or the tab
 // comes back to the foreground, it stops trusting the stream and collects the
-// run from GET <url>/<id> instead, polling until the run is done. `resume`
+// run from GET <url>/<id> instead, polling until the run is done; the same
+// when the phone went to the background before the response arrived. `resume`
 // does only that, for a run started before a reload.
 //
 // Three different stops: the caller's signal means the user cancelled, which
@@ -42,7 +43,6 @@ export interface ResumableRunConfig {
     cancelled: string;
     unreachable: string;
     dropped: string;
-    closedWithoutResult: string;
     gone: string;
     cancelledElsewhere: string;
   };
@@ -67,6 +67,8 @@ const isDetach = (signal: AbortSignal) => signal.reason === DETACH;
 
 const DEFAULT_POLL_MS = 1_500;
 const DEFAULT_MAX_POLL_FAILURES = 20;
+/** After this many polls of a run still going, poll half as often (each poll is an authenticated request). */
+const POLLS_BEFORE_BACKOFF = 10;
 
 function isAbort(err: unknown): boolean {
   return !!err && typeof err === 'object' && 'name' in err && (err as { name: unknown }).name === 'AbortError';
@@ -137,6 +139,7 @@ export function createResumableRun<Req, P, R, E extends RunErrorPayload, U>(conf
   /** Collect the run by id until it is done. Exactly one onResult/onError. */
   const collect = async (id: string, handlers: Handlers, signal: AbortSignal): Promise<void> => {
     let failures = 0;
+    let polls = 0;
     for (;;) {
       if (signal.aborted) return handlers.onError?.({ code: 'aborted', message: config.messages.cancelled });
       await whenVisible(signal);
@@ -175,7 +178,8 @@ export function createResumableRun<Req, P, R, E extends RunErrorPayload, U>(conf
           return handlers.onError?.({ code: 'cancelled', message: config.messages.cancelledElsewhere });
         default:
           if (snapshot.progress) handlers.onProgress?.(snapshot.progress);
-          await sleep(pollMs, signal);
+          polls += 1;
+          await sleep(polls > POLLS_BEFORE_BACKOFF ? pollMs * 2 : pollMs, signal);
       }
     }
   };
@@ -185,20 +189,27 @@ export function createResumableRun<Req, P, R, E extends RunErrorPayload, U>(conf
     const userSignal = signal ?? new AbortController().signal;
     // Drops the stream (a dead connection, or the tab came back): never a cancel.
     const stream = new AbortController();
-    let id: string | undefined;
+    // Chosen here, so the run can be collected even if no response ever arrives.
+    const id = globalThis.crypto.randomUUID();
     let settled = false;
     let switchToCollect = false;
+    // The tab was in the background at some point: a failed request may have
+    // reached the server anyway, so it is worth collecting.
+    let wentHidden = hasDocument() && document.visibilityState === 'hidden';
 
     const onUserAbort = () => {
       stream.abort();
-      if (id && !settled && !isDetach(userSignal)) cancelOnServer(id);
+      if (!settled && !isDetach(userSignal)) cancelOnServer(id);
     };
     userSignal.addEventListener('abort', onUserAbort, { once: true });
     // Back in the foreground: the stream may be dead without having errored
     // yet (iOS), so collect the run instead of waiting on it.
     const onVisible = () => {
-      if (hasDocument() && document.visibilityState !== 'visible') return;
-      if (!id || settled) return;
+      if (hasDocument() && document.visibilityState !== 'visible') {
+        wentHidden = true;
+        return;
+      }
+      if (settled) return;
       switchToCollect = true;
       stream.abort();
     };
@@ -218,20 +229,27 @@ export function createResumableRun<Req, P, R, E extends RunErrorPayload, U>(conf
         handlers.onError?.({ code: 'aborted', message: config.messages.cancelled });
         return;
       }
+      handlers.onStarted?.(id);
       let response: Response;
       try {
         response = await doFetch(config.url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(req),
+          body: JSON.stringify({ ...req, runId: id }),
           signal: stream.signal,
         });
       } catch (err) {
-        handlers.onError?.(
-          isAbort(err) && userSignal.aborted
-            ? { code: 'aborted', message: config.messages.cancelled }
-            : { code: 'network_error', message: config.messages.unreachable },
-        );
+        if (isAbort(err) && userSignal.aborted) {
+          handlers.onError?.({ code: 'aborted', message: config.messages.cancelled });
+          return;
+        }
+        // Backgrounded mid-request: the server may well be running it.
+        if (wentHidden || switchToCollect) {
+          await collect(id, handlers, userSignal);
+          settled = true;
+          return;
+        }
+        handlers.onError?.({ code: 'network_error', message: config.messages.unreachable });
         return;
       }
 
@@ -252,15 +270,9 @@ export function createResumableRun<Req, P, R, E extends RunErrorPayload, U>(conf
           return;
         }
         switch (event) {
-          case config.events.started: {
-            const started = (payload as { generationId?: unknown; reviewId?: unknown; id?: unknown }) ?? {};
-            const value = started.generationId ?? started.reviewId ?? started.id;
-            if (typeof value === 'string' && value) {
-              id = value;
-              handlers.onStarted?.(value);
-            }
+          case config.events.started:
+            // Confirms the id this transport chose; nothing to do.
             return;
-          }
           case config.events.progress:
             handlers.onProgress?.(payload as P);
             return;
@@ -315,17 +327,10 @@ export function createResumableRun<Req, P, R, E extends RunErrorPayload, U>(conf
         return;
       }
       if (switchToCollect || streamError !== undefined) stopReading();
-      // The stream ended (or was dropped) without an outcome: collect the run.
-      if (id) {
-        await collect(id, handlers, userSignal);
-        settled = true;
-        return;
-      }
+      // The stream ended (or was dropped) without an outcome: the server
+      // accepted the run, so collect it.
+      await collect(id, handlers, userSignal);
       settled = true;
-      handlers.onError?.({
-        code: 'network_error',
-        message: streamError !== undefined ? config.messages.dropped : config.messages.closedWithoutResult,
-      });
     } finally {
       cleanup();
     }

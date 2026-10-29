@@ -74,6 +74,8 @@ export interface ReviewRequest {
   brief?: string;
   /** Problems on the client side the model should know about ("the phone capture failed"). */
   notes?: string[];
+  /** The run's id (a UUID), chosen by the browser transport before sending. */
+  runId?: string;
 }
 
 /**

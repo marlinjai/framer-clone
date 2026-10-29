@@ -197,8 +197,10 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
     const isCurrent = () =>
       abortRef.current === controller && stateRef.current.phase === 'running' && stateRef.current.requestKey === requestKey;
     return {
+      // Fires before the request is sent (the transport chooses the id), so
+      // before the 'running' state rendered: the controller alone identifies the run.
       onStarted: (generationId) => {
-        if (!isCurrent() || !projectId) return;
+        if (abortRef.current !== controller || !projectId) return;
         savePendingRun(projectId, { generationId, requestKey, inputs: runInputs, target, startedAt: Date.now() });
       },
       onProgress: (progress) => {

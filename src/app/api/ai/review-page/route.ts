@@ -20,6 +20,7 @@
 //          review:result or review:error, then usage. Errors after the stream
 //          opened are `review:error`.
 //   400 -> bad JSON / failed validation / tree or images over budget
+//   409 -> the client-chosen `runId` is already taken (`run_exists`)
 //   401 -> no session / missing ANTHROPIC_API_KEY
 //   403 -> no active company / Sites not enabled / not permitted to edit
 //   429 -> a review is already running for this user, or the window limit
@@ -122,6 +123,8 @@ const BodySchema = z.strictObject({
   images: z.array(ImageSchema).max(REVIEW_LIMITS.maxImages),
   brief: z.string().trim().max(REVIEW_LIMITS.maxBriefChars).optional(),
   notes: z.array(z.string().max(300)).max(10).optional(),
+  /** The run's id, chosen by the browser so it can collect a run whose response it never saw. */
+  runId: z.string().uuid().optional(),
 });
 
 type Body = z.infer<typeof BodySchema>;
@@ -194,6 +197,9 @@ async function handlePOST(request: Request): Promise<Response> {
   }
 
   // ---- 4. Per-user budget ---------------------------------------------------
+  if (body.runId && getReviewJobs().has(body.runId)) {
+    return jsonError('run_exists', 'this run id is already in use', 409);
+  }
   const slot = getReviewRateLimiter().acquire(userId);
   if (!slot.ok) {
     const message =
@@ -208,7 +214,7 @@ async function handlePOST(request: Request): Promise<Response> {
   // ---- 5. Stream -------------------------------------------------------------
   // Registered before the stream opens and not tied to it (see the header).
   const workspaceId = scopeResult.scope.workspaceId;
-  const job = getReviewJobs().create({ id: globalThis.crypto.randomUUID(), userId, workspaceId });
+  const job = getReviewJobs().create({ id: body.runId ?? globalThis.crypto.randomUUID(), userId, workspaceId });
   const sse = createSseStream();
   void runReview({
     anthropic,

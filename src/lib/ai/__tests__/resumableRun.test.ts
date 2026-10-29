@@ -20,10 +20,12 @@ function liveStream() {
 }
 
 function setup(responses: Record<string, Array<() => Response | Promise<Response>>>) {
-  const calls: Array<{ url: string; method: string; keepalive?: boolean }> = [];
+  // The transport chooses the run id; pin it so the routes below match.
+  vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('r1' as ReturnType<Crypto['randomUUID']>);
+  const calls: Array<{ url: string; method: string; keepalive?: boolean; body?: string }> = [];
   const fetchMock = vi.fn(async (url: string, init: RequestInit = {}) => {
     const method = init.method ?? 'GET';
-    calls.push({ url, method, keepalive: init.keepalive });
+    calls.push({ url, method, keepalive: init.keepalive, body: typeof init.body === 'string' ? init.body : undefined });
     const queue = responses[`${method} ${url}`];
     const next = queue?.length ? queue.length > 1 ? queue.shift()! : queue[0] : undefined;
     if (!next) throw new TypeError('Failed to fetch');
@@ -37,7 +39,6 @@ function setup(responses: Record<string, Array<() => Response | Promise<Response
       cancelled: 'cancelled',
       unreachable: 'unreachable',
       dropped: 'dropped',
-      closedWithoutResult: 'closed',
       gone: 'gone',
       cancelledElsewhere: 'cancelled elsewhere',
     },
@@ -53,10 +54,22 @@ const json = (body: unknown, status = 200) => () => Response.json(body, { status
 
 afterEach(() => {
   Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+  vi.restoreAllMocks();
 });
 
 describe('createResumableRun', () => {
-  it('a stream that dies after the id was announced is collected by id', async () => {
+  it('announces its own run id before sending, and sends it along', async () => {
+    const live = liveStream();
+    const { run, calls, handlers } = setup({ 'POST /api/run': [() => live.response] });
+    const done = run.start({ brief: 'b' }, handlers);
+    expect(handlers.onStarted).toHaveBeenCalledWith('r1');
+    live.send('x:result', { page: 'p' });
+    live.close();
+    await done;
+    expect(JSON.parse(calls[0].body!)).toEqual({ brief: 'b', runId: 'r1' });
+  });
+
+  it('a stream that dies after the server accepted the run is collected by id', async () => {
     const live = liveStream();
     const { run, calls, handlers } = setup({
       'POST /api/run': [() => live.response],
@@ -106,13 +119,42 @@ describe('createResumableRun', () => {
     expect(calls.filter((c) => c.method === 'GET')).toHaveLength(0);
   });
 
-  it('a stream lost before the id was announced is a plain network error', async () => {
-    const live = liveStream();
-    const { run, handlers } = setup({ 'POST /api/run': [() => live.response] });
+  it('a request that fails while the tab is in front is a plain network error, nothing is collected', async () => {
+    const { run, calls, handlers } = setup({});
+    await run.start({ brief: 'b' }, handlers);
+    expect(handlers.onError).toHaveBeenCalledWith({ code: 'network_error', message: 'unreachable' });
+    expect(calls.filter((c) => c.method === 'GET')).toHaveLength(0);
+  });
+
+  it('a request lost because the phone went to the background is collected, since the server may have it', async () => {
+    let failRequest: () => void = () => {};
+    const { run, handlers } = setup({
+      'POST /api/run': [() => new Promise<Response>((_, reject) => (failRequest = () => reject(new TypeError('Load failed'))))],
+      'GET /api/run/r1': [json({ status: 'done', result: { page: 'p' } })],
+    });
     const done = run.start({ brief: 'b' }, handlers);
-    live.fail();
+    await vi.waitFor(() => expect(handlers.onStarted).toHaveBeenCalled());
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    failRequest();
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
     await done;
-    expect(handlers.onError).toHaveBeenCalledWith({ code: 'network_error', message: 'dropped' });
+    expect(handlers.onResult).toHaveBeenCalledWith({ page: 'p' });
+    expect(handlers.onError).not.toHaveBeenCalled();
+  });
+
+  it('a stream that closes without an outcome is collected; a run the server never had is one error', async () => {
+    const live = liveStream();
+    const { run, handlers } = setup({
+      'POST /api/run': [() => live.response],
+      'GET /api/run/r1': [json({ error: { code: 'not_found', message: 'x' } }, 404)],
+    });
+    const done = run.start({ brief: 'b' }, handlers);
+    live.close();
+    await done;
+    expect(handlers.onError).toHaveBeenCalledTimes(1);
+    expect(handlers.onError).toHaveBeenCalledWith({ code: 'run_gone', message: 'gone' });
   });
 
   it('the user cancelling stops the run on the server (keepalive DELETE); a detach does not', async () => {

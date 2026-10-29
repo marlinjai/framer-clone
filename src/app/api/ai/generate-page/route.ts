@@ -20,6 +20,7 @@
 //          gen:result or gen:error, then usage. Errors after the stream opened
 //          are `gen:error` events, never a silent close.
 //   400 -> bad JSON / failed validation / brief or context over budget
+//   409 -> the client-chosen `runId` is already taken (`run_exists`)
 //   401 -> no session / missing ANTHROPIC_API_KEY
 //   403 -> no active company / Sites not enabled / not permitted to edit
 //   429 -> this user already has a generation running, or hit the window limit
@@ -29,7 +30,9 @@
 // that switches to another app drops the stream, but the model call carries on
 // and the outcome is kept for the editor to collect through
 // GET /api/ai/generate-page/[id], even after iOS reloaded the tab. Only an
-// explicit DELETE on that route stops it. The spend stays bounded by the
+// explicit DELETE on that route stops it. The browser chooses the run's id
+// (`runId`) before sending, so it can collect the run even when the phone went
+// to the background before the response arrived. The spend stays bounded by the
 // attempt cap and the per-user rate limit below; the user's in-flight slot is
 // held until the run ends, connected or not.
 //
@@ -176,6 +179,8 @@ const BodySchema = z.strictObject({
   projectName: z.string().max(120).optional(),
   existingPageTitles: z.array(z.string().max(120)).max(100).optional(),
   siteContext: SiteContextSchema.optional(),
+  /** The run's id, chosen by the browser so it can collect a run whose response it never saw. */
+  runId: z.string().uuid().optional(),
 });
 
 type Body = z.infer<typeof BodySchema>;
@@ -227,6 +232,9 @@ async function handlePOST(request: Request): Promise<Response> {
   }
 
   // ---- 4. Per-user budget --------------------------------------------------
+  if (body.runId && getPageGenJobs().has(body.runId)) {
+    return jsonError('run_exists', 'this run id is already in use', 409);
+  }
   const slot = getPageGenRateLimiter().acquire(userId);
   if (!slot.ok) {
     const message =
@@ -242,7 +250,7 @@ async function handlePOST(request: Request): Promise<Response> {
   // The run is registered before the stream opens and is not tied to it: a
   // dropped connection leaves it running (see the header).
   const workspaceId = scopeResult.scope.workspaceId;
-  const job = getPageGenJobs().create({ id: newRequestId(), userId, workspaceId });
+  const job = getPageGenJobs().create({ id: body.runId ?? newRequestId(), userId, workspaceId });
   const sse = createSseStream();
   void runGeneration({
     anthropic,
