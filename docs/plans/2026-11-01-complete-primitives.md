@@ -143,6 +143,49 @@ representation, and a node without one fails the round-trip test rather than bei
 - Behaviour: every included WAI-ARIA pattern built from behaviour primitives alone, keyboard support
   included. Whatever cannot be is the defined scope of custom code.
 
+## Visual state management
+
+Marlin (2026-11-01): how do we give people a visual way to manage state, such as a hover state or
+other small things? Framer was tested in its real editor and on a page published to `framer.app` on
+2026-11-01, because it is the closest comparison.
+
+### What Framer does
+
+Each placed component holds one current variant, and events travel upward from child to parent. In
+React terms that is roughly one `useState` per instance plus callback props (our reading, not
+Framer's description). Shared values beyond that need code (`createStore` in a code override).
+
+- States are real frames on the canvas: a "Hover / Pressed" tile below a variant, a "Variant" tile
+  beside it. Each stores only what differs from the primary variant, marked on the panel row.
+- Interactions are drawn: dragging a handle from one variant to another makes a connector and opens
+  a popover with On, Delay, Transition (Once or Cycle) and Variant. The triggers are Click, Click
+  start, Appear, Mouse enter and Mouse leave.
+- A placed instance gets a Variant control and an automatic Trigger field.
+- Component variables come in 17 types and are inputs set per placement, not runtime state.
+- Event variables carry a child's interaction to its parent (from Framer's docs, not built in the
+  test). For two unrelated components no native route was found: they need a shared parent or a
+  community component.
+
+Measured on the published page: no CSS `:hover` rule existed for the component. Script added a
+`hover` class and wrote the colour inline, and with scripts blocked hover did nothing.
+
+### What we build
+
+Three layers, each usable without the next:
+
+1. **Element states.** A state switch in the panel (Normal, Hover, Pressed, Focused) over the
+   ordinary style controls. Output is plain CSS, added to the sheet `responsiveCss` already emits, so
+   hover works without JavaScript. Focused is included because keyboard users need it and Framer's
+   menu offers only Hover and Pressed.
+2. **Component states.** Named states on a reusable component, shown as frames on the canvas, storing
+   only their differences, with drag-to-connect interactions and Framer's small popover.
+3. **Page state.** A small panel of named values (`menuOpen`, `activeTab`). "On click, toggle
+   `menuOpen`" on one element and "when `menuOpen` is true, show" on another, with no shared parent
+   required. Accordion, tabs, dialog, carousel and menu are presets over this.
+
+Interactions must run on the editing canvas as well as in preview, and every state must be reachable
+by keyboard. Layer 1 belongs to step 4 of the work below; layers 2 and 3 to steps 5 and 6.
+
 ## The work this implies
 
 These are rough judgement estimates in agent time, not measurements. The evaluation may change them.
@@ -154,7 +197,7 @@ These are rough judgement estimates in agent time, not measurements. The evaluat
 | 3 | A general "any property, any attribute" editor in the panel. This closes the long tail of CSS cheaply; proper controls stay for common properties only, and `CSS_PROP_SET` is not extended by hand | days |
 | 4 | Selector-level styling: element states, keyframe animations and further at-rules, built on how `responsiveCss` already moves style maps into a stylesheet | 1 to 2 weeks |
 | 5 | Reusable components | 2 to 3 weeks |
-| 6 | Behaviour model: state, events and actions, then accordion, tabs, dialog, carousel and menu on top | 3 to 4 weeks |
+| 6 | Behaviour model (see [visual state management](#visual-state-management)): page state, events and actions, then accordion, tabs, dialog, carousel and menu on top | 3 to 4 weeks |
 | 7 | React import and export | 2 to 3 weeks |
 
 ### Reusable components and their inputs
