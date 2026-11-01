@@ -37,6 +37,29 @@ function isEditorPlanePath(pathname: string): 'api' | 'page' | null {
   return null;
 }
 
+/**
+ * True for a state-changing request that a page on another origin caused. The
+ * `.lumitra.co` session cookie is sent from every published site (same site, so
+ * SameSite=Lax does not stop it), and a stored form can post plain text that
+ * parses as JSON, so the authoring API must know where a request came from.
+ * Browsers state that in Sec-Fetch-Site; older ones send Origin. A request with
+ * neither is not from a browser page (a webhook, the host timers) and carries
+ * no ambient session.
+ */
+function isCrossOriginWrite(request: NextRequest): boolean {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return false;
+  const fetchSite = request.headers.get('sec-fetch-site');
+  if (fetchSite) return fetchSite !== 'same-origin' && fetchSite !== 'none';
+  const origin = request.headers.get('origin');
+  if (!origin) return false;
+  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host');
+  try {
+    return new URL(origin).host.toLowerCase() !== (host ?? '').toLowerCase();
+  } catch {
+    return true;
+  }
+}
+
 export async function middleware(request: NextRequest) {
   // Host-aware root routing. Next is host-agnostic, so without this `/` is the
   // editor (`app/page.tsx`) on EVERY host. The discriminator is the request Host:
@@ -47,6 +70,15 @@ export async function middleware(request: NextRequest) {
   // editor and local dev is unchanged. The rewrite only activates in prod where
   // EDITOR_HOST is set and the request Host differs.
   const isEditorHost = isEditorHostname(request.headers.get('host'));
+
+  // Before any routing: nothing on the editor host accepts a write from another
+  // origin, and a published site is another origin.
+  if (isEditorHost && isCrossOriginWrite(request)) {
+    return NextResponse.json(
+      { error: { code: 'cross_origin_refused', message: 'cross-origin request refused' } },
+      { status: 403 },
+    );
+  }
 
   if (request.nextUrl.pathname === '/') {
     if (!isEditorHost) {
@@ -100,6 +132,10 @@ export async function middleware(request: NextRequest) {
     }
     return NextResponse.next();
   }
+
+  // The matcher runs this for every API route so the cross-origin check above
+  // covers them; only the editor plane has a session gate.
+  if (!isEditorPlanePath(request.nextUrl.pathname)) return NextResponse.next();
 
   // Editor host, gated authoring surface (`/projects/*`, `/api/projects/*`,
   // `/api/ai/*` per the matcher below): coarse cookie-PRESENCE gate.
@@ -165,11 +201,8 @@ export const config = {
     '/',
     // Editor authoring dashboard (MT-09/MT-10) + its per-project sub-routes.
     '/projects/:path*',
-    // Editor authoring API: save / publish / unpublish / list project data.
-    '/api/projects/:path*',
-    // Editor AI API: cms-agent + edit. Editor-only, never anonymous traffic.
-    '/api/ai/:path*',
-    // The Books API (invoicing): editor-only, never anonymous traffic.
-    '/api/books/:path*',
+    // Every API route, for the cross-origin check. The editor-plane families
+    // (`/api/projects`, `/api/ai`, `/api/books`) also get the session gate.
+    '/api/:path*',
   ],
 };
