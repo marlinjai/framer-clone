@@ -1,9 +1,9 @@
 ---
 type: plan
-status: draft
+status: in-progress
 date: 2026-11-01
 title: "Agent fleet: taking primitives to 95 percent and building the shop"
-summary: "The autonomous fleet Marlin asked for on 2026-10-26 and again on 2026-11-01. About 70 small slices in two streams and a bug lane, run by the orchestrator on hermes and steered from the Mac. Roughly 30 million tokens and a few days of continuous running, measured from today's four slices. Draft for Marlin's review; nothing has been dispatched under it."
+summary: "The autonomous fleet Marlin asked for on 2026-10-26 and again on 2026-11-01. About 70 small slices in two streams and a bug lane, run by the orchestrator on hermes and steered from the Mac. Roughly 30 million tokens and a few days of continuous running, measured from today's four slices. Approved by Marlin on 2026-11-01."
 tags: [framer-clone, orchestration, agents, primitives, commerce]
 projects: [framer-clone]
 ---
@@ -95,7 +95,7 @@ and baseline ratchet.
 ## How it runs
 
 - **Workers:** the orchestrator CLI on hermes (8 cores, 241 GB free, docker), one worktree per slice,
-  each slice under 1.5 hours because long runs were reaped in June. Four at a time to start.
+  each slice under 1.5 hours because long runs were reaped in June. Four to eight at a time.
 - **Operator:** one session on the Mac runs the dispatcher loop and owns holds, deploys, the roadmap,
   score reruns and production proofs. Everything that needs the Keychain stays there.
 - **Goals:** one file per slice in `~/software-dev/orchestrator/goals/`, with `depends_on` and
@@ -116,14 +116,15 @@ and baseline ratchet.
 
 ## What still needs Marlin
 
-Contracts are reviewed before fan-out, because every later slice builds on them: selector styling,
-reusable components, behaviour and custom code, the job backbone. Beyond that:
+Decided 2026-11-01: only money, security and production stop for Marlin.
 
-- production migrations and machine changes, as a one-line yes;
-- money and stock slices (createOrder, reserve, payments, refunds);
-- the sandbox's security design;
-- a look-and-feel check of the state switch, canvas frames and connectors;
-- the VAT research, and live payments.
+- money and stock slices (createOrder, reserve, payments, refunds, reconciliation);
+- the sandbox's security design, and any change to auth or tenant isolation;
+- production migrations and machine changes, as a one-line yes, and live payments;
+- the VAT research.
+
+Contracts and look and feel are settled by a fresh review agent instead of Marlin. A contract gets that
+review before fan-out, because every later slice builds on it.
 
 ## Safety
 
@@ -134,9 +135,17 @@ meaningful. Deploys are batched, each with a production browser proof, and never
 
 ## Stop conditions
 
-Proposed for the primitive stream: every column at 95 percent or more on the widened matrix, all 30
-interaction patterns built from primitives, and every BusBasis page passing the corpus. The shop stream
-ends when ranks 1 to 10 of the Medusa analysis are built and proven with test purchases.
+Decided 2026-11-01. The primitive stream ends when every column is at 95 percent or more on the
+widened matrix, all 30 interaction patterns are built from primitives, and every BusBasis page passes
+the corpus. The shop stream ends when ranks 1 to 10 of the Medusa analysis are built and proven with
+test purchases.
+
+## Pace
+
+Decided 2026-11-01: four to eight workers, flexible with the workload, under a daily token cap. The
+fleet starts at four, and the operator raises it when the rate limit and the queue of runnable slices
+allow. Because the shop stream is serial, more than five workers only helps while several primitive
+slices can run at once.
 
 ## Dispatched before approval
 
