@@ -145,6 +145,36 @@ describe('double-tap to edit text, from touch events', () => {
     expect(el.style.userSelect).toBe('text');
   });
 
+  it('opens a text node beside an element inside the touchend, caret at the finger', () => {
+    nested.addChild(createIntrinsicComponent('inner-em', 'em', { children: 'x' }));
+    renderCanvas();
+    const el = nodeEl(nested);
+    const doc = document as unknown as { caretRangeFromPoint?: () => Range | null };
+    doc.caretRangeFromPoint = () => {
+      const box = el.querySelector('[contenteditable="true"]');
+      const text = box ? box.firstChild! : el.firstChild!;
+      const range = document.createRange();
+      range.setStart(text, 3);
+      return range;
+    };
+    const inside: Record<string, unknown> = {};
+    const probe = () => {
+      const box = el.querySelector<HTMLElement>('[contenteditable="true"]');
+      inside.tag = box?.tagName;
+      inside.focused = !!box && document.activeElement === box;
+      inside.caret = window.getSelection()?.anchorOffset;
+      inside.collapsed = window.getSelection()?.isCollapsed;
+    };
+    fingerTap(el, 1, { x: 5, y: 5 });
+    window.addEventListener('touchend', probe);
+    fingerTap(el, 2, { x: 6, y: 6 });
+    window.removeEventListener('touchend', probe);
+    delete doc.caretRangeFromPoint;
+    expect(inside).toEqual({ tag: 'SPAN', focused: true, caret: 3, collapsed: true });
+    expect(el.getAttribute('contenteditable')).toBeNull();
+    expect(store.editorUI.selectedComponent?.id).toBe(nested.id);
+  });
+
   it('a click after the double-tap does not end editing or change the selection', () => {
     renderCanvas();
     const el = nodeEl(nested);

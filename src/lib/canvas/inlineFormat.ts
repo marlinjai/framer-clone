@@ -217,7 +217,10 @@ export function applyInlineFormat(editorUI: EditorUIType, format: InlineFormat):
   if (!created) return false;
 
   if (format === 'link') {
-    document.querySelector<HTMLInputElement>('input[aria-label="Link target"]')?.focus();
+    // Selected, so typing a target replaces the placeholder.
+    const target = document.querySelector<HTMLInputElement>('input[aria-label="Link target"]');
+    target?.focus();
+    target?.select();
     return true;
   }
   const next = host ? directChildWithId(host, created.id) : undefined;
