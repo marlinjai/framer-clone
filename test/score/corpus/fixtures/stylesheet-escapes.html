@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stylesheet escapes</title>
+<style>
+  .hero {
+    font: 16px/1.5 Arial, sans-serif;
+    padding: 48px;
+    min-height: 120px;
+    display: grid;
+    grid-template-columns: 96px 1fr;
+    grid-template-areas:
+      "head head"
+      "side main";
+    content: "\201C";
+    background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='8' fill='navy'/></svg>");
+    background-size: 32px 32px;
+  }
+  .head { grid-area: head; margin: 0; padding: 8px; content: ">"; }
+  .side { grid-area: side; margin: 0; padding: 8px; content: "\"\A"; }
+  .main { grid-area: main; margin: 0; padding: 8px; content: "\3C /style>"; }
+  @media (max-width: 767.98px) {
+    .hero { padding: 16px; }
+    .head, .side, .main { padding: 4px; }
+  }
+</style>
+</head>
+<body style="margin:0">
+<section class="hero" data-parity-id="hero">
+  <p class="head" data-parity-id="head">Heading</p>
+  <p class="side" data-parity-id="side">Side</p>
+  <p class="main" data-parity-id="main">Main</p>
+</section>
+</body>
+</html>

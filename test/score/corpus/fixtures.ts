@@ -313,6 +313,37 @@ export const FIXTURES: Fixture[] = [
     states: [],
   },
   {
+    id: 'stylesheet-escapes',
+    group: 'edge',
+    source: 'hand-written: CSS escapes, angle brackets, a raw SVG and a multi-line grid on nodes in the sheet',
+    original: { html: 'stylesheet-escapes.html' },
+    initialGap: 'renderer-drops-value',
+    tree: () => {
+      const cell = (id: string, text: string, area: string, content: string) =>
+        t('p', text, parity(id, { style: { gridArea: area, margin: 0, padding: responsive('8px', undefined, '4px'), content } }));
+      return n(
+        'section',
+        parity('hero', {
+          style: {
+            font: `16px/1.5 ${FONT}`,
+            padding: responsive('48px', undefined, '16px'),
+            minHeight: '120px',
+            display: 'grid',
+            gridTemplateColumns: '96px 1fr',
+            gridTemplateAreas: '"head head"\n      "side main"',
+            content: '"\\201C"',
+            backgroundImage: `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='8' fill='navy'/></svg>")`,
+            backgroundSize: '32px 32px',
+          },
+        }),
+        cell('head', 'Heading', 'head', '">"'),
+        cell('side', 'Side', 'side', '"\\"\\A"'),
+        cell('main', 'Main', 'main', '"</style>"'),
+      );
+    },
+    states: [],
+  },
+  {
     id: 'shadcn-button',
     group: 'component',
     source: 'shadcn/ui Button (src/components/ui/button.tsx)',

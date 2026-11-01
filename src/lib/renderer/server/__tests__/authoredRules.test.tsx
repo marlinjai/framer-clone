@@ -516,7 +516,7 @@ describe('a page without rules', () => {
     ['a value holding an address', 'red;background:url(https://x.test/a)'],
     ['a value leaving the rule', 'red}*{x:y'],
     ['an expression', 'expression(alert(1))'],
-    ['an escape', '"Foo\\ Bar"'],
+    ['an escape outside a string', 'Foo\\ Bar'],
   ])('drops %s and keeps its override, delivering nothing inline', (_label, base) => {
     silence();
     const { root, css } = applyResponsiveStyles(node('a', { style: { color: { base, tablet: 'blue' } } }), BPS);
