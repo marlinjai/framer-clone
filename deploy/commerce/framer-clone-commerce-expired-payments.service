@@ -1,0 +1,38 @@
+# /etc/systemd/system/framer-clone-commerce-expired-payments.service
+#
+# Every 5 minutes (see the .timer): asks framer-clone to close the pending
+# payments whose window ran out, across all companies, so their stock goes back
+# even in a shop nobody is buying from (POST .../expired-payments). A non-2xx
+# answer fails this unit, so the journal and any monitor see it: 500
+# expired_payment_sweep_failed means some could not be closed, the rest were,
+# and the next run tries again. Uses the custom-domain token header on purpose:
+# one token for every internal call this host makes.
+[Unit]
+Description=framer-clone commerce: close expired payments and release their stock
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/curl --silent --show-error --fail-with-body --max-time 60 --proto =https -X POST -H @/etc/framer-clone/custom-domains.header https://app.lumitra.co/api/internal/commerce/expired-payments
+User=root
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+PrivateTmp=yes
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+UMask=0022

@@ -48,10 +48,19 @@ vi.mock('@/server/commerce/order/createOrder', () => ({
 vi.mock('@/server/commerce/mail/connection', () => ({
   hasShopMail: vi.fn(async () => false),
 }));
+// The sweep before the order: itself proven in payments.itest.ts and route.itest.ts.
+vi.mock('@/server/commerce/payment/deps', () => ({
+  configuredStripeApi: vi.fn(() => null),
+  paymentDeps: vi.fn((db: unknown, tgId: string, companyId: string) => ({ db, tgId, companyId })),
+}));
+vi.mock('@/server/commerce/payment/payments', () => ({
+  sweepExpiredPayments: vi.fn(async () => []),
+}));
 
 import { hasShopMail } from '@/server/commerce/mail/connection';
 import { createOrder } from '@/server/commerce/order/createOrder';
 import { commerceTenantDbChecked } from '@/server/commerce/db';
+import { sweepExpiredPayments } from '@/server/commerce/payment/payments';
 import { UnknownVariantError } from '@/server/commerce/repository/errors';
 import { readOrderTotal, resolveOrderLines } from '@/server/commerce/repository/storefront';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
@@ -62,6 +71,7 @@ const resolveSiteMock = vi.mocked(resolvePublishedSite);
 const tenantDbMock = vi.mocked(commerceTenantDbChecked);
 const resolveLinesMock = vi.mocked(resolveOrderLines);
 const readTotalMock = vi.mocked(readOrderTotal);
+const sweepMock = vi.mocked(sweepExpiredPayments);
 
 const TG_A = '018f9c10-0000-7000-8000-0000000013aa';
 const SCOPED_A = { __scopedHandleFor: TG_A };
@@ -92,6 +102,8 @@ beforeEach(() => {
   tenantDbMock.mockClear();
   resolveLinesMock.mockReset();
   readTotalMock.mockReset();
+  sweepMock.mockReset();
+  sweepMock.mockResolvedValue([]);
   // Default: the request host resolves to a published storefront site with a
   // valid tenant group.
   resolveSiteMock.mockResolvedValue(site(TG_A));
@@ -103,6 +115,47 @@ beforeEach(() => {
   );
   readTotalMock.mockResolvedValue({ totalCents: 4760, currency: 'EUR', orderNumber: 'ORD-000007' });
   createOrderMock.mockResolvedValue({ ok: true, orderId: 'order_created' });
+});
+
+describe('POST /api/commerce/orders closes expired holds first', () => {
+  it("sweeps THIS company's expired payments before the order reserves", async () => {
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }] }));
+    expect(res.status).toBe(201);
+    expect(sweepMock).toHaveBeenCalledTimes(1);
+    expect(sweepMock).toHaveBeenCalledWith({ db: SCOPED_A, tgId: TG_A, companyId: COMPANY_A }, COMPANY_A);
+    expect(sweepMock.mock.invocationCallOrder[0]).toBeLessThan(createOrderMock.mock.invocationCallOrder[0]);
+  });
+
+  it('a failed sweep is logged loudly and never fails the order', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failure = new Error('the sweep broke');
+    sweepMock.mockRejectedValue(failure);
+
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }] }));
+    expect(res.status).toBe(201);
+    expect(createOrderMock).toHaveBeenCalledTimes(1);
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('[payments]'), failure);
+    logged.mockRestore();
+  });
+
+  it('a failed sweep leaves the guarded reserve in charge: a real shortage is still a 409', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    sweepMock.mockRejectedValue(new Error('the sweep broke'));
+    createOrderMock.mockResolvedValue({
+      ok: false,
+      shortages: [{ inventoryItemId: 'inv_a', locationId: 'loc_a', needed: 1, available: 0 }],
+    });
+
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1 }] }));
+    expect(res.status).toBe(409);
+    logged.mockRestore();
+  });
+
+  it('does not sweep for a request that places no order', async () => {
+    const res = await POST(postReq({ lines: [{ variantId: 'var_a', quantity: 1, priceCents: 1 }] }));
+    expect(res.status).toBe(400);
+    expect(sweepMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/commerce/orders tenancy (D4: tenant from the HOST)', () => {

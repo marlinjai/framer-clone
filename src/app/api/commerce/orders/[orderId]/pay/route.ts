@@ -25,7 +25,12 @@ import { jsonError, parseBody } from '@/lib/api/respond';
 import { commerceServerFault } from '@/server/commerce/faults';
 import { buyerSchema, readBuyer } from '@/server/commerce/payment/buyer';
 import { paymentDeps } from '@/server/commerce/payment/deps';
-import { handlePaymentEvent, sweepExpiredPayments, type PaymentOutcome } from '@/server/commerce/payment/payments';
+import {
+  ExpirySweepError,
+  handlePaymentEvent,
+  sweepExpiredPayments,
+  type PaymentOutcome,
+} from '@/server/commerce/payment/payments';
 import { demoProvider } from '@/server/commerce/payment/provider';
 import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
 import { toJsonb } from '@/server/books/snapshots';
@@ -61,8 +66,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
 
   try {
     const deps = paymentDeps(db, tenantGroupId, companyId);
-    // A payment whose window ran out closes first (its stock goes back), so it is not paid here.
-    await sweepExpiredPayments(deps, companyId);
+    // A payment whose window ran out closes first (its stock goes back), so it is not paid here. Another order
+    // that cannot be closed (logged by the sweep) never stops this buyer; this order's own failure does.
+    try {
+      await sweepExpiredPayments(deps, companyId);
+    } catch (err) {
+      if (!(err instanceof ExpirySweepError) || err.failed.includes(orderId)) throw err;
+    }
 
     const payment = await db
       .selectFrom('order_payment')
