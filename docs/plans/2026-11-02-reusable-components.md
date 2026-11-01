@@ -629,6 +629,11 @@ primary.
 - **Nesting.** `X` and `S` hold the definition, so an outer component's state never reaches an inner one of another
   definition. A definition cannot contain itself. **An inner placement's state does not vary with the outer's.** Framer
   offers this; v1 here does not. The outer state can show or hide it.
+  **A definition never sits inside a placement of itself in v1,** so `X` and `S` never repeat on one path: the only
+  ways to do it are a cycle, which is refused, and `slot`, which waits for step 7. That is why a descendant form such as
+  `[data-fcs-S="open"] *` cannot reach a placement of the same definition. When `slot` arrives, the nearest-scope guard
+  of review finding F8 is required, and its fixture is two nested placements of one definition in different states,
+  asserting that the inner descendants follow the inner state.
 
 ### Without JavaScript
 
@@ -640,6 +645,15 @@ So a definition may name `noScriptState`. Its compiled rules are written twice, 
 `&:where(html:not([data-fc-b]) *)`, the form the behaviour contract uses for its own no-JavaScript rules. That covers
 scripts off and also a script that failed, since the gate falls after 3 seconds, which a `<noscript>` block could not.
 The panel asks for it when a click-driven state changes `display` or `visibility`.
+
+**ARIA with and without the script.** Every `aria-*` a `bind` writes is a function of the state `S` alone, so each
+transition keeps it in step, Escape included: Escape's `set` to primary makes the same `bind` write
+`aria-expanded="false"`, and a trigger needs no `aria` field of its own. The server writes the value for the initial
+state. A `<noscript>` block cannot change an attribute, so the no-JavaScript form changes what is exposed instead: the
+`noScriptState` rules also hide any node whose `bind` writes `aria-*` from `S` and whose only triggers need the script,
+written as `&:where(html:not([data-fc-b]) *)` with `display: none`. The links show, the button that would do nothing is
+gone, and no stale `aria-expanded="false"` is exposed beside open links. The popover lists this under the node, and the
+navbar fixture asserts it with the gate down.
 
 ### On the canvas
 
@@ -828,7 +842,8 @@ no `list` input.
                "from": { "eq": [{ "get": "cs-2f6c1a9e" }, "s1"] } }] }
   ```
 
-- **No JavaScript:** `noScriptState: 's1'`, so the links stay reachable, also when the script fails.
+- **No JavaScript:** `noScriptState: 's1'`, so the links stay reachable, also when the script fails. The menu button is
+  hidden then, so no `aria-expanded` is exposed that the open links contradict.
 - **On ten pages:** ten placements of a few bytes each, and one edit reaches all ten.
 
 **Not covered:** marking the current page's link (`aria-current`) needs a renderer pass that knows the path. That
