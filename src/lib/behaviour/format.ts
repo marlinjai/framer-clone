@@ -203,6 +203,8 @@ const STATE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ENTRY_ID = /^[A-Za-z0-9_-]{1,64}$/;
 /** A node's key goes into `[data-fc-n="<key>"]`, so nothing may end that string. */
 const NODE_KEY = /^[A-Za-z0-9_-]{1,128}$/;
+/** A node's key also keys the program table, so it must not name what every object inherits. */
+const RESERVED_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
 /** A `custom:<name>` event or a `delay` key. */
 const TOKEN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 /** A role goes into `[role="<role>"]`. */
@@ -380,7 +382,7 @@ const groupShapeOk = (group: unknown): boolean =>
 /** The stable key of a node: what `data-fc-n` and the program use. */
 export function behaviourNodeKey(node: BehaviourNode): string | null {
   const key = node.classKey ?? node.id;
-  return typeof key === 'string' && NODE_KEY.test(key) ? key : null;
+  return typeof key === 'string' && NODE_KEY.test(key) && !RESERVED_KEYS.has(key) ? key : null;
 }
 
 /** What a node is, read from its stored form. `insideIsland` is set under a commerce island or the sticky bar. */
@@ -669,7 +671,8 @@ function parseIf(value: unknown, scope: ExpressionScope, depth = 1): Parsed<Cond
 
 function referenceTo(key: unknown, scope: ExpressionScope): Parsed<NodeFacts & { key: string }> {
   if (typeof key !== 'string' || !NODE_KEY.test(key)) return refuse('a target is a node id');
-  const facts = scope.self.key === key ? scope.self : scope.nodes.get(key);
+  // The tree's record first: it holds what every node sharing this key is.
+  const facts = scope.nodes.get(key) ?? (scope.self.key === key ? scope.self : undefined);
   if (!facts) return refuse(`no node ${key} exists`);
   if (facts.tag === null) return refuse(`${key} has no single element to act on`);
   return accept({ ...facts, key });

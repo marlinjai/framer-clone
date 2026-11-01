@@ -114,7 +114,7 @@ describe('duplicateComponent', () => {
 
   it('does the same for a floating element', () => {
     const floating = {
-      ...getSnapshot(createIntrinsicComponent('float', 'div', { behaviour: { on: [{ id: 't', on: 'click', do: [{ focus: 'float' }] }] } })),
+      ...(getSnapshot(createIntrinsicComponent('float', 'div', { behaviour: { on: [{ id: 't', on: 'click', do: [{ focus: 'float' }] }] } })) as object),
       canvasNodeType: 'floating' as never,
       canvasX: 0,
       canvasY: 0,

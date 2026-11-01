@@ -1007,12 +1007,31 @@ describe('reach', () => {
     expect(readBehaviourTree(tree).refused).toEqual([]);
   });
 
+  it('refuses a key every object inherits, which also keys the program table', () => {
+    for (const id of ['__proto__', 'constructor', 'prototype']) {
+      const tree = { id: 'root', type: 'div', props: { behaviour: { on: [{ id: 't', on: 'click', do: [{ focus: id }] }] } }, children: [{ id, type: 'button' }] };
+      expect(readBehaviourTree(tree).refused[0].reason).toMatch(/no node/);
+    }
+  });
+
+  it('reads a shared key on the node itself as what all its sharers are', () => {
+    const tree = {
+      id: 'root', type: 'div',
+      children: [
+        { id: 'dup', type: 'form', props: { behaviour: { on: [{ id: 't', on: 'click', do: [{ form: 'dup', op: 'reset' }] }] } } },
+        { id: 'dup', type: 'form', props: { 'data-form-kind': 'form' } },
+      ],
+    };
+    expect(readBehaviourTree(tree).refused[0].reason).toMatch(/island owns/);
+  });
+
   it('holds the page caps in document order', () => {
     const trigger60 = Array.from({ length: 60 }, (_, i) => ({ id: `t${i}`, on: 'click', do: [{ emit: 'x' }] }));
     const children = Array.from({ length: 40 }, (_, i) => ({ id: `n${i}`, type: 'div', props: { behaviour: { on: trigger60 } } }));
     const read = readBehaviourTree({ id: 'root', type: 'div', children });
     const kept = [...read.behaviours.values()].reduce((sum, b) => sum + (b.on?.length ?? 0), 0);
-    expect(Math.min(kept, MAX_TRIGGERS_PER_PAGE)).toBe(kept);
+    expect(kept).toBeLessThanOrEqual(MAX_TRIGGERS_PER_PAGE);
+    expect(kept).toBeGreaterThan(0);
     expect(read.refused.length).toBeGreaterThan(0);
 
     const heavy = Array.from({ length: 4 }, (_, i) => ({
