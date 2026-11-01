@@ -23,7 +23,9 @@
 // unitless properties), so moving a value from `style` into the sheet never
 // changes what it means. A value or property name that could break out of its
 // declaration (and so out of the rule or the <style> element) is dropped and
-// logged once per page.
+// logged once per page. A `;` is not such a value by itself: inside a quoted
+// string or a url() it is data, as in `url("data:image/png;base64,...")`, and
+// isContainedValue tells the two apart.
 
 import { largestFirst, resolveCascade, type BreakpointRef } from './cascade';
 
@@ -50,13 +52,90 @@ const UNITLESS_NUMBERS: ReadonlySet<string> = new Set(
 const SAFE_PROPERTY = /^(?:[A-Za-z][A-Za-z0-9]*|--[A-Za-z0-9_-]+)$/;
 
 /**
- * Characters that let a value escape its declaration: `;` ends it, `{` `}`
- * open or close a rule, `<` can start `</style>` and end the element, a
- * backslash starts a CSS escape that can hide any of these, and control
- * characters (newlines included) have no place in a value. Mirrors
- * STYLE_BREAKOUT_CHARS in src/lib/ai/pageGen/validate.ts, plus `<`.
+ * Characters that let a value escape its declaration wherever they appear,
+ * quoted or not: `{` `}` open or close a rule, `<` can start `</style>` and end
+ * the element (the sheet is written raw, so CSS quoting does not protect it), a
+ * backslash starts a CSS escape that can hide any of these or a closing quote,
+ * and control characters (newlines included) have no place in a value. Mirrors
+ * STYLE_BREAKOUT_CHARS in src/lib/ai/pageGen/validate.ts, plus `<` and `>`, and
+ * without `;`, which depends on where it stands: see isContainedValue.
  */
-const BREAKOUT_CHARS = /[;{}<>\\\u0000-\u001f\u007f]/;
+const BREAKOUT_CHARS = /[{}<>\\\u0000-\u001f\u007f]/;
+
+/**
+ * How the browser reads the `(` at `open`, when no quote follows it: as the
+ * start of an unquoted url token, or as a plain block. It is a url token only
+ * when `url` is a name of its own: a name character, `#` or `@` before it pulls
+ * it into a longer identifier, a dimension, a hash or an at-keyword, and then
+ * the url rules do not apply. A non-ASCII character is 'ambiguous': browsers
+ * and the CSS specification differ on which ones are name characters, and the
+ * two readings end the token in different places, so neither can be trusted.
+ */
+function parenKind(text: string, open: number): 'url' | 'block' | 'ambiguous' {
+  if (open < 3 || text.slice(open - 3, open).toLowerCase() !== 'url') return 'block';
+  if (open === 3) return 'url';
+  const before = text[open - 4];
+  if (before >= '\u0080') return 'ambiguous';
+  return /[A-Za-z0-9_#@-]/.test(before) ? 'block' : 'url';
+}
+
+/**
+ * The index just past an unquoted url( body starting at `start`, or -1 when it
+ * is not one clean url token. A quote, a `(` or a space before the end makes the
+ * browser read a bad url, and without a `)` it would swallow what follows.
+ */
+function endOfUnquotedUrl(text: string, start: number): number {
+  const end = text.indexOf(')', start);
+  if (end === -1) return -1;
+  return /["'(\s]/.test(text.slice(start, end).trimEnd()) ? -1 : end + 1;
+}
+
+/**
+ * True when the value stays inside its declaration, read the way the browser
+ * tokenizes it. Call only on text free of BREAKOUT_CHARS: with no backslash a
+ * quote cannot be escaped, and with no newline a string cannot end early, so a
+ * quote always closes at its next match. A `;` counts as data only inside a
+ * string or an unquoted url(). Anywhere else it ends the declaration, so the
+ * value is refused. A string, block or url() left open is refused too, because
+ * the browser would carry on through the `;` and `}` that follow it and swallow
+ * the rest of the rule.
+ */
+function isContainedValue(text: string): boolean {
+  const closers: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"' || ch === "'") {
+      const close = text.indexOf(ch, i + 1);
+      if (close === -1) return false;
+      i = close + 1;
+    } else if (ch === '(') {
+      let body = i + 1;
+      while (text[body] === ' ') body++;
+      const quoted = text[body] === '"' || text[body] === "'";
+      const kind = quoted ? 'block' : parenKind(text, i);
+      if (kind === 'ambiguous') return false;
+      if (kind === 'url') {
+        i = endOfUnquotedUrl(text, body);
+        if (i === -1) return false;
+      } else {
+        closers.push(')');
+        i++;
+      }
+    } else if (ch === '[') {
+      closers.push(']');
+      i++;
+    } else if (ch === ')' || ch === ']') {
+      if (closers.pop() !== ch) return false;
+      i++;
+    } else if (ch === ';') {
+      return false;
+    } else {
+      i++;
+    }
+  }
+  return closers.length === 0;
+}
 
 /**
  * Script-capable or import-capable CSS. Mirrors UNSAFE_STYLE_VALUE in
@@ -113,7 +192,7 @@ function declaration(
   }
   const text = cssValueText(key, value);
   if (text === undefined) return null;
-  if (BREAKOUT_CHARS.test(text) || UNSAFE_VALUE.test(text)) {
+  if (BREAKOUT_CHARS.test(text) || UNSAFE_VALUE.test(text) || !isContainedValue(text)) {
     onDrop({ className, property: key, reason: 'unsafe-value' });
     return null;
   }

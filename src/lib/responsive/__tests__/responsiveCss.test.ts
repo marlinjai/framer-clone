@@ -126,6 +126,86 @@ describe('buildResponsiveCss', () => {
     expect(onDrop).toHaveBeenCalledWith({ className: 'fc-a', property: 'x}y', reason: 'unsafe-property' });
   });
 
+  describe('a `;` inside a value', () => {
+    const value = (text: string) => {
+      const onDrop = vi.fn();
+      const out = css({ backgroundImage: { base: text }, margin: { base: '4px' } }, onDrop);
+      return { out, onDrop };
+    };
+
+    it.each([
+      ['a double-quoted data url', 'url("data:image/svg+xml;base64,PHN2Zz4=")'],
+      ['a single-quoted data url', "url('data:image/svg+xml;base64,PHN2Zz4=')"],
+      ['spaces around a quoted url', 'url( "data:image/png;base64,AAA=" )'],
+      ['an unquoted data url', 'url(data:image/png;base64,AAA=)'],
+      ['spaces around an unquoted url', 'url(  data:image/png;base64,AAA=  )'],
+      ['an upper-case url', 'URL(data:image/png;base64,AAA=)'],
+      ['a url among other layers', 'url("a;b.png"), linear-gradient(red, blue)'],
+      ['a url inside another function', 'image-set(url("a;b.png") 1x, url(c;d.png) 2x)'],
+      ['a quoted string', '"a;b"'],
+      ['the other quote inside a string', `'say "a;b"'`],
+      ['a string next to balanced blocks', '"a;b" calc(1px + (2px * 3)) [full-start]'],
+    ])('keeps %s', (_label, text) => {
+      const { out, onDrop } = value(text);
+      expect(out).toBe(`.fc-a.fc-a{background-image:${text};margin:4px}`);
+      expect(onDrop).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a bare ;', '10px;position:fixed'],
+      ['a trailing ;', 'red;'],
+      ['a ; after a closed string', '"x";position:fixed'],
+      ['a ; after a closed quoted url', 'url("x");position:fixed'],
+      ['a ; after a closed unquoted url', 'url(x);position:fixed'],
+      ['a ; inside another function', 'calc(1px;position:fixed)'],
+      ['a ; inside a function merely named like url', 'not-url(a;b)'],
+      ['a ; inside a function ending in url', 'myurl(a;b)'],
+      ['a ; inside a non-ASCII function ending in url', 'éurl(a;b)'],
+      ['a hash that only looks like a url', '#url([)'],
+      ['an at-keyword that only looks like a url', '@url([)'],
+      ['a hash with a ; that only looks like a url', '#url(a;[)'],
+      ['a dimension that only looks like a url', '1url([)'],
+      ['a url whose start browsers read differently', '×url(a")"b)'],
+      ['a string that never closes', '"abc;position:fixed'],
+      ['a string closed by the wrong quote', `"abc;position:fixed'`],
+      ['a url that never closes', 'url(data:x;y'],
+      ['a quoted url that never closes', 'url("data:x;y"'],
+      ['a function that never closes', 'calc(1px'],
+      ['a bracket that never closes', '[full-start'],
+      ['a stray closing paren', 'red)'],
+      ['crossed brackets', 'calc(1px [2px)]'],
+      ['a quote inside an unquoted url', 'url(data:x;"y")'],
+      ['a paren inside an unquoted url', 'url(data:x;(y)'],
+      ['a space inside an unquoted url', 'url(data:x;y z)'],
+      ['a closing brace in a string', '"x}body{display:none"'],
+      ['a closing brace in a url', 'url(x;}body{display:none)'],
+      ['a backslash that hides a closing quote', '"a\\";position:fixed;content:"b"'],
+      ['an escape inside a string', '"\\22;x"'],
+      ['an escape inside a url', 'url(a\\29;position:fixed)'],
+      ['the end of the style element in a string', '"a;</style><script>alert(1)</script>"'],
+      ['the end of the style element in a url', 'url(a;</style>)'],
+      ['a newline in a string', '"a;\nb"'],
+      ['a script url with a ;', 'url("javascript:alert(1);")'],
+      ['a comment in a string', '"a;/* b */"'],
+    ])('refuses and reports %s', (_label, text) => {
+      const { out, onDrop } = value(text);
+      expect(out).toBe('.fc-a.fc-a{margin:4px}');
+      expect(onDrop).toHaveBeenCalledTimes(1);
+      expect(onDrop).toHaveBeenCalledWith({
+        className: 'fc-a',
+        property: 'backgroundImage',
+        reason: 'unsafe-value',
+      });
+    });
+
+    it('keeps a data url in a breakpoint query too', () => {
+      const image = 'url("data:image/png;base64,AAA=")';
+      expect(css({ backgroundImage: { 'bp-tablet': image } })).toBe(
+        `@media (max-width:1199.98px){\n.fc-a.fc-a{background-image:${image}}\n}`,
+      );
+    });
+  });
+
   it('skips rules whose class name is not a safe fc- class', () => {
     expect(buildResponsiveCss([{ className: 'x{}', style: { color: { base: 'red' } } }], BPS)).toBe('');
   });
