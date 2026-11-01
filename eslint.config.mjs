@@ -25,6 +25,7 @@ const eslintConfig = [
       "docs-dist/**",
       "dist-boot/**",
       "dist-bench/**",
+      "test/score/.out/**",
       "next-env.d.ts",
     ],
   },

@@ -22,7 +22,7 @@ import { COMPONENT_REGISTRY } from '@/lib/componentRegistry';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { InMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
 import RightSidebar from '@/components/sidebars/RightSidebar';
-import { allEntries, attributeSample, styleKeyOf } from './lib/universe';
+import { allEntries, attributeSample, markupAttributeSample, namespaceOf, styleKeyOf } from './lib/universe';
 import { writeOut } from './lib/io';
 import { rowKey, type Cell, type GapId, type SurfaceResults } from './lib/types';
 
@@ -39,6 +39,10 @@ const fail = (gap: GapId, note?: string): Cell => ({ status: 'fail', gap, ...(no
 const written = {
   styleKeys: new Set<string>(),
   propKeys: new Set<string>(),
+  /** `tag.prop`, because an attribute of one element says nothing about another. */
+  propsOnTag: new Set<string>(),
+  /** Every value a style action left, for the value rows. */
+  styleValues: new Set<string>(),
   types: new Set<string>(),
   breakpointOverride: false,
 };
@@ -89,7 +93,10 @@ function record(before: Record<string, unknown>, after: Record<string, unknown>,
   const afterProps = (after.props ?? {}) as Record<string, unknown>;
   for (const key of new Set([...Object.keys(beforeProps), ...Object.keys(afterProps)])) {
     if (key === 'style') continue;
-    if (JSON.stringify(beforeProps[key]) !== JSON.stringify(afterProps[key])) written.propKeys.add(key);
+    if (JSON.stringify(beforeProps[key]) !== JSON.stringify(afterProps[key])) {
+      written.propKeys.add(key);
+      written.propsOnTag.add(`${String(after.type)}.${key}`);
+    }
   }
   const beforeStyle = (beforeProps.style ?? {}) as Record<string, unknown>;
   const afterStyle = (afterProps.style ?? {}) as Record<string, unknown>;
@@ -97,6 +104,7 @@ function record(before: Record<string, unknown>, after: Record<string, unknown>,
     if (JSON.stringify(beforeStyle[key]) === JSON.stringify(afterStyle[key])) continue;
     written.styleKeys.add(key);
     const map = afterStyle[key];
+    for (const value of map && typeof map === 'object' ? Object.values(map) : [map]) written.styleValues.add(String(value));
     if (onBreakpoint && map && typeof map === 'object' && 'tablet-probe' in map) written.breakpointOverride = true;
   }
 }
@@ -110,6 +118,21 @@ function controlName(el: Element): string {
 }
 
 const TEXT_TRIES = ['37', '12px', 'probe-value', '#123456'];
+
+/**
+ * The value rows a driver action can decide: the shapes in TEXT_TRIES. Any other
+ * row needs a control that takes free text, which no action here proves, so it
+ * stays a fail with the panel's general editor gap.
+ */
+const VALUE_ROW_TRY: Record<string, string> = {
+  '<length>': '12px',
+  '<length-percentage>': '12px',
+  '<dimension>': '12px',
+  px: '12px',
+  '<color>': '#123456',
+  '<integer>': '37',
+  '<number>': '37',
+};
 
 async function operate(el: Element, node: ComponentInstance, onBreakpoint: boolean): Promise<void> {
   const step = async (fn: () => void) => {
@@ -235,6 +258,29 @@ describe('coverage matrix: properties panel', () => {
           else if (referenced.has(styleKey)) {
             results[key] = { status: 'not-tested', gap: 'harness-limit', note: 'named in a section, but the driver did not reach a control that writes it' };
           } else results[key] = fail('panel-no-general-editor');
+          break;
+        }
+        case 'html-element-attribute':
+        case 'svg-attribute':
+        case 'mathml-attribute': {
+          // Only HTML: an SVG or MathML `a` is not the link the panel edits.
+          const namespace = namespaceOf(entry.kind);
+          const { tag, prop } = markupAttributeSample(namespace, entry.id);
+          results[key] = namespace === 'html' && written.propsOnTag.has(`${tag}.${prop}`) ? pass() : fail('panel-no-general-editor');
+          break;
+        }
+        case 'html-event-handler':
+          results[key] = fail('blocked-event-handlers');
+          break;
+        case 'svg-element':
+        case 'mathml-element':
+          results[key] = fail('panel-no-tag-choice');
+          break;
+        case 'css-value': {
+          const tried = VALUE_ROW_TRY[entry.id];
+          results[key] = tried && written.styleValues.has(tried)
+            ? pass(`a control wrote ${tried}`)
+            : fail('panel-no-general-editor', 'no control wrote a value of this kind');
           break;
         }
         case 'css-selector':

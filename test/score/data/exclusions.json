@@ -3,18 +3,65 @@
   "rules": [
     {
       "id": "bcd-deprecated",
-      "appliesTo": ["html-element", "html-global-attribute", "css-property", "css-at-rule"],
+      "appliesTo": [
+        "html-element",
+        "html-global-attribute",
+        "css-property",
+        "css-at-rule",
+        "html-element-attribute",
+        "html-event-handler",
+        "svg-attribute",
+        "mathml-element",
+        "mathml-attribute"
+      ],
       "reason": "Marked deprecated by @mdn/browser-compat-data: browsers keep it only for old pages and new pages should not use it."
     },
     {
       "id": "mdn-obsolete",
-      "appliesTo": ["css-property", "css-selector", "css-at-rule"],
+      "appliesTo": [
+        "css-property",
+        "css-selector",
+        "css-at-rule",
+        "css-value"
+      ],
       "reason": "Marked obsolete by mdn-data: removed from the standard."
     },
     {
       "id": "mdn-nonstandard",
-      "appliesTo": ["css-property", "css-selector", "css-at-rule"],
+      "appliesTo": [
+        "css-property",
+        "css-selector",
+        "css-at-rule"
+      ],
       "reason": "Marked nonstandard by mdn-data: a vendor-only name (mostly -webkit-, -moz- and -ms- prefixes) that is not part of what CSS defines."
+    },
+    {
+      "id": "bcd-nonstandard",
+      "appliesTo": [
+        "html-element-attribute",
+        "html-event-handler",
+        "svg-attribute",
+        "mathml-attribute"
+      ],
+      "reason": "Not on a standards track in @mdn/browser-compat-data: a single vendor's experiment that no standard defines."
+    },
+    {
+      "id": "bcd-not-an-attribute",
+      "appliesTo": [
+        "html-element-attribute",
+        "svg-attribute",
+        "mathml-attribute"
+      ],
+      "reason": "A compatibility note in @mdn/browser-compat-data about how the element behaves, such as an implied rel or a parser rule, not an attribute anyone can write."
+    },
+    {
+      "id": "element-excluded",
+      "appliesTo": [
+        "html-element-attribute",
+        "svg-attribute",
+        "mathml-attribute"
+      ],
+      "reason": "An attribute of an element that is itself excluded, so the element's reason covers it: a node cannot be that element."
     }
   ],
   "items": {
@@ -38,6 +85,29 @@
       "@charset": "Not authored: the published page is served as UTF-8 by the app and its stylesheet is inline.",
       "@import": "Blocked on purpose: responsiveCss.ts drops it as an import-capable value. A stored page must not load foreign stylesheets.",
       "@namespace": "For XML documents; published pages are HTML."
+    },
+    "svg-element": {
+      "script": "Blocked in nodes on purpose (blockedNodes.ts matches the tag in any namespace), for the same reason as the HTML script element.",
+      "style": "Blocked in nodes on purpose (blockedNodes.ts matches the tag in any namespace). The selector and at-rule rows measure what a style element would add."
+    },
+    "svg-attribute": {
+      "view.svgView": "A fragment identifier syntax for URLs, listed under the view element, not an attribute."
+    },
+    "css-value": {
+      "<frequency>": "No CSS property takes a frequency in any browser (it comes from aural CSS), so no sample can be proven valid.",
+      "<frequency-percentage>": "No CSS property takes a frequency in any browser, so no sample can be proven valid.",
+      "<time-percentage>": "Defined for the grammar of future properties: no CSS property takes it yet, so no sample can be proven valid.",
+      "Hz": "No CSS property takes a frequency in any browser, so no sample can be proven valid.",
+      "kHz": "No CSS property takes a frequency in any browser, so no sample can be proven valid.",
+      "layer()": "Only valid inside @import, which is blocked on purpose. Not a value of any property.",
+      "cross-fade()": "Not implemented in Chromium, the browser this harness proves samples in, so no sample can be proven valid. The browser probe fails when that changes.",
+      "element()": "Not implemented in Chromium, the browser this harness proves samples in, so no sample can be proven valid. The browser probe fails when that changes.",
+      "image()": "Not implemented in Chromium, the browser this harness proves samples in, so no sample can be proven valid. The browser probe fails when that changes.",
+      "leader()": "Not implemented in Chromium, the browser this harness proves samples in, so no sample can be proven valid. The browser probe fails when that changes.",
+      "target-counter()": "Not implemented in Chromium, the browser this harness proves samples in, so no sample can be proven valid. The browser probe fails when that changes.",
+      "target-counters()": "Not implemented in Chromium, the browser this harness proves samples in, so no sample can be proven valid. The browser probe fails when that changes.",
+      "target-text()": "Not implemented in Chromium, the browser this harness proves samples in, so no sample can be proven valid. The browser probe fails when that changes.",
+      "paint()": "Chromium refuses it on the probe's page, which registers no paint worklet, so no sample can be proven valid. The browser probe fails when that changes."
     }
   }
 }

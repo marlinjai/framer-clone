@@ -170,6 +170,26 @@ numbers there replace the rough readings above. Where the first run corrects thi
 - **Style values, not only style keys.** A value holding `;`, such as a `data:` image, is dropped
   from the stylesheet as soon as the node has a responsive style, while it works inline.
 
+### The widened score (2026-11-01)
+
+The matrix now also holds the attributes of single elements, event handler attributes, SVG and
+MathML, and CSS value types, functions and units, so 874 rows became 1,844. The expected drop did not
+come: format, published page and canvas rose by about five percentage points, because most new rows
+pass by name and the selector rows weigh less in a longer list. Panel fell from 6.5 to 3.6 percent. So
+a higher percentage here says the list grew, not that the builder improved, and the corpus stays the
+real test. Where the widening corrects this plan:
+
+- **Interaction patterns run on the mounted editor.** The real `EditorApp` bundles for plain Chromium
+  with only the server edge stubbed, so no pattern is "not tested" any more. Four contracts pass
+  published and fail there: Space pans (accordion, button), a link never navigates, and the editor's
+  own `main` stops a `header` inside it being a banner.
+- **Event handlers fail in all five columns on purpose.** A stored handler is a string of code and
+  both renderers drop it. These 100 rows close through the behaviour model (step 6) or custom code,
+  never by letting strings through. They are 5.4 percent of the list, so without them format, page
+  and canvas top out at 94.6 percent, below the fleet's 95 percent target.
+- **A value `<` cannot pass the stylesheet.** `attr()` with a type needs `<color>` and the stylesheet
+  refuses `<` to protect the style element, so it works inline only.
+
 ## Visual state management
 
 Marlin (2026-11-01): how do we give people a visual way to manage state, such as a hover state or

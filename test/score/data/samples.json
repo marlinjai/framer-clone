@@ -1,5 +1,5 @@
 {
-  "_doc": "Runnable sample inputs for the matrix. These say what to try, never what the result is: every cell comes from a test. Attribute keys are the HTML names from the data packages; `prop` is the name a node stores (React's) and `html` is what must appear in the emitted markup.",
+  "_doc": "Runnable sample inputs for the matrix. These say what to try, never what the result is: every cell comes from a test. Attribute keys are the HTML names from the data packages; `prop` is the name a node stores (React's) and `html` is what must appear in the emitted markup. `elementAttributes` covers the attributes of single elements in HTML, SVG and MathML: `reactProps` names the prop where it is not the markup name in camelCase (React has no camelCase form for text-overflow and white-space as SVG attributes), `booleans` are rendered from true, and `values` holds a value where the default \"probe\" would not reach the page. `eventHandlersWithoutSpecLink` lists the handlers browser-compat-data knows as events without a handler- link; the browser probe compares the whole list with Chromium. `cssValues` is one value per entry of mdn-data types, functions and units, on a host property, and the browser probe proves each one valid.",
   "attributes": {
     "accesskey": { "prop": "accessKey", "value": "k", "html": "accesskey=\"k\"" },
     "anchor": { "prop": "anchor", "value": "probe-anchor", "html": "anchor=\"probe-anchor\"" },
@@ -133,5 +133,822 @@
     "vertical-viewport-segments": "(vertical-viewport-segments: 2)",
     "video-dynamic-range": "(video-dynamic-range: high)",
     "width": "(max-width: 767.98px)"
+  },
+  "elementAttributes": {
+    "reactProps": {
+      "accept-charset": "acceptCharset",
+      "allowfullscreen": "allowFullScreen",
+      "autocomplete": "autoComplete",
+      "autoplay": "autoPlay",
+      "class": "className",
+      "colspan": "colSpan",
+      "controlslist": "controlsList",
+      "crossorigin": "crossOrigin",
+      "datetime": "dateTime",
+      "disablepictureinpicture": "disablePictureInPicture",
+      "disableremoteplayback": "disableRemotePlayback",
+      "enctype": "encType",
+      "fetchpriority": "fetchPriority",
+      "for": "htmlFor",
+      "formaction": "formAction",
+      "formenctype": "formEncType",
+      "formmethod": "formMethod",
+      "formnovalidate": "formNoValidate",
+      "formtarget": "formTarget",
+      "hreflang": "hrefLang",
+      "maxlength": "maxLength",
+      "minlength": "minLength",
+      "novalidate": "noValidate",
+      "playsinline": "playsInline",
+      "popovertarget": "popoverTarget",
+      "popovertargetaction": "popoverTargetAction",
+      "readonly": "readOnly",
+      "referrerpolicy": "referrerPolicy",
+      "rowspan": "rowSpan",
+      "srcdoc": "srcDoc",
+      "srclang": "srcLang",
+      "srcset": "srcSet",
+      "tabindex": "tabIndex",
+      "usemap": "useMap",
+      "text-overflow": "text-overflow",
+      "white-space": "white-space"
+    },
+    "booleans": [
+      "default",
+      "allowfullscreen",
+      "async",
+      "autoplay",
+      "checked",
+      "controls",
+      "defer",
+      "disabled",
+      "disablepictureinpicture",
+      "disableremoteplayback",
+      "formnovalidate",
+      "loop",
+      "multiple",
+      "muted",
+      "novalidate",
+      "open",
+      "playsinline",
+      "readonly",
+      "required",
+      "reversed",
+      "selected"
+    ],
+    "values": {
+      "action": "/probe",
+      "alpha": "",
+      "capture": "user",
+      "cite": "/probe",
+      "cols": 2,
+      "colspan": 2,
+      "coords": "0,0,1,1",
+      "credentialless": "",
+      "data": "/probe",
+      
+      "formaction": "/probe",
+      "height": 10,
+      "high": 2,
+      "href": "/probe",
+      "ismap": "",
+      "low": 1,
+      "max": 2,
+      "maxlength": 2,
+      "min": 1,
+      "minlength": 1,
+      "optimum": 1,
+      "poster": "/probe",
+      "rows": 2,
+      "rowspan": 2,
+      "shadowrootclonable": "",
+      "shadowrootcustomelementregistry": "",
+      "shadowrootdelegatesfocus": "",
+      "shadowrootserializable": "",
+      "size": 2,
+      "span": 2,
+      "src": "/probe",
+      "srcset": "/probe 2x",
+      "start": 2,
+      "value": 2,
+      "webkitdirectory": "",
+      "width": 10
+    }
+  },
+  "eventHandlersWithoutSpecLink": [
+    "onanimationcancel",
+    "onanimationend",
+    "onanimationiteration",
+    "onanimationstart",
+    "onbeforeinput",
+    "onbeforematch",
+    "onbeforetoggle",
+    "onbeforexrselect",
+    "onclose",
+    "oncommand",
+    "oncontentvisibilityautostatechange",
+    "oncontextlost",
+    "oncontextmenu",
+    "oncontextrestored",
+    "onencrypted",
+    "onenterpictureinpicture",
+    "onformdata",
+    "ongotpointercapture",
+    "onleavepictureinpicture",
+    "onlostpointercapture",
+    "onmousewheel",
+    "onpointercancel",
+    "onpointerdown",
+    "onpointerenter",
+    "onpointerleave",
+    "onpointermove",
+    "onpointerout",
+    "onpointerover",
+    "onpointerup",
+    "onreset",
+    "onscrollsnapchange",
+    "onscrollsnapchanging",
+    "onsearch",
+    "onselectionchange",
+    "ontoggle",
+    "ontransitioncancel",
+    "ontransitionend",
+    "ontransitionrun",
+    "ontransitionstart",
+    "onwaitingforkey"
+  ],
+  "cssValues": {
+    "<angle>": {
+      "property": "transform",
+      "value": "rotate(45deg)"
+    },
+    "<angle-percentage>": {
+      "property": "backgroundImage",
+      "value": "conic-gradient(red 25%, blue 90deg)"
+    },
+    "<basic-shape>": {
+      "property": "clipPath",
+      "value": "circle(50%)"
+    },
+    "<blend-mode>": {
+      "property": "mixBlendMode",
+      "value": "multiply"
+    },
+    "<color>": {
+      "property": "color",
+      "value": "#123456"
+    },
+    "<custom-ident>": {
+      "property": "gridArea",
+      "value": "probe"
+    },
+    "<dashed-ident>": {
+      "property": "transitionProperty",
+      "value": "--probe"
+    },
+    "<dimension>": {
+      "property": "letterSpacing",
+      "value": "2px"
+    },
+    "<display-box>": {
+      "property": "display",
+      "value": "contents"
+    },
+    "<display-inside>": {
+      "property": "display",
+      "value": "flow-root"
+    },
+    "<display-internal>": {
+      "property": "display",
+      "value": "table-cell"
+    },
+    "<display-legacy>": {
+      "property": "display",
+      "value": "inline-block"
+    },
+    "<display-listitem>": {
+      "property": "display",
+      "value": "list-item"
+    },
+    "<display-outside>": {
+      "property": "display",
+      "value": "inline"
+    },
+    "<easing-function>": {
+      "property": "transitionTimingFunction",
+      "value": "ease-in-out"
+    },
+    "<filter-function>": {
+      "property": "filter",
+      "value": "blur(2px)"
+    },
+    "<flex>": {
+      "property": "gridTemplateColumns",
+      "value": "1fr 2fr"
+    },
+    "<gradient>": {
+      "property": "backgroundImage",
+      "value": "linear-gradient(red, blue)"
+    },
+    "<ident>": {
+      "property": "cursor",
+      "value": "pointer"
+    },
+    "<image>": {
+      "property": "backgroundImage",
+      "value": "url(/probe.png)"
+    },
+    "<integer>": {
+      "property": "zIndex",
+      "value": "3"
+    },
+    "<length>": {
+      "property": "width",
+      "value": "12px"
+    },
+    "<length-percentage>": {
+      "property": "paddingTop",
+      "value": "12%"
+    },
+    "<line-style>": {
+      "property": "borderStyle",
+      "value": "dashed"
+    },
+    "<number>": {
+      "property": "opacity",
+      "value": "0.5"
+    },
+    "<overflow>": {
+      "property": "overflowX",
+      "value": "clip"
+    },
+    "<percentage>": {
+      "property": "width",
+      "value": "50%"
+    },
+    "<position>": {
+      "property": "backgroundPosition",
+      "value": "left 10px top 20%"
+    },
+    "<ratio>": {
+      "property": "aspectRatio",
+      "value": "16 / 9"
+    },
+    "<resolution>": {
+      "property": "backgroundImage",
+      "value": "image-set(\"/probe.png\" 2x)"
+    },
+    "<shape>": {
+      "property": "clip",
+      "value": "rect(1px, 2px, 3px, 4px)"
+    },
+    "<string>": {
+      "property": "gridTemplateAreas",
+      "value": "\"a b\""
+    },
+    "<text-edge>": {
+      "property": "textBoxEdge",
+      "value": "cap alphabetic"
+    },
+    "<time>": {
+      "property": "transitionDuration",
+      "value": "200ms"
+    },
+    "<transform-function>": {
+      "property": "transform",
+      "value": "translateX(10px)"
+    },
+    "<url>": {
+      "property": "backgroundImage",
+      "value": "url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)"
+    },
+    "abs()": {
+      "property": "width",
+      "value": "abs(-12px)"
+    },
+    "calc()": {
+      "property": "width",
+      "value": "calc(100% - 12px)"
+    },
+    "calc-size()": {
+      "property": "width",
+      "value": "calc-size(auto, size + 10px)"
+    },
+    "clamp()": {
+      "property": "width",
+      "value": "clamp(1px, 2px, 3px)"
+    },
+    "min()": {
+      "property": "width",
+      "value": "min(1px, 2px)"
+    },
+    "max()": {
+      "property": "width",
+      "value": "max(1px, 2px)"
+    },
+    "hypot()": {
+      "property": "width",
+      "value": "hypot(3px, 4px)"
+    },
+    "mod()": {
+      "property": "width",
+      "value": "mod(7px, 3px)"
+    },
+    "rem()": {
+      "property": "width",
+      "value": "rem(7px, 3px)"
+    },
+    "round()": {
+      "property": "width",
+      "value": "round(7px, 3px)"
+    },
+    "exp()": {
+      "property": "width",
+      "value": "calc(exp(1) * 1px)"
+    },
+    "log()": {
+      "property": "width",
+      "value": "calc(log(2) * 1px)"
+    },
+    "pow()": {
+      "property": "width",
+      "value": "calc(pow(2, 3) * 1px)"
+    },
+    "sign()": {
+      "property": "width",
+      "value": "calc(sign(-1) * 1px)"
+    },
+    "sqrt()": {
+      "property": "width",
+      "value": "calc(sqrt(4) * 1px)"
+    },
+    "sin()": {
+      "property": "width",
+      "value": "calc(sin(30deg) * 1px)"
+    },
+    "cos()": {
+      "property": "width",
+      "value": "calc(cos(30deg) * 1px)"
+    },
+    "tan()": {
+      "property": "width",
+      "value": "calc(tan(30deg) * 1px)"
+    },
+    "anchor-size()": {
+      "property": "width",
+      "value": "anchor-size(--probe width)"
+    },
+    "anchor()": {
+      "property": "top",
+      "value": "anchor(--probe bottom)"
+    },
+    "acos()": {
+      "property": "transform",
+      "value": "rotate(acos(0.5))"
+    },
+    "asin()": {
+      "property": "transform",
+      "value": "rotate(asin(0.5))"
+    },
+    "atan()": {
+      "property": "transform",
+      "value": "rotate(atan(0.5))"
+    },
+    "atan2()": {
+      "property": "transform",
+      "value": "rotate(atan2(1, 2))"
+    },
+    "attr()": {
+      "property": "color",
+      "value": "attr(data-color type(<color>), red)"
+    },
+    "blur()": {
+      "property": "filter",
+      "value": "blur(2px)"
+    },
+    "brightness()": {
+      "property": "filter",
+      "value": "brightness(1.2)"
+    },
+    "contrast()": {
+      "property": "filter",
+      "value": "contrast(1.2)"
+    },
+    "drop-shadow()": {
+      "property": "filter",
+      "value": "drop-shadow(1px 1px 2px red)"
+    },
+    "grayscale()": {
+      "property": "filter",
+      "value": "grayscale(1)"
+    },
+    "hue-rotate()": {
+      "property": "filter",
+      "value": "hue-rotate(90deg)"
+    },
+    "invert()": {
+      "property": "filter",
+      "value": "invert(1)"
+    },
+    "opacity()": {
+      "property": "filter",
+      "value": "opacity(0.5)"
+    },
+    "saturate()": {
+      "property": "filter",
+      "value": "saturate(2)"
+    },
+    "sepia()": {
+      "property": "filter",
+      "value": "sepia(1)"
+    },
+    "circle()": {
+      "property": "clipPath",
+      "value": "circle(50%)"
+    },
+    "ellipse()": {
+      "property": "clipPath",
+      "value": "ellipse(40% 50%)"
+    },
+    "inset()": {
+      "property": "clipPath",
+      "value": "inset(10px)"
+    },
+    "polygon()": {
+      "property": "clipPath",
+      "value": "polygon(0 0, 100% 0, 0 100%)"
+    },
+    "path()": {
+      "property": "clipPath",
+      "value": "path(\"M0 0L10 0L0 10Z\")"
+    },
+    "rect()": {
+      "property": "clipPath",
+      "value": "rect(0 10px 10px 0)"
+    },
+    "xywh()": {
+      "property": "clipPath",
+      "value": "xywh(0 0 10px 10px)"
+    },
+    "color()": {
+      "property": "color",
+      "value": "color(display-p3 1 0 0)"
+    },
+    "color-mix()": {
+      "property": "color",
+      "value": "color-mix(in srgb, red, blue)"
+    },
+    "hsl()": {
+      "property": "color",
+      "value": "hsl(120 100% 50%)"
+    },
+    "hsla()": {
+      "property": "color",
+      "value": "hsla(120, 100%, 50%, 0.5)"
+    },
+    "hwb()": {
+      "property": "color",
+      "value": "hwb(120 0% 0%)"
+    },
+    "lab()": {
+      "property": "color",
+      "value": "lab(50% 40 59)"
+    },
+    "lch()": {
+      "property": "color",
+      "value": "lch(50% 70 40)"
+    },
+    "oklab()": {
+      "property": "color",
+      "value": "oklab(60% 0.1 0.1)"
+    },
+    "oklch()": {
+      "property": "color",
+      "value": "oklch(60% 0.15 50)"
+    },
+    "rgb()": {
+      "property": "color",
+      "value": "rgb(1 2 3)"
+    },
+    "rgba()": {
+      "property": "color",
+      "value": "rgba(1, 2, 3, 0.5)"
+    },
+    "light-dark()": {
+      "property": "color",
+      "value": "light-dark(red, blue)"
+    },
+    "var()": {
+      "property": "color",
+      "value": "var(--probe, red)"
+    },
+    "palette-mix()": {
+      "property": "fontPalette",
+      "value": "palette-mix(in srgb, light, dark)"
+    },
+    "conic-gradient()": {
+      "property": "backgroundImage",
+      "value": "conic-gradient(red, blue)"
+    },
+    "linear-gradient()": {
+      "property": "backgroundImage",
+      "value": "linear-gradient(red, blue)"
+    },
+    "radial-gradient()": {
+      "property": "backgroundImage",
+      "value": "radial-gradient(red, blue)"
+    },
+    "repeating-conic-gradient()": {
+      "property": "backgroundImage",
+      "value": "repeating-conic-gradient(red 0 10%, blue 0 20%)"
+    },
+    "repeating-linear-gradient()": {
+      "property": "backgroundImage",
+      "value": "repeating-linear-gradient(red 0 10px, blue 0 20px)"
+    },
+    "repeating-radial-gradient()": {
+      "property": "backgroundImage",
+      "value": "repeating-radial-gradient(red 0 10px, blue 0 20px)"
+    },
+    "cross-fade()": {
+      "property": "backgroundImage",
+      "value": "cross-fade(url(/a.png) 50%, url(/b.png))"
+    },
+    "element()": {
+      "property": "backgroundImage",
+      "value": "element(#probe)"
+    },
+    "image()": {
+      "property": "backgroundImage",
+      "value": "image(\"/probe.png\")"
+    },
+    "image-set()": {
+      "property": "backgroundImage",
+      "value": "image-set(\"/probe.png\" 1x)"
+    },
+    "paint()": {
+      "property": "backgroundImage",
+      "value": "paint(probe)"
+    },
+    "counter()": {
+      "property": "content",
+      "value": "counter(probe)"
+    },
+    "counters()": {
+      "property": "content",
+      "value": "counters(probe, \".\")"
+    },
+    "target-counter()": {
+      "property": "content",
+      "value": "target-counter(\"#probe\", page)"
+    },
+    "target-counters()": {
+      "property": "content",
+      "value": "target-counters(\"#probe\", page, \".\")"
+    },
+    "target-text()": {
+      "property": "content",
+      "value": "target-text(\"#probe\")"
+    },
+    "leader()": {
+      "property": "content",
+      "value": "leader(dotted)"
+    },
+    "cubic-bezier()": {
+      "property": "transitionTimingFunction",
+      "value": "cubic-bezier(0.1, 0.7, 1, 0.1)"
+    },
+    "linear()": {
+      "property": "transitionTimingFunction",
+      "value": "linear(0, 0.5, 1)"
+    },
+    "steps()": {
+      "property": "transitionTimingFunction",
+      "value": "steps(4, end)"
+    },
+    "env()": {
+      "property": "paddingTop",
+      "value": "env(safe-area-inset-top, 0px)"
+    },
+    "fit-content()": {
+      "property": "gridTemplateColumns",
+      "value": "fit-content(100px)"
+    },
+    "minmax()": {
+      "property": "gridTemplateColumns",
+      "value": "minmax(100px, 1fr)"
+    },
+    "matrix()": {
+      "property": "transform",
+      "value": "matrix(1, 0, 0, 1, 0, 0)"
+    },
+    "matrix3d()": {
+      "property": "transform",
+      "value": "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)"
+    },
+    "perspective()": {
+      "property": "transform",
+      "value": "perspective(100px)"
+    },
+    "rotate()": {
+      "property": "transform",
+      "value": "rotate(45deg)"
+    },
+    "rotate3d()": {
+      "property": "transform",
+      "value": "rotate3d(1, 1, 1, 45deg)"
+    },
+    "rotateX()": {
+      "property": "transform",
+      "value": "rotateX(45deg)"
+    },
+    "rotateY()": {
+      "property": "transform",
+      "value": "rotateY(45deg)"
+    },
+    "rotateZ()": {
+      "property": "transform",
+      "value": "rotateZ(45deg)"
+    },
+    "scale()": {
+      "property": "transform",
+      "value": "scale(2)"
+    },
+    "scale3d()": {
+      "property": "transform",
+      "value": "scale3d(1, 2, 3)"
+    },
+    "scaleX()": {
+      "property": "transform",
+      "value": "scaleX(2)"
+    },
+    "scaleY()": {
+      "property": "transform",
+      "value": "scaleY(2)"
+    },
+    "scaleZ()": {
+      "property": "transform",
+      "value": "scaleZ(2)"
+    },
+    "skew()": {
+      "property": "transform",
+      "value": "skew(10deg)"
+    },
+    "skewX()": {
+      "property": "transform",
+      "value": "skewX(10deg)"
+    },
+    "skewY()": {
+      "property": "transform",
+      "value": "skewY(10deg)"
+    },
+    "translate()": {
+      "property": "transform",
+      "value": "translate(10px)"
+    },
+    "translate3d()": {
+      "property": "transform",
+      "value": "translate3d(1px, 2px, 3px)"
+    },
+    "translateX()": {
+      "property": "transform",
+      "value": "translateX(10px)"
+    },
+    "translateY()": {
+      "property": "transform",
+      "value": "translateY(10px)"
+    },
+    "translateZ()": {
+      "property": "transform",
+      "value": "translateZ(10px)"
+    },
+    "ray()": {
+      "property": "offsetPath",
+      "value": "ray(45deg)"
+    },
+    "scroll()": {
+      "property": "animationTimeline",
+      "value": "scroll()"
+    },
+    "view()": {
+      "property": "animationTimeline",
+      "value": "view()"
+    },
+    "symbols()": {
+      "property": "listStyleType",
+      "value": "symbols(cyclic \"*\")"
+    },
+    "cap": {
+      "property": "width",
+      "value": "2cap"
+    },
+    "ch": {
+      "property": "width",
+      "value": "2ch"
+    },
+    "cm": {
+      "property": "width",
+      "value": "2cm"
+    },
+    "em": {
+      "property": "width",
+      "value": "2em"
+    },
+    "ex": {
+      "property": "width",
+      "value": "2ex"
+    },
+    "ic": {
+      "property": "width",
+      "value": "2ic"
+    },
+    "in": {
+      "property": "width",
+      "value": "2in"
+    },
+    "mm": {
+      "property": "width",
+      "value": "2mm"
+    },
+    "pc": {
+      "property": "width",
+      "value": "2pc"
+    },
+    "pt": {
+      "property": "width",
+      "value": "2pt"
+    },
+    "px": {
+      "property": "width",
+      "value": "2px"
+    },
+    "Q": {
+      "property": "width",
+      "value": "2Q"
+    },
+    "rem": {
+      "property": "width",
+      "value": "2rem"
+    },
+    "vh": {
+      "property": "width",
+      "value": "2vh"
+    },
+    "vmax": {
+      "property": "width",
+      "value": "2vmax"
+    },
+    "vmin": {
+      "property": "width",
+      "value": "2vmin"
+    },
+    "vw": {
+      "property": "width",
+      "value": "2vw"
+    },
+    "deg": {
+      "property": "transform",
+      "value": "rotate(45deg)"
+    },
+    "grad": {
+      "property": "transform",
+      "value": "rotate(50grad)"
+    },
+    "rad": {
+      "property": "transform",
+      "value": "rotate(1rad)"
+    },
+    "turn": {
+      "property": "transform",
+      "value": "rotate(0.25turn)"
+    },
+    "dpcm": {
+      "property": "backgroundImage",
+      "value": "image-set(\"/probe.png\" 100dpcm)"
+    },
+    "dpi": {
+      "property": "backgroundImage",
+      "value": "image-set(\"/probe.png\" 96dpi)"
+    },
+    "dppx": {
+      "property": "backgroundImage",
+      "value": "image-set(\"/probe.png\" 2dppx)"
+    },
+    "x": {
+      "property": "backgroundImage",
+      "value": "image-set(\"/probe.png\" 2x)"
+    },
+    "fr": {
+      "property": "gridTemplateColumns",
+      "value": "1fr"
+    },
+    "ms": {
+      "property": "transitionDuration",
+      "value": "200ms"
+    },
+    "s": {
+      "property": "transitionDuration",
+      "value": "2s"
+    }
   }
 }

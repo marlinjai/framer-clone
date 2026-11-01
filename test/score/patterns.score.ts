@@ -1,12 +1,11 @@
 // Coverage matrix, WAI-ARIA Authoring Practices rows. Each pattern's tree goes
 // through the real published path into real Chromium and its keyboard contract
-// runs there. The panel column follows from the matrix (report.ts): a pattern is
-// editable only when every tag and prop it uses is. The canvas column stays "not
-// tested": on the canvas a click selects, so running a contract there needs the
-// mounted editor, which this harness does not do yet.
+// runs there. The same contract then runs on the mounted canvas: the real EditorApp
+// with the tree on a page (lib/canvasBundle.ts). The panel column follows from the
+// matrix (report.ts): a pattern is editable only when every tag and prop it uses is.
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { chromium, type Browser } from 'playwright';
+import { chromium, type Browser, type Page } from 'playwright';
 import { getSnapshot } from 'mobx-state-tree';
 import ComponentModel, { ComponentTypeEnum } from '@/models/ComponentModel';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
@@ -14,6 +13,7 @@ import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
 import { validateGeneration } from '@/lib/ai/pageGen/validate';
 import { PATTERNS, treeVocabulary } from './patterns';
 import { BREAKPOINTS, publishedDocument, renderPublished } from './lib/published';
+import { bundleEditor } from './lib/canvasBundle';
 import { ariaPatterns } from './lib/universe';
 import { writeOut } from './lib/io';
 import { rowKey, type Cell } from './lib/types';
@@ -54,6 +54,23 @@ function generatorKeeps(root: ComponentNode): { kept: boolean; lost: string } {
   return { kept: lost.length === 0, lost: lost.join(', ') };
 }
 
+/** The editor open on one frame, with the tree in it. A broken mount throws: that is a harness error, not a score. */
+async function mountOnCanvas(browser: Browser, bundle: string, tree: ComponentNode): Promise<Page> {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+  page.setDefaultTimeout(1500);
+  const crashes: string[] = [];
+  page.on('pageerror', (error) => crashes.push(error.message));
+  // No server behind this page: every request the editor makes gets an empty answer.
+  await page.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+  await page.goto('http://canvas-probe.local/');
+  await page.setContent('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div></body></html>');
+  await page.addScriptTag({ path: bundle });
+  await page.evaluate((snapshot) => (window as unknown as { __placeTree: (s: unknown) => void }).__placeTree(snapshot), toSnapshot(tree));
+  await page.locator(`[data-viewport-content-id] [data-inner-component-id="${tree.id}"]`).first().waitFor({ state: 'attached' });
+  if (crashes.length > 0) throw new Error(`the editor crashed on the canvas: ${crashes[0]}`);
+  return page;
+}
+
 describe('coverage matrix: WAI-ARIA Authoring Practices patterns', () => {
   let browser: Browser;
 
@@ -75,6 +92,7 @@ describe('coverage matrix: WAI-ARIA Authoring Practices patterns', () => {
     const canvas: Record<string, Cell> = {};
     const ai: Record<string, Cell> = {};
     const vocabulary: Record<string, { tags: string[]; props: string[] }> = {};
+    const bundle = await bundleEditor();
 
     for (const pattern of PATTERNS) {
       const key = rowKey('aria-pattern', pattern.id);
@@ -85,7 +103,7 @@ describe('coverage matrix: WAI-ARIA Authoring Practices patterns', () => {
       page.setDefaultTimeout(1500);
       await page.setContent(publishedDocument(renderPublished(tree)));
       try {
-        await pattern.contract(page);
+        await pattern.contract(page, page);
         renderer[key] = { status: 'pass', note: pattern.built === 'native' ? 'plain HTML brings the behaviour' : undefined };
       } catch (error) {
         renderer[key] = {
@@ -96,7 +114,19 @@ describe('coverage matrix: WAI-ARIA Authoring Practices patterns', () => {
       }
       await page.close();
 
-      canvas[key] = { status: 'not-tested', gap: 'harness-limit', note: 'contracts do not run on the mounted canvas yet' };
+      const mounted = await mountOnCanvas(browser, bundle, tree);
+      try {
+        await pattern.contract(mounted, mounted.locator('[data-viewport-content-id]'));
+        canvas[key] = { status: 'pass' };
+      } catch (error) {
+        canvas[key] = {
+          status: 'fail',
+          gap: renderer[key].status === 'pass' ? 'canvas-editor-context' : 'behaviour-state',
+          note: (error instanceof Error ? error.message : String(error)).split('\n')[0],
+        };
+      }
+      await mounted.close();
+
       const generated = generatorKeeps(tree);
       ai[key] = generated.kept ? { status: 'pass' } : { status: 'fail', gap: 'ai-attribute-allowlist', note: `lost: ${generated.lost}` };
 
