@@ -56,9 +56,8 @@ export const SAFE_PROPERTY = /^(?:[A-Za-z][A-Za-z0-9]*|--[A-Za-z0-9_-]+)$/;
  * quoted or not: `{` `}` open or close a rule, `<` can start `</style>` and end
  * the element (the sheet is written raw, so CSS quoting does not protect it), a
  * backslash starts a CSS escape that can hide any of these or a closing quote,
- * and control characters (newlines included) have no place in a value. Mirrors
- * STYLE_BREAKOUT_CHARS in src/lib/ai/pageGen/validate.ts, plus `<` and `>`, and
- * without `;`, which depends on where it stands: see isContainedValue.
+ * and control characters (newlines included) have no place in a value. `;` is
+ * not here: it depends on where it stands, see isContainedValue.
  */
 const BREAKOUT_CHARS = /[{}<>\\\u0000-\u001f\u007f]/;
 
@@ -90,58 +89,99 @@ function endOfUnquotedUrl(text: string, start: number): number {
   return /["'(\s]/.test(text.slice(start, end).trimEnd()) ? -1 : end + 1;
 }
 
+/** What a CSS value holds, read the way the browser tokenizes it. */
+export interface CssValueScan {
+  /**
+   * True when the value stays inside its declaration. A `;` counts as data only
+   * inside a string or an unquoted url(). Anywhere else it ends the declaration,
+   * so the value is refused. A string, block or url() left open is refused too,
+   * because the browser would carry on through the `;` and `}` that follow it and
+   * swallow the rest of the rule.
+   */
+  contained: boolean;
+  /** Every address: each url(), quoted or not, and each string inside image-set(). */
+  urls: string[];
+  /** Every string, without its quotes. */
+  strings: string[];
+  /** A var() inside image-set(): an address no check can read here. */
+  indirect: boolean;
+}
+
+/** The name of the function whose `(` is at `open`, lower-cased; '' for a plain block. */
+function functionName(text: string, open: number): string {
+  let start = open;
+  while (start > 0 && /[A-Za-z0-9_-]/.test(text[start - 1])) start--;
+  return text.slice(start, open).toLowerCase();
+}
+
+const isImageSet = (name: string) => name === 'image-set' || name === '-webkit-image-set';
+
 /**
- * True when the value stays inside its declaration, read the way the browser
- * tokenizes it. Call only on text free of BREAKOUT_CHARS: with no backslash a
- * quote cannot be escaped, and with no newline a string cannot end early, so a
- * quote always closes at its next match. A `;` counts as data only inside a
- * string or an unquoted url(). Anywhere else it ends the declaration, so the
- * value is refused. A string, block or url() left open is refused too, because
- * the browser would carry on through the `;` and `}` that follow it and swallow
- * the rest of the rule.
+ * Read a value token by token. Call only on text free of BREAKOUT_CHARS: with no
+ * backslash a quote cannot be escaped, and with no newline a string cannot end
+ * early, so a quote always closes at its next match. Everything that asks where a
+ * value points goes through here, because a pattern over the raw text can start
+ * inside a string and read a different value than the browser does. When
+ * `contained` is false the rest of the fields stop at that point.
  */
-function isContainedValue(text: string): boolean {
-  const closers: string[] = [];
+export function scanCssValue(text: string): CssValueScan {
+  const scan: CssValueScan = { contained: false, urls: [], strings: [], indirect: false };
+  const open: { closer: string; name: string }[] = [];
   let i = 0;
   while (i < text.length) {
     const ch = text[i];
     if (ch === '"' || ch === "'") {
       const close = text.indexOf(ch, i + 1);
-      if (close === -1) return false;
+      if (close === -1) return scan;
+      const body = text.slice(i + 1, close);
+      const inside = open[open.length - 1]?.name ?? '';
+      scan.strings.push(body);
+      if (inside === 'url' || isImageSet(inside)) scan.urls.push(body.trim());
       i = close + 1;
     } else if (ch === '(') {
       let body = i + 1;
       while (text[body] === ' ') body++;
       const quoted = text[body] === '"' || text[body] === "'";
       const kind = quoted ? 'block' : parenKind(text, i);
-      if (kind === 'ambiguous') return false;
+      if (kind === 'ambiguous') return scan;
       if (kind === 'url') {
-        i = endOfUnquotedUrl(text, body);
-        if (i === -1) return false;
+        const end = endOfUnquotedUrl(text, body);
+        if (end === -1) return scan;
+        scan.urls.push(text.slice(body, end - 1).trim());
+        i = end;
       } else {
-        closers.push(')');
+        const name = functionName(text, i);
+        if (name === 'var' && open.some((block) => isImageSet(block.name))) scan.indirect = true;
+        open.push({ closer: ')', name });
         i++;
       }
     } else if (ch === '[') {
-      closers.push(']');
+      open.push({ closer: ']', name: '' });
       i++;
     } else if (ch === ')' || ch === ']') {
-      if (closers.pop() !== ch) return false;
+      if (open.pop()?.closer !== ch) return scan;
       i++;
     } else if (ch === ';') {
-      return false;
+      return scan;
     } else {
       i++;
     }
   }
-  return closers.length === 0;
+  scan.contained = open.length === 0;
+  return scan;
 }
 
-/**
- * Script-capable or import-capable CSS. Mirrors UNSAFE_STYLE_VALUE in
- * src/lib/ai/pageGen/validate.ts (copied, not imported: that module pulls in
- * the MST models, which this pure, client-safe module must not).
- */
+/** Whether a value stays inside its declaration. See CssValueScan.contained. */
+export function isContainedValue(text: string): boolean {
+  return scanCssValue(text).contained;
+}
+
+/** Every address in a value: the one list the AI generator and review judge. */
+export function cssUrlsIn(text: string): string[] {
+  return scanCssValue(text).urls;
+}
+
+/** Script-capable or import-capable CSS, and comments, which hide a `;` from isContainedValue. */
 export const UNSAFE_VALUE = /javascript:|vbscript:|expression\s*\(|<\s*\/?\s*script|@import|behavior\s*:|-moz-binding|\/\*/i;
 
 /** A camelCase style key as a CSS property name, exactly as React writes it. */

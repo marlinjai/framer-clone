@@ -197,6 +197,15 @@ real test. Where the widening corrects this plan:
 - **A value `<` cannot pass the stylesheet.** `attr()` with a type needs `<color>` and the stylesheet
   refuses `<` to protect the style element, so it works inline only.
 
+**The AI generator (2026-11-01, tightened 2026-11-02 after a security review).** The validator now
+accepts what the matrix lists AND a person has reviewed (`src/lib/ai/pageGen/reviewedVocabulary.ts`):
+a name that is new to the data is refused until someone judges it. The prompt keeps teaching its short
+list. Refused on purpose, so these rows stay failed: blocked tags, raw form controls (a form only
+works through the form presets), `template`, `noscript`, event handlers, `class`, `nonce`, every
+`data-*`, attributes that send a visitor elsewhere or open the top layer. Media outside `img` loads
+from a site path only, until the storage host is named. An attribute named like a CSS property
+(`width`, `transform`) stays out too: the format reads it as a style, past the style checks.
+
 ## Visual state management
 
 Marlin (2026-11-01): how do we give people a visual way to manage state, such as a hover state or

@@ -29,8 +29,9 @@ Rules:
   renders as bare text: it has no style, no label, no children and never stands at the top level.
 - Void tags (img) have neither text nor children.
 - Style values are strings ("16px", "#111827", "1fr 1fr") or numbers (unitless, e.g. fontWeight 600, opacity 0.8).
-- Only the style keys listed below are kept; anything else is dropped. No class names, no CSS text,
-  no event handlers, no HTML strings.
+- Use the tags, props and style keys listed here: the editor has controls for them. Any other standard HTML
+  tag, attribute or CSS property is kept when a design truly needs it (a list needs ul and li, a table its
+  table tags, a shape clipPath). No class names, no CSS text, no event handlers, no HTML strings.
 - Links: href must start with https://, http://, mailto:, tel:, # or a single /. Images: src must be https://,
   http:// or a site path starting with /. Always give images a meaningful alt in the page's language that
   says what the image shows (never "image", "photo", a file name or the layer name). Only a purely

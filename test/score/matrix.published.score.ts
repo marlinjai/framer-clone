@@ -150,7 +150,8 @@ function probeElementAttribute(namespace: Namespace, id: string, key: string): v
   const made = generate(stripIds(tree));
   const kept = findNode(made.node, sample.tag);
   if (!kept) results.ai[key] = fail('ai-tag-allowlist');
-  else results.ai[key] = sample.prop in ((kept.props ?? {}) as object) ? pass() : fail('ai-attribute-allowlist', made.warnings[0]);
+  else if (sample.prop in ((kept.props ?? {}) as object)) results.ai[key] = pass();
+  else results.ai[key] = fail(CSS_PROP_SET.has(sample.prop) ? 'attribute-read-as-style' : 'ai-attribute-allowlist', made.warnings[0]);
 }
 
 /** A stored handler has no reader, and so no meaning, until it reaches the page: bytes alone prove nothing. */

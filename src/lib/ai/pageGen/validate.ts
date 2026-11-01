@@ -4,12 +4,16 @@
 // model sent as-is: every node is rebuilt from the rules in ./schema.ts.
 //
 //   Repaired (with a warning the user can see):
-//     - unknown style keys dropped (kebab-case keys converted first),
+//     - style keys that are no CSS property dropped (kebab-case converted first),
 //     - unsafe or malformed style values, links and image sources dropped,
-//     - props outside the per-tag allowlist dropped (handlers, raw HTML, ...),
+//     - props that are no attribute of the tag, or refused ones, dropped
+//       (handlers, raw HTML, class names, the data attributes the renderers
+//       read: isAcceptedAttribute in ./schema.ts), url attributes checked,
 //     - a registry id used as `type` turned into its preset, a preset whose
-//       type disagrees with `type` wins, an unknown tag becomes a `div`,
+//       type disagrees with `type` wins, an unknown tag becomes a `div`
+//       (inside svg a `g`, inside math an `mrow`),
 //     - forbidden tags (script, iframe, form, ...) dropped with their subtree,
+//     - inside svg and math a tag is read in that language, in its own case,
 //     - text AND children on one node: the text becomes a leading text node
 //       (type "#text", bare text with no element, src/lib/renderer/textNode.ts),
 //     - a "#text" node keeps only its text, and never stands at the top level
@@ -51,7 +55,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { STOCK_CREDIT_ATTRS, stockCreditAttrs, stockCreditProps } from './stockCredit';
 import { parseAspectRatio, photoUrlOf, withPhotoUrl } from '@/lib/images/imageStyle';
 import { normalizeFontFamily } from '@/lib/fonts/registry';
-import ComponentModel, { ComponentTypeEnum, CSS_PROP_SET } from '@/models/ComponentModel';
+import ComponentModel, { ComponentTypeEnum } from '@/models/ComponentModel';
+import { UNSAFE_VALUE, isContainedValue, scanCssValue } from '@/lib/responsive/responsiveCss';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { TEXT_NODE_TYPE, refusesBareText } from '@/lib/renderer/textNode';
 import { formPropKeysFor, presetFormKind, sanitizeGeneratedFormProps } from '@/lib/forms/generation';
@@ -63,13 +68,21 @@ import {
   IMAGE_QUERY_PROP,
   PHOTO_BACKGROUND_TAGS,
   PLACEHOLDER_IMAGE_SRC,
+  acceptedTag,
   allowedPropKeysFor,
+  childNamespace,
   getGenerationPreset,
+  isAcceptedAttribute,
+  isAcceptedStyleKey,
   isSafeSrc,
-  listGenerationTags,
+  styleKeyFrom,
   type BreakpointKey,
   type GenerationPreset,
+  type MarkupNamespace,
 } from './schema';
+import { REVIEWED_ANIMATED_ATTRIBUTES } from './reviewedVocabulary';
+import { svgAttributeAsStyle } from './svgAttributes';
+import { WEB_ATTRIBUTE_PROP_NAMES } from './webVocabulary';
 import { EFFECTS_PROP, cleanGeneratedEffects } from './promptSections/effects';
 import { isSafeHref } from '@/lib/links/safeHref';
 import {
@@ -147,16 +160,55 @@ export interface ValidateContext {
 const OWNED_KEYS = new Set(['id', 'componentType', 'canvasNodeType', 'parentId']);
 const NODE_KEYS = new Set(['type', 'preset', 'label', 'props', 'children']);
 
-export const UNSAFE_STYLE_VALUE = /javascript:|vbscript:|expression\s*\(|<\s*\/?\s*script|@import|behavior\s*:|-moz-binding/i;
 /**
  * Characters that let one style value escape into more CSS when a renderer or
- * the publish path serializes styles to text: `;` ends the declaration (and
- * starts another, e.g. "red;position:fixed;inset:0"), `{` `}` open or close
- * rules, a backslash starts a CSS escape ("\75 rl(" reads as "url("), and
- * control characters (newlines included) can break out of a declaration or
- * hide content. No legitimate generated value needs any of them.
+ * the publish path serializes styles to text: `{` `}` open or close rules, a
+ * backslash starts a CSS escape ("\75 rl(" reads as "url("), and control
+ * characters (newlines included) can break out of a declaration or hide content.
+ * A `;` depends on where it stands (data inside a string or a url()), which
+ * isContainedValue reads the way a browser does: it needs this check first.
  */
-export const STYLE_BREAKOUT_CHARS = /[;{}\\\u0000-\u001f\u007f]/;
+const STYLE_BREAKOUT_CHARS = /[{}\\\u0000-\u001f\u007f]/;
+
+/** True when a style value could leave its declaration. */
+export function styleValueBreaksOut(text: string): boolean {
+  return STYLE_BREAKOUT_CHARS.test(text) || !isContainedValue(text);
+}
+
+/** CSS functions that load a URL from a string no check here reads. No generated page needs them. */
+export const STRING_URL_FUNCTION = /\bsrc\(|\bimage\(/i;
+
+const Z_INDEX_KEYWORD = /^(?:auto|inherit|initial|unset|revert|revert-layer)$/i;
+
+/**
+ * A z-index no higher than GENERATION_LIMITS.maxZIndex, or undefined for one that
+ * cannot be read: a var() or calc() could hide any number. The banner sits above
+ * that limit, so nothing generated can cover it.
+ */
+export function clampedZIndex(value: string | number): string | number | undefined {
+  const limit = GENERATION_LIMITS.maxZIndex;
+  if (typeof value === 'number') return Math.min(Math.trunc(value), limit);
+  if (Z_INDEX_KEYWORD.test(value)) return value;
+  if (!/^[+-]?\d+$/.test(value)) return undefined;
+  return Number(value) > limit ? String(limit) : value;
+}
+
+/**
+ * Why a style value is refused for what it says, whichever path it came by:
+ *   - a custom property holding an address: read through var(), it would pass every
+ *     check on the property that uses it;
+ *   - a var() in a font or in image-set(): the value that counts is not this one.
+ */
+export function styleValueProblem(property: string, value: string): string | undefined {
+  if (UNSAFE_VALUE.test(value) || STRING_URL_FUNCTION.test(value)) return 'unsafe value';
+  const scan = scanCssValue(value);
+  if (scan.indirect) return 'var() inside image-set()';
+  if ((property === 'fontFamily' || property === 'font') && /var\(/i.test(value)) return 'var() in a font';
+  if (property.startsWith('--')) {
+    if (/url\(|image-set\(/i.test(value) || scan.strings.some((text) => /[:/]/.test(text))) return 'an address in a custom property';
+  }
+  return undefined;
+}
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
@@ -165,10 +217,6 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 /** True for raw model output that asks for a text node. */
 function isTextNodeInput(v: unknown): boolean {
   return isPlainObject(v) && typeof v.type === 'string' && v.type.trim().toLowerCase() === TEXT_NODE_TYPE;
-}
-
-function kebabToCamel(key: string): string {
-  return key.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
 /**
@@ -185,9 +233,13 @@ export function cleanImageQuery(value: unknown): string | undefined {
   return q;
 }
 
+/**
+ * Read the way a browser reads it: against a base, so that a backslash or a
+ * protocol-relative address finds its host, and a trailing dot is the same host.
+ */
 function isUnsplashPhotoUrl(value: string): boolean {
   try {
-    return new URL(value).hostname === 'images.unsplash.com';
+    return new URL(value.trim(), 'https://site.invalid').hostname.replace(/\.+$/, '') === 'images.unsplash.com';
   } catch {
     return false;
   }
@@ -242,16 +294,108 @@ function cleanText(value: unknown, max: number): string | undefined {
   return value.length > max ? value.slice(0, max) : value;
 }
 
+/** Attributes that load media by themselves, beyond the taught img src. */
+const MEDIA_URL_ATTRIBUTES: ReadonlySet<string> = new Set(['src', 'poster', 'srcset']);
+
+/** Elements whose href is a link: it navigates, and draws nothing in. */
+const LINK_TAGS: ReadonlySet<string> = new Set(['a', 'area']);
+
+/** SVG elements whose href loads a file. */
+const MEDIA_HREF_TAGS: ReadonlySet<string> = new Set(['image', 'feImage']);
+
+/** Characters no attribute value needs: a backslash starts a CSS escape in a presentation attribute. */
+const ATTRIBUTE_BREAKOUT_CHARS = /[\\\u0000-\u001f\u007f]/;
+
+/** An id a page anchor needs, and none that reaches the platform: see attributeProblem. */
+const SAFE_ID = /^[a-z][a-z0-9-]*$/;
+const PLATFORM_ID_PREFIX = /^(?:fc-|ground-wrapper-)/;
+
+/** An id inside an svg, as design tools write them: it is scoped later, so it cannot reach a global. */
+const SVG_ID = /^[A-Za-z_][A-Za-z0-9_.:-]*$/;
+
+/** A camelCase page anchor, which has one plain slug form. */
+const CAMEL_CASE_ID = /^[a-z][a-zA-Z0-9]*$/;
+
+/** The scope an earlier generation left on an id, so that regenerating does not stack them. */
+const SVG_ID_SCOPE = /--[a-z0-9]{1,8}$/;
+
+/** A link's spellings: SVG reaches other documents through all three. */
+const HREF_ATTRIBUTES: ReadonlySet<string> = new Set(['href', 'xlinkhref', 'xlink:href']);
+
+/** SVG attributes that hold geometry: long, and wrapped over lines as often as not. */
+const GEOMETRY_ATTRIBUTES: ReadonlySet<string> = new Set(['d', 'points', 'values']);
+
+/** What replaces an unknown tag: the plain box of each language. */
+const FALLBACK_TAG: Record<MarkupNamespace, string> = { html: 'div', svg: 'g', mathml: 'mrow' };
+
+/**
+ * An address that loads by itself, with no click: a path of this site only. It would
+ * reach a third party with the visitor's address and, on a details or a lazy image,
+ * report what they did. The storage host could join once it is named in one place.
+ */
+function isSitePath(url: string): boolean {
+  return url.startsWith('/') && isSafeSrc(url) && !isUnsplashPhotoUrl(url);
+}
+
+/** Whether every candidate of a srcset is a path of this site (a candidate is a URL and an optional size). */
+function isSitePathSrcset(value: string): boolean {
+  return value.split(',').every((candidate) => isSitePath(candidate.trim().split(/\s+/)[0]));
+}
+
+/** What a browser would do with this href, by tag. */
+function hrefProblem(tag: string, text: string): string | undefined {
+  if (MEDIA_HREF_TAGS.has(tag)) return isSitePath(text) || text.startsWith('#') ? undefined : 'only a site path';
+  return isSafeHref(text) && !isUnsplashPhotoUrl(text) ? undefined : 'only https, http, mailto, tel, # or a site path';
+}
+
+/**
+ * Why an attribute's text is refused, numbers and booleans included: `target: 1`
+ * gets no pass for not being a string.
+ *   - An id becomes a property of `window`. Next.js boots from `self.__next_f`, so
+ *     one element with that id stops React on the whole page. Every platform global
+ *     has an underscore or a capital and a page anchor is a slug, so a slug is what
+ *     passes; fc- and ground-wrapper- are ids the page and the canvas look up. An id
+ *     inside an svg may look as a design tool wrote it, because scopeIds gives it a
+ *     suffix no global has.
+ *   - An SVG paint or filter attribute is read as CSS: its url() may only point
+ *     inside the page, and a backslash is a CSS escape, so `u\\72 l(` is a url().
+ *   - An animation writes an attribute after these checks ran, so only the shape
+ *     and paint attributes in the reviewed list may be its target.
+ *   - rel="opener" hands the opened page the site's own tab.
+ */
+function attributeProblem(tag: string, name: string, text: string, namespace: MarkupNamespace): string | undefined {
+  const limit = GEOMETRY_ATTRIBUTES.has(name) ? GENERATION_LIMITS.maxGeometryChars : GENERATION_LIMITS.maxAttributeChars;
+  if (text.length > limit) return 'too long';
+  if (ATTRIBUTE_BREAKOUT_CHARS.test(text)) return 'a backslash or a control character';
+  if (/javascript:|vbscript:/i.test(text) || STRING_URL_FUNCTION.test(text) || /image-set\(/i.test(text)) return 'unsafe value';
+  if (/url\(/i.test(text)) {
+    const scan = scanCssValue(text);
+    if (!scan.contained || scan.urls.some((url) => !url.startsWith('#'))) return 'url() outside the page';
+  }
+  if (name === 'id' && (!(namespace === 'svg' ? SVG_ID : SAFE_ID).test(text) || PLATFORM_ID_PREFIX.test(text))) {
+    return 'an id must be a lower-case slug';
+  }
+  if (name === 'attributename' && !REVIEWED_ANIMATED_ATTRIBUTES.has(text)) return 'animates an attribute outside the shape and paint ones';
+  if (name === 'rel' && /(?:^|\s)opener(?:\s|$)/i.test(text)) return 'rel opener';
+  if (HREF_ATTRIBUTES.has(name)) return hrefProblem(tag, text);
+  if (name === 'srcset') return isSitePathSrcset(text) ? undefined : 'only a site path';
+  if (MEDIA_URL_ATTRIBUTES.has(name)) return isSitePath(text) ? undefined : 'only a site path';
+  if (name === 'cite') return isSafeSrc(text) && !isUnsplashPhotoUrl(text) ? undefined : 'only https, http or a site path';
+  if (name === 'target' && text !== '_blank' && text !== '_self') return 'target must be _blank or _self';
+  return undefined;
+}
+
 class Validator {
   readonly warnings: string[] = [];
   readonly errors: string[] = [];
   readonly imageRequests: ImageRequest[] = [];
   invalidImageQueries = 0;
   nodeCount = 0;
+  /** Camel-case page anchors and the slugs they became, so a link to one follows it. */
+  readonly idSlugs = new Map<string, string>();
   /** Appear effects accepted so far (capped: motion is used sparingly). */
   appearCount = 0;
   maxDepth = 0;
-  private readonly tags = new Set(listGenerationTags());
   private readonly bpKeys: Map<string, string>;
   /** Breakpoint keys, largest breakpoint first (the editor's primary breakpoint). */
   private readonly orderedKeys: string[];
@@ -359,6 +503,11 @@ class Validator {
     return hasPhoto;
   }
 
+  /** A short token, new for each generation. */
+  scopeToken(): string {
+    return this.newId().replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase() || 'x';
+  }
+
   private warn(path: string, message: string): void {
     this.warnings.push(`${path}: ${message}`);
   }
@@ -368,7 +517,7 @@ class Validator {
   }
 
   /** Validate a style value or a responsive map; returns undefined to drop it. */
-  private styleValue(path: string, key: string, raw: unknown): unknown {
+  private styleValue(path: string, key: string, raw: unknown, photoLayerAllowed: boolean): unknown {
     if (isPlainObject(raw)) {
       const out: Record<string, string | number> = {};
       for (const [mapKey, v] of Object.entries(raw)) {
@@ -378,7 +527,7 @@ class Validator {
           this.warn(path, `style.${key}: unknown breakpoint key "${mapKey}" dropped`);
           continue;
         }
-        const scalar = this.scalarStyleValue(path, `${key}.${mapKey}`, v);
+        const scalar = this.scalarStyleValue(path, key, mapKey, v, photoLayerAllowed);
         if (scalar !== undefined) out[canonical] = scalar;
       }
       if (Object.keys(out).length === 0) {
@@ -391,14 +540,23 @@ class Validator {
       // breakpoint without one, and a smaller key's value its smaller ones.
       return out;
     }
-    return this.scalarStyleValue(path, key, raw);
+    return this.scalarStyleValue(path, key, undefined, raw, photoLayerAllowed);
   }
 
-  private scalarStyleValue(path: string, key: string, raw: unknown): string | number | undefined {
+  private scalarStyleValue(
+    path: string,
+    property: string,
+    mapKey: string | undefined,
+    raw: unknown,
+    photoLayerAllowed: boolean,
+  ): string | number | undefined {
+    const key = mapKey === undefined ? property : `${property}.${mapKey}`;
     if (typeof raw === 'number') {
-      if (Number.isFinite(raw)) return raw;
-      this.warn(path, `style.${key}: non-finite number dropped`);
-      return undefined;
+      if (!Number.isFinite(raw)) {
+        this.warn(path, `style.${key}: non-finite number dropped`);
+        return undefined;
+      }
+      return property === 'zIndex' ? clampedZIndex(raw) : raw;
     }
     if (typeof raw !== 'string') {
       this.warn(path, `style.${key}: value must be a string or number, dropped`);
@@ -410,24 +568,40 @@ class Validator {
       this.warn(path, `style.${key}: value longer than ${GENERATION_LIMITS.maxStyleValueChars} characters dropped`);
       return undefined;
     }
-    if (STYLE_BREAKOUT_CHARS.test(raw)) {
-      this.warn(path, `style.${key}: value contains ; { } \\ or a control character, dropped`);
+    if (styleValueBreaksOut(raw)) {
+      this.warn(path, `style.${key}: value contains a bare ;, { } \\ or a control character, dropped`);
       return undefined;
     }
-    if (UNSAFE_STYLE_VALUE.test(v)) {
-      this.warn(path, `style.${key}: unsafe value dropped`);
+    const problem = styleValueProblem(property, v);
+    if (problem) {
+      this.warn(path, `style.${key}: ${problem} dropped`);
       return undefined;
     }
-    // url(...) only to http(s) or site paths, never data: or other schemes.
-    const urls = [...v.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gi)].map((m) => m[2]);
-    if (urls.some((u) => !isSafeSrc(u))) {
+    // url(...) only to http(s), site paths or a reference inside the page (an SVG
+    // clip or mask), never data: or other schemes.
+    const { urls } = scanCssValue(v);
+    if (urls.some((u) => !u.startsWith('#') && !isSafeSrc(u))) {
       this.warn(path, `style.${key}: url() to a disallowed location dropped`);
       return undefined;
+    }
+    // A stock photo is only shown with its credit, which photoBackground checks,
+    // and it only reads the photo layer of a container's backgroundImage. Anywhere
+    // else no credit can travel with it.
+    const stock = urls.filter(isUnsplashPhotoUrl);
+    const isPhotoLayer = photoLayerAllowed && property === 'backgroundImage' && stock.length === 1 && photoUrlOf(v) === stock[0];
+    if (stock.length > 0 && !isPhotoLayer) {
+      this.warn(path, `style.${key}: an Unsplash photo outside a container's background cannot keep its credit, dropped`);
+      return undefined;
+    }
+    if (property === 'zIndex') {
+      const clamped = clampedZIndex(v);
+      if (clamped === undefined) this.warn(path, `style.${key}: z-index must be a plain number, dropped`);
+      return clamped;
     }
     // Font families: library families keep their canonical stack, system
     // stacks stay, anything else (Inter, Geist, a font this app does not host)
     // becomes the library default of its category (src/lib/fonts/registry.ts).
-    if (key === 'fontFamily' || key.startsWith('fontFamily.')) {
+    if (property === 'fontFamily') {
       const font = normalizeFontFamily(v);
       if (font.reason) {
         this.warn(path, `style.${key}: ${font.reason}`);
@@ -437,23 +611,63 @@ class Validator {
     return v;
   }
 
-  private style(path: string, raw: unknown): Record<string, unknown> {
+  private style(path: string, raw: unknown, photoLayerAllowed: boolean): Record<string, unknown> {
     if (raw === undefined) return {};
     if (!isPlainObject(raw)) {
       this.warn(path, 'props.style must be an object, dropped');
       return {};
     }
     const out: Record<string, unknown> = {};
-    for (const [rawKey, rawValue] of Object.entries(raw)) {
-      const key = CSS_PROP_SET.has(rawKey) ? rawKey : kebabToCamel(rawKey);
-      if (!CSS_PROP_SET.has(key)) {
+    const entries = Object.entries(raw);
+    if (entries.length > GENERATION_LIMITS.maxPropsPerNode) {
+      this.warn(path, `only the first ${GENERATION_LIMITS.maxPropsPerNode} style keys kept`);
+    }
+    for (const [rawKey, rawValue] of entries.slice(0, GENERATION_LIMITS.maxPropsPerNode)) {
+      const key = styleKeyFrom(rawKey);
+      if (rawKey.length > GENERATION_LIMITS.maxNameChars || !isAcceptedStyleKey(key)) {
         this.warn(path, `style key "${rawKey}" is not supported by the editor, dropped`);
         continue;
       }
-      const value = this.styleValue(path, key, rawValue);
+      const value = this.styleValue(path, key, rawValue, photoLayerAllowed);
       if (value !== undefined) out[key] = value;
     }
     return out;
+  }
+
+  /**
+   * A prop beyond the taught ones (see isAcceptedAttribute), stored under one
+   * spelling. HTML reads `ID` as `id` while every check here reads the key it was
+   * given, so a second spelling of a name is a way past them.
+   */
+  private attribute(
+    path: string,
+    type: string,
+    key: string,
+    value: unknown,
+    props: Record<string, unknown>,
+    namespace: MarkupNamespace,
+  ): void {
+    if (!isAcceptedAttribute(type, key)) {
+      this.warn(path, `prop "${key}" is not allowed on <${type}>, dropped`);
+      return;
+    }
+    const name = key.toLowerCase();
+    if (typeof value !== 'string' && typeof value !== 'boolean' && !(typeof value === 'number' && Number.isFinite(value))) {
+      this.warn(path, `${key} must be text, a number or true / false, dropped`);
+      return;
+    }
+    let text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : String(value);
+    if (name === 'id' && namespace !== 'svg' && CAMEL_CASE_ID.test(text) && text !== text.toLowerCase()) {
+      const slug = text.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+      this.idSlugs.set(text, slug);
+      text = slug;
+    }
+    const problem = attributeProblem(type, name, text, namespace);
+    if (problem) {
+      this.warn(path, `${key} dropped: ${problem}`);
+      return;
+    }
+    props[WEB_ATTRIBUTE_PROP_NAMES[name] ?? name] = typeof value === 'string' || name === 'id' ? text : value;
   }
 
   /** Resolve type + preset. Returns null when the node must be dropped. */
@@ -461,6 +675,7 @@ class Validator {
     path: string,
     rawType: unknown,
     rawPreset: unknown,
+    namespace: MarkupNamespace,
   ): { type: string; preset?: GenerationPreset } | null {
     let preset: GenerationPreset | undefined;
     if (rawPreset !== undefined) {
@@ -468,10 +683,10 @@ class Validator {
       if (!preset) this.warn(path, `unknown preset ${JSON.stringify(rawPreset)} ignored`);
     }
     let type = typeof rawType === 'string' ? rawType.trim().toLowerCase() : '';
-    if (!preset && type) {
+    if (!preset && type && namespace === 'html') {
       // The model used a registry id ("card", "stack") as the tag.
       const asPreset = getGenerationPreset(typeof rawType === 'string' ? rawType.trim() : '');
-      if (asPreset && !this.tags.has(type)) {
+      if (asPreset && !acceptedTag(type, namespace)) {
         this.warn(path, `"${rawType}" is a preset, not a tag: using type "${asPreset.htmlType}" with preset "${asPreset.id}"`);
         preset = asPreset;
         type = asPreset.htmlType;
@@ -485,12 +700,14 @@ class Validator {
       if (type) this.warn(path, `type "${type}" does not match preset "${preset.id}", using "${preset.htmlType}"`);
       type = preset.htmlType;
     }
+    const fallback = FALLBACK_TAG[namespace];
     if (!type) {
-      this.warn(path, 'missing type, using "div"');
-      type = 'div';
-    } else if (!this.tags.has(type)) {
-      this.warn(path, `tag "${type}" is not available in the editor, using "div"`);
-      type = 'div';
+      this.warn(path, `missing type, using "${fallback}"`);
+      type = fallback;
+    } else if (!preset) {
+      const accepted = acceptedTag(type, namespace);
+      if (!accepted) this.warn(path, `tag "${type}" is not available in the editor, using "${fallback}"`);
+      type = accepted ?? fallback;
     }
     return { type, preset };
   }
@@ -539,11 +756,13 @@ class Validator {
     return [snapshot];
   }
 
-  node(raw: unknown, path: string, depth: number, parentId?: string): GeneratedNodeSnapshot[] {
+  node(raw: unknown, path: string, depth: number, parentId?: string, namespace: MarkupNamespace = 'html'): GeneratedNodeSnapshot[] {
     if (!isPlainObject(raw)) {
       this.fail(path, 'node must be an object');
       return [];
     }
+    // Past the limit the generation is refused anyway: reading on only costs time.
+    if (this.nodeCount > GENERATION_LIMITS.maxNodes) return [];
     if (depth > GENERATION_LIMITS.maxDepth) {
       this.fail(path, `nesting deeper than ${GENERATION_LIMITS.maxDepth} levels`);
       return [];
@@ -556,9 +775,16 @@ class Validator {
       return this.textNode(raw, path, depth, parentId);
     }
 
-    const resolved = this.resolveType(path, raw.type, raw.preset);
+    const resolved = this.resolveType(path, raw.type, raw.preset, namespace);
     if (!resolved) return [];
     const { type, preset } = resolved;
+    // A preset is an HTML element, and the HTML parser throws one out of svg and math
+    // while a client render keeps it inside and invisible: crawlers would read text
+    // the owner never sees. Under a foreignObject the namespace is HTML again.
+    if (preset && namespace !== 'html') {
+      this.warn(path, `preset "${preset.id}" cannot sit inside svg or math, node and its children dropped`);
+      return [];
+    }
     const id = `${preset?.id ?? type}-${this.newId()}`;
     this.nodeCount += 1;
     if (depth > this.maxDepth) this.maxDepth = depth;
@@ -588,7 +814,13 @@ class Validator {
     const creditKeys = new Set<string>(
       type === 'img' ? ['title', ...STOCK_CREDIT_ATTRS] : isPhotoContainer ? STOCK_CREDIT_ATTRS : [],
     );
-    for (const [key, value] of Object.entries(modelProps)) {
+    const ownNamespace = type === 'svg' ? 'svg' : namespace;
+    const svgStyle: Record<string, unknown> = {};
+    const modelEntries = Object.entries(modelProps);
+    if (modelEntries.length > GENERATION_LIMITS.maxPropsPerNode) {
+      this.warn(path, `only the first ${GENERATION_LIMITS.maxPropsPerNode} props kept`);
+    }
+    for (const [key, value] of modelEntries.slice(0, GENERATION_LIMITS.maxPropsPerNode)) {
       if (key === 'style' || creditKeys.has(key)) continue;
       if (key === EFFECTS_PROP) {
         // Cleaned after the children are known (stagger needs two of them).
@@ -611,7 +843,9 @@ class Validator {
         continue;
       }
       if (!allowed.has(key)) {
-        this.warn(path, `prop "${key}" is not allowed on <${type}>, dropped`);
+        const asStyle = ownNamespace === 'svg' ? svgAttributeAsStyle(type, key, value) : undefined;
+        if (asStyle) svgStyle[asStyle.key] = asStyle.value;
+        else this.attribute(path, type, key, value, props, ownNamespace);
         continue;
       }
       if (key === 'children') {
@@ -652,7 +886,8 @@ class Validator {
     // Merge preset defaults under the model's props; style merges key by key.
     const presetDefaults = (preset?.defaultProps ?? {}) as Record<string, unknown>;
     const presetStyle = isPlainObject(presetDefaults.style) ? presetDefaults.style : {};
-    const modelStyle = this.style(path, modelProps.style);
+    const rawModelStyle = isPlainObject(modelProps.style) ? modelProps.style : modelProps.style === undefined ? {} : modelProps.style;
+    const modelStyle = this.style(path, isPlainObject(rawModelStyle) ? { ...svgStyle, ...rawModelStyle } : rawModelStyle, isPhotoContainer);
     const style: Record<string, unknown> = { ...presetStyle, ...modelStyle };
     if (type === 'img' && modelStyle.aspectRatio !== undefined && modelStyle.height === undefined) {
       // The shape comes from the aspect ratio: a preset's fixed height would override it.
@@ -768,7 +1003,7 @@ class Validator {
           this.warn(childPath, `a #text node cannot sit directly inside <${type}>, dropped`);
           return;
         }
-        children.push(...this.node(child, childPath, depth + 1, id));
+        children.push(...this.node(child, childPath, depth + 1, id, childNamespace(type, namespace)));
       });
     }
     if (isStickyCta(presetDefaults)) {
@@ -801,9 +1036,178 @@ function countNodes(node: GeneratedNodeSnapshot): number {
 }
 
 /**
+ * The ids a node draws in, by a paint, mask or filter url() or an href, and whether
+ * it is a `use` reaching outside the generation. A link draws nothing in, so `a`
+ * and `area` never count: a link to the section it sits in is no cycle.
+ */
+function referencesOf(node: GeneratedNodeSnapshot): { ids: string[]; external: boolean } {
+  const ids: string[] = [];
+  let external = false;
+  const read = (value: unknown): void => {
+    if (typeof value === 'string') {
+      if (/url\(/i.test(value)) {
+        for (const url of scanCssValue(value).urls) if (url.startsWith('#')) ids.push(url.slice(1));
+      }
+    } else if (isPlainObject(value)) {
+      Object.values(value).forEach(read);
+    }
+  };
+  for (const [key, value] of Object.entries(node.props)) {
+    if (key === 'children') continue;
+    read(value);
+    if (!HREF_ATTRIBUTES.has(key.toLowerCase()) || typeof value !== 'string' || LINK_TAGS.has(node.type)) continue;
+    if (value.startsWith('#')) ids.push(value.slice(1));
+    else if (node.type === 'use') external = true;
+  }
+  return { ids, external };
+}
+
+/**
+ * The size of a subtree with every reference counted at full size, memoised, so a
+ * chain of `use` costs its real expansion and not its node count. Over the budget
+ * stops counting; a cycle or a `use` reaching outside this generation counts as over
+ * it, because the size of what it reaches cannot be known.
+ */
+function expandedSize(
+  node: GeneratedNodeSnapshot,
+  byId: Map<string, GeneratedNodeSnapshot[]>,
+  memo: Map<GeneratedNodeSnapshot, number>,
+  open: Set<GeneratedNodeSnapshot>,
+): number {
+  const over = GENERATION_LIMITS.maxSvgExpansion + 1;
+  const known = memo.get(node);
+  if (known !== undefined) return known;
+  if (open.has(node)) return over;
+  open.add(node);
+  const { ids, external } = referencesOf(node);
+  let size = external ? over : 1;
+  const add = (target: GeneratedNodeSnapshot) => {
+    size = Math.min(over, size + expandedSize(target, byId, memo, open));
+  };
+  for (const id of ids) {
+    const targets = byId.get(id) ?? [];
+    if (node.type === 'use' && targets.length === 0) size = over;
+    // A duplicate id: a browser picks one, so all of them count.
+    targets.forEach(add);
+  }
+  node.children.forEach(add);
+  open.delete(node);
+  memo.set(node, size);
+  return size;
+}
+
+/** Every node under an svg, the root included. */
+function forEachInSvg(nodes: GeneratedNodeSnapshot[], visit: (node: GeneratedNodeSnapshot) => void): void {
+  const inside = (node: GeneratedNodeSnapshot): void => {
+    visit(node);
+    node.children.forEach(inside);
+  };
+  for (const node of nodes) {
+    if (node.type === 'svg') inside(node);
+    else forEachInSvg(node.children, visit);
+  }
+}
+
+const URL_REFERENCE = /url\(\s*(['"]?)#([^'")\s]+)\1\s*\)/gi;
+
+/**
+ * Give every id inside an svg a suffix unique to this generation, and every
+ * reference with it, and follow a page anchor to its slug. Ids under svg are private
+ * to the graphic, so nothing is lost, and a generation can no longer declare a decoy
+ * of an id another one holds, which is how three generations could rebuild a chain
+ * of `use` the budget had refused. An HTML id stays what it is: a page anchor.
+ */
+function scopeIds(nodes: GeneratedNodeSnapshot[], v: Validator): GeneratedNodeSnapshot[] {
+  const scoped = new Map<string, string>();
+  const taken = new Set<string>();
+  const inSvg = new Set<GeneratedNodeSnapshot>();
+  let scope: string | undefined;
+  forEachInSvg(nodes, (node) => {
+    inSvg.add(node);
+    const id = node.props.id;
+    if (typeof id !== 'string' || scoped.has(id)) return;
+    scope ??= v.scopeToken();
+    // Removing an old scope can make two ids one: each keeps a name of its own.
+    const base = id.replace(SVG_ID_SCOPE, '');
+    let name = `${base}--${scope}`;
+    for (let n = 2; taken.has(name); n++) name = `${base}-${n}--${scope}`;
+    taken.add(name);
+    scoped.set(id, name);
+  });
+  if (scoped.size === 0 && v.idSlugs.size === 0) return nodes;
+  const target = (id: string): string | undefined => scoped.get(id) ?? v.idSlugs.get(id);
+  const inValue = (value: unknown): unknown => {
+    if (typeof value === 'string') {
+      return value.replace(URL_REFERENCE, (match, quote: string, id: string) => {
+        const to = target(id);
+        return to ? `url(${quote}#${to}${quote})` : match;
+      });
+    }
+    if (!isPlainObject(value)) return value;
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, inValue(inner)]));
+  };
+  const rewrite = (node: GeneratedNodeSnapshot): GeneratedNodeSnapshot => {
+    const props: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(node.props)) {
+      if (key === 'children' || typeof value === 'boolean' || typeof value === 'number') props[key] = value;
+      else if (key === 'id') props[key] = inSvg.has(node) ? (scoped.get(value as string) ?? value) : value;
+      else if (HREF_ATTRIBUTES.has(key.toLowerCase()) && typeof value === 'string' && value.startsWith('#')) {
+        props[key] = `#${target(value.slice(1)) ?? value.slice(1)}`;
+      } else if (/^aria-(?:labelledby|describedby|controls|owns|details|flowto|activedescendant|errormessage)$/.test(key) && typeof value === 'string') {
+        props[key] = value.split(' ').map((id) => target(id) ?? id).join(' ');
+      } else props[key] = inValue(value);
+    }
+    return { ...node, props, children: node.children.map(rewrite) };
+  };
+  return nodes.map(rewrite);
+}
+
+/**
+ * Drop every svg whose expansion is over budget, after everything else, so that it
+ * covers every route into a generation. A few dozen nested `use` freeze a browser
+ * tab for every visitor and for the editor that opens the page, and no node or depth
+ * limit sees that. References run across the whole generation, because one svg can
+ * reach into another, and a `use` may not leave it. It runs on the ids scopeIds
+ * wrote, the ones a browser will read, so it cannot count a different page than the
+ * one that ships; that also stops a later generation declaring a decoy of an id.
+ */
+function dropExpandingSvgs(nodes: GeneratedNodeSnapshot[], v: Validator): GeneratedNodeSnapshot[] {
+  const byId = new Map<string, GeneratedNodeSnapshot[]>();
+  forEachInSvg(nodes, (node) => {
+    if (typeof node.props.id === 'string') byId.set(node.props.id, [...(byId.get(node.props.id) ?? []), node]);
+  });
+  const memo = new Map<GeneratedNodeSnapshot, number>();
+  const dropped = new Set<string>();
+  const forget = (node: GeneratedNodeSnapshot): void => {
+    dropped.add(node.id);
+    node.children.forEach(forget);
+  };
+  const keep = (list: GeneratedNodeSnapshot[]): GeneratedNodeSnapshot[] => {
+    const out: GeneratedNodeSnapshot[] = [];
+    for (const node of list) {
+      if (node.type === 'svg' && expandedSize(node, byId, memo, new Set()) > GENERATION_LIMITS.maxSvgExpansion) {
+        v.warnings.push(`${node.label}: this svg expands past ${GENERATION_LIMITS.maxSvgExpansion} elements or uses something outside this generation, dropped`);
+        v.nodeCount -= countNodes(node);
+        forget(node);
+      } else {
+        out.push(node.children.length > 0 ? { ...node, children: keep(node.children) } : node);
+      }
+    }
+    return out;
+  };
+  const kept = keep(nodes);
+  if (dropped.size > 0) {
+    const requests = v.imageRequests.filter((request) => !dropped.has(request.nodeId));
+    v.imageRequests.splice(0, v.imageRequests.length, ...requests);
+  }
+  return kept;
+}
+
+/**
  * The sticky call to action's rules: only on a new page, at most one, with a
  * label and a safe link, as the last top-level node (it is a page-level bar,
- * never part of a section). Extra or unusable bars are dropped with a warning.
+ * never part of a section), and never from inside an svg (a foreignObject), which
+ * would carry it out past the graphic. Extra or unusable bars are dropped with a warning.
  */
 function placeStickyCta(nodes: GeneratedNodeSnapshot[], v: Validator, allowed: boolean): GeneratedNodeSnapshot[] {
   let kept: GeneratedNodeSnapshot | undefined;
@@ -811,14 +1215,15 @@ function placeStickyCta(nodes: GeneratedNodeSnapshot[], v: Validator, allowed: b
     v.warnings.push(`${node.label}: ${reason}`);
     v.nodeCount -= countNodes(node);
   };
-  const strip = (list: GeneratedNodeSnapshot[]): GeneratedNodeSnapshot[] => {
+  const strip = (list: GeneratedNodeSnapshot[], inSvg: boolean): GeneratedNodeSnapshot[] => {
     const out: GeneratedNodeSnapshot[] = [];
     for (const node of list) {
       if (!isStickyCta(node.props)) {
-        out.push(node.children.length > 0 ? { ...node, children: strip(node.children) } : node);
+        out.push(node.children.length > 0 ? { ...node, children: strip(node.children, inSvg || node.type === 'svg') } : node);
         continue;
       }
-      if (!allowed) drop(node, 'a sticky call to action belongs to a whole page, not a section: dropped');
+      if (inSvg) drop(node, 'a sticky call to action has no place inside an svg: dropped');
+      else if (!allowed) drop(node, 'a sticky call to action belongs to a whole page, not a section: dropped');
       else if (typeof node.props.ctaLabel !== 'string' || typeof node.props.ctaHref !== 'string') {
         drop(node, 'the sticky call to action needs a ctaLabel and a ctaHref (https, mailto, tel, # or a site path): dropped');
       } else if (kept) drop(node, 'at most one sticky call to action per page: this one was dropped');
@@ -826,7 +1231,7 @@ function placeStickyCta(nodes: GeneratedNodeSnapshot[], v: Validator, allowed: b
     }
     return out;
   };
-  const rest = strip(nodes);
+  const rest = strip(nodes, false);
   if (!kept) return rest;
   const bar: GeneratedNodeSnapshot = { ...kept };
   delete bar.parentId;
@@ -849,11 +1254,18 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
     return { ok: false, errors: ['"nodes" is empty: produce at least one node'], warnings: [] };
   }
 
+  const size = JSON.stringify(raw)?.length ?? 0;
+  if (size > GENERATION_LIMITS.maxGenerationChars) {
+    return { ok: false, errors: [`output of ${size} characters exceeds the limit of ${GENERATION_LIMITS.maxGenerationChars}: produce a smaller page`], warnings: [] };
+  }
+
   const parsed: GeneratedNodeSnapshot[] = [];
   raw.nodes.forEach((n, i) => parsed.push(...v.node(n, `nodes[${i}]`, 1)));
-  const nodes = placeStickyCta(parsed, v, ctx.allowStickyCta === true);
+  // Decided before any svg is dropped: a page past the limit was cut short, and must not pass for being under it.
+  const overLimit = v.nodeCount > GENERATION_LIMITS.maxNodes;
+  const nodes = dropExpandingSvgs(scopeIds(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v), v);
 
-  if (v.nodeCount > GENERATION_LIMITS.maxNodes) {
+  if (overLimit) {
     v.errors.push(`${v.nodeCount} nodes exceed the limit of ${GENERATION_LIMITS.maxNodes}: produce a smaller page`);
   }
   if (v.errors.length === 0 && nodes.length === 0) {

@@ -1,8 +1,9 @@
 // src/lib/ai/pageGen/schemaDocs.ts
 //
 // Model-facing reference for the page generator's output format, generated
-// from ./schema.ts (which is itself derived from the component registry, the
-// properties panel's tag sets and CSS_PROP_SET). Deterministic: the same code
+// from the taught lists of ./schema.ts (derived from the component registry, the
+// properties panel's tag sets and CSS_PROP_SET); the validator accepts more than
+// this on purpose. Deterministic: the same code
 // produces byte-identical text, so it sits in the prompt-cached system prefix.
 //
 // The breakpoints are NOT in here (they vary per page and sit after the cache
@@ -11,9 +12,9 @@
 import { stableStringify } from '@/lib/ai/serializers/normalize';
 import {
   BASE_KEY,
-  FORBIDDEN_TAGS,
   GENERATION_LIMITS,
   PHOTO_BACKGROUND_TAGS,
+  PROMPT_AVOID_TAGS,
   allowedPropKeysFor,
   listGenerationPresets,
   listGenerationStyleKeys,
@@ -93,8 +94,9 @@ export function buildSchemaDocs(): string {
     '  renders as bare text: it has no style, no label, no children and never stands at the top level.',
     `- Void tags (${tags.filter((t) => isVoidTag(t)).join(', ') || 'none'}) have neither text nor children.`,
     '- Style values are strings ("16px", "#111827", "1fr 1fr") or numbers (unitless, e.g. fontWeight 600, opacity 0.8).',
-    '- Only the style keys listed below are kept; anything else is dropped. No class names, no CSS text,',
-    '  no event handlers, no HTML strings.',
+    '- Use the tags, props and style keys listed here: the editor has controls for them. Any other standard HTML',
+    '  tag, attribute or CSS property is kept when a design truly needs it (a list needs ul and li, a table its',
+    '  table tags, a shape clipPath). No class names, no CSS text, no event handlers, no HTML strings.',
     '- Links: href must start with https://, http://, mailto:, tel:, # or a single /. Images: src must be https://,',
     '  http:// or a site path starting with /. Always give images a meaningful alt in the page\'s language that',
     '  says what the image shows (never "image", "photo", a file name or the layer name). Only a purely',
@@ -113,7 +115,7 @@ export function buildSchemaDocs(): string {
     '  The same for a container whose backgroundImage has an images.unsplash.com url(): copy backgroundImage and',
     '  its three data-credit-* props unchanged, or drop the url() layer and give a new imageQuery.',
     '  An Unsplash photo without its credit props is dropped.',
-    `- Never use these tags: ${[...FORBIDDEN_TAGS].sort().join(', ')}.`,
+    `- Never use these tags: ${[...PROMPT_AVOID_TAGS].sort().join(', ')}.`,
     `- Budget: at most ${GENERATION_LIMITS.maxNodes} nodes in total, nesting at most ${GENERATION_LIMITS.maxDepth} levels,`,
     `  text at most ${GENERATION_LIMITS.maxTextChars} characters per node. Prefer fewer, well-structured nodes.`,
     '',
