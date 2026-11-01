@@ -20,10 +20,18 @@
 //     can leave it, so the subject of a rule is the node or something inside it.
 //     A condition inside `:is()`, `:not()` or `:has()` may still read the whole
 //     document, which is how `&:is(.dark *)` works.
-//   - The visitor. A rule makes a request conditional, so a rule cannot hold an
-//     external address in any form, see `scanValue`. A selector also cannot read
-//     what a visitor types: attribute selectors on `value` with an operator are
-//     refused, because React mirrors a controlled input's value into the attribute.
+//   - The visitor, in part. This narrows the channel and does not close it. A rule
+//     makes a request conditional, so a rule cannot hold an external address in any
+//     form, see `scanValue`, and a custom property holding one is dropped on a page
+//     with a rule. But a rule needs no address of its own: it can switch on what
+//     Normal already holds, such as `display:block` over a hidden element with an
+//     external background, a lazy image, or a `var()` fallback, and a declaration
+//     smuggled into a plain value gets past the custom property check. Normal's
+//     addresses stay allowed, so nothing in the render step can stop that. Only a
+//     Content Security Policy on published pages closes it, which is open question
+//     1 of the plan. A selector also cannot read what a visitor types: attribute
+//     selectors on `value` with an operator are refused, because React mirrors a
+//     controlled input's value into the attribute.
 //   - The editor. Global names must carry the `u-` prefix, because on the canvas
 //     the document is the editor itself.
 //
@@ -101,6 +109,11 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
 /** True for a stored rule list. `rules` is also a legacy `<table>` attribute, which stays a string. */
 export function isRuleList(value: unknown): value is unknown[] {
   return Array.isArray(value);
+}
+
+/** True for the one `rules` that is not ours, and the only one that may reach the markup. */
+export function isLegacyRulesAttribute(value: unknown): value is string {
+  return typeof value === 'string';
 }
 
 /** The node's stored rules, or an empty list for anything that is not a list. */
@@ -230,6 +243,15 @@ function endOfFirstCompound(part: string): number {
     i++;
   }
   return i;
+}
+
+/**
+ * True when an accepted part's subject is inside the node rather than the node
+ * itself, as in `&:hover h2`. Such a rule has to beat its target's Normal, which
+ * it cannot while that Normal is inline.
+ */
+export function reachesInsideNode(part: string): boolean {
+  return part.slice(endOfFirstCompound(part)).trim().length > 0;
 }
 
 /** Why one part of a selector list is refused, or null. */
@@ -515,6 +537,8 @@ function scanValue(text: string): ValueProblem | null {
         if (end === -1) return addressProblem();
         const address = text.slice(body, end).trim();
         if (/["'(\s]/.test(address)) return shapeProblem('a url() does not parse');
+        const markup = /[<>]/.exec(address);
+        if (markup) return shapeProblem(`a ${markup[0]} outside a string could end the style element`);
         if (!isAllowedAddress(address)) return addressProblem();
         i = end + 1;
       } else {

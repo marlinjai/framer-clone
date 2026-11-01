@@ -18,16 +18,41 @@
 // breakpoint's min width minus 0.02px (not 1px), so a fractional viewport width
 // such as 809.5px still lands on the breakpoint `pickBreakpoint` would choose.
 //
+// After those come the authored rules of `props.rules` (src/lib/rules/rules.ts),
+// grouped by rule rather than by breakpoint, so Pressed stays above Hover at every
+// width. Each rule's breakpoint query is outermost, then its `at`, then the
+// selector:
+//
+//   @media (hover:hover) and (pointer:fine){
+//   .fc_r-a.fc_r-a:hover{color:blue}
+//   }
+//   @media (max-width:1199.98px){
+//   @media (hover:hover) and (pointer:fine){
+//   .fc_r-a.fc_r-a:hover{color:green}
+//   }
+//   }
+//
 // PURE: no React, no MST. Values are serialized the way React serializes an
 // inline style (camelCase to kebab-case, px on non-zero numbers except the
-// unitless properties), so moving a value from `style` into the sheet never
-// changes what it means. A value or property name that could break out of its
-// declaration (and so out of the rule or the <style> element) is dropped and
-// logged once per page. A `;` is not such a value by itself: inside a quoted
-// string or a url() it is data, as in `url("data:image/png;base64,...")`, and
-// isContainedValue tells the two apart.
+// unitless properties). The sheet refuses more than an inline style does: a value
+// or property name that could break out of its declaration (and so out of the
+// rule or the <style> element) is not emitted, which is why applyResponsiveStyles
+// leaves such a value inline rather than moving it. A `;` is not such a value by
+// itself: inside a quoted string or a url() it is data, as in
+// `url("data:image/png;base64,...")`, and isContainedValue tells the two apart.
+//
+// Rules arrive here parsed, which the type says, and applyResponsiveStyles is what
+// reads stored rules for the page. A type is erased at run time and selectors are
+// written raw, so isWritableRule checks them again here, and the finished sheet
+// must hold no `<`. A rule is emitted whole or not at all.
 
+import type { ParsedSelectorRule } from '@/lib/rules/rules';
 import { largestFirst, resolveCascade, type BreakpointRef } from './cascade';
+
+/** At most this many emitted rules on one page, counted after rows share a rule class. */
+export const MAX_RULES_PER_PAGE = 2000;
+/** At most this much rule text on one page: one `data:` value can outweigh any rule count. */
+export const MAX_RULE_BYTES_PER_PAGE = 256 * 1024;
 
 /**
  * Properties React leaves unitless when given a number. Copied from React 19's
@@ -53,13 +78,13 @@ export const SAFE_PROPERTY = /^(?:[A-Za-z][A-Za-z0-9]*|--[A-Za-z0-9_-]+)$/;
 
 /**
  * Characters that let a value escape its declaration wherever they appear,
- * quoted or not: `{` `}` open or close a rule, `<` can start `</style>` and end
- * the element (the sheet is written raw, so CSS quoting does not protect it), a
- * backslash starts a CSS escape that can hide any of these or a closing quote,
- * and control characters (newlines included) have no place in a value. `;` is
- * not here: it depends on where it stands, see isContainedValue.
+ * quoted or not: `{` `}` open or close a rule, a backslash starts a CSS escape
+ * that can hide any of these or a closing quote, and control characters have no
+ * place in a value. `;` is not here, because it depends on where it stands (see
+ * isContainedValue), and neither is what sheetValueText handles by position: a
+ * tab or a newline, `<` and `>`.
  */
-const BREAKOUT_CHARS = /[{}<>\\\u0000-\u001f\u007f]/;
+const BREAKOUT_CHARS = /[{}\\\u0000-\u0008\u000b\u000e-\u001f\u007f]/;
 
 /**
  * How the browser reads the `(` at `open`, when no quote follows it: as the
@@ -117,12 +142,13 @@ function functionName(text: string, open: number): string {
 const isImageSet = (name: string) => name === 'image-set' || name === '-webkit-image-set';
 
 /**
- * Read a value token by token. Call only on text free of BREAKOUT_CHARS: with no
- * backslash a quote cannot be escaped, and with no newline a string cannot end
- * early, so a quote always closes at its next match. Everything that asks where a
- * value points goes through here, because a pattern over the raw text can start
- * inside a string and read a different value than the browser does. When
- * `contained` is false the rest of the fields stop at that point.
+ * Read a value token by token. Call only on text with no backslash of its own and
+ * no raw newline in a string, so a quote always closes at its next match: the AI
+ * validator's breakout check gives that, and so does sheetValueText, whose own
+ * escapes hold no quote. Everything that asks where a value points goes through
+ * here, because a pattern over the raw text can start inside a string and read a
+ * different value than the browser does. When `contained` is false the rest of the
+ * fields stop at that point.
  */
 export function scanCssValue(text: string): CssValueScan {
   const scan: CssValueScan = { contained: false, urls: [], strings: [], indirect: false };
@@ -184,6 +210,36 @@ export function cssUrlsIn(text: string): string[] {
 /** Script-capable or import-capable CSS, and comments, which hide a `;` from isContainedValue. */
 export const UNSAFE_VALUE = /javascript:|vbscript:|expression\s*\(|<\s*\/?\s*script|@import|behavior\s*:|-moz-binding|\/\*/i;
 
+/**
+ * The text the sheet holds for a value, or null when it cannot hold it. Where the
+ * emitter owns the output it widens what a value may be: inside a string `<` is
+ * written `\3c ` and a newline `\a `, and a tab or newline between tokens becomes a
+ * space. So the output never holds a `<`, which matters because the sheet is
+ * written raw and CSS quoting does not protect the <style> element. Everything is
+ * then checked as written, by isContainedValue. Stored text with no tab, newline
+ * or `<` comes back unchanged.
+ */
+function sheetValueText(text: string): string | null {
+  if (BREAKOUT_CHARS.test(text) || UNSAFE_VALUE.test(text)) return null;
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"' || ch === "'") {
+      const close = text.indexOf(ch, i + 1);
+      if (close === -1) return null;
+      out += ch + text.slice(i + 1, close).replace(/\r\n|[\n\r\f]/g, '\\a ').replace(/</g, '\\3c ') + ch;
+      i = close + 1;
+    } else if (ch === '<' || ch === '>') {
+      return null;
+    } else {
+      out += ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' ? ' ' : ch;
+      i++;
+    }
+  }
+  return isContainedValue(out) ? out : null;
+}
+
 /** A camelCase style key as a CSS property name, exactly as React writes it. */
 export function cssPropertyName(key: string): string {
   if (key.startsWith('--')) return key;
@@ -223,14 +279,16 @@ export function cssValueText(key: string, value: unknown): string | undefined {
 export function unsafeDeclaration(key: string, text: string | undefined): 'unsafe-property' | 'unsafe-value' | null {
   if (!SAFE_PROPERTY.test(key)) return 'unsafe-property';
   if (text === undefined) return null;
-  return BREAKOUT_CHARS.test(text) || UNSAFE_VALUE.test(text) || !isContainedValue(text) ? 'unsafe-value' : null;
+  return sheetValueText(text) === null ? 'unsafe-value' : null;
 }
 
-/** Why a declaration was dropped; reported once per page through `onUnsafe`. */
+/** Why a declaration was dropped; reported once per page through `onDrop`. */
 export interface DroppedDeclaration {
   className: string;
   property: string;
   reason: 'unsafe-property' | 'unsafe-value';
+  /** Set when the declaration stays inline: the breakpoints of a map it loses by that. */
+  lostBreakpoints?: string[];
 }
 
 /**
@@ -249,7 +307,7 @@ function declaration(
     onDrop({ className, property: key, reason });
     return null;
   }
-  return text === undefined ? null : `${cssPropertyName(key)}:${text}`;
+  return text === undefined ? null : `${cssPropertyName(key)}:${sheetValueText(text)}`;
 }
 
 /** One node's styles, keyed by its (already safe) class name. */
@@ -264,9 +322,27 @@ export interface ResponsiveRuleInput {
   style: Record<string, unknown>;
 }
 
+/** One rule class and its parsed rules, in stored order. */
+export interface AuthoredRulesInput {
+  /** A class name of the shape `fc_r-[A-Za-z0-9_-]+`, which stands in for `&`. */
+  className: string;
+  rules: readonly ParsedSelectorRule[];
+}
+
+/** A rule left out of the sheet whole, and why; reported once per page through `onDropRule`. */
+export interface DroppedRule {
+  className: string;
+  ruleId: string;
+  reason: string;
+}
+
 export interface BuildResponsiveCssOptions {
   /** Called for every declaration dropped as unsafe. */
   onDrop?: (dropped: DroppedDeclaration) => void;
+  /** Authored rules, in walk order. They follow every Normal block. */
+  authored?: readonly AuthoredRulesInput[];
+  /** Called for every authored rule left out of the sheet. */
+  onDropRule?: (dropped: DroppedRule) => void;
 }
 
 /** True when a style value is a responsive map rather than a scalar. */
@@ -275,6 +351,7 @@ export function isStyleMap(value: unknown): value is Record<string, unknown> {
 }
 
 const SAFE_CLASS = /^fc-[A-Za-z0-9_-]+$/;
+const SAFE_RULE_CLASS = /^fc_r-[A-Za-z0-9_-]+$/;
 
 /**
  * The max-width (px) of a breakpoint's media query: just below the next
@@ -317,6 +394,139 @@ function declarationsAt(
   return out;
 }
 
+const mediaBelow = (largerMinWidth: number): string => `@media (max-width:${maxWidthBelow(largerMinWidth)}px)`;
+
+/** One emitted rule, with the conditions around it from the outside in. */
+interface RuleBlock {
+  wrappers: readonly string[];
+  text: string;
+}
+
+/**
+ * What no selector part or wrapper may hold, whoever built it. A constant check
+ * and not the parser: this module cannot import rules.ts as a value, because
+ * rules.ts imports from here. It is the guard behind the parser, so it stops text
+ * from leaving the rule or the <style> element and leaves meaning to the parser.
+ */
+const UNSAFE_RULE_TEXT = /[<{};\\\u0000-\u001f\u007f]|\/\*/;
+
+const isSafeRuleText = (text: unknown): text is string => typeof text === 'string' && !UNSAFE_RULE_TEXT.test(text);
+
+/** True when a rule's selectors and wrappers can be written raw into the sheet. */
+function isWritableRule(rule: ParsedSelectorRule): boolean {
+  const { parts, at, style } = rule;
+  return (
+    Array.isArray(parts) &&
+    parts.every((part) => isSafeRuleText(part) && part.startsWith('&')) &&
+    Array.isArray(at) &&
+    at.every(isSafeRuleText) &&
+    isStyleMap(style)
+  );
+}
+
+/**
+ * Every block of one rule: its base, then each breakpoint's own values, one block
+ * per part of a selector list, because a browser throws away a whole list for one
+ * part it does not know. The parser and the sheet check values apart, so null
+ * means the sheet refused one, and the rule is dropped rather than partly applied.
+ */
+function blocksOfRule(
+  className: string,
+  rule: ParsedSelectorRule,
+  ordered: readonly BreakpointRef[],
+): { blocks: RuleBlock[] } | { refused: string } {
+  const blocks: RuleBlock[] = [];
+  const node = `.${className}.${className}`;
+  let refused: string | undefined;
+  const widths = Math.max(ordered.length, 1);
+  for (let index = 0; index < widths; index++) {
+    const decls = declarationsAt({ className, style: rule.style }, ordered, index, (d) => {
+      refused ??= d.property;
+    });
+    if (decls.length === 0) continue;
+    const wrappers = index === 0 ? rule.at : [mediaBelow(ordered[index - 1].minWidth), ...rule.at];
+    // Every part starts with `&`, and the parser allows no other.
+    for (const part of rule.parts) blocks.push({ wrappers, text: `${node}${part.slice(1)}{${decls.join(';')}}` });
+  }
+  return refused === undefined ? { blocks } : { refused: `the stylesheet refuses its ${refused}` };
+}
+
+const sameWrappers = (a: readonly string[], b: readonly string[]): boolean =>
+  a.length === b.length && a.every((wrapper, index) => wrapper === b[index]);
+
+/** The blocks as text. Adjacent blocks with identical wrappers merge, which keeps order and saves bytes. */
+function serializeBlocks(blocks: readonly RuleBlock[]): string {
+  const groups: { wrappers: readonly string[]; texts: string[] }[] = [];
+  for (const block of blocks) {
+    const last = groups[groups.length - 1];
+    if (last && sameWrappers(last.wrappers, block.wrappers)) last.texts.push(block.text);
+    else groups.push({ wrappers: block.wrappers, texts: [block.text] });
+  }
+  return groups
+    .map(({ wrappers, texts }) => [...wrappers.map((wrapper) => `${wrapper}{`), ...texts, ...wrappers.map(() => '}')].join('\n'))
+    .join('\n');
+}
+
+const ENCODER = new TextEncoder();
+const textBytes = (text: string): number => ENCODER.encode(text).length;
+
+/**
+ * The authored section of the sheet, grouped by rule. In today's grouping by
+ * breakpoint, a Tablet Hover would land after a Desktop Pressed and, having equal
+ * specificity, beat it while pressing. Past a page cap, this rule and all later
+ * ones are dropped, so a rule is never cut in half and the result never depends on
+ * which later rule happens to be small enough to fit.
+ */
+function authoredBlocks(
+  authored: readonly AuthoredRulesInput[],
+  ordered: readonly BreakpointRef[],
+  onDropRule: (dropped: DroppedRule) => void,
+): RuleBlock[] {
+  const out: RuleBlock[] = [];
+  let bytes = 0;
+  let full = false;
+  for (const { className, rules } of authored) {
+    if (!SAFE_RULE_CLASS.test(className)) continue;
+    for (const rule of rules) {
+      const drop = (reason: string) => onDropRule({ className, ruleId: rule.id, reason });
+      if (full) {
+        drop('the page is over its rule limit');
+        continue;
+      }
+      if (!isWritableRule(rule)) {
+        drop('its selector or a wrapper could leave the rule');
+        continue;
+      }
+      const built = blocksOfRule(className, rule, ordered);
+      if ('refused' in built) {
+        drop(built.refused);
+        continue;
+      }
+      const size = built.blocks.reduce((sum, block) => sum + textBytes(block.text) + textBytes(block.wrappers.join('')), 0);
+      if (out.length + built.blocks.length > MAX_RULES_PER_PAGE || bytes + size > MAX_RULE_BYTES_PER_PAGE) {
+        full = true;
+        drop('the page is over its rule limit');
+        continue;
+      }
+      out.push(...built.blocks);
+      bytes += size;
+    }
+  }
+  return out;
+}
+
+/**
+ * The sheet, or nothing when it holds a `<`. sheetValueText and isWritableRule
+ * each promise that it cannot, and `dangerouslySetInnerHTML` writes it raw, so a
+ * future path that breaks the promise loses its styles rather than opening the
+ * <style> element. The page still serves.
+ */
+export function withoutMarkup(sheet: string, onDropRule: (dropped: DroppedRule) => void): string {
+  if (!sheet.includes('<')) return sheet;
+  onDropRule({ className: 'sheet', ruleId: 'sheet', reason: 'the finished stylesheet held a <' });
+  return '';
+}
+
 /**
  * Build the stylesheet text for a page. Rules keep the input order (the
  * caller walks the tree in a fixed order) and each rule keeps its properties
@@ -355,7 +565,10 @@ export function buildResponsiveCss(
   for (let i = 1; i < ordered.length; i++) {
     const body = block(i);
     if (!body) continue;
-    parts.push(`@media (max-width:${maxWidthBelow(ordered[i - 1].minWidth)}px){\n${body}\n}`);
+    parts.push(`${mediaBelow(ordered[i - 1].minWidth)}{\n${body}\n}`);
   }
-  return parts.join('\n');
+  const onDropRule = options.onDropRule ?? (() => {});
+  const authored = serializeBlocks(authoredBlocks(options.authored ?? [], ordered, onDropRule));
+  if (authored) parts.push(authored);
+  return withoutMarkup(parts.join('\n'), onDropRule);
 }

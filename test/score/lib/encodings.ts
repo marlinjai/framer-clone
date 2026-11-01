@@ -14,8 +14,13 @@ const PROBE_COLOR = 'rgb(1, 2, 3)';
 /** What `&` becomes for the probe node: it is resolved in the sheet, never emitted. */
 const NODE = '.fc_r-probe.fc_r-probe';
 
-const squeeze = (text: string): string => text.replace(/\s+/g, '');
-const declared = `{color:${squeeze(PROBE_COLOR)}`;
+/**
+ * Layout out, meaning kept. The line breaks around a block are the emitter's own,
+ * but a space inside a selector is the descendant combinator, so `& ul li` must not
+ * compare equal to the compound `.nodeul` followed by `li`.
+ */
+const normalize = (text: string): string => text.replace(/\s+/g, ' ').replace(/ ?([{}]) ?/g, '$1').trim();
+const declared = `{color:${PROBE_COLOR}`;
 
 /** A row as a stored rule, and the texts that prove it reached the sheet. */
 export interface RuleProbe {
@@ -30,7 +35,7 @@ export function selectorProbe(id: string, sample: string): RuleProbe {
   const parts = selector.split(/,(?![^(]*\))/).map((part) => part.trim().slice(1));
   return {
     rule: { id: 'probe', selector, ...(wrapper ? { at: [wrapper] } : {}), style: { color: PROBE_COLOR } },
-    expected: parts.map((part) => squeeze(`${wrapper ? `${wrapper}{` : ''}${NODE}${part}${declared}`)),
+    expected: parts.map((part) => normalize(`${wrapper ? `${wrapper}{` : ''}${NODE}${part}${declared}`)),
   };
 }
 
@@ -38,7 +43,7 @@ export function selectorProbe(id: string, sample: string): RuleProbe {
 export function wrapperProbe(at: string): RuleProbe {
   return {
     rule: { id: 'probe', selector: '&', at: [at], style: { color: PROBE_COLOR } },
-    expected: [squeeze(`${at}{${NODE}${declared}`)],
+    expected: [normalize(`${at}{${NODE}${declared}`)],
   };
 }
 
@@ -53,16 +58,16 @@ export function atRuleProbe(id: string, sample: string): RuleProbe {
   const body = (samples.definitionBodies as Record<string, DefinitionBody>)[id];
   if (!body) return wrapperProbe(sample);
   const { marker, ...stored } = body;
-  return { rule: { id: 'probe', define: sample, ...stored }, expected: [squeeze(`${sample}{${marker}`)] };
+  return { rule: { id: 'probe', define: sample, ...stored }, expected: [normalize(`${sample}{${marker}`)] };
 }
 
 export const ruleNode = (rule: StoredRule): ComponentNode => ({ id: 'probe', type: 'div', props: { rules: [rule] } as never });
 
 export const styleNode = (style: Record<string, unknown>): ComponentNode => ({ id: 'probe', type: 'div', props: { style } });
 
-/** Whether a stylesheet holds the rule. Whitespace is not what a row is about. */
+/** Whether a stylesheet holds the rule, as `normalize` reads both. */
 export function stylesheetHasRule(css: string, probe: RuleProbe): boolean {
-  const sheet = squeeze(css);
+  const sheet = normalize(css);
   return probe.expected.every((text) => sheet.includes(text));
 }
 

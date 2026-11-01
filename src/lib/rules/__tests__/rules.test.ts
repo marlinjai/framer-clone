@@ -413,6 +413,17 @@ describe('the address check', () => {
 });
 
 describe('a rule value', () => {
+  it.each(['url(/a<b.png)', 'url(/a</style>.png)', 'url(/a>b.png)', 'url(data:image/svg+xml,<svg>)'])(
+    'refuses a < or > in the unquoted url %s, which the sheet would refuse',
+    (value) => {
+      expect(parseRule({ id: 'r', selector: '&', style: { backgroundImage: value } }).ok).toBe(false);
+    },
+  );
+
+  it('still takes a < in a quoted url, which the emitter escapes', () => {
+    expect(parseRule({ id: 'r', selector: '&', style: { backgroundImage: "url('/a<b.png')" } }).ok).toBe(true);
+  });
+
   it.each([
     ['a binding', '{{row.colour}}'],
     ['a brace', 'red}body{color:red'],
