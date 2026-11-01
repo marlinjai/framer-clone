@@ -25,6 +25,7 @@
 import React from 'react';
 import { COMPONENT_REGISTRY } from '@/lib/componentRegistry';
 import { isVoidTag } from '@/lib/drag/voidTags';
+import { isBlockedProp, isBlockedTag } from '@/lib/renderer/blockedNodes';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { createScope } from '@/lib/bindings/resolver/scope';
@@ -99,7 +100,7 @@ export function nodeDomProps(node: ComponentNode): Record<string, unknown> {
   const source = (node.props ?? {}) as Record<string, unknown>;
   const props: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(source)) {
-    if (NON_DOM_PROPS.has(name)) continue;
+    if (NON_DOM_PROPS.has(name) || isBlockedProp(name, value)) continue;
     if (name === 'style') {
       const style = flattenStyle(value);
       if (style && Object.keys(style).length > 0) props.style = style;
@@ -137,6 +138,9 @@ export function renderComponentNode(
   scope: BindingScope = createScope(),
   key: React.Key = node.id ?? 0,
 ): React.ReactNode {
+  // Checked first: an island below would otherwise mount with this host tag.
+  if (isBlockedTag(resolveHtmlTag(node.type))) return null;
+
   // Forms (published site essentials, decision 4): the form container is a
   // client island that owns its fields' state; fields and the submit button
   // read it from context (src/lib/renderer/forms/FormIsland.tsx). The render
