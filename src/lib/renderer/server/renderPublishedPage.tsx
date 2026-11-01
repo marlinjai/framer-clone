@@ -197,8 +197,8 @@ export async function renderPublishedPage(
         {responsive.css ? (
           // Rendered in place (no href / precedence, so React does not hoist
           // it) ahead of the content it styles, so streamed HTML never paints
-          // unstyled. The text cannot close the element: the generator drops
-          // any value containing `<`.
+          // unstyled. The text cannot close the element: the sheet never holds
+          // a `<`, see sheetValueText and parseSelector.
           <style data-fc-responsive="" dangerouslySetInnerHTML={{ __html: responsive.css }} />
         ) : null}
         {effects.hasEffects || smoothScroll ? (

@@ -232,6 +232,15 @@ function endOfFirstCompound(part: string): number {
   return i;
 }
 
+/**
+ * True when an accepted part's subject is inside the node rather than the node
+ * itself, as in `&:hover h2`. Such a rule has to beat its target's Normal, which
+ * it cannot while that Normal is inline.
+ */
+export function reachesInsideNode(part: string): boolean {
+  return part.slice(endOfFirstCompound(part)).trim().length > 0;
+}
+
 /** Why one part of a selector list is refused, or null. */
 function refusedPart(part: string): string | null {
   if (part[0] !== '&') return 'every part of a selector starts with &';

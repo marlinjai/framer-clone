@@ -1,9 +1,10 @@
 // The parity corpus: each fixture pairs an original (real HTML and CSS, or a real
 // Radix component) with the closest node tree the format can store. Trees are
 // written the way an author would: the declarations an element has without any
-// selector go on the node, and what the format cannot hold is left out rather than
-// faked. A hover colour inlined to match a screenshot would be a lie, so a tree
-// never carries a state's value.
+// selector go on the node, what needs a selector goes in `props.rules` as the
+// author would write it, and what the format cannot hold is left out rather than
+// faked. A hover colour inlined to match a screenshot would be a lie, so a state's
+// value only ever sits in a rule.
 //
 // Each state names the gap its failure belongs to, which is what the state exists
 // to probe. The classifier in compare.ts overrides that when the evidence is more
@@ -13,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Page } from 'playwright';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
+import { HOVER_GATE } from '@/lib/rules/states';
 import { n, run, t } from '../patterns';
 import type { GapId } from '../lib/types';
 
@@ -54,6 +56,12 @@ const FONT = 'Arial, sans-serif';
 const DOT_SVG = 'PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iOCIgZmlsbD0iIzFkNGVkOCIvPjwvc3ZnPg==';
 
 const responsive = (base: unknown, tablet: unknown, mobile: unknown) => ({ base, tablet, mobile });
+
+/** The named states, written the way the panel stores them (src/lib/rules/states.ts). */
+const hoverRule = (style: Record<string, unknown>) => ({ id: 'hover', selector: '&:hover', at: [HOVER_GATE], style });
+const focusedRule = (style: Record<string, unknown>) => ({ id: 'focused', selector: '&:focus-visible', style });
+const pressedRule = (style: Record<string, unknown>) => ({ id: 'pressed', selector: '&:active', style });
+const rule = (id: string, selector: string, style: Record<string, unknown>) => ({ id, selector, style });
 
 export const FIXTURES: Fixture[] = [
   {
@@ -100,6 +108,11 @@ export const FIXTURES: Fixture[] = [
           'Save',
           parity('button', {
             style: { background: '#1d4ed8', color: '#fff', border: 0, borderRadius: '6px', padding: '12px 20px', font: 'inherit', cursor: 'pointer' },
+            rules: [
+              hoverRule({ background: '#1e3a8a' }),
+              focusedRule({ outline: '3px solid #f59e0b', outlineOffset: '2px' }),
+              pressedRule({ background: '#172554' }),
+            ],
           }),
         ),
         n(
@@ -107,6 +120,7 @@ export const FIXTURES: Fixture[] = [
           parity('field', {
             'aria-label': 'Name',
             style: { border: '1px solid #9ca3af', borderRadius: '6px', padding: '10px 12px', font: 'inherit' },
+            rules: [rule('focus', '&:focus', { borderColor: '#1d4ed8', outline: 'none', boxShadow: '0 0 0 3px #bfdbfe' })],
           }),
         ),
       ),
@@ -209,10 +223,29 @@ export const FIXTURES: Fixture[] = [
       n(
         'div',
         parity('page', { style: { font: `16px/1.5 ${FONT}`, color: '#1f2937', padding: '24px' } }),
-        t('blockquote', 'Good design is honest.', parity('quote', { style: { position: 'relative', paddingLeft: '28px', margin: '0 0 16px' } })),
-        t('span', 'Feature', parity('badge', { style: { display: 'inline-block', padding: '4px 8px', background: '#fef3c7', borderRadius: '4px' } })),
-        n('ul', parity('list', { style: { margin: '16px 0 0' } }), t('li', 'One point', parity('item'))),
-        t('p', 'Once upon a time.', parity('drop')),
+        t(
+          'blockquote',
+          'Good design is honest.',
+          parity('quote', {
+            style: { position: 'relative', paddingLeft: '28px', margin: '0 0 16px' },
+            // The original's escape, typed as the character: a rule holds no CSS escape.
+            rules: [rule('mark', '&::before', { content: '"\u201C"', position: 'absolute', left: 0, top: '-8px', fontSize: '40px', color: '#1d4ed8' })],
+          }),
+        ),
+        t(
+          'span',
+          'Feature',
+          parity('badge', {
+            style: { display: 'inline-block', padding: '4px 8px', background: '#fef3c7', borderRadius: '4px' },
+            rules: [rule('tag', '&::after', { content: '" new"', fontWeight: 700, color: '#b45309' })],
+          }),
+        ),
+        n(
+          'ul',
+          parity('list', { style: { margin: '16px 0 0' }, rules: [rule('marker', '& li::marker', { color: '#dc2626' })] }),
+          t('li', 'One point', parity('item')),
+        ),
+        t('p', 'Once upon a time.', parity('drop', { rules: [rule('initial', '&::first-letter', { fontSize: '2em', fontWeight: 700 })] })),
       ),
     states: [],
   },
@@ -292,16 +325,23 @@ export const FIXTURES: Fixture[] = [
         padding: '8px 16px', boxSizing: 'border-box', border: 0, outline: 'none', flexShrink: 0, cursor: 'pointer',
         boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
       };
+      // Every variant shares these, as `.button` does in the original. The disabled
+      // look comes from `:disabled`, not from values on the node.
+      const shared = [
+        focusedRule({ boxShadow: '0 0 0 3px rgba(161,161,161,0.5)' }),
+        rule('disabled', '&:disabled', { pointerEvents: 'none', opacity: 0.5 }),
+      ];
+      const hovered = (background: string) => [hoverRule({ background }), ...shared];
       return n(
         'div',
         parity('page', { style: { font: `16px/1.5 ${FONT}`, padding: '24px', display: 'flex', flexWrap: 'wrap', gap: '12px' } }),
-        t('button', 'Continue', parity('default', { style: { ...base, background: '#171717', color: '#fafafa' } })),
-        t('button', 'Cancel', parity('outline', { style: { ...base, background: '#fff', color: '#171717', border: '1px solid #e5e5e5' } })),
-        t('button', 'Delete', parity('destructive', { style: { ...base, background: '#dc2626', color: '#fff' } })),
+        t('button', 'Continue', parity('default', { style: { ...base, background: '#171717', color: '#fafafa' }, rules: hovered('rgba(23,23,23,0.9)') })),
+        t('button', 'Cancel', parity('outline', { style: { ...base, background: '#fff', color: '#171717', border: '1px solid #e5e5e5' }, rules: hovered('#f5f5f5') })),
+        t('button', 'Delete', parity('destructive', { style: { ...base, background: '#dc2626', color: '#fff' }, rules: hovered('rgba(220,38,38,0.9)') })),
         t(
           'button',
           'Disabled',
-          parity('disabled', { disabled: true, style: { ...base, background: '#171717', color: '#fafafa', pointerEvents: 'none', opacity: 0.5 } }),
+          parity('disabled', { disabled: true, style: { ...base, background: '#171717', color: '#fafafa' }, rules: hovered('rgba(23,23,23,0.9)') }),
         ),
       );
     },

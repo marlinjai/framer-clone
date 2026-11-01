@@ -184,7 +184,12 @@ describe('buildResponsiveCss', () => {
       ['an escape inside a url', 'url(a\\29;position:fixed)'],
       ['the end of the style element in a string', '"a;</style><script>alert(1)</script>"'],
       ['the end of the style element in a url', 'url(a;</style>)'],
-      ['a newline in a string', '"a;\nb"'],
+      ['a newline that ends a string early', '"a;\nb'],
+      ['the start of the style element outside a string', 'a<style'],
+      ['the end of the style element outside a string', 'a</style>'],
+      ['a > outside a string', 'a>b'],
+      ['a newline before a brace', '"a"\n}'],
+      ['a vertical tab', 'a\u000bb'],
       ['a script url with a ;', 'url("javascript:alert(1);")'],
       ['a comment in a string', '"a;/* b */"'],
     ])('refuses and reports %s', (_label, text) => {
@@ -196,6 +201,23 @@ describe('buildResponsiveCss', () => {
         property: 'backgroundImage',
         reason: 'unsafe-value',
       });
+    });
+
+    // Where the emitter owns the output it can hold more than the raw text could.
+    it.each([
+      ['a newline in a string', '"a;\nb"', '"a;\\a b"'],
+      ['a carriage return and newline as one newline', '"a\r\nb"', '"a\\a b"'],
+      ['a form feed in a string', '"a\fb"', '"a\\a b"'],
+      ['a < in a string', '"a<b"', '"a\\3c b"'],
+      ['the end of the style element in a string', '"</style>"', '"\\3c /style>"'],
+      ['an svg data url', `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>")`, `url("data:image/svg+xml,\\3c svg xmlns='http://www.w3.org/2000/svg'/>")`],
+      ['a value over two lines', '"a b"\n"c d"', '"a b" "c d"'],
+      ['a tab between tokens', 'a\tb', 'a b'],
+    ])('escapes %s', (_label, text, written) => {
+      const { out, onDrop } = value(text);
+      expect(out).toBe(`.fc-a.fc-a{background-image:${written};margin:4px}`);
+      expect(out).not.toContain('<');
+      expect(onDrop).not.toHaveBeenCalled();
     });
 
     it('keeps a data url in a breakpoint query too', () => {
