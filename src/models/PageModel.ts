@@ -540,9 +540,15 @@ const PageModel = PageWithComponents
 
     // Refused before the detach, or the node would be lost: text belongs inside
     // an element, and a text node holds no children.
-    if (isTextNodeType(component.type) && target.kind === 'floating') return undefined;
+    if (isTextNodeType(component.type) && target.kind === 'floating') {
+      console.warn('[PageModel] moveTreeComponent: a text node stays inside an element');
+      return undefined;
+    }
     const resolvedParent = resolvedParentId ? findComponentInPage(self, resolvedParentId) : undefined;
-    if (resolvedParent && isTextNodeType(resolvedParent.type)) return undefined;
+    if (resolvedParent && isTextNodeType(resolvedParent.type)) {
+      console.warn('[PageModel] moveTreeComponent: a text node holds no children');
+      return undefined;
+    }
 
     // When moving within the same parent and the component sits before the
     // insert index, the detach will shift everything left by one — adjust.

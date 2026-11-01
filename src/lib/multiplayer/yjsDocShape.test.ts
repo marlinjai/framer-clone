@@ -394,3 +394,26 @@ describe('site settings and page noindex survive the round-trip', () => {
     expect(rebuilt.site.language).toBe('en');
   });
 });
+
+describe('text nodes survive the round-trip', () => {
+  it('keeps a #text child, its order and its spaces', () => {
+    const { project } = buildFixtureProject();
+    const snap = JSON.parse(JSON.stringify(getSnapshot(project)));
+    const tree = (Object.values(snap.pages)[0] as any).appComponentTree;
+    tree.children.unshift({
+      ...tree.children[0],
+      id: 'run-1',
+      type: '#text',
+      props: { children: 'Hello ' },
+      children: [],
+      parentId: tree.id,
+    });
+
+    const back = yDocToMstSnapshot(mstSnapshotToYDoc(snap)) as any;
+    const kids = (Object.values(back.pages)[0] as any).appComponentTree.children;
+    expect(kids[0].id).toBe('run-1');
+    expect(kids[0].type).toBe('#text');
+    expect(kids[0].props.children).toBe('Hello ');
+    expect(kids.map((k: any) => k.id)).toEqual(tree.children.map((k: any) => k.id));
+  });
+});

@@ -126,7 +126,8 @@ construct cannot survive the trip, the format cannot express it.
 "The same nodes" is defined over a normalised form, not raw `ComponentModel` snapshots:
 
 - **Compared as is:** component type, props and attributes, style maps (including breakpoint and
-  state variants), text content and child order.
+  state variants), text content and child order. Compare text and structure, never raw `childNodes`
+  counts: two adjacent text nodes are separated by a `<!-- -->` comment in server-rendered HTML.
 - **Normalised away:** node ids and parent or canvas bookkeeping (positions on the editing canvas,
   selection, expansion state). They are regenerated on import and are not part of the page's
   meaning.
