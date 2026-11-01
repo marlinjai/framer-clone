@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-01T19:06:09.746Z",
+  "generatedAt": "2026-11-01T19:40:18.974Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 30,
+  "durationSeconds": 27,
   "matrix": {
     "surfaces": {
       "format": {
@@ -15,8 +15,8 @@
         "total": 874
       },
       "renderer": {
-        "pass": 690,
-        "fail": 184,
+        "pass": 691,
+        "fail": 183,
         "notTested": 0,
         "total": 874
       },
@@ -48,8 +48,8 @@
           "total": 110
         },
         "renderer": {
-          "pass": 106,
-          "fail": 4,
+          "pass": 107,
+          "fail": 3,
           "notTested": 0,
           "total": 110
         },
@@ -1225,7 +1225,7 @@
       "html-element:figcaption": "pass pass pass panel-no-tag-choice ai-tag-allowlist",
       "html-element:figure": "pass pass pass panel-no-tag-choice ai-tag-allowlist",
       "html-element:footer": "pass pass pass panel-no-tag-choice pass",
-      "html-element:form": "pass registry-tag-collision pass panel-no-tag-choice ai-tag-allowlist",
+      "html-element:form": "pass pass pass panel-no-tag-choice ai-tag-allowlist",
       "html-element:geolocation": "pass pass pass panel-no-tag-choice ai-tag-allowlist",
       "html-element:h1": "pass pass pass panel-no-tag-choice pass",
       "html-element:h2": "pass pass pass panel-no-tag-choice pass",
@@ -2117,7 +2117,7 @@
             "state": "initial",
             "check": "screenshot",
             "gap": "mixed-text",
-            "detail": "0.33 percent of pixels differ"
+            "detail": "0.17 percent of pixels differ"
           },
           {
             "fixture": "mixed-text",
@@ -2125,7 +2125,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "mixed-text",
-            "detail": "5 differences, first: page: text \"OurfirstshopHelloboldandalinkattheendoft\" became \"firstboldalinkPlainitemcode\""
+            "detail": "5 differences, first: page: text \"OurfirstshopHelloboldandalinkattheendoft\" became \"OurfirstHelloboldalinkPlainitemItemwithc\""
           },
           {
             "fixture": "mixed-text",
@@ -2133,7 +2133,7 @@
             "state": "initial",
             "check": "accessibility-tree",
             "gap": "mixed-text",
-            "detail": "original \"- article:\\n  - heading \\\"Our first shop\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n    - text: shop\\n  - paragraph:\", replica \"- article:\\n  - heading \\\"first\\\" [level=1]:\\n    - emphasis: first\\n  - paragraph:\\n    - "
+            "detail": "original \"- article:\\n  - heading \\\"Our first shop\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n    - text: shop\\n  - paragraph:\", replica \"- article:\\n  - heading \\\"Our first\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n "
           },
           {
             "fixture": "mixed-text",
@@ -2141,7 +2141,7 @@
             "state": "initial",
             "check": "screenshot",
             "gap": "mixed-text",
-            "detail": "0.43 percent of pixels differ"
+            "detail": "0.22 percent of pixels differ"
           },
           {
             "fixture": "mixed-text",
@@ -2149,7 +2149,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "mixed-text",
-            "detail": "5 differences, first: page: text \"OurfirstshopHelloboldandalinkattheendoft\" became \"firstboldalinkPlainitemcode\""
+            "detail": "5 differences, first: page: text \"OurfirstshopHelloboldandalinkattheendoft\" became \"OurfirstHelloboldalinkPlainitemItemwithc\""
           },
           {
             "fixture": "mixed-text",
@@ -2157,7 +2157,7 @@
             "state": "initial",
             "check": "accessibility-tree",
             "gap": "mixed-text",
-            "detail": "original \"- article:\\n  - heading \\\"Our first shop\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n    - text: shop\\n  - paragraph:\", replica \"- article:\\n  - heading \\\"first\\\" [level=1]:\\n    - emphasis: first\\n  - paragraph:\\n    - "
+            "detail": "original \"- article:\\n  - heading \\\"Our first shop\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n    - text: shop\\n  - paragraph:\", replica \"- article:\\n  - heading \\\"Our first\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n "
           },
           {
             "fixture": "mixed-text",
@@ -2165,7 +2165,7 @@
             "state": "initial",
             "check": "screenshot",
             "gap": "mixed-text",
-            "detail": "1.55 percent of pixels differ"
+            "detail": "1.11 percent of pixels differ"
           },
           {
             "fixture": "mixed-text",
@@ -2173,7 +2173,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "mixed-text",
-            "detail": "13 differences, first: page: text \"OurfirstshopHelloboldandalinkattheendoft\" became \"firstboldalinkPlainitemcode\""
+            "detail": "13 differences, first: page: text \"OurfirstshopHelloboldandalinkattheendoft\" became \"OurfirstHelloboldalinkPlainitemItemwithc\""
           },
           {
             "fixture": "mixed-text",
@@ -2181,7 +2181,7 @@
             "state": "initial",
             "check": "accessibility-tree",
             "gap": "mixed-text",
-            "detail": "original \"- article:\\n  - heading \\\"Our first shop\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n    - text: shop\\n  - paragraph:\", replica \"- article:\\n  - heading \\\"first\\\" [level=1]:\\n    - emphasis: first\\n  - paragraph:\\n    - "
+            "detail": "original \"- article:\\n  - heading \\\"Our first shop\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n    - text: shop\\n  - paragraph:\", replica \"- article:\\n  - heading \\\"Our first\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n "
           }
         ],
         "notMeasured": []
@@ -3868,7 +3868,7 @@
       "total": 84
     },
     "jsxToNodesToRender": {
-      "pass": 4,
+      "pass": 5,
       "total": 12
     },
     "cases": [
@@ -4315,9 +4315,7 @@
       {
         "id": "text before an element",
         "direction": "jsx-nodes-render",
-        "pass": false,
-        "gap": "mixed-text",
-        "detail": "rendered <p><b>bold</b></p>, expected <p>hello <b>bold</b></p>"
+        "pass": true
       },
       {
         "id": "text after an element",
@@ -4519,8 +4517,8 @@
       "onlyGapOf": [
         "mixed-text"
       ],
-      "roundTripCases": 2,
-      "cost": 11
+      "roundTripCases": 1,
+      "cost": 10
     },
     {
       "id": "renderer-drops-value",
@@ -4555,16 +4553,6 @@
       "onlyGapOf": [],
       "roundTripCases": 6,
       "cost": 6
-    },
-    {
-      "id": "registry-tag-collision",
-      "description": "A tag that is also a component registry id renders as that entry instead: type \"form\" comes out as a div.",
-      "matrixCells": 1,
-      "corpusChecks": 0,
-      "fixtures": [],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 1
     }
   ],
   "panel": {

@@ -14,18 +14,13 @@ const editor = (type: string, props: Record<string, unknown>) =>
 describe('blocked nodes', () => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-  it.each(['script', 'style', 'iframe', 'object', 'embed', 'frame', 'frameset', 'base', 'meta', 'SCRIPT'])(
+  it.each(['script', 'style', 'iframe', 'object', 'embed', 'frame', 'frameset', 'base', 'link', 'meta', 'SCRIPT'])(
     'renders nothing for a stored <%s>',
     (type) => {
       expect(published({ type, props: { children: 'x' } })).toBe('');
       expect(editor(type, { children: 'x' })).toBe('');
     },
   );
-
-  it('treats link as the registry link on the published page and as the raw tag in the editor', () => {
-    expect(published({ type: 'link', props: { children: 'x' } })).toBe('<a>x</a>');
-    expect(editor('link', { children: 'x' })).toBe('');
-  });
 
   it('drops a blocked child and keeps its parent', () => {
     const html = published({ type: 'div', children: [{ id: 'a', type: 'script', props: { children: 'x' } }, { id: 'b', type: 'p', props: { children: 'kept' } }] });
