@@ -9,7 +9,7 @@ import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { InMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
 import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import ComponentModel, { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
-import { holdsText } from '@/lib/renderer/textContent';
+import { holdsText, textRunLabel } from '@/lib/renderer/textContent';
 import { TextContentSection } from '../sections/TextContentSection';
 import { DataSourceSection } from '../sections/DataSourceSection';
 
@@ -155,14 +155,32 @@ describe('TextContentSection on mixed text', () => {
     const { para } = mixed();
     render(<TextContentSection component={para} />);
     expect(fields().map(f => f.value)).toEqual(['Hello', ' world']);
-    expect(screen.getByRole('textbox', { name: 'Text 1' })).toBeTruthy();
-    expect(screen.getByRole('textbox', { name: 'Text 2' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: '"Hello" before "bold"' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: '"world" after "bold"' })).toBeTruthy();
+    // Visible too: the two fields are told apart by reading them.
+    expect(screen.getByText('"Hello" before "bold"')).toBeTruthy();
+  });
+
+  it('names a run between two elements, an empty run, a bound run and a hidden run', () => {
+    const { para } = seed();
+    para.addChild(createIntrinsicComponent('bold', 'strong', { children: 'a very long element text that keeps going' }));
+    para.addChild(ComponentModel.create({ id: 'gap', type: '#text', componentType: 'host', props: { children: '' }, parentId: para.id }));
+    para.addChild(createIntrinsicComponent('pic', 'img', { alt: '' }));
+    para.addChild(ComponentModel.create({ id: 'tail', type: '#text', componentType: 'host', props: { children: 'one two three four five six seven' }, parentId: para.id }));
+    const tail = para.children[para.children.length - 1] as ComponentInstance;
+    tail.toggleCanvasVisibility();
+    para.addChild(ComponentModel.create({ id: 'bound', type: '#text', componentType: 'host', props: {}, bindings: { children: { mode: 'read', path: 'row.title' } }, parentId: para.id }));
+    const [lead, , gap, , , bound] = para.children as ComponentInstance[];
+    expect(textRunLabel(para, lead)).toBe('"Hello" before "a very long element..."');
+    expect(textRunLabel(para, gap)).toBe('Empty text between "a very long element..." and Image');
+    expect(textRunLabel(para, tail)).toBe('"one two three four five..." after Image, hidden');
+    expect(textRunLabel(para, bound)).toBe('Text from data after Image');
   });
 
   it('edits one text node as one undo step, leaving the element child and spaces alone', () => {
     const { para } = mixed();
     render(<TextContentSection component={para} />);
-    const second = screen.getByRole('textbox', { name: 'Text 2' });
+    const second = screen.getByRole('textbox', { name: '"world" after "bold"' });
     fireEvent.focus(second);
     fireEvent.change(second, { target: { value: ' there ' } });
     fireEvent.blur(second);
@@ -175,7 +193,7 @@ describe('TextContentSection on mixed text', () => {
   it('keeps a text node that is emptied, as a layer that can still be typed into', () => {
     const { para } = mixed();
     render(<TextContentSection component={para} />);
-    const first = screen.getByRole('textbox', { name: 'Text 1' });
+    const first = screen.getByRole('textbox', { name: '"Hello" before "bold"' });
     fireEvent.focus(first);
     fireEvent.change(first, { target: { value: '' } });
     fireEvent.blur(first);
@@ -196,7 +214,7 @@ describe('TextContentSection on mixed text', () => {
     });
     render(<TextContentSection component={legacy} />);
     expect(fields().map(f => f.value)).toEqual(['Old ', '7']);
-    const first = screen.getByRole('textbox', { name: 'Text 1' });
+    const first = screen.getByRole('textbox', { name: '"Old" before Em' });
     fireEvent.focus(first);
     fireEvent.change(first, { target: { value: 'New ' } });
     fireEvent.blur(first);

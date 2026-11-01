@@ -31,6 +31,48 @@ export function isTextEditable(node: ComponentInstance): boolean {
   return holdsText(node) && !isTextBound(node);
 }
 
+const EXCERPT_CHARS = 24;
+
+/** The start of a text, cut at a word where one ends close by, or undefined when there is none. */
+function excerptOf(value: unknown): string | undefined {
+  const text = typeof value === 'string' || typeof value === 'number' ? String(value).replace(/\s+/g, ' ').trim() : '';
+  if (!text) return undefined;
+  if (text.length <= EXCERPT_CHARS) return text;
+  const cut = text.slice(0, EXCERPT_CHARS);
+  const space = cut.lastIndexOf(' ');
+  return `${space > EXCERPT_CHARS / 2 ? cut.slice(0, space) : cut}...`;
+}
+
+/** A neighbour as a person would point at it: its words, or what it is. */
+function neighbourName(node: ComponentInstance): string {
+  const words = excerptOf(node.props?.children);
+  return words ? `"${words}"` : node.displayName;
+}
+
+/**
+ * What a text run is called in the panel: a short excerpt and the elements on
+ * either side, so `Hello <b>bold</b> world` reads as two different fields. A
+ * run bound to data shows no stored text, an empty one has none.
+ */
+export function textRunLabel(element: ComponentInstance, run: ComponentInstance): string {
+  const siblings = element.children as ComponentInstance[];
+  const at = run === element ? -1 : siblings.indexOf(run);
+  const before = siblings.slice(0, Math.max(at, 0)).reverse().find(child => !isTextNodeType(child.type));
+  const after = siblings.slice(at + 1).find(child => !isTextNodeType(child.type));
+  const words = excerptOf(run.props?.children);
+  const name = isTextBound(run) ? 'Text from data' : words ? `"${words}"` : 'Empty text';
+  const beside =
+    before && after
+      ? `between ${neighbourName(before)} and ${neighbourName(after)}`
+      : after
+        ? `before ${neighbourName(after)}`
+        : before
+          ? `after ${neighbourName(before)}`
+          : '';
+  const hidden = run !== element && !run.canvasVisible ? ', hidden' : '';
+  return `${name}${beside ? ` ${beside}` : ''}${hidden}`;
+}
+
 /** Every node whose text belongs to this element, in page order: its own, then its text nodes. */
 export function textNodesOf(node: ComponentInstance): ComponentInstance[] {
   const runs = (node.children as ComponentInstance[]).filter(child => isTextNodeType(child.type));
