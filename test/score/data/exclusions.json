@@ -79,7 +79,19 @@
     "css-selector": {
       "Pseudo-classes": "A category heading in mdn-data, not a selector. Each pseudo-class has its own row.",
       "Pseudo-elements": "A category heading in mdn-data, not a selector. Each pseudo-element has its own row.",
-      "Namespace separator": "Only meaningful with @namespace, itself excluded, and published pages are HTML."
+      "Namespace separator": "Only meaningful with @namespace, itself excluded, and published pages are HTML.",
+      ":host": "They need a stylesheet inside a shadow tree (style is a blocked tag) or a custom element's script, and a node can author neither. Custom code is the route that could bring them, and this row returns with it.",
+      ":host()": "They need a stylesheet inside a shadow tree (style is a blocked tag) or a custom element's script, and a node can author neither. Custom code is the route that could bring them, and this row returns with it.",
+      ":host-context()": "They need a stylesheet inside a shadow tree (style is a blocked tag) or a custom element's script, and a node can author neither. Custom code is the route that could bring them, and this row returns with it.",
+      ":has-slotted": "They need a stylesheet inside a shadow tree (style is a blocked tag) or a custom element's script, and a node can author neither. Custom code is the route that could bring them, and this row returns with it.",
+      "::slotted()": "They need a stylesheet inside a shadow tree (style is a blocked tag) or a custom element's script, and a node can author neither. Custom code is the route that could bring them, and this row returns with it.",
+      ":state()": "They need a stylesheet inside a shadow tree (style is a blocked tag) or a custom element's script, and a node can author neither. Custom code is the route that could bring them, and this row returns with it.",
+      "Column combinator": "Neither Chromium nor WebKit parses the sample (checked 2026-11-02), so no sample can be proven valid. The browser probe fails when that changes.",
+      ":blank": "Neither Chromium nor WebKit parses the sample (checked 2026-11-02), so no sample can be proven valid. The browser probe fails when that changes.",
+      ":local-link": "Neither Chromium nor WebKit parses the sample (checked 2026-11-02), so no sample can be proven valid. The browser probe fails when that changes.",
+      ":target-within": "Neither Chromium nor WebKit parses the sample (checked 2026-11-02), so no sample can be proven valid. The browser probe fails when that changes.",
+      "::cue-region": "Neither Chromium nor WebKit parses the sample (checked 2026-11-02), so no sample can be proven valid. The browser probe fails when that changes.",
+      "::cue-region()": "Neither Chromium nor WebKit parses the sample (checked 2026-11-02), so no sample can be proven valid. The browser probe fails when that changes."
     },
     "css-at-rule": {
       "@charset": "Not authored: the published page is served as UTF-8 by the app and its stylesheet is inline.",

@@ -30,6 +30,17 @@ import {
   type ResolvedEffects,
   type StoredEffects,
 } from '@/lib/effects/effects';
+import {
+  MAX_RULES_PER_NODE,
+  isDefinitionRule,
+  isRuleList,
+  parseRule,
+  storedRulesOf,
+  type DefinitionRule,
+  type SelectorRule,
+  type StoredRule,
+} from '@/lib/rules/rules';
+import { findRuleIndex, moveRuleTo, namedState, namedStateOf, orderRules } from '@/lib/rules/states';
 
 export type PropsRecord = Record<string, any>;
 
@@ -53,6 +64,27 @@ export type ComponentType = IntrinsicElementType | FunctionComponentType;
 // --- helpers ---
 function isObject(x: any): x is Record<string, any> {
   return !!x && typeof x === 'object' && !Array.isArray(x);
+}
+
+/** A rule as a caller has it: an id is given when it brings none. */
+export type NewRule =
+  | (Omit<SelectorRule, 'id'> & { id?: string })
+  | (Omit<DefinitionRule, 'id'> & { id?: string });
+
+/** What a rule write did. A refusal says why, so the panel can show it. */
+export type RuleWrite = { ok: true } | { ok: false; reason: string };
+
+/** A text node has no element, so a rule would have nothing to apply to. */
+function refuseRules(type: string): RuleWrite | null {
+  return isTextNodeType(type) ? { ok: false, reason: 'Text has no element of its own, so it holds no rules.' } : null;
+}
+
+/** New props with this list, or with none when it is empty, so saved pages stay unchanged. */
+function withRules(props: Record<string, any>, rules: StoredRule[]): Record<string, any> {
+  const next = { ...props };
+  if (rules.length > 0) next.rules = rules;
+  else delete next.rules;
+  return next;
 }
 
 export { CSS_PROP_SET };
@@ -423,6 +455,77 @@ const ComponentModel: any = ComponentBase
       self.props = props;
     },
 
+    // Selector-level rules (src/lib/rules/rules.ts), stored as `props.rules`.
+    // Each action is one undo step and replaces the frozen props whole. Values
+    // cascade like a responsive style. A rule left with no values is removed
+    // and an empty list is deleted, so a node without rules stores nothing and
+    // clicking through states leaves nothing behind. The result says why when a
+    // write was refused, so the panel can show it.
+    //
+    // `ruleId` may name a state that has no rule yet ('hover'), which the first
+    // value creates in its place in the list. Clearing a value there stores nothing.
+    setRuleStyle(ruleId: string, property: string, value: any, breakpointId?: string): RuleWrite {
+      const refusal = refuseRules(self.type);
+      if (refusal) return refusal;
+      const currentProps = self.props || {};
+      const rules = storedRulesOf(currentProps);
+      const index = findRuleIndex(rules, ruleId);
+      const existing = rules[index];
+      if (existing && isDefinitionRule(existing)) return { ok: false, reason: 'A definition is edited as text.' };
+      const state = namedState(ruleId);
+      if (!existing && !state) return { ok: false, reason: 'That rule no longer exists.' };
+      if (!existing && rules.length >= MAX_RULES_PER_NODE) return { ok: false, reason: `A node holds at most ${MAX_RULES_PER_NODE} rules.` };
+
+      const style: Record<string, unknown> = { ...(existing?.style ?? {}) };
+      const next = writeCascade(style[property], value, breakpointId, self.cascadeBreakpoints(breakpointId));
+      if (next === undefined) delete style[property];
+      else style[property] = next;
+
+      const empty = Object.keys(style).length === 0;
+      if (!existing && empty) return { ok: true };
+      const updated: SelectorRule | undefined = empty
+        ? undefined
+        : existing
+          ? { ...(existing as SelectorRule), style }
+          : { id: state!.id, selector: state!.selector, ...(state!.at ? { at: [...state!.at] } : {}), style };
+      const list = existing ? rules.flatMap((rule, i) => (i !== index ? [rule] : updated ? [updated] : [])) : [...rules, updated!];
+      self.props = withRules(currentProps, orderRules(list));
+      return { ok: true };
+    },
+
+    // Add one rule, as the panel or an import has it. It goes through the parser,
+    // so nothing refused is stored. A rule without an id is given one.
+    addRule(rule: NewRule): RuleWrite {
+      const refusal = refuseRules(self.type);
+      if (refusal) return refusal;
+      const currentProps = self.props || {};
+      const rules = storedRulesOf(currentProps);
+      if (rules.length >= MAX_RULES_PER_NODE) return { ok: false, reason: `A node holds at most ${MAX_RULES_PER_NODE} rules.` };
+      const stored = { ...rule, id: rule.id ?? uuidv4().slice(0, 8) } as StoredRule;
+      if (rules.some((other) => other.id === stored.id)) return { ok: false, reason: 'Another rule on this node has the same id.' };
+      const state = namedStateOf(stored);
+      if (state && rules.some((other) => namedStateOf(other) === state)) return { ok: false, reason: `${state.label} already exists on this node.` };
+      const parsed = parseRule(stored);
+      if (!parsed.ok) return parsed;
+      self.props = withRules(currentProps, orderRules([...rules, stored]));
+      return { ok: true };
+    },
+
+    removeRule(ruleId: string) {
+      const currentProps = self.props || {};
+      const rules = storedRulesOf(currentProps);
+      const index = findRuleIndex(rules, ruleId);
+      if (index === -1) return;
+      self.props = withRules(currentProps, rules.filter((_, i) => i !== index));
+    },
+
+    moveRule(ruleId: string, toIndex: number) {
+      const currentProps = self.props || {};
+      const rules = storedRulesOf(currentProps);
+      const moved = moveRuleTo(rules, ruleId, toIndex);
+      if (moved.some((rule, i) => rule !== rules[i])) self.props = withRules(currentProps, moved);
+    },
+
     // Remove a stock photo's credit (data-credit-* and the hover title), when
     // the photo it describes was replaced by another picture. An action, so it
     // works on the protected tree and is one undoable step.
@@ -745,8 +848,10 @@ const ComponentModel: any = ComponentBase
       // resolve top-level props
       for (const [key, raw] of Object.entries(self.props)) {
         // `effects` is data for the effects runtime, never a DOM attribute:
-        // the canvas shows the final state, the preview reads it itself.
-        if (key === 'style' || key === 'effects') continue;
+        // the canvas shows the final state, the preview reads it itself. A
+        // `rules` list is the same, while a string stays the legacy `<table>`
+        // attribute of that name.
+        if (key === 'style' || key === 'effects' || (key === 'rules' && isRuleList(raw))) continue;
         assign(CSS_PROP_SET.has(key) ? style : attributes, key, raw);
       }
 
