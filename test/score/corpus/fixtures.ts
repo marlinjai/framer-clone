@@ -62,6 +62,9 @@ const hoverRule = (style: Record<string, unknown>) => ({ id: 'hover', selector: 
 const focusedRule = (style: Record<string, unknown>) => ({ id: 'focused', selector: '&:focus-visible', style });
 const pressedRule = (style: Record<string, unknown>) => ({ id: 'pressed', selector: '&:active', style });
 const rule = (id: string, selector: string, style: Record<string, unknown>) => ({ id, selector, style });
+const wrapped = (id: string, at: string, style: Record<string, unknown>, selector = '&') => ({ id, selector, at: [at], style });
+
+const WIDE_CARD = '@container (min-width: 600px)';
 
 export const FIXTURES: Fixture[] = [
   {
@@ -190,7 +193,13 @@ export const FIXTURES: Fixture[] = [
           parity('shell', { style: { containerType: 'inline-size' } }),
           n(
             'div',
-            parity('card', { style: { display: 'block', background: '#eff6ff', borderRadius: '8px', padding: '16px' } }),
+            parity('card', {
+              style: { display: 'block', background: '#eff6ff', borderRadius: '8px', padding: '16px' },
+              rules: [
+                wrapped('wide', WIDE_CARD, { display: 'flex', gap: '24px', alignItems: 'center' }),
+                wrapped('wide-heading', WIDE_CARD, { margin: 0 }, '& h2'),
+              ],
+            }),
             t('h2', 'Delivery', parity('heading', { style: { margin: '0 0 8px', fontSize: '20px' } })),
             t('p', 'Two working days inside Switzerland.', parity('copy', { style: { margin: 0 } })),
           ),
@@ -207,8 +216,18 @@ export const FIXTURES: Fixture[] = [
     tree: () =>
       n(
         'div',
-        parity('page', { style: { font: `16px/1.5 ${FONT}`, color: '#374151', background: '#f3f4f6', padding: '24px' } }),
-        t('div', 'Share this page', parity('bar', { style: { background: '#1d4ed8', color: '#fff', padding: '12px', margin: '0 0 16px' } })),
+        parity('page', {
+          style: { font: `16px/1.5 ${FONT}`, color: '#374151', background: '#f3f4f6', padding: '24px' },
+          rules: [wrapped('print', '@media print', { color: '#000', background: '#fff', padding: 0 })],
+        }),
+        t(
+          'div',
+          'Share this page',
+          parity('bar', {
+            style: { background: '#1d4ed8', color: '#fff', padding: '12px', margin: '0 0 16px' },
+            rules: [wrapped('print', '@media print', { display: 'none' })],
+          }),
+        ),
         t('p', 'The article text that belongs on paper.', parity('body', { style: { margin: 0 } })),
       ),
     states: [{ id: 'print', gap: 'media-queries', media: 'print', apply: async () => {} }],

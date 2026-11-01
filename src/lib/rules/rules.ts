@@ -15,7 +15,8 @@
 //
 //   - The <style> element and the rule. `dangerouslySetInnerHTML` writes the
 //     sheet raw, so `<` must not reach a selector or a prelude, and `{ } ; \` and
-//     comments must not reach anything.
+//     comments must not reach anything. A range query is the one `<` that is read
+//     instead of refused: see `withoutLessThan`, which leaves none behind.
 //   - The node. A selector starts with `&`, and only child and descendant steps
 //     can leave it, so the subject of a rule is the node or something inside it.
 //     A condition inside `:is()`, `:not()` or `:has()` may still read the whole
@@ -308,6 +309,71 @@ function closingParen(text: string, open: number): number {
   return -1;
 }
 
+/** Characters a term of a range comparison can hold. No `<`, so a term cannot carry one past `flippedRange`. */
+const RANGE_TERM = /^[A-Za-z0-9_.%+*/ ()-]+$/;
+
+const OPPOSITE: Readonly<Record<string, string>> = { '<': '>', '<=': '>=' };
+
+/**
+ * A range comparison with its `<` gone, or null when `body` is not one. The sides
+ * swap and the operator turns round, which CSS defines as the same query:
+ * `width < 600px` is `600px > width`, and `400px <= width < 600px` is
+ * `600px > width >= 400px`. A negation would differ where a feature is unknown.
+ */
+function flippedRange(body: string): string | null {
+  const terms: string[] = [];
+  const operators: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if (depth === 0 && (ch === '<' || ch === '>' || ch === '=')) {
+      const operator = ch !== '=' && body[i + 1] === '=' ? `${ch}=` : ch;
+      terms.push(body.slice(start, i).trim());
+      operators.push(operator);
+      i += operator.length - 1;
+      start = i + 1;
+    }
+  }
+  terms.push(body.slice(start).trim());
+  const flipped = operators.map((operator) => OPPOSITE[operator]);
+  if (flipped.length === 0 || flipped.length > 2 || flipped.some((operator) => operator === undefined)) return null;
+  if (!terms.every((term) => RANGE_TERM.test(term))) return null;
+  return terms.flatMap((term, index) => (index === 0 ? [term] : [flipped[index - 1], term])).reverse().join(' ');
+}
+
+/**
+ * `@media` and `@container` text with every range comparison rewritten so it holds
+ * no `<`. Tailwind's `max-md:` compiles to `(width < 48rem)`, so refusing the form
+ * would refuse real imports, and CSS has no escape for a `<` outside a string. So a
+ * `<` is read rather than written. This runs before `refusedPrelude`, which stays
+ * as strict as ever on what comes out: any `<` left here, in a shape this does not
+ * know, is refused there. The emitter and its guards never see one.
+ */
+function withoutLessThan(text: string): string {
+  if (!text.includes('<') || refusedBalance(text) !== null) return text;
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"' || ch === "'") return text;
+    if (ch !== '(') {
+      out += ch;
+      i++;
+      continue;
+    }
+    const end = closingParen(text, i);
+    const body = text.slice(i + 1, end);
+    const name = functionName(text, i);
+    const queries = name === '' || name === 'style';
+    out += `(${queries && body.includes('<') ? (flippedRange(body) ?? withoutLessThan(body)) : body})`;
+    i = end + 1;
+  }
+  return out;
+}
+
 /** Why an `@scope` prelude is refused, or null. Its selectors are read-only conditions. */
 function refusedScope(prelude: string): string | null {
   let rest = prelude;
@@ -334,22 +400,30 @@ function refusedScope(prelude: string): string | null {
 
 const WRAPPER_NAMES: ReadonlySet<string> = new Set(['media', 'supports', 'container', 'scope', 'starting-style']);
 
-/** One entry of a rule's `at`, or why it is refused. Only the allow list passes. */
+/** The wrappers with range comparisons. `@supports` has none, so a `<` stays refused there. */
+const RANGE_WRAPPERS: ReadonlySet<string> = new Set(['media', 'container']);
+
+/**
+ * One entry of a rule's `at` as the sheet may hold it, or why it is refused. Only
+ * the allow list passes. The text comes back unchanged, but for a range comparison,
+ * which comes back without its `<`.
+ */
 export function parseWrapper(text: unknown): Parsed<string> {
   if (typeof text !== 'string') return refuse('a wrapper is an at-rule as text');
   const match = /^@([A-Za-z-]+)([\s\S]*)$/.exec(text.trim());
   if (!match) return refuse('a wrapper starts with an at-rule name');
   const name = match[1].toLowerCase();
-  const prelude = match[2].trim();
   if (!WRAPPER_NAMES.has(name)) return refuse(`@${name} cannot wrap a rule`);
+  const written = RANGE_WRAPPERS.has(name) ? `@${match[1]}${withoutLessThan(match[2])}` : text.trim();
+  const prelude = written.slice(match[1].length + 1).trim();
   const reason = refusedPrelude(prelude);
   if (reason) return refuse(reason);
-  if (name === 'starting-style') return prelude ? refuse('@starting-style takes no condition') : accept(text.trim());
+  if (name === 'starting-style') return prelude ? refuse('@starting-style takes no condition') : accept(written);
   if (name === 'scope') {
     const refused = refusedScope(prelude);
-    return refused ? refuse(refused) : accept(text.trim());
+    return refused ? refuse(refused) : accept(written);
   }
-  return prelude ? accept(text.trim()) : refuse(`@${name} needs a condition`);
+  return prelude ? accept(written) : refuse(`@${name} needs a condition`);
 }
 
 type DefinitionName = 'none' | 'plain' | 'dashed';

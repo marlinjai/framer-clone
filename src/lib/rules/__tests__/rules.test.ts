@@ -256,6 +256,7 @@ describe('parseWrapper', () => {
     '@media (hover:hover) and (pointer:fine)',
     '@media(min-width:640px)',
     '@media (width >= 600px)',
+    '@media (600px > width)',
     '@MEDIA print',
     '@supports (display: grid)',
     '@supports not (display: grid)',
@@ -294,7 +295,6 @@ describe('parseWrapper', () => {
   });
 
   it.each([
-    ['a <', '@media (width < 600px)'],
     ['closing the element', '@media print</style>'],
     ['a brace', '@media print{body{color:red}}'],
     ['a ;', '@media print;'],
@@ -325,6 +325,101 @@ describe('parseWrapper', () => {
 
   it.each([1, null, {}, []])('refuses %j, which is not text', (value) => {
     expect(parseWrapper(value)).toMatchObject({ ok: false });
+  });
+
+  describe('a range comparison', () => {
+    it.each([
+      ['@media (width < 600px)', '@media (600px > width)'],
+      ['@media (width <= 600px)', '@media (600px >= width)'],
+      ['@media (width<600px)', '@media (600px > width)'],
+      ['@media(width < 48rem)', '@media(48rem > width)'],
+      ['@media (600px < width)', '@media (width > 600px)'],
+      ['@media (400px <= width < 600px)', '@media (600px > width >= 400px)'],
+      ['@media (400px < width <= 600px)', '@media (600px >= width > 400px)'],
+      ['@media screen and (width < 600px)', '@media screen and (600px > width)'],
+      ['@media not (width < 600px)', '@media not (600px > width)'],
+      ['@media (width < 600px) and (height < 400px)', '@media (600px > width) and (400px > height)'],
+      ['@media (width < 600px), print', '@media (600px > width), print'],
+      ['@media ((width < 600px) or (height <= 400px))', '@media ((600px > width) or (400px >= height))'],
+      ['@media (min-width: 100px) and (width < 600px)', '@media (min-width: 100px) and (600px > width)'],
+      ['@media (width < calc(100px + 1em))', '@media (calc(100px + 1em) > width)'],
+      ['@media (aspect-ratio < 16/9)', '@media (16/9 > aspect-ratio)'],
+      ['@MEDIA (WIDTH < 600px)', '@MEDIA (600px > WIDTH)'],
+      ['@container (width < 400px)', '@container (400px > width)'],
+      ['@container sidebar (width < 400px)', '@container sidebar (400px > width)'],
+      ['@container style(--u-size < 3)', '@container style(3 > --u-size)'],
+    ])('rewrites %s without its <', (text, written) => {
+      expect(parseWrapper(text)).toEqual({ ok: true, value: written });
+    });
+
+    it.each([
+      '@media print',
+      '@media(min-width:640px)',
+      '@media  (width >= 600px)',
+      '@media (width > 600px)',
+      '@MEDIA print',
+      '@container sidebar (min-width: 400px)',
+    ])('leaves %s as stored, because it needs nothing rewritten', (text) => {
+      expect(parseWrapper(text)).toEqual({ ok: true, value: text });
+    });
+
+    it('keeps the stored rule as it is and rewrites only what goes to the sheet', () => {
+      const rule = { id: 'r', selector: '&', at: ['@media (width < 48rem)'], style: { color: 'red' } };
+      expect(parseRule(rule)).toMatchObject({ ok: true, value: { at: ['@media (48rem > width)'] } });
+      expect(rule.at).toEqual(['@media (width < 48rem)']);
+    });
+
+    it.each([
+      ['@supports, which has no comparisons', '@supports (width < 600px)'],
+      ['@scope, which has no comparisons', '@scope (a < b)'],
+      ['outside a parenthesis', '@media print < screen'],
+      ['only a term', '@media (< 600px)'],
+      ['no term after it', '@media (width <)'],
+      ['a space inside the operator', '@media (width < = 600px)'],
+      ['a doubled operator', '@media (width << 600px)'],
+      ['operators that do not point the same way', '@media (400px < width > 600px)'],
+      ['one operator of each kind', '@media (400px > width < 600px)'],
+      ['an = beside it', '@media (400px = width < 600px)'],
+      ['a third comparison', '@media (1px < width < 2px < 3px)'],
+      ['a name and a value', '@media (min-width: 1px < 2px)'],
+      ['inside a math function', '@media (min-width: calc(1px < 2px))'],
+      ['in a term', '@media (width < calc(1px < 2px))'],
+      ['in an unknown function', '@media (width) and x(a < b)'],
+      ['in a string', '@container style(--u-x: "a<b")'],
+      ['closing the element from a term', '@media (width < 600px</style>)'],
+      ['closing the element after a comparison', '@media (width < 600px)</style>'],
+      ['closing the element in a condition', '@media (width < 1px) and (</style>)'],
+      ['opening a script', '@media (a <script> b)'],
+      ['a comment in a term', '@media (width < /* */ 600px)'],
+      ['a brace in a term', '@media (width < 600px}) {'],
+      ['a backslash in a term', '@media (width < \\36 00px)'],
+      ['a non-ASCII term', '@media (width < \u0661px)'],
+      ['an open parenthesis', '@media (width < 600px'],
+      ['an open quote', '@media (width < "600px)'],
+      ['url(', '@media (width < url(/x))'],
+      ['an &', '@media (width < &)'],
+    ])('refuses a < %s', (_, text) => {
+      expect(parseWrapper(text)).toMatchObject({ ok: false });
+    });
+
+    it('never lets a < through, whatever the pieces', () => {
+      const pieces = ['(', ')', '<', '<=', '>', '=', 'width', '600px', ' ', ' and ', 'not ', 'calc(', 'style(', '"', '</style>', ':', ',', '/', '*'];
+      let state = 20261102;
+      const next = (limit: number): number => {
+        state = (Math.imul(state ^ (state >>> 15), 2654435761) + 0x6d2b79f5) | 0;
+        return (state >>> 8) % limit;
+      };
+      let accepted = 0;
+      for (let attempt = 0; attempt < 20000; attempt++) {
+        let text = next(2) === 0 ? '@media ' : '@container ';
+        for (let length = 1 + next(9); length > 0; length--) text += pieces[next(pieces.length)];
+        const parsed = parseWrapper(text);
+        if (!parsed.ok) continue;
+        accepted++;
+        expect(parsed.value).not.toContain('<');
+      }
+      expect(accepted).toBeGreaterThan(100);
+    });
   });
 });
 
