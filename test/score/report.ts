@@ -288,7 +288,7 @@ export function renderReport(score: Score): string {
 
   push('## Parity corpus');
   push(
-    'Each fixture is an original next to the closest node tree, rendered through the published path, in Playwright\'s Chromium, at the three default breakpoints and in each scripted state. A check fails on more than 0.1 percent of pixels differing (per-pixel threshold 0.1), any computed style difference on matched elements including `::before` and `::after` content, or any difference in the accessibility tree. A fixture passes only when every check passes.',
+    'Each fixture is an original next to the closest node tree, rendered through the published path, in Playwright\'s Chromium, at the three default breakpoints and in each scripted state. A check fails on more than 0.1 percent of pixels differing (per-pixel threshold 0.1), any computed style difference on matched elements including `::before` and `::after` content, or any difference in the accessibility tree. A fixture passes only when every check passes. The interaction check is not independent: it passes when the other three pass in that scripted state, so one failed state counts up to four times in the check totals and in a gap\'s cost. Which gap a difference goes to comes from the state it appeared in or from the fixture\'s declared purpose, except that text missing from an untouched page is always `mixed-text` and a differing `::before` or `::after` is always `selector-styles`.',
   );
   push(
     table(
@@ -345,7 +345,7 @@ export function renderReport(score: Score): string {
     '- **CSS value grammar.** Every property is probed with `initial`, so a value the stylesheet refuses shows up only where a fixture happens to use one (`stylesheet-values`).',
     '- **Attributes of single elements** (`href`, `src`, `type`, ...), event handler attributes, SVG and MathML elements, and ARIA roles and attributes beyond one sample each. The lists cover HTML elements and global attributes, as the plan says.',
     '- **The mounted canvas.** The canvas column renders `ComponentRenderer` to markup. Nothing runs in a browser with the editor around it, so interactions on the canvas, which the plan requires, are not tested (the 30 WAI-ARIA rows).',
-    '- **Whether a panel control is any good.** A key counts as editable when a control changed it, whatever range or units that control offers.',
+    '- **Whether a panel control is any good.** A key counts as editable when a control changed it, whatever range or units that control offers. Only the properties panel and the palette are covered: the quick toolbar, context menus and the Layers panel were searched for tag changes and none found, not driven.',
     '- **The whole published page.** The corpus uses `applyResponsiveStyles` and `renderComponentNode`, without `hydrateBindings`, effects, the sticky bar, or the consent and font wrappers, and only in Chromium.',
     '- **WAI-ARIA conformance.** A contract is the primary keyboard path of a pattern, not its whole page in the Guide.',
     '- **Page-level items and reuse:** head tags, design tokens, page-wide scripts and reusable components (gaps 4 and 5 of the plan) have no rows, and script and style elements are excluded with a reason.',

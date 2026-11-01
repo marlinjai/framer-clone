@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-01T19:00:44.672Z",
+  "generatedAt": "2026-11-01T19:06:09.746Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 28,
+  "durationSeconds": 30,
   "matrix": {
     "surfaces": {
       "format": {
@@ -4447,7 +4447,7 @@
     },
     {
       "id": "panel-no-tag-choice",
-      "description": "No way to place or change to a given element from the editor: the palette offers few tags and the panel cannot change a tag.",
+      "description": "The palette offers five tags and the properties panel cannot change a tag, so other elements come only from the AI generator or a default page template.",
       "matrixCells": 126,
       "corpusChecks": 0,
       "fixtures": [],

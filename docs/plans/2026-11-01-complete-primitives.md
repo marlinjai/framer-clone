@@ -149,13 +149,13 @@ Step 1 exists: `pnpm score:primitives` writes [the score](../primitives-score/la
 numbers there replace the rough readings above. Where the first run corrects this plan:
 
 - **Not any tag.** A `form` node renders as a `div` on the published page, because the renderer
-  reads the tag as a registry id; the canvas shows a `form`. `iframe`, `object`, `embed` and `frame`
-  are dropped since the script fix.
+  reads the tag as a registry id; the canvas shows a `form`. `iframe`, `object` and `embed` are
+  dropped since the script fix.
 - **The denominator.** mdn-data lists 651 CSS properties, 528 after exclusions, so the 103 in
   `CSS_PROP_SET` are 19.5 percent of the included ones.
 - **A panel gap the plan missed.** The palette makes five tags (`a`, `button`, `div`, `img`, `p`) and
-  nothing changes a node's tag, so a person cannot place a heading. Step 3's general editor does not
-  close this.
+  the panel cannot change a node's tag, so a heading exists only where the AI generator or a default
+  page template made one. Step 3's general editor does not close this.
 - **Behaviour is less empty than gap 3 says.** Plain HTML passes the primary keyboard contract of 17
   of the 30 WAI-ARIA patterns with no behaviour model, among them accordion (`details`) and modal
   dialog (`command`). Tabs, carousel, menus, tooltip and combobox fail. So step 6's list is partly

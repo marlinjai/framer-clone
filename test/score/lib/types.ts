@@ -57,7 +57,7 @@ export const GAPS = {
   'behaviour-state': 'Behaviour and state: no way to say that one element changes another.',
   'blocked-embedded-content': 'Embedded content dropped by blockedNodes.ts (iframe, object, embed, ...), although these are ordinary content elements.',
   'panel-no-general-editor': 'No general style or attribute editor in the properties panel: only what the hand-written sections expose.',
-  'panel-no-tag-choice': 'No way to place or change to a given element from the editor: the palette offers few tags and the panel cannot change a tag.',
+  'panel-no-tag-choice': 'The palette offers five tags and the properties panel cannot change a tag, so other elements come only from the AI generator or a default page template.',
   'ai-style-allowlist': 'The AI generator validator only keeps style keys in CSS_PROP_SET.',
   'ai-tag-allowlist': 'The AI generator validator only keeps its tag list: anything else becomes a div or is dropped.',
   'ai-attribute-allowlist': 'The AI generator validator only keeps a short list of attributes.',
