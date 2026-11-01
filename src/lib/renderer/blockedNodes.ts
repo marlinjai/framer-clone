@@ -5,7 +5,7 @@
 // see docs/plans/2026-11-01-complete-primitives.md for the custom code primitive
 // that would be the deliberate way to run code on a site.
 
-const BLOCKED_TAGS: ReadonlySet<string> = new Set([
+export const BLOCKED_TAGS: ReadonlySet<string> = new Set([
   'script', 'style', 'iframe', 'object', 'embed', 'frame', 'frameset', 'base', 'link', 'meta',
 ]);
 
@@ -15,6 +15,14 @@ function warnOnce(what: string): void {
   if (warned.has(what)) return;
   warned.add(what);
   console.warn(`[renderer] dropped ${what} from a stored node`);
+}
+
+/**
+ * The rule alone, without the warning: for the properties panel, which refuses
+ * a prop before it is ever stored rather than dropping one that was.
+ */
+export function isDroppedProp(name: string, value: unknown): boolean {
+  return name === 'dangerouslySetInnerHTML' || (/^on/i.test(name) && typeof value !== 'function');
 }
 
 /** Whether a node with this resolved tag must render nothing. */
@@ -31,7 +39,7 @@ export function isBlockedTag(tag: unknown): boolean {
  * markup of a custom element (`<x-y onclick="...">`), in any letter case.
  */
 export function isBlockedProp(name: string, value: unknown): boolean {
-  const blocked = name === 'dangerouslySetInnerHTML' || (/^on/i.test(name) && typeof value !== 'function');
+  const blocked = isDroppedProp(name, value);
   if (blocked) warnOnce(`the prop ${name}`);
   return blocked;
 }

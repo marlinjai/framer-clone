@@ -150,6 +150,12 @@ export function cssPropertyName(key: string): string {
   return key.replace(/([A-Z])/g, '-$1').toLowerCase().replace(/^ms-/, '-ms-');
 }
 
+/** A CSS property name as a style key, the reverse of cssPropertyName. */
+export function cssStyleKey(property: string): string {
+  if (property.startsWith('--')) return property;
+  return property.replace(/^-ms-/, 'ms-').replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+}
+
 /**
  * A style value as CSS text, exactly as React serializes an inline style:
  * non-zero numbers get `px` unless the property is unitless (or a custom
@@ -169,6 +175,17 @@ export function cssValueText(key: string, value: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * The one safety rule for a declaration: what makes the published stylesheet
+ * drop it, and so what the properties panel refuses before it is stored. `text`
+ * is the value as cssValueText gives it.
+ */
+export function unsafeDeclaration(key: string, text: string | undefined): 'unsafe-property' | 'unsafe-value' | null {
+  if (!SAFE_PROPERTY.test(key)) return 'unsafe-property';
+  if (text === undefined) return null;
+  return BREAKOUT_CHARS.test(text) || UNSAFE_VALUE.test(text) || !isContainedValue(text) ? 'unsafe-value' : null;
+}
+
 /** Why a declaration was dropped; reported once per page through `onUnsafe`. */
 export interface DroppedDeclaration {
   className: string;
@@ -186,17 +203,13 @@ function declaration(
   value: unknown,
   onDrop: (d: DroppedDeclaration) => void,
 ): string | null {
-  if (!SAFE_PROPERTY.test(key)) {
-    onDrop({ className, property: key, reason: 'unsafe-property' });
+  const text = SAFE_PROPERTY.test(key) ? cssValueText(key, value) : undefined;
+  const reason = unsafeDeclaration(key, text);
+  if (reason) {
+    onDrop({ className, property: key, reason });
     return null;
   }
-  const text = cssValueText(key, value);
-  if (text === undefined) return null;
-  if (BREAKOUT_CHARS.test(text) || UNSAFE_VALUE.test(text) || !isContainedValue(text)) {
-    onDrop({ className, property: key, reason: 'unsafe-value' });
-    return null;
-  }
-  return `${cssPropertyName(key)}:${text}`;
+  return text === undefined ? null : `${cssPropertyName(key)}:${text}`;
 }
 
 /** One node's styles, keyed by its (already safe) class name. */
