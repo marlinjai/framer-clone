@@ -21,6 +21,7 @@
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "score:primitives": "tsx test/score/run.ts",
+    "generate:web-names": "tsx scripts/generate-web-names.ts",
     "db:public": "tsx scripts/db-public.ts",
     "db:migrate-tenants": "tsx scripts/db-migrate-tenants.ts",
     "db:backfill-demo": "tsx scripts/db-backfill-demo.ts",

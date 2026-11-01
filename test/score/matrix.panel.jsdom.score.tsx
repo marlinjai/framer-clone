@@ -9,6 +9,10 @@
 // palette entry produces it or a panel action changes a node's type. The source of
 // the sections is also scanned, so a key the panel writes but this driver did not
 // reach becomes "not tested" and never a silent fail or pass.
+//
+// The Custom section's add fields take a name, then a value, so typing the same few
+// probes into every field cannot reach them. For those the driver types each name of
+// the universe, as a person would, and only a real write counts.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,7 +26,11 @@ import { COMPONENT_REGISTRY } from '@/lib/componentRegistry';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { InMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
 import RightSidebar from '@/components/sidebars/RightSidebar';
-import { allEntries, attributeSample, markupAttributeSample, namespaceOf, styleKeyOf } from './lib/universe';
+import { BLOCKED_TAGS } from '@/lib/renderer/blockedNodes';
+import { cssPropertyName } from '@/lib/responsive/responsiveCss';
+import { attributeName, attributeProp } from '@/lib/styles/customEditor';
+import { PATTERNS, treeVocabulary } from './patterns';
+import { allEntries, attributeSample, cssValueSample, markupAttributeSample, namespaceOf, styleKeyOf } from './lib/universe';
 import { writeOut } from './lib/io';
 import { rowKey, type Cell, type GapId, type SurfaceResults } from './lib/types';
 
@@ -69,6 +77,7 @@ const SCENARIOS: Scenario[] = [
   { label: 'link', type: 'a', props: { children: 'Link', href: '/', style: {} } },
   { label: 'image', type: 'img', props: { src: '/x.jpg', alt: 'x', style: {} } },
   { label: 'generic', type: 'button', props: { children: 'Go', style: { border: '1px solid red' } } },
+  { label: 'form control', type: 'input', props: { style: {} } },
   { label: 'form', ...preset('form') },
   { label: 'form submit', ...preset('formSubmit') },
   { label: 'sticky bar', ...preset('stickyCta') },
@@ -87,7 +96,9 @@ function setUp(scenario: Scenario): ComponentInstance {
   return main.children.find((c: ComponentInstance) => c.id === 'probe') as ComponentInstance;
 }
 
-function record(before: Record<string, unknown>, after: Record<string, unknown>, onBreakpoint: boolean): void {
+/** Notes what an action changed, and returns the style keys it wrote. */
+function record(before: Record<string, unknown>, after: Record<string, unknown>, onBreakpoint: boolean): string[] {
+  const styleKeys: string[] = [];
   if (before.type !== after.type) written.types.add(String(after.type));
   const beforeProps = (before.props ?? {}) as Record<string, unknown>;
   const afterProps = (after.props ?? {}) as Record<string, unknown>;
@@ -103,10 +114,12 @@ function record(before: Record<string, unknown>, after: Record<string, unknown>,
   for (const key of new Set([...Object.keys(beforeStyle), ...Object.keys(afterStyle)])) {
     if (JSON.stringify(beforeStyle[key]) === JSON.stringify(afterStyle[key])) continue;
     written.styleKeys.add(key);
+    styleKeys.push(key);
     const map = afterStyle[key];
     for (const value of map && typeof map === 'object' ? Object.values(map) : [map]) written.styleValues.add(String(value));
     if (onBreakpoint && map && typeof map === 'object' && 'tablet-probe' in map) written.breakpointOverride = true;
   }
+  return styleKeys;
 }
 
 /** A stable name for a control, so it is operated once per scenario. */
@@ -121,8 +134,8 @@ const TEXT_TRIES = ['37', '12px', 'probe-value', '#123456'];
 
 /**
  * The value rows a driver action can decide: the shapes in TEXT_TRIES. Any other
- * row needs a control that takes free text, which no action here proves, so it
- * stays a fail with the panel's general editor gap.
+ * row needs a control that takes free text: the Custom section's, driven with the
+ * row's sample in driveCustomNames.
  */
 const VALUE_ROW_TRY: Record<string, string> = {
   '<length>': '12px',
@@ -134,27 +147,32 @@ const VALUE_ROW_TRY: Record<string, string> = {
   '<number>': '37',
 };
 
-async function operate(el: Element, node: ComponentInstance, onBreakpoint: boolean): Promise<void> {
-  const step = async (fn: () => void) => {
-    if (!isAlive(node)) return;
-    const before = JSON.parse(JSON.stringify(getSnapshot(node)));
-    await act(async () => {
-      fn();
-      await Promise.resolve();
-    });
-    if (isAlive(node)) record(before, JSON.parse(JSON.stringify(getSnapshot(node))), onBreakpoint);
-  };
+/** The control that last wrote a style key, by controlName, so a sample value can be typed into it. */
+const writers = new Map<string, string>();
+let lastStyleKeys: string[] = [];
 
+/** Runs one action on the panel and records what it changed on the node. */
+async function step(node: ComponentInstance, onBreakpoint: boolean, fn: () => void): Promise<void> {
+  if (!isAlive(node)) return;
+  const before = JSON.parse(JSON.stringify(getSnapshot(node)));
+  await act(async () => {
+    fn();
+    await Promise.resolve();
+  });
+  if (isAlive(node)) lastStyleKeys = record(before, JSON.parse(JSON.stringify(getSnapshot(node))), onBreakpoint);
+}
+
+async function operate(el: Element, node: ComponentInstance, onBreakpoint: boolean): Promise<void> {
   if (el instanceof HTMLSelectElement) {
     for (const option of Array.from(el.options)) {
       if (!option.value) continue;
-      await step(() => fireEvent.change(el, { target: { value: option.value } }));
+      await step(node, onBreakpoint, () => fireEvent.change(el, { target: { value: option.value } }));
     }
     return;
   }
   if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
     if (el instanceof HTMLInputElement && ['checkbox', 'radio'].includes(el.type)) {
-      await step(() => fireEvent.click(el));
+      await step(node, onBreakpoint, () => fireEvent.click(el));
       return;
     }
     if (el instanceof HTMLInputElement && el.type === 'file') return;
@@ -162,19 +180,94 @@ async function operate(el: Element, node: ComponentInstance, onBreakpoint: boole
     for (const value of tries) {
       // Separate steps: a field commits from its own state on Enter or blur,
       // so the change has to render before the commit reads it.
-      await step(() => fireEvent.focus(el));
-      await step(() => fireEvent.change(el, { target: { value } }));
-      await step(() => fireEvent.keyDown(el, { key: 'Enter' }));
-      await step(() => fireEvent.blur(el));
+      await step(node, onBreakpoint, () => fireEvent.focus(el));
+      await step(node, onBreakpoint, () => fireEvent.change(el, { target: { value } }));
+      await step(node, onBreakpoint, () => fireEvent.keyDown(el, { key: 'Enter' }));
+      for (const key of lastStyleKeys) writers.set(key, controlName(el));
+      await step(node, onBreakpoint, () => fireEvent.blur(el));
+      for (const key of lastStyleKeys) writers.set(key, controlName(el));
     }
     return;
   }
   // An open section stays open: closing it would hide the controls still to be operated.
   if (el.getAttribute('aria-expanded') === 'true') return;
-  await step(() => fireEvent.click(el));
+  await step(node, onBreakpoint, () => fireEvent.click(el));
 }
 
-async function drive(scenario: Scenario, breakpointId?: string): Promise<void> {
+/** Adds one property or attribute through the Custom section, by keyboard. */
+async function addThroughCustom(node: ComponentInstance, thing: string, name: string, value: string): Promise<void> {
+  const field = (kind: string) => document.body.querySelector(`input[aria-label="${thing} ${kind}"]`);
+  const nameField = field('name');
+  const valueField = field('value');
+  if (!nameField || !valueField) return;
+  await step(node, false, () => fireEvent.change(nameField, { target: { value: name } }));
+  await step(node, false, () => fireEvent.change(valueField, { target: { value } }));
+  await step(node, false, () => fireEvent.keyDown(valueField, { key: 'Enter' }));
+}
+
+/** Types a value into the section control that writes this style key, as the row's own field. */
+async function typeIntoOwnControl(node: ComponentInstance, styleKey: string, value: string): Promise<void> {
+  const name = writers.get(styleKey);
+  const el = Array.from(document.body.querySelectorAll('input')).find((input) => controlName(input) === name);
+  if (!el) return;
+  await step(node, false, () => fireEvent.focus(el));
+  await step(node, false, () => fireEvent.change(el, { target: { value } }));
+  await step(node, false, () => fireEvent.keyDown(el, { key: 'Enter' }));
+  await step(node, false, () => fireEvent.blur(el));
+}
+
+/** Sets the node's tag through the Custom section's picker. False when the picker does not offer it. */
+async function pickTag(node: ComponentInstance, tag: string): Promise<boolean> {
+  const picker = document.body.querySelector('select:has(option[value="section"])');
+  if (!picker || !picker.querySelector(`option[value="${tag}"]`)) return false;
+  await step(node, false, () => fireEvent.change(picker, { target: { value: tag } }));
+  return node.type === tag;
+}
+
+/** Every name of the universe that no control has written yet. */
+async function driveCustomNames(node: ComponentInstance): Promise<void> {
+  const seed = getSnapshot(node);
+  for (const entry of allEntries().filter((e) => !e.excluded)) {
+    if (entry.kind === 'css-property') {
+      if (written.styleKeys.has(styleKeyOf(entry.id))) continue;
+      const name = entry.id === '--*' ? '--probe' : entry.id;
+      await addThroughCustom(node, 'CSS property', name, 'inherit');
+    } else if (entry.kind === 'html-global-attribute') {
+      const sample = attributeSample(entry.id);
+      if (sample.prop === 'style' || written.propKeys.has(sample.prop)) continue;
+      await addThroughCustom(node, 'Attribute', sample.html.split('=')[0], String(sample.value));
+    } else if (entry.kind === 'css-value') {
+      const { property, value } = cssValueSample(entry.id);
+      if (written.styleValues.has(value)) continue;
+      await addThroughCustom(node, 'CSS property', cssPropertyName(property), value);
+      if (!written.styleValues.has(value)) await typeIntoOwnControl(node, property, value);
+    } else if (entry.kind === 'html-element-attribute') {
+      const { tag, prop, value } = markupAttributeSample('html', entry.id);
+      const key = `${tag}.${prop}`;
+      if (written.propsOnTag.has(key)) continue;
+      // Through the picker: an element it does not offer has no attributes to edit.
+      if (!(await pickTag(node, tag))) continue;
+      const attribute = entry.id.slice(entry.id.indexOf('.') + 1);
+      const name = attribute.startsWith('type_') ? 'type' : attribute;
+      await addThroughCustom(node, 'Attribute', name, value === true ? '' : String(value));
+      // A form control's `value` is stored as `defaultValue`: one attribute.
+      if (written.propsOnTag.has(`${tag}.${attributeProp(name, tag)}`)) written.propsOnTag.add(key);
+    } else continue;
+    await act(async () => applySnapshot(node, seed));
+  }
+  // The attributes the interaction patterns use, which the lists above do not name.
+  const patternProps = new Set(PATTERNS.flatMap((pattern) => [...treeVocabulary(pattern.tree()).props]));
+  for (const prop of patternProps) {
+    if (prop === 'style' || written.propKeys.has(prop)) continue;
+    const name = attributeName(prop);
+    await addThroughCustom(node, 'Attribute', name, 'probe');
+    // A pattern spells `popovertarget`, a node stores React's `popoverTarget`: one attribute.
+    if (written.propKeys.has(attributeProp(name, String(node.type)))) written.propKeys.add(prop);
+    await act(async () => applySnapshot(node, seed));
+  }
+}
+
+async function drive(scenario: Scenario, breakpointId?: string, customNames = false): Promise<void> {
   const node = setUp(scenario);
   if (breakpointId) {
     // A second frame's breakpoint id is random per store: give it a known one.
@@ -207,6 +300,7 @@ async function drive(scenario: Scenario, breakpointId?: string): Promise<void> {
     }
     if (!acted || !isAlive(node)) break;
   }
+  if (customNames) await driveCustomNames(node);
   view.unmount();
   cleanup();
 }
@@ -230,7 +324,8 @@ describe('coverage matrix: properties panel', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
 
-    for (const scenario of SCENARIOS) await drive(scenario);
+    // A generic element shows fewer sections, so Custom accepts what a container's own controls hold.
+    for (const scenario of SCENARIOS) await drive(scenario, undefined, ['container', 'generic', 'form control'].includes(scenario.label));
     await drive(SCENARIOS[0], 'tablet-probe');
 
     const referenced = referencedStyleKeys();
@@ -244,7 +339,7 @@ describe('coverage matrix: properties panel', () => {
         case 'html-element':
           if (paletteTags.has(entry.id)) results[key] = pass('placed from the palette');
           else if (written.types.has(entry.id)) results[key] = pass('a panel action set this tag');
-          else results[key] = fail('panel-no-tag-choice');
+          else results[key] = fail(BLOCKED_TAGS.has(entry.id) ? 'blocked-embedded-content' : 'panel-no-tag-choice');
           break;
         case 'html-global-attribute': {
           const { prop } = attributeSample(entry.id);
@@ -266,7 +361,8 @@ describe('coverage matrix: properties panel', () => {
           // Only HTML: an SVG or MathML `a` is not the link the panel edits.
           const namespace = namespaceOf(entry.kind);
           const { tag, prop } = markupAttributeSample(namespace, entry.id);
-          results[key] = namespace === 'html' && written.propsOnTag.has(`${tag}.${prop}`) ? pass() : fail('panel-no-general-editor');
+          if (namespace === 'html' && written.propsOnTag.has(`${tag}.${prop}`)) results[key] = pass();
+          else results[key] = fail(BLOCKED_TAGS.has(tag) ? 'blocked-embedded-content' : 'panel-no-general-editor');
           break;
         }
         case 'html-event-handler':
@@ -277,10 +373,8 @@ describe('coverage matrix: properties panel', () => {
           results[key] = fail('panel-no-tag-choice');
           break;
         case 'css-value': {
-          const tried = VALUE_ROW_TRY[entry.id];
-          results[key] = tried && written.styleValues.has(tried)
-            ? pass(`a control wrote ${tried}`)
-            : fail('panel-no-general-editor', 'no control wrote a value of this kind');
+          const tried = [VALUE_ROW_TRY[entry.id], cssValueSample(entry.id).value].find((value) => written.styleValues.has(value));
+          results[key] = tried ? pass(`a control wrote ${tried}`) : fail('panel-no-general-editor', 'no control wrote a value of this kind');
           break;
         }
         case 'css-selector':
@@ -308,5 +402,5 @@ describe('coverage matrix: properties panel', () => {
       referencedNotDriven: [...referenced].filter((k) => !written.styleKeys.has(k)).sort(),
       paletteTags: [...paletteTags].sort(),
     });
-  });
+  }, 400_000);
 });

@@ -50,6 +50,7 @@
   ],
   "exclude": [
     "node_modules",
-    "clearify.config.ts"
+    "clearify.config.ts",
+    "scripts/generate-web-names.ts"
   ]
 }

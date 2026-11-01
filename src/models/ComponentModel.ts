@@ -2,6 +2,7 @@
 import { types, Instance, SnapshotIn, SnapshotOut, getParent, hasParent as hasMstParent } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
+import { tagRefusal } from '@/lib/styles/customEditor';
 import { TEXT_NODE_TYPE, isTextNodeType } from '@/lib/renderer/textNode';
 import React from 'react';
 import type {
@@ -549,6 +550,24 @@ const ComponentModel: any = ComponentBase
         else next[key] = value;
       }
       self.props = next;
+    },
+
+    // The element's tag, from the Custom section's picker. tagRefusal is the
+    // whole rule (src/lib/styles/customEditor.ts); the panel shows its message,
+    // and a refused tag leaves the node as it was. One action, so one undo step.
+    setTag(tag: string) {
+      const props = self.props as Record<string, unknown>;
+      if (tagRefusal(tag, { childCount: self.children.length, text: props.children })) return;
+      self.type = tag;
+    },
+
+    // Remove a style property from every breakpoint. One action, so one undo step.
+    removeStyleProperty(property: string) {
+      const currentProps = self.props || {};
+      if (!currentProps.style || !(property in currentProps.style)) return;
+      const style: Record<string, any> = { ...currentProps.style };
+      delete style[property];
+      self.props = { ...currentProps, style };
     },
 
     // Canvas-level actions
