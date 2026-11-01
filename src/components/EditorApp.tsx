@@ -18,6 +18,7 @@ import { EditorTool } from '@/stores/EditorUIStore';
 import { getUndoManager, getHistoryStore, getDragManager } from '@/stores/RootStore';
 import { openProject, pageIdFromLocation, pickPage, restoreStashedDemo } from '@/stores/openProject';
 import EditorNotice from './EditorNotice';
+import InlineFormatBar from './InlineFormatBar';
 import LegalTemplateNotice from './site/LegalTemplateNotice';
 import { isEditableTarget, resolveAction } from '@/lib/keyBindings';
 import { deleteSelection } from '@/lib/canvas/deleteSelection';
@@ -278,6 +279,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
           Render nothing unless a gesture is active. */}
       <DropIndicatorLayer />
       <DragGhostLayer />
+      <InlineFormatBar />
 
       <TopBar />
       {/* Notices stack under the top bar (48px on a phone, 64px otherwise),

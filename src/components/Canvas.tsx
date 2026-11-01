@@ -591,6 +591,8 @@ const CanvasInner = observer(() => {
       while (el && el.getAttribute('data-inner-component-id') !== editing.id) {
         el = el.parentElement?.closest('[data-inner-component-id]') ?? null;
       }
+      // A text node of the tapped element is edited in a span of its own.
+      el ??= document.activeElement;
       if (el instanceof HTMLElement) {
         // A finger puts the caret where it tapped (the end when the tap was
         // beside the text); the mouse double-click selected everything.

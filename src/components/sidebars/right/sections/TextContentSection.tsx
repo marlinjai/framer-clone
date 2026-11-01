@@ -19,7 +19,7 @@ import { Type } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindableSlotMeta } from '@/lib/bindings/types';
 import { getBindableSlotsFor } from '@/lib/componentRegistry';
-import { isTextBound, textNodesOf } from '@/lib/renderer/textContent';
+import { isTextBound, textNodesOf, textRunLabel } from '@/lib/renderer/textContent';
 import { cn } from '@/lib/utils';
 import { CollapsibleSection, FIELD_LABEL } from '../primitives';
 import BindingControl from '../BindingControl';
@@ -155,6 +155,7 @@ const TextNodeRow = observer(({ node, label }: TextNodeRowProps) => {
 
   return (
     <>
+      {label && <span className={cn(FIELD_LABEL, 'min-w-0 break-words leading-snug')}>{label}</span>}
       {slotMeta || bound ? (
         // Bindable (or already bound): the binding control shows the field
         // with a bind button, or the binding chip instead of the field.
@@ -179,8 +180,8 @@ export const TextContentSection = observer(({ component }: TextContentSectionPro
       <div className="flex min-w-0 flex-col gap-1.5" data-testid="text-content-section">
         {/* key: a new draft per node, so text typed for one element never
             lands on the next one selected. */}
-        {nodes.map((node, i) => (
-          <TextNodeRow key={node.id} node={node} label={nodes.length > 1 ? `Text ${i + 1}` : undefined} />
+        {nodes.map(node => (
+          <TextNodeRow key={node.id} node={node} label={nodes.length > 1 ? textRunLabel(component, node) : undefined} />
         ))}
       </div>
     </CollapsibleSection>

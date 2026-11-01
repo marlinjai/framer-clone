@@ -8,10 +8,10 @@
 // paragraph, a button label) or bound to data. Text mixed with elements lives in
 // text nodes among the children (src/lib/renderer/textNode.ts): the Text field
 // lists those too, so the text of a mixed paragraph is editable without touching
-// its elements. Inline editing stays stricter (ComponentRenderer): it needs no
-// child at all, because it reads the element's whole textContent back. A node
-// whose text is bound to data still holds text, but the text is the binding's:
-// it is shown as the binding, never edited.
+// its elements. Inline editing opens one run at a time (src/lib/canvas/
+// inlineFormat.ts), so it cannot reach the elements either. A node whose text is
+// bound to data still holds text, but the text is the binding's: it is shown as
+// the binding, never edited.
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { isTextNodeType } from './textNode';
 
@@ -29,6 +29,65 @@ export function isTextBound(node: ComponentInstance): boolean {
 /** True when the node's text may be typed over in the Text field. */
 export function isTextEditable(node: ComponentInstance): boolean {
   return holdsText(node) && !isTextBound(node);
+}
+
+/**
+ * The runs that emit text into this element's DOM, in order: a legacy string,
+ * then each text node shown and not empty. A hidden run renders nothing.
+ */
+export function renderedRunsOf(node: ComponentInstance): ComponentInstance[] {
+  return textNodesOf(node).filter(
+    run => run === node || (run.canvasVisible && (isTextBound(run) || (run.props?.children ?? '') !== '')),
+  );
+}
+
+/** The text that opens first for inline editing: bound text is the binding's, a hidden run is not on the canvas. */
+export function firstEditableRun(node: ComponentInstance): ComponentInstance | undefined {
+  return textNodesOf(node).find(run => !isTextBound(run) && (run === node || run.canvasVisible));
+}
+
+const EXCERPT_CHARS = 24;
+
+/** The start of a text, cut at a word where one ends close by, or undefined when there is none. */
+function excerptOf(value: unknown): string | undefined {
+  const text = typeof value === 'string' || typeof value === 'number' ? String(value).replace(/\s+/g, ' ').trim() : '';
+  if (!text) return undefined;
+  if (text.length <= EXCERPT_CHARS) return text;
+  const cut = text.slice(0, EXCERPT_CHARS);
+  const space = cut.lastIndexOf(' ');
+  return `${space > EXCERPT_CHARS / 2 ? cut.slice(0, space) : cut}...`;
+}
+
+/** A neighbour as a person would point at it: its words, or what it is. */
+function neighbourName(node: ComponentInstance): string {
+  const words = excerptOf(node.props?.children);
+  return words ? `"${words}"` : node.displayName;
+}
+
+/**
+ * What a text run is called in the panel: a short excerpt and the elements on
+ * either side, so `Hello <b>bold</b> world` reads as two different fields. A
+ * run bound to data shows no stored text, an empty one has none, and the space
+ * between two elements is a run too.
+ */
+export function textRunLabel(element: ComponentInstance, run: ComponentInstance): string {
+  const siblings = element.children as ComponentInstance[];
+  const at = run === element ? -1 : siblings.indexOf(run);
+  const before = siblings.slice(0, Math.max(at, 0)).reverse().find(child => !isTextNodeType(child.type));
+  const after = siblings.slice(at + 1).find(child => !isTextNodeType(child.type));
+  const words = excerptOf(run.props?.children);
+  const blank = String(run.props?.children ?? '') === '' ? 'Empty text' : 'A space';
+  const name = isTextBound(run) ? 'Text from data' : words ? `"${words}"` : blank;
+  const beside =
+    before && after
+      ? `between ${neighbourName(before)} and ${neighbourName(after)}`
+      : after
+        ? `before ${neighbourName(after)}`
+        : before
+          ? `after ${neighbourName(before)}`
+          : '';
+  const hidden = run !== element && !run.canvasVisible ? ', hidden' : '';
+  return `${name}${beside ? ` ${beside}` : ''}${hidden}`;
 }
 
 /** Every node whose text belongs to this element, in page order: its own, then its text nodes. */

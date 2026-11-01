@@ -6,6 +6,10 @@ import ts from 'typescript';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { FORM_KIND_ATTR } from '@/lib/forms/definition';
 import { STICKY_CTA_ATTR, STICKY_CTA_MARKER } from '@/lib/stickyCta/stickyCta';
+import { TEXT_NODE_TYPE, isTextNodeType } from '@/lib/renderer/textNode';
+
+/** A text node with a binding: bare text has nowhere to carry the bindings prop. */
+const TEXT_RUN_TAG = 'TextRun';
 
 /** The bindings prop on a JSX element: the plan's "explicit, named prop". */
 const BINDINGS_PROP = 'bindings';
@@ -60,7 +64,17 @@ function simplify(node: ComponentNode): NormalNode {
     props: JSON.parse(JSON.stringify(props)) as Record<string, unknown>,
     children: (node.children ?? []).map(simplify),
   };
-  if (typeof text === 'string' || typeof text === 'number') out.text = text;
+  if (typeof text === 'string' || typeof text === 'number') {
+    // A string in front of child nodes renders as a leading text node, so it is one.
+    if (out.children.length > 0) out.children.unshift({ type: TEXT_NODE_TYPE, props: {}, text, children: [] });
+    else out.text = text;
+  }
+  // And a lone plain text node renders as the element's own text.
+  const only = out.children.length === 1 ? out.children[0] : undefined;
+  if (only && isTextNodeType(only.type) && only.text !== undefined && !only.bindings && Object.keys(only.props).length === 0) {
+    out.children = [];
+    out.text = only.text;
+  }
   if (node.bindings && Object.keys(node.bindings).length > 0) out.bindings = node.bindings;
   return out;
 }
@@ -76,9 +90,20 @@ function attributeText(name: string, value: unknown): string {
   return ` ${name}={${JSON.stringify(value)}}`;
 }
 
+/** A text node is an expression among its siblings; a bound one needs a tag to carry the binding. */
+function renderTextNode(n: NormalNode): string {
+  const extra = Object.keys(n.props);
+  if (extra.length > 0 || n.children.length > 0) throw new Error(`a text node holds only text, not ${extra.join(', ') || 'children'}`);
+  const text = n.text === undefined ? '' : `{${JSON.stringify(n.text)}}`;
+  if (n.bindings === undefined) return text || '{""}';
+  const bindings = attributeText(BINDINGS_PROP, n.bindings);
+  return text ? `<${TEXT_RUN_TAG}${bindings}>${text}</${TEXT_RUN_TAG}>` : `<${TEXT_RUN_TAG}${bindings} />`;
+}
+
 /** Total over the normalised form: a node with no JSX representation throws. */
 export function nodesToJsx(node: ComponentNode): string {
   const render = (n: NormalNode): string => {
+    if (isTextNodeType(n.type)) return renderTextNode(n);
     const island = Object.entries(ISLANDS).find(([, { attr, value }]) => n.props[attr] === value);
     const name = island ? island[0] : n.type;
     if (!island && !/^[a-z][a-zA-Z0-9-]*$/.test(name)) throw new Error(`type ${JSON.stringify(name)} is not a JSX tag`);
@@ -108,7 +133,6 @@ export interface ImportResult {
   /** Everything not converted, by source text: reported, never dropped silently. */
   leftOver: string[];
   /** Text sat somewhere a node cannot hold it. */
-  mixedText: boolean;
 }
 
 /** A literal expression's value, or undefined with a note when it is a program. */
@@ -159,14 +183,14 @@ function jsxText(raw: string): string {
 export function jsxToNodes(jsx: string): ImportResult {
   const source = ts.createSourceFile('import.tsx', `const root = (${jsx});`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const leftOver: string[] = [];
-  let mixedText = false;
   const textOf = (node: ts.Node) => node.getText(source).replace(/\s+/g, ' ').slice(0, 120);
 
   const convert = (element: ts.JsxElement | ts.JsxSelfClosingElement): ComponentNode | undefined => {
     const open = ts.isJsxElement(element) ? element.openingElement : element;
     const tag = open.tagName.getText(source);
     const island = ISLANDS[tag];
-    if (!island && !/^[a-z]/.test(tag)) {
+    const textRun = tag === TEXT_RUN_TAG;
+    if (!island && !textRun && !/^[a-z]/.test(tag)) {
       leftOver.push(`unknown component <${tag}>`);
       return undefined;
     }
@@ -195,7 +219,8 @@ export function jsxToNodes(jsx: string): ImportResult {
       else props[name] = value;
     }
 
-    const children: ComponentNode[] = [];
+    // Text and elements in source order; which form a run takes is known at the end.
+    const contents: Array<ComponentNode | string | number> = [];
     if (ts.isJsxElement(element)) {
       for (const child of element.children) {
         let text: string | number | undefined;
@@ -212,21 +237,26 @@ export function jsxToNodes(jsx: string): ImportResult {
           text = literal.value;
         } else if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
           const converted = convert(child);
-          if (converted) children.push(converted);
+          if (converted) contents.push(converted);
           continue;
         } else {
           leftOver.push(`unsupported child ${textOf(child)}`);
           continue;
         }
-        // A node holds one leading string; text after an element has no slot.
-        if (children.length > 0 || props.children !== undefined) {
-          mixedText = true;
-          leftOver.push(`text with no place in a node: ${JSON.stringify(text)}`);
-        } else props.children = text;
+        contents.push(text);
       }
     }
 
-    const node: ComponentNode = { type: host, props: props as ComponentNode['props'] };
+    // A lone run is the element's own text; beside anything else each run is a text node.
+    let children: ComponentNode[] = [];
+    if (contents.length === 1 && typeof contents[0] !== 'object') props.children = contents[0];
+    else {
+      children = contents.map((item) =>
+        typeof item === 'object' ? item : { type: TEXT_NODE_TYPE, props: { children: item } as ComponentNode['props'] },
+      );
+    }
+
+    const node: ComponentNode = { type: textRun ? TEXT_NODE_TYPE : host, props: props as ComponentNode['props'] };
     if (bindings) node.bindings = bindings;
     if (children.length > 0) node.children = children;
     return node;
@@ -238,14 +268,14 @@ export function jsxToNodes(jsx: string): ImportResult {
     if (!root) ts.forEachChild(node, find);
   };
   find(source);
-  if (!root) return { leftOver: [`not JSX: ${jsx.slice(0, 80)}`], mixedText };
+  if (!root) return { leftOver: [`not JSX: ${jsx.slice(0, 80)}`] };
 
   // Only a bare element converts: `cond && <p />` or `items.map(...)` is a program.
   const statement = source.statements[0] as ts.VariableStatement;
   let init = statement.declarationList.declarations[0].initializer;
   while (init && ts.isParenthesizedExpression(init)) init = init.expression;
   if (init !== root) {
-    return { leftOver: [`logic around the markup: ${textOf(init as ts.Node)}`], mixedText };
+    return { leftOver: [`logic around the markup: ${textOf(init as ts.Node)}`] };
   }
-  return { node: convert(root), leftOver, mixedText };
+  return { node: convert(root), leftOver };
 }

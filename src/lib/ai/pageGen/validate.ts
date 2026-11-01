@@ -12,7 +12,8 @@
 //     - forbidden tags (script, iframe, form, ...) dropped with their subtree,
 //     - text AND children on one node: the text becomes a leading text node
 //       (type "#text", bare text with no element, src/lib/renderer/textNode.ts),
-//     - a "#text" node keeps only its text, and never stands at the top level,
+//     - a "#text" node keeps only its text, and never stands at the top level
+//       or directly inside an element a browser would move it out of,
 //     - children on a void tag dropped, missing labels filled,
 //     - an img's alt text kept as the model wrote it: a missing or generic
 //       one is NOT filled here (the preset's "Image" default is removed too),
@@ -52,7 +53,7 @@ import { parseAspectRatio, photoUrlOf, withPhotoUrl } from '@/lib/images/imageSt
 import { normalizeFontFamily } from '@/lib/fonts/registry';
 import ComponentModel, { ComponentTypeEnum, CSS_PROP_SET } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag/voidTags';
-import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
+import { TEXT_NODE_TYPE, refusesBareText } from '@/lib/renderer/textNode';
 import { formPropKeysFor, presetFormKind, sanitizeGeneratedFormProps } from '@/lib/forms/generation';
 import {
   BASE_KEY,
@@ -159,6 +160,11 @@ export const STYLE_BREAKOUT_CHARS = /[;{}\\\u0000-\u001f\u007f]/;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+/** True for raw model output that asks for a text node. */
+function isTextNodeInput(v: unknown): boolean {
+  return isPlainObject(v) && typeof v.type === 'string' && v.type.trim().toLowerCase() === TEXT_NODE_TYPE;
 }
 
 function kebabToCamel(key: string): string {
@@ -546,7 +552,7 @@ class Validator {
       if (!NODE_KEYS.has(key) && !OWNED_KEYS.has(key)) this.warn(path, `unknown key "${key}" ignored`);
     }
 
-    if (typeof raw.type === 'string' && raw.type.trim().toLowerCase() === TEXT_NODE_TYPE) {
+    if (isTextNodeInput(raw)) {
       return this.textNode(raw, path, depth, parentId);
     }
 
@@ -756,7 +762,13 @@ class Validator {
         text = undefined;
       }
       rawChildren.forEach((child, i) => {
-        children.push(...this.node(child, `${path}.children[${i}]`, depth + 1, id));
+        const childPath = `${path}.children[${i}]`;
+        // The browser would move this text out of the element while parsing.
+        if (refusesBareText(type) && isTextNodeInput(child)) {
+          this.warn(childPath, `a #text node cannot sit directly inside <${type}>, dropped`);
+          return;
+        }
+        children.push(...this.node(child, childPath, depth + 1, id));
       });
     }
     if (isStickyCta(presetDefaults)) {

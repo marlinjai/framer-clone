@@ -16,6 +16,35 @@ export function isTextNodeType(type: unknown): boolean {
   return type === TEXT_NODE_TYPE;
 }
 
+// Elements whose content model has no place for text. The HTML parser moves
+// text out of a table's structure in front of the table (foster parenting) and
+// never shows text in a select, so a published page would not match the tree.
+const NO_BARE_TEXT: Readonly<Record<string, string>> = {
+  table: 'a table',
+  thead: 'a table section',
+  tbody: 'a table section',
+  tfoot: 'a table section',
+  tr: 'a table row',
+  colgroup: 'a table column group',
+  select: 'a dropdown',
+  optgroup: 'an option group',
+  html: 'the document',
+  head: 'the document head',
+  frameset: 'a frameset',
+};
+
+/** True for an element a browser would not keep bare text in while parsing. */
+export function refusesBareText(type: string): boolean {
+  return Object.hasOwn(NO_BARE_TEXT, type.toLowerCase());
+}
+
+/** Why text may not go directly inside `type`, or undefined when it may. */
+export function bareTextRefusal(type: string): string | undefined {
+  if (!refusesBareText(type)) return undefined;
+  const place = NO_BARE_TEXT[type.toLowerCase()];
+  return `Text cannot go directly inside ${place}: a browser would move it out of place. Put it inside a cell or another element.`;
+}
+
 let warnedUnrenderable = false;
 
 /**

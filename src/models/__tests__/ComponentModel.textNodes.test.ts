@@ -196,6 +196,113 @@ describe('copying and saving', () => {
   });
 });
 
+describe('words becoming their own element', () => {
+  const bold = { tag: 'strong', label: 'Bold' };
+  const history = () => getHistoryStore()!;
+
+  it('splits a plain element into text, element, text, as one undo step that also holds the typing', () => {
+    const made = para.wrapTextRange('para', 'Hello big world', 6, 9, bold)!;
+    expect(shape(para)).toEqual(['Hello ', made.id, ' world']);
+    expect(made).toMatchObject({ type: 'strong', label: 'Bold', parentId: 'para' });
+    expect(made.props.children).toBe('big');
+    expect(para.props.children).toBeUndefined();
+    expect(para.props.className).toBe('lead');
+    expect(history().history).toHaveLength(1);
+
+    history().undo();
+    expect(para.children).toHaveLength(0);
+    expect(para.props.children).toBe('Hello ');
+    history().redo();
+    expect(shape(para)).toEqual(['Hello ', made.id, ' world']);
+  });
+
+  it('splits one text node and leaves everything around it where it is', () => {
+    para.addChild(createIntrinsicComponent('kid', 'em', { children: 'x' }));
+    para.addChild(textChild('tail', ' one two', 'para'));
+    const made = para.wrapTextRange('tail', ' one two', 1, 4, bold)!;
+    expect(shape(para)).toEqual(['Hello ', 'kid', ' ', made.id, ' two']);
+  });
+
+  it('leaves no empty text node at either end, or when every word is taken', () => {
+    para.addChild(createIntrinsicComponent('kid', 'em', {}));
+    para.addChild(textChild('tail', 'one two', 'para'));
+    const first = para.wrapTextRange('tail', 'one two', 0, 3, bold)!;
+    expect(shape(para)).toEqual(['Hello ', 'kid', first.id, ' two']);
+    const lead = para.children[0].id;
+    const second = para.wrapTextRange(lead, 'Hello ', 0, 6, bold)!;
+    expect(shape(para)).toEqual([second.id, 'kid', first.id, ' two']);
+  });
+
+  it('refuses without a change: bound text, a range that does not fit, an unknown run, a data element', () => {
+    para.addChild(createIntrinsicComponent('kid', 'em', {}));
+    para.addChild(textChild('tail', 'one two', 'para'));
+    const before = getSnapshot(para);
+    (para.children[2] as ComponentInstance).setBinding('children', { mode: 'read', path: 'row.title' } as never);
+    history().clear();
+    expect(para.wrapTextRange('tail', 'one two', 0, 3, bold)).toBeUndefined();
+    expect(para.wrapTextRange(para.children[0].id, 'Hello ', 4, 4, bold)).toBeUndefined();
+    expect(para.wrapTextRange(para.children[0].id, 'Hello ', 2, 99, bold)).toBeUndefined();
+    expect(para.wrapTextRange('kid', 'x', 0, 1, bold)).toBeUndefined();
+    expect(para.wrapTextRange('nothing', 'x', 0, 1, bold)).toBeUndefined();
+    expect(history().canUndo).toBe(false);
+    expect((getSnapshot(para) as { children: unknown[] }).children).toHaveLength((before as { children: unknown[] }).children.length);
+
+    const island = createIntrinsicComponent('island', 'div', { children: 'x', 'data-component-kind': 'collection' });
+    main.addChild(island);
+    const live = main.children.find((c: ComponentInstance) => c.id === 'island') as ComponentInstance;
+    expect(live.wrapTextRange('island', 'x', 0, 1, bold)).toBeUndefined();
+    const boundOwn = createIntrinsicComponent('own', 'p', { children: 'x' });
+    main.addChild(boundOwn);
+    const liveOwn = main.children.find((c: ComponentInstance) => c.id === 'own') as ComponentInstance;
+    liveOwn.setBinding('children', { mode: 'read', path: 'row.title' } as never);
+    expect(liveOwn.wrapTextRange('own', 'x', 0, 1, bold)).toBeUndefined();
+  });
+
+  it('gives words back joined to the text on both sides, and collapses to a plain element', () => {
+    const made = para.wrapTextRange('para', 'one two three', 4, 7, bold)!;
+    history().clear();
+    para.unwrapChild(made.id, 'TWO');
+    expect(para.children).toHaveLength(0);
+    expect(para.props.children).toBe('one TWO three');
+    expect(history().history).toHaveLength(1);
+    history().undo();
+    expect(shape(para)).toEqual(['one ', made.id, ' three']);
+  });
+
+  it('gives words back as a text node between elements, and leaves bound and hidden text whole', () => {
+    para.setProps({ children: undefined });
+    para.addChild(createIntrinsicComponent('a1', 'em', {}));
+    para.addChild(createIntrinsicComponent('mid', 'strong', { children: 'x' }));
+    para.addChild(createIntrinsicComponent('a2', 'em', {}));
+    para.unwrapChild('mid', 'x');
+    expect(shape(para)).toEqual(['a1', 'x', 'a2']);
+
+    para.addChild(textChild('hidden', 'h', 'para'));
+    (para.children[3] as ComponentInstance).toggleCanvasVisibility();
+    para.addChild(createIntrinsicComponent('mid2', 'strong', { children: 'y' }));
+    para.addChild(textChild('bound', 'b', 'para'));
+    (para.children[5] as ComponentInstance).setBinding('children', { mode: 'read', path: 'row.title' } as never);
+    para.unwrapChild('mid2', 'y');
+    expect(shape(para)).toEqual(['a1', 'x', 'a2', 'h', 'y', 'b']);
+    para.unwrapChild('nothing', 'z');
+    expect(para.children).toHaveLength(6);
+  });
+
+  it('turns a legacy string into a leading text node, and leaves a plain element alone', () => {
+    para.adoptOwnText();
+    expect(para.children).toHaveLength(0);
+    const legacy = ComponentModel.create({
+      id: 'legacy',
+      type: 'p',
+      componentType: 'host',
+      props: { children: 'Old ' },
+      children: [{ id: 'em', type: 'em', componentType: 'host', parentId: 'legacy' }],
+    });
+    legacy.adoptOwnText();
+    expect(shape(legacy)).toEqual(['Old ', 'em']);
+  });
+});
+
 describe('what a text node refuses', () => {
   let run: ComponentInstance;
 
@@ -226,6 +333,49 @@ describe('what a text node refuses', () => {
   it('moves to another element, and between siblings', () => {
     expect(page.moveTreeComponent(run.id, { kind: 'parent', parentId: main.id })).toBeDefined();
     expect(run.parentId).toBe(main.id);
+  });
+
+  it.each(['table', 'thead', 'tbody', 'tfoot', 'tr', 'colgroup', 'select', 'optgroup'] as const)(
+    'stays out of <%s>, where a browser would move it, and says why',
+    (tag) => {
+      const holder = createIntrinsicComponent('holder', tag, {});
+      main.addChild(holder);
+      const cell = createIntrinsicComponent('cell', 'td', {});
+      holder.addChild(cell);
+      const target = { kind: 'parent', parentId: 'holder' } as const;
+      expect(page.dropRefusal(run.id, target)).toMatch(/move it out of place/);
+      expect(page.dropRefusal(run.id, { kind: 'sibling', siblingId: 'cell', position: 'before' })).toMatch(/move it out of place/);
+      expect(page.moveTreeComponent(run.id, target)).toBeUndefined();
+      expect(page.moveTreeComponent(run.id, { kind: 'sibling', siblingId: 'cell', position: 'after' })).toBeUndefined();
+      expect(para.children[0].id).toBe(run.id);
+      holder.addChild(textChild('direct', 'x', 'holder'));
+      holder.addChildren([textChild('direct-2', 'x', 'holder')]);
+      expect(holder.children.map((c: ComponentInstance) => c.id)).toEqual(['cell']);
+    },
+  );
+
+  it('moves freely inside a table cell, and an element still moves into a table row', () => {
+    const row = createIntrinsicComponent('row', 'tr', {});
+    const cell = createIntrinsicComponent('cell', 'td', {});
+    main.addChild(row);
+    row.addChild(cell);
+    expect(page.dropRefusal(run.id, { kind: 'parent', parentId: 'cell' })).toBeUndefined();
+    expect(page.dropRefusal('bold', { kind: 'parent', parentId: 'row' })).toBeUndefined();
+    expect(page.moveTreeComponent(run.id, { kind: 'parent', parentId: 'cell' })).toBeDefined();
+    expect(run.parentId).toBe('cell');
+  });
+
+  it('gives a reason for the two other refusals, and none for a node that is gone', () => {
+    expect(page.dropRefusal(run.id, { kind: 'floating', x: 1, y: 1 })).toMatch(/inside an element/);
+    expect(page.dropRefusal('bold', { kind: 'parent', parentId: run.id })).toMatch(/cannot hold/);
+    expect(page.dropRefusal('nothing', { kind: 'appTree' })).toBeUndefined();
+  });
+
+  it('keeps its element from becoming a tag a browser would move it out of', () => {
+    para.setTag('tr');
+    expect(para.type).toBe('p');
+    para.setTag('section');
+    expect(para.type).toBe('section');
   });
 
   it('takes no generated nodes', () => {

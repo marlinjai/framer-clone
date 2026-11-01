@@ -7,11 +7,13 @@ import { observer } from 'mobx-react-lite';
 import { ComponentInstance } from '../models/ComponentModel';
 import { EditorTool } from '../stores/EditorUIStore';
 import { useStore } from '@/hooks/useStore';
+import { getUndoManager } from '@/stores/RootStore';
 import { useDragSource } from '@/lib/drag';
 import { createComponentElement } from '@/lib/renderer/createComponentElement';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
 import { createScope, type BindingScope } from '@/lib/bindings/resolver/scope';
 import { EDITING_TEXT_STYLE, startInlineTextEdit } from '@/lib/canvas/inlineTextEdit';
+import { INLINE_FORMAT_KEYS, applyInlineFormat, beginRunEdit, normaliseEditedText, runAtPoint } from '@/lib/canvas/inlineFormat';
 import { isTextBound } from '@/lib/renderer/textContent';
 import { isTextNodeType } from '@/lib/renderer/textNode';
 
@@ -77,6 +79,77 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
   // nodes get the same treatment via GroundWrapper's `visible` prop.
   if (!component.canvasVisible) return null;
 
+  // What makes an element a text box, for an element and for a text node's span.
+  // Commits on blur; Enter commits, ESC cancels.
+  const textBoxProps = (initialText: string, readText: (el: HTMLElement) => string) => ({
+    onBlur: (e: React.FocusEvent<HTMLElement>) => {
+      // The edit moved on: a format wrote this text in its own action.
+      if (editorUI.editingComponent?.id !== component.id) return;
+      const next = readText(e.currentTarget);
+      if (next !== initialText) {
+        component.setTextContent(next);
+      }
+      editorUI.endTextEdit();
+    },
+    onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
+      e.stopPropagation();
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+        const key = e.key.toLowerCase();
+        const format = Object.hasOwn(INLINE_FORMAT_KEYS, key) ? INLINE_FORMAT_KEYS[key] : undefined;
+        if (format) {
+          // Also keeps the browser's own bold from writing markup in here.
+          e.preventDefault();
+          applyInlineFormat(editorUI, format);
+          return;
+        }
+        // Nothing typed in this box: the step to undo is the page's, such as the
+        // format that opened it. The box has no undo of its own to offer.
+        if (key === 'z' && readText(e.currentTarget) === initialText) {
+          e.preventDefault();
+          editorUI.endTextEdit();
+          getUndoManager()?.undo();
+          return;
+        }
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        (e.currentTarget as HTMLElement).blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        // Revert the DOM text before blurring so onBlur doesn't commit the
+        // in-progress edit.
+        e.currentTarget.textContent = initialText;
+        (e.currentTarget as HTMLElement).blur();
+      }
+    },
+    // Remove the upstream onClick handler during editing so clicks inside the
+    // textbox don't re-trigger selection.
+    onClick: (e: React.MouseEvent) => e.stopPropagation(),
+    onMouseDown: (e: React.MouseEvent) => e.stopPropagation(),
+  });
+
+  // A text node has no element, so while it is edited it gets a span of its own
+  // and nothing else in the element is editable (src/lib/canvas/inlineFormat.ts).
+  // pre-wrap keeps the spaces at its edges, which separate it from its neighbours.
+  if (isTextNodeType(component.type) && isEditingCopy) {
+    const initialText = String(component.props?.children ?? '');
+    return (
+      <span
+        ref={editRef}
+        contentEditable="true"
+        suppressContentEditableWarning
+        data-inner-component-id={component.id}
+        style={{ ...EDITING_TEXT_STYLE, whiteSpace: 'pre-wrap' }}
+        {...textBoxProps(initialText, el => normaliseEditedText(el.textContent ?? ''))}
+        // The element around it would start a drag or take the double-click.
+        onPointerDown={e => e.stopPropagation()}
+        onDoubleClick={e => e.stopPropagation()}
+      >
+        {initialText}
+      </span>
+    );
+  }
+
   const { attributes, style } = component.getResolvedProps(breakpointId, allBreakpoints);
 
   // Apply read bindings against the active scope. Feed style in alongside the
@@ -95,9 +168,8 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
   // Text-editing eligibility: a single string-valued `children` and no nested
   // components. Anything with child components renders its own subtree and
   // isn't safe to turn contenteditable (the commit reads the element's whole
-  // textContent, which would flatten them). Text nodes count as children here:
-  // the text of a mixed element is edited in the Text field of the panel, and
-  // an element child of it edits inline as itself.
+  // textContent, which would flatten them): its text nodes open one at a time,
+  // and an element child of it edits inline as itself.
   // Text bound to data is the binding's: it shows as the binding in the
   // properties panel and is not typed over on the canvas.
   const rawChildren = (resolvedAttributes as any).children;
@@ -131,8 +203,19 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
       (resolvedAttributes as any)?.onClick?.(e);
     },
     onDoubleClick: (e: React.MouseEvent) => {
-      if (!isTextEditable || isLocked) return;
-      if (editorUI.selectedTool !== EditorTool.SELECT) return;
+      if (isLocked || editorUI.selectedTool !== EditorTool.SELECT) return;
+      if (!isTextEditable) {
+        // Mixed with elements: the text node under the pointer opens. A press
+        // on an element child is that child's.
+        const host = e.currentTarget as HTMLElement;
+        if (e.target !== host) return;
+        const run = runAtPoint(host, component, { x: e.clientX, y: e.clientY });
+        if (!run) return;
+        e.stopPropagation();
+        e.preventDefault();
+        beginRunEdit(editorUI, component, run, host, breakpointId || undefined, 'all');
+        return;
+      }
       e.stopPropagation();
       e.preventDefault();
       // Edit in this event, before the store hears of it: the element turns
@@ -146,36 +229,12 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
   };
 
   if (isEditing && isTextEditable) {
-    // contenteditable host element. Commits on blur; Enter commits, ESC cancels.
+    // contenteditable host element.
     finalProps.contentEditable = 'true';
     finalProps.suppressContentEditableWarning = true;
     finalProps.ref = editRef;
     finalProps.style = { ...editorStyle, ...EDITING_TEXT_STYLE };
-    const initialText = rawChildren as string;
-    finalProps.onBlur = (e: React.FocusEvent<HTMLElement>) => {
-      const next = e.currentTarget.textContent ?? '';
-      if (next !== initialText) {
-        component.setTextContent(next);
-      }
-      editorUI.endTextEdit();
-    };
-    finalProps.onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
-      e.stopPropagation();
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        (e.currentTarget as HTMLElement).blur();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        // Revert the DOM text before blurring so onBlur doesn't commit the
-        // in-progress edit.
-        e.currentTarget.textContent = initialText;
-        (e.currentTarget as HTMLElement).blur();
-      }
-    };
-    // Remove the upstream onClick handler during editing so clicks inside the
-    // textbox don't re-trigger selection.
-    finalProps.onClick = (e: React.MouseEvent) => e.stopPropagation();
-    finalProps.onMouseDown = (e: React.MouseEvent) => e.stopPropagation();
+    Object.assign(finalProps, textBoxProps(rawChildren as string, el => el.textContent ?? ''));
   } else if (canMove) {
     // Attach the unified drag manager's pointer handler. Click is not
     // suppressed: below the threshold, the gesture never engages and the

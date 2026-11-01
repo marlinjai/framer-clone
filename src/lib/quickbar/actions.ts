@@ -17,6 +17,7 @@
 //   - Values the model does not store (a heading's default size, a flex
 //     container's default row direction) are read from the rendered element
 //     through `computed`, so a step starts from what the person sees.
+import { firstEditableRun } from '@/lib/renderer/textContent';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { PageModelType } from '@/models/PageModel';
 import type { EditorUIType } from '@/stores/EditorUIStore';
@@ -51,9 +52,9 @@ export function quickKindOf(component: ComponentInstance): QuickKind {
   return 'other';
 }
 
-/** True when the element's text can be edited inline (a single string child, no nested components). */
+/** True when the element has text that can be edited inline: its own, or a text node beside its elements. */
 export function isTextEditable(component: ComponentInstance): boolean {
-  return component.children.length === 0 && typeof (component.props as Record<string, unknown>)?.children === 'string';
+  return !!firstEditableRun(component);
 }
 
 /** The groups of controls the quick toolbar shows, in order, for an element. */

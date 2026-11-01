@@ -12,6 +12,7 @@
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { isSafeHref } from '@/lib/links/safeHref';
 import { BLOCKED_TAGS, isDroppedProp } from '@/lib/renderer/blockedNodes';
+import { bareTextRefusal, isTextNodeType } from '@/lib/renderer/textNode';
 import { cssPropertyName, cssStyleKey, unsafeDeclaration } from '@/lib/responsive/responsiveCss';
 import {
   cssProperties,
@@ -189,6 +190,8 @@ export interface NodeContent {
   childCount: number;
   /** The node's `props.children`. */
   text: unknown;
+  /** True when a child is bare text (src/lib/renderer/textNode.ts). */
+  hasTextNode?: boolean;
 }
 
 const holdsText = (text: unknown) => (typeof text === 'string' && text !== '') || typeof text === 'number';
@@ -201,7 +204,18 @@ export function tagRefusal(tag: string, content: NodeContent): string | null {
   const hasContent = content.childCount > 0 || holdsText(content.text);
   if (isVoidTag(tag) && hasContent) return `<${tag}> cannot hold content. Remove its text and children first.`;
   if (tag === 'textarea' && content.childCount > 0) return '<textarea> holds only text. Remove its children first.';
+  // The same list a drop obeys: text in here would not stay where the tree says.
+  if (holdsText(content.text) || content.hasTextNode) return bareTextRefusal(tag) ?? null;
   return null;
+}
+
+/** What tagRefusal needs to know about a node. */
+export function contentOf(node: { props?: unknown; children: readonly { type: string }[] }): NodeContent {
+  return {
+    childCount: node.children.length,
+    text: (node.props as { children?: unknown } | undefined)?.children,
+    hasTextNode: node.children.some(child => isTextNodeType(child.type)),
+  };
 }
 
 const TAG_GROUPS: readonly { label: string; tags: readonly string[] }[] = [

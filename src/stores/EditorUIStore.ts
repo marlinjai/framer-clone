@@ -25,6 +25,12 @@ function selectionTarget(component: ComponentInstance): ComponentInstance {
   return getParentOfType(component, ComponentModel) as ComponentInstance;
 }
 
+/** 'refused': an action the editor would not carry out, and why. */
+export interface EditorNoticeState {
+  kind: 'changedElsewhere' | 'missingPage' | 'refused';
+  message: string;
+}
+
 // EditorUI store - manages all UI state and current selections
 const EditorUIStore = types.model('EditorUI', {
   // Current project selection (domain reference)
@@ -83,7 +89,7 @@ const EditorUIStore = types.model('EditorUI', {
   // the demo editor drops it and starts fresh instead of offering it again.
   consumedDemoProjectId: undefined as string | undefined,
   // A message for the person above the canvas (see EditorNotice), dismissable.
-  editorNotice: undefined as { kind: 'changedElsewhere' | 'missingPage'; message: string } | undefined,
+  editorNotice: undefined as EditorNoticeState | undefined,
   // The product a product page shows while designing (src/lib/commerce/productPreview.tsx),
   // by handle; undefined means the first in the catalogue. Never saved with the project.
   previewProductHandle: undefined as string | undefined,
@@ -131,7 +137,7 @@ const EditorUIStore = types.model('EditorUI', {
     self.demoProjectId = undefined;
   },
 
-  setEditorNotice(notice: { kind: 'changedElsewhere' | 'missingPage'; message: string } | undefined) {
+  setEditorNotice(notice: EditorNoticeState | undefined) {
     self.editorNotice = notice;
   },
 

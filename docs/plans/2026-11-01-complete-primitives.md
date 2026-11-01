@@ -67,9 +67,12 @@ render.
    a child with `type: '#text'` and its text in `props.children` emits no element, so the DOM is exact
    (`src/lib/renderer/textNode.ts`). A row holding a string and child nodes is not migrated: every
    renderer shows the string first. On the canvas a click lands on the element, and selecting a text
-   node selects that element, whose Text section has one field per text node. Inline editing of a
-   text node inside a mixed element is not built, and neither is splitting a text node at the caret,
-   so in the editor an element lands after the text. The AI generator can write mixed text directly.
+   node selects that element, whose Text section has one field per text node, named by its words and
+   its neighbours. A double-click opens one text node for typing, in a span of its own, so the browser
+   never touches its element siblings. Selected words become `strong`, `em` or `a` as text, element,
+   text in one undo step (`src/lib/canvas/inlineFormat.ts`). A selection stays inside one text node:
+   it cannot cross an element. Text is refused where a browser would move it (`table`, `tr`, `select`
+   and similar), with a notice. The AI generator can write mixed text directly.
 2. **CSS that needs a selector.** An inline style cannot say `:hover`, `:focus`, `:nth-child`,
    `::before`, `@keyframes`, `@container` or `@supports`. Today there are three hover presets
    (`lift`, `dim`, `underline`), five appear presets and one scroll preset. Media queries exist only

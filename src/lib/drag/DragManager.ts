@@ -39,6 +39,7 @@ import type { InsertTarget, PageModelType } from '@/models/PageModel';
 import { EditorTool, type EditorUIType } from '@/stores/EditorUIStore';
 import type { HistoryStoreInstance } from '@/stores/HistoryStore';
 import type { DragSource, DragMode, IndicatorSpec } from './types';
+import { isTextNodeType } from '@/lib/renderer/textNode';
 import { resolveDropTarget } from './resolveDropTarget';
 import { dragThresholdFor } from '@/lib/canvas/touchGestures';
 
@@ -227,7 +228,10 @@ const DragManagerModel = types
         source: self.source,
         sourceNode: self.sourceNode && isAlive(self.sourceNode) ? self.sourceNode : undefined,
       });
-      self._setPending(target, indicator);
+      // A refused drop paints nothing and says why on release.
+      const page = self.deps?.getPage();
+      const refused = self.source?.kind === 'moveNode' && !!target && !!page?.dropRefusal(self.source.nodeId, target);
+      self._setPending(target, refused ? null : indicator);
 
       // Live mode: keep source's canvasX/Y pinned to cursor in canvas space.
       // If the pointer wanders into a reparent-eligible container, we still
@@ -294,10 +298,16 @@ const DragManagerModel = types
             // discarded; per-frame canvasX/Y updates stand.
             const viewportTreeDrop = isViewport && target.kind !== 'floating';
             if (!liveReleaseOnCanvas && !viewportTreeDrop) {
-              const result = page.moveTreeComponent(source.nodeId, target);
-              if (result) {
-                const breakpointId = editorUI.selectedViewportNode?.breakpointId;
-                editorUI.selectComponent(result, breakpointId);
+              const refusal = page.dropRefusal(source.nodeId, target);
+              if (refusal) {
+                editorUI.setEditorNotice({ kind: 'refused', message: refusal });
+              } else {
+                const result = page.moveTreeComponent(source.nodeId, target);
+                if (result) {
+                  if (editorUI.editorNotice?.kind === 'refused') editorUI.setEditorNotice(undefined);
+                  const breakpointId = editorUI.selectedViewportNode?.breakpointId;
+                  editorUI.selectComponent(result, breakpointId);
+                }
               }
             }
           }
@@ -380,8 +390,12 @@ const DragManagerModel = types
           const editorUI = deps.getEditorUI();
           // GRAB tool owns the canvas; let Canvas's own mousedown start a pan.
           if (editorUI.selectedTool === EditorTool.GRAB) return false;
-          // Currently inline-editing this node: refuse so typing stays stable.
-          if (editorUI.editingComponent?.id === source.nodeId) return false;
+          // Currently inline-editing this node, or a text node of it: refuse so
+          // typing stays stable.
+          const editing = editorUI.editingComponent;
+          if (editing?.id === source.nodeId || (isTextNodeType(editing?.type) && editing?.parentId === source.nodeId)) {
+            return false;
+          }
         }
 
         const startClient = { x: event.clientX, y: event.clientY };

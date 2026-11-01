@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Page } from 'playwright';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
-import { n, t } from '../patterns';
+import { n, run, t } from '../patterns';
 import type { GapId } from '../lib/types';
 
 const FIXTURE_DIR = path.resolve(process.cwd(), 'test/score/corpus/fixtures');
@@ -62,24 +62,25 @@ export const FIXTURES: Fixture[] = [
     source: 'hand-written',
     original: { html: 'mixed-text.html' },
     initialGap: 'mixed-text',
-    // A node holds one string, so the first run of text is the string and the
-    // later runs have nowhere to go.
     tree: () =>
       n(
         'article',
         parity('page', { style: { font: `16px/1.5 ${FONT}`, color: '#1f2937', padding: '24px', maxWidth: '640px' } }),
-        n('h1', parity('title', { children: 'Our ' }), t('em', 'first', parity('title-em'))),
+        n('h1', parity('title'), run('Our '), t('em', 'first', parity('title-em')), run(' shop')),
         n(
           'p',
-          parity('lead', { children: 'Hello ' }),
+          parity('lead'),
+          run('Hello '),
           t('strong', 'bold', parity('lead-strong')),
+          run(' and '),
           t('a', 'a link', parity('lead-link', { href: '#more', style: { color: '#1d4ed8' } })),
+          run(' at the end of the sentence.'),
         ),
         n(
           'ul',
           parity('list'),
           t('li', 'Plain item', parity('item-1')),
-          n('li', parity('item-2', { children: 'Item with ' }), t('code', 'code', parity('item-code'))),
+          n('li', parity('item-2'), run('Item with '), t('code', 'code', parity('item-code')), run(' inside')),
         ),
       ),
     states: [],
