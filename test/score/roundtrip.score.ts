@@ -11,7 +11,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { COMPONENT_REGISTRY } from '@/lib/componentRegistry';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { FIXTURES } from './corpus/fixtures';
-import { PATTERNS } from './patterns';
+import { PATTERNS, n, run, t } from './patterns';
 import { renderPublished } from './lib/published';
 import { jsxToNodes, nodesToJsx, normalise } from './roundtrip/jsx';
 import { writeOut } from './lib/io';
@@ -23,6 +23,9 @@ const SYNTHETIC: Array<{ id: string; node: ComponentNode }> = [
   { id: 'read binding', node: { type: 'p', props: { children: 'Fallback' } as never, bindings: { children: { mode: 'read', path: 'row.title' } } as never } },
   { id: 'effects', node: { type: 'div', props: { effects: { appear: { kind: 'fade' }, hover: 'lift' } } as never } },
   { id: 'void element', node: { type: 'hr', props: {} } },
+  { id: 'text mixed with an element', node: n('p', {}, run('Hello '), t('b', 'bold'), run(' world')) },
+  { id: 'adjacent text nodes', node: n('p', {}, run('one'), run('two')) },
+  { id: 'text mixed with a bound text node', node: n('p', {}, run('Hi '), { type: '#text', props: { children: 'Fallback' } as never, bindings: { children: { mode: 'read', path: 'row.title' } } as never }, t('b', 'x')) },
   { id: 'text with awkward characters', node: { type: 'p', props: { children: 'a < b & "c" {d}\nnext line' } as never } },
   { id: 'text with outer spaces', node: { type: 'span', props: { children: '  spaced  ' } as never } },
   { id: 'empty string text', node: { type: 'p', props: { children: '' } as never } },
@@ -35,6 +38,7 @@ const SYNTHETIC: Array<{ id: string; node: ComponentNode }> = [
 const MUST_REFUSE: Array<{ id: string; node: ComponentNode }> = [
   { id: 'unknown island', node: { type: 'div', props: { 'data-component-kind': 'not-a-real-kind' } as never } },
   { id: 'a function prop', node: { type: 'div', props: { onClick: () => {} } as never } },
+  { id: 'a style on a text node', node: { type: 'p', props: {}, children: [{ type: '#text', props: { children: 'x', style: { color: 'red' } } as never }] } },
 ];
 
 const JSX_CASES: Array<{ id: string; jsx: string }> = [
@@ -83,9 +87,8 @@ function nodesCase(id: string, node: ComponentNode): RoundTripCase {
 function jsxCase(id: string, jsx: string): RoundTripCase {
   const base = { id, direction: 'jsx-nodes-render' as const };
   const imported = jsxToNodes(jsx);
-  const gap: GapId = imported.mixedText ? 'mixed-text' : 'import-dynamic-logic';
   if (!imported.node || imported.leftOver.length > 0) {
-    return { ...base, pass: false, gap, detail: 'reported as left over', leftOver: imported.leftOver };
+    return { ...base, pass: false, gap: 'import-dynamic-logic', detail: 'reported as left over', leftOver: imported.leftOver };
   }
   const reference = renderJsx(jsx).toLowerCase();
   const rendered = renderPublished(imported.node).html.toLowerCase();

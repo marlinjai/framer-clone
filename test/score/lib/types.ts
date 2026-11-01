@@ -60,7 +60,7 @@ export const GAPS = {
   'selector-styles': 'CSS that needs a selector (states, pseudo-elements, structural selectors): a node only holds inline declarations, so no rule can be written.',
   'at-rules': 'At-rules: no way to store @keyframes, @container, @supports, @font-face and the rest.',
   'media-queries': 'Media queries beyond width: print, dark mode and reduced motion have no home.',
-  'mixed-text': 'Text mixed with elements: a node holds one string or children, and the renderers drop the string.',
+  'mixed-text': 'Text mixed with elements: text beside an element is lost or lands out of order.',
   'behaviour-state': 'Behaviour and state: no way to say that one element changes another.',
   'blocked-embedded-content': 'Embedded content dropped by blockedNodes.ts (iframe, object, embed, ...), although these are ordinary content elements.',
   'panel-no-general-editor': 'What the Custom section of the properties panel, the general style and attribute editor, cannot write: SVG and MathML attributes.',

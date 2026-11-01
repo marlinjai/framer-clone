@@ -11,6 +11,7 @@
 
 import type { Locator, Page } from 'playwright';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
+import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 
 type Props = Record<string, unknown>;
 
@@ -23,6 +24,9 @@ export function n(type: string, props: Props = {}, ...children: ComponentNode[])
 }
 
 export const t = (type: string, text: string, props: Props = {}) => n(type, { ...props, children: text });
+
+/** A run of bare text among an element's children (src/lib/renderer/textNode.ts). */
+export const run = (text: string) => t(TEXT_NODE_TYPE, text);
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
