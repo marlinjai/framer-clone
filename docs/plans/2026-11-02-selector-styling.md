@@ -742,7 +742,10 @@ The F8 neutraliser keeps one accepted edge, stated at the canvas.
    - the editor warns when a page uses an address the policy would block, so a new one does not break
      silently after publishing;
    - violations stay measured after enforcing, and the legal view (a third-party image before consent)
-     and the product view (some sites lose images) have been weighed by Marlin.
+     and the product view (some sites lose images) have been weighed by Marlin;
+   - it is understood what this does not cover: `<a ping>` is a `connect-src` request, and `connect-src`
+     is not measured, so neither the counts nor an enforced policy of these directives would show or
+     stop it. Reports can also be forged, so a count is a lead to check, never proof of a host.
 2. **`@font-face` from an uploaded font.** `src` takes site paths today, and an uploaded file would live
    on the storage host. Allowing it needs that host named, which is a decision for whichever slice adds
    font upload. Not needed by any slice here.

@@ -30,8 +30,11 @@ export const CSP_REPORT_PATH = '/api/csp-report';
 export const REPORTED_DIRECTIVES = ['img-src', 'font-src', 'media-src'] as const;
 export type ReportedDirective = (typeof REPORTED_DIRECTIVES)[number];
 
+/** The external image hosts the policy allows, over https. */
+export const ALLOWED_IMAGE_HOSTS = ['images.unsplash.com'] as const;
+
 export const PUBLISHED_REPORT_ONLY_POLICY = [
-  "img-src 'self' data: blob: https://images.unsplash.com",
+  `img-src 'self' data: blob: ${ALLOWED_IMAGE_HOSTS.map((host) => `https://${host}`).join(' ')}`,
   "font-src 'self' data:",
   "media-src 'self' data: blob:",
   `report-uri ${CSP_REPORT_PATH}`,

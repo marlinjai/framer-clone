@@ -9,7 +9,7 @@
 
 import { getPrismaClient } from '@/server/db';
 import { getCachedPublishedSite } from '@/server/sites/cachedResolver';
-import { getCspReportLimiter, handleCspReport } from '@/server/sites/cspReports';
+import { getCspReportDrops, getCspReportLimiter, handleCspReport } from '@/server/sites/cspReports';
 import { recordCspViolation } from '@/server/sites/cspReportStore';
 
 export const runtime = 'nodejs';
@@ -20,6 +20,7 @@ export async function POST(req: Request): Promise<Response> {
     resolveSiteId: async (host) => (await getCachedPublishedSite(host))?.siteId ?? null,
     store: (siteId, violation) => recordCspViolation(getPrismaClient(), siteId, violation, new Date()),
     limiter: getCspReportLimiter(),
+    drops: getCspReportDrops(),
     now: () => Date.now(),
   });
 }

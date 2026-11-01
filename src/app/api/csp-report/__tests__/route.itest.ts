@@ -118,6 +118,13 @@ describe('POST /api/csp-report', () => {
     expect((await rowsOf(site.siteId)).map((r) => [r.blockedHost, r.count])).toEqual([['through.example', markings.length]]);
   });
 
+  it('stores no report naming the site, an allowed host or the row for replaced counts', async () => {
+    expect((await report(site.host, `https://${site.host}/a.png`)).status).toBe(204);
+    expect((await report(site.host, 'https://images.unsplash.com/a.png')).status).toBe(204);
+    expect((await report(site.host, 'https://(other)/a.png')).status).toBe(204);
+    expect(await rowsOf(site.siteId)).toEqual([]);
+  });
+
   it('stores nothing for junk, and tells a browser nothing went wrong', async () => {
     const junk = await POST(
       new Request(`https://${site.host}/api/csp-report`, { method: 'POST', headers: { host: site.host }, body: 'nonsense' }),
@@ -146,23 +153,32 @@ describe('POST /api/csp-report', () => {
     expect((await rowsOf(site.siteId))[0].count).toBe(120);
   });
 
-  it('folds new hosts past the cap into one row, and known hosts keep counting', async () => {
+  it('at the cap replaces the lowest count, keeps its count, and a real host survives a flood', async () => {
     await fx.prisma.cspReportCount.createMany({
       data: Array.from({ length: MAX_ROWS_PER_SITE }, (_, i) => ({
         siteId: site.siteId,
         directive: 'img-src',
         blockedHost: `junk-${i}.example`,
+        // Every row above the lowest, which is the one to go. Row 7 is the real host.
+        count: i === 0 ? 1 : i === 7 ? 50 : 2,
       })),
     });
     await report(site.host, 'https://new-1.example/a.png');
-    await report(site.host, 'https://new-2.example/a.png');
-    await report(site.host, 'https://junk-7.example/a.png');
 
-    const rows = await rowsOf(site.siteId);
+    let rows = await rowsOf(site.siteId);
     expect(rows).toHaveLength(MAX_ROWS_PER_SITE + 1);
-    expect(rows.find((r) => r.blockedHost === OTHER_BLOCKED_HOST)?.count).toBe(2);
-    expect(rows.find((r) => r.blockedHost === 'junk-7.example')?.count).toBe(2);
-    expect(rows.some((r) => r.blockedHost.startsWith('new-'))).toBe(false);
+    expect(rows.find((r) => r.blockedHost === 'new-1.example')?.count).toBe(1);
+    expect(rows.some((r) => r.blockedHost === 'junk-0.example')).toBe(false);
+    expect(rows.find((r) => r.blockedHost === OTHER_BLOCKED_HOST)?.count).toBe(1);
+
+    // A flood of one-off hosts only displaces itself.
+    for (let i = 2; i < 6; i += 1) await report(site.host, `https://new-${i}.example/a.png`);
+    await report(site.host, 'https://junk-7.example/a.png');
+    rows = await rowsOf(site.siteId);
+    expect(rows).toHaveLength(MAX_ROWS_PER_SITE + 1);
+    expect(rows.find((r) => r.blockedHost === 'junk-7.example')?.count).toBe(51);
+    expect(rows.filter((r) => r.blockedHost.startsWith('new-')).map((r) => r.blockedHost)).toEqual(['new-5.example']);
+    expect(rows.find((r) => r.blockedHost === OTHER_BLOCKED_HOST)?.count).toBe(5);
     // A full site does not stop another one.
     await report(other.host, 'https://new-1.example/a.png');
     expect((await rowsOf(other.siteId)).map((r) => r.blockedHost)).toEqual(['new-1.example']);
@@ -199,11 +215,39 @@ describe('readCspReportSummary', () => {
       [other.siteId, 1],
     ]);
     const lines = formatCspReportSummary(summary);
-    expect(lines[0]).toMatch(/^3\timg-src\tbusy\.example\tlast /);
-    expect(lines[0]).toContain('Store csp (2), Store csp-other (1)');
+    expect(lines[0]).toBe('Counts are leads and can be forged: check a host before acting on it.');
+    expect(lines[1]).toMatch(/^3\timg-src\tbusy\.example\tlast /);
+    expect(lines[1]).toContain('Store csp (2), Store csp-other (1)');
   });
 
-  it('says so when there is nothing', () => {
-    expect(formatCspReportSummary([])).toEqual(['No reports yet: nothing would have been blocked.']);
+  it('says an empty result proves nothing', () => {
+    expect(formatCspReportSummary([])).toEqual(['No reports stored, which proves nothing.']);
+  });
+
+  const row = (blockedHost: string, name: string) => ({
+    directive: 'img-src',
+    blockedHost,
+    count: 1,
+    lastSeenAt: new Date(0),
+    sites: [{ siteId: 's', name, count: 1 }],
+  });
+
+  it('warns once for a site with hosts replaced, across directives', () => {
+    const lines = formatCspReportSummary([
+      row(OTHER_BLOCKED_HOST, 'Busy'),
+      { ...row(OTHER_BLOCKED_HOST, 'Busy'), directive: 'font-src' },
+      row('x.example', 'Calm'),
+    ]);
+    expect(lines.filter((line) => line.startsWith('Warning: Busy reached the cap'))).toHaveLength(1);
+    expect(lines.some((line) => line.startsWith('Warning: Calm'))).toBe(false);
+  });
+
+  it('strips control characters from a site name and a host, in the warning too', () => {
+    const name = 'Shop\u001b[2J\u0007\u202e\u2028\nname';
+    const output = formatCspReportSummary([row('x\u001b[31m.example', name), row(OTHER_BLOCKED_HOST, name)]).join('\n');
+    // Only the newlines and tabs this function writes itself may remain.
+    expect(output.replace(/[\n\t]/g, '')).not.toMatch(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+    expect(output).toContain('Shop[2Jname');
+    expect(output).toContain('x[31m.example');
   });
 });

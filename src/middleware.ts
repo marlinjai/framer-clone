@@ -63,8 +63,8 @@ function isCrossOriginWrite(request: NextRequest): boolean {
 
 /**
  * A published page's response, carrying the report-only policy
- * (src/lib/site/cspReportOnly.ts). Only a published page gets it: the editor
- * host and its previews never do, and it never blocks anything.
+ * (src/lib/site/cspReportOnly.ts). Only a document on a published host gets it:
+ * the editor host never does, and it never blocks anything.
  */
 function withReportOnlyPolicy(response: NextResponse): NextResponse {
   response.headers.set(CSP_REPORT_ONLY_HEADER, PUBLISHED_REPORT_ONLY_POLICY);
@@ -196,7 +196,7 @@ export const config = {
   //     serve anonymous traffic: matched only so a published page gets the
   //     report-only policy, never gated on any host
   //   - /preview/* (and /projects/<id>/preview, reached via the gated dashboard)
-  //     render anonymous previews
+  //     render anonymous previews: matched only for the policy, as above
   //   - /api/health/* is the liveness probe
   //   - /api/cms + /api/commerce are LEFT OPEN here because they serve BOTH
   //     planes: on a published-site host their reads are scoped to the Host's
@@ -221,9 +221,11 @@ export const config = {
     // Every API route, for the cross-origin check. The editor-plane families
     // (`/api/projects`, `/api/ai`, `/api/books`) also get the session gate.
     '/api/:path*',
-    // Published pages, for the report-only policy: any path except the routes
-    // and files that are not documents (API routes, build output, public files,
-    // the per-host files) and the editor's /preview.
-    '/((?!(?:api|_next|fonts|images|preview)(?:/|$)|(?:favicon\\.ico|robots\\.txt|sitemap\\.xml|site\\.webmanifest)$).+)',
+    // Published pages, for the report-only policy: any path except API routes,
+    // build output, what is inside /images and /fonts, and the per-host files.
+    // Other public files carry the header, where it does nothing. /preview is
+    // matched too: the host decides, so the editor's preview stays unmarked on
+    // the editor host, and a published host marks whatever document it serves.
+    '/((?!(?:api|_next)(?:/|$)|(?:images|fonts)/.|(?:favicon\\.ico|robots\\.txt|sitemap\\.xml|site\\.webmanifest)$).+)',
   ],
 };

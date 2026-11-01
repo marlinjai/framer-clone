@@ -384,12 +384,36 @@ describe('middleware: the report-only policy of published pages', () => {
   const matchesPublishedPages = (path: string) => new RegExp(`^${PUBLISHED_PAGES}$`).test(path);
 
   it('matches page paths, also ones that only begin like an excluded path', () => {
-    for (const path of ['/about', '/products/classic-tee', '/preview-sale', '/apitude', '/images-of-us', '/robots.txt/x']) {
+    for (const path of [
+      '/about',
+      '/products/classic-tee',
+      '/preview-sale',
+      '/apitude',
+      '/images-of-us',
+      '/robots.txt/x',
+      '/images',
+      '/fonts',
+      '/preview',
+      '/preview/x',
+    ]) {
       expect(matchesPublishedPages(path), path).toBe(true);
     }
   });
 
-  it('leaves API routes, build output, public files and /preview unmatched', () => {
+  it('matches other public files, which carry the header where it does nothing', () => {
+    expect(matchesPublishedPages('/file.svg')).toBe(true);
+  });
+
+  it('marks /preview on a published host and never on the editor host', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    expect(policy(await middleware(req(`https://${PUBLISHED}/preview`, { host: PUBLISHED })))).toBe(PUBLISHED_REPORT_ONLY_POLICY);
+    const editor = await middleware(req(`https://${EDITOR}/preview`, { host: EDITOR }));
+    expect(policy(editor)).toBeNull();
+    expect(isNext(editor)).toBe(true);
+    expect(editor.headers.get('location')).toBeNull();
+  });
+
+  it('leaves API routes, build output, what is inside /images and /fonts, and the per-host files unmatched', () => {
     for (const path of [
       '/api/cms/x',
       '/api/commerce/orders',
@@ -400,8 +424,6 @@ describe('middleware: the report-only policy of published pages', () => {
       '/_next/image',
       '/fonts/inter/5/a.woff2',
       '/images/a.png',
-      '/preview',
-      '/preview/x',
       '/favicon.ico',
       '/robots.txt',
       '/sitemap.xml',
