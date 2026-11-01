@@ -11,10 +11,12 @@ projects: [framer-clone]
 # Editing an existing Next.js frontend visually in framer-clone
 
 > **Answered 2026-11-01 (Marlin): framer-clone does not edit frontends it does not host.** The hosted
-> canvas (point 3) and the delivery API, webhook and preview (point 2) will not be built. Two parts
-> carry on under their own roadmap lines, because framer-clone's own sites need them: typed property
-> controls (point 1) and the immutable published copy (first step of point 2). The route for BusBasis
-> is now [expressing the storefront fully in framer-clone](2026-11-01-busbasis-native-storefront.md).
+> canvas (point 3) and the delivery API, webhook and preview (point 2) will not be built. The
+> immutable published copy (first step of point 2) carries on under its own roadmap line. Typed
+> property controls (point 1) do not carry on as designed here: sites are built from framer-clone's
+> own primitives, so a form is needed only for the inputs of reusable components, see the
+> [complete primitives plan](2026-11-01-complete-primitives.md). The route for BusBasis is now
+> [expressing the storefront fully in framer-clone](2026-11-01-busbasis-native-storefront.md).
 > This document stays as the record of the research.
 
 Question from Marlin (2026-10-26): what exactly would framer-clone (Lumitra's hosted Framer-style
