@@ -868,6 +868,30 @@ export interface ShopMailTable {
   updated_at: Timestamp;
 }
 
+/**
+ * 025_commerce_job: the shop's durable work, written in the transaction that needs it and claimed under a
+ * lease (src/server/commerce/jobs). `run_at` is when it is due and, while running, when its lease ends.
+ */
+export interface CommerceJobTable {
+  id: string;
+  tenant_id: string;
+  kind: string;
+  dedupe_key: string;
+  event_type: string | null;
+  payload: JsonColumn<Record<string, unknown>>;
+  status: Generated<'pending' | 'running' | 'done' | 'dead'>;
+  run_at: Timestamp;
+  attempts: Generated<number>;
+  open_claims: Generated<number>;
+  cycle_started_at: Timestamp;
+  claim_token: string | null;
+  last_error: string | null;
+  acknowledged_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
+  finished_at: Timestamp | null;
+}
+
 // =============================================================================
 // The Database interface. GLOBAL keys are `public.`-qualified; tenant tables
 // are BARE. The two namespaces are disjoint by construction.
@@ -921,6 +945,7 @@ export interface CommerceDB {
   payment_account: PaymentAccountTable;
   shop_mail_connection: ShopMailConnectionTable;
   shop_mail: ShopMailTable;
+  commerce_job: CommerceJobTable;
 }
 
 // --- compile-time discipline guards (the package's brand types) --------------

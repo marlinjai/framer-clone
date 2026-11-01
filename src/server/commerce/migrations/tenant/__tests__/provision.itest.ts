@@ -29,6 +29,7 @@ import {
   assertTenantGroupId,
 } from '@marlinjai/tenant-db';
 import { COMMERCE_TENANT_MIGRATIONS } from '../index';
+import { commerceJob } from '../025_commerce_job';
 import { APPEND_ONLY_TABLES, revokeAppendOnlyWrites } from '../../../provisioning/provision';
 
 const DB_NAME = 'framer_clone_test';
@@ -63,6 +64,7 @@ const EXPECTED_MIGRATION_IDS = [
   '022_payment_account',
   '023_shop_mail',
   '024_receipt_paid_on',
+  '025_commerce_job',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {
@@ -91,6 +93,7 @@ const EXPECTED_TABLES = [
   'catalog_image',
   'collection',
   'collection_product',
+  'commerce_job',
   'credit_note',
   'credit_note_ref',
   'customer',
@@ -232,7 +235,7 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
   });
 
   // --- tables -------------------------------------------------------------
-  it('creates exactly the 27 commerce, 13 Books and 1 forms tables in the schema', async () => {
+  it('creates exactly the 30 commerce, 13 Books and 1 forms tables in the schema', async () => {
     const rows = await owner!`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = ${SCHEMA} AND table_type = 'BASE TABLE'
@@ -467,6 +470,53 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
     await expect(
       inSchema((tx) => tx`INSERT INTO order_line_item (tenant_id, id, order_id, unit_price, quantity, subtotal, tax_rate, tax_amount, tax_treatment) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'li_3', 'li_o', -1, 1, 0, 1900, 0, 'standard')`),
     ).rejects.toThrow(/order_line_item_unit_price_nonneg_check/);
+  });
+
+  // --- the job table (025) --------------------------------------------------
+  it('commerce_job CHECKs refuse a row the engine could not reason about', async () => {
+    const company = '018f9c10-0000-7000-8000-0000000000dc';
+    const insert = (id: string, columns: { tenant?: string; status?: string; token?: string | null; finished?: boolean; payload?: string; attempts?: number; error?: string }) =>
+      inSchema(
+        (tx) => tx`
+          INSERT INTO commerce_job (id, tenant_id, kind, dedupe_key, payload, status, run_at, attempts, cycle_started_at, claim_token, last_error, updated_at, finished_at)
+          VALUES (${id}, ${columns.tenant ?? company}, 'test', ${id}, ${columns.payload ?? '{}'}::text::jsonb, ${columns.status ?? 'pending'}, now(), ${columns.attempts ?? 0}, now(),
+                  ${columns.token ?? null}, ${columns.error ?? null}, now(), ${columns.finished ? new Date() : null})
+        `,
+      );
+
+    await insert('cj_ok', {});
+    await insert('cj_running', { status: 'running', token: 'token' });
+    await insert('cj_dead', { status: 'dead', finished: true });
+    await expect(insert('cj_1', { tenant: 'not-a-uuid' })).rejects.toThrow(/commerce_job_tenant_id_check/);
+    await expect(insert('cj_2', { status: 'waiting' })).rejects.toThrow(/commerce_job_status_check/);
+    await expect(insert('cj_3', { attempts: -1 })).rejects.toThrow(/commerce_job_counters_check/);
+    await expect(insert('cj_4', { payload: '[]' })).rejects.toThrow(/commerce_job_payload_check/);
+    await expect(insert('cj_5', { payload: JSON.stringify({ text: 'x'.repeat(2000) }) })).rejects.toThrow(/commerce_job_payload_check/);
+    await expect(insert('cj_6', { error: 'x'.repeat(1001) })).rejects.toThrow(/commerce_job_error_check/);
+    await expect(insert('cj_7', { status: 'running' })).rejects.toThrow(/commerce_job_running_check/);
+    await expect(insert('cj_8', { status: 'done' })).rejects.toThrow(/commerce_job_finished_check/);
+    await expect(insert('cj_9', { status: 'dead' })).rejects.toThrow(/commerce_job_finished_check/);
+    await expect(insert('cj_ok', {})).rejects.toThrow(/commerce_job_dedupe_key|commerce_job_pkey/);
+  });
+
+  it('commerce_job has its three partial indexes, and 025 is re-runnable', async () => {
+    await inSchema((tx) => commerceJob.up(tx));
+    const indexes = await owner!`
+      SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = ${SCHEMA} AND tablename = 'commerce_job'
+    `;
+    const definition = (name: string) => indexes.find((row) => row.indexname === name)?.indexdef;
+    expect(definition('commerce_job_due_idx')).toMatch(/\(run_at\) WHERE .*pending.*running/);
+    expect(definition('commerce_job_dead_idx')).toMatch(/\(tenant_id, created_at\) WHERE .*dead/);
+    expect(definition('commerce_job_done_idx')).toMatch(/\(finished_at\) WHERE .*done/);
+  });
+
+  it('commerce_app may read, write and delete a job: it is not append-only', async () => {
+    const rights = await owner!`
+      SELECT has_table_privilege(${APP_ROLE}, ${SCHEMA + '.commerce_job'}, 'INSERT') AS can_insert,
+             has_table_privilege(${APP_ROLE}, ${SCHEMA + '.commerce_job'}, 'UPDATE') AS can_update,
+             has_table_privilege(${APP_ROLE}, ${SCHEMA + '.commerce_job'}, 'DELETE') AS can_delete
+    `;
+    expect(rights[0]).toEqual({ can_insert: true, can_update: true, can_delete: true });
   });
 
   // --- partial-unique indexes (live-only) --------------------------------
