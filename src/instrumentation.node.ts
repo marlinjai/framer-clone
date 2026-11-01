@@ -3,7 +3,8 @@
 // The Node-server half of register(). Kept in its own module because Next
 // compiles instrumentation.ts for the edge runtime too, and only a positive
 // `NEXT_RUNTIME === 'nodejs'` block around the import lets webpack drop this
-// file (and the Postgres driver behind the mail sweep) from that build.
+// file (and the Postgres driver behind the mail sweep and the job worker) from that
+// build.
 
 export async function registerNode(): Promise<void> {
   const { assertEditorHostConfigured } = await import('./lib/editorHost');
@@ -25,5 +26,13 @@ export async function registerNode(): Promise<void> {
     startShopMailSweep();
   } catch (err) {
     console.error('[startup] the shop mail sweep did not start:', err);
+  }
+  // The shop's job engine: a pass over every tenant group, every 30 seconds. Also never a failed start, and the host
+  // timer's watchdog route gets the same work done if this does not run.
+  try {
+    const { startCommerceWorker } = await import('./server/commerce/jobs/runtime');
+    startCommerceWorker();
+  } catch (err) {
+    console.error('[startup] the commerce job worker did not start:', err);
   }
 }

@@ -87,6 +87,23 @@ export async function migrateCommercePublic(
       END
       $$
     `;
+    // The job worker lists the tenant groups as commerce_app, the only role the
+    // server's pool holds, so it reads the ids of the registry and nothing else.
+    // Runs on every start, so a database migrated before this line gets it too.
+    // A registry owned by someone else (a database first migrated as a superuser)
+    // warns instead of failing the start: the shop sells without its worker, and
+    // the worker's pass and the watchdog route report the denied read.
+    await sql`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commerce_app') THEN
+          GRANT SELECT (id) ON public.tenant_groups TO commerce_app;
+        END IF;
+      EXCEPTION WHEN insufficient_privilege THEN
+        RAISE WARNING 'commerce_app could not be granted the tenant group ids: %', SQLERRM;
+      END
+      $$
+    `;
     return applied;
   } finally {
     await sql.end();

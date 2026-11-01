@@ -1103,3 +1103,8 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
   takes the tenant id as well (`runJobNow(db, tenantId, jobId)`), because the primary key leads with `tenant_id` and a lookup by id alone would scan the
   table. A handler that ignores its signal is abandoned when its lease ends, so it cannot stall a worker for good; it then counts as an open claim. Both
   registries take an injected value and stay empty in production, so the one test kind lives in the tests.
+- 2026-11-01: B2 built: `jobs/runtime.ts`, `jobs/backfills.ts`, the watchdog route and the host units, beside the existing sweeps. The mail sweep stays until
+  B5, although section 1.7 says the worker replaces it. Corrections to the text: `commerce_app` could not read `public.tenant_groups`, so the start step now
+  grants it `SELECT (id)`, and a failed grant warns instead of failing the start. Decided: the pass covers every status, because `suspended` stops provisioning
+  and not a selling shop. The route's answer gains `skipped`, and `findingsOpen` is 0 until B8. A signal stops the claiming, but Next exits without waiting for
+  a handler, so a handler in hand at shutdown is cut off and recovers through its lease, as one open claim. The timer is not installed.

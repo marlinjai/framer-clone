@@ -131,7 +131,7 @@ tables and is `DATABASE_URL`):
 
 | Role | URL variable | What it may do |
 | --- | --- | --- |
-| `commerce_app` | `COMMERCE_APP_DATABASE_URL` | Low privilege, used by every storefront and editor request. Reads and writes rows inside the company schemas, but may not change or delete a placed order, its lines, a credit note or a stock movement (insert and read only). Creates nothing. Its default `search_path` is exactly `ext`, which the app checks on first commerce use and refuses to run otherwise. |
+| `commerce_app` | `COMMERCE_APP_DATABASE_URL` | Low privilege, used by every storefront and editor request. Reads and writes rows inside the company schemas, but may not change or delete a placed order, its lines, a credit note or a stock movement (insert and read only). Creates nothing. In `public` it reads only the ids of `tenant_groups`, for the job worker. Its default `search_path` is exactly `ext`, which the app checks on first commerce use and refuses to run otherwise. |
 | `commerce_ddl` | `COMMERCE_OWNER_DATABASE_URL` | Owner, not a superuser. Owns `ext`, the registry and every company schema; runs the start step and the first-project provisioning. Holds `CREATE` on the database and on `public`, and nothing over any role: no `CREATEROLE`, no grant of `commerce_app`. Provisioning only reads `commerce_app`'s `search_path` (`@marlinjai/tenant-db` 0.2, `appRoleBootstrap: 'verify'`), which the roles file sets as the superuser. A wrong value fails the start step, and a project create answers 500 `commerce_misconfigured` with nothing created and the repair command in the server log. |
 
 **The owner URL lives in the running server, on purpose.** First-project
@@ -243,7 +243,7 @@ says where each comes from.
 | `CUSTOM_DOMAIN_TARGET_IPV6` | no | Comma-separated IPv6 address(es) Traefik answers on. Unset means "no AAAA record allowed": a customer AAAA record pointing elsewhere is reported, because Let's Encrypt would try it first and fail |
 | `CUSTOM_DOMAIN_DNS_SERVERS` | no, recommended | Resolver IPs for the ownership check, e.g. `1.1.1.1,8.8.8.8`, so a TXT record a customer just added is not hidden by the container resolver's negative cache |
 | `CUSTOM_DOMAIN_TLS_PROBE` | no | `off` skips the certificate probe that moves a domain from verified to active (it then stays verified) |
-| `CUSTOM_DOMAIN_SYNC_TOKEN` | for custom domains | Bearer token (at least 32 characters, generated) the host timers present to `GET /api/internal/custom-domains/hostnames`, `POST /api/internal/custom-domains/recheck` and `POST /api/internal/commerce/expired-payments`. Unset means all three answer 503, the proxy keeps its last file, live domains are not re-checked and abandoned checkouts close only when the next order or payment of the same company comes in |
+| `CUSTOM_DOMAIN_SYNC_TOKEN` | for custom domains | Bearer token (at least 32 characters, generated) the host timers present to `GET /api/internal/custom-domains/hostnames`, `POST /api/internal/custom-domains/recheck`, `POST /api/internal/commerce/expired-payments` and `POST /api/internal/commerce/jobs/run`. Unset means all four answer 503, the proxy keeps its last file, live domains are not re-checked, abandoned checkouts close only when the next order or payment of the same company comes in and the job watchdog is off (the poller still runs) |
 
 A published site only injects analytics when its `lumitraEnabled` flag is set.
 
@@ -313,6 +313,49 @@ framer-clone-commerce-expired-payments.service -n 5 -o cat`). A failing unit mea
 `expired_payment_sweep_failed`: some payments or a whole tenant group could not be
 closed, the rest were, the app log names them (`[payments]`) and the next run
 tries again.
+
+## The shop's job engine: poller and watchdog
+
+Durable shop work (`commerce_job` in every company schema) is run by a poller in
+each server process: `startCommerceWorker` (`src/server/commerce/jobs/runtime.ts`),
+started at boot, a pass over every row of `public.tenant_groups` every 30 seconds.
+It needs nothing on the host, is safe with any number of app copies (the claim
+hands each job to one of them), and never fails a start. With nothing due a pass
+costs one registry read and one indexed query per group, plus an hourly cleanup. On SIGTERM it stops
+claiming; a handler still running is cut off with the process, and its job becomes
+due again when its 10 minute lease ends.
+
+The worker reads the registry as `commerce_app`, which holds only `SELECT (id)` on
+`public.tenant_groups`. The start step grants that on every start, so a deploy
+needs no manual step. If the registry is not owned by `commerce_ddl` the grant only
+warns: the app starts and the pass and the route below report `permission denied`.
+
+The host timer is the watchdog, not the worker:
+`deploy/commerce/framer-clone-commerce-jobs.timer`, every 5 minutes, calls
+`POST /api/internal/commerce/jobs/run`, which runs one pass and answers
+`{ tenantGroups, skipped, ran, failed, deadUnacknowledged, findingsOpen, oldestDueSeconds }`.
+It answers 500 `commerce_jobs_unhealthy` with that report under `error.report` only
+when a pass failed or the oldest due job is over 10 minutes late. A dead job is a
+count, so one dead row cannot keep the monitor red. `findingsOpen` stays 0 until
+Stripe reconciliation exists. It uses the same token and header file as the expired
+payment sweep, so nothing new is needed in Infisical.
+
+To install, as root on `coolify-shared-host`, from `deploy/commerce/` at
+`origin/main` once the route is deployed:
+
+    install -m 0644 framer-clone-commerce-jobs.service framer-clone-commerce-jobs.timer /etc/systemd/system/
+    systemctl daemon-reload
+    systemd-analyze verify /etc/systemd/system/framer-clone-commerce-jobs.service
+    systemctl start framer-clone-commerce-jobs.service   # {"tenantGroups":...,"ran":...,"failed":0,...}
+    systemctl enable --now framer-clone-commerce-jobs.timer
+
+The answer lands in the journal (`journalctl -u framer-clone-commerce-jobs.service
+-n 5 -o cat`). A failing unit means 503 `custom_domains_not_configured` or 401 (the
+token), or 500 `commerce_jobs_unhealthy`: the app log names the group
+(`[commerce-job]`). After a deploy rollback the jobs of a kind the older build does
+not know stay pending by design, so the lateness 500 fires until the newer build is
+back. To reach Marlin, add an Uptime Kuma monitor on the same route (a POST with the
+header); the timer alone only reaches the journal.
 
 ## Operator commands (from a checkout, against a forwarded database)
 

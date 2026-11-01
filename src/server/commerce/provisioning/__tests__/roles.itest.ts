@@ -215,6 +215,16 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
           WHERE n.nspname = 'ext' AND extname = 'pgcrypto') AS pgcrypto
     `;
     expect(owners).toEqual({ registry_owner: 'commerce_ddl', pgcrypto: 'pgcrypto' });
+
+    // The job worker lists the tenant groups as commerce_app: the ids, and nothing else of the registry.
+    const [registry] = await su!`
+      SELECT
+        has_column_privilege('commerce_app', 'public.tenant_groups', 'id', 'SELECT') AS app_reads_ids,
+        has_column_privilege('commerce_app', 'public.tenant_groups', 'slug', 'SELECT') AS app_reads_slugs,
+        has_table_privilege('commerce_app', 'public.tenant_groups', 'SELECT') AS app_reads_table,
+        has_table_privilege('commerce_app', 'public.tenant_groups', 'INSERT, UPDATE, DELETE, TRUNCATE') AS app_writes
+    `;
+    expect(registry).toEqual({ app_reads_ids: true, app_reads_slugs: false, app_reads_table: false, app_writes: false });
   });
 
   let tgId: string;
