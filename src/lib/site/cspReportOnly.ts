@@ -19,8 +19,7 @@
 // style and script and bury the third-party hosts this exists to find.
 //
 // report-uri and not report-to: Chromium ignores report-uri once report-to is
-// present, report-to only delivers batched and late, and Firefox and Safari
-// still only speak report-uri.
+// present, and report-to delivers batched and late, where report-uri posts at once.
 
 export const CSP_REPORT_ONLY_HEADER = 'content-security-policy-report-only';
 
