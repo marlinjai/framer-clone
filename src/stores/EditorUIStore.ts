@@ -72,6 +72,9 @@ const EditorUIStore = types.model('EditorUI', {
   consumedDemoProjectId: undefined as string | undefined,
   // A message for the person above the canvas (see EditorNotice), dismissable.
   editorNotice: undefined as { kind: 'changedElsewhere' | 'missingPage'; message: string } | undefined,
+  // The product a product page shows while designing (src/lib/commerce/productPreview.tsx),
+  // by handle; undefined means the first in the catalogue. Never saved with the project.
+  previewProductHandle: undefined as string | undefined,
   isResizing: false,
   // The preview shown over the editor (PreviewOverlay), from this store: no
   // navigation and no server round trip. The editor's own keyboard shortcuts
@@ -120,6 +123,10 @@ const EditorUIStore = types.model('EditorUI', {
     self.editorNotice = notice;
   },
 
+  setPreviewProductHandle(handle: string | undefined) {
+    self.previewProductHandle = handle;
+  },
+
   /** Shows or hides the preview over the editor (PreviewOverlay). */
   setPreviewOpen(open: boolean) {
     self.previewOpen = open;
@@ -138,6 +145,7 @@ const EditorUIStore = types.model('EditorUI', {
     // selection are set by setCurrentPage right after.
     if (self.currentProject?.id !== project?.id) {
       self.editorNotice = undefined;
+      self.previewProductHandle = undefined;
       self.editingComponent = undefined;
       self.selectedViewportNode = undefined;
       self.selectedComponents.clear();

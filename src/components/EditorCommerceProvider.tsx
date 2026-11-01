@@ -21,6 +21,7 @@
 // project (every project shares the editor's host) and is remounted when the
 // project changes, so one shop's lines never show in another shop's cart. Checkout itself is disabled here with
 // a clear message: the order route resolves a published storefront from the request host, which the editor is not.
+// A project with a product page also gets the catalogue's products, so that page shows a real product while designing.
 
 import React from 'react';
 import { observer } from 'mobx-react-lite';
@@ -28,6 +29,7 @@ import { observer } from 'mobx-react-lite';
 import { CartProvider, CheckoutUnavailableContext, editorCartStorageKey } from '@/lib/commerce/cart';
 import { CommerceDataSourceContext } from '@/lib/commerce/context';
 import { getEditorCommerceDataSource } from '@/lib/commerce/httpCommerceDataSource';
+import { ProductPreviewProvider } from '@/lib/commerce/productPreview';
 import { useStore } from '@/hooks/useStore';
 
 const NO_PROJECT_ID = '__no_project__';
@@ -39,9 +41,15 @@ const EditorCommerceProvider = observer(({ children }: { children: React.ReactNo
   const projectId = rootStore.editorUI.currentProject?.id ?? NO_PROJECT_ID;
   return (
     <CommerceDataSourceContext.Provider value={getEditorCommerceDataSource(projectId)}>
-      <CartProvider key={projectId} storageKey={editorCartStorageKey(projectId)}>
-        <CheckoutUnavailableContext.Provider value={CHECKOUT_PREVIEW_MESSAGE}>{children}</CheckoutUnavailableContext.Provider>
-      </CartProvider>
+      <ProductPreviewProvider
+        enabled={Boolean(rootStore.editorUI.currentProject?.productPagePath)}
+        chosenHandle={rootStore.editorUI.previewProductHandle}
+        onChoose={(handle) => rootStore.editorUI.setPreviewProductHandle(handle)}
+      >
+        <CartProvider key={projectId} storageKey={editorCartStorageKey(projectId)}>
+          <CheckoutUnavailableContext.Provider value={CHECKOUT_PREVIEW_MESSAGE}>{children}</CheckoutUnavailableContext.Provider>
+        </CartProvider>
+      </ProductPreviewProvider>
     </CommerceDataSourceContext.Provider>
   );
 });

@@ -32,6 +32,7 @@ import {
   pushPageFrame,
   type BindingScope,
 } from '@/lib/bindings/resolver/scope';
+import { useProductPageParams } from '@/lib/commerce/productPreview';
 
 // Parse a CSS length into pixels for GroundWrapper sizing. Accepts a raw
 // number or a `<n>px` string. Anything else (e.g. '100%', 'auto',
@@ -59,6 +60,7 @@ const ResponsivePageRenderer = observer(() => {
   const rootStore = useStore();
   const project = rootStore.editorUI.currentProject;
   const page = rootStore.editorUI.currentPage;
+  const pageParams = useProductPageParams(page?.slug);
   if (!project || !page) return null;
 
   const { appComponentTree } = page;
@@ -72,11 +74,11 @@ const ResponsivePageRenderer = observer(() => {
 
 
   // Root binding scope: a page frame carrying route params. The editor canvas
-  // has no concrete route params yet, so this is an empty params bag; a bound
-  // RecordView therefore resolves `{{page.params.id}}` to undefined and shows
-  // its empty state until preview/publish supplies real params. The product
-  // page path makes `{{product.href}}` resolve as on the published site.
-  const rootScope: BindingScope = pushPageFrame(createScope(), {}, project.productPagePath);
+  // has no concrete route, so a bound RecordView resolves `{{page.params.id}}`
+  // to undefined and shows its empty state until preview/publish supplies real
+  // params; only a product page gets a param, the product being previewed. The
+  // product page path makes `{{product.href}}` resolve as on the published site.
+  const rootScope: BindingScope = pushPageFrame(createScope(), pageParams, project.productPagePath);
 
   return (
     <>

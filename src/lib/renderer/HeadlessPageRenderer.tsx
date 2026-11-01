@@ -24,6 +24,7 @@ function firstStickyCta(node: ComponentInstance): ComponentInstance | null {
 }
 import PageFontFaces from '@/lib/fonts/PageFontFaces';
 import { createScope, pushPageFrame } from '@/lib/bindings/resolver/scope';
+import { useProductPageParams } from '@/lib/commerce/productPreview';
 
 /** The product page path of the project holding `page` (pages map -> project), or null. */
 function productPagePathOf(page: PageModelType): string | null {
@@ -40,6 +41,7 @@ export interface HeadlessPageRendererProps {
 const HeadlessPageRenderer = observer(({ page, breakpointId }: HeadlessPageRendererProps) => {
   const { appComponentTree } = page;
   const viewportNodes = page.sortedViewportNodes;
+  const pageParams = useProductPageParams(page.slug);
 
   if (!appComponentTree) return null;
   if (viewportNodes.length === 0) return null;
@@ -55,8 +57,9 @@ const HeadlessPageRenderer = observer(({ page, breakpointId }: HeadlessPageRende
   const smallest = [...allBreakpoints].sort((a, b) => a.minWidth - b.minWidth)[0];
   const stickyBar = isStickyCta(appComponentTree.props) ? null : firstStickyCta(appComponentTree);
   const pinned = stickyBar !== null && smallest?.id === breakpointId;
-  // The page frame, as on the published page: `{{product.href}}` links to the product page.
-  const scope = pushPageFrame(createScope(), {}, productPagePathOf(page));
+  // The page frame, as on the published page: `{{product.href}}` links to the
+  // product page, and a product page shows the product being previewed.
+  const scope = pushPageFrame(createScope(), pageParams, productPagePathOf(page));
 
   return (
     <>

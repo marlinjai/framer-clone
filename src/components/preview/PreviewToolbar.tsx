@@ -31,6 +31,8 @@ export interface PreviewToolbarProps {
   pages: ReadonlyArray<{ id: string; title: string }>;
   currentPageId: string;
   onPageChange: (pageId: string) => void;
+  /** Which product a product page shows; renders nothing on any other page. */
+  productPicker?: React.ReactNode;
 }
 
 const PreviewToolbar = observer(({
@@ -49,6 +51,7 @@ const PreviewToolbar = observer(({
   pages,
   currentPageId,
   onPageChange,
+  productPicker,
 }: PreviewToolbarProps) => {
   const isDevice = frame === 'device';
 
@@ -116,6 +119,7 @@ const PreviewToolbar = observer(({
           </option>
         ))}
       </select>
+      {productPicker}
 
       <div className="flex-1" />
 

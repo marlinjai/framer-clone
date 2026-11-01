@@ -193,8 +193,13 @@ export function validateSlug(slug: string, ctx: ValidateSlugContext = {}): SlugV
  */
 export function productPagePath(slugs: Iterable<string>): string | null {
   const suffix = `/${PRODUCT_PARAM_SEGMENT}`;
-  const candidates = [...slugs].filter((slug) => slug.endsWith(suffix) && validateSlugFormat(slug).ok).sort();
+  const candidates = [...slugs].filter(isProductPageSlug).sort();
   return candidates.length > 0 ? `/${candidates[0].slice(0, -suffix.length)}` : null;
+}
+
+/** True for a product page's slug (`products/:handle`): a template that shows one product at a time. */
+export function isProductPageSlug(slug: string): boolean {
+  return slug.endsWith(`/${PRODUCT_PARAM_SEGMENT}`) && validateSlugFormat(slug).ok;
 }
 
 /** The link to one product's page under `productPagePath`; the handle is encoded, never trusted as a path. */

@@ -25,6 +25,7 @@ import { duplicateLayer } from '@/lib/layers/layerActions';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
 import EditorCommerceProvider from '@/components/EditorCommerceProvider';
+import ProductPreviewBar from '@/components/ProductPreviewBar';
 import PreviewOverlay, { previewRequestedInLocation } from '@/components/preview/PreviewOverlay';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 
@@ -284,6 +285,7 @@ export default function EditorApp({ projectSnapshot }: { projectSnapshot?: Proje
       <div className="pointer-events-none fixed inset-x-0 top-16 z-90 mt-2 flex flex-col items-center gap-2 px-4 phone:top-12">
         <EditorNotice />
         <LegalTemplateNotice />
+        <ProductPreviewBar />
       </div>
       {isPhone ? (
         <PhoneEditorChrome editorUI={rootStore.editorUI} />

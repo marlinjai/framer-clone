@@ -17,6 +17,8 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
 import EditorCommerceProvider from '@/components/EditorCommerceProvider';
+import { ProductPreviewPicker } from '@/components/ProductPreviewBar';
+import { PRODUCT_PARAM_SEGMENT } from '@/lib/pages/slug';
 import PreviewFrame from './PreviewFrame';
 import FullscreenExitControl from './FullscreenExitControl';
 import PreviewToolbar, { type PreviewFrameMode } from './PreviewToolbar';
@@ -209,9 +211,9 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
     replaceParams((params) => params.set('page', pageId));
   }, [project, rootStore, replaceParams]);
 
-  // A link to a fixed page of the site switches the preview to it; a product
-  // link (a dynamic page) has no product to show here, so it stays put and
-  // says why, as does a link to a page the site does not have.
+  // A link to a fixed page of the site switches the preview to it, a product
+  // link opens the product page with that product, and a link to a page the
+  // site does not have stays put and says why.
   const onSitePath = useCallback((path: string) => {
     const slug = path.replace(/^\/+|\/+$/g, '').toLowerCase();
     const target = project?.pagesArray.find(p => p.slug.toLowerCase() === slug);
@@ -220,12 +222,14 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
       return;
     }
     const productPath = project?.productPagePath;
-    setLinkNotice(
-      productPath && path.toLowerCase().startsWith(`${productPath}/`)
-        ? `${path} is a product page: it opens with its product on the published site.`
-        : `This site has no page at ${path}.`,
-    );
-  }, [project, onPageChange]);
+    const productPage = project?.pagesArray.find(p => productPath && p.slug === `${productPath.slice(1)}/${PRODUCT_PARAM_SEGMENT}`);
+    if (productPath && productPage && path.toLowerCase().startsWith(`${productPath}/`)) {
+      rootStore.editorUI.setPreviewProductHandle(productHandleFrom(path.slice(productPath.length + 1)));
+      onPageChange(productPage.id);
+      return;
+    }
+    setLinkNotice(`This site has no page at ${path}.`);
+  }, [project, rootStore, onPageChange]);
 
   const onPresetChange = useCallback((viewport: ComponentInstance) => {
     if (viewport.viewportWidth) setWidth(viewport.viewportWidth);
@@ -284,6 +288,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
         pages={pages}
         currentPageId={page.id}
         onPageChange={onPageChange}
+        productPicker={<ProductPreviewPicker slug={page.slug} tone="dark" />}
       />
       {/* Always present, so the notice is announced when its text appears. */}
       <div
@@ -363,4 +368,13 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
 });
 
 PreviewShell.displayName = 'PreviewShell';
+/** The handle in a product link, or undefined for a malformed one (the page then shows the first product). */
+function productHandleFrom(segment: string): string | undefined {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
+}
+
 export default PreviewShell;
