@@ -51,7 +51,7 @@ export function cssPropertyError(typed: string): string | null {
 /** Why this value is not stored, or null: exactly what the published stylesheet would drop. */
 export function cssValueError(styleKey: string, value: string): string | null {
   if (unsafeDeclaration(styleKey, value.trim()) === null) return null;
-  return 'Not saved: this value could break out of the page or load code. Check for ; { } < > \\, an unclosed bracket or quote, and script addresses.';
+  return 'Not saved: this value could break out of the page or load code. Check for { }, for ; < > \\ outside quotes, an unclosed bracket or quote, and script addresses.';
 }
 
 /** False when this browser reads the declaration as invalid, so it would silently do nothing. */

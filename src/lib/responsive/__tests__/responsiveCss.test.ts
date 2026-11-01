@@ -112,7 +112,6 @@ describe('buildResponsiveCss', () => {
         background: { base: 'red</style><script>alert(1)</script>' },
         width: { base: '10px;position:fixed' },
         backgroundImage: { base: 'url(javascript:alert(1))' },
-        content: { base: '"\\7d"' },
         border: { base: '1px solid red /* x */' },
         'x}y': { base: 'red' },
         height: { base: '10px\n}' },
@@ -122,7 +121,7 @@ describe('buildResponsiveCss', () => {
     );
     expect(out).toBe('.fc-a.fc-a{margin:4px}');
     expect(out).not.toMatch(/<|script|\}body/);
-    expect(onDrop).toHaveBeenCalledTimes(8);
+    expect(onDrop).toHaveBeenCalledTimes(7);
     expect(onDrop).toHaveBeenCalledWith({ className: 'fc-a', property: 'x}y', reason: 'unsafe-property' });
   });
 
@@ -180,7 +179,6 @@ describe('buildResponsiveCss', () => {
       ['a closing brace in a string', '"x}body{display:none"'],
       ['a closing brace in a url', 'url(x;}body{display:none)'],
       ['a backslash that hides a closing quote', '"a\\";position:fixed;content:"b"'],
-      ['an escape inside a string', '"\\22;x"'],
       ['an escape inside a url', 'url(a\\29;position:fixed)'],
       ['the end of the style element in a string', '"a;</style><script>alert(1)</script>"'],
       ['the end of the style element in a url', 'url(a;</style>)'],
@@ -220,11 +218,67 @@ describe('buildResponsiveCss', () => {
       expect(onDrop).not.toHaveBeenCalled();
     });
 
+    it('keeps a ; beside an escape in a string', () => {
+      const { out, onDrop } = value('"\\22;x"');
+      expect(out).toBe('.fc-a.fc-a{background-image:"\\22;x";margin:4px}');
+      expect(onDrop).not.toHaveBeenCalled();
+    });
+
     it('keeps a data url in a breakpoint query too', () => {
       const image = 'url("data:image/png;base64,AAA=")';
       expect(css({ backgroundImage: { 'bp-tablet': image } })).toBe(
         `@media (max-width:1199.98px){\n.fc-a.fc-a{background-image:${image}}\n}`,
       );
+    });
+  });
+
+  describe('css escapes', () => {
+    const value = (text: string) => {
+      const onDrop = vi.fn();
+      const out = css({ content: { base: text }, margin: { base: '4px' } }, onDrop);
+      return { out, onDrop };
+    };
+
+    it.each([
+      ['a hex escape', '"\\201C"', '"\\201C"'],
+      ['a hex escape closed by a space', '"\\201C x"', '"\\201C x"'],
+      ['a hex escape closed by a newline', '"\\201C\nx"', '"\\201C x"'],
+      ['a hex escape closed by a carriage return and newline', '"\\201C\r\nx"', '"\\201C x"'],
+      ['the longest hex escape', '"\\01F600"', '"\\01F600"'],
+      ['an escape beyond the last code point', '"\\FFFFFF"', '"\\FFFFFF"'],
+      ['an escaped quote', '"a\\"b"', '"a\\"b"'],
+      ['an escaped quote with a ; after it', '"a\\";b"', '"a\\";b"'],
+      ['an escaped backslash before the closing quote', '"a\\\\"', '"a\\\\"'],
+      ['a hex escape of a brace', '"\\7d"', '"\\7d"'],
+      ['a hex escape of the end of a string', '"\\22"', '"\\22"'],
+      ['an escaped less-than sign', '"\\<"', '"\\3c "'],
+      ['an escaped end of the style element', '"\\</style"', '"\\3c /style"'],
+    ])('keeps %s', (_label, text, sheet) => {
+      const { out, onDrop } = value(text);
+      expect(out).toBe(`.fc-a.fc-a{content:${sheet};margin:4px}`);
+      expect(out).not.toContain('<');
+      expect(onDrop).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a backslash last in the value', 'red\\'],
+      ['a string ending in its escape', '"a\\"'],
+      ['a backslash before a newline in a string', '"a\\\nb"'],
+      ['an escape outside a string', 'a\\;b'],
+      ['an escaped url name', '\\75 rl(a")"b)'],
+      ['a half escaped url name', 'u\\72 l(a")"b)'],
+      ['an escape in an unquoted url', 'url(a\\)b)'],
+      ['a brace after a backslash', '"\\}"'],
+      ['a script address behind an escape', 'url("java\\73 cript:alert(1)")'],
+      ['a script address behind an escape without digits', 'url("java\\script:alert(1)")'],
+      ['a script tag behind escapes', '"\\3Cscript"'],
+      ['an import behind an escape', '"@\\69 mport"'],
+      ['a comment behind an escape', '"/\\2A"'],
+    ])('refuses and reports %s', (_label, text) => {
+      const { out, onDrop } = value(text);
+      expect(out).toBe('.fc-a.fc-a{margin:4px}');
+      expect(onDrop).toHaveBeenCalledTimes(1);
+      expect(onDrop).toHaveBeenCalledWith({ className: 'fc-a', property: 'content', reason: 'unsafe-value' });
     });
   });
 

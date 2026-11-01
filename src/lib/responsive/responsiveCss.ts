@@ -39,7 +39,8 @@
 // rule or the <style> element) is not emitted, which is why applyResponsiveStyles
 // leaves such a value inline rather than moving it. A `;` is not such a value by
 // itself: inside a quoted string or a url() it is data, as in
-// `url("data:image/png;base64,...")`, and isContainedValue tells the two apart.
+// `url("data:image/png;base64,...")`, and isContainedValue tells the two apart. A
+// CSS escape inside a string is data too, as in `content:"\201C"`.
 //
 // Rules arrive here parsed, which the type says, and applyResponsiveStyles is what
 // reads stored rules for the page. A type is erased at run time and selectors are
@@ -78,13 +79,12 @@ export const SAFE_PROPERTY = /^(?:[A-Za-z][A-Za-z0-9]*|--[A-Za-z0-9_-]+)$/;
 
 /**
  * Characters that let a value escape its declaration wherever they appear,
- * quoted or not: `{` `}` open or close a rule, a backslash starts a CSS escape
- * that can hide any of these or a closing quote, and control characters have no
+ * quoted or not: `{` `}` open or close a rule, and control characters have no
  * place in a value. `;` is not here, because it depends on where it stands (see
  * isContainedValue), and neither is what sheetValueText handles by position: a
- * tab or a newline, `<` and `>`.
+ * tab or a newline, `<`, `>` and the backslash.
  */
-const BREAKOUT_CHARS = /[{}\\\u0000-\u0008\u000b\u000e-\u001f\u007f]/;
+const BREAKOUT_CHARS = /[{}\u0000-\u0008\u000b\u000e-\u001f\u007f]/;
 
 /**
  * How the browser reads the `(` at `open`, when no quote follows it: as the
@@ -114,6 +114,28 @@ function endOfUnquotedUrl(text: string, start: number): number {
   return /["'(\s]/.test(text.slice(start, end).trimEnd()) ? -1 : end + 1;
 }
 
+/**
+ * The index just past the quoted string opening at `start`, or -1 when it never
+ * closes. A backslash hides the character after it, so an escaped quote does not
+ * end the string, and one last in the text leaves it open.
+ */
+function endOfString(text: string, start: number): number {
+  for (let i = start + 1; i < text.length; i++) {
+    if (text[i] === '\\') i++;
+    else if (text[i] === text[start]) return i + 1;
+  }
+  return -1;
+}
+
+/** The text with its CSS escapes resolved, the way the browser reads it, so an escape cannot hide what a check looks for. */
+function withoutEscapes(text: string): string {
+  return text.replace(/\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\n\r\f])?|([\s\S]))/g, (_, hex: string | undefined, ch: string) => {
+    if (!hex) return ch;
+    const code = parseInt(hex, 16);
+    return code === 0 || code > 0x10ffff ? '\ufffd' : String.fromCodePoint(code);
+  });
+}
+
 /** What a CSS value holds, read the way the browser tokenizes it. */
 export interface CssValueScan {
   /**
@@ -124,9 +146,9 @@ export interface CssValueScan {
    * swallow the rest of the rule.
    */
   contained: boolean;
-  /** Every address: each url(), quoted or not, and each string inside image-set(). */
+  /** Every address: each url(), quoted or not, and each string inside image-set(), with its escapes resolved. */
   urls: string[];
-  /** Every string, without its quotes. */
+  /** Every string, without its quotes, with its escapes resolved. */
   strings: string[];
   /** A var() inside image-set(): an address no check can read here. */
   indirect: boolean;
@@ -142,10 +164,10 @@ function functionName(text: string, open: number): string {
 const isImageSet = (name: string) => name === 'image-set' || name === '-webkit-image-set';
 
 /**
- * Read a value token by token. Call only on text with no backslash of its own and
- * no raw newline in a string, so a quote always closes at its next match: the AI
- * validator's breakout check gives that, and so does sheetValueText, whose own
- * escapes hold no quote. Everything that asks where a value points goes through
+ * Read a value token by token. Call only on text with no backslash outside a
+ * string and no raw newline in one, which this reader would not see through: the
+ * AI validator's breakout check gives that, and so does sheetValueText. Everything
+ * that asks where a value points goes through
  * here, because a pattern over the raw text can start inside a string and read a
  * different value than the browser does. When `contained` is false the rest of the
  * fields stop at that point.
@@ -157,13 +179,13 @@ export function scanCssValue(text: string): CssValueScan {
   while (i < text.length) {
     const ch = text[i];
     if (ch === '"' || ch === "'") {
-      const close = text.indexOf(ch, i + 1);
-      if (close === -1) return scan;
-      const body = text.slice(i + 1, close);
+      const end = endOfString(text, i);
+      if (end === -1) return scan;
+      const body = withoutEscapes(text.slice(i + 1, end - 1));
       const inside = open[open.length - 1]?.name ?? '';
       scan.strings.push(body);
       if (inside === 'url' || isImageSet(inside)) scan.urls.push(body.trim());
-      i = close + 1;
+      i = end;
     } else if (ch === '(') {
       let body = i + 1;
       while (text[body] === ' ') body++;
@@ -211,26 +233,48 @@ export function cssUrlsIn(text: string): string[] {
 export const UNSAFE_VALUE = /javascript:|vbscript:|expression\s*\(|<\s*\/?\s*script|@import|behavior\s*:|-moz-binding|\/\*/i;
 
 /**
+ * A string's body as sheet text, or null. A hex escape stays, with the space that
+ * ends it if it has one. An escaped `<` loses its backslash for an escape the
+ * sheet can hold. A backslash before a newline continues the string in CSS, which
+ * nothing needs, so it is refused.
+ */
+function sheetStringBody(body: string): string | null {
+  let refused = false;
+  const out = body.replace(/\\([0-9a-fA-F]{1,6})(\r\n|[ \t\n\r\f])?|\\([\s\S])|\r\n|[\n\r\f]|</g, (match, hex: string | undefined, space: string | undefined, ch: string | undefined) => {
+    if (hex) return `\\${hex}${space ? ' ' : ''}`;
+    if (ch === undefined) return match === '<' ? '\\3c ' : '\\a ';
+    if (/[\n\r\f]/.test(ch)) refused = true;
+    return ch === '<' ? '\\3c ' : match;
+  });
+  return refused ? null : out;
+}
+
+/**
  * The text the sheet holds for a value, or null when it cannot hold it. Where the
  * emitter owns the output it widens what a value may be: inside a string `<` is
  * written `\3c ` and a newline `\a `, and a tab or newline between tokens becomes a
  * space. So the output never holds a `<`, which matters because the sheet is
  * written raw and CSS quoting does not protect the <style> element. Everything is
- * then checked as written, by isContainedValue. Stored text with no tab, newline
- * or `<` comes back unchanged.
+ * then checked as written, by isContainedValue, and UNSAFE_VALUE also reads the
+ * text with its escapes resolved. A backslash is an escape only inside a string.
+ * Outside one it is refused: an escaped name can spell `url` where the reader would
+ * not see it, and last in the value it would hide what the sheet adds. Stored text
+ * with no tab, newline or `<` comes back unchanged.
  */
 function sheetValueText(text: string): string | null {
-  if (BREAKOUT_CHARS.test(text) || UNSAFE_VALUE.test(text)) return null;
+  if (BREAKOUT_CHARS.test(text) || UNSAFE_VALUE.test(text) || UNSAFE_VALUE.test(withoutEscapes(text))) return null;
   let out = '';
   let i = 0;
   while (i < text.length) {
     const ch = text[i];
     if (ch === '"' || ch === "'") {
-      const close = text.indexOf(ch, i + 1);
-      if (close === -1) return null;
-      out += ch + text.slice(i + 1, close).replace(/\r\n|[\n\r\f]/g, '\\a ').replace(/</g, '\\3c ') + ch;
-      i = close + 1;
-    } else if (ch === '<' || ch === '>') {
+      const end = endOfString(text, i);
+      if (end === -1) return null;
+      const body = sheetStringBody(text.slice(i + 1, end - 1));
+      if (body === null) return null;
+      out += ch + body + ch;
+      i = end;
+    } else if (ch === '<' || ch === '>' || ch === '\\') {
       return null;
     } else {
       out += ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' ? ' ' : ch;
