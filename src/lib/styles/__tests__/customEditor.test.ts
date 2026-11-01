@@ -20,6 +20,7 @@ import {
   isAttributeProp,
   tagGroups,
   tagNestingHint,
+  contentOf,
   tagRefusal,
 } from '../customEditor';
 import { elements } from '../webPlatformNames.generated';
@@ -140,6 +141,21 @@ describe('tags', () => {
 
   it('refuses a text node and what is no tag', () => {
     for (const tag of ['#text', '', 'A', '1h', 'a b']) expect(tagRefusal(tag, EMPTY), tag).not.toBeNull();
+  });
+
+  it('refuses a tag a browser would move the node\'s text out of, and only with text in it', () => {
+    for (const tag of ['table', 'tbody', 'tr', 'select']) {
+      expect(tagRefusal(tag, EMPTY), tag).toBeNull();
+      expect(tagRefusal(tag, { childCount: 1, text: undefined }), tag).toBeNull();
+      expect(tagRefusal(tag, { childCount: 0, text: 'Hello' }), tag).toMatch(/move it out of place/);
+      expect(tagRefusal(tag, { childCount: 2, text: undefined, hasTextNode: true }), tag).toMatch(/move it out of place/);
+    }
+    expect(tagRefusal('td', { childCount: 2, text: undefined, hasTextNode: true })).toBeNull();
+  });
+
+  it('reads what a node holds, a text node among its children included', () => {
+    expect(contentOf({ props: { children: 'Hi' }, children: [] })).toEqual({ childCount: 0, text: 'Hi', hasTextNode: false });
+    expect(contentOf({ children: [{ type: 'b' }, { type: '#text' }] })).toEqual({ childCount: 2, text: undefined, hasTextNode: true });
   });
 
   it('refuses a void tag only for a node with content, which would otherwise vanish', () => {

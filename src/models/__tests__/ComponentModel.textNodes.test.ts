@@ -371,6 +371,13 @@ describe('what a text node refuses', () => {
     expect(page.dropRefusal('nothing', { kind: 'appTree' })).toBeUndefined();
   });
 
+  it('keeps its element from becoming a tag a browser would move it out of', () => {
+    para.setTag('tr');
+    expect(para.type).toBe('p');
+    para.setTag('section');
+    expect(para.type).toBe('section');
+  });
+
   it('takes no generated nodes', () => {
     const out = page.applyGeneratedNodes('insert', run.id, [{ id: 'g', type: 'p', componentType: 'host' }], 'gen');
     expect(out.ok).toBe(false);

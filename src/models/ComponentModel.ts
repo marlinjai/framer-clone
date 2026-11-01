@@ -2,7 +2,7 @@
 import { types, Instance, SnapshotIn, SnapshotOut, getParent, hasParent as hasMstParent } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
-import { tagRefusal } from '@/lib/styles/customEditor';
+import { contentOf, tagRefusal } from '@/lib/styles/customEditor';
 import { TEXT_NODE_TYPE, isTextNodeType, refusesBareText } from '@/lib/renderer/textNode';
 import React from 'react';
 import type {
@@ -544,8 +544,7 @@ const ComponentModel: any = ComponentBase
     // whole rule (src/lib/styles/customEditor.ts); the panel shows its message,
     // and a refused tag leaves the node as it was. One action, so one undo step.
     setTag(tag: string) {
-      const props = self.props as Record<string, unknown>;
-      if (tagRefusal(tag, { childCount: self.children.length, text: props.children })) return;
+      if (tagRefusal(tag, contentOf(self))) return;
       self.type = tag;
     },
 

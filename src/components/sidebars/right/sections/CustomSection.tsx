@@ -34,6 +34,7 @@ import {
   isSupportedDeclaration,
   tagGroups,
   tagNestingHint,
+  contentOf,
   tagRefusal,
 } from '@/lib/styles/customEditor';
 import { cn } from '@/lib/utils';
@@ -94,8 +95,7 @@ const TagPicker = observer(({ component }: { component: ComponentInstance }) => 
   const hint = tagNestingHint(tag, parentTag(component));
 
   const choose = (next: string) => {
-    const props = component.props as Record<string, unknown>;
-    const problem = tagRefusal(next, { childCount: component.children.length, text: props.children });
+    const problem = tagRefusal(next, contentOf(component));
     setRefusal(problem);
     if (!problem) component.setTag(next);
   };
