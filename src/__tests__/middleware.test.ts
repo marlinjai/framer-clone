@@ -205,9 +205,7 @@ describe('middleware: matcher reconciled to real routes (MT-16)', () => {
     expect(config.matcher).toEqual([
       '/',
       '/projects/:path*',
-      '/api/projects/:path*',
-      '/api/ai/:path*',
-      '/api/books/:path*',
+      '/api/:path*',
     ]);
   });
 
@@ -217,16 +215,69 @@ describe('middleware: matcher reconciled to real routes (MT-16)', () => {
     expect(config.matcher).not.toContain('/api/admin/:path*');
   });
 
-  it('leaves public read/render families out of the matcher (open, never bounced)', () => {
-    // The storefront catch-all, /preview, /api/health, and the public
-    // /api/cms + /api/commerce read/order paths must NOT be matched.
-    for (const open of [
-      '/api/cms/:path*',
-      '/api/commerce/:path*',
-      '/api/health/:path*',
-      '/preview/:path*',
-    ]) {
+  it('leaves public page families out of the matcher', () => {
+    for (const open of ['/preview/:path*', '/[...slug]']) {
       expect(config.matcher).not.toContain(open);
     }
+  });
+
+  it('runs on an open API route but does not gate it on a session', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    for (const path of ['/api/health', '/api/cms/collections', '/api/commerce/products']) {
+      expect(isNext(await middleware(req(`https://${EDITOR}${path}`, { host: EDITOR })))).toBe(true);
+    }
+  });
+});
+
+describe('middleware: a write from another origin never reaches the editor host', () => {
+  const write = (path: string, headers: Record<string, string>, host = EDITOR) =>
+    new NextRequest(`https://${host}${path}`, { method: 'POST', headers: { host, cookie: 'lumitra_session=x', ...headers } });
+
+  it.each(['same-site', 'cross-site'])('refuses Sec-Fetch-Site %s on every API family', async (site) => {
+    process.env.EDITOR_HOST = EDITOR;
+    for (const path of ['/api/projects/save', '/api/projects/publish', '/api/books/invoices', '/api/ai/edit', '/api/cms/rows', '/api/commerce/orders']) {
+      const res = await middleware(write(path, { 'sec-fetch-site': site, 'content-type': 'text/plain' }));
+      expect(res.status).toBe(403);
+    }
+  });
+
+  it('refuses a stored form on a published site, by Origin, in a browser without Sec-Fetch-Site', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(write('/api/projects/save', { origin: `https://${PUBLISHED}` }));
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses a null or malformed Origin', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    expect((await middleware(write('/api/projects/save', { origin: 'null' }))).status).toBe(403);
+  });
+
+  it('refuses a server action posted from another origin', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    expect((await middleware(write('/projects', { 'sec-fetch-site': 'same-site' }))).status).toBe(403);
+  });
+
+  it('lets the editor write to itself', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    expect(isNext(await middleware(write('/api/projects/save', { 'sec-fetch-site': 'same-origin' })))).toBe(true);
+    expect(isNext(await middleware(write('/api/projects/save', { origin: `https://${EDITOR}` })))).toBe(true);
+  });
+
+  it('lets a webhook or host timer through: neither header means no browser page', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const stripe = new NextRequest(`https://${EDITOR}/api/payments/stripe/webhook`, { method: 'POST', headers: { host: EDITOR } });
+    expect(isNext(await middleware(stripe))).toBe(true);
+    const timer = new NextRequest(`https://${EDITOR}/api/internal/commerce/jobs/run`, { method: 'POST', headers: { host: EDITOR } });
+    expect(isNext(await middleware(timer))).toBe(true);
+  });
+
+  it('does not touch a read, or a checkout on a published site', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    expect(isNext(await middleware(req(`https://${EDITOR}/api/cms/x`, { host: EDITOR })))).toBe(true);
+    const checkout = new NextRequest(`https://${PUBLISHED}/api/commerce/orders`, {
+      method: 'POST',
+      headers: { host: PUBLISHED, 'sec-fetch-site': 'same-origin' },
+    });
+    expect(isNext(await middleware(checkout))).toBe(true);
   });
 });
