@@ -33,6 +33,11 @@ describe('blocked nodes', () => {
     expect(editor('div', props)).toBe('<div id="keep"></div>');
   });
 
+  it.each(['onclick', 'ONCLICK', 'onClick', 'OnMouseOver'])('drops a stored %s on a custom element', (name) => {
+    expect(published({ type: 'x-y', props: { [name]: 'x', id: 'keep' } })).toBe('<x-y id="keep"></x-y>');
+    expect(editor('x-y', { [name]: 'x', id: 'keep' })).toBe('<x-y id="keep"></x-y>');
+  });
+
   it('keeps the handlers the editor attaches, which are functions', () => {
     const onClick = () => {};
     const element = createComponentElement({ type: 'div', props: {}, isHostElement: true } as never, { onClick }, []) as React.ReactElement<{ onClick: unknown }>;
