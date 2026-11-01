@@ -47,6 +47,12 @@ describe('StorefrontPaymentGateway', () => {
     expect(result).toEqual({ ok: false, code: 'refused', message, field: 'country' });
   });
 
+  it('names the country when that is what the server could not read', async () => {
+    const body = { error: { code: 'bad_body', message: 'invalid request body', issues: [{ path: ['buyer', 'country'] }] } };
+    const result = await new StorefrontPaymentGateway(answer(400, body) as unknown as typeof fetch).authorize(request);
+    expect(result).toMatchObject({ ok: false, code: 'refused', field: 'country', message: expect.stringContaining('two letters') });
+  });
+
   it.each([
     [402, { error: { code: 'payment_declined', message: 'the card was declined' } }, 'declined'],
     [409, { error: { code: 'payment_closed', message: 'the order is expired' } }, 'closed'],

@@ -334,6 +334,41 @@ describe('CheckoutButton a buyer the shop cannot invoice', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('names each refusal by its own id when a page carries two checkouts', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      fakeResponse(201, { orderId: 'order_123', orderNumber: 'ORD-123', totalCents: 4760, currency: 'EUR' }),
+    );
+    const authorize = vi.fn<PaymentGateway['authorize']>().mockResolvedValue({ ok: false, code: 'refused', message: REFUSAL, field: 'country' });
+    const gateway = { id: 'demo', isDemo: true, authorize };
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(SEEDED_LINES));
+    const { container, getByTestId } = render(
+      <CartProvider>
+        <div data-checkout-host>
+          <CheckoutButton node={makeNode()} scope={createScope()} gateway={gateway} />
+        </div>
+        <div data-checkout-host>
+          <CheckoutButton node={makeNode()} scope={createScope()} gateway={gateway} />
+        </div>
+        <CartProbe />
+      </CartProvider>,
+    );
+    await waitForHydratedCart(getByTestId);
+    const hosts = Array.from(container.querySelectorAll<HTMLElement>('[data-checkout-host]'));
+    for (const host of hosts) {
+      clickCheckout(host);
+      await waitFor(() => expect(host.querySelector('[data-checkout-pay]')).not.toBeNull());
+      fillBuyer(host);
+      await act(async () => {
+        fireEvent.click(host.querySelector('button[data-checkout-pay]')!);
+      });
+    }
+    const ids = hosts.map((host) => host.querySelector('[data-checkout-refused]')?.id);
+    expect(ids[0]).toBeTruthy();
+    expect(ids[1]).toBeTruthy();
+    expect(ids[0]).not.toBe(ids[1]);
+    hosts.forEach((host, index) => expect(field(host, 'country').getAttribute('aria-describedby')).toBe(ids[index]));
+  });
+
   it('goes back to the cart and returns to the same order with the input kept and the refusal gone', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')

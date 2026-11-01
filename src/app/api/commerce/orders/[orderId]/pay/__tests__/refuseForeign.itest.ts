@@ -4,12 +4,13 @@
 // 2026-11-01). Through the real routes against a provisioned tenant schema, with real Books settings, the real
 // German VAT module and the real issue; only the shared contacts database is a fake.
 //
-//   - regular taxation: a foreign address and a VAT id that is not German answer 422, the payment stays pending,
-//     the stock stays held, no document exists, and the same order pays once the buyer corrects the input;
-//   - a company without Books is priced as a regular one, so it refuses the same way;
-//   - section 19 (small business): every line is free of VAT whoever buys, so any address and any VAT id are
-//     accepted and the receipt adds up to what was paid. An order the company priced with VAT before it became a
-//     small business cannot be invoiced that way and is refused;
+//   - every company: a foreign address answers 422, the payment stays pending, the stock stays held, no document
+//     exists, and the same order pays once the buyer corrects the input;
+//   - regular taxation (and a company without Books, priced as a regular one): a VAT id that is not German as well;
+//   - section 19 (small business): a German buyer may give any VAT id the Books would store;
+//   - a blank VAT id is none; a customer row left with another country never taxes this buyer as foreign, and an
+//     invoice already issued to that row stays as it is;
+//   - the tax status changed since a net-priced order was placed: 409, the order closed, the buyer checks out again;
 //   - the four paths of a stateful flow: forward, backtrack and revise, resume from the buyer stored with the
 //     order, and re-entry after the order was paid.
 // All data is synthetic.
@@ -34,7 +35,12 @@ vi.mock('@/server/commerce/payment/stripe/client', async (importOriginal) => ({
 
 import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 import { FakeContactBook, FakeDirectory, initCompany } from '@/server/books/__tests__/booksFixtures';
+import { issue } from '@/server/books/issue';
+import { createCustomer } from '@/server/books/repository/customers';
+import { createDraft } from '@/server/books/repository/documents';
+import { addLine } from '@/server/books/repository/lines';
 import { booksScope } from '@/server/books/scope';
+import { toJsonb } from '@/server/books/snapshots';
 import {
   createPublishedSite,
   openStorefrontFixtures,
@@ -43,6 +49,7 @@ import {
   type ProvisionedTenant,
   type StorefrontFixtures,
 } from '@/server/commerce/__tests__/storefrontFixtures';
+import { StorefrontPaymentGateway } from '@/lib/commerce/payment/storefrontGateway';
 import type { StripeApi } from '@/server/commerce/payment/stripe/client';
 import { refreshAccount, startOnboarding } from '@/server/commerce/payment/stripe/connect';
 import { POST as placeOrder } from '../../../route';
@@ -61,9 +68,34 @@ let noBooks: Shop;
 // Provisioning takes a lock every suite of the integration run shares, so waiting for it outlasts the default budget.
 const PROVISIONING_TIMEOUT = 300_000;
 
+function scopeOf(shop: Shop) {
+  return booksScope(shop.tenant.db, shop.tenant.tgId, DEMO_COMPANY_ID, { recipients: state.directory as FakeDirectory });
+}
+
 function setUpBooks(shop: Shop, taxStatus: 'regular' | 'small_business') {
-  const scope = booksScope(shop.tenant.db, shop.tenant.tgId, DEMO_COMPANY_ID, { recipients: state.directory as FakeDirectory });
-  return initCompany(scope, { taxStatus, invoiceNext: 1000 });
+  return initCompany(scopeOf(shop), { taxStatus, invoiceNext: 1000 });
+}
+
+/** The customer an earlier sale or a person left behind: the contacts database matches the next buyer by name. */
+async function staleCustomer(shop: Shop, name: string, row: { countryCode: string; vatId?: string }) {
+  const contact = await (state.contactBook as FakeContactBook).create(DEMO_COMPANY_ID, {
+    kind: 'person',
+    name,
+    companyOrRole: null,
+    email: 'alex@example.com',
+    addressLine1: 'Altweg 1',
+    addressLine2: null,
+    postalCode: '1010',
+    city: 'Wien',
+    country: row.countryCode,
+    vatId: row.vatId ?? null,
+  });
+  return createCustomer(scopeOf(shop), {
+    contactId: contact.id,
+    customerType: row.vatId ? 'b2b' : 'b2c',
+    countryCode: row.countryCode,
+    vatId: row.vatId ?? null,
+  });
 }
 
 async function newShop(slug: string, taxStatus: 'regular' | 'small_business' | null): Promise<Shop> {
@@ -307,16 +339,26 @@ describe('pay for a company without Books: priced as a regular business', () => 
   });
 });
 
-describe('pay under section 19: no VAT on any line, whoever buys', () => {
+describe('pay under section 19: Germany only, like every company', () => {
   it.each([
     ['an Austrian business with a VAT id', austrianBusiness],
     ['a Swiss buyer', swissBuyer],
-    ['a German address with a foreign VAT id', () => buyer({ kind: 'organization', vatId: 'ATU12345678' })],
-  ])('%s pays and gets a receipt that adds up to the payment', async (_label, makeBuyer) => {
+  ])('%s is refused, net and gross', async (_label, makeBuyer) => {
+    for (const basis of ['net', 'gross'] as const) {
+      const placed = await order(smallBusiness, { basis });
+      await expectRefused(smallBusiness, placed, await payOrder(smallBusiness, placed.orderId, { buyer: makeBuyer() }), 'country');
+    }
+  });
+
+  it.each([
+    ['no VAT id', {}],
+    ['a German VAT id', { kind: 'organization', vatId: 'DE123456789' }],
+    ['a foreign VAT id', { kind: 'organization', vatId: 'ATU12345678' }],
+  ])('a German buyer with %s pays and gets a receipt without VAT', async (_label, details) => {
     for (const basis of ['net', 'gross'] as const) {
       const placed = await order(smallBusiness, { basis });
       expect(placed.totalCents).toBe(1000);
-      const answer = await payOrder(smallBusiness, placed.orderId, { buyer: makeBuyer() });
+      const answer = await payOrder(smallBusiness, placed.orderId, { buyer: buyer(details) });
       expect(answer).toMatchObject({ status: 200, body: { status: 'paid', receiptError: null } });
       const [receipt] = await documentsOf(smallBusiness, placed.orderId);
       expect(receipt).toMatchObject({ status: 'issued', total: 1000, tax_amount: 0, reverse_charge: false, kleinunternehmer: true });
@@ -329,12 +371,132 @@ describe('pay under section 19: no VAT on any line, whoever buys', () => {
     const answer = await payOrder(smallBusiness, placed.orderId, { buyer: buyer({ kind: 'organization', vatId: '12/345/67890' }) });
     await expectRefused(smallBusiness, placed, answer, 'vatId');
   });
+});
 
-  it('an order priced with VAT before the company set up its Books as a small business takes no foreign buyer', async () => {
-    const shop = await newShop('refuse-late-small', null);
-    const placed = await order(shop);
-    expect(placed.totalCents).toBe(1190);
+describe('pay with a blank VAT id: there is none', () => {
+  it.each(['', '   '])('the buyer pays and gets a consumer receipt (%j)', async (vatId) => {
+    for (const shop of [regular, smallBusiness]) {
+      const placed = await order(shop);
+      const answer = await payOrder(shop, placed.orderId, { buyer: buyer({ vatId }) });
+      expect(answer).toMatchObject({ status: 200, body: { status: 'paid', receiptError: null } });
+      expect(await documentsOf(shop, placed.orderId)).toHaveLength(1);
+    }
+  });
+
+  it('a blank id stored with the order before this rule is read the same way', async () => {
+    const placed = await order(regular);
+    await regular.tenant.db
+      .updateTable('order_payment')
+      .set({ buyer: toJsonb(buyer({ vatId: '' })) })
+      .where('order_id', '=', placed.orderId)
+      .execute();
+    expect(await payOrder(regular, placed.orderId, {})).toMatchObject({ status: 200, body: { receiptError: null } });
+  });
+});
+
+describe('a customer row left with another country', () => {
+  it('a German buyer with the same German VAT id is taxed as German, not as reverse charge', async () => {
+    const details = buyer({ vatId: 'DE123456789' });
+    await staleCustomer(regular, details.name, { countryCode: 'AT', vatId: 'DE123456789' });
+    const placed = await order(regular, { basis: 'gross' });
+    expect(await payOrder(regular, placed.orderId, { buyer: details })).toMatchObject({ status: 200, body: { receiptError: null } });
+    expect(await documentsOf(regular, placed.orderId)).toEqual([
+      { status: 'issued', total: 1000, tax_amount: 160, reverse_charge: false, kleinunternehmer: false, tax_note: null },
+    ]);
+  });
+
+  it('a row outside the EU no longer costs a German buyer the invoice', async () => {
+    const details = buyer();
+    await staleCustomer(regular, details.name, { countryCode: 'CH' });
+    const placed = await order(regular);
+    expect(await payOrder(regular, placed.orderId, { buyer: details })).toMatchObject({ status: 200, body: { receiptError: null } });
+    expect(await documentsOf(regular, placed.orderId)).toHaveLength(1);
+  });
+
+  it('an invoice already issued to that row stays exactly as it was', async () => {
+    const details = buyer({ vatId: 'DE123456789' });
+    const customer = await staleCustomer(regular, details.name, { countryCode: 'AT', vatId: 'DE123456789' });
+    const scope = scopeOf(regular);
+    const draft = await createDraft(scope, { docType: 'invoice', actorUserId: 'test', customerId: customer.id, netOrGross: 'net', serviceDate: '2026-10-01' });
+    await addLine(scope, draft.document.id, { kind: 'product', title: 'Ring', quantity: 1000, unitLabel: 'Stk', unitPrice: 5000, taxClass: 'standard' });
+    await issue(scope, draft.document.id, { actorUserId: 'test' });
+    const read = () =>
+      regular.tenant.db.selectFrom('sales_document').selectAll().where('id', '=', draft.document.id).executeTakeFirstOrThrow();
+    const before = await read();
+    expect(before).toMatchObject({ status: 'issued', reverse_charge: true });
+
+    const placed = await order(regular, { basis: 'gross' });
+    expect(await payOrder(regular, placed.orderId, { buyer: details })).toMatchObject({ status: 200, body: { receiptError: null } });
+    expect((await documentsOf(regular, placed.orderId))[0]).toMatchObject({ reverse_charge: false, tax_amount: 160 });
+    expect(await read()).toEqual(before);
+  });
+});
+
+describe('the tax status changed between placing and paying', () => {
+  const setStatus = (shop: Shop, taxStatus: 'regular' | 'small_business') =>
+    shop.tenant.db.updateTable('books_company_settings').set({ tax_status: taxStatus }).where('tenant_id', '=', DEMO_COMPANY_ID).execute();
+
+  it('in both directions a net order closes, its stock back, and the buyer checks out again; a gross total stands', async () => {
+    const shop = await newShop('refuse-switch', null);
+
+    // Priced with VAT, then set up as a small business.
+    const withVat = await order(shop);
+    expect(withVat.totalCents).toBe(1190);
     await setUpBooks(shop, 'small_business');
-    await expectRefused(shop, placed, await payOrder(shop, placed.orderId, { buyer: austrianBusiness() }), 'country');
+    expect(await payOrder(shop, withVat.orderId, { buyer: buyer() })).toMatchObject({
+      status: 409,
+      body: { error: { code: 'order_outdated' } },
+    });
+    expect((await paymentOf(shop, withVat.orderId)).status).toBe('cancelled');
+    expect(await reserved(shop, withVat.inventoryItemId)).toBe(0);
+    expect(await documentsOf(shop, withVat.orderId)).toEqual([]);
+
+    // Priced without VAT, then regular.
+    const withoutVat = await order(shop);
+    const gross = await order(shop, { basis: 'gross' });
+    expect(withoutVat.totalCents).toBe(1000);
+    await setStatus(shop, 'regular');
+    expect(await payOrder(shop, withoutVat.orderId, { buyer: buyer() })).toMatchObject({
+      status: 409,
+      body: { error: { code: 'order_outdated' } },
+    });
+    expect((await paymentOf(shop, withoutVat.orderId)).status).toBe('cancelled');
+
+    // The total of a gross order is the same under either status: it pays and the receipt adds up.
+    expect(await payOrder(shop, gross.orderId, { buyer: buyer() })).toMatchObject({ status: 200, body: { receiptError: null } });
+    expect(await documentsOf(shop, gross.orderId)).toMatchObject([{ status: 'issued', total: 1000, tax_amount: 160 }]);
+
+    // Checking out again is a new order under today's status, and it pays.
+    const again = await order(shop);
+    expect(again.totalCents).toBe(1190);
+    expect(await payOrder(shop, again.orderId, { buyer: buyer() })).toMatchObject({ status: 200, body: { receiptError: null } });
+  }, PROVISIONING_TIMEOUT);
+});
+
+describe('what the checkout hears from the real route', () => {
+  const gatewayFor = (shop: Shop) =>
+    new StorefrontPaymentGateway((async (url: string, init: RequestInit) => {
+      const orderId = decodeURIComponent(String(url).split('/').at(-2) ?? '');
+      return pay(request(shop, String(url), JSON.parse(String(init.body))), { params: Promise.resolve({ orderId }) });
+    }) as unknown as typeof fetch);
+
+  it.each(['Germany', 'Deutschland'])('%s names the country field, the order keeps waiting', async (country) => {
+    const placed = await order(regular);
+    const result = await gatewayFor(regular).authorize({
+      orderId: placed.orderId,
+      amountCents: placed.totalCents,
+      currency: 'EUR',
+      buyer: buyer({ country }),
+    });
+    expect(result).toMatchObject({ ok: false, code: 'refused', field: 'country', message: expect.stringContaining('two letters') });
+    expect((await paymentOf(regular, placed.orderId)).status).toBe('pending');
+  });
+
+  it('an outdated order reaches the checkout as closed, so it places a new one', async () => {
+    const shop = await newShop('refuse-switch-gateway', 'small_business');
+    const placed = await order(shop);
+    await shop.tenant.db.updateTable('books_company_settings').set({ tax_status: 'regular' }).where('tenant_id', '=', DEMO_COMPANY_ID).execute();
+    const result = await gatewayFor(shop).authorize({ orderId: placed.orderId, amountCents: placed.totalCents, currency: 'EUR', buyer: buyer() });
+    expect(result).toMatchObject({ ok: false, code: 'closed', message: expect.stringContaining('nothing has been charged') });
   }, PROVISIONING_TIMEOUT);
 });

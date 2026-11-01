@@ -25,7 +25,7 @@ import { BooksError } from '@/server/books/errors';
 import type { ContactBook, NewContactInput } from '@/server/books/contactBook';
 import { issue } from '@/server/books/issue';
 import { storeBeforeCommit } from '@/server/books/render/store';
-import { createCustomer, customersByContactIds } from '@/server/books/repository/customers';
+import { createCustomer, customersByContactIds, updateCustomerTaxFields } from '@/server/books/repository/customers';
 import { createDraft, deleteDraft } from '@/server/books/repository/documents';
 import { addLine } from '@/server/books/repository/lines';
 import { getDocument } from '@/server/books/repository/read';
@@ -105,6 +105,11 @@ function normalizedVatId(vatId: string | null | undefined): string | null {
  * customer is reused only when that identity is the buyer's own; another buyer of the same name with another VAT
  * id is refused instead of getting a receipt that shows the first buyer's tax identity. An archived contact is
  * refused as well: the recipient override carries no archived flag of its own.
+ *
+ * The country is corrected, not compared: the invoice's tax profile reads it from the customer row while the
+ * recipient is the buyer, so a row left with another country would tax a German buyer as a foreign one. What is
+ * issued keeps its own: a document freezes its tax fields and its recipient, and issue never reads the row again.
+ * An id on the row already had to match above, so a business known under another country's id is never touched.
  */
 async function customerFor(scope: BooksScope, contactBook: ContactBook, buyer: Buyer): Promise<{ customerId: string; contactId: string }> {
   const input = contactFor(buyer);
@@ -117,6 +122,9 @@ async function customerFor(scope: BooksScope, contactBook: ContactBook, buyer: B
     if (existing.archivedAt) throw new ReceiptError('CUSTOMER_ARCHIVED');
     if (existing.customerType !== (buyer.vatId ? 'b2b' : 'b2c') || normalizedVatId(existing.vatId) !== normalizedVatId(buyer.vatId)) {
       throw new ReceiptError('TAX_IDENTITY_MISMATCH');
+    }
+    if (existing.countryCode !== buyer.country) {
+      await updateCustomerTaxFields(scope, existing.id, { countryCode: buyer.country });
     }
     return { customerId: existing.id, contactId: contact.id };
   }

@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { buyerSchema } from '../buyer';
 import { buyerRefusal } from '../invoiceable';
 
 const REGULAR = { kleinunternehmer: false };
@@ -14,15 +15,29 @@ describe('buyerRefusal', () => {
   it.each([
     ['DE', undefined],
     ['DE', null],
-    ['DE', ''],
     ['DE', 'DE123456789'],
     ['DE', 'de 123 456 789'],
   ])('regular taxation takes %s with VAT id %s', (country, vatId) => {
     expect(buyerRefusal({ country, vatId }, REGULAR)).toBeNull();
   });
 
-  it.each(['AT', 'FR', 'CH', 'GB', 'XI', 'US'])('regular taxation refuses an address in %s', (country) => {
+  it.each(['', '   '])('a blank VAT id is none at all, so it reaches neither the rule nor the Books (%j)', (vatId) => {
+    const { vatId: parsed } = buyerSchema.parse({
+      name: 'Alex Example',
+      email: 'alex@example.com',
+      addressLine1: 'Beispielweg 2',
+      postalCode: '20095',
+      city: 'Hamburg',
+      country: 'DE',
+      vatId,
+    });
+    expect(parsed).toBeNull();
+    expect(buyerRefusal({ country: 'DE', vatId: parsed }, REGULAR)).toBeNull();
+  });
+
+  it.each(['AT', 'FR', 'CH', 'GB', 'XI', 'US'])('every company refuses an address in %s', (country) => {
     expect(buyerRefusal({ country, vatId: null }, REGULAR)).toMatchObject({ field: 'country' });
+    expect(buyerRefusal({ country, vatId: null }, SMALL_BUSINESS)).toMatchObject({ field: 'country' });
   });
 
   it('names the address first when both are foreign: the VAT id alone would not help', () => {
@@ -37,25 +52,23 @@ describe('buyerRefusal', () => {
   );
 
   it.each([
-    ['DE', null],
-    ['AT', 'ATU12345678'],
-    ['CH', null],
-    ['CH', 'CHE123456789'],
-    ['DE', 'ATU12345678'],
-    ['FR', 'fr 12 345678901'],
-  ])('section 19 takes %s with VAT id %s', (country, vatId) => {
-    expect(buyerRefusal({ country, vatId }, SMALL_BUSINESS)).toBeNull();
+    [null],
+    ['DE123456789'],
+    ['ATU12345678'],
+    ['fr 12 345678901'],
+  ])('section 19 takes a German address with VAT id %s', (vatId) => {
+    expect(buyerRefusal({ country: 'DE', vatId }, SMALL_BUSINESS)).toBeNull();
   });
 
-  it('section 19 refuses only an id the Books would not store', () => {
-    expect(buyerRefusal({ country: 'AT', vatId: '12/345/67890' }, SMALL_BUSINESS)).toMatchObject({ field: 'vatId' });
+  it('section 19 refuses an id the Books would not store', () => {
+    expect(buyerRefusal({ country: 'DE', vatId: '12/345/67890' }, SMALL_BUSINESS)).toMatchObject({ field: 'vatId' });
   });
 
   it('every refusal says what to do and that no money moved', () => {
     const refusals = [
       buyerRefusal({ country: 'AT', vatId: null }, REGULAR),
       buyerRefusal({ country: 'DE', vatId: 'ATU12345678' }, REGULAR),
-      buyerRefusal({ country: 'AT', vatId: 'nonsense!' }, SMALL_BUSINESS),
+      buyerRefusal({ country: 'DE', vatId: 'nonsense!' }, SMALL_BUSINESS),
     ];
     for (const refusal of refusals) {
       expect(refusal?.message).toMatch(/continue/);

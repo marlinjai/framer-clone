@@ -203,6 +203,8 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
   const cart = useCart();
   const unavailableReason = useCheckoutUnavailableReason();
   const [state, setState] = React.useState<CheckoutState>({ status: 'idle' });
+  // A page can carry several checkout buttons; each refusal is named by its own field.
+  const refusalId = React.useId();
 
   // The payment gateway is resolved once (the seam). Tests inject a fake.
   const gatewayRef = React.useRef<PaymentGateway | null>(gateway ?? null);
@@ -474,6 +476,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
     ) : null,
     renderOutcome(state, {
       payLabel,
+      refusalId,
       isDemo: activeGateway.isDemo && !(state.status === 'payment' && state.order.provider === 'stripe'),
       onPay: pay,
       onToggleDecline: (next) =>
@@ -493,6 +496,7 @@ function CheckoutButton({ node, hostType = 'div', hostProps = {}, gateway }: Che
 
 interface OutcomeHandlers {
   payLabel: string;
+  refusalId: string;
   isDemo: boolean;
   onPay: () => void;
   onToggleDecline: (next: boolean) => void;
@@ -529,7 +533,7 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
                 value={String(buyer[field.key] ?? '')}
                 disabled={paying}
                 aria-invalid={refusal?.field === field.key ? true : undefined}
-                aria-describedby={refusal?.field === field.key ? 'checkout-refusal' : undefined}
+                aria-describedby={refusal?.field === field.key ? handlers.refusalId : undefined}
                 onChange={(event) => handlers.onBuyerChange(field.key, event.target.value)}
                 style={{
                   padding: '6px 8px',
@@ -557,7 +561,7 @@ function renderOutcome(state: CheckoutState, handlers: OutcomeHandlers): React.R
           </label>
         ) : null}
         {refusal ? (
-          <div id="checkout-refusal" role="alert" data-checkout-refused style={{ marginTop: '8px', color: '#b91c1c' }}>
+          <div id={handlers.refusalId} role="alert" data-checkout-refused style={{ marginTop: '8px', color: '#b91c1c' }}>
             {refusal.message}
           </div>
         ) : null}

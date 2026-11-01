@@ -9,13 +9,14 @@
 //   402 payment_declined        -> declined (the order is closed: the checkout starts a new one)
 //   409 payment_closed          -> closed (paid or closed elsewhere, or expired: check out again)
 //   422 buyer_not_invoiceable   -> refused, with the shop's own message (no money moved, the order keeps waiting)
+//   400 on the country          -> refused, naming the field (Germany typed out instead of the two letters)
 //   422 buyer_required / 400    -> invalid (the buyer's details are missing or malformed)
 //   anything else, or no answer -> gateway_error (retryable)
 
 import type { PaymentGateway, PaymentRequest, PaymentResult } from './types';
 
 interface ErrorBody {
-  error?: { code?: string; message?: string; field?: 'country' | 'vatId' };
+  error?: { code?: string; message?: string; field?: 'country' | 'vatId'; issues?: Array<{ path?: unknown[] }> };
 }
 
 async function errorOf(res: Response): Promise<ErrorBody['error']> {
@@ -71,6 +72,14 @@ export class StorefrontPaymentGateway implements PaymentGateway {
         code: 'refused',
         message: error.message ?? 'this shop cannot invoice these details. Nothing has been charged.',
         field: error.field,
+      };
+    }
+    if (res.status === 400 && error?.issues?.some((issue) => issue.path?.at(-1) === 'country')) {
+      return {
+        ok: false,
+        code: 'refused',
+        message: 'Enter the country as two letters, such as DE for Germany. Nothing has been charged.',
+        field: 'country',
       };
     }
     if (res.status === 422 || res.status === 400) {
