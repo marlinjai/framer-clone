@@ -1,0 +1,12 @@
+# /etc/systemd/system/framer-clone-commerce-jobs.timer
+[Unit]
+Description=framer-clone commerce: job watchdog every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

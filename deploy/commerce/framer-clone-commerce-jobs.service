@@ -1,0 +1,40 @@
+# /etc/systemd/system/framer-clone-commerce-jobs.service
+#
+# Every 5 minutes (see the .timer): the watchdog of the shop's job engine. The
+# poller in every app process does the work; this runs one pass through
+# POST .../commerce/jobs/run, so a dead poller still gets its work done, and a
+# non-2xx answer fails this unit, so the journal and any monitor see it: 500
+# commerce_jobs_unhealthy means a pass failed or a due job is over 10 minutes late.
+# Dead jobs are a count in the answer, not a failure. Uses the custom-domain token
+# header on purpose: one token for every internal call this host makes. The
+# --max-time is above the expired-payments unit's because a pass runs real jobs; a
+# timeout fails the unit while the pass goes on in the app.
+[Unit]
+Description=framer-clone commerce: job watchdog, one pass and its report
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/curl --silent --show-error --fail-with-body --max-time 120 --proto =https -X POST -H @/etc/framer-clone/custom-domains.header https://app.lumitra.co/api/internal/commerce/jobs/run
+User=root
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+PrivateTmp=yes
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+UMask=0022

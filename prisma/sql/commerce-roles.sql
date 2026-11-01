@@ -125,7 +125,9 @@ $$;
 -- Postgres 15 and later no longer let every role create objects in `public`.
 -- The public migrations create public.__public_db_migrations,
 -- public.tenant_groups and public.tenant_migration_progress there, owned by
--- commerce_ddl. commerce_app gets nothing on `public` beyond the default USAGE.
+-- commerce_ddl. commerce_app gets nothing on `public` from this file beyond the
+-- default USAGE; the start step grants it the registry's ids for the job worker
+-- (migrateCommercePublic), once the table exists.
 -- A database restored from an older dump (or created on Postgres 14 and
 -- upgraded) can still give CREATE on `public` to PUBLIC, i.e. to commerce_app;
 -- the REVOKE takes that away and is a no-op on a fresh Postgres 16.
