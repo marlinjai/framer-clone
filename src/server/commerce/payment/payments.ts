@@ -11,7 +11,8 @@ import 'server-only';
 //                       closed. Paid or refunded: nothing changes.
 //   payment_failed      pending -> failed, the reserved stock released.
 //   checkout_cancelled  pending -> cancelled, the reserved stock released.
-//   checkout_expired    pending -> expired, the reserved stock released (also sweepExpiredPayments).
+//   checkout_expired    pending -> expired, the reserved stock released (also sweepExpiredPayments, which runs
+//                       before a new order reserves, before a payment starts, and on a schedule: expirySweep.ts).
 //
 // This row is the order's state. The order itself is append-only (005_minimal_orders revokes UPDATE from the
 // app role: a placed order is a bookkeeping record), so its `status` stays `confirmed`, meaning "placed",
@@ -65,6 +66,18 @@ class LateStockGoneError extends Error {
   constructor() {
     super('late payment: the stock could not be reserved again');
     this.name = 'LateStockGoneError';
+  }
+}
+
+/** A sweep could not close every expired payment. It closed the others; the next sweep tries these again. */
+export class ExpirySweepError extends Error {
+  constructor(
+    readonly tenantId: string,
+    readonly closed: string[],
+    readonly failed: string[],
+  ) {
+    super(`company ${tenantId}: ${failed.length} expired payment(s) could not be closed`);
+    this.name = 'ExpirySweepError';
   }
 }
 
@@ -353,8 +366,10 @@ export function receiptFailure(err: unknown): string {
 }
 
 /**
- * Close every pending payment whose window ran out (checkout_expired, stock released). Idempotent: each
- * expiry is recorded once per order. Answers the orders it closed.
+ * Close every pending payment whose window ran out (checkout_expired, stock released). Idempotent and safe to
+ * run concurrently: the payment row is locked and each expiry recorded once per order, so a second sweep finds
+ * the event and releases nothing. Answers the orders it closed. One payment that cannot be closed never keeps
+ * the others holding their stock: it is logged, the rest are closed, then ExpirySweepError reports it.
  */
 export async function sweepExpiredPayments(deps: PaymentDeps, tenantId: string): Promise<string[]> {
   const at = (deps.now ?? (() => new Date()))();
@@ -366,15 +381,22 @@ export async function sweepExpiredPayments(deps: PaymentDeps, tenantId: string):
     .where('expires_at', '<', at)
     .execute();
   const closed: string[] = [];
+  const failed: string[] = [];
   for (const row of due) {
-    const outcome = await handlePaymentEvent(deps, {
-      provider: row.provider as ProviderId,
-      eventId: `expiry:${row.order_id}`,
-      type: 'checkout_expired',
-      tenantId,
-      orderId: row.order_id,
-    });
-    if (!outcome.duplicate && outcome.status === 'expired') closed.push(row.order_id);
+    try {
+      const outcome = await handlePaymentEvent(deps, {
+        provider: row.provider as ProviderId,
+        eventId: `expiry:${row.order_id}`,
+        type: 'checkout_expired',
+        tenantId,
+        orderId: row.order_id,
+      });
+      if (!outcome.duplicate && outcome.status === 'expired') closed.push(row.order_id);
+    } catch (err) {
+      console.error(`[payments] order ${row.order_id}: the expired payment could not be closed:`, err);
+      failed.push(row.order_id);
+    }
   }
+  if (failed.length > 0) throw new ExpirySweepError(tenantId, closed, failed);
   return closed;
 }

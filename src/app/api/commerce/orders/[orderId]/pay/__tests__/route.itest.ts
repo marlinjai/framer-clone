@@ -5,12 +5,13 @@
 //   - forward: 201 order, 200 paid; the receipt waits for the Books (this shop's company has none set up),
 //     the payment stands;
 //   - a declined card: 402, the order is closed and its stock released;
-//   - paying twice, or a closed order: 409 payment_closed; another shop's order: 404;
-//   - no buyer: 422 buyer_required, nothing paid.
+//   - paying twice, a closed order or one whose window ran out: 409 payment_closed; another shop's order: 404;
+//   - no buyer: 422 buyer_required, nothing paid;
+//   - an expired order that cannot be closed stops only itself, never another buyer of the shop.
 // All data is synthetic.
 
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
   createPublishedSite,
@@ -74,6 +75,14 @@ function payOrder(orderId: string, body: unknown, requestHost = host) {
   return pay(request(`/api/commerce/orders/${orderId}/pay`, body, requestHost), { params: Promise.resolve({ orderId }) });
 }
 
+async function letWindowRunOut(orderId: string) {
+  await tenant.db
+    .updateTable('order_payment')
+    .set({ expires_at: new Date(Date.now() - 60_000) })
+    .where('order_id', '=', orderId)
+    .execute();
+}
+
 async function reserved(item: string) {
   const level = await tenant.db
     .selectFrom('inventory_level')
@@ -131,5 +140,38 @@ describe('POST /api/commerce/orders/<id>/pay (demo provider)', () => {
     const placed = await order();
     expect((await payOrder(placed.orderId, { buyer: BUYER }, otherHost)).status).toBe(404);
     expect((await payOrder(placed.orderId, { buyer: { ...BUYER, email: 'not-an-email' } })).status).toBe(400);
+  });
+
+  it('an expired order is not paid: 409, its stock back', async () => {
+    const placed = await order(1, BUYER);
+    await letWindowRunOut(placed.orderId);
+    const res = await payOrder(placed.orderId, {});
+    expect(res.status).toBe(409);
+    expect((await res.json()) as unknown).toMatchObject({ error: { code: 'payment_closed', status: 'expired' } });
+    expect(await reserved(placed.inventoryItemId)).toBe(0);
+  });
+
+  it('an expired order that cannot be closed stops only itself: another buyer pays, it takes no money', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const stuck = await order(1, BUYER);
+    const other = await order(5, BUYER);
+    await letWindowRunOut(stuck.orderId);
+    // The stock level no longer agrees with the hold, so its release is refused.
+    const setReserved = (quantity: number) =>
+      tenant.db
+        .updateTable('inventory_level')
+        .set({ reserved_quantity: quantity })
+        .where('inventory_item_id', '=', stuck.inventoryItemId)
+        .execute();
+    await setReserved(0);
+
+    expect((await payOrder(other.orderId, {})).status).toBe(200);
+    expect((await payOrder(stuck.orderId, {})).status).toBe(500);
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining(stuck.orderId), expect.anything());
+
+    // Once the cause is gone, the next attempt closes it.
+    await setReserved(1);
+    expect((await payOrder(stuck.orderId, {})).status).toBe(409);
+    logged.mockRestore();
   });
 });

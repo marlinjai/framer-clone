@@ -2,9 +2,9 @@ import 'server-only';
 
 // src/server/domains/internalAuth.ts
 //
-// The gate for the two internal custom-domain endpoints the host-side timer
-// on the shared server calls (the hostname feed and the scheduled re-check):
-// editor host only (404 elsewhere), and a bearer token equal to
+// The gate for the internal endpoints the host-side timers on the shared
+// server call (the custom-domain hostname feed and re-check, and the expired
+// payment sweep): editor host only (404 elsewhere), and a bearer token equal to
 // CUSTOM_DOMAIN_SYNC_TOKEN compared in constant time (401 otherwise). No token
 // configured (or one shorter than 32 characters) means 503
 // custom_domains_not_configured: never an open endpoint. These routes sit

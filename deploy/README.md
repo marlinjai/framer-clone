@@ -243,7 +243,7 @@ says where each comes from.
 | `CUSTOM_DOMAIN_TARGET_IPV6` | no | Comma-separated IPv6 address(es) Traefik answers on. Unset means "no AAAA record allowed": a customer AAAA record pointing elsewhere is reported, because Let's Encrypt would try it first and fail |
 | `CUSTOM_DOMAIN_DNS_SERVERS` | no, recommended | Resolver IPs for the ownership check, e.g. `1.1.1.1,8.8.8.8`, so a TXT record a customer just added is not hidden by the container resolver's negative cache |
 | `CUSTOM_DOMAIN_TLS_PROBE` | no | `off` skips the certificate probe that moves a domain from verified to active (it then stays verified) |
-| `CUSTOM_DOMAIN_SYNC_TOKEN` | for custom domains | Bearer token (at least 32 characters, generated) the host timer presents to `GET /api/internal/custom-domains/hostnames` and `POST /api/internal/custom-domains/recheck`. Unset means both answer 503, the proxy keeps its last file and live domains are not re-checked |
+| `CUSTOM_DOMAIN_SYNC_TOKEN` | for custom domains | Bearer token (at least 32 characters, generated) the host timers present to `GET /api/internal/custom-domains/hostnames`, `POST /api/internal/custom-domains/recheck` and `POST /api/internal/commerce/expired-payments`. Unset means all three answer 503, the proxy keeps its last file, live domains are not re-checked and abandoned checkouts close only when the next order or payment of the same company comes in |
 
 A published site only injects analytics when its `lumitraEnabled` flag is set.
 
@@ -286,6 +286,33 @@ definitive failures in a row release a domain). If more than half of a pass
 fails at once (at least 5 checked), nothing is counted and the call answers 503
 `recheck_circuit_open`, which fails the unit: check the `CUSTOM_DOMAIN_TARGET_*`
 values. The ordered operator steps live in the infra RUNBOOK.
+
+## Abandoned checkouts: the expired payment sweep
+
+A pending payment holds its stock for 30 minutes. A new order or payment closes
+its own company's expired payments first, but a shop nobody buys from would keep
+showing the stock as taken, so a host timer closes them across all companies:
+`deploy/commerce/framer-clone-commerce-expired-payments.timer`, every 5 minutes,
+calls `POST /api/internal/commerce/expired-payments`. With nothing due a call
+costs one indexed query per tenant group. It runs on `coolify-shared-host` and
+reuses the custom-domain token, so nothing new is needed in Infisical.
+
+To install, as root on `coolify-shared-host`, from `deploy/commerce/` at
+`origin/main` once the route is deployed (the header file
+`/etc/framer-clone/custom-domains.header` is already there):
+
+    install -m 0644 framer-clone-commerce-expired-payments.service framer-clone-commerce-expired-payments.timer /etc/systemd/system/
+    systemctl daemon-reload
+    systemd-analyze verify /etc/systemd/system/framer-clone-commerce-expired-payments.service
+    systemctl start framer-clone-commerce-expired-payments.service   # {"tenantGroups":...,"closed":...,"failed":0,...}
+    systemctl enable --now framer-clone-commerce-expired-payments.timer
+
+The answer lands in the journal (`journalctl -u
+framer-clone-commerce-expired-payments.service -n 5 -o cat`). A failing unit means
+503 `custom_domains_not_configured` or 401 (the token), or 500
+`expired_payment_sweep_failed`: some payments or a whole tenant group could not be
+closed, the rest were, the app log names them (`[payments]`) and the next run
+tries again.
 
 ## Operator commands (from a checkout, against a forwarded database)
 

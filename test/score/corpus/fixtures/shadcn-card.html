@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>shadcn/ui card</title>
+<!-- The markup and classes of shadcn/ui's Card, written out as the CSS they
+     compile to, with the neutral theme's colours as plain values. -->
+<style>
+  .page { font: 14px/20px Arial, sans-serif; padding: 24px; }
+  .card { display: flex; flex-direction: column; gap: 24px; border: 1px solid #e5e5e5; border-radius: 12px; padding: 24px 0; background: #fff; color: #0a0a0a; box-shadow: 0 1px 2px rgba(0,0,0,0.05); max-width: 380px; }
+  .header { display: grid; gap: 6px; padding: 0 24px; }
+  .title { font-weight: 600; line-height: 1; }
+  .description { color: #737373; font-size: 14px; }
+  .content { padding: 0 24px; }
+  .footer { display: flex; align-items: center; padding: 0 24px; }
+</style>
+</head>
+<body style="margin:0">
+<div class="page" data-parity-id="page">
+  <div class="card" data-parity-id="card">
+    <div class="header" data-parity-id="header">
+      <div class="title" data-parity-id="title">Create project</div>
+      <div class="description" data-parity-id="description">Deploy your new project in one click.</div>
+    </div>
+    <div class="content" data-parity-id="content"><p style="margin:0" data-parity-id="copy">Card content goes here.</p></div>
+    <div class="footer" data-parity-id="footer"><p style="margin:0" data-parity-id="note">Card footer</p></div>
+  </div>
+</div>
+</body>
+</html>

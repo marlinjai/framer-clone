@@ -150,6 +150,26 @@ representation, and a node without one fails the round-trip test rather than bei
 - Behaviour: every included WAI-ARIA pattern built from behaviour primitives alone, keyboard support
   included. Whatever cannot be is the defined scope of custom code.
 
+### The first score (2026-11-01)
+
+Step 1 exists: `pnpm score:primitives` writes [the score](../primitives-score/latest.md), and the
+numbers there replace the rough readings above. Where the first run corrects this plan:
+
+- **Not any tag.** A `form` node renders as a `div` on the published page, because the renderer
+  reads the tag as a registry id; the canvas shows a `form`. `iframe`, `object` and `embed` are
+  dropped since the script fix.
+- **The denominator.** mdn-data lists 651 CSS properties, 528 after exclusions, so the 103 in
+  `CSS_PROP_SET` are 19.5 percent of the included ones.
+- **A panel gap the plan missed.** The palette makes five tags (`a`, `button`, `div`, `img`, `p`) and
+  the panel cannot change a node's tag, so a heading exists only where the AI generator or a default
+  page template made one. Step 3's general editor does not close this.
+- **Behaviour is less empty than gap 3 says.** Plain HTML passes the primary keyboard contract of 17
+  of the 30 WAI-ARIA patterns with no behaviour model, among them accordion (`details`) and modal
+  dialog (`command`). Tabs, carousel, menus, tooltip and combobox fail. So step 6's list is partly
+  covered by presets over native elements, though a Radix component's exact behaviour is not.
+- **Style values, not only style keys.** A value holding `;`, such as a `data:` image, is dropped
+  from the stylesheet as soon as the node has a responsive style, while it works inline.
+
 ## Visual state management
 
 Marlin (2026-11-01): how do we give people a visual way to manage state, such as a hover state or
@@ -199,7 +219,7 @@ These are rough judgement estimates in agent time, not measurements. The evaluat
 
 | Step | What | Rough size |
 |---|---|---|
-| 1 | The matrix, corpus harness and round-trip test, reporting the honest first score | 1 week |
+| 1 | The matrix, corpus harness and round-trip test, reporting the honest first score (done, [score](../primitives-score/latest.md)) | 1 week |
 | 2 | Text nodes, so mixed text stops losing content (built, see gap 1) | days |
 | 3 | A general "any property, any attribute" editor in the panel. This closes the long tail of CSS cheaply; proper controls stay for common properties only, and `CSS_PROP_SET` is not extended by hand | days |
 | 4 | Selector-level styling: element states, keyframe animations and further at-rules, built on how `responsiveCss` already moves style maps into a stylesheet | 1 to 2 weeks |

@@ -1,0 +1,20 @@
+/* Plain CSS for the three Radix fixtures, in the look of the shadcn/ui wrappers. */
+.page { font: 14px/20px Arial, sans-serif; color: #0a0a0a; padding: 24px; max-width: 480px; }
+
+.accordion-item { border-bottom: 1px solid #e5e5e5; }
+.accordion-heading { margin: 0; font: inherit; }
+.accordion-trigger { display: flex; width: 100%; justify-content: space-between; padding: 16px 0; border: 0; background: none; font: inherit; font-weight: 500; text-align: left; cursor: pointer; }
+.accordion-trigger:hover { text-decoration: underline; }
+.accordion-content { padding: 0 0 16px; }
+
+.tabs-list { display: inline-flex; background: #f5f5f5; border-radius: 8px; padding: 3px; }
+.tabs-trigger { border: 0; background: none; border-radius: 6px; padding: 4px 8px; font: inherit; font-weight: 500; cursor: pointer; }
+.tabs-trigger[data-state="active"] { background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+.tabs-content { padding-top: 8px; }
+
+.dialog-trigger { border: 1px solid #e5e5e5; border-radius: 6px; background: #fff; padding: 8px 16px; font: inherit; cursor: pointer; }
+.dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); }
+.dialog-content { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #fff; border-radius: 8px; padding: 24px; width: 320px; display: grid; gap: 16px; }
+.dialog-title { font-size: 18px; font-weight: 600; margin: 0; }
+.dialog-description { color: #737373; margin: 0; }
+.dialog-close { justify-self: end; border: 0; border-radius: 6px; background: #171717; color: #fafafa; padding: 8px 16px; font: inherit; cursor: pointer; }
