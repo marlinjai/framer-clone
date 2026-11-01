@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: decided
 date: 2026-11-01
 title: "How Medusa solves e-commerce, and what framer-clone's commerce engine should build"
 summary: "A source reading of Medusa v2.22.2 against framer-clone's own engine on origin/main (6ddf54b). Not a migration plan: BusBasis may stay on Medusa. Medusa's domain model is worth copying, its runtime is not: its workflow engine and event bus are built for one shop per server and give weak guarantees without Redis. framer-clone already beats it on stock and webhook correctness, and lacks shipping, discounts, order work and returns. Five decisions must be made before those features pile up, starting with one Postgres outbox and job table and a server-side checkout record."
@@ -46,6 +46,14 @@ Short forms used below: SQL (Structured Query Language, how the database is quer
 programming interface), VAT (value-added tax), EU (European Union), JSON (JavaScript Object Notation, a
 text format for structured data). "Books" is framer-clone's invoicing
 domain (`src/server/books`).
+
+## Decisions (Marlin, 2026-11-01)
+
+1. **The backbone runs now, features after the first score.** The backbone is ranks 1 and 2 of the
+   table in section 5.5: the outbox and job table with Stripe reconciliation, and the server-side
+   checkout record.
+2. **The build order and skip list are accepted as listed.**
+3. **German VAT is researched first and Marlin reviews it,** before ranks 3, 5 and 6 are built.
 
 ## 1. The short version
 
