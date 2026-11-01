@@ -9,7 +9,7 @@
 // A contract is one interaction, not the whole Guide page: passing means the
 // primary keyboard path works, not that the pattern is fully conformant.
 
-import type { Page } from 'playwright';
+import type { Locator, Page } from 'playwright';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 
 type Props = Record<string, unknown>;
@@ -33,21 +33,25 @@ export interface Pattern {
   /** How the tree is built, in a few words. */
   built: 'native' | 'aria-only';
   tree: () => ComponentNode;
-  contract: (page: Page) => Promise<void>;
+  /** `root` is where the tree sits: the page once published, the frame's content on the canvas. */
+  contract: (page: Page, root: Scope) => Promise<void>;
 }
+
+/** What a contract looks elements up in, so the editor around a canvas tree is never matched. */
+export type Scope = Page | Locator;
 
 const pressed = async (page: Page, key: string) => {
   await page.keyboard.press(key);
   await page.waitForTimeout(20);
 };
 
-const attr = (page: Page, selector: string, name: string) => page.locator(selector).first().getAttribute(name);
+const attr = (root: Scope, selector: string, name: string) => root.locator(selector).first().getAttribute(name);
 
 /** Opens by keyboard, puts focus inside, closes with Escape, gives focus back. */
-async function modalContract(page: Page, role: 'dialog' | 'alertdialog'): Promise<void> {
-  await page.getByRole('button', { name: 'Open' }).focus();
+async function modalContract(page: Page, root: Scope, role: 'dialog' | 'alertdialog'): Promise<void> {
+  await root.getByRole('button', { name: 'Open' }).focus();
   await pressed(page, 'Enter');
-  const dialog = page.getByRole(role);
+  const dialog = root.getByRole(role);
   assert(await dialog.isVisible(), 'Enter on the trigger did not open it');
   await pressed(page, 'Tab');
   // A native modal hands focus to the browser's own controls after its last
@@ -95,29 +99,29 @@ export const PATTERNS: Pattern[] = [
         n('details', { name: 'group' }, t('summary', 'One'), t('p', 'First panel')),
         n('details', { name: 'group' }, t('summary', 'Two'), t('p', 'Second panel')),
       ),
-    contract: async (page) => {
-      await page.locator('summary').nth(0).focus();
+    contract: async (page, root) => {
+      await root.locator('summary').nth(0).focus();
       await pressed(page, 'Enter');
-      assert(await page.getByText('First panel').isVisible(), 'Enter did not open the first panel');
-      await page.locator('summary').nth(1).focus();
+      assert(await root.getByText('First panel').isVisible(), 'Enter did not open the first panel');
+      await root.locator('summary').nth(1).focus();
       await pressed(page, 'Space');
-      assert(await page.getByText('Second panel').isVisible(), 'Space did not open the second panel');
-      assert(!(await page.getByText('First panel').isVisible()), 'the first panel did not close');
+      assert(await root.getByText('Second panel').isVisible(), 'Space did not open the second panel');
+      assert(!(await root.getByText('First panel').isVisible()), 'the first panel did not close');
     },
   },
   {
     id: 'alert',
     built: 'native',
     tree: () => t('div', 'Saved', { role: 'alert' }),
-    contract: async (page) => {
-      assert(await page.getByRole('alert').isVisible(), 'no alert in the accessibility tree');
+    contract: async (_page, root) => {
+      assert(await root.getByRole('alert').isVisible(), 'no alert in the accessibility tree');
     },
   },
   {
     id: 'alertdialog',
     built: 'native',
     tree: modalTree('alertdialog'),
-    contract: (page) => modalContract(page, 'alertdialog'),
+    contract: (page, root) => modalContract(page, root, 'alertdialog'),
   },
   {
     id: 'breadcrumb',
@@ -133,22 +137,22 @@ export const PATTERNS: Pattern[] = [
           n('li', {}, t('a', 'Shoes', { href: '/shoes', 'aria-current': 'page' })),
         ),
       ),
-    contract: async (page) => {
-      assert(await page.getByRole('navigation', { name: 'Breadcrumb' }).isVisible(), 'no breadcrumb landmark');
-      assert((await attr(page, 'a[aria-current]', 'aria-current')) === 'page', 'no current page marked');
+    contract: async (page, root) => {
+      assert(await root.getByRole('navigation', { name: 'Breadcrumb' }).isVisible(), 'no breadcrumb landmark');
+      assert((await attr(root, 'a[aria-current]', 'aria-current')) === 'page', 'no current page marked');
     },
   },
   {
     id: 'button',
     built: 'native',
     tree: () => t('button', 'Press'),
-    contract: async (page) => {
-      await page.evaluate(() => {
+    contract: async (page, root) => {
+      await root.getByRole('button', { name: 'Press' }).evaluate((button) => {
         const win = window as unknown as { clicks: number };
         win.clicks = 0;
-        document.querySelector('button')?.addEventListener('click', () => win.clicks++);
+        button.addEventListener('click', () => win.clicks++);
       });
-      await page.getByRole('button', { name: 'Press' }).focus();
+      await root.getByRole('button', { name: 'Press' }).focus();
       await pressed(page, 'Enter');
       await pressed(page, 'Space');
       const clicks = await page.evaluate(() => (window as unknown as { clicks: number }).clicks);
@@ -166,18 +170,18 @@ export const PATTERNS: Pattern[] = [
         t('div', 'Slide one', { role: 'group', 'aria-roledescription': 'slide' }),
         t('div', 'Slide two', { role: 'group', 'aria-roledescription': 'slide', hidden: true }),
       ),
-    contract: async (page) => {
-      await page.getByRole('button', { name: 'Next slide' }).focus();
+    contract: async (page, root) => {
+      await root.getByRole('button', { name: 'Next slide' }).focus();
       await pressed(page, 'Enter');
-      assert(await page.getByText('Slide two').isVisible(), 'Next slide did not show the next slide');
+      assert(await root.getByText('Slide two').isVisible(), 'Next slide did not show the next slide');
     },
   },
   {
     id: 'checkbox',
     built: 'native',
     tree: () => n('label', {}, n('input', { type: 'checkbox', 'aria-label': 'Agree' })),
-    contract: async (page) => {
-      const box = page.getByRole('checkbox', { name: 'Agree' });
+    contract: async (page, root) => {
+      const box = root.getByRole('checkbox', { name: 'Agree' });
       await box.focus();
       await pressed(page, 'Space');
       assert(await box.isChecked(), 'Space did not check it');
@@ -193,26 +197,26 @@ export const PATTERNS: Pattern[] = [
         n('input', { role: 'combobox', 'aria-label': 'City', 'aria-expanded': 'false', 'aria-controls': 'cities' }),
         n('ul', { id: 'cities', role: 'listbox', hidden: true }, t('li', 'Bern', { role: 'option' })),
       ),
-    contract: async (page) => {
-      await page.getByRole('combobox', { name: 'City' }).focus();
+    contract: async (page, root) => {
+      await root.getByRole('combobox', { name: 'City' }).focus();
       await pressed(page, 'ArrowDown');
-      assert(await page.getByRole('option', { name: 'Bern' }).isVisible(), 'ArrowDown did not open the list');
+      assert(await root.getByRole('option', { name: 'Bern' }).isVisible(), 'ArrowDown did not open the list');
     },
   },
   {
     id: 'dialog-modal',
     built: 'native',
     tree: modalTree('dialog'),
-    contract: (page) => modalContract(page, 'dialog'),
+    contract: (page, root) => modalContract(page, root, 'dialog'),
   },
   {
     id: 'disclosure',
     built: 'native',
     tree: () => n('details', {}, t('summary', 'More'), t('p', 'Hidden text')),
-    contract: async (page) => {
-      await page.locator('summary').focus();
+    contract: async (page, root) => {
+      await root.locator('summary').focus();
       await pressed(page, 'Enter');
-      assert(await page.getByText('Hidden text').isVisible(), 'Enter did not show the content');
+      assert(await root.getByText('Hidden text').isVisible(), 'Enter did not show the content');
     },
   },
   {
@@ -225,8 +229,8 @@ export const PATTERNS: Pattern[] = [
         t('article', 'One', { tabIndex: 0, 'aria-posinset': 1, 'aria-setsize': 2 }),
         t('article', 'Two', { tabIndex: 0, 'aria-posinset': 2, 'aria-setsize': 2 }),
       ),
-    contract: async (page) => {
-      await page.getByRole('article').nth(0).focus();
+    contract: async (page, root) => {
+      await root.getByRole('article').nth(0).focus();
       await pressed(page, 'PageDown');
       const focused = await page.evaluate(() => document.activeElement?.textContent);
       assert(focused === 'Two', 'Page Down did not move to the next article');
@@ -241,8 +245,8 @@ export const PATTERNS: Pattern[] = [
         { role: 'grid', 'aria-label': 'Prices' },
         n('tbody', {}, n('tr', {}, t('td', 'A1', { tabIndex: 0 }), t('td', 'A2', { tabIndex: -1 }))),
       ),
-    contract: async (page) => {
-      await page.getByRole('gridcell', { name: 'A1' }).focus();
+    contract: async (page, root) => {
+      await root.getByRole('gridcell', { name: 'A1' }).focus();
       await pressed(page, 'ArrowRight');
       const focused = await page.evaluate(() => document.activeElement?.textContent);
       assert(focused === 'A2', 'ArrowRight did not move to the next cell');
@@ -261,9 +265,9 @@ export const PATTERNS: Pattern[] = [
         t('aside', 'Related', { 'aria-label': 'Related' }),
         t('footer', 'Bottom'),
       ),
-    contract: async (page) => {
+    contract: async (_page, root) => {
       for (const role of ['banner', 'navigation', 'main', 'complementary', 'contentinfo'] as const) {
-        assert(await page.getByRole(role).isVisible(), `no ${role} landmark`);
+        assert(await root.getByRole(role).isVisible(), `no ${role} landmark`);
       }
     },
   },
@@ -271,8 +275,8 @@ export const PATTERNS: Pattern[] = [
     id: 'link',
     built: 'native',
     tree: () => n('div', {}, t('a', 'Jump', { href: '#target' }), t('p', 'Target', { id: 'target' })),
-    contract: async (page) => {
-      await page.getByRole('link', { name: 'Jump' }).focus();
+    contract: async (page, root) => {
+      await root.getByRole('link', { name: 'Jump' }).focus();
       await pressed(page, 'Enter');
       assert(page.url().endsWith('#target'), 'Enter did not follow the link');
     },
@@ -287,8 +291,8 @@ export const PATTERNS: Pattern[] = [
         t('option', 'Small', { value: 's' }),
         t('option', 'Large', { value: 'l' }),
       ),
-    contract: async (page) => {
-      const box = page.getByRole('listbox', { name: 'Size' });
+    contract: async (page, root) => {
+      const box = root.getByRole('listbox', { name: 'Size' });
       await box.focus();
       await pressed(page, 'ArrowDown');
       await pressed(page, 'ArrowDown');
@@ -300,8 +304,8 @@ export const PATTERNS: Pattern[] = [
     id: 'menubar',
     built: 'aria-only',
     tree: () => roving('menubar', ['File', 'Edit'], 'menuitem', 'Main'),
-    contract: async (page) => {
-      await page.getByRole('menuitem', { name: 'File' }).focus();
+    contract: async (page, root) => {
+      await root.getByRole('menuitem', { name: 'File' }).focus();
       await pressed(page, 'ArrowRight');
       assert((await page.evaluate(() => document.activeElement?.textContent)) === 'Edit', 'ArrowRight did not move');
     },
@@ -321,10 +325,10 @@ export const PATTERNS: Pattern[] = [
           t('button', 'Paste', { role: 'menuitem' }),
         ),
       ),
-    contract: async (page) => {
-      await page.getByRole('button', { name: 'Actions' }).focus();
+    contract: async (page, root) => {
+      await root.getByRole('button', { name: 'Actions' }).focus();
       await pressed(page, 'Enter');
-      assert(await page.getByRole('menu').isVisible(), 'Enter did not open the menu');
+      assert(await root.getByRole('menu').isVisible(), 'Enter did not open the menu');
       assert((await page.evaluate(() => document.activeElement?.textContent)) === 'Copy', 'focus is not on the first item');
       await pressed(page, 'ArrowDown');
       assert((await page.evaluate(() => document.activeElement?.textContent)) === 'Paste', 'ArrowDown did not move');
@@ -334,8 +338,8 @@ export const PATTERNS: Pattern[] = [
     id: 'meter',
     built: 'native',
     tree: () => n('meter', { value: 3, min: 0, max: 10, 'aria-label': 'Fuel' }),
-    contract: async (page) => {
-      assert(await page.getByRole('meter', { name: 'Fuel' }).isVisible(), 'no meter in the accessibility tree');
+    contract: async (_page, root) => {
+      assert(await root.getByRole('meter', { name: 'Fuel' }).isVisible(), 'no meter in the accessibility tree');
     },
   },
   {
@@ -348,18 +352,18 @@ export const PATTERNS: Pattern[] = [
         n('input', { type: 'radio', name: 'size', 'aria-label': 'Small', defaultChecked: true }),
         n('input', { type: 'radio', name: 'size', 'aria-label': 'Large' }),
       ),
-    contract: async (page) => {
-      await page.getByRole('radio', { name: 'Small' }).focus();
+    contract: async (page, root) => {
+      await root.getByRole('radio', { name: 'Small' }).focus();
       await pressed(page, 'ArrowDown');
-      assert(await page.getByRole('radio', { name: 'Large' }).isChecked(), 'ArrowDown did not move the selection');
+      assert(await root.getByRole('radio', { name: 'Large' }).isChecked(), 'ArrowDown did not move the selection');
     },
   },
   {
     id: 'slider',
     built: 'native',
     tree: () => n('input', { type: 'range', min: 0, max: 10, defaultValue: 5, 'aria-label': 'Volume' }),
-    contract: async (page) => {
-      const slider = page.getByRole('slider', { name: 'Volume' });
+    contract: async (page, root) => {
+      const slider = root.getByRole('slider', { name: 'Volume' });
       await slider.focus();
       await pressed(page, 'ArrowRight');
       assert((await slider.inputValue()) === '6', 'ArrowRight did not raise the value');
@@ -375,11 +379,11 @@ export const PATTERNS: Pattern[] = [
         n('input', { type: 'range', min: 0, max: 10, defaultValue: 2, 'aria-label': 'Low' }),
         n('input', { type: 'range', min: 0, max: 10, defaultValue: 8, 'aria-label': 'High' }),
       ),
-    contract: async (page) => {
-      const low = page.getByRole('slider', { name: 'Low' });
+    contract: async (page, root) => {
+      const low = root.getByRole('slider', { name: 'Low' });
       await low.focus();
       await pressed(page, 'End');
-      const high = await page.getByRole('slider', { name: 'High' }).inputValue();
+      const high = await root.getByRole('slider', { name: 'High' }).inputValue();
       assert(Number(await low.inputValue()) <= Number(high), 'the low thumb passed the high thumb');
     },
   },
@@ -387,8 +391,8 @@ export const PATTERNS: Pattern[] = [
     id: 'spinbutton',
     built: 'native',
     tree: () => n('input', { type: 'number', defaultValue: 1, 'aria-label': 'Count' }),
-    contract: async (page) => {
-      const spin = page.getByRole('spinbutton', { name: 'Count' });
+    contract: async (page, root) => {
+      const spin = root.getByRole('spinbutton', { name: 'Count' });
       await spin.focus();
       await pressed(page, 'ArrowUp');
       assert((await spin.inputValue()) === '2', 'ArrowUp did not raise the value');
@@ -398,8 +402,8 @@ export const PATTERNS: Pattern[] = [
     id: 'switch',
     built: 'native',
     tree: () => n('input', { type: 'checkbox', role: 'switch', 'aria-label': 'Wifi' }),
-    contract: async (page) => {
-      const control = page.getByRole('switch', { name: 'Wifi' });
+    contract: async (page, root) => {
+      const control = root.getByRole('switch', { name: 'Wifi' });
       await control.focus();
       await pressed(page, 'Space');
       assert(await control.isChecked(), 'Space did not switch it');
@@ -416,9 +420,9 @@ export const PATTERNS: Pattern[] = [
         n('thead', {}, n('tr', {}, t('th', 'Item'), t('th', 'Price'))),
         n('tbody', {}, n('tr', {}, t('td', 'Tea'), t('td', '3'))),
       ),
-    contract: async (page) => {
-      assert(await page.getByRole('table', { name: 'Prices' }).isVisible(), 'no table in the accessibility tree');
-      assert((await page.getByRole('columnheader').count()) === 2, 'no column headers');
+    contract: async (_page, root) => {
+      assert(await root.getByRole('table', { name: 'Prices' }).isVisible(), 'no table in the accessibility tree');
+      assert((await root.getByRole('columnheader').count()) === 2, 'no column headers');
     },
   },
   {
@@ -437,10 +441,10 @@ export const PATTERNS: Pattern[] = [
         t('div', 'Panel one', { id: 'p1', role: 'tabpanel' }),
         t('div', 'Panel two', { id: 'p2', role: 'tabpanel', hidden: true }),
       ),
-    contract: async (page) => {
-      await page.getByRole('tab', { name: 'One' }).focus();
+    contract: async (page, root) => {
+      await root.getByRole('tab', { name: 'One' }).focus();
       await pressed(page, 'ArrowRight');
-      assert(await page.getByText('Panel two').isVisible(), 'ArrowRight did not change the tab');
+      assert(await root.getByText('Panel two').isVisible(), 'ArrowRight did not change the tab');
     },
   },
   {
@@ -453,8 +457,8 @@ export const PATTERNS: Pattern[] = [
         t('button', 'Bold', { tabIndex: 0 }),
         t('button', 'Italic', { tabIndex: -1 }),
       ),
-    contract: async (page) => {
-      await page.getByRole('button', { name: 'Bold' }).focus();
+    contract: async (page, root) => {
+      await root.getByRole('button', { name: 'Bold' }).focus();
       await pressed(page, 'ArrowRight');
       assert((await page.evaluate(() => document.activeElement?.textContent)) === 'Italic', 'ArrowRight did not move');
     },
@@ -469,10 +473,10 @@ export const PATTERNS: Pattern[] = [
         t('button', 'Save', { 'aria-describedby': 'tip' }),
         t('div', 'Saves the page', { id: 'tip', role: 'tooltip', hidden: true }),
       ),
-    contract: async (page) => {
-      await page.getByRole('button', { name: 'Save' }).focus();
+    contract: async (page, root) => {
+      await root.getByRole('button', { name: 'Save' }).focus();
       await page.waitForTimeout(50);
-      assert(await page.getByRole('tooltip').isVisible(), 'focus did not show the tooltip');
+      assert(await root.getByRole('tooltip').isVisible(), 'focus did not show the tooltip');
     },
   },
   {
@@ -489,10 +493,10 @@ export const PATTERNS: Pattern[] = [
           n('ul', { role: 'group', hidden: true }, t('li', 'app.ts', { role: 'treeitem', tabIndex: -1 })),
         ),
       ),
-    contract: async (page) => {
-      await page.getByRole('treeitem').first().focus();
+    contract: async (page, root) => {
+      await root.getByRole('treeitem').first().focus();
       await pressed(page, 'ArrowRight');
-      assert(await page.getByText('app.ts').isVisible(), 'ArrowRight did not expand the node');
+      assert(await root.getByText('app.ts').isVisible(), 'ArrowRight did not expand the node');
     },
   },
   {
@@ -509,10 +513,10 @@ export const PATTERNS: Pattern[] = [
           n('tr', { 'aria-level': 2, hidden: true, tabIndex: -1 }, t('td', 'Reply')),
         ),
       ),
-    contract: async (page) => {
-      await page.getByRole('row').first().focus();
+    contract: async (page, root) => {
+      await root.getByRole('row').first().focus();
       await pressed(page, 'ArrowRight');
-      assert(await page.getByText('Reply').isVisible(), 'ArrowRight did not expand the row');
+      assert(await root.getByText('Reply').isVisible(), 'ArrowRight did not expand the row');
     },
   },
   {
@@ -528,10 +532,10 @@ export const PATTERNS: Pattern[] = [
         'aria-valuemin': 0,
         'aria-valuemax': 100,
       }),
-    contract: async (page) => {
-      await page.getByRole('separator').focus();
+    contract: async (page, root) => {
+      await root.getByRole('separator').focus();
       await pressed(page, 'ArrowLeft');
-      const value = await attr(page, '[role="separator"]', 'aria-valuenow');
+      const value = await attr(root, '[role="separator"]', 'aria-valuenow');
       assert(value !== '50', 'ArrowLeft did not change the value');
     },
   },

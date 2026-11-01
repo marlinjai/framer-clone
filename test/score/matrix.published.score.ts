@@ -5,9 +5,10 @@
 
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { getSnapshot } from 'mobx-state-tree';
-import ComponentModel, { ComponentTypeEnum } from '@/models/ComponentModel';
+import ComponentModel, { ComponentTypeEnum, type ComponentInstance } from '@/models/ComponentModel';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { cssPropertyName } from '@/lib/responsive/responsiveCss';
+import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
 import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
 import { validateGeneration } from '@/lib/ai/pageGen/validate';
 import { isBlockedTag } from '@/lib/renderer/blockedNodes';
@@ -18,9 +19,17 @@ import {
   allEntries,
   atRuleSample,
   attributeSample,
+  cssValueSample,
+  decodeEntities,
+  markupAttributeSample,
   mediaFeatureSample,
+  namespaceOf,
+  openingTag,
+  placed,
   selectorSample,
   styleKeyOf,
+  type Namespace,
+  type NodeShape,
 } from './lib/universe';
 import { writeOut } from './lib/io';
 import { rowKey, type Cell, type Entry, type GapId, type SurfaceResults } from './lib/types';
@@ -29,10 +38,24 @@ const pass = (note?: string): Cell => ({ status: 'pass', ...(note ? { note } : {
 const fail = (gap: GapId, note?: string): Cell => ({ status: 'fail', gap, ...(note ? { note } : {}) });
 
 /** Created, snapshotted, sent through JSON and created again, as a save and load does. */
-function storedRoundTrip(type: string, props: Record<string, unknown>) {
-  const first = ComponentModel.create({ id: 'probe', type, componentType: ComponentTypeEnum.HOST, props });
+function storedRoundTrip(type: string | NodeShape, props: Record<string, unknown> = {}) {
+  const shape = typeof type === 'string' ? { id: 'probe', type, props } : type;
+  const first = ComponentModel.create(toSnapshot(shape));
   const reloaded = ComponentModel.create(JSON.parse(JSON.stringify(getSnapshot(first))));
   return { model: reloaded, resolved: reloaded.getResolvedProps('', []) as { attributes: Record<string, unknown>; style: Record<string, unknown> } };
+}
+
+const toSnapshot = (shape: NodeShape): Record<string, unknown> => ({
+  id: shape.id,
+  type: shape.type,
+  componentType: ComponentTypeEnum.HOST,
+  props: shape.props,
+  children: (shape.children ?? []).map(toSnapshot),
+});
+
+function findStored(model: ComponentInstance, tag: string): ComponentInstance | undefined {
+  if (model.type === tag) return model;
+  return (model.children as ComponentInstance[]).map((child) => findStored(child, tag)).find(Boolean);
 }
 
 const aiContext = { breakpoints: deriveBreakpointKeys(BREAKPOINTS.map(({ label, minWidth }) => ({ label, minWidth }))) };
@@ -60,6 +83,104 @@ function probeElement(tag: string, key: string): void {
 
   const made = generate({ type: tag, label: 'Probe' });
   results.ai[key] = made.node?.type === tag ? pass() : fail('ai-tag-allowlist', made.warnings[0]);
+}
+
+/** Why a tag is not on the page, so the attributes of a missing element say the same as the element. */
+function missingElement(tag: string, html: string): Cell {
+  if (isBlockedTag(tag)) return fail('blocked-embedded-content', 'dropped by blockedNodes.ts');
+  const entry = COMPONENT_REGISTRY[tag];
+  if (entry) return fail('registry-tag-collision', `the tag is also a registry id, so it renders as <${entry.htmlType}>`);
+  return fail('unclassified', `not in the output: ${html.slice(0, 80)}`);
+}
+
+function findNode(node: { type: string; children?: unknown[] } | undefined, tag: string): (Record<string, unknown> & { type: string }) | undefined {
+  if (!node) return undefined;
+  if (node.type === tag) return node as Record<string, unknown> & { type: string };
+  for (const child of (node.children ?? []) as Array<{ type: string; children?: unknown[] }>) {
+    const found = findNode(child, tag);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+const stripIds = ({ type, props, children }: NodeShape): Record<string, unknown> => ({
+  type,
+  props,
+  label: 'Probe',
+  children: (children ?? []).map(stripIds),
+});
+
+const asComponentNode = (shape: NodeShape) => shape as unknown as ComponentNode;
+
+function probeForeignElement(namespace: Namespace, tag: string, key: string): void {
+  const tree = placed(namespace, tag);
+  const stored = storedRoundTrip(tree);
+  results.format[key] = findStored(stored.model, tag) ? pass() : fail('unclassified', 'the model changed the tag');
+  const { html } = renderPublished(asComponentNode(tree));
+  results.renderer[key] = openingTag(html, tag) ? pass() : missingElement(tag, html);
+  const kept = findNode(generate(stripIds(tree)).node, tag);
+  results.ai[key] = kept ? pass() : fail('ai-tag-allowlist');
+}
+
+function probeElementAttribute(namespace: Namespace, id: string, key: string): void {
+  const sample = markupAttributeSample(namespace, id);
+  const tree = placed(namespace, sample.tag, { [sample.prop]: sample.value });
+  const stored = findStored(storedRoundTrip(tree).model, sample.tag);
+  const resolved = stored?.getResolvedProps('', []) as { attributes: Record<string, unknown>; style: Record<string, unknown> } | undefined;
+  if (JSON.stringify(resolved?.attributes[sample.prop]) === JSON.stringify(sample.value)) results.format[key] = pass();
+  else if (CSS_PROP_SET.has(sample.prop) && resolved?.style[sample.prop] === sample.value) results.format[key] = pass('read back as a style');
+  else if (sample.prop === 'style' && JSON.stringify(resolved?.style) === JSON.stringify(sample.value)) results.format[key] = pass();
+  else results.format[key] = fail('unclassified', 'not read back unchanged');
+
+  const { html } = renderPublished(asComponentNode(tree));
+  const tag = openingTag(html, sample.tag);
+  if (!tag) results.renderer[key] = missingElement(sample.tag, html);
+  else if (decodeEntities(tag).toLowerCase().includes(sample.html.toLowerCase())) results.renderer[key] = pass();
+  else results.renderer[key] = fail('react-attribute-handling', `expected ${sample.html}, got ${tag.slice(0, 100)}`);
+
+  const made = generate(stripIds(tree));
+  const kept = findNode(made.node, sample.tag);
+  if (!kept) results.ai[key] = fail('ai-tag-allowlist');
+  else results.ai[key] = sample.prop in ((kept.props ?? {}) as object) ? pass() : fail('ai-attribute-allowlist', made.warnings[0]);
+}
+
+/** A stored handler has no reader, and so no meaning, until it reaches the page: bytes alone prove nothing. */
+function probeEventHandler(id: string, key: string): void {
+  const camel = `on${id[2].toUpperCase()}${id.slice(3)}`;
+  const attempts = [{ [id]: 'probe()' }, { [camel]: 'probe()' }];
+  const reached = attempts.some((props) => openingTag(renderPublished({ id: 'probe', type: 'div', props: props as never }).html, 'div')?.includes(`${id}=`));
+  results.format[key] = reached ? pass() : fail('blocked-event-handlers', 'stored, but nothing reads it');
+  results.renderer[key] = reached ? pass() : fail('blocked-event-handlers');
+  const kept = attempts.some((props) => Object.keys(props)[0] in (generate({ type: 'div', props }).node?.props ?? {}));
+  results.ai[key] = kept ? pass() : fail('blocked-event-handlers');
+}
+
+/** A representative value on a host property, both ways a declaration reaches a page. */
+function probeCssValue(id: string, key: string): void {
+  const { property, value } = cssValueSample(id);
+  const declaration = `${cssPropertyName(property)}:${value}`;
+
+  const stored = storedRoundTrip('div', { style: { [property]: value } });
+  results.format[key] = stored.resolved.style[property] === value ? pass() : fail('unclassified', 'not read back unchanged');
+
+  const inline = renderPublished({ id: 'probe', type: 'div', props: { style: { [property]: value } } as never });
+  const sheet = renderPublished({
+    id: 'probe',
+    type: 'div',
+    props: { style: { [property]: { base: value, tablet: 'inherit' } } } as never,
+  });
+  const inInline = decodeEntities(inline.html).includes(declaration);
+  const inSheet = sheet.css.includes(declaration);
+  results.renderer[key] =
+    inInline && inSheet
+      ? pass()
+      : fail('renderer-drops-value', `inline ${inInline ? 'kept' : 'lost'}, stylesheet ${inSheet ? 'kept' : 'lost'}`);
+
+  const made = generate({ type: 'div', props: { style: { [property]: value } } });
+  const style = (made.node?.props.style ?? {}) as Record<string, unknown>;
+  if (style[property] === value) results.ai[key] = pass();
+  else if (CSS_PROP_SET.has(property)) results.ai[key] = fail('ai-value-refused', made.warnings[0]);
+  else results.ai[key] = fail('ai-style-allowlist', `the host property ${property} is not in the list`);
 }
 
 function probeAttribute(id: string, key: string): void {
@@ -146,8 +267,19 @@ function probe(entry: Entry): void {
       return probeElement(entry.id, key);
     case 'html-global-attribute':
       return probeAttribute(entry.id, key);
+    case 'html-element-attribute':
+    case 'svg-attribute':
+    case 'mathml-attribute':
+      return probeElementAttribute(namespaceOf(entry.kind), entry.id, key);
+    case 'html-event-handler':
+      return probeEventHandler(entry.id, key);
+    case 'svg-element':
+    case 'mathml-element':
+      return probeForeignElement(namespaceOf(entry.kind), entry.id, key);
     case 'css-property':
       return probeProperty(entry.id, key);
+    case 'css-value':
+      return probeCssValue(entry.id, key);
     case 'css-selector':
       return probeRule(
         selectorSample(entry.id),

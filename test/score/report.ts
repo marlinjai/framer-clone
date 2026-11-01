@@ -41,7 +41,14 @@ type Counts = { pass: number; fail: number; notTested: number; total: number };
 const KIND_LABEL: Record<RowKind, string> = {
   'html-element': 'HTML elements',
   'html-global-attribute': 'HTML global attributes',
+  'html-element-attribute': 'HTML attributes of single elements',
+  'html-event-handler': 'HTML event handler attributes',
+  'svg-element': 'SVG elements',
+  'svg-attribute': 'SVG attributes',
+  'mathml-element': 'MathML elements',
+  'mathml-attribute': 'MathML attributes',
   'css-property': 'CSS properties',
+  'css-value': 'CSS value types, functions and units',
   'css-selector': 'CSS selectors',
   'css-at-rule': 'CSS at-rules',
   'css-media-feature': 'CSS media features',
@@ -128,8 +135,14 @@ export function buildScore(durationSeconds?: number): Score {
   };
   const patterns = readOut<PatternsOut>('patterns');
   const detail = readOut<PanelDetail>('panel-detail');
+  const namespaces = readOut<SurfaceResults>('namespaces');
   const fixtures = readOut<CorpusResult[]>('corpus');
   const cases = readOut<RoundTripCase[]>('roundtrip');
+
+  // Markup that holds the tag is not yet an SVG or MathML element: the browser decides that.
+  for (const [key, cell] of Object.entries(namespaces)) {
+    if (cell.status !== 'pass' && results.renderer[key]?.status === 'pass') results.renderer[key] = cell;
+  }
 
   Object.assign(results.format, patterns.format);
   Object.assign(results.renderer, patterns.renderer);
@@ -260,7 +273,7 @@ export function renderReport(score: Score): string {
 
   push('## Coverage matrix');
   push(
-    `Entries: ${matrix.included} included, ${matrix.excluded.length} excluded with a reason (listed at the end). Sources: mdn-data ${score.versions['mdn-data']}, @mdn/browser-compat-data ${score.versions['@mdn/browser-compat-data']}, and the pattern index of the WAI-ARIA Authoring Practices Guide (the web standard's catalogue of accordions, tabs, dialogs and so on), hand-listed because no package carries it.`,
+    `Entries: ${matrix.included} included, ${matrix.excluded.length} excluded with a reason (listed at the end). Sources: mdn-data ${score.versions['mdn-data']}, @mdn/browser-compat-data ${score.versions['@mdn/browser-compat-data']} (its html, svg, mathml and api trees), and the pattern index of the WAI-ARIA Authoring Practices Guide (the web standard's catalogue of accordions, tabs, dialogs and so on), hand-listed because no package carries it. CSS value rows are one per entry of mdn-data's types, functions and units. Chromium proves every value sample valid and compares the event handler rows with what it reflects, and a mismatch stops the run.`,
   );
   push(
     table(
@@ -276,11 +289,11 @@ export function renderReport(score: Score): string {
   );
   push('What each cell means:');
   push(
-    '- **Format stores it:** the entry is written into a node, survives `ComponentModel.create`, a snapshot, JSON and a second create, and is read back unchanged through `getResolvedProps`. For a selector, at-rule or media feature the bytes alone prove nothing (props are opaque JSON and hold anything), so it also needs a reader that gives it a meaning: the rule has to reach the page.',
-    '- **Published renderer emits it:** the node goes through `applyResponsiveStyles` and `renderComponentNode`. An element or attribute must be in the markup. A CSS property must be there both ways a declaration reaches a page: inline, and in the page stylesheet as a responsive value. The value is `initial` for every property, so this measures that the property name survives, not the property\'s value grammar. A WAI-ARIA pattern must pass its keyboard contract in real Chromium.',
-    '- **Editor canvas shows it:** the same entry through the real `ComponentRenderer` with a real store, rendered to markup. WAI-ARIA contracts do not run there yet, so that row is not tested.',
-    '- **Panel can edit it:** the real `RightSidebar` is mounted for a node of each component category and every control is operated. A key counts only if an action changed it in the node. An element counts when a palette entry produces it or a panel action sets it. A pattern counts when every tag and prop it uses does.',
-    '- **AI generator can produce it:** `validateGeneration` is given a node with the entry, and the entry must still be there afterwards. A tag rewritten to `div` is a fail.',
+    '- **Format stores it:** the entry is written into a node, survives `ComponentModel.create`, a snapshot, JSON and a second create, and is read back unchanged through `getResolvedProps`. For a selector, at-rule, media feature or event handler the bytes alone prove nothing (props are opaque JSON and hold anything), so it also needs a reader that gives it a meaning: it has to reach the page. An attribute named like a CSS property comes back as a style, which counts as stored.',
+    '- **Published renderer emits it:** the node goes through `applyResponsiveStyles` and `renderComponentNode`. An element or attribute must be in the markup, an attribute on the opening tag of its own element, and when that element is missing the attribute takes the element\'s gap. An SVG or MathML entry sits inside its root element and Chromium must parse the tag into that namespace. A CSS property must be there both ways a declaration reaches a page: inline, and in the page stylesheet as a responsive value, with `initial` as the value. A value row does the same with its sample on a host property. A WAI-ARIA pattern must pass its keyboard contract in real Chromium.',
+    '- **Editor canvas shows it:** the same entry through the real `ComponentRenderer` with a real store, rendered to markup. An SVG attribute that arrives as a style declaration passes, because SVG maps those to the same property; an HTML one is `attribute-read-as-style`. A WAI-ARIA pattern runs its contract on the mounted editor instead: the real `EditorApp` in Chromium with the tree on a page, its server edge stubbed. A contract that passes when published and fails there is `canvas-editor-context`.',
+    '- **Panel can edit it:** the real `RightSidebar` is mounted for a node of each component category and every control is operated. A key counts only if an action changed it in the node, and an attribute only on the tag the action changed it on. An element counts when a palette entry produces it or a panel action sets it. A pattern counts when every tag and prop it uses does. A value row counts only for the kinds the driver types (a length, a color, a number) and when a control kept what was typed.',
+    '- **AI generator can produce it:** `validateGeneration` is given a node with the entry, and the entry must still be there afterwards. A tag rewritten to `div` is a fail. A value row needs the exact value back. A sample on a host property outside the allowlist fails as `ai-style-allowlist`, so it says nothing about the value.',
   );
   push(
     `The panel writes ${score.panel.styleKeysWritten.length} style keys and ${score.panel.propKeysWritten.length} other props across every category. Palette tags: ${score.panel.paletteTags.map((t) => `\`${t}\``).join(', ')}.`,
@@ -342,9 +355,10 @@ export function renderReport(score: Score): string {
 
   push('## What this does not measure yet');
   push(
-    '- **CSS value grammar.** Every property is probed with `initial`, so a value the stylesheet refuses shows up only where a fixture happens to use one (`stylesheet-values`).',
-    '- **Attributes of single elements** (`href`, `src`, `type`, ...), event handler attributes, SVG and MathML elements, and ARIA roles and attributes beyond one sample each. The lists cover HTML elements and global attributes, as the plan says.',
-    '- **The mounted canvas.** The canvas column renders `ComponentRenderer` to markup. Nothing runs in a browser with the editor around it, so interactions on the canvas, which the plan requires, are not tested (the 30 WAI-ARIA rows).',
+    '- **CSS value grammar per property.** A value row is one sample on one host property, so it proves the value type survives, not that every property takes every type. Named syntaxes in mdn-data below the level of a type (such as `<bg-size>`) have no row.',
+    '- **Attribute value grammar.** An attribute row proves the name reaches the page with one value. SVG and MathML samples are not checked for meaning, MathML attribute value notes have no row, and ARIA roles and attributes are still one sample each.',
+    '- **Handlers on `body` and `window`** (`onbeforeunload`, `onhashchange`, ...), because `body` is excluded. An event handler row only asks whether a stored handler reaches the page, and whether it would run is not tested.',
+    '- **Canvas markup beyond the patterns.** Only the WAI-ARIA rows run on the mounted editor, and only by keyboard: their contracts never click, so a click that selects shows up through Enter and Space, and pointer gestures on the canvas are not tested. Everything else in the canvas column is rendered to markup.',
     '- **Whether a panel control is any good.** A key counts as editable when a control changed it, whatever range or units that control offers. Only the properties panel and the palette are covered: the quick toolbar, context menus and the Layers panel were searched for tag changes and none found, not driven.',
     '- **The whole published page.** The corpus uses `applyResponsiveStyles` and `renderComponentNode`, without `hydrateBindings`, effects, the sticky bar, or the consent and font wrappers, and only in Chromium.',
     '- **WAI-ARIA conformance.** A contract is the primary keyboard path of a pattern, not its whole page in the Guide.',
@@ -361,7 +375,7 @@ export function renderReport(score: Score): string {
       ['Reason', 'Count', 'Entries'],
       [...grouped.entries()].map(([reason, list]) => {
         const names = list.map((e) => e.id);
-        return [escapeCell(reason), String(list.length), escapeCell(names.slice(0, 12).join(', ') + (names.length > 12 ? ', and more' : ''))];
+        return [escapeCell(reason), String(list.length), escapeCell(names.slice(0, 12).map((n) => `\`${n}\``).join(', ') + (names.length > 12 ? ', and more' : ''))];
       }),
     ),
   );
