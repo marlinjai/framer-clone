@@ -19,6 +19,7 @@ import ComponentModel, {
   createFloatingCanvasComponent,
 } from './ComponentModel';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
+import { remapBehaviourRefs } from '@/lib/behaviour/format';
 import { getComponentEntry } from '@/lib/componentRegistry';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
@@ -423,10 +424,12 @@ const PageModel = PageWithComponents
   // we don't want Backspace to nuke entire breakpoint frames.
   /**
    * Duplicate a node and its whole subtree as one history entry. Every id in
-   * the copy is fresh and every child's parentId follows it. A tree child is
-   * inserted right after the original; a floating element is placed 24px down
-   * and right of it on the canvas. The page root and breakpoint frames are not
-   * duplicable. Returns the copy, or undefined when nothing was duplicated.
+   * the copy is fresh and every child's parentId follows it, and so does
+   * behaviour: a reference to a node in the copy takes its new id, a reference
+   * to one outside stays. A tree child is inserted right after the original; a
+   * floating element is placed 24px down and right of it on the canvas. The page
+   * root and breakpoint frames are not duplicable. Returns the copy, or undefined
+   * when nothing was duplicated.
    */
   duplicateComponent(componentId: string): ComponentInstance | undefined {
     const component = findComponentInPage(self, componentId);
@@ -437,15 +440,20 @@ const PageModel = PageWithComponents
     const appTree = self.appComponentTree as ComponentInstance;
     if (component.id === appTree.id || component.isViewportNode) return undefined;
 
-    const withFreshIds = (snap: ComponentSnapshotIn, parentId: string | undefined): ComponentSnapshotIn => {
+    const freshIds = new Map<string, string>();
+    const renewIds = (snap: ComponentSnapshotIn, parentId: string | undefined): ComponentSnapshotIn => {
       const id = uuidv4();
+      freshIds.set(snap.id, id);
       return {
         ...snap,
         id,
         parentId,
-        children: (snap.children ?? []).map((c: ComponentSnapshotIn) => withFreshIds(c, id)),
+        children: (snap.children ?? []).map((c: ComponentSnapshotIn) => renewIds(c, id)),
       };
     };
+    // A second pass, because a reference can point at a node later in the walk.
+    const withFreshIds = (snap: ComponentSnapshotIn, parentId: string | undefined): ComponentSnapshotIn =>
+      remapBehaviourRefs(renewIds(snap, parentId), freshIds);
 
     if (component.hasParent && component.parentId) {
       const parent = findComponentInPage(self, component.parentId);
