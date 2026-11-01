@@ -228,6 +228,42 @@ describe('what a text node refuses', () => {
     expect(run.parentId).toBe(main.id);
   });
 
+  it.each(['table', 'thead', 'tbody', 'tfoot', 'tr', 'colgroup', 'select', 'optgroup'] as const)(
+    'stays out of <%s>, where a browser would move it, and says why',
+    (tag) => {
+      const holder = createIntrinsicComponent('holder', tag, {});
+      main.addChild(holder);
+      const cell = createIntrinsicComponent('cell', 'td', {});
+      holder.addChild(cell);
+      const target = { kind: 'parent', parentId: 'holder' } as const;
+      expect(page.dropRefusal(run.id, target)).toMatch(/move it out of place/);
+      expect(page.dropRefusal(run.id, { kind: 'sibling', siblingId: 'cell', position: 'before' })).toMatch(/move it out of place/);
+      expect(page.moveTreeComponent(run.id, target)).toBeUndefined();
+      expect(page.moveTreeComponent(run.id, { kind: 'sibling', siblingId: 'cell', position: 'after' })).toBeUndefined();
+      expect(para.children[0].id).toBe(run.id);
+      holder.addChild(textChild('direct', 'x', 'holder'));
+      holder.addChildren([textChild('direct-2', 'x', 'holder')]);
+      expect(holder.children.map((c: ComponentInstance) => c.id)).toEqual(['cell']);
+    },
+  );
+
+  it('moves freely inside a table cell, and an element still moves into a table row', () => {
+    const row = createIntrinsicComponent('row', 'tr', {});
+    const cell = createIntrinsicComponent('cell', 'td', {});
+    main.addChild(row);
+    row.addChild(cell);
+    expect(page.dropRefusal(run.id, { kind: 'parent', parentId: 'cell' })).toBeUndefined();
+    expect(page.dropRefusal('bold', { kind: 'parent', parentId: 'row' })).toBeUndefined();
+    expect(page.moveTreeComponent(run.id, { kind: 'parent', parentId: 'cell' })).toBeDefined();
+    expect(run.parentId).toBe('cell');
+  });
+
+  it('gives a reason for the two other refusals, and none for a node that is gone', () => {
+    expect(page.dropRefusal(run.id, { kind: 'floating', x: 1, y: 1 })).toMatch(/inside an element/);
+    expect(page.dropRefusal('bold', { kind: 'parent', parentId: run.id })).toMatch(/cannot hold/);
+    expect(page.dropRefusal('nothing', { kind: 'appTree' })).toBeUndefined();
+  });
+
   it('takes no generated nodes', () => {
     const out = page.applyGeneratedNodes('insert', run.id, [{ id: 'g', type: 'p', componentType: 'host' }], 'gen');
     expect(out.ok).toBe(false);

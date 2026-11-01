@@ -227,7 +227,10 @@ const DragManagerModel = types
         source: self.source,
         sourceNode: self.sourceNode && isAlive(self.sourceNode) ? self.sourceNode : undefined,
       });
-      self._setPending(target, indicator);
+      // A refused drop paints nothing and says why on release.
+      const page = self.deps?.getPage();
+      const refused = self.source?.kind === 'moveNode' && !!target && !!page?.dropRefusal(self.source.nodeId, target);
+      self._setPending(target, refused ? null : indicator);
 
       // Live mode: keep source's canvasX/Y pinned to cursor in canvas space.
       // If the pointer wanders into a reparent-eligible container, we still
@@ -294,10 +297,16 @@ const DragManagerModel = types
             // discarded; per-frame canvasX/Y updates stand.
             const viewportTreeDrop = isViewport && target.kind !== 'floating';
             if (!liveReleaseOnCanvas && !viewportTreeDrop) {
-              const result = page.moveTreeComponent(source.nodeId, target);
-              if (result) {
-                const breakpointId = editorUI.selectedViewportNode?.breakpointId;
-                editorUI.selectComponent(result, breakpointId);
+              const refusal = page.dropRefusal(source.nodeId, target);
+              if (refusal) {
+                editorUI.setEditorNotice({ kind: 'refused', message: refusal });
+              } else {
+                const result = page.moveTreeComponent(source.nodeId, target);
+                if (result) {
+                  if (editorUI.editorNotice?.kind === 'refused') editorUI.setEditorNotice(undefined);
+                  const breakpointId = editorUI.selectedViewportNode?.breakpointId;
+                  editorUI.selectComponent(result, breakpointId);
+                }
               }
             }
           }

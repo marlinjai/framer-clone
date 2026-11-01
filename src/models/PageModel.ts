@@ -22,7 +22,7 @@ import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { getComponentEntry } from '@/lib/componentRegistry';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
-import { isTextNodeType } from '@/lib/renderer/textNode';
+import { bareTextRefusal, isTextNodeType } from '@/lib/renderer/textNode';
 
 export type InsertTarget =
   | { kind: 'appTree' }
@@ -76,6 +76,26 @@ function findComponentInPage(page: PageLike, id: string): ComponentInstance | un
   return undefined;
 }
 
+/** The element `target` would place a node inside; undefined for the canvas or a target that is gone. */
+function targetParent(page: PageLike, target: InsertTarget): ComponentInstance | undefined {
+  if (target.kind === 'appTree') return page.appComponentTree;
+  if (target.kind === 'parent') return findComponentInPage(page, target.parentId);
+  if (target.kind === 'sibling') {
+    const parentId = findComponentInPage(page, target.siblingId)?.parentId;
+    return parentId ? findComponentInPage(page, parentId) : undefined;
+  }
+  return undefined;
+}
+
+/** Why `component` may not go to `target`, in words for the person dragging it. */
+function dropRefusalFor(page: PageLike, component: ComponentInstance, target: InsertTarget): string | undefined {
+  const isText = isTextNodeType(component.type);
+  if (isText && target.kind === 'floating') return 'Text stays inside an element. Drop it next to other content.';
+  const parent = targetParent(page, target);
+  if (!parent) return undefined;
+  if (isTextNodeType(parent.type)) return 'Text cannot hold other elements. Drop this next to it instead.';
+  return isText ? bareTextRefusal(parent.type) : undefined;
+}
 
 
 // SEO and metadata model
@@ -152,6 +172,13 @@ function findStickyCta(node: ComponentInstance): ComponentInstance | undefined {
 }
 
 const PageModel = PageWithComponents
+  .views(self => ({
+  /** Why a moved node may not land on `target`, or undefined when it may. */
+  dropRefusal(componentId: string, target: InsertTarget): string | undefined {
+    const component = findComponentInPage(self, componentId);
+    return component ? dropRefusalFor(self, component, target) : undefined;
+  },
+  }))
   .actions(self => ({
   // Update page metadata
   updateMetadata(metadata: Partial<SnapshotIn<typeof PageMetadataModel>>) {
@@ -538,15 +565,10 @@ const PageModel = PageWithComponents
       return undefined;
     }
 
-    // Refused before the detach, or the node would be lost: text belongs inside
-    // an element, and a text node holds no children.
-    if (isTextNodeType(component.type) && target.kind === 'floating') {
-      console.warn('[PageModel] moveTreeComponent: a text node stays inside an element');
-      return undefined;
-    }
-    const resolvedParent = resolvedParentId ? findComponentInPage(self, resolvedParentId) : undefined;
-    if (resolvedParent && isTextNodeType(resolvedParent.type)) {
-      console.warn('[PageModel] moveTreeComponent: a text node holds no children');
+    // Refused before the detach, or the node would be lost.
+    const refusal = dropRefusalFor(self, component, target);
+    if (refusal) {
+      console.warn(`[PageModel] moveTreeComponent: ${refusal}`);
       return undefined;
     }
 

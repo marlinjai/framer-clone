@@ -3,7 +3,7 @@ import { types, Instance, SnapshotIn, SnapshotOut, getParent, hasParent as hasMs
 import { v4 as uuidv4 } from 'uuid';
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
 import { tagRefusal } from '@/lib/styles/customEditor';
-import { TEXT_NODE_TYPE, isTextNodeType } from '@/lib/renderer/textNode';
+import { TEXT_NODE_TYPE, isTextNodeType, refusesBareText } from '@/lib/renderer/textNode';
 import React from 'react';
 import type {
   BindingEntry,
@@ -285,6 +285,10 @@ const ComponentModel: any = ComponentBase
         console.warn(`[ComponentModel] a text node cannot hold children, ${child.id} not added`);
         return;
       }
+      if (isTextNodeType(child.type) && refusesBareText(self.type)) {
+        console.warn(`[ComponentModel] a browser would move text out of <${self.type}>, ${child.id} not added`);
+        return;
+      }
       const shift = moveOwnTextToChild(self);
       if (typeof index === 'number') {
         const clamped = Math.max(0, Math.min(index + shift, self.children.length));
@@ -303,6 +307,10 @@ const ComponentModel: any = ComponentBase
       }
       moveOwnTextToChild(self);
       children.forEach(child => {
+        if (isTextNodeType(child.type) && refusesBareText(self.type)) {
+          console.warn(`[ComponentModel] a browser would move text out of <${self.type}>, ${child.id} not added`);
+          return;
+        }
         self.children.push(child);
         // Update parent relation
         child.setParent(self.id);
