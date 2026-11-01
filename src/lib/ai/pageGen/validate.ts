@@ -778,6 +778,13 @@ class Validator {
     const resolved = this.resolveType(path, raw.type, raw.preset, namespace);
     if (!resolved) return [];
     const { type, preset } = resolved;
+    // A preset is an HTML element, and the HTML parser throws one out of svg and math
+    // while a client render keeps it inside and invisible: crawlers would read text
+    // the owner never sees. Under a foreignObject the namespace is HTML again.
+    if (preset && namespace !== 'html') {
+      this.warn(path, `preset "${preset.id}" cannot sit inside svg or math, node and its children dropped`);
+      return [];
+    }
     const id = `${preset?.id ?? type}-${this.newId()}`;
     this.nodeCount += 1;
     if (depth > this.maxDepth) this.maxDepth = depth;
@@ -807,8 +814,7 @@ class Validator {
     const creditKeys = new Set<string>(
       type === 'img' ? ['title', ...STOCK_CREDIT_ATTRS] : isPhotoContainer ? STOCK_CREDIT_ATTRS : [],
     );
-    // A preset is an HTML component wherever the model put it, so it gets HTML's id rule.
-    const ownNamespace = preset ? 'html' : type === 'svg' ? 'svg' : namespace;
+    const ownNamespace = type === 'svg' ? 'svg' : namespace;
     const svgStyle: Record<string, unknown> = {};
     const modelEntries = Object.entries(modelProps);
     if (modelEntries.length > GENERATION_LIMITS.maxPropsPerNode) {
@@ -1200,8 +1206,8 @@ function dropExpandingSvgs(nodes: GeneratedNodeSnapshot[], v: Validator): Genera
 /**
  * The sticky call to action's rules: only on a new page, at most one, with a
  * label and a safe link, as the last top-level node (it is a page-level bar,
- * never part of a section), and never from inside an svg, which would carry it out
- * past the id rules of the graphic. Extra or unusable bars are dropped with a warning.
+ * never part of a section), and never from inside an svg (a foreignObject), which
+ * would carry it out past the graphic. Extra or unusable bars are dropped with a warning.
  */
 function placeStickyCta(nodes: GeneratedNodeSnapshot[], v: Validator, allowed: boolean): GeneratedNodeSnapshot[] {
   let kept: GeneratedNodeSnapshot | undefined;

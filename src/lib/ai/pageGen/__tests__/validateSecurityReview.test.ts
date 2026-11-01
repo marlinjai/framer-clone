@@ -243,17 +243,18 @@ describe('final round V2: a sticky bar cannot carry an id out of an svg', () => 
     const result = page([{ type: 'p' }, { type: 'svg', children: [bar] }]);
     expect(JSON.stringify(result.nodes)).not.toContain('__next_f');
     expect(JSON.stringify(result.nodes)).not.toContain('data-sticky-cta');
-    expect(result.warnings.join('\n')).toMatch(/no place inside an svg/);
+    expect(result.warnings.join('\n')).toMatch(/cannot sit inside svg or math/);
   });
 
   it('drops a bar under a foreignObject too', () => {
     const result = page([{ type: 'p' }, { type: 'svg', children: [{ type: 'foreignObject', children: [bar] }] }]);
     expect(JSON.stringify(result.nodes)).not.toContain('data-sticky-cta');
+    expect(result.warnings.join('\n')).toMatch(/no place inside an svg/);
   });
 
-  it('reads any preset as HTML, so the strict id rule holds under an svg', () => {
-    const svg = forest([{ type: 'svg', children: [{ preset: 'card', type: 'div', props: { id: '__next_f' } }] }]).nodes[0];
-    expect(svg.children[0].props).not.toHaveProperty('id');
+  it('holds the strict id rule for a preset under a foreignObject', () => {
+    const svg = forest([{ type: 'svg', children: [{ type: 'foreignObject', children: [{ preset: 'card', type: 'div', props: { id: '__next_f' } }] }] }]).nodes[0];
+    expect(svg.children[0].children[0].props).not.toHaveProperty('id');
   });
 
   it('keeps a bar at the page level', () => {
@@ -333,6 +334,28 @@ describe('F3: nothing the owner cannot see', () => {
 
   it('refuses every shadowroot attribute, wherever it stands', () => {
     expect(propsOf('div', { shadowrootmode: 'open', shadowRootMode: 'open', shadowrootclonable: true, shadowrootdelegatesfocus: true })).toEqual({});
+  });
+
+  it('drops a preset inside an svg: the parser would throw it out for crawlers while the canvas hides it', () => {
+    const result = forest([{ type: 'svg', children: [{ preset: 'card', props: { children: 'Forged text' } }, { type: 'rect' }] }]);
+    expect(result.nodes[0].children.map((c) => c.type)).toEqual(['rect']);
+    expect(JSON.stringify(result.nodes)).not.toContain('Forged text');
+    expect(result.warnings.join('\n')).toMatch(/preset "card" cannot sit inside svg or math/);
+  });
+
+  it('drops a preset inside math the same way, children included', () => {
+    const math = one({ type: 'math', children: [{ preset: 'text', props: { children: 'Forged text' } }, { type: 'mi' }] });
+    expect(math.children.map((c) => c.type)).toEqual(['mi']);
+  });
+
+  it('reads an SVG text or image as a tag, never as the preset of that name', () => {
+    expect(one({ type: 'svg', children: [{ type: 'text', props: { children: 'Logo' } }, { type: 'image' }] }).children.map((c) => c.type)).toEqual(['text', 'image']);
+  });
+
+  it('keeps a preset under a foreignObject, whose namespace is HTML', () => {
+    const svg = one({ type: 'svg', children: [{ type: 'foreignObject', children: [{ preset: 'card', props: { children: 'Real text' } }] }] });
+    expect(svg.children[0].children[0].type).toBe('div');
+    expect(JSON.stringify(svg)).toContain('Real text');
   });
 
   it('drops noscript with its hidden links', () => {
