@@ -4,6 +4,7 @@ import type { NextRequest } from 'next/server';
 // that pulls `server-only` + Prisma, which cannot run in the edge middleware.
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
 import { isEditorHost as isEditorHostname } from '@/lib/editorHost';
+import { CSP_REPORT_ONLY_HEADER, PUBLISHED_REPORT_ONLY_POLICY } from '@/lib/site/cspReportOnly';
 
 /**
  * The coarse edge auth gate for framer-clone.
@@ -60,6 +61,16 @@ function isCrossOriginWrite(request: NextRequest): boolean {
   }
 }
 
+/**
+ * A published page's response, carrying the report-only policy
+ * (src/lib/site/cspReportOnly.ts). Only a document on a published host gets it:
+ * the editor host never does, and it never blocks anything.
+ */
+function withReportOnlyPolicy(response: NextResponse): NextResponse {
+  response.headers.set(CSP_REPORT_ONLY_HEADER, PUBLISHED_REPORT_ONLY_POLICY);
+  return response;
+}
+
 export async function middleware(request: NextRequest) {
   // Host-aware root routing. Next is host-agnostic, so without this `/` is the
   // editor (`app/page.tsx`) on EVERY host. The discriminator is the request Host:
@@ -87,7 +98,7 @@ export async function middleware(request: NextRequest) {
       // auth-brain login). A rewrite (NOT redirect): the visitor's URL stays `/`,
       // the required catch-all `(site)/[...slug]` route receives the sentinel
       // segment and resolves it as the home request.
-      return NextResponse.rewrite(new URL(`/${HOME_REWRITE_SENTINEL}`, request.url));
+      return withReportOnlyPolicy(NextResponse.rewrite(new URL(`/${HOME_REWRITE_SENTINEL}`, request.url)));
     }
     // Editor host root: preserve EXACTLY today's behavior. The editor `/` is NOT
     // auth-bounced here; it loads client-only and owns its own auth. Do NOT start
@@ -130,15 +141,20 @@ export async function middleware(request: NextRequest) {
         headers: { 'content-type': 'text/plain; charset=utf-8' },
       });
     }
-    return NextResponse.next();
+    // The matcher also brings every API route here (for the check above, which
+    // only runs on the editor host): those are not pages, so they pass unmarked.
+    const { pathname } = request.nextUrl;
+    if (pathname === '/api' || pathname.startsWith('/api/')) return NextResponse.next();
+    return withReportOnlyPolicy(NextResponse.next());
   }
 
   // The matcher runs this for every API route so the cross-origin check above
-  // covers them; only the editor plane has a session gate.
+  // covers them, and for page paths so a published page gets its policy; only
+  // the editor plane has a session gate.
   if (!isEditorPlanePath(request.nextUrl.pathname)) return NextResponse.next();
 
   // Editor host, gated authoring surface (`/projects/*`, `/api/projects/*`,
-  // `/api/ai/*` per the matcher below): coarse cookie-PRESENCE gate.
+  // `/api/ai/*`): coarse cookie-PRESENCE gate.
   const sessionCookie = request.cookies.get('lumitra_session')?.value;
 
   if (!sessionCookie) {
@@ -174,12 +190,13 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   // Reconciled to the REAL routes on disk. Gate the authoring surface only;
-  // everything a logged-out visitor legitimately hits stays OPEN (unmatched ->
-  // middleware never runs -> no login bounce):
+  // everything a logged-out visitor legitimately hits stays OPEN (unmatched, or
+  // matched and passed through -> no login bounce):
   //   - the `(site)/[...slug]` storefront catch-all + the published-site root
-  //     serve anonymous traffic
+  //     serve anonymous traffic: matched only so a published page gets the
+  //     report-only policy, never gated on any host
   //   - /preview/* (and /projects/<id>/preview, reached via the gated dashboard)
-  //     render anonymous previews
+  //     render anonymous previews: matched only for the policy, as above
   //   - /api/health/* is the liveness probe
   //   - /api/cms + /api/commerce are LEFT OPEN here because they serve BOTH
   //     planes: on a published-site host their reads are scoped to the Host's
@@ -204,5 +221,11 @@ export const config = {
     // Every API route, for the cross-origin check. The editor-plane families
     // (`/api/projects`, `/api/ai`, `/api/books`) also get the session gate.
     '/api/:path*',
+    // Published pages, for the report-only policy: any path except API routes,
+    // build output, what is inside /images and /fonts, and the per-host files.
+    // Other public files carry the header, where it does nothing. /preview is
+    // matched too: the host decides, so the editor's preview stays unmarked on
+    // the editor host, and a published host marks whatever document it serves.
+    '/((?!(?:api|_next)(?:/|$)|(?:images|fonts)/.|(?:favicon\\.ico|robots\\.txt|sitemap\\.xml|site\\.webmanifest)$).+)',
   ],
 };

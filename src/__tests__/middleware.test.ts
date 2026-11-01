@@ -16,11 +16,14 @@
 //     (`/projects/*`, `/api/projects/*`, `/api/ai/*`) are refused with a 404
 //     whether or not the `.lumitra.co` cookie is present;
 //   - the matcher gates only the real authoring surfaces and the dead
-//     `/editor`, `/api/sites`, `/api/admin` patterns are gone.
+//     `/editor`, `/api/sites`, `/api/admin` patterns are gone;
+//   - a published page carries the report-only policy and nothing else does:
+//     a page path on the editor host is matched but never gated or marked.
 import { describe, it, expect, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { middleware, config } from '../middleware';
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
+import { CSP_REPORT_ONLY_HEADER, PUBLISHED_REPORT_ONLY_POLICY } from '@/lib/site/cspReportOnly';
 
 const EDITOR = 'app.lumitra.co';
 const PUBLISHED = 'acme.sites.lumitra.co';
@@ -200,9 +203,12 @@ describe('middleware: the authoring and AI APIs are refused on a published host 
   });
 });
 
+/** The matcher's published-page entry: the only one that is not a plain path. */
+const PUBLISHED_PAGES = config.matcher[config.matcher.length - 1];
+
 describe('middleware: matcher reconciled to real routes (MT-16)', () => {
   it('gates `/`, `/projects/*`, and the authoring `/api/*` families', () => {
-    expect(config.matcher).toEqual([
+    expect(config.matcher.slice(0, -1)).toEqual([
       '/',
       '/projects/:path*',
       '/api/:path*',
@@ -279,5 +285,151 @@ describe('middleware: a write from another origin never reaches the editor host'
       headers: { host: PUBLISHED, 'sec-fetch-site': 'same-origin' },
     });
     expect(isNext(await middleware(checkout))).toBe(true);
+  });
+});
+
+describe('middleware: the report-only policy of published pages', () => {
+  const policy = (res: Response) => res.headers.get(CSP_REPORT_ONLY_HEADER);
+
+  it('marks a published page and the published home, and never enforces', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const page = await middleware(req(`https://${PUBLISHED}/about`, { host: PUBLISHED }));
+    const home = await middleware(req(`https://${PUBLISHED}/`, { host: PUBLISHED }));
+    expect(policy(page)).toBe(PUBLISHED_REPORT_ONLY_POLICY);
+    expect(policy(home)).toBe(PUBLISHED_REPORT_ONLY_POLICY);
+    expect(rewriteTarget(home)).not.toBeNull();
+    expect(page.headers.get('content-security-policy')).toBeNull();
+    expect(home.headers.get('content-security-policy')).toBeNull();
+  });
+
+  it('measures images, fonts and media, allows the site and Unsplash, and reports to the site itself', () => {
+    expect(PUBLISHED_REPORT_ONLY_POLICY).toBe(
+      "img-src 'self' data: blob: https://images.unsplash.com; font-src 'self' data:; media-src 'self' data: blob:; report-uri /api/csp-report",
+    );
+  });
+
+  it('never marks the editor host, on any path, signed in or not', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    for (const path of ['/', '/about', '/projects', '/api/projects/x']) {
+      for (const cookie of [undefined, 'lumitra_session=abc']) {
+        const res = await middleware(req(`https://${EDITOR}${path}`, { host: EDITOR, cookie }));
+        expect(policy(res)).toBeNull();
+      }
+    }
+  });
+
+  it('never marks localhost, or any host with EDITOR_HOST unset', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    expect(policy(await middleware(req('http://localhost:3000/about', { host: 'localhost:3000' })))).toBeNull();
+    delete process.env.EDITOR_HOST;
+    expect(policy(await middleware(req(`https://${PUBLISHED}/about`, { host: PUBLISHED })))).toBeNull();
+  });
+
+  it('does not mark the 404 that refuses the editor plane on a published host', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    expect(policy(await middleware(req(`https://${PUBLISHED}/projects`, { host: PUBLISHED })))).toBeNull();
+    expect(policy(await middleware(req(`https://${PUBLISHED}/api/ai/edit`, { host: PUBLISHED })))).toBeNull();
+  });
+
+  it('does not mark an API answer on a published host, though the matcher brings API routes here', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    for (const path of ['/api/cms/rows', '/api/commerce/products', '/api/forms/submit', '/api/health', '/api/csp-report']) {
+      const res = await middleware(req(`https://${PUBLISHED}${path}`, { host: PUBLISHED }));
+      expect(isNext(res), path).toBe(true);
+      expect(policy(res), path).toBeNull();
+    }
+  });
+
+  // The headers a report can arrive with. The gate must not depend on which of
+  // them a browser sends, so a report passes with each.
+  const REPORT_HEADERS: Record<string, string>[] = [
+    { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'no-cors', origin: `https://${PUBLISHED}` },
+    { 'sec-fetch-site': 'same-site' },
+    { 'sec-fetch-site': 'cross-site' },
+    { origin: 'https://elsewhere.example' },
+    { origin: 'null' },
+    {},
+  ];
+
+  it.each(REPORT_HEADERS)('lets a report through on a published host, the cross-origin refusal does not run there: %j', async (headers) => {
+    process.env.EDITOR_HOST = EDITOR;
+    const report = new NextRequest(`https://${PUBLISHED}/api/csp-report`, {
+      method: 'POST',
+      headers: { host: PUBLISHED, 'content-type': 'application/csp-report', ...headers },
+      body: '{}',
+    });
+    const res = await middleware(report);
+    expect(res.status).toBe(200);
+    expect(isNext(res)).toBe(true);
+  });
+
+  it('still refuses a cross-origin write first on the editor host, before any routing', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const write = new NextRequest(`https://${EDITOR}/about`, {
+      method: 'POST',
+      headers: { host: EDITOR, 'sec-fetch-site': 'cross-site' },
+    });
+    expect((await middleware(write)).status).toBe(403);
+  });
+
+  it('a page path on the editor host passes through ungated, though it is now matched', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(req(`https://${EDITOR}/about`, { host: EDITOR }));
+    expect(isNext(res)).toBe(true);
+    expect(res.status).not.toBe(307);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  // The entry is a regular expression source, as Next compiles it.
+  const matchesPublishedPages = (path: string) => new RegExp(`^${PUBLISHED_PAGES}$`).test(path);
+
+  it('matches page paths, also ones that only begin like an excluded path', () => {
+    for (const path of [
+      '/about',
+      '/products/classic-tee',
+      '/preview-sale',
+      '/apitude',
+      '/images-of-us',
+      '/robots.txt/x',
+      '/images',
+      '/fonts',
+      '/preview',
+      '/preview/x',
+    ]) {
+      expect(matchesPublishedPages(path), path).toBe(true);
+    }
+  });
+
+  it('matches other public files, which carry the header where it does nothing', () => {
+    expect(matchesPublishedPages('/file.svg')).toBe(true);
+  });
+
+  it('marks /preview on a published host and never on the editor host', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    expect(policy(await middleware(req(`https://${PUBLISHED}/preview`, { host: PUBLISHED })))).toBe(PUBLISHED_REPORT_ONLY_POLICY);
+    const editor = await middleware(req(`https://${EDITOR}/preview`, { host: EDITOR }));
+    expect(policy(editor)).toBeNull();
+    expect(isNext(editor)).toBe(true);
+    expect(editor.headers.get('location')).toBeNull();
+  });
+
+  it('leaves API routes, build output, what is inside /images and /fonts, and the per-host files unmatched', () => {
+    for (const path of [
+      '/api/cms/x',
+      '/api/commerce/orders',
+      '/api/health',
+      '/api/csp-report',
+      '/api/forms/submit',
+      '/_next/static/chunk.js',
+      '/_next/image',
+      '/fonts/inter/5/a.woff2',
+      '/images/a.png',
+      '/favicon.ico',
+      '/robots.txt',
+      '/sitemap.xml',
+      '/site.webmanifest',
+    ]) {
+      expect(matchesPublishedPages(path), path).toBe(false);
+    }
   });
 });

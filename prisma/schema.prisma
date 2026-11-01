@@ -277,6 +277,7 @@ model Site {
   pages       SitePage[]
   domains     SiteDomain[]
   experiments SiteExperiment[]
+  cspReports  CspReportCount[]
 
   @@index([workspaceId])
   @@index([tenantGroupId])
@@ -463,5 +464,24 @@ model AgentChange {
 
   @@index([runId])
   @@map("agent_changes")
+  @@schema("public")
+}
+
+/// How often a site's pages would have had one host blocked by one directive of
+/// the report-only policy (src/lib/site/cspReportOnly.ts). An aggregate on
+/// purpose: no visitor, page address, referrer or user agent is kept, and an
+/// address is reduced to its host (src/server/sites/cspReports.ts). The rows per
+/// site are capped (src/server/sites/cspReportStore.ts).
+model CspReportCount {
+  siteId      String   @map("site_id")
+  directive   String
+  blockedHost String   @map("blocked_host")
+  count       Int      @default(1)
+  firstSeenAt DateTime @default(now()) @map("first_seen_at")
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at")
+  site        Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@id([siteId, directive, blockedHost])
+  @@map("csp_report_counts")
   @@schema("public")
 }
