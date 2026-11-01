@@ -1235,14 +1235,15 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: CatalogueItemView) => 
   // The highlighted product (the combobox pattern: the focus stays in the search, the arrows move this).
   const [active, setActive] = useState(0);
   const items = result?.items ?? null;
-  useEffect(() => setActive(0), [result]);
   useEffect(() => {
     let cancelled = false;
     const query = q.trim();
     const t = setTimeout(() => {
       booksApi
         .catalogue(query || undefined)
-        .then((page) => !cancelled && (setResult({ q: query, items: page.items }), setError(null)))
+        // A new answer starts at its first product, in the same update that shows it: reset in an effect, it would
+        // overwrite an arrow key pressed as the list appears.
+        .then((page) => !cancelled && (setResult({ q: query, items: page.items }), setActive(0), setError(null)))
         .catch((err: unknown) => !cancelled && setError(errorText(err)));
     }, 200);
     return () => {
