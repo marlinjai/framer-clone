@@ -33,7 +33,7 @@ import {
 import {
   MAX_RULES_PER_NODE,
   isDefinitionRule,
-  isRuleList,
+  isLegacyRulesAttribute,
   parseRule,
   storedRulesOf,
   type DefinitionRule,
@@ -938,10 +938,10 @@ const ComponentModel: any = ComponentBase
       // resolve top-level props
       for (const [key, raw] of Object.entries(self.props)) {
         // `effects` is data for the effects runtime, never a DOM attribute:
-        // the canvas shows the final state, the preview reads it itself. A
-        // `rules` list is the same, while a string stays the legacy `<table>`
-        // attribute of that name.
-        if (key === 'style' || key === 'effects' || (key === 'rules' && isRuleList(raw))) continue;
+        // the canvas shows the final state, the preview reads it itself.
+        // `rules` is the same, unless it is a string, which stays the legacy
+        // `<table>` attribute of that name.
+        if (key === 'style' || key === 'effects' || (key === 'rules' && !isLegacyRulesAttribute(raw))) continue;
         assign(CSS_PROP_SET.has(key) ? style : attributes, key, raw);
       }
 

@@ -362,8 +362,10 @@ page inline and are dropped from the sheet. So:
 - The sheet widens where the emitter owns the output: inside a string `isContainedValue` has verified, `<`
   is written `\3c ` and a newline `\a `, and a tab or newline between tokens becomes a space. Backslashes
   stay refused.
-- This applies to moves caused by rules. The same fallback on a purely responsive node comes with it,
-  since it is the same code path, and it can only restore a value that is lost today.
+- This applies to moves caused by rules. A node that is only responsive keeps today's behaviour, by the
+  security review of pull request 221: the refused value is dropped and its overrides stay, because a page
+  nobody touched must not change at deploy. The widened strings reach it all the same, which is the one
+  change a rule-free page sees: a value the sheet could not hold before and now holds escaped.
 
 **Structural selectors differ at the page root.** `renderPublishedPage` renders several `<style>` and
 `<script>` siblings beside the root, so `&:first-child` on the root does not match there, and

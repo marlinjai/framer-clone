@@ -18,9 +18,11 @@
 //     Its rules go on a second class, `fc_r-<id>`, keyed on the rules alone, so
 //     rows that differ only in a bound value share one rule block. A preset or a
 //     definition is not an authored rule here and moves nothing.
-//   - A declaration the sheet refuses stays inline, alone, and is reported, so
-//     moving never loses a value. A map keeps its largest value there and loses
-//     its breakpoints, which the report names.
+//   - On a move a rule caused, a declaration the sheet refuses stays inline,
+//     alone, and is reported, so a rule never costs a value. A map keeps its
+//     largest value there and loses its breakpoints, which the report names. A
+//     node that is only responsive is not newly authored, so it stays as it has
+//     always been: the refused value is dropped, reported, and the overrides stay.
 //   - A node with only plain style values keeps its inline style unchanged.
 //   - A responsive map on a top-level prop that is not `style` (an attribute)
 //     resolves to the largest breakpoint's value: an attribute cannot change
@@ -34,6 +36,9 @@
 // A rule makes a request conditional, so on a page with an authored rule a custom
 // property holding an external address is dropped on every node: a rule could
 // reach it through `var()`.
+//
+// `fc-` and `fc_` names belong to this step, so a stored className cannot hold one:
+// it would take another node's styles, a step sideways out of that node.
 //
 // hydrateBindings clones a template subtree per collection row, so one id can
 // appear many times. Identical rules share one class; a different rule under
@@ -83,6 +88,12 @@ function hasResponsiveStyle(style: Record<string, unknown>): boolean {
 /** True when a style value, or any value of its map, could give a rule an external address. */
 function holdsExternalAddress(value: unknown): boolean {
   return isStyleMap(value) ? Object.values(value).some(hasExternalAddress) : hasExternalAddress(value);
+}
+
+/** A stored className without any name this step issues. Anything else is left exactly as stored. */
+function withoutIssuedClasses(className: string): string {
+  if (!/(?:^|\s)fc[-_]/i.test(className)) return className;
+  return className.split(/\s+/).filter(name => name.length > 0 && !/^fc[-_]/i.test(name)).join(' ');
 }
 
 /** A problem with a rule or a custom property, for the page's one warning. */
@@ -216,6 +227,11 @@ export function applyResponsiveStyles(
         }
         props[name] = value;
       }
+      if (typeof props.className === 'string') {
+        const className = withoutIssuedClasses(props.className);
+        if (className) props.className = className;
+        else delete props.className;
+      }
       const classes: string[] = [];
       const stored = props.style;
       if (isStyleMap(stored)) {
@@ -224,8 +240,9 @@ export function applyResponsiveStyles(
         if (emptied) delete props.style;
         else props.style = style;
         const inReach = insideReachingRule && !isTextNodeType(node.type);
-        if (hasResponsiveStyle(style) || selectorRules.length > 0 || inReach) {
-          const { sheet, inline } = splitForSheet(style);
+        const causedByRule = selectorRules.length > 0 || inReach;
+        if (hasResponsiveStyle(style) || causedByRule) {
+          const { sheet, inline } = causedByRule ? splitForSheet(style) : { sheet: style, inline: {} };
           const className = Object.keys(sheet).length > 0 ? classFor(node, sheet) : undefined;
           if (className) classes.push(className);
           for (const [key, value] of Object.entries(inline)) {

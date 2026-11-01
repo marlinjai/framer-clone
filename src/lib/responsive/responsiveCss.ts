@@ -41,9 +41,10 @@
 // itself: inside a quoted string or a url() it is data, as in
 // `url("data:image/png;base64,...")`, and isContainedValue tells the two apart.
 //
-// Rules arrive here parsed: the type says so, and the one place that reads stored
-// rules for the page is applyResponsiveStyles. A rule is emitted whole or not at
-// all.
+// Rules arrive here parsed, which the type says, and applyResponsiveStyles is what
+// reads stored rules for the page. A type is erased at run time and selectors are
+// written raw, so isWritableRule checks them again here, and the finished sheet
+// must hold no `<`. A rule is emitted whole or not at all.
 
 import type { ParsedSelectorRule } from '@/lib/rules/rules';
 import { largestFirst, resolveCascade, type BreakpointRef } from './cascade';
@@ -402,6 +403,28 @@ interface RuleBlock {
 }
 
 /**
+ * What no selector part or wrapper may hold, whoever built it. A constant check
+ * and not the parser: this module cannot import rules.ts as a value, because
+ * rules.ts imports from here. It is the guard behind the parser, so it stops text
+ * from leaving the rule or the <style> element and leaves meaning to the parser.
+ */
+const UNSAFE_RULE_TEXT = /[<{};\\\u0000-\u001f\u007f]|\/\*/;
+
+const isSafeRuleText = (text: unknown): text is string => typeof text === 'string' && !UNSAFE_RULE_TEXT.test(text);
+
+/** True when a rule's selectors and wrappers can be written raw into the sheet. */
+function isWritableRule(rule: ParsedSelectorRule): boolean {
+  const { parts, at, style } = rule;
+  return (
+    Array.isArray(parts) &&
+    parts.every((part) => isSafeRuleText(part) && part.startsWith('&')) &&
+    Array.isArray(at) &&
+    at.every(isSafeRuleText) &&
+    isStyleMap(style)
+  );
+}
+
+/**
  * Every block of one rule: its base, then each breakpoint's own values, one block
  * per part of a selector list, because a browser throws away a whole list for one
  * part it does not know. The parser and the sheet check values apart, so null
@@ -470,6 +493,10 @@ function authoredBlocks(
         drop('the page is over its rule limit');
         continue;
       }
+      if (!isWritableRule(rule)) {
+        drop('its selector or a wrapper could leave the rule');
+        continue;
+      }
       const built = blocksOfRule(className, rule, ordered);
       if ('refused' in built) {
         drop(built.refused);
@@ -486,6 +513,18 @@ function authoredBlocks(
     }
   }
   return out;
+}
+
+/**
+ * The sheet, or nothing when it holds a `<`. sheetValueText and isWritableRule
+ * each promise that it cannot, and `dangerouslySetInnerHTML` writes it raw, so a
+ * future path that breaks the promise loses its styles rather than opening the
+ * <style> element. The page still serves.
+ */
+export function withoutMarkup(sheet: string, onDropRule: (dropped: DroppedRule) => void): string {
+  if (!sheet.includes('<')) return sheet;
+  onDropRule({ className: 'sheet', ruleId: 'sheet', reason: 'the finished stylesheet held a <' });
+  return '';
 }
 
 /**
@@ -528,7 +567,8 @@ export function buildResponsiveCss(
     if (!body) continue;
     parts.push(`${mediaBelow(ordered[i - 1].minWidth)}{\n${body}\n}`);
   }
-  const authored = serializeBlocks(authoredBlocks(options.authored ?? [], ordered, options.onDropRule ?? (() => {})));
+  const onDropRule = options.onDropRule ?? (() => {});
+  const authored = serializeBlocks(authoredBlocks(options.authored ?? [], ordered, onDropRule));
   if (authored) parts.push(authored);
-  return parts.join('\n');
+  return withoutMarkup(parts.join('\n'), onDropRule);
 }

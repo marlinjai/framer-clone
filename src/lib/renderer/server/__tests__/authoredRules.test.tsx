@@ -7,12 +7,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ComponentNode, CommerceServerRepository } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
-import { buildResponsiveCss, MAX_RULE_BYTES_PER_PAGE, MAX_RULES_PER_PAGE } from '@/lib/responsive/responsiveCss';
+import { buildResponsiveCss, MAX_RULE_BYTES_PER_PAGE, MAX_RULES_PER_PAGE, withoutMarkup } from '@/lib/responsive/responsiveCss';
 import { collectPageFonts } from '@/lib/fonts/registry';
 import { readRules, type ParsedSelectorRule } from '@/lib/rules/rules';
 import { HOVER_GATE } from '@/lib/rules/states';
 import { applyResponsiveStyles } from '../applyResponsiveStyles';
-import { renderComponentNode } from '../renderComponentNode';
+import { nodeDomProps, renderComponentNode } from '../renderComponentNode';
 import { renderPublishedPage } from '../renderPublishedPage';
 import { componentSnapshotToNode } from '../snapshotToComponentNode';
 
@@ -36,6 +36,15 @@ const node = (id: string, props: Record<string, unknown>, children?: ComponentNo
 const propsOf = (n: ComponentNode | undefined) => n?.props as Record<string, unknown>;
 const silence = () => vi.spyOn(console, 'warn').mockImplementation(() => {});
 const parse = (rules: unknown[]) => readRules({ rules }).rules as ParsedSelectorRule[];
+/** A rule that never met the parser, as a slip in a later caller would make one. */
+const handBuilt = (over: Partial<ParsedSelectorRule> = {}): ParsedSelectorRule => ({
+  kind: 'selector',
+  id: 'r',
+  parts: ['&'],
+  at: [],
+  style: { color: 'red' },
+  ...over,
+});
 
 describe('a rule in the sheet', () => {
   it('writes the example of the contract exactly', () => {
@@ -95,10 +104,10 @@ describe('a rule in the sheet', () => {
     expect(root.props).toEqual({ className: 'mine fc_r-a' });
   });
 
-  it('drops a rule whole when the sheet refuses one of its values, though the parser took it', () => {
+  it('drops a rule whole when the sheet refuses one of its values', () => {
     const onDropRule = vi.fn();
-    const rules = parse([{ id: 'r', selector: '&', style: { color: 'red', backgroundImage: 'url(/a<b.png)' } }]);
-    expect(rules).toHaveLength(1);
+    // Built by hand: the parser refuses this value too, and all or nothing must hold without it.
+    const rules = [handBuilt({ style: { color: 'red', backgroundImage: 'url(/a<b.png)' } })];
     const css = buildResponsiveCss([], BPS, { authored: [{ className: 'fc_r-a', rules }], onDropRule });
     expect(css).toBe('');
     expect(onDropRule).toHaveBeenCalledWith(expect.objectContaining({ className: 'fc_r-a', ruleId: 'r' }));
@@ -107,6 +116,77 @@ describe('a rule in the sheet', () => {
   it('skips a rule class that is not a safe one', () => {
     const rules = parse([pressed({ color: 'red' })]);
     expect(buildResponsiveCss([], BPS, { authored: [{ className: 'x{}', rules }] })).toBe('');
+  });
+});
+
+describe('the guard behind the parser', () => {
+  const written = (rule: ParsedSelectorRule) => {
+    const onDropRule = vi.fn();
+    const css = buildResponsiveCss([], BPS, { authored: [{ className: 'fc_r-a', rules: [rule] }], onDropRule });
+    return { css, onDropRule };
+  };
+
+  it('refuses the payload of the review, a part that ran script in Chromium', () => {
+    const { css, onDropRule } = written(handBuilt({ parts: ['&{}</style><script>alert(1)</script><style>'] }));
+    expect(css).toBe('');
+    expect(onDropRule).toHaveBeenCalledWith(expect.objectContaining({ className: 'fc_r-a', ruleId: 'r' }));
+  });
+
+  it.each([
+    ['<', '&:hover<'],
+    ['{', '&{'],
+    ['}', '&}'],
+    [';', '&;'],
+    ['a backslash', '&\\3c'],
+    ['a comment', '&/*x*/'],
+    ['a newline', '&\n'],
+    ['a null', '&\u0000'],
+    ['a delete', '&\u007f'],
+  ])('refuses %s in a part', (_label, part) => {
+    expect(written(handBuilt({ parts: [part] })).css).toBe('');
+  });
+
+  it.each([
+    ['<', '@media print</style>'],
+    ['{', '@media print{}body'],
+    ['}', '@media print}'],
+    [';', '@media print;'],
+    ['a backslash', '@media \\70rint'],
+    ['a comment', '@media /*x*/ print'],
+    ['a newline', '@media\nprint'],
+  ])('refuses %s in a wrapper', (_label, wrapper) => {
+    expect(written(handBuilt({ at: [wrapper] })).css).toBe('');
+  });
+
+  it('refuses a part that does not start with &', () => {
+    expect(written(handBuilt({ parts: ['body'] })).css).toBe('');
+    expect(written(handBuilt({ parts: ['&', 'body'] })).css).toBe('');
+  });
+
+  it('refuses what the type would have ruled out, without throwing', () => {
+    for (const broken of [{ parts: '&' }, { parts: [1] }, { parts: undefined }, { at: '@media print' }, { at: [1] }, { at: undefined }, { style: undefined }, { style: 'color:red' }]) {
+      const { css, onDropRule } = written(handBuilt(broken as never));
+      expect(css).toBe('');
+      expect(onDropRule).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('leaves the other rules of the node standing', () => {
+    const rules = [handBuilt({ parts: ['&<'] }), handBuilt({ id: 's', parts: ['&:hover'] })];
+    expect(buildResponsiveCss([], BPS, { authored: [{ className: 'fc_r-a', rules }] })).toBe('.fc_r-a.fc_r-a:hover{color:red}');
+  });
+
+  it('passes every part and wrapper the parser accepts', () => {
+    const rules = parse([{ id: 'r', selector: '&:is(.dark *), & ul > li, &[data-a="b"]::before', at: ['@media (min-width: 640px)', '@supports (display:grid)', '@scope (.a) to (.b)'], style: { color: 'red' } }]);
+    expect(buildResponsiveCss([], BPS, { authored: [{ className: 'fc_r-a', rules }] })).toContain('.fc_r-a.fc_r-a:is(.dark *){color:red}');
+  });
+
+  it('never lets a sheet out with a <', () => {
+    const onDropRule = vi.fn();
+    expect(withoutMarkup('.a{color:red}', onDropRule)).toBe('.a{color:red}');
+    expect(onDropRule).not.toHaveBeenCalled();
+    expect(withoutMarkup('.a{color:red}</style><script>', onDropRule)).toBe('');
+    expect(onDropRule).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -119,6 +199,9 @@ describe('what the parser refuses', () => {
     ['an unknown wrapper', { id: 'r', selector: '&', at: ['@layer x'], style: { color: 'red' } }],
     ['a value leaving the rule', { id: 'r', selector: '&', style: { color: 'red}body{display:none' } }],
     ['a binding', { id: 'r', selector: '&', style: { color: '{{row.colour}}' } }],
+    ['a < in an unquoted url', { id: 'r', selector: '&', style: { backgroundImage: 'url(/a<b.png)' } }],
+    ['the end of the style element in an unquoted url', { id: 'r', selector: '&', style: { backgroundImage: 'url(/a</style>.png)' } }],
+    ['a > in an unquoted url', { id: 'r', selector: '&', style: { backgroundImage: 'url(/a>b.png)' } }],
   ];
 
   it.each(refused)('drops %s whole and warns once, leaving the node as it was', (_label, rule) => {
@@ -145,6 +228,22 @@ describe('what the parser refuses', () => {
     silence();
     const { root } = applyResponsiveStyles(node('a', { rules: [1, 'x', [], {}, null] }), BPS);
     expect(root.props).toEqual({});
+  });
+
+  it('escapes a < in a quoted url, which is a string the emitter owns', () => {
+    const { css } = applyResponsiveStyles(node('a', { rules: [{ id: 'r', selector: '&', style: { backgroundImage: "url('/a<b.png')" } }] }), BPS);
+    expect(css).toBe(".fc_r-a.fc_r-a{background-image:url('/a\\3c b.png')}");
+  });
+
+  it.each([
+    ['an object', { 0: { id: 'r' } }],
+    ['a number', 5],
+    ['true', true],
+  ])('never renders %s as a rules attribute', (_label, rules) => {
+    const table = { id: 't', type: 'table', props: { rules } } as unknown as ComponentNode;
+    const { root } = applyResponsiveStyles(table, BPS);
+    expect(nodeDomProps(root)).not.toHaveProperty('rules');
+    expect(renderToStaticMarkup(<>{renderComponentNode(root)}</>)).toBe('<table></table>');
   });
 
   it('leaves a stored string alone, the legacy table attribute', () => {
@@ -226,11 +325,20 @@ describe('moving Normal', () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  it('gives a purely responsive node the same fallback, restoring a value lost before', () => {
+  it('gives no fallback to a node that is only responsive: nobody touched it', () => {
     const warn = silence();
     const { root, css } = applyResponsiveStyles(node('a', { style: { padding: { base: 1, mobile: 2 }, backgroundImage: REFUSED_BY_THE_SHEET } }), BPS);
-    expect(root.props).toEqual({ className: 'fc-a', style: { backgroundImage: REFUSED_BY_THE_SHEET } });
-    expect(css).toContain('.fc-a.fc-a{padding:1px}');
+    expect(root.props).toEqual({ className: 'fc-a' });
+    expect(css).toBe('.fc-a.fc-a{padding:1px}\n@media (max-width:767.98px){\n.fc-a.fc-a{padding:2px}\n}');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives the fallback under a reaching rule, which is a move a rule caused', () => {
+    const warn = silence();
+    const root = node('a', { rules: [{ id: 'r', selector: '& p', style: { color: 'blue' } }] }, [
+      { id: 'p', type: 'p', props: { style: { color: 'red', backgroundImage: REFUSED_BY_THE_SHEET } } } as ComponentNode,
+    ]);
+    expect(propsOf(applyResponsiveStyles(root, BPS).root.children?.[0])).toEqual({ className: 'fc-p', style: { backgroundImage: REFUSED_BY_THE_SHEET } });
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
@@ -310,6 +418,36 @@ describe('a custom property holding an external address', () => {
   });
 });
 
+describe('a stored className', () => {
+  const classOf = (className: string) => propsOf(applyResponsiveStyles(node('a', { className }), BPS).root).className;
+
+  it('cannot claim another node\'s rules, the payload of the review', () => {
+    const victim = node('v', { rules: [pressed({ color: 'red' })] });
+    const thief = node('t', { className: 'fc_r-v' });
+    const { root, css } = applyResponsiveStyles(node('p', {}, [victim, thief]), BPS);
+    expect(css).toBe('.fc_r-v.fc_r-v:active{color:red}');
+    expect(propsOf(root.children?.[0]).className).toBe('fc_r-v');
+    expect(root.children?.[1]?.props).toEqual({});
+  });
+
+  it('cannot claim another node\'s Normal', () => {
+    const victim = node('v', { style: { color: { base: 'red', mobile: 'blue' } } });
+    const { root } = applyResponsiveStyles(node('p', {}, [victim, node('t', { className: 'mine fc-v' })]), BPS);
+    expect(propsOf(root.children?.[1]).className).toBe('mine');
+  });
+
+  it('loses only the issued names, in any letter case, and gets its own after them', () => {
+    expect(classOf('a fc-x b fc_r-y FC-z Fc_R-w')).toBe('a b');
+    const { root } = applyResponsiveStyles(node('a', { className: 'mine fc_r-other', rules: [pressed({ color: 'red' })] }), BPS);
+    expect(propsOf(root).className).toBe('mine fc_r-a');
+  });
+
+  it('leaves a name that only looks close, and any other className exactly as stored', () => {
+    expect(classOf('fcx fc foo-fc-bar')).toBe('fcx fc foo-fc-bar');
+    expect(classOf('  two   spaces  ')).toBe('  two   spaces  ');
+  });
+});
+
 describe('rows and the page caps', () => {
   it('shares one rule block across rows that differ only in a bound value', () => {
     const rules = [hover({ color: 'blue' })];
@@ -371,6 +509,34 @@ describe('rows and the page caps', () => {
 });
 
 describe('a page without rules', () => {
+  const tablet = '@media (max-width:1279.98px){\n.fc-a.fc-a';
+
+  // Each of these changed in the first version of this slice, on pages nobody touched.
+  it.each([
+    ['a value holding an address', 'red;background:url(https://x.test/a)'],
+    ['a value leaving the rule', 'red}*{x:y'],
+    ['an expression', 'expression(alert(1))'],
+    ['an escape', '"Foo\\ Bar"'],
+  ])('drops %s and keeps its override, delivering nothing inline', (_label, base) => {
+    silence();
+    const { root, css } = applyResponsiveStyles(node('a', { style: { color: { base, tablet: 'blue' } } }), BPS);
+    expect(css).toBe(`${tablet}{color:blue}\n}`);
+    expect(root.props).toEqual({ className: 'fc-a' });
+  });
+
+  it('drops an unsafe property on a responsive node, delivering nothing inline', () => {
+    silence();
+    const { root, css } = applyResponsiveStyles(node('a', { style: { 'a;b': 'x', color: { base: 'red', tablet: 'blue' } } }), BPS);
+    expect(css).toBe(`.fc-a.fc-a{color:red}\n${tablet}{color:blue}\n}`);
+    expect(root.props).toEqual({ className: 'fc-a' });
+  });
+
+  it('holds what it can now escape, the one change a page without rules sees', () => {
+    silence();
+    const { css } = applyResponsiveStyles(node('a', { style: { content: { base: '"a<b"', tablet: '"c"' } } }), BPS);
+    expect(css).toBe(`.fc-a.fc-a{content:"a\\3c b"}\n${tablet}{content:"c"}\n}`);
+  });
+
   it('renders exactly as it did before rules existed', () => {
     const warn = silence();
     const root = node('a', { className: 'hero', style: { padding: { base: '8px', tablet: '4px' }, color: 'red' } }, [
