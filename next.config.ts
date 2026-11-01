@@ -66,19 +66,14 @@ const nextConfig: NextConfig = {
     ];
   },
   images: {
-    // Allow all external domains (for design tool flexibility)
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: '**', // Allow all hostnames
-      },
-      {
-        protocol: 'http',
-        hostname: '**', // Allow all hostnames (for development)
-      }
-    ],
-    // Alternative: disable optimization for external images
-    unoptimized: false,
+    // Hosts `/_next/image` may fetch for anyone who asks, so a wide pattern makes
+    // this server an open proxy. Nothing in the app renders through it today:
+    // page images, Unsplash stock photos included, are plain <img src> and CSS
+    // url() that the visitor's browser loads directly, from any host, and catalogue
+    // images are same-origin, so this list never limits what a site can show.
+    // Unsplash stays because it is the one external image source the app itself
+    // places. A component that adopts next/image for another host adds that host.
+    remotePatterns: [{ protocol: 'https', hostname: 'images.unsplash.com', pathname: '/**' }],
   },
 };
 
