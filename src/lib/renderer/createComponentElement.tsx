@@ -13,6 +13,7 @@
 import React from 'react';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag';
+import { isBlockedTag, withoutBlockedProps } from '@/lib/renderer/blockedNodes';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { createScope } from '@/lib/bindings/resolver/scope';
 import CollectionRenderer, {
@@ -101,14 +102,17 @@ export function createComponentElement(
   rawTextChildren?: React.ReactNode,
   options?: CreateComponentElementOptions,
 ): React.ReactNode {
+  if (isBlockedTag(component.type)) return null;
+
   const identity = options?.identity;
+  const safeProps = withoutBlockedProps(finalProps);
   const propsWithIdentity: Record<string, unknown> = identity
     ? {
-        ...finalProps,
+        ...safeProps,
         'data-component-id': `${identity.breakpointId}-${identity.componentId}`,
         'data-inner-component-id': identity.componentId,
       }
-    : finalProps;
+    : safeProps;
 
   if (component.isHostElement) {
     // The sticky call to action bar draws its own link (src/lib/stickyCta).
