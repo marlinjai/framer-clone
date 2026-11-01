@@ -162,7 +162,11 @@ numbers there replace the rough readings above. Where the first run corrects thi
   `CSS_PROP_SET` are 19.5 percent of the included ones.
 - **A panel gap the plan missed.** The palette makes five tags (`a`, `button`, `div`, `img`, `p`) and
   the panel cannot change a node's tag, so a heading exists only where the AI generator or a default
-  page template made one. Step 3's general editor does not close this.
+  page template made one. Step 3's general editor does not close this. **Built 2026-11-01:** the
+  panel's Custom section holds a tag picker for HTML elements and the general editor of step 3, any
+  CSS property per breakpoint and any attribute (`src/components/sidebars/right/sections/CustomSection.tsx`).
+  SVG and MathML tags and their attributes are not offered: `animate` and `set` can write an address
+  into a link, so they need their own rules first.
 - **Behaviour is less empty than gap 3 says.** Plain HTML passes the primary keyboard contract of 17
   of the 30 WAI-ARIA patterns with no behaviour model, among them accordion (`details`) and modal
   dialog (`command`). Tabs, carousel, menus, tooltip and combobox fail. So step 6's list is partly

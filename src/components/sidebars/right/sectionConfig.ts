@@ -3,7 +3,7 @@ import { formKindOf } from '@/lib/forms/definition';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 
 export type ComponentCategory = 'viewport' | 'container' | 'text' | 'link' | 'image' | 'generic' | 'form' | 'formField' | 'formSubmit' | 'stickyCta';
-export type SectionId = 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles' | 'effects' | 'form' | 'stickyCta' | 'link';
+export type SectionId = 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles' | 'effects' | 'form' | 'stickyCta' | 'link' | 'custom';
 
 // Exported so the AI page generator's schema docs (src/lib/ai/pageGen/schema.ts)
 // offer exactly the tags this properties panel knows how to edit.
@@ -26,22 +26,25 @@ export function getComponentCategory(component: ComponentInstance): ComponentCat
   return 'generic';
 }
 
+// `custom` closes every list but the viewport's: the general style and attribute
+// editor, for what the sections before it have no control for. A viewport is a
+// breakpoint's frame, not an element of the page.
 export const SECTION_MAP: Record<ComponentCategory, SectionId[]> = {
   viewport:  ['size', 'layout', 'styles'],
   // Typography on a container sets the font its text inherits (a section's
   // body family, which is how generated pages set fonts).
-  container: ['size', 'position', 'layout', 'typography', 'image', 'styles', 'effects'],
-  text:      ['size', 'position', 'typography', 'styles', 'effects'],
+  container: ['size', 'position', 'layout', 'typography', 'image', 'styles', 'effects', 'custom'],
+  text:      ['size', 'position', 'typography', 'styles', 'effects', 'custom'],
   // A link is text with a target: the Link section first.
-  link:      ['link', 'size', 'position', 'typography', 'styles', 'effects'],
-  image:     ['size', 'position', 'image', 'styles', 'effects'],
-  generic:   ['size', 'position', 'styles', 'effects'],
+  link:      ['link', 'size', 'position', 'typography', 'styles', 'effects', 'custom'],
+  image:     ['size', 'position', 'image', 'styles', 'effects', 'custom'],
+  generic:   ['size', 'position', 'styles', 'effects', 'custom'],
   // A form may reveal like any section; single fields and the submit button
   // do not animate (hover-everything is one of the design tells).
-  form:       ['form', 'size', 'position', 'layout', 'styles', 'effects'],
-  formField:  ['form', 'size', 'position', 'typography', 'styles'],
-  formSubmit: ['form', 'size', 'position', 'typography', 'styles'],
+  form:       ['form', 'size', 'position', 'layout', 'styles', 'effects', 'custom'],
+  formField:  ['form', 'size', 'position', 'typography', 'styles', 'custom'],
+  formSubmit: ['form', 'size', 'position', 'typography', 'styles', 'custom'],
   // Pinned by the published page, so no size, position or effects; the bar's
   // look is the Styles section, the font of its label Typography.
-  stickyCta:  ['stickyCta', 'typography', 'styles'],
+  stickyCta:  ['stickyCta', 'typography', 'styles', 'custom'],
 };
