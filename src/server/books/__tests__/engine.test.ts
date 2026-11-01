@@ -137,7 +137,8 @@ describe('pagination', () => {
       expect(page('totals')).toHaveLength(1);
       expect(page('taxNote')).toEqual(page('totals'));
     }
-  });
+    // 31 full renders: about 2 s beside other suites, so the 5s default is too tight under load.
+  }, 30_000);
 
   it('breaks a row taller than a page line by line and never draws under the footer', async () => {
     for (const name of PRESETS) {
