@@ -74,7 +74,13 @@
       "base": "Page-level and blocked in nodes (blockedNodes.ts): it would rewrite every link on the page.",
       "link": "Page-level and blocked in nodes (blockedNodes.ts): an external stylesheet is the same risk as a script. The hosted fonts have their own path.",
       "script": "Blocked in nodes on purpose (blockedNodes.ts). The designed replacement is the custom code primitive, an open decision in the plan, so it is not a coverage gap until that is decided.",
-      "style": "Blocked in nodes on purpose (blockedNodes.ts). What a style element would add is measured directly by the selector and at-rule rows."
+      "style": "Blocked in nodes on purpose (blockedNodes.ts). What a style element would add is measured directly by the selector and at-rule rows.",
+      "camera": "A browser permission element: drawn by the browser, it asks the visitor for a permission that stays with the site's origin. A page without script has no use for it, so nothing generates it.",
+      "geolocation": "A browser permission element: drawn by the browser, it asks the visitor for a permission that stays with the site's origin. A page without script has no use for it, so nothing generates it.",
+      "install": "A browser permission element: drawn by the browser, it asks the visitor for a permission that stays with the site's origin. A page without script has no use for it, so nothing generates it.",
+      "microphone": "A browser permission element: drawn by the browser, it asks the visitor for a permission that stays with the site's origin. A page without script has no use for it, so nothing generates it.",
+      "model": "A browser permission element: drawn by the browser, it asks the visitor for a permission that stays with the site's origin. A page without script has no use for it, so nothing generates it.",
+      "usermedia": "A browser permission element: drawn by the browser, it asks the visitor for a permission that stays with the site's origin. A page without script has no use for it, so nothing generates it."
     },
     "css-selector": {
       "Pseudo-classes": "A category heading in mdn-data, not a selector. Each pseudo-class has its own row.",

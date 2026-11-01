@@ -1,10 +1,8 @@
 // What the AI generator accepts, derived from the score's own lists: the tags,
 // attributes and properties the matrix includes. What is
-// refused on top (blocked tags, handlers, reserved data attributes) is policy, not
-// data, and lives in src/lib/ai/pageGen/schema.ts.
+// accepted of this is a reviewed decision, not data, and lives in
+// src/lib/ai/pageGen/reviewedVocabulary.ts and schema.ts.
 
-import fs from 'node:fs';
-import path from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
@@ -30,24 +28,6 @@ export interface WebVocabulary {
   globalAttributes: string[];
   elementAttributes: Record<string, string[]>;
   propNames: Record<string, string>;
-  reservedDataAttributes: string[];
-}
-
-/** Every data-* name in the source, tests and this generated list aside. */
-export function dataAttributesInSource(): string[] {
-  const names = new Set<string>();
-  const walk = (dir: string) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const file = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (entry.name !== '__tests__') walk(file);
-      } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) && entry.name !== 'webVocabulary.ts') {
-        for (const m of fs.readFileSync(file, 'utf8').matchAll(/data-[a-z][a-z0-9-]*[a-z0-9]/g)) names.add(m[0]);
-      }
-    }
-  };
-  walk(path.resolve(process.cwd(), 'src'));
-  return [...names].sort();
 }
 
 /** React's own spelling of each lower-case attribute it has one for, read from its development warning. */
@@ -78,6 +58,8 @@ export function buildWebVocabulary(): WebVocabulary {
     const [owner, name] = [entry.id.slice(0, entry.id.indexOf('.')), entry.id.slice(entry.id.indexOf('.') + 1)];
     // Both spellings: the markup's (stroke-width) and React's (strokeWidth).
     const names = name.startsWith('type_') ? [prop] : [prop, name];
+    // A note in the data, not a name anyone can write.
+    if (name.includes('_') && !name.startsWith('type_')) continue;
     const into = owner === '*' ? global : perTag.get(tag) ?? new Set<string>();
     if (owner !== '*') perTag.set(tag, into);
     for (const spelling of names) into.add(spelling.toLowerCase());
@@ -96,7 +78,6 @@ export function buildWebVocabulary(): WebVocabulary {
     globalAttributes,
     elementAttributes,
     propNames,
-    reservedDataAttributes: dataAttributesInSource(),
   };
 }
 
@@ -131,9 +112,6 @@ export function renderWebVocabulary(v: WebVocabulary): string {
     'export const WEB_ATTRIBUTE_PROP_NAMES: Readonly<Record<string, string>> = {',
     ...Object.entries(v.propNames).map(([name, prop]) => `  ${JSON.stringify(name).replace(/"/g, "'")}: '${prop}',`),
     '};',
-    '',
-    '/** The data attributes the source uses, scanned: never accepted from the model. */',
-    `export const WEB_RESERVED_DATA_ATTRIBUTES: readonly string[] = ${list(v.reservedDataAttributes)};`,
     '',
   ].join('\n');
 }

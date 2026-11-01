@@ -9,8 +9,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import React from 'react';
 import { deriveBreakpointKeys } from '../schema';
 import { validateGeneration, type GeneratedNodeSnapshot } from '../validate';
-import { isAcceptedAttribute } from '../schema';
-import { dataAttributesInSource } from '../../../../../test/score/lib/vocabulary';
 
 const breakpoints = deriveBreakpointKeys([{ label: 'Desktop', minWidth: 1200 }, { label: 'Mobile', minWidth: 390 }]);
 
@@ -28,7 +26,7 @@ describe('tags', () => {
     const list = one({ type: 'ul', children: [{ type: 'li', props: { children: 'One' } }] }).node;
     expect(list.type).toBe('ul');
     expect(list.children[0].type).toBe('li');
-    for (const tag of ['table', 'details', 'blockquote', 'dialog', 'video', 'template']) {
+    for (const tag of ['table', 'details', 'blockquote', 'dialog', 'video']) {
       expect(one({ type: tag }).node.type).toBe(tag);
     }
   });
@@ -107,7 +105,8 @@ describe('svg and math', () => {
     expect(svgProps('use', { href: 'javascript:alert(1)', xlinkHref: 'javascript:alert(1)', 'xlink:href': 'data:image/svg+xml,x' })).toEqual({});
     expect(svgProps('image', { href: 'https://images.unsplash.com/photo-1' })).toEqual({});
     expect(svgProps('rect', { fill: 'url(https://evil.example/a.svg#g)', stroke: 'url("/a.svg#g")' })).toEqual({});
-    expect(svgProps('use', { href: '#icon' })).toEqual({ href: '#icon' });
+    const sprite = one({ type: 'svg', children: [{ type: 'g', props: { id: 'icon' } }, { type: 'use', props: { href: '#icon' } }] }).node;
+    expect(sprite.children[1].props).toEqual({ href: '#icon' });
   });
 
   it('refuses an animation aimed at a link or a handler, and every handler', () => {
@@ -180,14 +179,14 @@ describe('a ; in a style value', () => {
 describe('attributes', () => {
   it('keeps global attributes as text, numbers or booleans', () => {
     expect(
-      propsOf('div', { id: 'pricing', role: 'note', hidden: true, tabIndex: 0, spellCheck: false, lang: 'de', title: 'x', 'aria-label': 'y', 'data-plan': 'pro' }),
-    ).toEqual({ id: 'pricing', role: 'note', hidden: true, tabIndex: 0, spellCheck: false, lang: 'de', title: 'x', 'aria-label': 'y', 'data-plan': 'pro' });
+      propsOf('div', { id: 'pricing', role: 'note', hidden: true, tabIndex: 0, spellCheck: false, lang: 'de', title: 'x', 'aria-label': 'y' }),
+    ).toEqual({ id: 'pricing', role: 'note', hidden: true, tabIndex: 0, spellCheck: false, lang: 'de', title: 'x', 'aria-label': 'y' });
   });
 
   it('keeps an element\'s own attributes, and only on that element', () => {
     expect(propsOf('td', { colSpan: 2 })).toEqual({ colSpan: 2 });
     expect(propsOf('details', { name: 'group', open: true })).toEqual({ name: 'group', open: true });
-    expect(propsOf('button', { commandfor: 'modal', command: 'show-modal' })).toEqual({ commandfor: 'modal', command: 'show-modal' });
+    expect(propsOf('button', { type: 'button', name: 'x' })).toEqual({ type: 'button', name: 'x' });
     expect(propsOf('div', { colSpan: 2, href: '/x', src: '/x' })).toEqual({});
   });
 
@@ -198,7 +197,7 @@ describe('attributes', () => {
   });
 
   it('writes booleans of global attributes under React\'s name too', () => {
-    expect(propsOf('div', { autofocus: true, spellcheck: false })).toEqual({ autoFocus: true, spellCheck: false });
+    expect(propsOf('div', { spellcheck: false })).toEqual({ spellCheck: false });
   });
 
   it('refuses handlers, raw HTML, class names and nonces, in any spelling', () => {
@@ -243,14 +242,10 @@ describe('attributes', () => {
   });
 });
 
-describe('data attributes the code reads', () => {
-  it('refuses every name the source uses, so a new one fails here until the list is regenerated', () => {
-    const names = dataAttributesInSource();
-    expect(names).toEqual(expect.arrayContaining(['data-form-kind', 'data-component-id', 'data-sticky-cta']));
-    expect(names.filter((name) => isAcceptedAttribute('div', name))).toEqual([]);
-  });
-
-  it('a plain node cannot pose as a form, an island or another node', () => {
-    expect(propsOf('div', { 'data-form-kind': 'form', 'data-component-kind': 'product-list', 'data-component-id': 'x', 'data-sticky-cta': 'true' })).toEqual({});
+describe('data attributes', () => {
+  it('refuses every one: nothing on a generated page reads them, and the code does', () => {
+    expect(
+      propsOf('div', { 'data-form-kind': 'form', 'data-component-kind': 'product-list', 'data-component-id': 'x', 'data-sticky-cta': 'true', 'data-plan': 'pro' }),
+    ).toEqual({});
   });
 });

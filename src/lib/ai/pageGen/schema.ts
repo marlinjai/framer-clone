@@ -4,9 +4,10 @@
 // lists on purpose, so that accepting more never changes what the model is told:
 //
 //   Accepted (the validator, ./validate.ts, and the review, ../review/ops.ts):
-//   the web itself, from ./webVocabulary.ts, the data the primitive score reads,
-//   minus FORBIDDEN_TAGS and the refused attributes. A page the model wrote with
-//   a <ul> or a clipPath keeps them.
+//   what the data the primitive score reads lists (./webVocabulary.ts) AND a person
+//   has reviewed (./reviewedVocabulary.ts), so a page the model wrote with a <ul>
+//   keeps it, and a name that is new to the data stays out. CSS properties need no
+//   review: their values are judged, by the rules of ./validate.ts.
 //   Taught (the prompt, ./schemaDocs.ts): the short list below, which the
 //   properties panel has controls for, derived from the editor's real code:
 //
@@ -32,11 +33,11 @@ import { CSS_PROP_SET, type PropsRecord } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { BLOCKED_TAGS } from '@/lib/renderer/blockedNodes';
 import { CONTAINER_TYPES, TEXT_TYPES } from '@/components/sidebars/right/sectionConfig';
+import { REVIEWED_ATTRIBUTES, REVIEWED_HTML_TAGS, REVIEWED_MATHML_TAGS, REVIEWED_SVG_TAGS } from './reviewedVocabulary';
 import {
   WEB_ELEMENT_ATTRIBUTES,
   WEB_GLOBAL_ATTRIBUTES,
   WEB_MATHML_TAGS,
-  WEB_RESERVED_DATA_ATTRIBUTES,
   WEB_STYLE_KEYS,
   WEB_SVG_TAGS,
   WEB_TAGS,
@@ -56,6 +57,20 @@ export const GENERATION_LIMITS = {
   maxAttributeChars: 300,
   /** The same for SVG geometry (d, points, values): a real icon's path runs to thousands of characters. */
   maxGeometryChars: 8000,
+  /** Longest attribute or style key name, in characters. */
+  maxNameChars: 64,
+  /** Most props, and most style keys, one node keeps. */
+  maxPropsPerNode: 100,
+  /** Largest model output the validator reads, in characters of its JSON. */
+  maxGenerationChars: 1_000_000,
+  /**
+   * Most SVG elements one svg may become once each `use` and in-page reference is
+   * counted at its full size. Five levels of ten `use` take a browser over a
+   * second, six freeze it, and the size is in the expansion, not in the nodes.
+   */
+  maxSvgExpansion: 1000,
+  /** Highest z-index, well below the consent banner, so that nothing can cover it. */
+  maxZIndex: 100000,
   /**
    * Longest single style value, in characters (longer is dropped, with a
    * warning). Sized for a photo background echoed back in replace / insert
@@ -155,19 +170,28 @@ export function allowedPropKeysFor(tag: string): string[] {
 }
 
 /**
- * Tags that are never generated, even if the model insists (dropped with their
- * subtree and a warning): what no renderer shows (blockedNodes.ts), and raw form
- * controls, because a form only works through the form presets (a raw one would
- * lose what a visitor submits).
+ * Tags that are dropped with their subtree, even if the model insists (with a
+ * warning), rather than rewritten to a div:
+ *   - what no renderer shows (blockedNodes.ts);
+ *   - raw form controls: a form only works through the form presets, a raw one
+ *     would lose what a visitor submits;
+ *   - template, because its declarative shadow root replaces the parent's content
+ *     on a published page and shows nothing on the canvas;
+ *   - noscript, whose content only crawlers and visitors without script see, so
+ *     the owner cannot review it;
+ *   - browser permission elements, and elements the data lists that may become
+ *     them: a page without script has no use for them, and a grant stays with the
+ *     site's origin.
  */
-export const FORBIDDEN_TAGS: ReadonlySet<string> = new Set([...BLOCKED_TAGS, 'form', 'input', 'textarea', 'select']);
+export const FORBIDDEN_TAGS: ReadonlySet<string> = new Set([
+  ...BLOCKED_TAGS, 'form', 'input', 'textarea', 'select', 'template', 'noscript',
+  'geolocation', 'camera', 'microphone', 'usermedia', 'install', 'model',
+]);
 
-/**
- * The tags the prompt names as off limits: the forbidden ones, plus what the
- * validator keeps but a generated page should not reach for: template, whose
- * content never shows, and svg and math, which no panel can edit.
- */
-export const PROMPT_AVOID_TAGS: ReadonlySet<string> = new Set([...FORBIDDEN_TAGS, 'template', 'svg', 'math']);
+/** The tags the prompt names as off limits. Kept short: the validator refuses the rest without the model's help. */
+export const PROMPT_AVOID_TAGS: ReadonlySet<string> = new Set([
+  ...BLOCKED_TAGS, 'form', 'input', 'textarea', 'select', 'template', 'svg', 'math',
+]);
 
 /** Which language a node's tag is read in: the root element of the other two opens them. */
 export type MarkupNamespace = 'html' | 'svg' | 'mathml';
@@ -175,10 +199,11 @@ export type MarkupNamespace = 'html' | 'svg' | 'mathml';
 const byLowerCase = (tags: readonly string[]): ReadonlyMap<string, string> =>
   new Map(tags.filter((tag) => !FORBIDDEN_TAGS.has(tag.toLowerCase())).map((tag) => [tag.toLowerCase(), tag]));
 
+/** In the data and reviewed: a name the data gains later stays out until someone has judged it. */
 const ACCEPTED_TAGS: Record<MarkupNamespace, ReadonlyMap<string, string>> = {
-  html: byLowerCase([...WEB_TAGS, ...listGenerationTags(), 'svg', 'math']),
-  svg: byLowerCase(WEB_SVG_TAGS),
-  mathml: byLowerCase(WEB_MATHML_TAGS),
+  html: byLowerCase([...WEB_TAGS.filter((tag) => REVIEWED_HTML_TAGS.has(tag)), ...listGenerationTags(), 'svg', 'math']),
+  svg: byLowerCase(WEB_SVG_TAGS.filter((tag) => REVIEWED_SVG_TAGS.has(tag))),
+  mathml: byLowerCase(WEB_MATHML_TAGS.filter((tag) => REVIEWED_MATHML_TAGS.has(tag))),
 };
 
 /**
@@ -210,50 +235,36 @@ export function styleKeyFrom(key: string): string {
   return key.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
-/**
- * Attributes the data lists but the model never sets, lower-cased:
- *   - class and classname: a page has no stylesheet a class could target, and a utility
- *     class would be a style the validator never saw;
- *   - nonce: a security token has no business in generated content;
- *   - action and the form* overrides, ping, attributionsrc, data, srcdoc and
- *     manifest: they send a visitor or their data to a URL, or embed a document.
- */
-const REFUSED_ATTRIBUTES: ReadonlySet<string> = new Set([
-  'class', 'classname', 'nonce', 'action', 'formaction', 'formenctype', 'formmethod', 'formnovalidate', 'formtarget',
-  'ping', 'attributionsrc', 'data', 'srcdoc', 'manifest',
-]);
+/** Attribute names as `CSS_PROP_SET` reads them, whatever the case the model wrote. */
+const CSS_ATTRIBUTE_NAMES: ReadonlySet<string> = new Set([...CSS_PROP_SET].map((key) => key.toLowerCase()));
 
 const GLOBAL_ATTRIBUTES: ReadonlySet<string> = new Set(WEB_GLOBAL_ATTRIBUTES);
 
 /**
- * Whether the code itself uses this data attribute: one of these would turn a div
- * into a form or a commerce island, or point the canvas at the wrong node. The
- * names are scanned from the source, so a new one cannot be forgotten, and a name
- * also covers its family (`data-credit-${x}`).
- */
-function isReservedDataAttribute(name: string): boolean {
-  return WEB_RESERVED_DATA_ATTRIBUTES.some((used) => name === used || name.startsWith(`${used}-`));
-}
-
-/**
  * A prop that survives the validator as an attribute on this tag, beyond the
- * taught ones. Anything a CSS key would route into `style` stays out (a `width`
- * prop would skip the style checks), and handlers never pass, whatever the data
- * says. A key is matched without case: the data has HTML's names (`tabindex`) and
- * a node holds React's (`tabIndex`). The value is the validator's to check.
+ * taught ones. Refused by default: a name must be in the reviewed list and the
+ * data must say it belongs on this tag, or be an aria-* name, which only changes
+ * what assistive technology hears. Anything a CSS key would route into `style`
+ * stays out, in any case (a `width` prop would skip the style checks). data-* stays
+ * out entirely: nothing on a generated page reads one, and the code does (a
+ * `data-form-kind` turns a div into a form), so there is only risk in it. A key is
+ * matched without case: the data has HTML's names (`tabindex`) and a node holds
+ * React's (`tabIndex`). The value is the validator's to check.
  */
 export function isAcceptedAttribute(tag: string, key: string): boolean {
-  if (CSS_PROP_SET.has(key)) return false;
+  if (key.length > GENERATION_LIMITS.maxNameChars) return false;
   const name = key.toLowerCase();
-  if (name.startsWith('on') || REFUSED_ATTRIBUTES.has(name)) return false;
+  if (CSS_ATTRIBUTE_NAMES.has(name)) return false;
   if (name.startsWith('aria-')) return /^aria-[a-z]+$/.test(key);
-  if (name.startsWith('data-')) return /^data-[a-z0-9][a-z0-9_.-]*$/.test(key) && !isReservedDataAttribute(key);
+  if (!REVIEWED_ATTRIBUTES.has(name)) return false;
   return GLOBAL_ATTRIBUTES.has(name) || (WEB_ELEMENT_ATTRIBUTES[tag] ?? []).includes(name);
 }
 
 /** Allowed image sources: http(s) or a site-relative path. No data: or javascript: URLs. */
 export function isSafeSrc(value: string): boolean {
   const v = value.trim();
+  // A browser reads a backslash as a slash: `/\\host` would leave the site.
+  if (v.includes('\\')) return false;
   if (v.startsWith('/') && !v.startsWith('//')) return true;
   return /^https?:\/\//i.test(v);
 }

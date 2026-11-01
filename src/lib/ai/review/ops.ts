@@ -33,9 +33,9 @@
 //     glass, coloured radial orbs, rainbow gradients.
 
 import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
-import { UNSAFE_VALUE } from '@/lib/responsive/responsiveCss';
+import { cssUrlsIn } from '@/lib/responsive/responsiveCss';
 import { GENERATION_LIMITS, isAcceptedStyleKey, isSafeSrc, styleKeyFrom } from '@/lib/ai/pageGen/schema';
-import { STRING_URL_FUNCTION, imageSetUrls, styleValueBreaksOut } from '@/lib/ai/pageGen/validate';
+import { clampedZIndex, styleValueBreaksOut, styleValueProblem } from '@/lib/ai/pageGen/validate';
 import { styleValueTell, textTell } from '@/lib/ai/pageGen/tells';
 import { REVIEW_LIMITS, type RejectedOp, type ReviewOp, type ReviewTreeNode } from './protocol';
 
@@ -54,11 +54,9 @@ export interface OpValidationContext {
   nodes: Map<string, IndexedNode>;
 }
 
-const URL_RE = /url\(\s*(['"]?)(.*?)\1\s*\)/gi;
-
 function urlsIn(value: unknown, into: Set<string>): void {
   if (typeof value === 'string') {
-    for (const m of value.matchAll(URL_RE)) if (m[2]) into.add(m[2].trim());
+    for (const url of cssUrlsIn(value)) if (url) into.add(url);
   } else if (value && typeof value === 'object') {
     for (const v of Object.values(value)) urlsIn(v, into);
   }
@@ -88,11 +86,11 @@ export function indexReviewTree(tree: ReviewTreeNode): Map<string, IndexedNode> 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
 /** Why a style value is refused, or null when it is fine. */
-function styleValueProblem(property: string, value: string, node: IndexedNode): string | null {
+function reviewValueProblem(property: string, value: string, node: IndexedNode): string | null {
   if (value.length > GENERATION_LIMITS.maxStyleValueChars) return `value longer than ${GENERATION_LIMITS.maxStyleValueChars} characters`;
-  if (UNSAFE_VALUE.test(value) || STRING_URL_FUNCTION.test(value)) return 'unsafe value';
-  const urls = [...[...value.matchAll(URL_RE)].map((m) => (m[2] ?? '').trim()), ...imageSetUrls(value)];
-  for (const url of urls) {
+  const problem = styleValueProblem(property, value);
+  if (problem) return problem;
+  for (const url of cssUrlsIn(value)) {
     // A reference inside the page (an SVG clip or mask) brings nothing in.
     if (url.startsWith('#')) continue;
     if (!isSafeSrc(url)) return 'url() to a disallowed location';
@@ -159,11 +157,16 @@ export function validateReviewOps(raw: unknown, ctx: OpValidationContext): { ops
           if (!v) {
             value = null;
           } else {
-            const problem = styleValueProblem(property, v, node);
+            const problem = reviewValueProblem(property, v, node);
             if (problem) return reject(problem);
             value = v;
           }
         } else return reject('value must be a string, a number or null');
+        if (property === 'zIndex' && value !== null) {
+          const clamped = clampedZIndex(value);
+          if (clamped === undefined) return reject('z-index must be a plain number');
+          value = clamped;
+        }
         ops.push({ op: 'update_style', nodeId, breakpoint, property, value, reason });
         return;
       }
