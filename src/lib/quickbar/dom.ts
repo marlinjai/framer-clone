@@ -8,7 +8,9 @@
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { EditorUIType } from '@/stores/EditorUIStore';
 import { visibleRectInFrame } from '@/lib/canvas/viewportFrame';
+import { beginRunEdit } from '@/lib/canvas/inlineFormat';
 import { startInlineTextEdit } from '@/lib/canvas/inlineTextEdit';
+import { firstEditableRun } from '@/lib/renderer/textContent';
 import type { ComputedReader } from './actions';
 import type { ScreenRect, VisibleArea } from './placement';
 
@@ -67,7 +69,7 @@ export function measureVisibleArea(keyboardInset: number): VisibleArea {
 
 /**
  * Start inline text editing of `component` from a button press or a menu
- * item: the canvas's own synchronous entry point (src/lib/canvas/inlineTextEdit.ts,
+ * item (its first text node when it mixes text with elements): the canvas's own synchronous entry point (src/lib/canvas/inlineTextEdit.ts,
  * the one its touchend double-tap uses) makes the element editable, focuses
  * it and puts the caret at the end inside this call, then the store is told.
  * Call it from a click or touchend handler: iOS opens the keyboard only for a
@@ -77,6 +79,12 @@ export function beginInlineTextEdit(editorUI: EditorUIType, component: Component
   const breakpointId = editorUI.selectedViewportNode?.breakpointId;
   const el = elementFor(component, breakpointId);
   if (!el) return false;
+  const run = firstEditableRun(component);
+  if (run && component.children.length > 0) {
+    const inner = `[data-inner-component-id="${component.id}"]`;
+    const host = el.matches(inner) ? el : el.querySelector<HTMLElement>(inner);
+    return !!host && beginRunEdit(editorUI, component, run, host, breakpointId, 'end');
+  }
   startInlineTextEdit(el, 'end');
   editorUI.beginTextEdit(component);
   return true;

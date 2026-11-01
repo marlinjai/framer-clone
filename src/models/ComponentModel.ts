@@ -115,14 +115,26 @@ function moveOwnTextToChild(self: any): number {
   delete otherBindings.children;
   self.bindings = otherBindings;
   self.children.unshift({
+    ...textNodeSnapshot(self.id, hasOwnText(props) ? props.children : undefined),
+    bindings: binding ? { children: binding } : {},
+  });
+  return 1;
+}
+
+/** A fresh text node, ready to go into `parentId`'s children. */
+function textNodeSnapshot(parentId: string, text: unknown) {
+  return {
     id: `text-${uuidv4()}`,
     type: TEXT_NODE_TYPE,
     componentType: ComponentTypeEnum.HOST,
-    props: hasOwnText(props) ? { children: props.children } : {},
-    bindings: binding ? { children: binding } : {},
-    parentId: self.id,
-  });
-  return 1;
+    props: text === undefined ? {} : { children: text },
+    parentId,
+  };
+}
+
+/** True for a text node whose text can be joined to the text beside it. */
+function isPlainRun(node: ComponentInstance | undefined): node is ComponentInstance {
+  return !!node && isTextNodeType(node.type) && node.canvasVisible && !node.bindings.children && typeof node.props?.children === 'string';
 }
 
 // ---------- BASE MODEL (no recursion) ----------
@@ -341,6 +353,77 @@ const ComponentModel: any = ComponentBase
       self.children.clear();
       if (text !== undefined) self.props = { ...props, children: text };
       if (binding) self.bindings = { ...self.bindings, children: binding };
+    },
+
+    // A string in front of child nodes becomes the text node it renders as. The
+    // page looks the same; a node can be opened for editing, a string cannot.
+    adoptOwnText() {
+      if (self.children.length > 0) moveOwnTextToChild(self);
+    },
+
+    // Selected words become their own element, in place: text, element, text.
+    // `runId` is a text node of this element, or this element for its own
+    // string, and `text` is that text as it stands now, so what was typed so far
+    // and the split are one action, one undo step. A bound text is the binding's
+    // and stays whole. Returns the new element, or undefined when nothing changed.
+    wrapTextRange(
+      runId: string,
+      text: string,
+      start: number,
+      end: number,
+      element: { tag: string; label: string; props?: PropsRecord },
+    ): ComponentInstance | undefined {
+      if (start < 0 || start >= end || end > text.length) return undefined;
+      if (runId === self.id) {
+        if (self.bindings.children || drawsOwnContent((self.props ?? {}) as PropsRecord)) return undefined;
+        self.props = { ...self.props, children: text };
+        moveOwnTextToChild(self);
+      }
+      const index = runId === self.id ? 0 : self.children.findIndex(child => child.id === runId);
+      const run = self.children[index] as ComponentInstance | undefined;
+      if (!run || !isTextNodeType(run.type) || run.bindings.children) return undefined;
+
+      const id = `${element.tag}-${uuidv4()}`;
+      const made = {
+        id,
+        type: element.tag,
+        componentType: ComponentTypeEnum.HOST,
+        label: element.label,
+        props: { ...element.props, children: text.slice(start, end) },
+        parentId: self.id,
+      };
+      const before = text.slice(0, start);
+      const after = text.slice(end);
+      if (before) {
+        run.setTextContent(before);
+        self.children.splice(index + 1, 0, made as any, ...(after ? [textNodeSnapshot(self.id, after) as any] : []));
+      } else if (after) {
+        run.setTextContent(after);
+        self.children.splice(index, 0, made as any);
+      } else {
+        self.children.splice(index, 1, made as any);
+      }
+      return self.children.find(child => child.id === id) as ComponentInstance | undefined;
+    },
+
+    // The reverse: an element child gives its words back as plain text, joined
+    // to the plain text on either side, and an element left with one text node
+    // is a plain text element again. One action, one undo step.
+    unwrapChild(childId: string, text: string) {
+      const index = self.children.findIndex(child => child.id === childId);
+      if (index === -1) return;
+      const previous = self.children[index - 1] as ComponentInstance | undefined;
+      const next = self.children[index + 1] as ComponentInstance | undefined;
+      if (isPlainRun(previous)) {
+        previous.setTextContent(`${previous.props.children}${text}${isPlainRun(next) ? next.props.children : ''}`);
+        self.children.splice(index, isPlainRun(next) ? 2 : 1);
+      } else if (isPlainRun(next)) {
+        next.setTextContent(`${text}${next.props.children}`);
+        self.children.splice(index, 1);
+      } else {
+        self.children.splice(index, 1, textNodeSnapshot(self.id, text) as any);
+      }
+      (self as unknown as ComponentInstance).collapseTextChild();
     },
 
     clearChildren() {

@@ -39,6 +39,7 @@ import type { InsertTarget, PageModelType } from '@/models/PageModel';
 import { EditorTool, type EditorUIType } from '@/stores/EditorUIStore';
 import type { HistoryStoreInstance } from '@/stores/HistoryStore';
 import type { DragSource, DragMode, IndicatorSpec } from './types';
+import { isTextNodeType } from '@/lib/renderer/textNode';
 import { resolveDropTarget } from './resolveDropTarget';
 import { dragThresholdFor } from '@/lib/canvas/touchGestures';
 
@@ -389,8 +390,12 @@ const DragManagerModel = types
           const editorUI = deps.getEditorUI();
           // GRAB tool owns the canvas; let Canvas's own mousedown start a pan.
           if (editorUI.selectedTool === EditorTool.GRAB) return false;
-          // Currently inline-editing this node: refuse so typing stays stable.
-          if (editorUI.editingComponent?.id === source.nodeId) return false;
+          // Currently inline-editing this node, or a text node of it: refuse so
+          // typing stays stable.
+          const editing = editorUI.editingComponent;
+          if (editing?.id === source.nodeId || (isTextNodeType(editing?.type) && editing?.parentId === source.nodeId)) {
+            return false;
+          }
         }
 
         const startClient = { x: event.clientX, y: event.clientY };

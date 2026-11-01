@@ -8,10 +8,10 @@
 // paragraph, a button label) or bound to data. Text mixed with elements lives in
 // text nodes among the children (src/lib/renderer/textNode.ts): the Text field
 // lists those too, so the text of a mixed paragraph is editable without touching
-// its elements. Inline editing stays stricter (ComponentRenderer): it needs no
-// child at all, because it reads the element's whole textContent back. A node
-// whose text is bound to data still holds text, but the text is the binding's:
-// it is shown as the binding, never edited.
+// its elements. Inline editing opens one run at a time (src/lib/canvas/
+// inlineFormat.ts), so it cannot reach the elements either. A node whose text is
+// bound to data still holds text, but the text is the binding's: it is shown as
+// the binding, never edited.
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { isTextNodeType } from './textNode';
 
@@ -29,6 +29,21 @@ export function isTextBound(node: ComponentInstance): boolean {
 /** True when the node's text may be typed over in the Text field. */
 export function isTextEditable(node: ComponentInstance): boolean {
   return holdsText(node) && !isTextBound(node);
+}
+
+/**
+ * The runs that emit text into this element's DOM, in order: a legacy string,
+ * then each text node shown and not empty. A hidden run renders nothing.
+ */
+export function renderedRunsOf(node: ComponentInstance): ComponentInstance[] {
+  return textNodesOf(node).filter(
+    run => run === node || (run.canvasVisible && (isTextBound(run) || (run.props?.children ?? '') !== '')),
+  );
+}
+
+/** The text that opens first for inline editing: bound text is the binding's, a hidden run is not on the canvas. */
+export function firstEditableRun(node: ComponentInstance): ComponentInstance | undefined {
+  return textNodesOf(node).find(run => !isTextBound(run) && (run === node || run.canvasVisible));
 }
 
 const EXCERPT_CHARS = 24;
