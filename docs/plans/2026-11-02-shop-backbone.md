@@ -1099,3 +1099,7 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
   keeps refusing on a profile disagreement until B14, rank 3 gated on the rounding decision, one slice owns the tenant fix, Stripe
   recollection marked unverified, reviews only for money, security and production. The expiry timer is installed on production. A
   roadmap line comes from the operator when this is decided.
+- 2026-11-01: B1 built: `commerce_job` (migration 025) and `src/server/commerce/jobs`, nothing calling it. Three additions to the text. `runJobNow`
+  takes the tenant id as well (`runJobNow(db, tenantId, jobId)`), because the primary key leads with `tenant_id` and a lookup by id alone would scan the
+  table. A handler that ignores its signal is abandoned when its lease ends, so it cannot stall a worker for good; it then counts as an open claim. Both
+  registries take an injected value and stay empty in production, so the one test kind lives in the tests.
