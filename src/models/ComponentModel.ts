@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { types, Instance, SnapshotIn, SnapshotOut, getParent, hasParent as hasMstParent } from 'mobx-state-tree';
+import { v4 as uuidv4 } from 'uuid';
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
+import { TEXT_NODE_TYPE, isTextNodeType } from '@/lib/renderer/textNode';
 import React from 'react';
 import type {
   BindingEntry,
@@ -83,6 +85,43 @@ function findPageBreakpoints(node: unknown): PageBreakpoint[] {
     }
   }
   return [];
+}
+
+/** Form and data components draw their own content from their props, so their text stays there. */
+function drawsOwnContent(props: PropsRecord): boolean {
+  return !!props['data-form-kind'] || !!props['data-component-kind'];
+}
+
+function hasOwnText(props: PropsRecord): boolean {
+  return props.children !== undefined && props.children !== null && props.children !== '';
+}
+
+/**
+ * An element that takes a child while it holds text hands the text (and its
+ * binding) to a leading text node, or the text would sit outside the order of
+ * the children. Every way a child arrives ends in addChild, so this covers a
+ * drop, a tap, a generated insert and a legacy row alike. Call from an action.
+ * Returns how many children it added in front.
+ */
+function moveOwnTextToChild(self: any): number {
+  const props = (self.props ?? {}) as PropsRecord;
+  const binding = self.bindings?.children;
+  if (drawsOwnContent(props) || (!hasOwnText(props) && !binding)) return 0;
+  const rest: PropsRecord = { ...props };
+  delete rest.children;
+  self.props = rest;
+  const otherBindings: BindingsRecord = { ...self.bindings };
+  delete otherBindings.children;
+  self.bindings = otherBindings;
+  self.children.unshift({
+    id: `text-${uuidv4()}`,
+    type: TEXT_NODE_TYPE,
+    componentType: ComponentTypeEnum.HOST,
+    props: hasOwnText(props) ? { children: props.children } : {},
+    bindings: binding ? { children: binding } : {},
+    parentId: self.id,
+  });
+  return 1;
 }
 
 // ---------- BASE MODEL (no recursion) ----------
@@ -241,8 +280,13 @@ const ComponentModel: any = ComponentBase
     
     // Children management actions with parent tracking
     addChild(child: ComponentInstance, index?: number) {
+      if (isTextNodeType(self.type)) {
+        console.warn(`[ComponentModel] a text node cannot hold children, ${child.id} not added`);
+        return;
+      }
+      const shift = moveOwnTextToChild(self);
       if (typeof index === 'number') {
-        const clamped = Math.max(0, Math.min(index, self.children.length));
+        const clamped = Math.max(0, Math.min(index + shift, self.children.length));
         self.children.splice(clamped, 0, child);
       } else {
         self.children.push(child);
@@ -252,6 +296,11 @@ const ComponentModel: any = ComponentBase
     },
     
     addChildren(children: ComponentInstance[]) {
+      if (isTextNodeType(self.type)) {
+        console.warn('[ComponentModel] a text node cannot hold children, none added');
+        return;
+      }
+      moveOwnTextToChild(self);
       children.forEach(child => {
         self.children.push(child);
         // Update parent relation
@@ -269,6 +318,22 @@ const ComponentModel: any = ComponentBase
       }
     },
     
+    // The reverse of moveOwnTextToChild, once a removal or a move is finished:
+    // an element left with one text node is a plain text element again, so
+    // inline editing works on it. A hidden text node stays a layer.
+    collapseTextChild() {
+      if (self.children.length !== 1) return;
+      const only = self.children[0] as ComponentInstance;
+      if (!isTextNodeType(only.type) || !only.canvasVisible) return;
+      const props = (self.props ?? {}) as PropsRecord;
+      if (drawsOwnContent(props) || hasOwnText(props) || self.bindings.children) return;
+      const text = only.props?.children;
+      const binding = only.bindings.children;
+      self.children.clear();
+      if (text !== undefined) self.props = { ...props, children: text };
+      if (binding) self.bindings = { ...self.bindings, children: binding };
+    },
+
     clearChildren() {
       // Clear parent relations for all children
       self.children.forEach(child => child.clearParent());
@@ -588,6 +653,12 @@ const ComponentModel: any = ComponentBase
     
     // Get display name for any component type
     get displayName(): string {
+      // A text node reads as its text: a list of "Text" rows says nothing.
+      if (isTextNodeType(self.type)) {
+        const text = self.props?.children;
+        const shown = typeof text === 'string' || typeof text === 'number' ? String(text).trim() : '';
+        return (shown.length > 40 ? `${shown.slice(0, 40)}...` : shown) || 'Text';
+      }
       if (self.label) return self.label;
       
       // Fallback based on component type

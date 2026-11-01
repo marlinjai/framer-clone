@@ -6,7 +6,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, fireEvent, act } from '@testing-library/react';
 import { createRootStore, getDragManager, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
-import { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
+import ComponentModel, { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
 import ComponentRenderer from '../ComponentRenderer';
 
 let store: RootStoreType;
@@ -31,6 +31,7 @@ beforeEach(() => {
   editorUI.setCurrentPage(page);
   root = page.appComponentTree as ComponentInstance;
   main = root.children[0] as ComponentInstance;
+  main.setProps({ children: undefined }); // the seed's text would become a leading text node
   main.addChildren([createIntrinsicComponent('span-child', 'span', { children: 'Nested' })]);
   nested = main.children[0] as ComponentInstance;
   breakpoints = page.sortedViewportNodes.map(v => ({ id: v.breakpointId!, minWidth: v.breakpointMinWidth ?? 0 }));
@@ -119,5 +120,77 @@ describe('links on the canvas', () => {
 
     // An ordinary node keeps its default action.
     expect(fireEvent.click(nodeEl(nested)!)).toBe(true);
+  });
+});
+
+describe('mixed text on the canvas', () => {
+  /** `Hello <strong>bold</strong> world` inside a paragraph under main. */
+  function mixedParagraph() {
+    main.addChildren([createIntrinsicComponent('para', 'p', { children: 'Hello ' })]);
+    const para = main.children.find((c: ComponentInstance) => c.id === 'para') as ComponentInstance;
+    para.addChild(createIntrinsicComponent('bold', 'strong', { children: 'bold' }));
+    para.addChild(ComponentModel.create({ id: 'tail', type: '#text', componentType: 'host', props: { children: ' world' }, parentId: para.id }));
+    return para;
+  }
+
+  it('renders the text in order with no wrapper and no placeholder', () => {
+    mixedParagraph();
+    const { container } = renderTree();
+    const el = container.querySelector('[data-inner-component-id="para"]')!;
+    expect(el.textContent).toBe('Hello bold world');
+    expect(Array.from(el.childNodes).map(n => n.nodeName)).toEqual(['#text', 'STRONG', '#text']);
+    expect(container.textContent).not.toContain('Unknown component');
+  });
+
+  it('never turns the mixed parent into a text box, so a commit cannot flatten it', () => {
+    const para = mixedParagraph();
+    const { container } = renderTree();
+    const el = container.querySelector('[data-inner-component-id="para"]') as HTMLElement;
+    fireEvent.doubleClick(el);
+    expect(el.getAttribute('contenteditable')).toBeNull();
+    expect(store.editorUI.editingComponent).toBeUndefined();
+    fireEvent.blur(el);
+    expect((para.children as ComponentInstance[]).map(c => c.type)).toEqual(['#text', 'strong', '#text']);
+  });
+
+  it('edits an element child of mixed text inline, and only that child', () => {
+    const para = mixedParagraph();
+    const { container } = renderTree();
+    const bold = container.querySelector('[data-inner-component-id="bold"]') as HTMLElement;
+    fireEvent.doubleClick(bold);
+    expect(bold.getAttribute('contenteditable')).toBe('true');
+    bold.textContent = 'strong';
+    fireEvent.blur(bold);
+    expect(para.children[1].props.children).toBe('strong');
+    expect(para.children[0].props.children).toBe('Hello ');
+  });
+
+  it('a click on the text of a mixed paragraph selects the paragraph', () => {
+    mixedParagraph();
+    const { container } = renderTree();
+    fireEvent.click(container.querySelector('[data-inner-component-id="para"]')!);
+    expect(store.editorUI.selectedComponent?.id).toBe('para');
+  });
+
+  it('honours the Layers eye on a text node', () => {
+    const para = mixedParagraph();
+    act(() => (para.children[0] as ComponentInstance).toggleCanvasVisibility());
+    const { container } = renderTree();
+    expect(container.querySelector('[data-inner-component-id="para"]')!.textContent).toBe('bold world');
+  });
+
+  it('renders a legacy string in front of its children, and keeps it out of inline editing', () => {
+    main.addChild(ComponentModel.create({
+      id: 'legacy',
+      type: 'p',
+      componentType: 'host',
+      props: { children: 'Old ' },
+      children: [{ id: 'in', type: 'em', componentType: 'host', parentId: 'legacy', props: { children: 'row' } }],
+    }));
+    const { container } = renderTree();
+    const el = container.querySelector('[data-inner-component-id="legacy"]') as HTMLElement;
+    expect(el.textContent).toBe('Old row');
+    fireEvent.doubleClick(el);
+    expect(store.editorUI.editingComponent).toBeUndefined();
   });
 });

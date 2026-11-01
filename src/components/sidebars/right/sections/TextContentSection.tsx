@@ -1,7 +1,10 @@
 'use client';
 // TextContentSection: the "Text" field at the top of the properties panel,
 // for every element whose content is its own text (a heading, a paragraph, a
-// button label; the rule is holdsText in src/lib/renderer/textContent.ts).
+// button label; the rule is holdsText in src/lib/renderer/textContent.ts). An
+// element mixing text with other elements gets one field per text node, in page
+// order: a click on the canvas lands on that element, so its text is right here,
+// and each field writes one text node, which can never touch the elements.
 //
 // It is the dependable way to change text on a phone: the Edit sheet's
 // textarea is a plain form field, which always opens the on-screen keyboard,
@@ -16,7 +19,7 @@ import { Type } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { BindableSlotMeta } from '@/lib/bindings/types';
 import { getBindableSlotsFor } from '@/lib/componentRegistry';
-import { holdsText, isTextBound } from '@/lib/renderer/textContent';
+import { isTextBound, textNodesOf } from '@/lib/renderer/textContent';
 import { cn } from '@/lib/utils';
 import { CollapsibleSection, FIELD_LABEL } from '../primitives';
 import BindingControl from '../BindingControl';
@@ -33,7 +36,7 @@ interface TextContentFieldProps {
 /** The node's own text as a string ('' when it has none). */
 function textOf(node: ComponentInstance): string {
   const v = node.props?.children;
-  return typeof v === 'string' ? v : '';
+  return typeof v === 'string' || typeof v === 'number' ? String(v) : '';
 }
 
 /**
@@ -139,28 +142,46 @@ interface TextContentSectionProps {
   breakpointId?: string;
 }
 
-export const TextContentSection = observer(({ component }: TextContentSectionProps) => {
-  if (!holdsText(component)) return null;
-  const registryId = getRegistryIdForNode(component);
+interface TextNodeRowProps {
+  node: ComponentInstance;
+  label?: string;
+}
+
+const TextNodeRow = observer(({ node, label }: TextNodeRowProps) => {
+  const registryId = getRegistryIdForNode(node);
   const slotMeta = registryId ? getBindableSlotsFor(registryId).children : undefined;
-  const bound = isTextBound(component);
-  // key: a new draft per element, so text typed for one element never lands
-  // on the next one selected.
-  const field = <TextContentField key={component.id} node={component} />;
+  const bound = isTextBound(node);
+  const field = <TextContentField node={node} label={label} />;
+
+  return (
+    <>
+      {slotMeta || bound ? (
+        // Bindable (or already bound): the binding control shows the field
+        // with a bind button, or the binding chip instead of the field.
+        <BindingControl node={node} slot="children" meta={slotMeta ?? FALLBACK_META}>
+          {field}
+        </BindingControl>
+      ) : (
+        field
+      )}
+      {bound && <span className={FIELD_LABEL}>The text comes from data. Unlink it to type your own.</span>}
+    </>
+  );
+});
+TextNodeRow.displayName = 'TextNodeRow';
+
+export const TextContentSection = observer(({ component }: TextContentSectionProps) => {
+  const nodes = textNodesOf(component);
+  if (nodes.length === 0) return null;
 
   return (
     <CollapsibleSection title="Text" icon={<Type size={14} />}>
       <div className="flex min-w-0 flex-col gap-1.5" data-testid="text-content-section">
-        {slotMeta || bound ? (
-          // Bindable (or already bound): the binding control shows the field
-          // with a bind button, or the binding chip instead of the field.
-          <BindingControl node={component} slot="children" meta={slotMeta ?? FALLBACK_META}>
-            {field}
-          </BindingControl>
-        ) : (
-          field
-        )}
-        {bound && <span className={FIELD_LABEL}>The text comes from data. Unlink it to type your own.</span>}
+        {/* key: a new draft per node, so text typed for one element never
+            lands on the next one selected. */}
+        {nodes.map((node, i) => (
+          <TextNodeRow key={node.id} node={node} label={nodes.length > 1 ? `Text ${i + 1}` : undefined} />
+        ))}
       </div>
     </CollapsibleSection>
   );

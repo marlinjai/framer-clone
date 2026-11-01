@@ -19,7 +19,8 @@
 //     unsafe, at most maxStyleValueChars. A url() is accepted only when the
 //     node's background already holds that exact URL (the review may change
 //     the scrim over a photo, never bring in a new picture or drop a credited
-//     one). `null` removes the value on that breakpoint.
+//     one). `null` removes the value on that breakpoint. A text node has no
+//     element to style, so it is refused.
 //   - update_text: only on a node whose content is plain text (string
 //     children, no child components), at most maxTextChars.
 //   - remove_node: at most REVIEW_LIMITS.maxRemovals per review; later
@@ -31,6 +32,7 @@
 //     "it's not X, it's Y" copy, Inter / Geist / Space Grotesk, backdrop
 //     glass, coloured radial orbs, rainbow gradients.
 
+import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
 import { GENERATION_LIMITS, isSafeSrc } from '@/lib/ai/pageGen/schema';
 import { STYLE_BREAKOUT_CHARS, UNSAFE_STYLE_VALUE } from '@/lib/ai/pageGen/validate';
@@ -135,6 +137,7 @@ export function validateReviewOps(raw: unknown, ctx: OpValidationContext): { ops
 
     switch (item.op) {
       case 'update_style': {
+        if (node.type === TEXT_NODE_TYPE) return reject('a text node has no element to style; style its parent');
         const rawProp = typeof item.property === 'string' ? item.property.trim() : '';
         const property = CSS_PROP_SET.has(rawProp) ? rawProp : kebabToCamel(rawProp);
         if (!CSS_PROP_SET.has(property)) return reject(`style key ${JSON.stringify(item.property)} is not supported by the editor`);

@@ -35,6 +35,7 @@ beforeEach(() => {
   editorUI.setCurrentPage(page);
   root = page.appComponentTree as ComponentInstance;
   [main, image] = root.children as ComponentInstance[];
+  main.setProps({ children: undefined }); // the seed's text would become a leading text node
   main.addChildren([createIntrinsicComponent('span-child', 'span', { children: 'Nested' })]);
   nested = main.children[0] as ComponentInstance;
   // Only the first breakpoint frame expanded keeps one row per node.
@@ -193,5 +194,37 @@ describe('folding', () => {
     expect(
       document.querySelector(`[data-layer-row="${nested.id}"][data-layer-breakpoint="${tablet.breakpointId}"]`),
     ).not.toBeNull();
+  });
+});
+
+describe('text nodes in the Layers panel', () => {
+  function withTextNode() {
+    nested.addChild(createIntrinsicComponent('bold', 'strong', {}));
+    return nested.children[0] as ComponentInstance;
+  }
+
+  it('shows a text node as its text, and marks its row as no drop parent', () => {
+    const run = withTextNode();
+    render(<LayersPanel />);
+    const row = rowOf(run);
+    expect(row.textContent).toContain('Nested');
+    expect(row.hasAttribute('data-text-node-row')).toBe(true);
+    expect(rowOf(nested).hasAttribute('data-text-node-row')).toBe(false);
+  });
+
+  it('a click on a text row selects the element it sits in', () => {
+    const run = withTextNode();
+    render(<LayersPanel />);
+    fireEvent.click(rowOf(run));
+    expect(store.editorUI.selectedComponent?.id).toBe(nested.id);
+  });
+
+  it('offers no lock on a text row, and hide and delete still work', () => {
+    const run = withTextNode();
+    render(<LayersPanel />);
+    const row = within(rowOf(run));
+    expect(row.queryByRole('button', { name: 'Lock layer' })).toBeNull();
+    fireEvent.click(row.getByRole('button', { name: 'Hide layer' }));
+    expect(run.canvasVisible).toBe(false);
   });
 });

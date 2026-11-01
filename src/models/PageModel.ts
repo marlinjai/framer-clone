@@ -22,6 +22,7 @@ import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { getComponentEntry } from '@/lib/componentRegistry';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
+import { isTextNodeType } from '@/lib/renderer/textNode';
 
 export type InsertTarget =
   | { kind: 'appTree' }
@@ -275,6 +276,10 @@ const PageModel = PageWithComponents
       console.warn('[PageModel] Insert target parent not found, falling back to appTree');
       parent = self.appComponentTree as ComponentInstance;
     }
+    if (isTextNodeType(parent.type)) {
+      console.warn('[PageModel] Insert target is a text node, which holds no children');
+      return undefined;
+    }
 
     parent.addChild(child, insertIndex);
     self.updatedAt = new Date();
@@ -311,7 +316,7 @@ const PageModel = PageWithComponents
       snapshots.map(s => ComponentModel.create({ ...s, parentId }) as ComponentInstance);
 
     if (mode === 'insert') {
-      if (isVoidTag(target.type) || target.props?.['data-component-kind']) {
+      if (isVoidTag(target.type) || isTextNodeType(target.type) || target.props?.['data-component-kind']) {
         return { ok: false, reason: 'The selected component cannot contain other components.' };
       }
       if (typeof target.props?.children === 'string') {
@@ -475,6 +480,7 @@ const PageModel = PageWithComponents
       const parent = findComponentInPage(self, component.parentId);
       if (parent) {
         parent.removeChild(component.id);
+        parent.collapseTextChild();
         self.updatedAt = new Date();
         return true;
       }
@@ -532,6 +538,12 @@ const PageModel = PageWithComponents
       return undefined;
     }
 
+    // Refused before the detach, or the node would be lost: text belongs inside
+    // an element, and a text node holds no children.
+    if (isTextNodeType(component.type) && target.kind === 'floating') return undefined;
+    const resolvedParent = resolvedParentId ? findComponentInPage(self, resolvedParentId) : undefined;
+    if (resolvedParent && isTextNodeType(resolvedParent.type)) return undefined;
+
     // When moving within the same parent and the component sits before the
     // insert index, the detach will shift everything left by one — adjust.
     if (resolvedParentId && typeof resolvedIndex === 'number' && component.parentId === resolvedParentId) {
@@ -544,6 +556,14 @@ const PageModel = PageWithComponents
       }
     }
 
+    // Once the node has landed, the parent it left may be down to one text node.
+    const previousParentId = component.parentId;
+    const collapseLeftParent = (newParentId: string | undefined) => {
+      if (previousParentId && previousParentId !== newParentId) {
+        findComponentInPage(self, previousParentId)?.collapseTextChild();
+      }
+    };
+
     // Detach from current location (tree parent, floating subtree parent, or canvasNodes map)
     detach(component);
 
@@ -552,6 +572,7 @@ const PageModel = PageWithComponents
       component.setCanvasPosition(Math.round(target.x), Math.round(target.y));
       component.clearParent();
       self.canvasNodes.set(component.id, component);
+      collapseLeftParent(undefined);
       self.updatedAt = new Date();
       return self.canvasNodes.get(component.id) as ComponentInstance | undefined;
     }
@@ -574,6 +595,7 @@ const PageModel = PageWithComponents
       component.setCanvasNodeType(CanvasNodeType.COMPONENT);
     }
     newParent.addChild(component, resolvedIndex);
+    collapseLeftParent(newParent.id);
     self.updatedAt = new Date();
     return component;
   },

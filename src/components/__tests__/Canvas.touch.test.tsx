@@ -36,6 +36,7 @@ beforeEach(() => {
   editorUI.setCurrentPage(page);
   root = page.appComponentTree as ComponentInstance;
   main = root.children[0] as ComponentInstance;
+  main.setProps({ children: undefined }); // the seed's text would become a leading text node
   main.addChildren([createIntrinsicComponent('span-child', 'span', { children: 'Nested' })]);
   nested = main.children[0] as ComponentInstance;
   breakpointId = page.sortedViewportNodes[0].breakpointId!;

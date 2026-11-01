@@ -164,3 +164,26 @@ describe('validateReviewOps', () => {
     expect(validateReviewOps({ op: 'update_text' }, ctx()).rejected[0].reason).toBe('ops must be a list');
   });
 });
+
+describe('validateReviewOps on a text node', () => {
+  const tree = {
+    id: 'root',
+    type: 'div',
+    props: {},
+    children: [{ id: 'p', type: 'p', props: {}, children: [{ id: 'run', type: '#text', props: { children: 'Hello' }, children: [] }] }],
+  };
+  const validate = (op: unknown) =>
+    validateReviewOps([op], { nodes: indexReviewTree(tree as never), breakpointKeys: ['desktop'] } as never);
+
+  it('allows text to be changed', () => {
+    const { ops, rejected } = validate({ op: 'update_text', nodeId: 'run', text: 'Hi', reason: 'tighter' });
+    expect(rejected).toEqual([]);
+    expect(ops).toHaveLength(1);
+  });
+
+  it('refuses a style: there is no element to carry it', () => {
+    const { ops, rejected } = validate({ op: 'update_style', nodeId: 'run', property: 'color', value: 'red', reason: 'x' });
+    expect(ops).toEqual([]);
+    expect(rejected[0].reason).toContain('no element to style');
+  });
+});

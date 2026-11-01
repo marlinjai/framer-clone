@@ -445,3 +445,28 @@ describe('resolveDropTarget', () => {
     });
   });
 });
+
+describe('resolveDropTarget on a Layers row', () => {
+  const source: DragSource = { kind: 'create', registryId: 'text' };
+  const resolveAtMiddle = (row: HTMLElement) => {
+    stubRect(row, { top: 0, height: 100 });
+    stubHitStack([row]);
+    return resolveDropTarget({
+      pointer: { clientX: 10, clientY: 50 },
+      transform: { panX: 0, panY: 0, zoom: 1 },
+      source,
+    });
+  };
+
+  it('offers inside on the row of a text holder: the model keeps its text as a text node', () => {
+    const row = el('div', { 'data-inner-component-id': 'para' }, document.body);
+    el('span', {}, row);
+    expect(resolveAtMiddle(row).target).toEqual({ kind: 'parent', parentId: 'para' });
+  });
+
+  it('offers only before and after on the row of a text node', () => {
+    const row = el('div', { 'data-inner-component-id': 'run', 'data-text-node-row': '' }, document.body);
+    el('span', {}, row);
+    expect(resolveAtMiddle(row).target).toMatchObject({ kind: 'sibling', siblingId: 'run' });
+  });
+});

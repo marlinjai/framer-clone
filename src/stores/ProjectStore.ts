@@ -109,7 +109,6 @@ const ProjectStore = types.model('ProjectStore', {
         marginBottom: '20px',
         fontFamily: 'system-ui, sans-serif'
       },
-      children: 'Welcome to Framer Clone!'
     });
 
     // Add a main component as a sibling (this would be handled differently in a real app)
