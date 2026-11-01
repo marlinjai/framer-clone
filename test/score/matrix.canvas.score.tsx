@@ -13,7 +13,15 @@ import { ComponentTypeEnum, default as ComponentModel, type ComponentInstance } 
 import { cssPropertyName } from '@/lib/responsive/responsiveCss';
 import { isBlockedTag } from '@/lib/renderer/blockedNodes';
 import ComponentRenderer from '@/components/ComponentRenderer';
-import { inlineStylesheets, ruleEncodings, stylesheetHasRule } from './lib/encodings';
+import {
+  atRuleProbe,
+  inlineStylesheets,
+  isPageLevelRow,
+  selectorProbe,
+  stylesheetHasRule,
+  wrapperProbe,
+  type RuleProbe,
+} from './lib/encodings';
 import {
   allEntries,
   atRuleSample,
@@ -90,12 +98,12 @@ function probeElementAttribute(kind: RowKind, id: string): Cell {
   return fail('react-attribute-handling', `expected ${sample.html}`);
 }
 
-function probeRule(rule: string, gap: GapId): Cell {
-  const reached = ruleEncodings(rule).some((style) => stylesheetHasRule(inlineStylesheets(canvasMarkup('div', { style })), rule));
-  return reached ? pass() : fail(gap);
+function probeRule(probe: RuleProbe, gap: GapId): Cell {
+  return stylesheetHasRule(inlineStylesheets(canvasMarkup('div', { rules: [probe.rule] })), probe) ? pass() : fail(gap);
 }
 
 function probeEntry(kind: RowKind, id: string): Cell {
+  if (isPageLevelRow(id)) return fail('page-level-css', 'applies to the document, which the route owns');
   switch (kind) {
     case 'html-element-attribute':
     case 'svg-attribute':
@@ -133,11 +141,11 @@ function probeEntry(kind: RowKind, id: string): Cell {
         : fail('renderer-drops-value', 'the canvas overwrites this property with its own value');
     }
     case 'css-selector':
-      return probeRule(selectorSample(id), 'selector-styles');
+      return probeRule(selectorProbe(id, selectorSample(id)), 'selector-styles');
     case 'css-at-rule':
-      return probeRule(atRuleSample(id), id === '@media' ? 'media-queries' : 'at-rules');
+      return probeRule(atRuleProbe(id, atRuleSample(id)), id === '@media' ? 'media-queries' : 'at-rules');
     case 'css-media-feature': {
-      if (id !== 'width') return probeRule(`@media ${mediaFeatureSample(id)}`, 'media-queries');
+      if (id !== 'width') return probeRule(wrapperProbe(`@media ${mediaFeatureSample(id)}`), 'media-queries');
       const style = { color: { base: 'red', tablet: 'blue' } };
       const shown = canvasMarkup('div', { style }, 'desktop').includes('color:red') && canvasMarkup('div', { style }, 'tablet').includes('color:blue');
       return shown ? pass('as breakpoints') : fail('media-queries');

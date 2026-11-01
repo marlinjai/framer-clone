@@ -7,14 +7,23 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { getSnapshot } from 'mobx-state-tree';
 import ComponentModel, { ComponentTypeEnum, type ComponentInstance } from '@/models/ComponentModel';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
-import { cssPropertyName } from '@/lib/responsive/responsiveCss';
+import { cssPropertyName, maxWidthBelow } from '@/lib/responsive/responsiveCss';
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
 import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
 import { validateGeneration } from '@/lib/ai/pageGen/validate';
 import { isBlockedTag } from '@/lib/renderer/blockedNodes';
 import { COMPONENT_REGISTRY } from '@/lib/componentRegistry';
 import { BREAKPOINTS, renderPublished } from './lib/published';
-import { ruleEncodings, ruleNode, stylesheetHasRule } from './lib/encodings';
+import {
+  atRuleProbe,
+  isPageLevelRow,
+  ruleNode,
+  selectorProbe,
+  styleNode,
+  stylesheetHasRule,
+  wrapperProbe,
+  type RuleProbe,
+} from './lib/encodings';
 import {
   allEntries,
   atRuleSample,
@@ -228,21 +237,26 @@ function probeProperty(property: string, key: string): void {
   results.ai[key] = styleKey in style ? pass() : fail('ai-style-allowlist');
 }
 
-function probeRule(rule: string, key: string, gap: GapId, presetNote?: string): void {
-  const encodings = ruleEncodings(rule);
-  const reached = encodings.some((style) => stylesheetHasRule(renderPublished(ruleNode(style)).css, rule));
+function probeRule(probe: RuleProbe, key: string, gap: GapId, presetNote?: string): void {
+  const { rule } = probe;
+  const reached = stylesheetHasRule(renderPublished(ruleNode(rule)).css, probe);
+  const stored = JSON.stringify(storedRoundTrip('div', { rules: [rule] }).model.props.rules) === JSON.stringify([rule]);
 
   // Bytes alone prove nothing here (props are opaque JSON and hold anything), so
   // storing a rule counts only when a reader gives it a meaning.
-  results.format[key] = reached ? pass() : fail(gap, presetNote ?? 'the format has no slot for a rule');
+  results.format[key] = reached && stored ? pass() : fail(gap, presetNote ?? 'stored, but nothing reads it yet');
   results.renderer[key] = reached ? pass() : fail(gap, presetNote);
 
-  const kept = encodings.some((style) => {
-    const made = generate({ type: 'div', props: { style } });
-    const out = (made.node?.props.style ?? {}) as Record<string, unknown>;
-    return rule in out || (typeof out.color === 'object' && out.color !== null && rule in out.color);
-  });
-  results.ai[key] = kept ? pass() : fail(gap);
+  const out = (generate({ type: 'div', props: { rules: [rule] } }).node?.props.rules ?? []) as unknown[];
+  results.ai[key] = out.some((kept) => JSON.stringify(kept) === JSON.stringify(rule)) ? pass() : fail(gap);
+}
+
+/** A row the route owns: it is left red on purpose, whatever a node could hold. */
+function probePageLevel(key: string): void {
+  const note = 'applies to the document, which the route owns';
+  results.format[key] = fail('page-level-css', note);
+  results.renderer[key] = fail('page-level-css', note);
+  results.ai[key] = fail('page-level-css', note);
 }
 
 /** The width media feature is the one part of @media a node holds: a responsive style map. */
@@ -251,8 +265,10 @@ function probeWidthMediaFeature(key: string): void {
   const stored = storedRoundTrip('div', { style });
   const tablet = stored.model.getResolvedProps('tablet', BREAKPOINTS).style.color;
   results.format[key] = tablet === 'blue' ? pass('as breakpoints, max-width only') : fail('media-queries');
-  const { css } = renderPublished(ruleNode(style));
-  results.renderer[key] = /@media \(max-width:767\.98px\)\{\s*\.fc-probe\.fc-probe\{color:blue/.test(css)
+  const { css } = renderPublished(styleNode(style));
+  // A Tablet override sits just below Desktop's min width, see maxWidthBelow.
+  const query = maxWidthBelow(BREAKPOINTS[0].minWidth).replace('.', '\\.');
+  results.renderer[key] = new RegExp(`@media \\(max-width:${query}px\\)\\{\\s*\\.fc-probe\\.fc-probe\\{color:blue`).test(css)
     ? pass('as breakpoints, max-width only')
     : fail('media-queries');
   const made = generate({ type: 'div', props: { style: { color: { base: 'red', tablet: 'blue' } } } });
@@ -262,6 +278,7 @@ function probeWidthMediaFeature(key: string): void {
 
 function probe(entry: Entry): void {
   const key = rowKey(entry.kind, entry.id);
+  if (isPageLevelRow(entry.id)) return probePageLevel(key);
   switch (entry.kind) {
     case 'html-element':
       return probeElement(entry.id, key);
@@ -282,21 +299,21 @@ function probe(entry: Entry): void {
       return probeCssValue(entry.id, key);
     case 'css-selector':
       return probeRule(
-        selectorSample(entry.id),
+        selectorProbe(entry.id, selectorSample(entry.id)),
         key,
         'selector-styles',
         entry.id === ':hover' ? 'partial through a preset: three fixed hover effects, no authored rule' : undefined,
       );
     case 'css-at-rule':
       return probeRule(
-        atRuleSample(entry.id),
+        atRuleProbe(entry.id, atRuleSample(entry.id)),
         key,
         entry.id === '@media' ? 'media-queries' : 'at-rules',
         entry.id === '@media' ? 'partial through a preset: width breakpoints only (see the width media feature row)' : undefined,
       );
     case 'css-media-feature':
       if (entry.id === 'width') return probeWidthMediaFeature(key);
-      return probeRule(`@media ${mediaFeatureSample(entry.id)}`, key, 'media-queries');
+      return probeRule(wrapperProbe(`@media ${mediaFeatureSample(entry.id)}`), key, 'media-queries');
     case 'aria-pattern':
       return; // Run in a real browser: patterns.score.ts.
   }

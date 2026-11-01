@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-01T20:05:30.950Z",
+  "generatedAt": "2026-11-01T21:25:12.928Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
@@ -10,33 +10,33 @@
     "surfaces": {
       "format": {
         "pass": 1578,
-        "fail": 266,
+        "fail": 254,
         "notTested": 0,
-        "total": 1844
+        "total": 1832
       },
       "renderer": {
-        "pass": 1537,
-        "fail": 307,
+        "pass": 1538,
+        "fail": 294,
         "notTested": 0,
-        "total": 1844
+        "total": 1832
       },
       "canvas": {
         "pass": 1524,
-        "fail": 320,
+        "fail": 308,
         "notTested": 0,
-        "total": 1844
+        "total": 1832
       },
       "panel": {
         "pass": 67,
-        "fail": 1777,
+        "fail": 1765,
         "notTested": 0,
-        "total": 1844
+        "total": 1832
       },
       "ai": {
         "pass": 273,
-        "fail": 1571,
+        "fail": 1559,
         "notTested": 0,
-        "total": 1844
+        "total": 1832
       }
     },
     "byKind": {
@@ -363,33 +363,33 @@
       "css-selector": {
         "format": {
           "pass": 0,
-          "fail": 118,
+          "fail": 106,
           "notTested": 0,
-          "total": 118
+          "total": 106
         },
         "renderer": {
           "pass": 0,
-          "fail": 118,
+          "fail": 106,
           "notTested": 0,
-          "total": 118
+          "total": 106
         },
         "canvas": {
           "pass": 0,
-          "fail": 118,
+          "fail": 106,
           "notTested": 0,
-          "total": 118
+          "total": 106
         },
         "panel": {
           "pass": 0,
-          "fail": 118,
+          "fail": 106,
           "notTested": 0,
-          "total": 118
+          "total": 106
         },
         "ai": {
           "pass": 0,
-          "fail": 118,
+          "fail": 106,
           "notTested": 0,
-          "total": 118
+          "total": 106
         }
       },
       "css-at-rule": {
@@ -432,8 +432,8 @@
           "total": 34
         },
         "renderer": {
-          "pass": 0,
-          "fail": 34,
+          "pass": 1,
+          "fail": 33,
           "notTested": 0,
           "total": 34
         },
@@ -489,7 +489,7 @@
         }
       }
     },
-    "included": 1844,
+    "included": 1832,
     "excluded": [
       {
         "kind": "html-element",
@@ -2868,6 +2868,11 @@
       },
       {
         "kind": "css-selector",
+        "id": "Column combinator",
+        "reason": "Neither Chromium nor WebKit parses the sample (checked 2026-11-02), so no sample can be proven valid. The browser probe fails when that changes."
+      },
+      {
+        "kind": "css-selector",
         "id": "Namespace separator",
         "reason": "Only meaningful with @namespace, itself excluded, and published pages are HTML."
       },
@@ -2880,6 +2885,46 @@
         "kind": "css-selector",
         "id": "Pseudo-elements",
         "reason": "A category heading in mdn-data, not a selector. Each pseudo-element has its own row."
+      },
+      {
+        "kind": "css-selector",
+        "id": ":blank",
+        "reason": "Neither Chromium nor WebKit parses the sample (checked 2026-11-02), so no sample can be proven valid. The browser probe fails when that changes."
+      },
+      {
+        "kind": "css-selector",
+        "id": ":has-slotted",
+        "reason": "They need a stylesheet inside a shadow tree (style is a blocked tag) or a custom element's script, and a node can author neither. Custom code is the route that could bring them, and this row returns with it."
+      },
+      {
+        "kind": "css-selector",
+        "id": ":host",
+        "reason": "They need a stylesheet inside a shadow tree (style is a blocked tag) or a custom element's script, and a node can author neither. Custom code is the route that could bring them, and this row returns with it."
+      },
+      {
+        "kind": "css-selector",
+        "id": ":host()",
+        "reason": "They need a stylesheet inside a shadow tree (style is a blocked tag) or a custom element's script, and a node can author neither. Custom code is the route that could bring them, and this row returns with it."
+      },
+      {
+        "kind": "css-selector",
+        "id": ":host-context()",
+        "reason": "They need a stylesheet inside a shadow tree (style is a blocked tag) or a custom element's script, and a node can author neither. Custom code is the route that could bring them, and this row returns with it."
+      },
+      {
+        "kind": "css-selector",
+        "id": ":local-link",
+        "reason": "Neither Chromium nor WebKit parses the sample (checked 2026-11-02), so no sample can be proven valid. The browser probe fails when that changes."
+      },
+      {
+        "kind": "css-selector",
+        "id": ":state()",
+        "reason": "They need a stylesheet inside a shadow tree (style is a blocked tag) or a custom element's script, and a node can author neither. Custom code is the route that could bring them, and this row returns with it."
+      },
+      {
+        "kind": "css-selector",
+        "id": ":target-within",
+        "reason": "Neither Chromium nor WebKit parses the sample (checked 2026-11-02), so no sample can be proven valid. The browser probe fails when that changes."
       },
       {
         "kind": "css-selector",
@@ -2995,6 +3040,21 @@
         "kind": "css-selector",
         "id": "::-webkit-slider-thumb",
         "reason": "Marked nonstandard by mdn-data: a vendor-only name (mostly -webkit-, -moz- and -ms- prefixes) that is not part of what CSS defines."
+      },
+      {
+        "kind": "css-selector",
+        "id": "::cue-region",
+        "reason": "Neither Chromium nor WebKit parses the sample (checked 2026-11-02), so no sample can be proven valid. The browser probe fails when that changes."
+      },
+      {
+        "kind": "css-selector",
+        "id": "::cue-region()",
+        "reason": "Neither Chromium nor WebKit parses the sample (checked 2026-11-02), so no sample can be proven valid. The browser probe fails when that changes."
+      },
+      {
+        "kind": "css-selector",
+        "id": "::slotted()",
+        "reason": "They need a stylesheet inside a shadow tree (style is a blocked tag) or a custom element's script, and a node can author neither. Custom code is the route that could bring them, and this row returns with it."
       },
       {
         "kind": "css-at-rule",
@@ -4691,13 +4751,11 @@
       "css-selector:Subsequent-sibling combinator": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector:Child combinator": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector:Descendant combinator": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:Column combinator": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::active": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::active-view-transition": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::active-view-transition-type()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
+      "css-selector::active-view-transition": "page-level-css page-level-css page-level-css selector-styles page-level-css",
+      "css-selector::active-view-transition-type()": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-selector::any-link": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::autofill": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::blank": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::buffering": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::checked": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::current": "selector-styles selector-styles selector-styles selector-styles selector-styles",
@@ -4707,7 +4765,7 @@
       "css-selector::disabled": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::empty": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::enabled": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::first": "selector-styles selector-styles selector-styles selector-styles selector-styles",
+      "css-selector::first": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-selector::first-child": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::first-of-type": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::focus": "selector-styles selector-styles selector-styles selector-styles selector-styles",
@@ -4716,10 +4774,6 @@
       "css-selector::fullscreen": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::future": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::has()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::has-slotted": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::host": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::host()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::host-context()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::hover": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::in-range": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::indeterminate": "selector-styles selector-styles selector-styles selector-styles selector-styles",
@@ -4728,9 +4782,8 @@
       "css-selector::lang()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::last-child": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::last-of-type": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::left": "selector-styles selector-styles selector-styles selector-styles selector-styles",
+      "css-selector::left": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-selector::link": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::local-link": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::modal": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::muted": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::not()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
@@ -4752,15 +4805,13 @@
       "css-selector::read-only": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::read-write": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::required": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::right": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::root": "selector-styles selector-styles selector-styles selector-styles selector-styles",
+      "css-selector::right": "page-level-css page-level-css page-level-css selector-styles page-level-css",
+      "css-selector::root": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-selector::scope": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::seeking": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::stalled": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::state()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::target": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::target-current": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::target-within": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::user-invalid": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::user-valid": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector::valid": "selector-styles selector-styles selector-styles selector-styles selector-styles",
@@ -4774,8 +4825,6 @@
       "css-selector:::checkmark": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector:::cue": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector:::cue()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::cue-region": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::cue-region()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector:::details-content": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector:::file-selector-button": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector:::first-letter": "selector-styles selector-styles selector-styles selector-styles selector-styles",
@@ -4790,29 +4839,28 @@
       "css-selector:::scroll-marker": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector:::scroll-marker-group": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector:::selection": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::slotted()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector:::spelling-error": "selector-styles selector-styles selector-styles selector-styles selector-styles",
       "css-selector:::target-text": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::view-transition": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::view-transition-group()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::view-transition-image-pair()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::view-transition-new()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::view-transition-old()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
+      "css-selector:::view-transition": "page-level-css page-level-css page-level-css selector-styles page-level-css",
+      "css-selector:::view-transition-group()": "page-level-css page-level-css page-level-css selector-styles page-level-css",
+      "css-selector:::view-transition-image-pair()": "page-level-css page-level-css page-level-css selector-styles page-level-css",
+      "css-selector:::view-transition-new()": "page-level-css page-level-css page-level-css selector-styles page-level-css",
+      "css-selector:::view-transition-old()": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-at-rule:@counter-style": "at-rules at-rules at-rules at-rules at-rules",
       "css-at-rule:@container": "at-rules at-rules at-rules at-rules at-rules",
       "css-at-rule:@font-face": "at-rules at-rules at-rules at-rules at-rules",
       "css-at-rule:@font-feature-values": "at-rules at-rules at-rules at-rules at-rules",
       "css-at-rule:@font-palette-values": "at-rules at-rules at-rules at-rules at-rules",
       "css-at-rule:@keyframes": "at-rules at-rules at-rules at-rules at-rules",
-      "css-at-rule:@layer": "at-rules at-rules at-rules at-rules at-rules",
+      "css-at-rule:@layer": "page-level-css page-level-css page-level-css at-rules page-level-css",
       "css-at-rule:@media": "media-queries media-queries media-queries media-queries media-queries",
-      "css-at-rule:@page": "at-rules at-rules at-rules at-rules at-rules",
+      "css-at-rule:@page": "page-level-css page-level-css page-level-css at-rules page-level-css",
       "css-at-rule:@position-try": "at-rules at-rules at-rules at-rules at-rules",
       "css-at-rule:@property": "at-rules at-rules at-rules at-rules at-rules",
       "css-at-rule:@scope": "at-rules at-rules at-rules at-rules at-rules",
       "css-at-rule:@starting-style": "at-rules at-rules at-rules at-rules at-rules",
       "css-at-rule:@supports": "at-rules at-rules at-rules at-rules at-rules",
-      "css-at-rule:@view-transition": "at-rules at-rules at-rules at-rules at-rules",
+      "css-at-rule:@view-transition": "page-level-css page-level-css page-level-css at-rules page-level-css",
       "css-media-feature:any-hover": "media-queries media-queries media-queries media-queries media-queries",
       "css-media-feature:any-pointer": "media-queries media-queries media-queries media-queries media-queries",
       "css-media-feature:aspect-ratio": "media-queries media-queries media-queries media-queries media-queries",
@@ -4846,7 +4894,7 @@
       "css-media-feature:update": "media-queries media-queries media-queries media-queries media-queries",
       "css-media-feature:vertical-viewport-segments": "media-queries media-queries media-queries media-queries media-queries",
       "css-media-feature:video-dynamic-range": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:width": "pass media-queries pass pass pass",
+      "css-media-feature:width": "pass pass pass pass pass",
       "aria-pattern:accordion": "pass pass canvas-editor-context panel-no-tag-choice ai-attribute-allowlist",
       "aria-pattern:alert": "pass pass pass panel-no-general-editor ai-attribute-allowlist",
       "aria-pattern:alertdialog": "pass pass pass panel-no-tag-choice ai-attribute-allowlist",
@@ -7178,7 +7226,7 @@
     {
       "id": "selector-styles",
       "description": "CSS that needs a selector (states, pseudo-elements, structural selectors): a node only holds inline declarations, so no rule can be written.",
-      "matrixCells": 590,
+      "matrixCells": 486,
       "corpusChecks": 68,
       "fixtures": [
         "hover-focus",
@@ -7192,7 +7240,7 @@
         "shadcn-button"
       ],
       "roundTripCases": 0,
-      "cost": 658
+      "cost": 554
     },
     {
       "id": "blocked-event-handlers",
@@ -7227,7 +7275,7 @@
     {
       "id": "media-queries",
       "description": "Media queries beyond width: print, dark mode and reduced motion have no home.",
-      "matrixCells": 171,
+      "matrixCells": 170,
       "corpusChecks": 12,
       "fixtures": [
         "print-styles"
@@ -7236,7 +7284,7 @@
         "print-styles"
       ],
       "roundTripCases": 0,
-      "cost": 183
+      "cost": 182
     },
     {
       "id": "ai-attribute-allowlist",
@@ -7268,7 +7316,7 @@
     {
       "id": "at-rules",
       "description": "At-rules: no way to store @keyframes, @container, @supports, @font-face and the rest.",
-      "matrixCells": 70,
+      "matrixCells": 58,
       "corpusChecks": 16,
       "fixtures": [
         "keyframes",
@@ -7279,7 +7327,17 @@
         "container-query"
       ],
       "roundTripCases": 0,
-      "cost": 86
+      "cost": 74
+    },
+    {
+      "id": "page-level-css",
+      "description": "CSS that applies to the document rather than a node (`:root`, view transitions, `@page`, `@layer`): the route owns `html`, so these close with the page-level items of the plan.",
+      "matrixCells": 56,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 56
     },
     {
       "id": "blocked-embedded-content",
