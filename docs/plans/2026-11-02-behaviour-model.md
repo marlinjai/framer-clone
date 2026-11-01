@@ -17,7 +17,7 @@ sites is allowed, sandboxed, off by default and clearly marked. It builds on the
 [reusable components contract](2026-11-02-reusable-components.md), compiles to it, as "How a component
 state compiles" defines.
 
-Read against commit `22c794b`. Revised after the independent review of 2026-11-02
+Read against commit `fc32fc1`. Revised after the independent review of 2026-11-02
 (`~/software-dev/decision-pages/2026-11-02-behaviour-model-review.md`, findings 1 to 22, probes beside it),
 which found seven stated guarantees false as written. Every finding is applied here except the ones under
 "Review findings not adopted", each with the code or test that decides it.
@@ -462,7 +462,7 @@ fails leaves the node visible, the safe direction. A reference to a deleted stat
 | Script on a published site | No expression is code, the runtime holds no `eval`, stored `on*` strings stay dropped |
 | An attribute that runs or loads something | Allow list |
 | Markup injection | Text bindings use `textContent` |
-| A foreign form posted without a press | No submit action, so `form` keeps `reset` only. The hole a stored `form` opens on `main`, one click from any `*.sites.lumitra.co` page to the editor API, is being closed separately in `middleware.ts` (M1) |
+| A foreign form posted without a press | No submit action, so `form` keeps `reset` only. The hole a stored `form` opened, one click from any `*.sites.lumitra.co` page to the editor API, was closed separately in `middleware.ts` by #225 (M1). Removing submit keeps a stored page from reaching any other foreign form without a press |
 | What a visitor types | The taint rule, and no reflected `text`. **Not a page guarantee.** `filter` makes item visibility depend on typed text, and a rule with `:has()` can read that through the selector contract's residual route. Only a policy on published pages closes this (M5) |
 | What is selected or ticked | A boolean or `choice` is readable through the same route, as `:checked` already is. No new kind of exposure |
 | A free redirector | `navigate` needs a press, see above |
@@ -842,7 +842,7 @@ default. **Slices C1 to C5 stay blocked until these are answered.** Nothing in B
 
 | # | Decision | Default |
 |---|---|---|
-| M1 | Same-site write protection on the editor plane. A change to auth and live on `main`, so it goes first and independently | Yes, now, as its own pull request. **Being fixed by the operator in `middleware.ts`** |
+| M1 | Same-site write protection on the editor plane. A change to auth and live on `main`, so it goes first and independently | Yes, now, as its own pull request. **Done by the operator in #225, `middleware.ts`** |
 | M2 | Separate domain. Spends real money, and its name is his | Yes |
 | M3 | Where the code is served: same Next app, separate small service, or `srcdoc` with no domain | **Separate small service** |
 | M4 | Accept the preconnect and DNS residual in WebKit and Firefox | Accept, **with `text` removed from `reads` in version 1,** and the consent reading rewritten |
@@ -935,7 +935,7 @@ only when `src/lib/customCode`, `services/box` or the suite changes, so the five
 
 Only B1 and C2 touch the two renderer files. B2 to B5 share `runtime.ts` or the pipeline, so the operator runs them in order. B6 is the first slice a person can see working.
 
-**What the slices add,** as ceilings out of today's 1,816 rows, on `22c794b`. "After selectors" is today plus what the selector contract still closes: 7 format and published cells, and 140 canvas cells.
+**What the slices add,** as ceilings out of today's 1,816 rows, on `fc32fc1`. "After selectors" is today plus what the selector contract still closes: 7 format and published cells, and 140 canvas cells.
 
 | Column | Today | After selectors | Added here | After this | Percent | What is left |
 |---|---|---|---|---|---|---|
