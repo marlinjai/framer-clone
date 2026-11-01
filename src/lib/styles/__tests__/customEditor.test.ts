@@ -99,7 +99,7 @@ describe('attributes', () => {
   });
 
   it('refuses handlers, raw HTML, styles and the editor\'s own markers', () => {
-    for (const name of ['onclick', 'onClick', 'ONERROR', 'dangerouslySetInnerHTML', 'srcdoc', 'style', 'children', 'key', 'ref', 'data-form-kind', 'data-component-kind', 'data-sticky-cta', '1a', 'a b', '']) {
+    for (const name of ['onclick', 'onClick', 'ONERROR', 'dangerouslySetInnerHTML', 'srcdoc', 'style', 'children', 'key', 'ref', 'data-form-kind', 'data-component-kind', 'data-sticky-cta', 'DATA-FORM-KIND', 'Data-Sticky-CTA', '1a', 'a b', '']) {
       expect(attributeNameError(name, 'div'), name).not.toBeNull();
     }
     for (const name of ['id', 'aria-label', 'data-probe', 'role', 'title', 'my-attribute']) {
