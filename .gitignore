@@ -56,3 +56,6 @@ docs-dist/
 # esbuild output of scripts/commerce-migrate.ts (pnpm build:boot), built in the image
 dist-boot/
 dist-bench/
+
+# primitive score: per-run probe results and screenshot diffs (test/score/run.ts wipes it)
+test/score/.out/

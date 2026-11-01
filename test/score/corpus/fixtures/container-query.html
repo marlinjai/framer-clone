@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Container query</title>
+<style>
+  .page { font: 16px/1.5 Arial, sans-serif; padding: 24px; }
+  .shell { container-type: inline-size; }
+  .card { display: block; background: #eff6ff; border-radius: 8px; padding: 16px; }
+  .card h2 { margin: 0 0 8px; font-size: 20px; }
+  .card p { margin: 0; }
+  @container (min-width: 600px) {
+    .card { display: flex; gap: 24px; align-items: center; }
+    .card h2 { margin: 0; }
+  }
+</style>
+</head>
+<body style="margin:0">
+<div class="page" data-parity-id="page">
+  <div class="shell" data-parity-id="shell">
+    <div class="card" data-parity-id="card">
+      <h2 data-parity-id="heading">Delivery</h2>
+      <p data-parity-id="copy">Two working days inside Switzerland.</p>
+    </div>
+  </div>
+</div>
+</body>
+</html>

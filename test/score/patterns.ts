@@ -1,0 +1,551 @@
+// The WAI-ARIA Authoring Practices patterns as node trees, each with the primary
+// keyboard contract from its page in the Guide. A tree is the best a page author
+// can store today: where plain HTML brings the behaviour along (details, a range
+// input, a dialog opened by a command attribute) that counts, because it needs no
+// new primitive. Where a pattern needs script, the tree carries the correct roles
+// and states and the contract fails: that failure is what the behaviour model
+// (step 6 of the plan) has to close.
+//
+// A contract is one interaction, not the whole Guide page: passing means the
+// primary keyboard path works, not that the pattern is fully conformant.
+
+import type { Page } from 'playwright';
+import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
+
+type Props = Record<string, unknown>;
+
+let nextId = 0;
+
+export function n(type: string, props: Props = {}, ...children: ComponentNode[]): ComponentNode {
+  const node: ComponentNode = { id: `n${++nextId}`, type, props: props as ComponentNode['props'] };
+  if (children.length > 0) node.children = children;
+  return node;
+}
+
+export const t = (type: string, text: string, props: Props = {}) => n(type, { ...props, children: text });
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+export interface Pattern {
+  id: string;
+  /** How the tree is built, in a few words. */
+  built: 'native' | 'aria-only';
+  tree: () => ComponentNode;
+  contract: (page: Page) => Promise<void>;
+}
+
+const pressed = async (page: Page, key: string) => {
+  await page.keyboard.press(key);
+  await page.waitForTimeout(20);
+};
+
+const attr = (page: Page, selector: string, name: string) => page.locator(selector).first().getAttribute(name);
+
+/** Opens by keyboard, puts focus inside, closes with Escape, gives focus back. */
+async function modalContract(page: Page, role: 'dialog' | 'alertdialog'): Promise<void> {
+  await page.getByRole('button', { name: 'Open' }).focus();
+  await pressed(page, 'Enter');
+  const dialog = page.getByRole(role);
+  assert(await dialog.isVisible(), 'Enter on the trigger did not open it');
+  await pressed(page, 'Tab');
+  // A native modal hands focus to the browser's own controls after its last
+  // stop and the page behind stays inert, so what must not happen is focus
+  // landing on the page behind the dialog.
+  const leaked = await page.evaluate(() => {
+    const active = document.activeElement;
+    return !!active && active !== document.body && !active.closest('dialog');
+  });
+  assert(!leaked, 'focus reached the page behind the dialog');
+  await pressed(page, 'Escape');
+  assert(!(await dialog.isVisible()), 'Escape did not close it');
+  const back = await page.evaluate(() => document.activeElement?.textContent);
+  assert(back === 'Open', 'focus did not return to the trigger');
+}
+
+const modalTree = (role: 'dialog' | 'alertdialog') => () =>
+  n(
+    'div',
+    {},
+    t('button', 'Open', { commandfor: 'modal', command: 'show-modal' }),
+    n(
+      'dialog',
+      { id: 'modal', role: role === 'alertdialog' ? 'alertdialog' : undefined, 'aria-labelledby': 'modal-title' },
+      t('h2', 'Title', { id: 'modal-title' }),
+      t('button', 'Close', { commandfor: 'modal', command: 'close' }),
+    ),
+  );
+
+const roving = (role: string, items: string[], itemRole: string, label: string) =>
+  n(
+    'div',
+    { role, 'aria-label': label },
+    ...items.map((item, i) => t('div', item, { role: itemRole, tabIndex: i === 0 ? 0 : -1 })),
+  );
+
+export const PATTERNS: Pattern[] = [
+  {
+    id: 'accordion',
+    built: 'native',
+    tree: () =>
+      n(
+        'div',
+        {},
+        n('details', { name: 'group' }, t('summary', 'One'), t('p', 'First panel')),
+        n('details', { name: 'group' }, t('summary', 'Two'), t('p', 'Second panel')),
+      ),
+    contract: async (page) => {
+      await page.locator('summary').nth(0).focus();
+      await pressed(page, 'Enter');
+      assert(await page.getByText('First panel').isVisible(), 'Enter did not open the first panel');
+      await page.locator('summary').nth(1).focus();
+      await pressed(page, 'Space');
+      assert(await page.getByText('Second panel').isVisible(), 'Space did not open the second panel');
+      assert(!(await page.getByText('First panel').isVisible()), 'the first panel did not close');
+    },
+  },
+  {
+    id: 'alert',
+    built: 'native',
+    tree: () => t('div', 'Saved', { role: 'alert' }),
+    contract: async (page) => {
+      assert(await page.getByRole('alert').isVisible(), 'no alert in the accessibility tree');
+    },
+  },
+  {
+    id: 'alertdialog',
+    built: 'native',
+    tree: modalTree('alertdialog'),
+    contract: (page) => modalContract(page, 'alertdialog'),
+  },
+  {
+    id: 'breadcrumb',
+    built: 'native',
+    tree: () =>
+      n(
+        'nav',
+        { 'aria-label': 'Breadcrumb' },
+        n(
+          'ol',
+          {},
+          n('li', {}, t('a', 'Home', { href: '/' })),
+          n('li', {}, t('a', 'Shoes', { href: '/shoes', 'aria-current': 'page' })),
+        ),
+      ),
+    contract: async (page) => {
+      assert(await page.getByRole('navigation', { name: 'Breadcrumb' }).isVisible(), 'no breadcrumb landmark');
+      assert((await attr(page, 'a[aria-current]', 'aria-current')) === 'page', 'no current page marked');
+    },
+  },
+  {
+    id: 'button',
+    built: 'native',
+    tree: () => t('button', 'Press'),
+    contract: async (page) => {
+      await page.evaluate(() => {
+        const win = window as unknown as { clicks: number };
+        win.clicks = 0;
+        document.querySelector('button')?.addEventListener('click', () => win.clicks++);
+      });
+      await page.getByRole('button', { name: 'Press' }).focus();
+      await pressed(page, 'Enter');
+      await pressed(page, 'Space');
+      const clicks = await page.evaluate(() => (window as unknown as { clicks: number }).clicks);
+      assert(clicks === 2, `Enter and Space gave ${clicks} activations`);
+    },
+  },
+  {
+    id: 'carousel',
+    built: 'aria-only',
+    tree: () =>
+      n(
+        'section',
+        { 'aria-roledescription': 'carousel', 'aria-label': 'Offers' },
+        t('button', 'Next slide'),
+        t('div', 'Slide one', { role: 'group', 'aria-roledescription': 'slide' }),
+        t('div', 'Slide two', { role: 'group', 'aria-roledescription': 'slide', hidden: true }),
+      ),
+    contract: async (page) => {
+      await page.getByRole('button', { name: 'Next slide' }).focus();
+      await pressed(page, 'Enter');
+      assert(await page.getByText('Slide two').isVisible(), 'Next slide did not show the next slide');
+    },
+  },
+  {
+    id: 'checkbox',
+    built: 'native',
+    tree: () => n('label', {}, n('input', { type: 'checkbox', 'aria-label': 'Agree' })),
+    contract: async (page) => {
+      const box = page.getByRole('checkbox', { name: 'Agree' });
+      await box.focus();
+      await pressed(page, 'Space');
+      assert(await box.isChecked(), 'Space did not check it');
+    },
+  },
+  {
+    id: 'combobox',
+    built: 'aria-only',
+    tree: () =>
+      n(
+        'div',
+        {},
+        n('input', { role: 'combobox', 'aria-label': 'City', 'aria-expanded': 'false', 'aria-controls': 'cities' }),
+        n('ul', { id: 'cities', role: 'listbox', hidden: true }, t('li', 'Bern', { role: 'option' })),
+      ),
+    contract: async (page) => {
+      await page.getByRole('combobox', { name: 'City' }).focus();
+      await pressed(page, 'ArrowDown');
+      assert(await page.getByRole('option', { name: 'Bern' }).isVisible(), 'ArrowDown did not open the list');
+    },
+  },
+  {
+    id: 'dialog-modal',
+    built: 'native',
+    tree: modalTree('dialog'),
+    contract: (page) => modalContract(page, 'dialog'),
+  },
+  {
+    id: 'disclosure',
+    built: 'native',
+    tree: () => n('details', {}, t('summary', 'More'), t('p', 'Hidden text')),
+    contract: async (page) => {
+      await page.locator('summary').focus();
+      await pressed(page, 'Enter');
+      assert(await page.getByText('Hidden text').isVisible(), 'Enter did not show the content');
+    },
+  },
+  {
+    id: 'feed',
+    built: 'aria-only',
+    tree: () =>
+      n(
+        'div',
+        { role: 'feed', 'aria-label': 'News' },
+        t('article', 'One', { tabIndex: 0, 'aria-posinset': 1, 'aria-setsize': 2 }),
+        t('article', 'Two', { tabIndex: 0, 'aria-posinset': 2, 'aria-setsize': 2 }),
+      ),
+    contract: async (page) => {
+      await page.getByRole('article').nth(0).focus();
+      await pressed(page, 'PageDown');
+      const focused = await page.evaluate(() => document.activeElement?.textContent);
+      assert(focused === 'Two', 'Page Down did not move to the next article');
+    },
+  },
+  {
+    id: 'grid',
+    built: 'aria-only',
+    tree: () =>
+      n(
+        'table',
+        { role: 'grid', 'aria-label': 'Prices' },
+        n('tbody', {}, n('tr', {}, t('td', 'A1', { tabIndex: 0 }), t('td', 'A2', { tabIndex: -1 }))),
+      ),
+    contract: async (page) => {
+      await page.getByRole('gridcell', { name: 'A1' }).focus();
+      await pressed(page, 'ArrowRight');
+      const focused = await page.evaluate(() => document.activeElement?.textContent);
+      assert(focused === 'A2', 'ArrowRight did not move to the next cell');
+    },
+  },
+  {
+    id: 'landmarks',
+    built: 'native',
+    tree: () =>
+      n(
+        'div',
+        {},
+        t('header', 'Top'),
+        t('nav', 'Links', { 'aria-label': 'Main' }),
+        t('main', 'Content'),
+        t('aside', 'Related', { 'aria-label': 'Related' }),
+        t('footer', 'Bottom'),
+      ),
+    contract: async (page) => {
+      for (const role of ['banner', 'navigation', 'main', 'complementary', 'contentinfo'] as const) {
+        assert(await page.getByRole(role).isVisible(), `no ${role} landmark`);
+      }
+    },
+  },
+  {
+    id: 'link',
+    built: 'native',
+    tree: () => n('div', {}, t('a', 'Jump', { href: '#target' }), t('p', 'Target', { id: 'target' })),
+    contract: async (page) => {
+      await page.getByRole('link', { name: 'Jump' }).focus();
+      await pressed(page, 'Enter');
+      assert(page.url().endsWith('#target'), 'Enter did not follow the link');
+    },
+  },
+  {
+    id: 'listbox',
+    built: 'native',
+    tree: () =>
+      n(
+        'select',
+        { size: 3, 'aria-label': 'Size' },
+        t('option', 'Small', { value: 's' }),
+        t('option', 'Large', { value: 'l' }),
+      ),
+    contract: async (page) => {
+      const box = page.getByRole('listbox', { name: 'Size' });
+      await box.focus();
+      await pressed(page, 'ArrowDown');
+      await pressed(page, 'ArrowDown');
+      const value = await box.inputValue();
+      assert(value === 'l', `ArrowDown selected ${JSON.stringify(value)}`);
+    },
+  },
+  {
+    id: 'menubar',
+    built: 'aria-only',
+    tree: () => roving('menubar', ['File', 'Edit'], 'menuitem', 'Main'),
+    contract: async (page) => {
+      await page.getByRole('menuitem', { name: 'File' }).focus();
+      await pressed(page, 'ArrowRight');
+      assert((await page.evaluate(() => document.activeElement?.textContent)) === 'Edit', 'ArrowRight did not move');
+    },
+  },
+  {
+    id: 'menu-button',
+    built: 'native',
+    tree: () =>
+      n(
+        'div',
+        {},
+        t('button', 'Actions', { popovertarget: 'menu', 'aria-haspopup': 'menu' }),
+        n(
+          'div',
+          { id: 'menu', popover: 'auto', role: 'menu' },
+          t('button', 'Copy', { role: 'menuitem', autoFocus: true }),
+          t('button', 'Paste', { role: 'menuitem' }),
+        ),
+      ),
+    contract: async (page) => {
+      await page.getByRole('button', { name: 'Actions' }).focus();
+      await pressed(page, 'Enter');
+      assert(await page.getByRole('menu').isVisible(), 'Enter did not open the menu');
+      assert((await page.evaluate(() => document.activeElement?.textContent)) === 'Copy', 'focus is not on the first item');
+      await pressed(page, 'ArrowDown');
+      assert((await page.evaluate(() => document.activeElement?.textContent)) === 'Paste', 'ArrowDown did not move');
+    },
+  },
+  {
+    id: 'meter',
+    built: 'native',
+    tree: () => n('meter', { value: 3, min: 0, max: 10, 'aria-label': 'Fuel' }),
+    contract: async (page) => {
+      assert(await page.getByRole('meter', { name: 'Fuel' }).isVisible(), 'no meter in the accessibility tree');
+    },
+  },
+  {
+    id: 'radio',
+    built: 'native',
+    tree: () =>
+      n(
+        'fieldset',
+        {},
+        n('input', { type: 'radio', name: 'size', 'aria-label': 'Small', defaultChecked: true }),
+        n('input', { type: 'radio', name: 'size', 'aria-label': 'Large' }),
+      ),
+    contract: async (page) => {
+      await page.getByRole('radio', { name: 'Small' }).focus();
+      await pressed(page, 'ArrowDown');
+      assert(await page.getByRole('radio', { name: 'Large' }).isChecked(), 'ArrowDown did not move the selection');
+    },
+  },
+  {
+    id: 'slider',
+    built: 'native',
+    tree: () => n('input', { type: 'range', min: 0, max: 10, defaultValue: 5, 'aria-label': 'Volume' }),
+    contract: async (page) => {
+      const slider = page.getByRole('slider', { name: 'Volume' });
+      await slider.focus();
+      await pressed(page, 'ArrowRight');
+      assert((await slider.inputValue()) === '6', 'ArrowRight did not raise the value');
+    },
+  },
+  {
+    id: 'slider-multithumb',
+    built: 'native',
+    tree: () =>
+      n(
+        'div',
+        {},
+        n('input', { type: 'range', min: 0, max: 10, defaultValue: 2, 'aria-label': 'Low' }),
+        n('input', { type: 'range', min: 0, max: 10, defaultValue: 8, 'aria-label': 'High' }),
+      ),
+    contract: async (page) => {
+      const low = page.getByRole('slider', { name: 'Low' });
+      await low.focus();
+      await pressed(page, 'End');
+      const high = await page.getByRole('slider', { name: 'High' }).inputValue();
+      assert(Number(await low.inputValue()) <= Number(high), 'the low thumb passed the high thumb');
+    },
+  },
+  {
+    id: 'spinbutton',
+    built: 'native',
+    tree: () => n('input', { type: 'number', defaultValue: 1, 'aria-label': 'Count' }),
+    contract: async (page) => {
+      const spin = page.getByRole('spinbutton', { name: 'Count' });
+      await spin.focus();
+      await pressed(page, 'ArrowUp');
+      assert((await spin.inputValue()) === '2', 'ArrowUp did not raise the value');
+    },
+  },
+  {
+    id: 'switch',
+    built: 'native',
+    tree: () => n('input', { type: 'checkbox', role: 'switch', 'aria-label': 'Wifi' }),
+    contract: async (page) => {
+      const control = page.getByRole('switch', { name: 'Wifi' });
+      await control.focus();
+      await pressed(page, 'Space');
+      assert(await control.isChecked(), 'Space did not switch it');
+    },
+  },
+  {
+    id: 'table',
+    built: 'native',
+    tree: () =>
+      n(
+        'table',
+        {},
+        t('caption', 'Prices'),
+        n('thead', {}, n('tr', {}, t('th', 'Item'), t('th', 'Price'))),
+        n('tbody', {}, n('tr', {}, t('td', 'Tea'), t('td', '3'))),
+      ),
+    contract: async (page) => {
+      assert(await page.getByRole('table', { name: 'Prices' }).isVisible(), 'no table in the accessibility tree');
+      assert((await page.getByRole('columnheader').count()) === 2, 'no column headers');
+    },
+  },
+  {
+    id: 'tabs',
+    built: 'aria-only',
+    tree: () =>
+      n(
+        'div',
+        {},
+        n(
+          'div',
+          { role: 'tablist', 'aria-label': 'Sections' },
+          t('button', 'One', { role: 'tab', 'aria-selected': 'true', 'aria-controls': 'p1', tabIndex: 0 }),
+          t('button', 'Two', { role: 'tab', 'aria-selected': 'false', 'aria-controls': 'p2', tabIndex: -1 }),
+        ),
+        t('div', 'Panel one', { id: 'p1', role: 'tabpanel' }),
+        t('div', 'Panel two', { id: 'p2', role: 'tabpanel', hidden: true }),
+      ),
+    contract: async (page) => {
+      await page.getByRole('tab', { name: 'One' }).focus();
+      await pressed(page, 'ArrowRight');
+      assert(await page.getByText('Panel two').isVisible(), 'ArrowRight did not change the tab');
+    },
+  },
+  {
+    id: 'toolbar',
+    built: 'aria-only',
+    tree: () =>
+      n(
+        'div',
+        { role: 'toolbar', 'aria-label': 'Format' },
+        t('button', 'Bold', { tabIndex: 0 }),
+        t('button', 'Italic', { tabIndex: -1 }),
+      ),
+    contract: async (page) => {
+      await page.getByRole('button', { name: 'Bold' }).focus();
+      await pressed(page, 'ArrowRight');
+      assert((await page.evaluate(() => document.activeElement?.textContent)) === 'Italic', 'ArrowRight did not move');
+    },
+  },
+  {
+    id: 'tooltip',
+    built: 'aria-only',
+    tree: () =>
+      n(
+        'div',
+        {},
+        t('button', 'Save', { 'aria-describedby': 'tip' }),
+        t('div', 'Saves the page', { id: 'tip', role: 'tooltip', hidden: true }),
+      ),
+    contract: async (page) => {
+      await page.getByRole('button', { name: 'Save' }).focus();
+      await page.waitForTimeout(50);
+      assert(await page.getByRole('tooltip').isVisible(), 'focus did not show the tooltip');
+    },
+  },
+  {
+    id: 'treeview',
+    built: 'aria-only',
+    tree: () =>
+      n(
+        'ul',
+        { role: 'tree', 'aria-label': 'Files' },
+        n(
+          'li',
+          { role: 'treeitem', 'aria-expanded': 'false', tabIndex: 0 },
+          t('span', 'src'),
+          n('ul', { role: 'group', hidden: true }, t('li', 'app.ts', { role: 'treeitem', tabIndex: -1 })),
+        ),
+      ),
+    contract: async (page) => {
+      await page.getByRole('treeitem').first().focus();
+      await pressed(page, 'ArrowRight');
+      assert(await page.getByText('app.ts').isVisible(), 'ArrowRight did not expand the node');
+    },
+  },
+  {
+    id: 'treegrid',
+    built: 'aria-only',
+    tree: () =>
+      n(
+        'table',
+        { role: 'treegrid', 'aria-label': 'Mail' },
+        n(
+          'tbody',
+          {},
+          n('tr', { 'aria-expanded': 'false', 'aria-level': 1, tabIndex: 0 }, t('td', 'Thread')),
+          n('tr', { 'aria-level': 2, hidden: true, tabIndex: -1 }, t('td', 'Reply')),
+        ),
+      ),
+    contract: async (page) => {
+      await page.getByRole('row').first().focus();
+      await pressed(page, 'ArrowRight');
+      assert(await page.getByText('Reply').isVisible(), 'ArrowRight did not expand the row');
+    },
+  },
+  {
+    id: 'windowsplitter',
+    built: 'aria-only',
+    tree: () =>
+      n('div', {
+        role: 'separator',
+        tabIndex: 0,
+        'aria-orientation': 'vertical',
+        'aria-label': 'Resize',
+        'aria-valuenow': 50,
+        'aria-valuemin': 0,
+        'aria-valuemax': 100,
+      }),
+    contract: async (page) => {
+      await page.getByRole('separator').focus();
+      await pressed(page, 'ArrowLeft');
+      const value = await attr(page, '[role="separator"]', 'aria-valuenow');
+      assert(value !== '50', 'ArrowLeft did not change the value');
+    },
+  },
+];
+
+/** Every tag and prop a tree uses, for the columns that follow from the elementwise ones. */
+export function treeVocabulary(root: ComponentNode): { tags: Set<string>; props: Set<string> } {
+  const tags = new Set<string>();
+  const props = new Set<string>();
+  const walk = (node: ComponentNode) => {
+    tags.add(node.type);
+    for (const key of Object.keys(node.props ?? {})) if (key !== 'children') props.add(key);
+    node.children?.forEach(walk);
+  };
+  walk(root);
+  return { tags, props };
+}

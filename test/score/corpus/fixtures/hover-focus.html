@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hover and focus</title>
+<style>
+  .page { font: 16px/1.5 Arial, sans-serif; color: #1f2937; padding: 24px; display: flex; gap: 16px; align-items: center; }
+  .btn { background: #1d4ed8; color: #fff; border: 0; border-radius: 6px; padding: 12px 20px; font: inherit; cursor: pointer; }
+  .btn:hover { background: #1e3a8a; }
+  .btn:active { background: #172554; }
+  .btn:focus-visible { outline: 3px solid #f59e0b; outline-offset: 2px; }
+  .field { border: 1px solid #9ca3af; border-radius: 6px; padding: 10px 12px; font: inherit; }
+  .field:focus { border-color: #1d4ed8; outline: none; box-shadow: 0 0 0 3px #bfdbfe; }
+</style>
+</head>
+<body style="margin:0">
+<div class="page" data-parity-id="page">
+  <button class="btn" data-parity-id="button">Save</button>
+  <input class="field" data-parity-id="field" aria-label="Name">
+</div>
+</body>
+</html>

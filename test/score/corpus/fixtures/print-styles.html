@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Print styles</title>
+<style>
+  .page { font: 16px/1.5 Arial, sans-serif; color: #374151; background: #f3f4f6; padding: 24px; }
+  .bar { background: #1d4ed8; color: #fff; padding: 12px; margin: 0 0 16px; }
+  .body { margin: 0; }
+  @media print {
+    .page { color: #000; background: #fff; padding: 0; }
+    .bar { display: none; }
+  }
+</style>
+</head>
+<body style="margin:0">
+<div class="page" data-parity-id="page">
+  <div class="bar" data-parity-id="bar">Share this page</div>
+  <p class="body" data-parity-id="body">The article text that belongs on paper.</p>
+</div>
+</body>
+</html>

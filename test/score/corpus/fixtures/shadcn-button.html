@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>shadcn/ui button</title>
+<!-- The classes of src/components/ui/button.tsx (default size), written out as
+     the CSS they compile to, with the neutral theme's colours as plain values. -->
+<style>
+  .page { font: 16px/1.5 Arial, sans-serif; padding: 24px; display: flex; flex-wrap: wrap; gap: 12px; }
+  .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap; border-radius: 6px; font-size: 14px; line-height: 20px; font-weight: 500; font-family: inherit; height: 36px; padding: 8px 16px; box-sizing: border-box; border: 0; outline: none; flex-shrink: 0; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+  .default { background: #171717; color: #fafafa; }
+  .default:hover { background: rgba(23,23,23,0.9); }
+  .outline { background: #fff; color: #171717; border: 1px solid #e5e5e5; }
+  .outline:hover { background: #f5f5f5; }
+  .destructive { background: #dc2626; color: #fff; }
+  .destructive:hover { background: rgba(220,38,38,0.9); }
+  .button:focus-visible { box-shadow: 0 0 0 3px rgba(161,161,161,0.5); }
+  .button:disabled { pointer-events: none; opacity: 0.5; }
+</style>
+</head>
+<body style="margin:0">
+<div class="page" data-parity-id="page">
+  <button class="button default" data-parity-id="default">Continue</button>
+  <button class="button outline" data-parity-id="outline">Cancel</button>
+  <button class="button destructive" data-parity-id="destructive">Delete</button>
+  <button class="button default" data-parity-id="disabled" disabled>Disabled</button>
+</div>
+</body>
+</html>

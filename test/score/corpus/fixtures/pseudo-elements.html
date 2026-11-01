@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pseudo-elements</title>
+<style>
+  .page { font: 16px/1.5 Arial, sans-serif; color: #1f2937; padding: 24px; }
+  .quote { position: relative; padding-left: 28px; margin: 0 0 16px; }
+  .quote::before { content: "\201C"; position: absolute; left: 0; top: -8px; font-size: 40px; color: #1d4ed8; }
+  .badge { display: inline-block; padding: 4px 8px; background: #fef3c7; border-radius: 4px; }
+  .badge::after { content: " new"; font-weight: 700; color: #b45309; }
+  .list { margin: 16px 0 0; }
+  .list li::marker { color: #dc2626; }
+  .drop::first-letter { font-size: 2em; font-weight: 700; }
+</style>
+</head>
+<body style="margin:0">
+<div class="page" data-parity-id="page">
+  <blockquote class="quote" data-parity-id="quote">Good design is honest.</blockquote>
+  <span class="badge" data-parity-id="badge">Feature</span>
+  <ul class="list" data-parity-id="list">
+    <li data-parity-id="item">One point</li>
+  </ul>
+  <p class="drop" data-parity-id="drop">Once upon a time.</p>
+</div>
+</body>
+</html>
