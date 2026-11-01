@@ -82,6 +82,8 @@ const COLUMN_OVERRIDES: Record<string, string> = {
   'shop_mail.status': "Generated<'pending' | 'sent' | 'blocked' | 'failed'>",
   // Nullable JSONB, written through toJsonb (or null) and read parsed.
   'shop_mail.letter': 'ColumnType<Record<string, unknown> | null, JsonbWrite | null, JsonbWrite | null>',
+  // 025_commerce_job: a TEXT column with a CHECK vocabulary (no enum type). `kind` stays a string: it has no CHECK.
+  'commerce_job.status': "Generated<'pending' | 'running' | 'done' | 'dead'>",
 };
 
 /** Named types the overrides above refer to, emitted with the scalar aliases. */
@@ -114,6 +116,8 @@ const JSON_COLUMNS: Record<string, string> = {
   'order_payment.buyer': 'Record<string, unknown>',
   // 023_shop_mail: the template ids of the company's workspace, by name.
   'shop_mail_connection.template_ids': 'Record<string, string>',
+  // 025_commerce_job: ids and cursors, parsed by a per-kind schema at claim (src/server/commerce/jobs).
+  'commerce_job.payload': 'Record<string, unknown>',
 };
 
 /** The type-only imports the JSON shapes need. */
@@ -185,6 +189,8 @@ const TABLE_DOCS: Record<string, string> = {
   shop_mail_connection:
     "023_shop_mail: the company's Lumitra Mail workspace for the receipt email (the send key sealed).",
   shop_mail: '023_shop_mail: the outbox, one row per order and kind of mail.',
+  commerce_job:
+    "025_commerce_job: the shop's durable work, written in the transaction that needs it and claimed under a\nlease (src/server/commerce/jobs). `run_at` is when it is due and, while running, when its lease ends.",
   books_product:
     '015_books_products: an item of the company\'s product and service list. Mutable,\narchived instead of deleted; draft lines copy its values and never reference it.\n`name_key` and `search_text` are folded by the repository (src/lib/books/searchKey.ts).',
 };

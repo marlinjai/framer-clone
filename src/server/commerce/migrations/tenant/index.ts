@@ -24,6 +24,7 @@ import { orderPayment } from './021_order_payment';
 import { paymentAccount } from './022_payment_account';
 import { shopMail } from './023_shop_mail';
 import { receiptPaidOn } from './024_receipt_paid_on';
+import { commerceJob } from './025_commerce_job';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -120,6 +121,11 @@ import { receiptPaidOn } from './024_receipt_paid_on';
  *   022_payment_account    : the company's connected payment account (Stripe
  *                            Connect), one per company and provider, its account
  *                            id fixed once set (BK020)
+ *   023_shop_mail          : the company's Lumitra Mail workspace and the receipt
+ *                            email's outbox
+ *   024_receipt_paid_on    : the day a shop receipt was paid
+ *   025_commerce_job       : the shop's durable work (commerce_job): written in the
+ *                            transaction that needs it, claimed under a lease
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -147,4 +153,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   paymentAccount,
   shopMail,
   receiptPaidOn,
+  commerceJob,
 ];
