@@ -11,15 +11,19 @@
 //      failed (the Books not set up yet) is issued on the next delivery once they are;
 //   4. late (re-entry): an expired payment released its stock; a late success with the stock still there is
 //      paid and gets its receipt, with the stock gone it is refunded and the order stays closed.
+// The expiry sweep on its own: two sweeps at once release once (each truly waiting on the same payment row), a
+// payment racing a sweep ends paid with its stock held, and one payment that cannot be closed keeps no other
+// from closing.
 // All data is synthetic.
 
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { sql } from 'kysely';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { catalogRepository } from '../../repository/catalog';
 import { pricingRepository } from '../../repository/pricing';
 import { createOrder } from '../../order/createOrder';
-import { handlePaymentEvent, platformFee, sweepExpiredPayments, type PaymentDeps } from '../payments';
+import { ExpirySweepError, handlePaymentEvent, platformFee, sweepExpiredPayments, type PaymentDeps } from '../payments';
 import { demoProvider, type PaymentEvent, type PaymentProvider } from '../provider';
 import { berlinDay, ensureReceipt } from '../receipt';
 import type { BuyerInput } from '../buyer';
@@ -389,6 +393,177 @@ describe('paying an order and its receipt', () => {
     // Delivered again: nothing changes, no second refund.
     expect((await handlePaymentEvent(shop.deps, late)).duplicate).toBe(true);
     expect(shop.refunds).toHaveLength(1);
+  });
+});
+
+describe('the expiry sweep', () => {
+  const WINDOW_RAN_OUT = 31 * 60 * 1000;
+  const runOutWindow = () => {
+    shop.clock.now = new Date(shop.clock.now.getTime() + WINDOW_RAN_OUT);
+  };
+
+  async function ledger(orderId: string) {
+    const events = await env.ownerDb.selectFrom('payment_event').select('event_id').where('order_id', '=', orderId).execute();
+    const releases = await env.ownerDb
+      .selectFrom('stock_movement')
+      .select('quantity')
+      .where('movement_type', '=', 'release')
+      .where('ref_id', '=', orderId)
+      .execute();
+    return { events: events.map((e) => e.event_id), released: releases.map((r) => r.quantity) };
+  }
+
+  /**
+   * Run `calls` while another transaction holds the payment row, and let go only once `calls.length` of them wait
+   * on it. Every caller has then passed its own read of what is due and arrives at the lock at the same moment:
+   * the overlap is forced, not left to the scheduler.
+   */
+  async function raceOnPaymentRow<T>(orderId: string, calls: Array<() => Promise<T>>): Promise<T[]> {
+    let waiting: Promise<T[]> | undefined;
+    await env.ownerDb.transaction().execute(async (trx) => {
+      await trx.selectFrom('order_payment').select('order_id').where('order_id', '=', orderId).forUpdate().execute();
+      waiting = Promise.all(calls.map((call) => call()));
+      // The first waiter queues on this transaction, the others on the row's tuple lock behind it.
+      await vi.waitFor(
+        async () => {
+          const blocked = await sql<{ n: number }>`
+            SELECT count(*)::int AS n FROM pg_locks
+             WHERE NOT granted
+               AND (transactionid = pg_current_xact_id()::xid
+                    OR (locktype = 'tuple' AND relation = to_regclass(${`"${env.schema}".order_payment`})))
+          `.execute(trx);
+          expect(blocked.rows[0].n).toBe(calls.length);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+    });
+    return waiting as Promise<T[]>;
+  }
+
+  it('forward: closes only what ran out, and a second sweep changes nothing', async () => {
+    const ring = await stockedRing(3);
+    const abandoned = await placeOrder(ring);
+    runOutWindow();
+    const live = await placeOrder(ring);
+
+    expect(await sweepExpiredPayments(shop.deps, shop.company)).toEqual([abandoned]);
+    expect(await sweepExpiredPayments(shop.deps, shop.company)).toEqual([]);
+    expect((await payment(abandoned)).status).toBe('expired');
+    expect((await payment(live)).status).toBe('pending');
+    expect(await reserved(ring.item)).toBe(1);
+    expect(await ledger(abandoned)).toEqual({ events: [`expiry:${abandoned}`], released: [1] });
+  });
+
+  it('two sweeps at once release once, even with other holds on the same stock to over-release into', async () => {
+    const ring = await stockedRing(5);
+    const abandoned = await placeOrder(ring, 2);
+    runOutWindow();
+    const live = await placeOrder(ring, 2);
+
+    const answers = await raceOnPaymentRow(abandoned, [
+      () => sweepExpiredPayments(shop.deps, shop.company),
+      () => sweepExpiredPayments(shop.deps, shop.company),
+    ]);
+    expect(answers.flat()).toEqual([abandoned]);
+    expect(await reserved(ring.item)).toBe(2);
+    expect((await payment(live)).status).toBe('pending');
+    expect(await ledger(abandoned)).toEqual({ events: [`expiry:${abandoned}`], released: [2] });
+  });
+
+  it('the same expiry event delivered twice at once: exactly one takes effect', async () => {
+    const ring = await stockedRing(2);
+    const orderId = await placeOrder(ring);
+    const expiry = event(orderId, 'checkout_expired', { eventId: `expiry:${orderId}` });
+
+    const outcomes = await raceOnPaymentRow(orderId, [
+      () => handlePaymentEvent(shop.deps, expiry),
+      () => handlePaymentEvent(shop.deps, expiry),
+    ]);
+    expect(outcomes.map((o) => o.duplicate).sort()).toEqual([false, true]);
+    expect(outcomes.map((o) => o.status)).toEqual(['expired', 'expired']);
+    expect(await reserved(ring.item)).toBe(0);
+    expect(await ledger(orderId)).toEqual({ events: [`expiry:${orderId}`], released: [1] });
+  });
+
+  it('a success racing a sweep ends paid with its stock held, whichever wins the row', async () => {
+    const ring = await stockedRing(2);
+    const orderId = await placeOrder(ring);
+    runOutWindow();
+
+    await raceOnPaymentRow<unknown>(orderId, [
+      () => sweepExpiredPayments(shop.deps, shop.company),
+      () => handlePaymentEvent(shop.deps, event(orderId, 'payment_succeeded')),
+    ]);
+    expect((await payment(orderId)).status).toBe('paid');
+    expect(await reserved(ring.item)).toBe(1);
+    expect(await receiptsOf(orderId)).toHaveLength(1);
+    expect(shop.refunds).toEqual([]);
+  });
+
+  it('re-entry: a sweep gave the unit to another buyer, the late success is refunded and the new order stands', async () => {
+    const ring = await stockedRing(1);
+    const abandoned = await placeOrder(ring);
+    runOutWindow();
+    await sweepExpiredPayments(shop.deps, shop.company);
+    const next = await placeOrder(ring);
+
+    const late = await handlePaymentEvent(shop.deps, event(abandoned, 'payment_succeeded'));
+    expect(late).toMatchObject({ status: 'refunded', receiptDocumentId: null });
+    expect(await payment(abandoned)).toMatchObject({ status: 'refunded', failure_code: 'stock_gone' });
+    expect(shop.refunds).toEqual([`demo_pi_${abandoned}`]);
+    expect((await payment(next)).status).toBe('pending');
+    expect(await reserved(ring.item)).toBe(1);
+  });
+
+  it('resume: a late success keeps its stock, and later sweeps never release it', async () => {
+    const ring = await stockedRing(2);
+    const orderId = await placeOrder(ring);
+    runOutWindow();
+    await sweepExpiredPayments(shop.deps, shop.company);
+    await handlePaymentEvent(shop.deps, event(orderId, 'payment_succeeded'));
+
+    runOutWindow();
+    expect(await sweepExpiredPayments(shop.deps, shop.company)).toEqual([]);
+    expect((await payment(orderId)).status).toBe('paid');
+    expect(await reserved(ring.item)).toBe(1);
+  });
+
+  it('touches only its own company', async () => {
+    const ring = await stockedRing(2);
+    const orderId = await placeOrder(ring);
+    runOutWindow();
+    const other = await newShop();
+    other.clock.now = shop.clock.now;
+
+    expect(await sweepExpiredPayments(other.deps, other.company)).toEqual([]);
+    expect((await payment(orderId)).status).toBe('pending');
+  });
+
+  it('one payment that cannot be closed keeps no other from closing, is reported, and closes on a later sweep', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const poisoned = await stockedRing(1);
+    const healthy = await stockedRing(1);
+    const stuck = await placeOrder(poisoned);
+    const closes = await placeOrder(healthy);
+    runOutWindow();
+    // The stock level no longer agrees with the hold, so its release is refused.
+    await env.ownerDb.updateTable('inventory_level').set({ reserved_quantity: 0 }).where('inventory_item_id', '=', poisoned.item).execute();
+
+    const failure = await sweepExpiredPayments(shop.deps, shop.company).then(
+      () => null,
+      (err: unknown) => err,
+    );
+    expect(failure).toBeInstanceOf(ExpirySweepError);
+    expect(failure).toMatchObject({ closed: [closes], failed: [stuck] });
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining(stuck), expect.anything());
+    expect((await payment(closes)).status).toBe('expired');
+    // Nothing of the failed close stuck: no event, so the next sweep tries it afresh.
+    expect(await payment(stuck)).toMatchObject({ status: 'pending' });
+    expect((await ledger(stuck)).events).toEqual([]);
+
+    await env.ownerDb.updateTable('inventory_level').set({ reserved_quantity: 1 }).where('inventory_item_id', '=', poisoned.item).execute();
+    expect(await sweepExpiredPayments(shop.deps, shop.company)).toEqual([stuck]);
+    logged.mockRestore();
   });
 });
 

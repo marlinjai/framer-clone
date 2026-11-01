@@ -17,7 +17,10 @@
 //      (409 { ok:false, shortages }) and the whole order rolls back,
 //   4. a host that does not resolve to a published site is a 403 (D4),
 //   5. the route carries the host gate and NO payment/Stripe code (checkout
-//      STOPS at order-created) and no session/withTenant seam.
+//      STOPS at order-created) and no session/withTenant seam,
+//   6. an abandoned hold ends at its window: an expired payment is closed before
+//      the next order reserves, so it can never read as a shortage, while a hold
+//      still inside its window keeps its stock.
 //
 // Cross-tenant isolation is proven separately in
 // src/app/api/commerce/__tests__/routes.isolation.itest.ts.
@@ -152,6 +155,91 @@ describe('POST /api/commerce/orders on the tenant schema (Dockerized Postgres)',
     expect(res.status).toBe(403);
     expect((await res.json()).error.code).toBe('forbidden');
     expect(await countInSchema(fx, tenant.schema, 'order')).toBe(ordersBefore);
+  });
+});
+
+describe('an abandoned hold on the last unit', () => {
+  const lastUnit = () => seedBuyableVariant(1000, 1);
+
+  async function place(variantId: string, idempotencyKey?: string) {
+    const res = await postOrder({ lines: [{ variantId, quantity: 1 }], idempotencyKey });
+    return { status: res.status, body: (await res.json()) as { orderId: string } };
+  }
+
+  /** The buyer's window ran out while nobody touched the order (the clock moved, nothing else). */
+  async function letWindowRunOut(orderId: string) {
+    await tenant.db
+      .updateTable('order_payment')
+      .set({ expires_at: new Date(Date.now() - 60_000) })
+      .where('order_id', '=', orderId)
+      .execute();
+  }
+
+  async function reserved(inventoryItemId: string) {
+    const level = await tenant.db
+      .selectFrom('inventory_level')
+      .select('reserved_quantity')
+      .where('inventory_item_id', '=', inventoryItemId)
+      .executeTakeFirstOrThrow();
+    return level.reserved_quantity;
+  }
+
+  async function paymentStatus(orderId: string) {
+    const row = await tenant.db
+      .selectFrom('order_payment')
+      .select('status')
+      .where('order_id', '=', orderId)
+      .executeTakeFirstOrThrow();
+    return row.status;
+  }
+
+  it('forward: the next buyer gets the unit, never a 409 for a hold that ran out', async () => {
+    const seeded = await lastUnit();
+    const abandoned = await place(seeded.variantId);
+    expect(abandoned.status).toBe(201);
+    await letWindowRunOut(abandoned.body.orderId);
+
+    const next = await place(seeded.variantId);
+    expect(next.status).toBe(201);
+    expect(next.body.orderId).not.toBe(abandoned.body.orderId);
+    expect(await paymentStatus(abandoned.body.orderId)).toBe('expired');
+    expect(await paymentStatus(next.body.orderId)).toBe('pending');
+    // One hold: the new order's, the old one was given back exactly once.
+    expect(await reserved(seeded.inventoryItemId)).toBe(1);
+    const events = await tenant.db
+      .selectFrom('payment_event')
+      .select(['event_id', 'event_type'])
+      .where('order_id', '=', abandoned.body.orderId)
+      .execute();
+    expect(events).toEqual([{ event_id: `expiry:${abandoned.body.orderId}`, event_type: 'checkout_expired' }]);
+  });
+
+  it('a hold still inside its window keeps its stock: the next buyer is told the truth', async () => {
+    const seeded = await lastUnit();
+    const holding = await place(seeded.variantId);
+    expect(holding.status).toBe(201);
+
+    expect((await place(seeded.variantId)).status).toBe(409);
+    expect(await paymentStatus(holding.body.orderId)).toBe('pending');
+    expect(await reserved(seeded.inventoryItemId)).toBe(1);
+  });
+
+  it('re-entry: the same attempt sent again answers its closed order, and takes no stock with it', async () => {
+    const seeded = await lastUnit();
+    const key = `attempt-${randomUUID()}`;
+    const first = await place(seeded.variantId, key);
+    await letWindowRunOut(first.body.orderId);
+
+    // The checkout's idempotency key: the same order comes back, closed (paying it answers payment_closed and
+    // the checkout starts over with a new key), and the unit it gave up stays free.
+    const again = await place(seeded.variantId, key);
+    expect(again.status).toBe(201);
+    expect(again.body.orderId).toBe(first.body.orderId);
+    expect(await paymentStatus(first.body.orderId)).toBe('expired');
+    expect(await reserved(seeded.inventoryItemId)).toBe(0);
+
+    expect((await place(seeded.variantId, `attempt-${randomUUID()}`)).status).toBe(201);
+    expect(await reserved(seeded.inventoryItemId)).toBe(1);
   });
 });
 

@@ -24,7 +24,11 @@
 // Stripe, and NO redirect to pay anywhere in this route. The storefront's
 // fake-pay demo step runs CLIENT-side after this seam (it never calls this
 // route), and a real provider would plug in behind its own payment route, not
-// here. A successful order is the end of THIS seam.
+// here. A successful order is the end of THIS seam. Its one touch of payments:
+// before reserving it closes this company's payments whose window ran out, so an
+// abandoned hold can never read as a shortage. A sweep that fails is logged and
+// the order goes on: the guarded reserve still protects the stock, and the
+// scheduled sweep (src/server/commerce/payment/expirySweep.ts) tries again.
 //
 // IDEMPOTENCY: the client MAY send its own `idempotencyKey` (one per checkout
 // attempt). It becomes the order's request_id, so a double-submit or a
@@ -60,7 +64,8 @@ import { z } from 'zod';
 import { createOrder, type Cart } from '@/server/commerce/order/createOrder';
 import { buyerSchema } from '@/server/commerce/payment/buyer';
 import { shopTaxProfile } from '@/server/commerce/payment/shopTax';
-import { configuredStripeApi } from '@/server/commerce/payment/deps';
+import { configuredStripeApi, paymentDeps } from '@/server/commerce/payment/deps';
+import { sweepExpiredPayments } from '@/server/commerce/payment/payments';
 import { readAccount } from '@/server/commerce/payment/stripe/connect';
 import { UnknownVariantError } from '@/server/commerce/repository/errors';
 import { readOrderTotal, resolveOrderLines } from '@/server/commerce/repository/storefront';
@@ -195,6 +200,14 @@ export async function POST(req: Request): Promise<Response> {
       // The payment, pending for the payment window (021_order_payment).
       payment: { provider, buyer: buyer ?? null },
     };
+
+    // An expired hold gives its stock back first. Not a condition of this order: a buyer is never turned away
+    // because the sweep failed, at worst they see the shortage the failed sweep left behind.
+    try {
+      await sweepExpiredPayments(paymentDeps(db, tenantGroupId, companyId), companyId);
+    } catch (err) {
+      console.error(`[payments] company ${companyId}: the sweep before an order failed, placing it anyway:`, err);
+    }
 
     // b6 createOrder runs the whole order inside ONE READ COMMITTED
     // transaction on the scoped handle and reserves each line through b3's

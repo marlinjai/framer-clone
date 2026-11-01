@@ -1,0 +1,12 @@
+# /etc/systemd/system/framer-clone-commerce-expired-payments.timer
+[Unit]
+Description=framer-clone commerce: close expired payments every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
