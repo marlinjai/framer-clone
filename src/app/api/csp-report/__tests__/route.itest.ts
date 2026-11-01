@@ -104,7 +104,7 @@ describe('POST /api/csp-report', () => {
         headers: { host: site.host, 'content-type': 'application/csp-report', ...headers },
         body: JSON.stringify({ 'csp-report': { 'effective-directive': 'img-src', 'blocked-uri': 'https://through.example/a.png' } }),
       });
-    const markings = [
+    const markings: Record<string, string>[] = [
       { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'no-cors', origin: `https://${site.host}` },
       { 'sec-fetch-site': 'cross-site' },
       { origin: 'null' },
