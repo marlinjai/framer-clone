@@ -1296,6 +1296,9 @@ export async function renderTemplate(
   const pdf = await PDFDocument.create({ updateMetadata: false });
   pdf.registerFontkit(fontkit);
   const subset = EMBED_SUBSET[doc.theme.fontFamily];
+  // Every render parses its faces anew, and that is required: about 40% of a render's time, but fontkit caches each
+  // glyph with the code points of its first use and pdf-lib writes those into the ToUnicode map. One parsed face shared
+  // between renders would make a document's bytes depend on what the process drew before (engineFontHistory.test.ts).
   const fonts: Fonts = {
     // Subset where the subsetter is proven to keep every glyph's outline (fonts.ts EMBED_SUBSET).
     regular: await pdf.embedFont(fontBytes.regular, { subset }),

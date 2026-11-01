@@ -89,7 +89,9 @@ function documentIn(family: (typeof FONT_FAMILIES)[number]) {
   return doc;
 }
 
-describe('every printed glyph has an outline in the embedded font', () => {
+// A Noto render embeds and deflates its whole faces (EMBED_SUBSET): up to 800 ms a test beside other suites, and that
+// time has been seen to rise fourfold on a loaded machine, so the 5s default leaves too little room.
+describe('every printed glyph has an outline in the embedded font', { timeout: 30_000 }, () => {
   it('the check finds the defect: pdf-lib subsetting Noto embeds empty glyphs', async () => {
     const pdf = await PDFDocument.create({ updateMetadata: false });
     pdf.registerFontkit(fontkit);

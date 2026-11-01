@@ -77,7 +77,10 @@ describe('stored template documents', () => {
   });
 });
 
-describe('the save gate', () => {
+// A valid structure costs eight full renders per templateProblems call, each read back as text: about 60 ms a render
+// alone on a free core (DejaVu Sans), 2 to 5 times that beside other suites, and up to 24 renders in one test here. The
+// time cannot be cut: the faces must be parsed per render (engineFontHistory.test.ts), so the 5s default is too tight.
+describe('the save gate', { timeout: 30_000 }, () => {
   it.each(PRESETS)('passes the %s preset against every probe document', async (name) => {
     expect(await templateProblems(preset(name))).toEqual([]);
     expect(PROBE_NAMES).toHaveLength(8);
@@ -272,8 +275,7 @@ describe('the save gate', () => {
       ],
     });
     expect(await templateProblems(tall)).toContainEqual(expect.objectContaining({ code: 'LAYOUT_PROBLEM', field: 'BLOCK_TOO_TALL', blockId: 'row' }));
-    // Three full template renders (one is a multi-page block): well over the 5s default on a loaded CI runner.
-  }, 30_000);
+  });
 
   it('names the probe and the field a template would lose', async () => {
     // A broken engine that drops the footer: the sender's tax ids go missing on every probe.
