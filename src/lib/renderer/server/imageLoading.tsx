@@ -13,7 +13,11 @@
 //     that photo is preloaded with high priority instead (HeroPreload, which
 //     calls ReactDOM.preload during the server render, so the hint lands in
 //     <head>). `fetchpriority` cannot apply to a CSS background.
-//   - Every other img gets `loading="lazy"` and `decoding="async"`.
+//   - Every other img gets `loading="lazy"` and `decoding="async"`, except that an
+//     image from another host is not lazy: its request would tell that host how
+//     far a visitor read, and a page can hold one a model was fed. The stock photo
+//     host stays lazy: the generator only keeps those with their credit, and up to
+//     twelve per page would otherwise all load at once.
 //   - A value the author set explicitly (`loading`, `decoding`,
 //     `fetchPriority`) is kept.
 //
@@ -45,6 +49,17 @@ function pixels(value: unknown): number | null {
     if (m) return Number(m[1]);
   }
   return null;
+}
+
+/** Whether an image's request may wait for the visitor to scroll: this site, or the stock photo host. */
+function mayLoadLazily(src: unknown): boolean {
+  if (typeof src !== 'string') return true;
+  try {
+    const { hostname } = new URL(src, 'https://site.invalid');
+    return hostname === 'site.invalid' || hostname === 'images.unsplash.com';
+  } catch {
+    return false;
+  }
 }
 
 function isImg(node: ComponentNode): boolean {
@@ -98,7 +113,7 @@ function withLoading(node: ComponentNode, hero: ComponentNode | null): Component
       // Never lazy: an explicit lazy on the hero would delay the first paint.
       if (props.loading === 'lazy') delete props.loading;
     } else {
-      if (props.loading === undefined) props.loading = 'lazy';
+      if (props.loading === undefined && mayLoadLazily(props.src)) props.loading = 'lazy';
       if (props.decoding === undefined) props.decoding = 'async';
     }
     next = { ...node, props };

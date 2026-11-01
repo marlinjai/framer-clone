@@ -29,7 +29,7 @@ function review(property: string, value: unknown) {
 }
 
 describe('F1: an id cannot clobber a global the platform boots from', () => {
-  it.each(['__next_f', 'webpackChunk_N_E', '__NEXT_DATA__', 'fc-consent', 'fc-fx-start', 'ground-wrapper-x', 'Pricing', '1a', ''])('refuses %j', (id) => {
+  it.each(['__next_f', 'webpackChunk_N_E', '__NEXT_DATA__', 'fc-consent', 'fc-fx-start', 'ground-wrapper-x', 'Pricing', '1a', '', 'fcConsent-x'])('refuses %j', (id) => {
     expect(propsOf('div', { id, children: 'x' })).toEqual({ children: 'x' });
   });
 
@@ -105,6 +105,146 @@ describe('F2: use expansion', () => {
   });
 });
 
+describe('second round R1: one spelling for every attribute', () => {
+  it('drops the bomb whose heavy groups say ID', () => {
+    const uses = (id: string) => Array.from({ length: 10 }, () => ({ type: 'use', props: { href: `#${id}` } }));
+    const groups: unknown[] = [{ type: 'g', props: { ID: 'a0' }, children: [{ type: 'rect' }] }, { type: 'g', props: { id: 'a0' } }];
+    for (let i = 1; i <= 6; i++) groups.push({ type: 'g', props: { ID: `a${i}` }, children: uses(`a${i - 1}`) }, { type: 'g', props: { id: `a${i}` } });
+    const svg = { type: 'svg', children: [{ type: 'defs', children: groups }, { type: 'use', props: { href: '#a6' } }] };
+    expect(forest([{ type: 'p' }, svg]).nodes.map((n) => n.type)).toEqual(['p']);
+  });
+
+  it('stores one key whatever the case the model wrote', () => {
+    expect(propsOf('div', { ID: 'a', TABINDEX: 0, LANG: 'de' })).toEqual({ id: 'a', tabIndex: 0, lang: 'de' });
+    expect(inSvg('rect', { 'stroke-width': 2, STROKEWIDTH: 3 })).toEqual({ strokeWidth: 3 });
+    expect(inSvg('feGaussianBlur', { STDDEVIATION: 2 })).toEqual({ stdDeviation: 2 });
+    expect(one({ type: 'svg', props: { VIEWBOX: '0 0 1 1' } }).props).toEqual({ viewBox: '0 0 1 1' });
+  });
+});
+
+describe('second round R3: ids under svg belong to one generation', () => {
+  const uses = (id: string, count: number) => Array.from({ length: count }, () => ({ type: 'use', props: { href: `#${id}` } }));
+  const chain = (prefix: string, base: string, count: number) => {
+    const groups: unknown[] = [{ type: 'g', props: { id: `${prefix}0` }, children: uses(base, count) }];
+    for (let i = 1; i <= 3; i++) groups.push({ type: 'g', props: { id: `${prefix}${i}` }, children: uses(`${prefix}${i - 1}`, count) });
+    return groups;
+  };
+  const generate = (nodes: unknown[], token: string) => {
+    const outcome = validateGeneration({ nodes }, { breakpoints, newId: () => token });
+    if (!outcome.ok) throw new Error(outcome.errors.join('; '));
+    return outcome.result;
+  };
+
+  it('rewrites an id and every reference to it, and leaves no bare id for a decoy', () => {
+    const svg = generate(
+      [{
+        type: 'svg',
+        children: [
+          { type: 'linearGradient', props: { id: 'paint0_linear_1_2' } },
+          { type: 'rect', props: { fill: 'url(#paint0_linear_1_2)', style: { mask: { base: 'url("#paint0_linear_1_2")' } } } },
+          { type: 'use', props: { href: '#paint0_linear_1_2' } },
+          { type: 'text', props: { 'aria-labelledby': 'paint0_linear_1_2', children: 'x' } },
+        ],
+      }],
+      'abc',
+    ).nodes[0];
+    const [gradient, rect, use, text] = svg.children;
+    expect(gradient.props.id).toBe('paint0_linear_1_2--abc');
+    expect(rect.props.fill).toBe('url(#paint0_linear_1_2--abc)');
+    expect(rect.props.style).toEqual({ mask: { base: 'url("#paint0_linear_1_2--abc")' } });
+    expect(use.props.href).toBe('#paint0_linear_1_2--abc');
+    expect(text.props['aria-labelledby']).toBe('paint0_linear_1_2--abc');
+  });
+
+  it('reaches an svg id from a style outside the svg', () => {
+    const [div] = generate([{ type: 'div', props: { style: { clipPath: 'url(#shape)' } } }, { type: 'svg', children: [{ type: 'clipPath', props: { id: 'shape' } }] }], 'abc').nodes;
+    expect(div.props.style).toEqual({ clipPath: 'url(#shape--abc)' });
+  });
+
+  it('leaves a page anchor alone', () => {
+    const [section] = generate([{ type: 'section', props: { id: 'top' } }, { type: 'svg', children: [{ type: 'a', props: { href: '#top' } }] }], 'abc').nodes;
+    expect(section.props.id).toBe('top');
+  });
+
+  it('does not stack suffixes when a generation echoes an earlier id', () => {
+    const svg = generate([{ type: 'svg', children: [{ type: 'g', props: { id: 'a--old' } }, { type: 'use', props: { href: '#a--old' } }] }], 'new').nodes[0];
+    expect(svg.children[0].props.id).toBe('a--new');
+    expect(svg.children[1].props.href).toBe('#a--new');
+  });
+
+  it('cannot rebuild a chain over three generations: a decoy matches nothing', () => {
+    const first = forest([{ type: 'svg', children: [{ type: 'defs', children: [{ type: 'g', props: { id: 'base' }, children: [{ type: 'rect' }] }, ...chain('p', 'base', 3)] }] }]).nodes[0];
+    const second = forest([{ type: 'p' }, { type: 'svg', children: [{ type: 'defs', children: [{ type: 'g', props: { id: 'p3' } }, ...chain('q', 'p3', 3)] }] }]).nodes;
+    const third = forest([{ type: 'p' }, { type: 'svg', children: [{ type: 'g', props: { id: 'q3' } }, ...chain('r', 'q3', 3), ...uses('r3', 1)] }]).nodes;
+    const ids: string[] = [];
+    const collect = (node: GeneratedNodeSnapshot) => {
+      if (typeof node.props.id === 'string') ids.push(node.props.id);
+      node.children.forEach(collect);
+    };
+    [first, ...second, ...third].forEach(collect);
+    expect(new Set(ids).size).toBe(ids.length);
+    const hrefs = JSON.stringify(third);
+    expect(hrefs).not.toMatch(/"#(?:q3|p3)"/);
+  });
+});
+
+describe('second round R4: real SVG survives', () => {
+  it('keeps a Figma export with its fill', () => {
+    const svg = forest([{ type: 'svg', children: [{ type: 'linearGradient', props: { id: 'paint0_linear_1_2' } }, { type: 'rect', props: { fill: 'url(#paint0_linear_1_2)' } }] }]).nodes[0];
+    expect(svg.children[0].props.id).toMatch(/^paint0_linear_1_2--/);
+    expect(svg.children[1].props.fill).toBe(`url(#${svg.children[0].props.id})`);
+  });
+
+  it('never counts a link as a reference, so a link to its own section is no cycle', () => {
+    const result = forest([{ type: 'section', props: { id: 'top' }, children: [{ type: 'svg', children: [{ type: 'a', props: { href: '#top' } }] }] }]);
+    expect(result.nodes[0].children[0].type).toBe('svg');
+    expect(result.nodes[0].children[0].children[0].props.href).toBe('#top');
+  });
+
+  it('turns a camelCase anchor into its slug, and follows the link', () => {
+    const [section, link] = forest([{ type: 'section', props: { id: 'heroSection' } }, { type: 'a', props: { href: '#heroSection', children: 'Up' } }]).nodes;
+    expect(section.props.id).toBe('hero-section');
+    expect(link.props.href).toBe('#hero-section');
+  });
+
+  it('keeps fill on svg and g, so an outline icon stays an outline', () => {
+    expect(one({ type: 'svg', props: { fill: 'none' } }).props.fill).toBe('none');
+    expect(inSvg('g', { fill: 'none' })).toEqual({ fill: 'none' });
+  });
+
+  it('moves geometry the format reads as style into style, in the form CSS needs', () => {
+    expect(one({ type: 'svg', props: { width: '24', height: 24 } }).props.style).toEqual({ width: 24, height: 24 });
+    expect(inSvg('rect', { width: '10', height: '100%' })).toEqual({ style: { width: 10, height: '100%' } });
+    expect(inSvg('g', { transform: 'translate(10 20)', opacity: '0.5' })).toEqual({ style: { transform: 'translate(10px, 20px)', opacity: 0.5 } });
+    expect(inSvg('g', { transform: 'rotate(45 12 12) scale(2)' })).toEqual({ style: { transform: 'translate(12px, 12px) rotate(45deg) translate(-12px, -12px) scale(2)' } });
+    expect(inSvg('g', { transform: 'matrix(1 0 0 1 5 5)' })).toEqual({ style: { transform: 'matrix(1, 0, 0, 1, 5, 5)' } });
+  });
+
+  it('lets a style the model wrote win, and refuses what it cannot read', () => {
+    expect(inSvg('rect', { width: '10', style: { width: '20px' } })).toEqual({ style: { width: '20px' } });
+    expect(inSvg('g', { transform: 'url(#x)' })).toEqual({});
+    expect(inSvg('mask', { width: '100%' })).toEqual({});
+  });
+
+  it('checks a moved value like any style', () => {
+    expect(inSvg('rect', { width: 'red;x:y', opacity: 'javascript:x' })).toEqual({});
+  });
+});
+
+describe('second round R6: /_next/ is no site path', () => {
+  const proxy = '/_next/image?url=https%3A%2F%2Fimages.unsplash.com%2Fphoto-1506744038136-46273834b3fb&w=64&q=50';
+
+  it.each([proxy, '/./_next/image?url=x', '/a/../_next/image', '/%5Fnext/image', 'https://site.example/_next/image?url=x'])('refuses %s as an image', (src) => {
+    expect(one({ type: 'img', props: { alt: 'a', src } }).props.src).toBe('/images/sample-image.jpg');
+    expect(propsOf('video', { poster: src })).toEqual({});
+    expect(styleOf({ backgroundImage: `url(${src})` })).toEqual({});
+  });
+
+  it('keeps other paths', () => {
+    expect(propsOf('video', { poster: '/next/poster.jpg' })).toEqual({ poster: '/next/poster.jpg' });
+  });
+});
+
 describe('F3: nothing the owner cannot see', () => {
   it('drops a declarative shadow root that would replace a section', () => {
     const div = one({
@@ -140,7 +280,10 @@ describe('F4: leaking a visitor to a third party', () => {
     expect(propsOf('a', { rel: 'nofollow noopener' })).toEqual({ rel: 'nofollow noopener' });
   });
 
-  it('refuses loading, which turns a request into a report of how far someone read', () => {
+  // Not enough alone: the platform lazy-loads images too, so applyImageLoading skips
+  // external ones. A background inside details still fetches on open, and only a
+  // browser-enforced image policy closes that.
+  it('refuses a loading attribute from the model', () => {
     expect(propsOf('img', { loading: 'lazy', alt: 'x' })).not.toHaveProperty('loading');
   });
 
@@ -253,13 +396,11 @@ describe('F8: the consent banner stays on top and answerable', () => {
     expect(review('zIndex', 'var(--top)').rejected).toHaveLength(1);
   });
 
-  it('refuses the pass-through overlay, here and on its parent, because it inherits', () => {
+  it('keeps pointerEvents: the clamp alone puts any overlay under the banner', () => {
     const overlay = { position: 'fixed', bottom: 0, left: 0, right: 0, height: 100, zIndex: 2147483647, pointerEvents: 'none', background: '#eee' };
-    expect(styleOf(overlay)).not.toHaveProperty('pointerEvents');
-    expect(styleOf({ pointerEvents: 'none' })).toEqual({});
-    expect(styleOf({ pointerEvents: { base: 'none' } })).toEqual({});
-    expect(review('pointerEvents', 'none').ops).toEqual([]);
-    expect(inSvg('rect', { pointerEvents: 'none', 'pointer-events': 'none' })).toEqual({});
+    expect(styleOf(overlay)).toMatchObject({ zIndex: 100000, pointerEvents: 'none' });
+    expect(review('pointerEvents', 'none').ops).toHaveLength(1);
+    expect(inSvg('rect', { pointerEvents: 'none' })).toEqual({ pointerEvents: 'none' });
   });
 
   it('refuses every way into the top layer', () => {
@@ -281,6 +422,11 @@ describe('F10', () => {
     expect(propsOf('a', { href: true })).toEqual({});
     expect(propsOf('div', { id: 1 })).toEqual({});
     expect(propsOf('td', { colSpan: 2 })).toEqual({ colSpan: 2 });
+  });
+
+  it('does not let a dropped svg bring a page past the node limit back under it', () => {
+    const bomb = { type: 'svg', children: [{ type: 'use', props: { href: '#outside' } }, ...Array.from({ length: 300 }, () => ({ type: 'rect' }))] };
+    expect(validateGeneration({ nodes: [bomb, { type: 'p' }] }, { breakpoints }).ok).toBe(false);
   });
 
   it('caps props and style keys per node, and names', () => {

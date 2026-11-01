@@ -121,7 +121,7 @@ export const WEB_ELEMENT_ATTRIBUTES: Readonly<Record<string, readonly string[]>>
   'view': ['preserveaspectratio', 'viewbox'],
 };
 
-/** React's spelling of a lower-case attribute, where it differs. */
+/** The one spelling a node stores an attribute under, where it is not the lower-case name. */
 export const WEB_ATTRIBUTE_PROP_NAMES: Readonly<Record<string, string>> = {
   'accept-charset': 'acceptCharset',
   'acceptcharset': 'acceptCharset',
@@ -242,6 +242,7 @@ export const WEB_ATTRIBUTE_PROP_NAMES: Readonly<Record<string, string>> = {
   'preservealpha': 'preserveAlpha',
   'preserveaspectratio': 'preserveAspectRatio',
   'primitiveunits': 'primitiveUnits',
+  'privatetoken': 'privateToken',
   'readonly': 'readOnly',
   'referrerpolicy': 'referrerPolicy',
   'refx': 'refX',

@@ -11,7 +11,7 @@ import { applyImageLoading } from '../imageLoading';
 import { renderComponentNode } from '../renderComponentNode';
 
 const img = (id: string, extra: Record<string, unknown> = {}): ComponentNode =>
-  ({ id, type: 'img', props: { src: `https://img.test/${id}.jpg`, alt: id, ...extra } }) as ComponentNode;
+  ({ id, type: 'img', props: { src: `/images/${id}.jpg`, alt: id, ...extra } }) as ComponentNode;
 const section = (id: string, children: ComponentNode[], style: Record<string, unknown> = {}): ComponentNode =>
   ({ id, type: 'section', props: { style }, children }) as ComponentNode;
 const page = (...sections: ComponentNode[]): ComponentNode => ({ id: 'root', type: 'div', props: {}, children: sections }) as ComponentNode;
@@ -87,8 +87,34 @@ describe('applyImageLoading', () => {
   it('reaches the HTML as fetchpriority, loading and decoding attributes', () => {
     const { root } = applyImageLoading(page(section('hero', [img('photo')]), section('more', [img('a')])));
     const html = renderToStaticMarkup(<>{renderComponentNode(root)}</>);
-    expect(html).toMatch(/<img[^>]*src="https:\/\/img.test\/photo.jpg"[^>]*fetchPriority="high"|<img[^>]*fetchPriority="high"[^>]*photo/i);
+    expect(html).toMatch(/<img[^>]*src="\/images\/photo.jpg"[^>]*fetchPriority="high"|<img[^>]*fetchPriority="high"[^>]*photo/i);
     expect(html).toMatch(/<img[^>]*loading="lazy"[^>]*decoding="async"[^>]*>|<img[^>]*decoding="async"[^>]*loading="lazy"/);
     expect(html).not.toMatch(/photo.jpg"[^>]*loading="lazy"/);
+  });
+});
+
+describe('applyImageLoading: images from other hosts', () => {
+  const page = (...images: ComponentNode[]) =>
+    ({ id: 'root', type: 'div', children: [{ id: 'first', type: 'section' }, { id: 'rest', type: 'section', children: images }] }) as ComponentNode;
+  const propsAt = (root: ComponentNode, index: number) => root.children![1].children![index].props as Record<string, unknown>;
+
+  it('never makes an external image lazy: its request would report how far a visitor read', () => {
+    const external = { id: 'x', type: 'img', props: { src: 'https://evil.example/depth.png', alt: 'x' } } as ComponentNode;
+    const props = propsAt(applyImageLoading(page(external)).root, 0);
+    expect(props.loading).toBeUndefined();
+    expect(props.decoding).toBe('async');
+  });
+
+  it.each(['//evil.example/a.png', '/\\evil.example/a.png'])('reads %s as external', (src) => {
+    const props = propsAt(applyImageLoading(page({ id: 'x', type: 'img', props: { src, alt: 'x' } } as ComponentNode)).root, 0);
+    expect(props.loading).toBeUndefined();
+  });
+
+  it('keeps a site image and a stock photo lazy', () => {
+    const site = { id: 'a', type: 'img', props: { src: '/a.png', alt: 'a' } } as ComponentNode;
+    const stock = { id: 'b', type: 'img', props: { src: 'https://images.unsplash.com/photo-1', alt: 'b' } } as ComponentNode;
+    const { root } = applyImageLoading(page(site, stock));
+    expect(propsAt(root, 0).loading).toBe('lazy');
+    expect(propsAt(root, 1).loading).toBe('lazy');
   });
 });

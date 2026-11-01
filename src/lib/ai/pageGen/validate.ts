@@ -81,6 +81,7 @@ import {
   type MarkupNamespace,
 } from './schema';
 import { REVIEWED_ANIMATED_ATTRIBUTES } from './reviewedVocabulary';
+import { svgAttributeAsStyle } from './svgAttributes';
 import { WEB_ATTRIBUTE_PROP_NAMES } from './webVocabulary';
 import { EFFECTS_PROP, cleanGeneratedEffects } from './promptSections/effects';
 import { isSafeHref } from '@/lib/links/safeHref';
@@ -194,8 +195,6 @@ export function clampedZIndex(value: string | number): string | number | undefin
 
 /**
  * Why a style value is refused for what it says, whichever path it came by:
- *   - pointerEvents none: an overlay above the banner would show its own text while
- *     clicks reach the banner's button. It inherits, so it is refused on every node;
  *   - a custom property holding an address: read through var(), it would pass every
  *     check on the property that uses it;
  *   - a var() in a font or in image-set(): the value that counts is not this one.
@@ -204,7 +203,6 @@ export function styleValueProblem(property: string, value: string): string | und
   if (UNSAFE_VALUE.test(value) || STRING_URL_FUNCTION.test(value)) return 'unsafe value';
   const scan = scanCssValue(value);
   if (scan.indirect) return 'var() inside image-set()';
-  if (property === 'pointerEvents' && /none/i.test(value)) return 'pointerEvents none is not available';
   if ((property === 'fontFamily' || property === 'font') && /var\(/i.test(value)) return 'var() in a font';
   if (property.startsWith('--')) {
     if (/url\(|image-set\(/i.test(value) || scan.strings.some((text) => /[:/]/.test(text))) return 'an address in a custom property';
@@ -299,6 +297,9 @@ function cleanText(value: unknown, max: number): string | undefined {
 /** Attributes that load media by themselves, beyond the taught img src. */
 const MEDIA_URL_ATTRIBUTES: ReadonlySet<string> = new Set(['src', 'poster', 'srcset']);
 
+/** Elements whose href is a link: it navigates, and draws nothing in. */
+const LINK_TAGS: ReadonlySet<string> = new Set(['a', 'area']);
+
 /** SVG elements whose href loads a file. */
 const MEDIA_HREF_TAGS: ReadonlySet<string> = new Set(['image', 'feImage']);
 
@@ -308,6 +309,15 @@ const ATTRIBUTE_BREAKOUT_CHARS = /[\\\u0000-\u001f\u007f]/;
 /** An id a page anchor needs, and none that reaches the platform: see attributeProblem. */
 const SAFE_ID = /^[a-z][a-z0-9-]*$/;
 const PLATFORM_ID_PREFIX = /^(?:fc-|ground-wrapper-)/;
+
+/** An id inside an svg, as design tools write them: it is scoped later, so it cannot reach a global. */
+const SVG_ID = /^[A-Za-z_][A-Za-z0-9_.:-]*$/;
+
+/** A camelCase page anchor, which has one plain slug form. */
+const CAMEL_CASE_ID = /^[a-z][a-zA-Z0-9]*$/;
+
+/** The scope an earlier generation left on an id, so that regenerating does not stack them. */
+const SVG_ID_SCOPE = /--[a-z0-9]{1,8}$/;
 
 /** A link's spellings: SVG reaches other documents through all three. */
 const HREF_ATTRIBUTES: ReadonlySet<string> = new Set(['href', 'xlinkhref', 'xlink:href']);
@@ -344,14 +354,16 @@ function hrefProblem(tag: string, text: string): string | undefined {
  *   - An id becomes a property of `window`. Next.js boots from `self.__next_f`, so
  *     one element with that id stops React on the whole page. Every platform global
  *     has an underscore or a capital and a page anchor is a slug, so a slug is what
- *     passes; fc- and ground-wrapper- are ids the page and the canvas look up.
+ *     passes; fc- and ground-wrapper- are ids the page and the canvas look up. An id
+ *     inside an svg may look as a design tool wrote it, because scopeIds gives it a
+ *     suffix no global has.
  *   - An SVG paint or filter attribute is read as CSS: its url() may only point
  *     inside the page, and a backslash is a CSS escape, so `u\\72 l(` is a url().
  *   - An animation writes an attribute after these checks ran, so only the shape
  *     and paint attributes in the reviewed list may be its target.
  *   - rel="opener" hands the opened page the site's own tab.
  */
-function attributeProblem(tag: string, name: string, text: string): string | undefined {
+function attributeProblem(tag: string, name: string, text: string, namespace: MarkupNamespace): string | undefined {
   const limit = GEOMETRY_ATTRIBUTES.has(name) ? GENERATION_LIMITS.maxGeometryChars : GENERATION_LIMITS.maxAttributeChars;
   if (text.length > limit) return 'too long';
   if (ATTRIBUTE_BREAKOUT_CHARS.test(text)) return 'a backslash or a control character';
@@ -360,7 +372,9 @@ function attributeProblem(tag: string, name: string, text: string): string | und
     const scan = scanCssValue(text);
     if (!scan.contained || scan.urls.some((url) => !url.startsWith('#'))) return 'url() outside the page';
   }
-  if (name === 'id' && (!SAFE_ID.test(text) || PLATFORM_ID_PREFIX.test(text))) return 'an id must be a lower-case slug';
+  if (name === 'id' && (!(namespace === 'svg' ? SVG_ID : SAFE_ID).test(text) || PLATFORM_ID_PREFIX.test(text))) {
+    return 'an id must be a lower-case slug';
+  }
   if (name === 'attributename' && !REVIEWED_ANIMATED_ATTRIBUTES.has(text)) return 'animates an attribute outside the shape and paint ones';
   if (name === 'rel' && /(?:^|\s)opener(?:\s|$)/i.test(text)) return 'rel opener';
   if (HREF_ATTRIBUTES.has(name)) return hrefProblem(tag, text);
@@ -377,6 +391,8 @@ class Validator {
   readonly imageRequests: ImageRequest[] = [];
   invalidImageQueries = 0;
   nodeCount = 0;
+  /** Camel-case page anchors and the slugs they became, so a link to one follows it. */
+  readonly idSlugs = new Map<string, string>();
   /** Appear effects accepted so far (capped: motion is used sparingly). */
   appearCount = 0;
   maxDepth = 0;
@@ -485,6 +501,11 @@ class Validator {
     }
     if (usedCredit && credit) Object.assign(merged, stockCreditAttrs(credit));
     return hasPhoto;
+  }
+
+  /** A short token, new for each generation. */
+  scopeToken(): string {
+    return this.newId().replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase() || 'x';
   }
 
   private warn(path: string, message: string): void {
@@ -614,10 +635,18 @@ class Validator {
   }
 
   /**
-   * A prop beyond the taught ones (see isAcceptedAttribute). Kept under its own
-   * spelling, except that React drops a boolean under a lower-case one.
+   * A prop beyond the taught ones (see isAcceptedAttribute), stored under one
+   * spelling. HTML reads `ID` as `id` while every check here reads the key it was
+   * given, so a second spelling of a name is a way past them.
    */
-  private attribute(path: string, type: string, key: string, value: unknown, props: Record<string, unknown>): void {
+  private attribute(
+    path: string,
+    type: string,
+    key: string,
+    value: unknown,
+    props: Record<string, unknown>,
+    namespace: MarkupNamespace,
+  ): void {
     if (!isAcceptedAttribute(type, key)) {
       this.warn(path, `prop "${key}" is not allowed on <${type}>, dropped`);
       return;
@@ -627,14 +656,18 @@ class Validator {
       this.warn(path, `${key} must be text, a number or true / false, dropped`);
       return;
     }
-    const text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : String(value);
-    const problem = attributeProblem(type, name, text);
+    let text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : String(value);
+    if (name === 'id' && namespace !== 'svg' && CAMEL_CASE_ID.test(text) && text !== text.toLowerCase()) {
+      const slug = text.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+      this.idSlugs.set(text, slug);
+      text = slug;
+    }
+    const problem = attributeProblem(type, name, text, namespace);
     if (problem) {
       this.warn(path, `${key} dropped: ${problem}`);
       return;
     }
-    if (typeof value === 'boolean') props[WEB_ATTRIBUTE_PROP_NAMES[name] ?? key] = value;
-    else props[key] = typeof value === 'string' ? text : value;
+    props[WEB_ATTRIBUTE_PROP_NAMES[name] ?? name] = typeof value === 'string' || name === 'id' ? text : value;
   }
 
   /** Resolve type + preset. Returns null when the node must be dropped. */
@@ -774,6 +807,8 @@ class Validator {
     const creditKeys = new Set<string>(
       type === 'img' ? ['title', ...STOCK_CREDIT_ATTRS] : isPhotoContainer ? STOCK_CREDIT_ATTRS : [],
     );
+    const ownNamespace = type === 'svg' ? 'svg' : namespace;
+    const svgStyle: Record<string, unknown> = {};
     const modelEntries = Object.entries(modelProps);
     if (modelEntries.length > GENERATION_LIMITS.maxPropsPerNode) {
       this.warn(path, `only the first ${GENERATION_LIMITS.maxPropsPerNode} props kept`);
@@ -801,7 +836,9 @@ class Validator {
         continue;
       }
       if (!allowed.has(key)) {
-        this.attribute(path, type, key, value, props);
+        const asStyle = ownNamespace === 'svg' ? svgAttributeAsStyle(type, key, value) : undefined;
+        if (asStyle) svgStyle[asStyle.key] = asStyle.value;
+        else this.attribute(path, type, key, value, props, ownNamespace);
         continue;
       }
       if (key === 'children') {
@@ -842,7 +879,8 @@ class Validator {
     // Merge preset defaults under the model's props; style merges key by key.
     const presetDefaults = (preset?.defaultProps ?? {}) as Record<string, unknown>;
     const presetStyle = isPlainObject(presetDefaults.style) ? presetDefaults.style : {};
-    const modelStyle = this.style(path, modelProps.style, isPhotoContainer);
+    const rawModelStyle = isPlainObject(modelProps.style) ? modelProps.style : modelProps.style === undefined ? {} : modelProps.style;
+    const modelStyle = this.style(path, isPlainObject(rawModelStyle) ? { ...svgStyle, ...rawModelStyle } : rawModelStyle, isPhotoContainer);
     const style: Record<string, unknown> = { ...presetStyle, ...modelStyle };
     if (type === 'img' && modelStyle.aspectRatio !== undefined && modelStyle.height === undefined) {
       // The shape comes from the aspect ratio: a preset's fixed height would override it.
@@ -990,7 +1028,11 @@ function countNodes(node: GeneratedNodeSnapshot): number {
   return 1 + node.children.reduce((n, c) => n + countNodes(c), 0);
 }
 
-/** The ids a node's href and url(#id) values point at, and whether it is a `use` that reaches outside the generation. */
+/**
+ * The ids a node draws in, by a paint, mask or filter url() or an href, and whether
+ * it is a `use` reaching outside the generation. A link draws nothing in, so `a`
+ * and `area` never count: a link to the section it sits in is no cycle.
+ */
 function referencesOf(node: GeneratedNodeSnapshot): { ids: string[]; external: boolean } {
   const ids: string[] = [];
   let external = false;
@@ -1006,7 +1048,7 @@ function referencesOf(node: GeneratedNodeSnapshot): { ids: string[]; external: b
   for (const [key, value] of Object.entries(node.props)) {
     if (key === 'children') continue;
     read(value);
-    if (!HREF_ATTRIBUTES.has(key.toLowerCase()) || typeof value !== 'string') continue;
+    if (!HREF_ATTRIBUTES.has(key.toLowerCase()) || typeof value !== 'string' || LINK_TAGS.has(node.type)) continue;
     if (value.startsWith('#')) ids.push(value.slice(1));
     else if (node.type === 'use') external = true;
   }
@@ -1047,21 +1089,78 @@ function expandedSize(
   return size;
 }
 
+/** Every node under an svg, the root included. */
+function forEachInSvg(nodes: GeneratedNodeSnapshot[], visit: (node: GeneratedNodeSnapshot) => void): void {
+  const inside = (node: GeneratedNodeSnapshot): void => {
+    visit(node);
+    node.children.forEach(inside);
+  };
+  for (const node of nodes) {
+    if (node.type === 'svg') inside(node);
+    else forEachInSvg(node.children, visit);
+  }
+}
+
+const URL_REFERENCE = /url\(\s*(['"]?)#([^'")\s]+)\1\s*\)/gi;
+
+/**
+ * Give every id inside an svg a suffix unique to this generation, and every
+ * reference with it, and follow a page anchor to its slug. Ids under svg are private
+ * to the graphic, so nothing is lost, and a generation can no longer declare a decoy
+ * of an id another one holds, which is how three generations could rebuild a chain
+ * of `use` the budget had refused. An HTML id stays what it is: a page anchor.
+ */
+function scopeIds(nodes: GeneratedNodeSnapshot[], v: Validator): GeneratedNodeSnapshot[] {
+  const scoped = new Map<string, string>();
+  const inSvg = new Set<GeneratedNodeSnapshot>();
+  let scope: string | undefined;
+  forEachInSvg(nodes, (node) => {
+    inSvg.add(node);
+    if (typeof node.props.id !== 'string') return;
+    scope ??= v.scopeToken();
+    scoped.set(node.props.id, `${node.props.id.replace(SVG_ID_SCOPE, '')}--${scope}`);
+  });
+  if (scoped.size === 0 && v.idSlugs.size === 0) return nodes;
+  const target = (id: string): string | undefined => scoped.get(id) ?? v.idSlugs.get(id);
+  const inValue = (value: unknown): unknown => {
+    if (typeof value === 'string') {
+      return value.replace(URL_REFERENCE, (match, quote: string, id: string) => {
+        const to = target(id);
+        return to ? `url(${quote}#${to}${quote})` : match;
+      });
+    }
+    if (!isPlainObject(value)) return value;
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, inValue(inner)]));
+  };
+  const rewrite = (node: GeneratedNodeSnapshot): GeneratedNodeSnapshot => {
+    const props: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(node.props)) {
+      if (key === 'children' || typeof value === 'boolean' || typeof value === 'number') props[key] = value;
+      else if (key === 'id') props[key] = inSvg.has(node) ? (scoped.get(value as string) ?? value) : value;
+      else if (HREF_ATTRIBUTES.has(key.toLowerCase()) && typeof value === 'string' && value.startsWith('#')) {
+        props[key] = `#${target(value.slice(1)) ?? value.slice(1)}`;
+      } else if (/^aria-(?:labelledby|describedby|controls|owns)$/.test(key) && typeof value === 'string') {
+        props[key] = value.split(' ').map((id) => target(id) ?? id).join(' ');
+      } else props[key] = inValue(value);
+    }
+    return { ...node, props, children: node.children.map(rewrite) };
+  };
+  return nodes.map(rewrite);
+}
+
 /**
  * Drop every svg whose expansion is over budget, after everything else, so that it
  * covers every route into a generation. A few dozen nested `use` freeze a browser
  * tab for every visitor and for the editor that opens the page, and no node or depth
  * limit sees that. References run across the whole generation, because one svg can
- * reach into another, and a `use` may not leave it: two generations could otherwise
- * build the chain between them.
+ * reach into another, and a `use` may not leave it. scopeIds closes the rest: a
+ * later generation cannot declare a decoy of an id, because no two share one.
  */
 function dropExpandingSvgs(nodes: GeneratedNodeSnapshot[], v: Validator): GeneratedNodeSnapshot[] {
   const byId = new Map<string, GeneratedNodeSnapshot[]>();
-  const index = (node: GeneratedNodeSnapshot): void => {
+  forEachInSvg(nodes, (node) => {
     if (typeof node.props.id === 'string') byId.set(node.props.id, [...(byId.get(node.props.id) ?? []), node]);
-    node.children.forEach(index);
-  };
-  nodes.forEach(index);
+  });
   const memo = new Map<GeneratedNodeSnapshot, number>();
   const dropped = new Set<string>();
   const forget = (node: GeneratedNodeSnapshot): void => {
@@ -1145,9 +1244,11 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
 
   const parsed: GeneratedNodeSnapshot[] = [];
   raw.nodes.forEach((n, i) => parsed.push(...v.node(n, `nodes[${i}]`, 1)));
-  const nodes = dropExpandingSvgs(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v);
+  // Decided before any svg is dropped: a page past the limit was cut short, and must not pass for being under it.
+  const overLimit = v.nodeCount > GENERATION_LIMITS.maxNodes;
+  const nodes = scopeIds(dropExpandingSvgs(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v), v);
 
-  if (v.nodeCount > GENERATION_LIMITS.maxNodes) {
+  if (overLimit) {
     v.errors.push(`${v.nodeCount} nodes exceed the limit of ${GENERATION_LIMITS.maxNodes}: produce a smaller page`);
   }
   if (v.errors.length === 0 && nodes.length === 0) {

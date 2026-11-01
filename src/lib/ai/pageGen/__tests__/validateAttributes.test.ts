@@ -85,7 +85,7 @@ describe('svg and math', () => {
       fill: 'url(#g)',
       stroke: 'red',
       strokeWidth: 2,
-      'stroke-linecap': 'round',
+      strokeLinecap: 'round',
     });
   });
 
@@ -106,7 +106,7 @@ describe('svg and math', () => {
     expect(svgProps('image', { href: 'https://images.unsplash.com/photo-1' })).toEqual({});
     expect(svgProps('rect', { fill: 'url(https://evil.example/a.svg#g)', stroke: 'url("/a.svg#g")' })).toEqual({});
     const sprite = one({ type: 'svg', children: [{ type: 'g', props: { id: 'icon' } }, { type: 'use', props: { href: '#icon' } }] }).node;
-    expect(sprite.children[1].props).toEqual({ href: '#icon' });
+    expect(sprite.children[1].props).toEqual({ href: `#${sprite.children[0].props.id}` });
   });
 
   it('refuses an animation aimed at a link or a handler, and every handler', () => {

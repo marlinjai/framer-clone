@@ -239,6 +239,7 @@ export function styleKeyFrom(key: string): string {
 const CSS_ATTRIBUTE_NAMES: ReadonlySet<string> = new Set([...CSS_PROP_SET].map((key) => key.toLowerCase()));
 
 const GLOBAL_ATTRIBUTES: ReadonlySet<string> = new Set(WEB_GLOBAL_ATTRIBUTES);
+const SVG_TAGS: ReadonlySet<string> = new Set(WEB_SVG_TAGS);
 
 /**
  * A prop that survives the validator as an attribute on this tag, beyond the
@@ -257,7 +258,24 @@ export function isAcceptedAttribute(tag: string, key: string): boolean {
   if (CSS_ATTRIBUTE_NAMES.has(name)) return false;
   if (name.startsWith('aria-')) return /^aria-[a-z]+$/.test(key);
   if (!REVIEWED_ATTRIBUTES.has(name)) return false;
+  // The data lists fill on shapes, but on a group or the svg it sets what they
+  // inherit: an outline icon says fill="none" there.
+  if (name === 'fill' && SVG_TAGS.has(tag)) return true;
   return GLOBAL_ATTRIBUTES.has(name) || (WEB_ELEMENT_ATTRIBUTES[tag] ?? []).includes(name);
+}
+
+/**
+ * A path under /_next/. `/_next/image?url=...` fetches any host for the page, so it
+ * would walk past the credit rule and the site-path-only rule while looking like a
+ * path of the site. Read as the server reads it: dots resolved, percent-decoded.
+ */
+function isNextInternalPath(value: string): boolean {
+  try {
+    const { pathname } = new URL(value, 'https://site.invalid');
+    return /^\/_next(?:\/|$)/i.test(decodeURIComponent(pathname));
+  } catch {
+    return true;
+  }
 }
 
 /** Allowed image sources: http(s) or a site-relative path. No data: or javascript: URLs. */
@@ -265,6 +283,7 @@ export function isSafeSrc(value: string): boolean {
   const v = value.trim();
   // A browser reads a backslash as a slash: `/\\host` would leave the site.
   if (v.includes('\\')) return false;
+  if (isNextInternalPath(v)) return false;
   if (v.startsWith('/') && !v.startsWith('//')) return true;
   return /^https?:\/\//i.test(v);
 }

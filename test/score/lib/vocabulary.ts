@@ -42,7 +42,7 @@ function reactPropNames(names: string[]): Record<string, string> {
   console.error = original;
   // A production build of React has no such warning, and an empty map would pass silently.
   if (!out.colspan) throw new Error('React gave no attribute names: run this with a development build');
-  return Object.fromEntries(Object.entries(out).sort(([a], [b]) => a.localeCompare(b)));
+  return out;
 }
 
 export function buildWebVocabulary(): WebVocabulary {
@@ -53,6 +53,7 @@ export function buildWebVocabulary(): WebVocabulary {
     .sort();
   const global = new Set(htmlGlobalAttributes().filter((e) => !e.excluded).map((e) => attributeSample(e.id).prop.toLowerCase()));
   const perTag = new Map<string, Set<string>>();
+  const spellings = new Map<string, string>();
   for (const entry of [...htmlElementAttributes(), ...svgAttributes(), ...mathmlAttributes()].filter((e) => !e.excluded)) {
     const { tag, prop } = markupAttributeSample(namespaceOf(entry.kind), entry.id);
     const [owner, name] = [entry.id.slice(0, entry.id.indexOf('.')), entry.id.slice(entry.id.indexOf('.') + 1)];
@@ -62,14 +63,22 @@ export function buildWebVocabulary(): WebVocabulary {
     if (name.includes('_') && !name.startsWith('type_')) continue;
     const into = owner === '*' ? global : perTag.get(tag) ?? new Set<string>();
     if (owner !== '*') perTag.set(tag, into);
-    for (const spelling of names) into.add(spelling.toLowerCase());
+    for (const spelling of names) {
+      into.add(spelling.toLowerCase());
+      if (spelling !== spelling.toLowerCase()) spellings.set(spelling.toLowerCase(), spelling);
+    }
   }
   // style has its own path, and aria-* and data-* are patterns, not names.
   const globalAttributes = [...global].filter((name) => name !== 'style' && !name.startsWith('aria-') && !name.startsWith('data-')).sort();
   const elementAttributes = Object.fromEntries(
     [...perTag.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([tag, names]) => [tag, [...names].sort()]),
   );
-  const propNames = reactPropNames([...new Set([...globalAttributes, ...Object.values(elementAttributes).flat()])].sort());
+  const allNames = [...new Set([...globalAttributes, ...Object.values(elementAttributes).flat()])].sort();
+  const propNames = reactPropNames(allNames);
+  for (const name of allNames) {
+    const spelling = spellings.get(name);
+    if (spelling && !propNames[name]) propNames[name] = spelling;
+  }
   return {
     tags,
     svgTags: svgElements().filter((e) => !e.excluded).map((e) => e.id).sort(),
@@ -77,7 +86,7 @@ export function buildWebVocabulary(): WebVocabulary {
     styleKeys,
     globalAttributes,
     elementAttributes,
-    propNames,
+    propNames: Object.fromEntries(Object.entries(propNames).sort(([a], [b]) => (a < b ? -1 : 1))),
   };
 }
 
@@ -108,7 +117,7 @@ export function renderWebVocabulary(v: WebVocabulary): string {
     ...Object.entries(v.elementAttributes).map(([tag, names]) => `  ${JSON.stringify(tag).replace(/"/g, "'")}: ${list(names)},`),
     '};',
     '',
-    "/** React's spelling of a lower-case attribute, where it differs. */",
+    "/** The one spelling a node stores an attribute under, where it is not the lower-case name. */",
     'export const WEB_ATTRIBUTE_PROP_NAMES: Readonly<Record<string, string>> = {',
     ...Object.entries(v.propNames).map(([name, prop]) => `  ${JSON.stringify(name).replace(/"/g, "'")}: '${prop}',`),
     '};',

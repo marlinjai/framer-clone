@@ -61,7 +61,7 @@ export const REVIEWED_ATTRIBUTES = words(`
   marker-mid marker-start markerend markerheight markermid markerstart markerunits markerwidth
   mask maskcontentunits maskunits mathvariant max maxsize media method min minsize mode movablelimits multiple muted
   name numoctaves offset open operator optimum orient origin paint-order paintorder part path pathlength
-  patterncontentunits patterntransform patternunits playsinline points pointsatx pointsaty pointsatz
+  patterncontentunits patterntransform patternunits playsinline pointer-events pointerevents points pointsatx pointsaty pointsatz
   poster preload preservealpha preserveaspectratio primitiveunits r radius refx refy rel repeatcount
   requiredextensions reversed role rotate rows rowspan rspace rx ry scale scope scriptlevel seed selected
   shape shape-rendering shaperendering side size sizes slot spacing span specularconstant specularexponent
@@ -92,7 +92,6 @@ export const REFUSED_ATTRIBUTES = words(`
   referrerpolicy crossorigin loading
   autofocus contenteditable
   popover popovertarget popovertargetaction command commandfor closedby
-  pointer-events pointerevents
   font-family
   autolocate
   htmlfor for

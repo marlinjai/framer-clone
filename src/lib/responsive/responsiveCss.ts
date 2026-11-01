@@ -223,7 +223,7 @@ export function cssValueText(key: string, value: unknown): string | undefined {
 export function unsafeDeclaration(key: string, text: string | undefined): 'unsafe-property' | 'unsafe-value' | null {
   if (!SAFE_PROPERTY.test(key)) return 'unsafe-property';
   if (text === undefined) return null;
-  return BREAKOUT_CHARS.test(text) || UNSAFE_CSS_VALUE.test(text) || !isContainedValue(text) ? 'unsafe-value' : null;
+  return BREAKOUT_CHARS.test(text) || UNSAFE_VALUE.test(text) || !isContainedValue(text) ? 'unsafe-value' : null;
 }
 
 /** Why a declaration was dropped; reported once per page through `onUnsafe`. */
