@@ -109,7 +109,8 @@
       "style": "Blocked in nodes on purpose (blockedNodes.ts matches the tag in any namespace). The selector and at-rule rows measure what a style element would add."
     },
     "svg-attribute": {
-      "view.svgView": "A fragment identifier syntax for URLs, listed under the view element, not an attribute."
+      "view.svgView": "A fragment identifier syntax for URLs, listed under the view element, not an attribute.",
+      "a.ping": "Refused by the render gate (src/lib/renderer/renderVocabulary.ts): a click would send a request to a third address the visitor never sees. Links and the behaviour model cover what it is for."
     },
     "css-value": {
       "<frequency>": "No CSS property takes a frequency in any browser (it comes from aural CSS), so no sample can be proven valid.",
@@ -126,6 +127,22 @@
       "target-counters()": "Not implemented in Chromium, the browser this harness proves samples in, so no sample can be proven valid. The browser probe fails when that changes.",
       "target-text()": "Not implemented in Chromium, the browser this harness proves samples in, so no sample can be proven valid. The browser probe fails when that changes.",
       "paint()": "Chromium refuses it on the probe's page, which registers no paint worklet, so no sample can be proven valid. The browser probe fails when that changes."
+    },
+    "html-global-attribute": {
+      "is": "Refused by the render gate: it would turn an element into a customized built-in, which only a script can define, and custom code is the route that could bring one.",
+      "nonce": "Refused by the render gate: a nonce vouches for a script or style that the page itself did not write, and a stored one could only ever undermine a Content-Security-Policy.",
+      "drawable": "Refused by the render gate until someone judges what it does: an experimental name in the data, with no standard behind it and no use on a page."
+    },
+    "html-element-attribute": {
+      "a.ping": "Refused by the render gate (src/lib/renderer/renderVocabulary.ts): a click would send a request to a third address the visitor never sees. Links and the behaviour model cover what it is for.",
+      "area.ping": "Refused by the render gate (src/lib/renderer/renderVocabulary.ts): a click would send a request to a third address the visitor never sees. Links and the behaviour model cover what it is for.",
+      "a.attributionsourceid": "Refused by the render gate: attribution reporting sends a browser report to a third party, which a page must not do on its owner's data alone.",
+      "template.shadowrootclonable": "Refused by the render gate: a declarative shadow root hides content from the owner's stylesheet and rules, and nothing a node can author would use it. Custom code is the route that could bring it, and this row returns with it.",
+      "template.shadowrootcustomelementregistry": "Refused by the render gate: a declarative shadow root hides content from the owner's stylesheet and rules, and nothing a node can author would use it. Custom code is the route that could bring it, and this row returns with it.",
+      "template.shadowrootdelegatesfocus": "Refused by the render gate: a declarative shadow root hides content from the owner's stylesheet and rules, and nothing a node can author would use it. Custom code is the route that could bring it, and this row returns with it.",
+      "template.shadowrootmode": "Refused by the render gate: a declarative shadow root hides content from the owner's stylesheet and rules, and nothing a node can author would use it. Custom code is the route that could bring it, and this row returns with it.",
+      "template.shadowrootserializable": "Refused by the render gate: a declarative shadow root hides content from the owner's stylesheet and rules, and nothing a node can author would use it. Custom code is the route that could bring it, and this row returns with it.",
+      "template.shadowrootslotassignment": "Refused by the render gate: a declarative shadow root hides content from the owner's stylesheet and rules, and nothing a node can author would use it. Custom code is the route that could bring it, and this row returns with it."
     }
   }
 }

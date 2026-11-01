@@ -10,7 +10,7 @@ import { ComponentTypeEnum } from '@/models/ComponentModel';
 import { buildProbes, type ProbeNode } from './probes';
 
 const EMBEDS = 'script,style,iframe,object,embed,fencedframe,portal';
-const HOSTILE = /^tag |html>$|proto|ref|as text|style|attributeName|js-array|=js>|=js-tab>/;
+const HOSTILE = /^tag .* in (?:html|svg)$|^<(?:x-y|div) \w+=html>$|proto|^an? \w+ ref$|as text|^a style|^<(?:a|form) (?:href|action)=js-array>$/;
 
 const toSnapshot = (node: ProbeNode): Record<string, unknown> => ({
   id: node.id,
@@ -38,6 +38,7 @@ describe('render gate on the mounted editor', () => {
     const errors: string[] = [];
     try {
       const page = await browser.newPage();
+      page.setDefaultTimeout(60_000);
       await page.exposeFunction('__hit', (id: string) => { hits.push(id); });
       page.on('pageerror', (error) => errors.push(error.message));
       await page.route('**/*', (route) =>

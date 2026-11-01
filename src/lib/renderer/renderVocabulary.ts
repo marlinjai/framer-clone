@@ -53,7 +53,7 @@ const PAGE_ONLY_ATTRIBUTES = words(`
   webkitdirectory wrap
   closedby command commandfor popover popovertarget popovertargetaction
   crossorigin loading referrerpolicy
-  color cursor display filter font-family height opacity order overflow transform width
+  color cursor display filter font-family fontfamily height opacity order overflow transform width
   xmlns xmlns:xlink xmlnsxlink xml:lang xmllang xml:space xmlspace
   align axis bgcolor border cellpadding cellspacing char charoff clear face frame hspace noshade
   nowrap rules summary valign vspace
