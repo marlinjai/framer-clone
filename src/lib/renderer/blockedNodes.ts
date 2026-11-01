@@ -7,7 +7,14 @@
 
 export const BLOCKED_TAGS: ReadonlySet<string> = new Set([
   'script', 'style', 'iframe', 'object', 'embed', 'frame', 'frameset', 'base', 'link', 'meta',
+  // Browser permission buttons: a grant stays with the origin, which on the
+  // canvas is the signed-in editor.
+  'geolocation', 'camera', 'microphone', 'usermedia', 'install', 'model',
 ]);
+
+// SVG animation can write a `javascript:` address into a link or a handler, so
+// it is judged by the attribute it targets, not by the value it sets.
+const ANIMATION_TARGET_BLOCKED = /^(?:(?:xlink:)?href$|on)/i;
 
 const warned = new Set<string>();
 
@@ -22,7 +29,9 @@ function warnOnce(what: string): void {
  * a prop before it is ever stored rather than dropping one that was.
  */
 export function isDroppedProp(name: string, value: unknown): boolean {
-  return name === 'dangerouslySetInnerHTML' || (/^on/i.test(name) && typeof value !== 'function');
+  if (name === 'dangerouslySetInnerHTML') return true;
+  if (/^on/i.test(name)) return typeof value !== 'function';
+  return name.toLowerCase() === 'attributename' && typeof value === 'string' && ANIMATION_TARGET_BLOCKED.test(value.trim());
 }
 
 /** Whether a node with this resolved tag must render nothing. */
