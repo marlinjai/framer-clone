@@ -49,7 +49,7 @@ const UNITLESS_NUMBERS: ReadonlySet<string> = new Set(
 );
 
 /** A style key React accepts: a camelCase name or a custom property. */
-const SAFE_PROPERTY = /^(?:[A-Za-z][A-Za-z0-9]*|--[A-Za-z0-9_-]+)$/;
+export const SAFE_PROPERTY = /^(?:[A-Za-z][A-Za-z0-9]*|--[A-Za-z0-9_-]+)$/;
 
 /**
  * Characters that let a value escape its declaration wherever they appear,
@@ -142,7 +142,7 @@ function isContainedValue(text: string): boolean {
  * src/lib/ai/pageGen/validate.ts (copied, not imported: that module pulls in
  * the MST models, which this pure, client-safe module must not).
  */
-const UNSAFE_VALUE = /javascript:|vbscript:|expression\s*\(|<\s*\/?\s*script|@import|behavior\s*:|-moz-binding|\/\*/i;
+export const UNSAFE_VALUE = /javascript:|vbscript:|expression\s*\(|<\s*\/?\s*script|@import|behavior\s*:|-moz-binding|\/\*/i;
 
 /** A camelCase style key as a CSS property name, exactly as React writes it. */
 export function cssPropertyName(key: string): string {
