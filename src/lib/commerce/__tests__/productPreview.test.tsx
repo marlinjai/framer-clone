@@ -10,7 +10,8 @@ import { ProductPreviewPicker } from '@/components/ProductPreviewBar';
 
 afterEach(cleanup);
 
-const source = (listProducts: () => Promise<unknown>) => ({ listProducts }) as unknown as CommerceDataSource;
+const source = (listProducts: () => Promise<unknown>) =>
+  ({ listProducts, subscribe: () => () => {} }) as unknown as CommerceDataSource;
 const catalogue = () =>
   Promise.resolve({
     products: [
