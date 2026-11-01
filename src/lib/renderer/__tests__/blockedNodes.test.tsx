@@ -14,7 +14,7 @@ const editor = (type: string, props: Record<string, unknown>) =>
 describe('blocked nodes', () => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-  it.each(['script', 'style', 'iframe', 'object', 'embed', 'frame', 'frameset', 'base', 'link', 'meta', 'SCRIPT'])(
+  it.each(['script', 'style', 'iframe', 'object', 'embed', 'frame', 'frameset', 'base', 'link', 'meta', 'SCRIPT', 'geolocation', 'camera', 'microphone', 'usermedia', 'install', 'model'])(
     'renders nothing for a stored <%s>',
     (type) => {
       expect(published({ type, props: { children: 'x' } })).toBe('');
@@ -36,6 +36,19 @@ describe('blocked nodes', () => {
   it.each(['onclick', 'ONCLICK', 'onClick', 'OnMouseOver'])('drops a stored %s on a custom element', (name) => {
     expect(published({ type: 'x-y', props: { [name]: 'x', id: 'keep' } })).toBe('<x-y id="keep"></x-y>');
     expect(editor('x-y', { [name]: 'x', id: 'keep' })).toBe('<x-y id="keep"></x-y>');
+  });
+
+  it.each([
+    ['attributeName', 'href'],
+    ['attributeName', ' HREF '],
+    ['attributename', 'xlink:href'],
+    ['ATTRIBUTENAME', 'onclick'],
+  ])('drops %s=%s on an SVG animation', (name, value) => {
+    expect(published({ type: 'animate', props: { [name]: value, to: 'x' } })).toBe('<animate to="x"></animate>');
+  });
+
+  it('keeps animation of a harmless attribute', () => {
+    expect(published({ type: 'animate', props: { attributeName: 'opacity' } })).toContain('opacity');
   });
 
   it('keeps the handlers the editor attaches, which are functions', () => {
