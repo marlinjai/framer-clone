@@ -178,19 +178,20 @@ export function allowedPropKeysFor(tag: string): string[] {
  *   - template, because its declarative shadow root replaces the parent's content
  *     on a published page and shows nothing on the canvas;
  *   - noscript, whose content only crawlers and visitors without script see, so
- *     the owner cannot review it;
- *   - browser permission elements, and elements the data lists that may become
- *     them: a page without script has no use for them, and a grant stays with the
- *     site's origin.
+ *     the owner cannot review it.
  */
 export const FORBIDDEN_TAGS: ReadonlySet<string> = new Set([
   ...BLOCKED_TAGS, 'form', 'input', 'textarea', 'select', 'template', 'noscript',
-  'geolocation', 'camera', 'microphone', 'usermedia', 'install', 'model',
 ]);
 
-/** The tags the prompt names as off limits. Kept short: the validator refuses the rest without the model's help. */
+/**
+ * The tags the prompt names as off limits. Written out, not derived: a tag added to
+ * the blocked list should not change the prompt, because the validator refuses the
+ * rest without the model's help.
+ */
 export const PROMPT_AVOID_TAGS: ReadonlySet<string> = new Set([
-  ...BLOCKED_TAGS, 'form', 'input', 'textarea', 'select', 'template', 'svg', 'math',
+  'script', 'style', 'iframe', 'object', 'embed', 'frame', 'frameset', 'base', 'link', 'meta',
+  'form', 'input', 'textarea', 'select', 'template', 'svg', 'math',
 ]);
 
 /** Which language a node's tag is read in: the root element of the other two opens them. */

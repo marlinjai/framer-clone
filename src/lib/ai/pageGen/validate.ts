@@ -807,7 +807,8 @@ class Validator {
     const creditKeys = new Set<string>(
       type === 'img' ? ['title', ...STOCK_CREDIT_ATTRS] : isPhotoContainer ? STOCK_CREDIT_ATTRS : [],
     );
-    const ownNamespace = type === 'svg' ? 'svg' : namespace;
+    // A preset is an HTML component wherever the model put it, so it gets HTML's id rule.
+    const ownNamespace = preset ? 'html' : type === 'svg' ? 'svg' : namespace;
     const svgStyle: Record<string, unknown> = {};
     const modelEntries = Object.entries(modelProps);
     if (modelEntries.length > GENERATION_LIMITS.maxPropsPerNode) {
@@ -1112,13 +1113,20 @@ const URL_REFERENCE = /url\(\s*(['"]?)#([^'")\s]+)\1\s*\)/gi;
  */
 function scopeIds(nodes: GeneratedNodeSnapshot[], v: Validator): GeneratedNodeSnapshot[] {
   const scoped = new Map<string, string>();
+  const taken = new Set<string>();
   const inSvg = new Set<GeneratedNodeSnapshot>();
   let scope: string | undefined;
   forEachInSvg(nodes, (node) => {
     inSvg.add(node);
-    if (typeof node.props.id !== 'string') return;
+    const id = node.props.id;
+    if (typeof id !== 'string' || scoped.has(id)) return;
     scope ??= v.scopeToken();
-    scoped.set(node.props.id, `${node.props.id.replace(SVG_ID_SCOPE, '')}--${scope}`);
+    // Removing an old scope can make two ids one: each keeps a name of its own.
+    const base = id.replace(SVG_ID_SCOPE, '');
+    let name = `${base}--${scope}`;
+    for (let n = 2; taken.has(name); n++) name = `${base}-${n}--${scope}`;
+    taken.add(name);
+    scoped.set(id, name);
   });
   if (scoped.size === 0 && v.idSlugs.size === 0) return nodes;
   const target = (id: string): string | undefined => scoped.get(id) ?? v.idSlugs.get(id);
@@ -1139,7 +1147,7 @@ function scopeIds(nodes: GeneratedNodeSnapshot[], v: Validator): GeneratedNodeSn
       else if (key === 'id') props[key] = inSvg.has(node) ? (scoped.get(value as string) ?? value) : value;
       else if (HREF_ATTRIBUTES.has(key.toLowerCase()) && typeof value === 'string' && value.startsWith('#')) {
         props[key] = `#${target(value.slice(1)) ?? value.slice(1)}`;
-      } else if (/^aria-(?:labelledby|describedby|controls|owns)$/.test(key) && typeof value === 'string') {
+      } else if (/^aria-(?:labelledby|describedby|controls|owns|details|flowto|activedescendant|errormessage)$/.test(key) && typeof value === 'string') {
         props[key] = value.split(' ').map((id) => target(id) ?? id).join(' ');
       } else props[key] = inValue(value);
     }
@@ -1153,8 +1161,9 @@ function scopeIds(nodes: GeneratedNodeSnapshot[], v: Validator): GeneratedNodeSn
  * covers every route into a generation. A few dozen nested `use` freeze a browser
  * tab for every visitor and for the editor that opens the page, and no node or depth
  * limit sees that. References run across the whole generation, because one svg can
- * reach into another, and a `use` may not leave it. scopeIds closes the rest: a
- * later generation cannot declare a decoy of an id, because no two share one.
+ * reach into another, and a `use` may not leave it. It runs on the ids scopeIds
+ * wrote, the ones a browser will read, so it cannot count a different page than the
+ * one that ships; that also stops a later generation declaring a decoy of an id.
  */
 function dropExpandingSvgs(nodes: GeneratedNodeSnapshot[], v: Validator): GeneratedNodeSnapshot[] {
   const byId = new Map<string, GeneratedNodeSnapshot[]>();
@@ -1191,7 +1200,8 @@ function dropExpandingSvgs(nodes: GeneratedNodeSnapshot[], v: Validator): Genera
 /**
  * The sticky call to action's rules: only on a new page, at most one, with a
  * label and a safe link, as the last top-level node (it is a page-level bar,
- * never part of a section). Extra or unusable bars are dropped with a warning.
+ * never part of a section), and never from inside an svg, which would carry it out
+ * past the id rules of the graphic. Extra or unusable bars are dropped with a warning.
  */
 function placeStickyCta(nodes: GeneratedNodeSnapshot[], v: Validator, allowed: boolean): GeneratedNodeSnapshot[] {
   let kept: GeneratedNodeSnapshot | undefined;
@@ -1199,14 +1209,15 @@ function placeStickyCta(nodes: GeneratedNodeSnapshot[], v: Validator, allowed: b
     v.warnings.push(`${node.label}: ${reason}`);
     v.nodeCount -= countNodes(node);
   };
-  const strip = (list: GeneratedNodeSnapshot[]): GeneratedNodeSnapshot[] => {
+  const strip = (list: GeneratedNodeSnapshot[], inSvg: boolean): GeneratedNodeSnapshot[] => {
     const out: GeneratedNodeSnapshot[] = [];
     for (const node of list) {
       if (!isStickyCta(node.props)) {
-        out.push(node.children.length > 0 ? { ...node, children: strip(node.children) } : node);
+        out.push(node.children.length > 0 ? { ...node, children: strip(node.children, inSvg || node.type === 'svg') } : node);
         continue;
       }
-      if (!allowed) drop(node, 'a sticky call to action belongs to a whole page, not a section: dropped');
+      if (inSvg) drop(node, 'a sticky call to action has no place inside an svg: dropped');
+      else if (!allowed) drop(node, 'a sticky call to action belongs to a whole page, not a section: dropped');
       else if (typeof node.props.ctaLabel !== 'string' || typeof node.props.ctaHref !== 'string') {
         drop(node, 'the sticky call to action needs a ctaLabel and a ctaHref (https, mailto, tel, # or a site path): dropped');
       } else if (kept) drop(node, 'at most one sticky call to action per page: this one was dropped');
@@ -1214,7 +1225,7 @@ function placeStickyCta(nodes: GeneratedNodeSnapshot[], v: Validator, allowed: b
     }
     return out;
   };
-  const rest = strip(nodes);
+  const rest = strip(nodes, false);
   if (!kept) return rest;
   const bar: GeneratedNodeSnapshot = { ...kept };
   delete bar.parentId;
@@ -1246,7 +1257,7 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
   raw.nodes.forEach((n, i) => parsed.push(...v.node(n, `nodes[${i}]`, 1)));
   // Decided before any svg is dropped: a page past the limit was cut short, and must not pass for being under it.
   const overLimit = v.nodeCount > GENERATION_LIMITS.maxNodes;
-  const nodes = scopeIds(dropExpandingSvgs(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v), v);
+  const nodes = dropExpandingSvgs(scopeIds(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v), v);
 
   if (overLimit) {
     v.errors.push(`${v.nodeCount} nodes exceed the limit of ${GENERATION_LIMITS.maxNodes}: produce a smaller page`);

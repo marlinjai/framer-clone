@@ -156,6 +156,12 @@ describe('second round R3: ids under svg belong to one generation', () => {
     expect(text.props['aria-labelledby']).toBe('paint0_linear_1_2--abc');
   });
 
+  it('rewrites every aria reference that names an id', () => {
+    const props = ['aria-details', 'aria-flowto', 'aria-activedescendant', 'aria-errormessage', 'aria-owns', 'aria-controls'];
+    const svg = generate([{ type: 'svg', children: [{ type: 'g', props: { id: 'x' } }, { type: 'rect', props: Object.fromEntries(props.map((p) => [p, 'x'])) }] }], 'abc').nodes[0];
+    expect(svg.children[1].props).toEqual(Object.fromEntries(props.map((p) => [p, 'x--abc'])));
+  });
+
   it('reaches an svg id from a style outside the svg', () => {
     const [div] = generate([{ type: 'div', props: { style: { clipPath: 'url(#shape)' } } }, { type: 'svg', children: [{ type: 'clipPath', props: { id: 'shape' } }] }], 'abc').nodes;
     expect(div.props.style).toEqual({ clipPath: 'url(#shape--abc)' });
@@ -185,6 +191,74 @@ describe('second round R3: ids under svg belong to one generation', () => {
     expect(new Set(ids).size).toBe(ids.length);
     const hrefs = JSON.stringify(third);
     expect(hrefs).not.toMatch(/"#(?:q3|p3)"/);
+  });
+});
+
+describe('final round V1: the budget reads the ids that ship', () => {
+  const tenUses = (id: string) => Array.from({ length: 10 }, () => ({ type: 'use', props: { href: `#${id}` } }));
+  function mergingBomb() {
+    const groups: unknown[] = [{ type: 'g', props: { id: 'a0--h' }, children: [{ type: 'rect' }] }, { type: 'g', props: { id: 'a0--d' } }];
+    for (let i = 1; i <= 6; i++) groups.push({ type: 'g', props: { id: `a${i}--h` }, children: tenUses(`a${i - 1}--d`) }, { type: 'g', props: { id: `a${i}--d` } });
+    return { type: 'svg', children: [{ type: 'defs', children: groups }, { type: 'use', props: { href: '#a6--d' } }] };
+  }
+
+  it('never maps two ids to one, so a decoy stays a decoy', () => {
+    const svg = forest([mergingBomb()]).nodes[0];
+    const ids: string[] = [];
+    const collect = (node: GeneratedNodeSnapshot) => {
+      if (typeof node.props.id === 'string') ids.push(node.props.id);
+      node.children.forEach(collect);
+    };
+    collect(svg);
+    expect(ids).toHaveLength(14);
+    expect(new Set(ids).size).toBe(14);
+  });
+
+  it('points every use at its own target, never at the heavy twin', () => {
+    const svg = forest([mergingBomb()]).nodes[0];
+    const [defs, top] = svg.children;
+    const decoy = defs.children.at(-1)!;
+    const heavy = defs.children.at(-2)!;
+    expect(top.props.href).toBe(`#${decoy.props.id}`);
+    expect(top.props.href).not.toBe(`#${heavy.props.id}`);
+  });
+
+  it('counts the budget after the rewrite: a real duplicate of one id is counted at its heaviest', () => {
+    const groups: unknown[] = [{ type: 'g', props: { id: 'a0' }, children: [{ type: 'rect' }] }, { type: 'g', props: { id: 'a0' } }];
+    for (let i = 1; i <= 6; i++) groups.push({ type: 'g', props: { id: `a${i}` }, children: tenUses(`a${i - 1}`) }, { type: 'g', props: { id: `a${i}` } });
+    const svg = { type: 'svg', children: [{ type: 'defs', children: groups }, { type: 'use', props: { href: '#a6' } }] };
+    expect(forest([{ type: 'p' }, svg]).nodes.map((n) => n.type)).toEqual(['p']);
+  });
+});
+
+describe('final round V2: a sticky bar cannot carry an id out of an svg', () => {
+  const page = (nodes: unknown[]) => {
+    const outcome = validateGeneration({ nodes }, { breakpoints, allowStickyCta: true });
+    if (!outcome.ok) throw new Error(outcome.errors.join('; '));
+    return outcome.result;
+  };
+  const bar = { preset: 'stickyCta', type: 'div', props: { id: '__next_f', ctaLabel: 'Buy', ctaHref: '/x' } };
+
+  it('drops a bar under an svg, with its id', () => {
+    const result = page([{ type: 'p' }, { type: 'svg', children: [bar] }]);
+    expect(JSON.stringify(result.nodes)).not.toContain('__next_f');
+    expect(JSON.stringify(result.nodes)).not.toContain('data-sticky-cta');
+    expect(result.warnings.join('\n')).toMatch(/no place inside an svg/);
+  });
+
+  it('drops a bar under a foreignObject too', () => {
+    const result = page([{ type: 'p' }, { type: 'svg', children: [{ type: 'foreignObject', children: [bar] }] }]);
+    expect(JSON.stringify(result.nodes)).not.toContain('data-sticky-cta');
+  });
+
+  it('reads any preset as HTML, so the strict id rule holds under an svg', () => {
+    const svg = forest([{ type: 'svg', children: [{ preset: 'card', type: 'div', props: { id: '__next_f' } }] }]).nodes[0];
+    expect(svg.children[0].props).not.toHaveProperty('id');
+  });
+
+  it('keeps a bar at the page level', () => {
+    const result = page([{ type: 'p' }, { ...bar, props: { ...bar.props, id: 'buy-bar' } }]);
+    expect(result.nodes.at(-1)!.props).toMatchObject({ id: 'buy-bar', ctaLabel: 'Buy' });
   });
 });
 
