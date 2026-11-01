@@ -174,11 +174,13 @@ measured match rather than a promise.
 
 `POST /api/projects/save` and `/publish` keep the page body as opaque JSON (`.passthrough()`), and
 the published renderer passes props through. The probe rendered `dangerouslySetInnerHTML`, a
-`<script>` node and a `<style>` node verbatim. So a signed-in member of a company can put script on
-that company's published sites through the API, although no editor path produces such nodes, and
-no Content-Security-Policy is set app-wide. It was not tried end to end on production.
+`<script>` node and a `<style>` node verbatim. So anyone with the `editSite` permission (a workspace
+admin) can put script on that workspace's published sites through the API, although no editor path
+produces such nodes, and no Content-Security-Policy is set app-wide. It was not tried end to end on
+production.
 
-These props and nodes get stripped at save and publish in a separate change. The custom code
+These props and nodes get dropped by both renderers in a separate change, so existing rows and every
+write path are covered. The custom code
 primitive below is the designed replacement, so nothing intended is taken away.
 
 ## Open decisions (Marlin's)
