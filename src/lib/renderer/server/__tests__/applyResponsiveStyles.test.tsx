@@ -114,6 +114,28 @@ describe('applyResponsiveStyles', () => {
     expect(css).toBe('');
     expect(warn).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps a data url in the sheet without logging, and still logs an unquoted break-out', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const image = 'url("data:image/png;base64,AAA=")';
+    const root: ComponentNode = {
+      type: 'div',
+      id: 'hero',
+      props: { style: { backgroundImage: image, color: { base: 'red', 'bp-phone': 'blue' } } },
+    };
+    expect(applyResponsiveStyles(root, BPS).css).toContain(`background-image:${image};color:red`);
+    expect(warn).not.toHaveBeenCalled();
+
+    const breakout: ComponentNode = {
+      type: 'div',
+      id: 'hero',
+      props: { style: { width: '10px;position:fixed', color: { base: 'red', 'bp-phone': 'blue' } } },
+    };
+    const { css } = applyResponsiveStyles(breakout, BPS);
+    expect(css).not.toContain('position:fixed');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][1]).toEqual([{ className: 'fc-hero', property: 'width', reason: 'unsafe-value' }]);
+  });
 });
 
 describe('extractBreakpoints', () => {
