@@ -131,7 +131,7 @@ connections to the suite. The four lines below are in that order.
   See [plan](docs/plans/2026-10-25-business-platform-architecture.md) and
   [catalogue design](docs/plans/2026-10-25-catalogue-design.md). (2026-11-01)
 - [ ] Live payments: the platform runs on Stripe sandbox keys. Going live means live keys and a real shop finishing Stripe onboarding, which is Marlin's yes because it moves real money; prepare a checklist and a rollback first. (2026-11-01)
-- [ ] A real product in the editor: a product page is a template, so the canvas says "no product selected" and the layout can't be judged while designing. Show the first catalogue product by default, with a small switcher on the canvas. (2026-11-01)
+- [x] A real product in the editor: a product page is a template, so the canvas and the preview now show the first catalogue product, with a small switcher in the editor and the preview toolbar, and a product link in the preview opens that product. The choice stays in the editor session. (2026-11-01)
 - [x] 3f. Prove Stripe Connect against Stripe in test mode: open the Stripe account (test mode), paste the
   test secret key, the webhook signing secret and the Connect client id into the three placeholders in
   Infisical (project framer-clone), register the webhook endpoint `/api/payments/stripe/webhook` for

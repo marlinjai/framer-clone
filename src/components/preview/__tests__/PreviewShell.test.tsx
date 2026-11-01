@@ -45,6 +45,7 @@ import PreviewShell from '../PreviewShell';
 
 let homeId: string;
 let bakeryId: string;
+let productId: string;
 
 let replaceState: ReturnType<typeof vi.spyOn>;
 
@@ -61,7 +62,9 @@ beforeEach(() => {
   home.setSlug('');
   homeId = home.id;
   bakeryId = p.createPage('Crumb & Hearth Bakery').id;
-  p.createPage('Product').setSlug('products/:handle');
+  const product = p.createPage('Product');
+  product.setSlug('products/:handle');
+  productId = product.id;
   openProject(store, getSnapshot(p) as ProjectSnapshotOut, bakeryId);
 });
 afterEach(() => {
@@ -77,15 +80,27 @@ describe('PreviewShell links', () => {
     expect(screen.getByTestId('frame').textContent).toBe(homeId);
   });
 
-  it('a product link stays put and says it opens on the published site; an unknown path says so', () => {
+  it('a product link opens the product page with that product', () => {
     render(<PreviewShell />);
     followPath = '/products/pearl-necklace';
     fireEvent.click(screen.getByRole('button', { name: 'follow' }));
-    expect(screen.getByTestId('frame').textContent).toBe(bakeryId);
-    expect(screen.getByRole('status').textContent).toContain('opens with its product on the published site');
+    expect(screen.getByTestId('frame').textContent).toBe(productId);
+    expect(store.editorUI.previewProductHandle).toBe('pearl-necklace');
+  });
 
+  it('a malformed product link opens the product page with the first product', () => {
+    render(<PreviewShell />);
+    followPath = '/products/%E0%A4%A';
+    fireEvent.click(screen.getByRole('button', { name: 'follow' }));
+    expect(screen.getByTestId('frame').textContent).toBe(productId);
+    expect(store.editorUI.previewProductHandle).toBeUndefined();
+  });
+
+  it('a link to a page the site does not have stays put and says so', () => {
+    render(<PreviewShell />);
     followPath = '/nowhere';
     fireEvent.click(screen.getByRole('button', { name: 'follow' }));
+    expect(screen.getByTestId('frame').textContent).toBe(bakeryId);
     expect(screen.getByRole('status').textContent).toContain('no page at /nowhere');
   });
 });
