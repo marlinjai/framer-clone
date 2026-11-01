@@ -3,7 +3,7 @@ type: plan
 status: draft
 date: 2026-11-02
 title: "The behaviour model: page state, events and actions as data, and sandboxed custom code"
-summary: "How a node stores behaviour without ever storing code: typed state values, triggers for real browser events, a closed list of actions, all compiled to a small runtime that a page without behaviour never loads. Thirteen failing interaction patterns become presets, 95 of the 100 event handler rows close, five stay red with a reason. Custom code runs on a separate registrable domain in a sandboxed frame, off by default, never in the editor, with no network in its first version. Browser claims measured in Chromium and WebKit. The sandbox design waits for Marlin's security review."
+summary: "How a node stores behaviour without ever storing code: typed state values, triggers for real browser events, a closed list of actions, all compiled to a small runtime that a page without behaviour never loads. Thirteen failing interaction patterns become presets. Of the 100 event handler rows, 93 close on a real cause, 2 are labelled as reachable only by custom code, and 5 stay red with a reason. Custom code runs on a separate registrable domain in a sandboxed frame, off by default, never in the editor, with no network in its first version. Browser claims measured in Chromium and WebKit. The sandbox design waits for Marlin's security review."
 tags: [framer-clone, primitives, behaviour, state, wai-aria, custom-code, sandbox, security, fleet]
 projects: [framer-clone]
 ---
@@ -213,7 +213,8 @@ type Binding =
 no address is ever computed. `hidden` is missing on purpose: hiding goes through `showWhen`, or the content
 would vanish without JavaScript.
 
-A binding from `text` state to an attribute is refused, see Safety.
+A binding from `text` state to an attribute is refused, see Safety. A `text` binding is refused on a node
+with element children, because `textContent` would wipe them: it needs a string or text nodes only.
 
 ## From stored data to a page
 
@@ -335,7 +336,7 @@ reference to a deleted state counts as a failure of that entry alone.
 | Keyboard trap | `prevent` on `Tab` is refused, so a page cannot hold focus. Native dialogs trap by themselves and Escape closes them |
 | Pressing the consent banner | No `click` action, and the banner has no `data-fc-n`, so nothing can target it |
 | Device storage | The runtime reads and writes none, so it needs no consent |
-| A huge or looping program | 64 triggers per node, 2,000 per page, 16 actions per trigger, expression depth 6, 64 kilobytes per program, `every` at 1,000 ms or more, `delay` at 10 seconds or less, `emit` chains at depth 4, no reaction to a state change, so there are no cycles. Beyond a cap, later entries are dropped with the warning |
+| A huge or looping program | 64 triggers per node, 2,000 per page, 16 actions per trigger, expression depth 6, 64 kilobytes per program, `every` at 1,000 ms or more, `delay` at 10 seconds or less, `emit` chains at depth 4. No trigger fires on a state change, so there are no cycles. Beyond a cap, later entries are dropped with the warning |
 | Tenant reach | The program is in that site's HTML, per request, the sheet's reasoning in the selector contract |
 
 ## Presets
@@ -554,7 +555,7 @@ page, and the frame is no worse.
 | **Opaque origin** | Measured `null` | No storage, no same-origin access to anything |
 | **One host, not one per site** | Origin is opaque, so a subdomain per site adds no isolation | Saves a wildcard certificate. Tenants never share a page |
 | **Parent `frame-src`** | A policy with only this directive on any page with a block, so it blocks no images and breaks nothing else | The only control measured to stop self-navigation, in both engines. `<meta http-equiv>` and the header both worked. The slice proves it on the real published route, since React must place the tag in `head` |
-| **`frame-ancestors`** | Lists the site's own hosts | Tenant A's code cannot be framed by tenant B |
+| **`frame-ancestors`** | Lists the site's own hosts plus the editor host | Tenant A's code cannot be framed by tenant B. The editor host is there for the standalone preview, whose route is session-gated by `middleware.ts`, and it gains nothing from the frame, which is opaque and cross-site |
 
 ### The frame
 
@@ -566,7 +567,7 @@ is the precedent for content-hash serving.
 Content-Security-Policy: sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline';
   style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; connect-src 'none';
   form-action 'none'; base-uri 'none'; frame-src 'none'; worker-src 'none'; object-src 'none';
-  webrtc 'block'; frame-ancestors <the site's hosts>
+  webrtc 'block'; frame-ancestors <the site's hosts> <the editor host>
 Permissions-Policy: camera=(), microphone=(), geolocation=(), usb=(), serial=(), payment=()
 X-Content-Type-Options: nosniff
 Referrer-Policy: no-referrer
@@ -593,9 +594,11 @@ a frame holds: the visitor's address, and what they typed into that frame.
 ### What it can reach
 
 Nothing by default. A block declares what it may touch, and a broker in the parent page's behaviour runtime
-enforces that.
+enforces that. The declaration is `props.customCode` on an ordinary `div` node. That prop is what the
+renderers dispatch on, ahead of the island checks, and it never reaches the DOM.
 
 ```ts
+/** props.customCode */
 interface StoredCustomCode {
   sha256: string;             // never the code itself
   title: string;              // required: the frame's accessible name
