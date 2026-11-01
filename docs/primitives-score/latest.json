@@ -1,22 +1,22 @@
 {
-  "generatedAt": "2026-11-01T22:17:51.992Z",
+  "generatedAt": "2026-11-01T22:56:01.603Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 69,
+  "durationSeconds": 123,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1562,
-        "fail": 254,
+        "pass": 1695,
+        "fail": 121,
         "notTested": 0,
         "total": 1816
       },
       "renderer": {
-        "pass": 1522,
-        "fail": 294,
+        "pass": 1655,
+        "fail": 161,
         "notTested": 0,
         "total": 1816
       },
@@ -362,14 +362,14 @@
       },
       "css-selector": {
         "format": {
-          "pass": 0,
-          "fail": 106,
+          "pass": 95,
+          "fail": 11,
           "notTested": 0,
           "total": 106
         },
         "renderer": {
-          "pass": 0,
-          "fail": 106,
+          "pass": 95,
+          "fail": 11,
           "notTested": 0,
           "total": 106
         },
@@ -394,14 +394,14 @@
       },
       "css-at-rule": {
         "format": {
-          "pass": 0,
-          "fail": 15,
+          "pass": 5,
+          "fail": 10,
           "notTested": 0,
           "total": 15
         },
         "renderer": {
-          "pass": 0,
-          "fail": 15,
+          "pass": 5,
+          "fail": 10,
           "notTested": 0,
           "total": 15
         },
@@ -426,14 +426,14 @@
       },
       "css-media-feature": {
         "format": {
-          "pass": 1,
-          "fail": 33,
+          "pass": 34,
+          "fail": 0,
           "notTested": 0,
           "total": 34
         },
         "renderer": {
-          "pass": 1,
-          "fail": 33,
+          "pass": 34,
+          "fail": 0,
           "notTested": 0,
           "total": 34
         },
@@ -4804,160 +4804,160 @@
       "css-value:vmin": "pass pass pass pass pass",
       "css-value:vw": "pass pass pass pass pass",
       "css-value:x": "pass pass pass pass pass",
-      "css-selector:Type selectors": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:Class selectors": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:ID selectors": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:Universal selectors": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:Attribute selectors": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:Nesting selector": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:Selector list": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:Next-sibling combinator": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:Subsequent-sibling combinator": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:Child combinator": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:Descendant combinator": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::active": "selector-styles selector-styles selector-styles selector-styles selector-styles",
+      "css-selector:Type selectors": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:Class selectors": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:ID selectors": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:Universal selectors": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:Attribute selectors": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:Nesting selector": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:Selector list": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:Next-sibling combinator": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:Subsequent-sibling combinator": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:Child combinator": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:Descendant combinator": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::active": "pass pass selector-styles selector-styles selector-styles",
       "css-selector::active-view-transition": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-selector::active-view-transition-type()": "page-level-css page-level-css page-level-css selector-styles page-level-css",
-      "css-selector::any-link": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::autofill": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::buffering": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::checked": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::current": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::default": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::defined": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::dir()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::disabled": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::empty": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::enabled": "selector-styles selector-styles selector-styles selector-styles selector-styles",
+      "css-selector::any-link": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::autofill": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::buffering": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::checked": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::current": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::default": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::defined": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::dir()": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::disabled": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::empty": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::enabled": "pass pass selector-styles selector-styles selector-styles",
       "css-selector::first": "page-level-css page-level-css page-level-css selector-styles page-level-css",
-      "css-selector::first-child": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::first-of-type": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::focus": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::focus-visible": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::focus-within": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::fullscreen": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::future": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::has()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::hover": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::in-range": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::indeterminate": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::invalid": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::is()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::lang()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::last-child": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::last-of-type": "selector-styles selector-styles selector-styles selector-styles selector-styles",
+      "css-selector::first-child": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::first-of-type": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::focus": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::focus-visible": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::focus-within": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::fullscreen": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::future": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::has()": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::hover": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::in-range": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::indeterminate": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::invalid": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::is()": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::lang()": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::last-child": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::last-of-type": "pass pass selector-styles selector-styles selector-styles",
       "css-selector::left": "page-level-css page-level-css page-level-css selector-styles page-level-css",
-      "css-selector::link": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::modal": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::muted": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::not()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::nth-child()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::nth-last-child()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::nth-last-of-type()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::nth-of-type()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::only-child": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::only-of-type": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::open": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::optional": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::out-of-range": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::past": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::paused": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::picture-in-picture": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::placeholder-shown": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::playing": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::popover-open": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::read-only": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::read-write": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::required": "selector-styles selector-styles selector-styles selector-styles selector-styles",
+      "css-selector::link": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::modal": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::muted": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::not()": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::nth-child()": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::nth-last-child()": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::nth-last-of-type()": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::nth-of-type()": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::only-child": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::only-of-type": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::open": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::optional": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::out-of-range": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::past": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::paused": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::picture-in-picture": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::placeholder-shown": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::playing": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::popover-open": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::read-only": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::read-write": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::required": "pass pass selector-styles selector-styles selector-styles",
       "css-selector::right": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-selector::root": "page-level-css page-level-css page-level-css selector-styles page-level-css",
-      "css-selector::scope": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::seeking": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::stalled": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::target": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::target-current": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::user-invalid": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::user-valid": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::valid": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::visited": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::volume-locked": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::where()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector::xr-overlay": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::after": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::backdrop": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::before": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::checkmark": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::cue": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::cue()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::details-content": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::file-selector-button": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::first-letter": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::first-line": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::grammar-error": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::highlight()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::marker": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::part()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::picker-icon": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::picker()": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::placeholder": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::scroll-marker": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::scroll-marker-group": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::selection": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::spelling-error": "selector-styles selector-styles selector-styles selector-styles selector-styles",
-      "css-selector:::target-text": "selector-styles selector-styles selector-styles selector-styles selector-styles",
+      "css-selector::scope": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::seeking": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::stalled": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::target": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::target-current": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::user-invalid": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::user-valid": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::valid": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::visited": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::volume-locked": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::where()": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector::xr-overlay": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::after": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::backdrop": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::before": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::checkmark": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::cue": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::cue()": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::details-content": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::file-selector-button": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::first-letter": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::first-line": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::grammar-error": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::highlight()": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::marker": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::part()": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::picker-icon": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::picker()": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::placeholder": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::scroll-marker": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::scroll-marker-group": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::selection": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::spelling-error": "pass pass selector-styles selector-styles selector-styles",
+      "css-selector:::target-text": "pass pass selector-styles selector-styles selector-styles",
       "css-selector:::view-transition": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-selector:::view-transition-group()": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-selector:::view-transition-image-pair()": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-selector:::view-transition-new()": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-selector:::view-transition-old()": "page-level-css page-level-css page-level-css selector-styles page-level-css",
       "css-at-rule:@counter-style": "at-rules at-rules at-rules at-rules at-rules",
-      "css-at-rule:@container": "at-rules at-rules at-rules at-rules at-rules",
+      "css-at-rule:@container": "pass pass at-rules at-rules at-rules",
       "css-at-rule:@font-face": "at-rules at-rules at-rules at-rules at-rules",
       "css-at-rule:@font-feature-values": "at-rules at-rules at-rules at-rules at-rules",
       "css-at-rule:@font-palette-values": "at-rules at-rules at-rules at-rules at-rules",
       "css-at-rule:@keyframes": "at-rules at-rules at-rules at-rules at-rules",
       "css-at-rule:@layer": "page-level-css page-level-css page-level-css at-rules page-level-css",
-      "css-at-rule:@media": "media-queries media-queries media-queries media-queries media-queries",
+      "css-at-rule:@media": "pass pass media-queries media-queries media-queries",
       "css-at-rule:@page": "page-level-css page-level-css page-level-css at-rules page-level-css",
       "css-at-rule:@position-try": "at-rules at-rules at-rules at-rules at-rules",
       "css-at-rule:@property": "at-rules at-rules at-rules at-rules at-rules",
-      "css-at-rule:@scope": "at-rules at-rules at-rules at-rules at-rules",
-      "css-at-rule:@starting-style": "at-rules at-rules at-rules at-rules at-rules",
-      "css-at-rule:@supports": "at-rules at-rules at-rules at-rules at-rules",
+      "css-at-rule:@scope": "pass pass at-rules at-rules at-rules",
+      "css-at-rule:@starting-style": "pass pass at-rules at-rules at-rules",
+      "css-at-rule:@supports": "pass pass at-rules at-rules at-rules",
       "css-at-rule:@view-transition": "page-level-css page-level-css page-level-css at-rules page-level-css",
-      "css-media-feature:any-hover": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:any-pointer": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:aspect-ratio": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:color": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:color-gamut": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:color-index": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:device-posture": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:display-mode": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:display-state": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:dynamic-range": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:forced-colors": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:grid": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:height": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:horizontal-viewport-segments": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:hover": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:inverted-colors": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:monochrome": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:orientation": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:overflow-block": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:overflow-inline": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:pointer": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:prefers-color-scheme": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:prefers-contrast": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:prefers-reduced-data": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:prefers-reduced-motion": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:prefers-reduced-transparency": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:resizable": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:resolution": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:scan": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:scripting": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:update": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:vertical-viewport-segments": "media-queries media-queries media-queries media-queries media-queries",
-      "css-media-feature:video-dynamic-range": "media-queries media-queries media-queries media-queries media-queries",
+      "css-media-feature:any-hover": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:any-pointer": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:aspect-ratio": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:color": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:color-gamut": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:color-index": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:device-posture": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:display-mode": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:display-state": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:dynamic-range": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:forced-colors": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:grid": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:height": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:horizontal-viewport-segments": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:hover": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:inverted-colors": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:monochrome": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:orientation": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:overflow-block": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:overflow-inline": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:pointer": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:prefers-color-scheme": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:prefers-contrast": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:prefers-reduced-data": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:prefers-reduced-motion": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:prefers-reduced-transparency": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:resizable": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:resolution": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:scan": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:scripting": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:update": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:vertical-viewport-segments": "pass pass media-queries media-queries media-queries",
+      "css-media-feature:video-dynamic-range": "pass pass media-queries media-queries media-queries",
       "css-media-feature:width": "pass pass pass pass pass",
       "aria-pattern:accordion": "pass pass canvas-editor-context pass pass",
       "aria-pattern:alert": "pass pass pass pass pass",
@@ -4992,23 +4992,23 @@
     }
   },
   "corpus": {
-    "passed": 4,
+    "passed": 7,
     "total": 13,
     "checks": {
       "screenshot": {
-        "pass": 52,
+        "pass": 66,
         "total": 87
       },
       "computed-styles": {
-        "pass": 31,
+        "pass": 55,
         "total": 87
       },
       "accessibility-tree": {
-        "pass": 63,
+        "pass": 66,
         "total": 87
       },
       "interaction": {
-        "pass": 0,
+        "pass": 21,
         "total": 48
       }
     },
@@ -5043,14 +5043,14 @@
         "fixture": "hover-focus",
         "group": "edge",
         "source": "hand-written",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 15,
             "total": 15
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 15,
             "total": 15
           },
           "accessibility-tree": {
@@ -5058,292 +5058,11 @@
             "total": 15
           },
           "interaction": {
-            "pass": 0,
+            "pass": 12,
             "total": 12
           }
         },
-        "failures": [
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "hover button",
-            "check": "screenshot",
-            "gap": "selector-styles",
-            "detail": "0.33 percent of pixels differ"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "hover button",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: button: background-color rgb(30, 58, 138) became rgb(29, 78, 216)"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "hover button",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "pressed button",
-            "check": "screenshot",
-            "gap": "selector-styles",
-            "detail": "0.33 percent of pixels differ"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "pressed button",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: button: background-color rgb(23, 37, 84) became rgb(29, 78, 216)"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "pressed button",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "keyboard focus button",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "4 differences, first: button: outline-color rgb(245, 158, 11) became rgb(0, 95, 204)"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "keyboard focus button",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "focus field",
-            "check": "screenshot",
-            "gap": "selector-styles",
-            "detail": "0.18 percent of pixels differ"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "focus field",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "12 differences, first: field: border-block-end-color rgb(29, 78, 216) became rgb(156, 163, 175)"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Desktop",
-            "state": "focus field",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "hover button",
-            "check": "screenshot",
-            "gap": "selector-styles",
-            "detail": "0.42 percent of pixels differ"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "hover button",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: button: background-color rgb(30, 58, 138) became rgb(29, 78, 216)"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "hover button",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "pressed button",
-            "check": "screenshot",
-            "gap": "selector-styles",
-            "detail": "0.43 percent of pixels differ"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "pressed button",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: button: background-color rgb(23, 37, 84) became rgb(29, 78, 216)"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "pressed button",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "keyboard focus button",
-            "check": "screenshot",
-            "gap": "selector-styles",
-            "detail": "0.12 percent of pixels differ"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "keyboard focus button",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "4 differences, first: button: outline-color rgb(245, 158, 11) became rgb(0, 95, 204)"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "keyboard focus button",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "focus field",
-            "check": "screenshot",
-            "gap": "selector-styles",
-            "detail": "0.23 percent of pixels differ"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "focus field",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "12 differences, first: field: border-block-end-color rgb(29, 78, 216) became rgb(156, 163, 175)"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Tablet",
-            "state": "focus field",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "hover button",
-            "check": "screenshot",
-            "gap": "selector-styles",
-            "detail": "1.33 percent of pixels differ"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "hover button",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: button: background-color rgb(30, 58, 138) became rgb(29, 78, 216)"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "hover button",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "pressed button",
-            "check": "screenshot",
-            "gap": "selector-styles",
-            "detail": "1.34 percent of pixels differ"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "pressed button",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: button: background-color rgb(23, 37, 84) became rgb(29, 78, 216)"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "pressed button",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "keyboard focus button",
-            "check": "screenshot",
-            "gap": "selector-styles",
-            "detail": "0.39 percent of pixels differ"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "keyboard focus button",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "4 differences, first: button: outline-color rgb(245, 158, 11) became rgb(0, 95, 204)"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "keyboard focus button",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "focus field",
-            "check": "screenshot",
-            "gap": "selector-styles",
-            "detail": "0.73 percent of pixels differ"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "focus field",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "12 differences, first: field: border-block-end-color rgb(29, 78, 216) became rgb(156, 163, 175)"
-          },
-          {
-            "fixture": "hover-focus",
-            "viewport": "Mobile",
-            "state": "focus field",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          }
-        ],
+        "failures": [],
         "notMeasured": []
       },
       {
@@ -5655,18 +5374,18 @@
         "fixture": "pseudo-elements",
         "group": "edge",
         "source": "hand-written",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 1,
+            "pass": 3,
             "total": 3
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "accessibility-tree": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "interaction": {
@@ -5674,72 +5393,7 @@
             "total": 0
           }
         },
-        "failures": [
-          {
-            "fixture": "pseudo-elements",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "14 differences, first: page: block-size 192px became 168px"
-          },
-          {
-            "fixture": "pseudo-elements",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "accessibility-tree",
-            "gap": "selector-styles",
-            "detail": "original \"- blockquote: “ Good design is honest.\\n- text: Feature new\\n- list:\\n  - listitem: One point\\n- paragraph: Once upon a time\", replica \"- blockquote: Good design is honest.\\n- text: Feature\\n- list:\\n  - listitem: One point\\n- par"
-          },
-          {
-            "fixture": "pseudo-elements",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "selector-styles",
-            "detail": "0.12 percent of pixels differ"
-          },
-          {
-            "fixture": "pseudo-elements",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "14 differences, first: page: block-size 192px became 168px"
-          },
-          {
-            "fixture": "pseudo-elements",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "accessibility-tree",
-            "gap": "selector-styles",
-            "detail": "original \"- blockquote: “ Good design is honest.\\n- text: Feature new\\n- list:\\n  - listitem: One point\\n- paragraph: Once upon a time\", replica \"- blockquote: Good design is honest.\\n- text: Feature\\n- list:\\n  - listitem: One point\\n- par"
-          },
-          {
-            "fixture": "pseudo-elements",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "selector-styles",
-            "detail": "0.39 percent of pixels differ"
-          },
-          {
-            "fixture": "pseudo-elements",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "14 differences, first: page: block-size 192px became 168px"
-          },
-          {
-            "fixture": "pseudo-elements",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "accessibility-tree",
-            "gap": "selector-styles",
-            "detail": "original \"- blockquote: “ Good design is honest.\\n- text: Feature new\\n- list:\\n  - listitem: One point\\n- paragraph: Once upon a time\", replica \"- blockquote: Good design is honest.\\n- text: Feature\\n- list:\\n  - listitem: One point\\n- par"
-          }
-        ],
+        "failures": [],
         "notMeasured": []
       },
       {
@@ -5798,14 +5452,14 @@
         "fixture": "shadcn-button",
         "group": "component",
         "source": "shadcn/ui Button (src/components/ui/button.tsx)",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 11,
+            "pass": 12,
             "total": 12
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 12,
             "total": 12
           },
           "accessibility-tree": {
@@ -5813,164 +5467,11 @@
             "total": 12
           },
           "interaction": {
-            "pass": 0,
+            "pass": 9,
             "total": 9
           }
         },
-        "failures": [
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Desktop",
-            "state": "hover default",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: default: background-color rgba(23, 23, 23, 0.9) became rgb(23, 23, 23)"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Desktop",
-            "state": "hover default",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Desktop",
-            "state": "hover outline",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: outline: background-color rgb(245, 245, 245) became rgb(255, 255, 255)"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Desktop",
-            "state": "hover outline",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Desktop",
-            "state": "keyboard focus",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: default: box-shadow rgba(161, 161, 161, 0.5) 0px 0px 0px 3px became rgba(0, 0, 0, 0.05) 0px 1px 2px 0px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Desktop",
-            "state": "keyboard focus",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Tablet",
-            "state": "hover default",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: default: background-color rgba(23, 23, 23, 0.9) became rgb(23, 23, 23)"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Tablet",
-            "state": "hover default",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Tablet",
-            "state": "hover outline",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: outline: background-color rgb(245, 245, 245) became rgb(255, 255, 255)"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Tablet",
-            "state": "hover outline",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Tablet",
-            "state": "keyboard focus",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: default: box-shadow rgba(161, 161, 161, 0.5) 0px 0px 0px 3px became rgba(0, 0, 0, 0.05) 0px 1px 2px 0px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Tablet",
-            "state": "keyboard focus",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "hover default",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: default: background-color rgba(23, 23, 23, 0.9) became rgb(23, 23, 23)"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "hover default",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "hover outline",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: outline: background-color rgb(245, 245, 245) became rgb(255, 255, 255)"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "hover outline",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "keyboard focus",
-            "check": "screenshot",
-            "gap": "selector-styles",
-            "detail": "0.18 percent of pixels differ"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "keyboard focus",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "1 differences, first: default: box-shadow rgba(161, 161, 161, 0.5) 0px 0px 0px 3px became rgba(0, 0, 0, 0.05) 0px 1px 2px 0px"
-          },
-          {
-            "fixture": "shadcn-button",
-            "viewport": "Mobile",
-            "state": "keyboard focus",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          }
-        ],
+        "failures": [],
         "notMeasured": []
       },
       {
@@ -7210,25 +6711,6 @@
   },
   "gaps": [
     {
-      "id": "selector-styles",
-      "description": "CSS that needs a selector (states, pseudo-elements, structural selectors): a node only holds inline declarations, so no rule can be written.",
-      "matrixCells": 486,
-      "corpusChecks": 68,
-      "fixtures": [
-        "hover-focus",
-        "pseudo-elements",
-        "shadcn-button",
-        "radix-accordion"
-      ],
-      "onlyGapOf": [
-        "hover-focus",
-        "pseudo-elements",
-        "shadcn-button"
-      ],
-      "roundTripCases": 0,
-      "cost": 554
-    },
-    {
       "id": "blocked-event-handlers",
       "description": "A stored event handler attribute is a string of code, so both renderers drop it on purpose (blockedNodes.ts). What closes this is a stored behaviour for the event: the behaviour model or custom code, neither of which exists yet.",
       "matrixCells": 500,
@@ -7249,18 +6731,16 @@
       "cost": 361
     },
     {
-      "id": "media-queries",
-      "description": "Media queries beyond width: print, dark mode and reduced motion have no home.",
-      "matrixCells": 170,
-      "corpusChecks": 12,
+      "id": "selector-styles",
+      "description": "CSS that needs a selector (states, pseudo-elements, structural selectors): a node only holds inline declarations, so no rule can be written.",
+      "matrixCells": 296,
+      "corpusChecks": 6,
       "fixtures": [
-        "print-styles"
+        "radix-accordion"
       ],
-      "onlyGapOf": [
-        "print-styles"
-      ],
+      "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 182
+      "cost": 302
     },
     {
       "id": "ai-tag-allowlist",
@@ -7271,6 +6751,20 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 122
+    },
+    {
+      "id": "media-queries",
+      "description": "Media queries beyond width: print, dark mode and reduced motion have no home.",
+      "matrixCells": 102,
+      "corpusChecks": 12,
+      "fixtures": [
+        "print-styles"
+      ],
+      "onlyGapOf": [
+        "print-styles"
+      ],
+      "roundTripCases": 0,
+      "cost": 114
     },
     {
       "id": "behaviour-state",
@@ -7312,7 +6806,7 @@
     {
       "id": "at-rules",
       "description": "At-rules: no way to store @keyframes, @container, @supports, @font-face and the rest.",
-      "matrixCells": 58,
+      "matrixCells": 50,
       "corpusChecks": 16,
       "fixtures": [
         "keyframes",
@@ -7323,7 +6817,7 @@
         "container-query"
       ],
       "roundTripCases": 0,
-      "cost": 74
+      "cost": 66
     },
     {
       "id": "ai-attribute-allowlist",
