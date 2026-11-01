@@ -31,6 +31,7 @@ export const ROW_KINDS = [
   'css-at-rule',
   'css-media-feature',
   'aria-pattern',
+  'component',
 ] as const;
 export type RowKind = (typeof ROW_KINDS)[number];
 
@@ -78,6 +79,7 @@ export const GAPS = {
   'react-attribute-handling': 'React drops or rewrites an attribute that is valid HTML.',
   'roundtrip-not-representable': 'A construct that cannot survive nodes to JSX and back, because the format has nowhere to put it.',
   'import-dynamic-logic': 'JSX that is a program, not markup: reported as left over by the static import, as the plan requires.',
+  'reusable-components': 'A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.',
   'layout-difference': 'Same declarations, different geometry or pixels, for a reason other than the gaps above.',
   'harness-limit': 'Not a product gap: the harness cannot yet decide this cell, so it is not counted as a pass.',
   unclassified: 'A difference no rule explains yet. Investigate before trusting the score.',

@@ -1,0 +1,38 @@
+{
+  "_doc": "The one list of what the reusable component format promises (docs/plans/2026-11-02-reusable-components.md, Score changes): the 17 input types of Framer's editor and 13 capabilities.",
+  "source": "docs/plans/2026-11-02-reusable-components.md",
+  "inputTypes": [
+    "text",
+    "number",
+    "toggle",
+    "color",
+    "image",
+    "link",
+    "choice",
+    "richtext",
+    "file",
+    "date",
+    "border",
+    "shadow",
+    "cursor",
+    "transition",
+    "list",
+    "gallery",
+    "event"
+  ],
+  "capabilities": [
+    "definition",
+    "placement",
+    "placement-style",
+    "nested",
+    "cycle-refused",
+    "collection-template",
+    "state-hover",
+    "state-pressed",
+    "state-focused",
+    "state-custom",
+    "interaction-click",
+    "interaction-appear",
+    "placement-trigger"
+  ]
+}
