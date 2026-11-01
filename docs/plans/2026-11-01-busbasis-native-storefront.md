@@ -10,6 +10,10 @@ projects: [framer-clone]
 
 # Expressing the BusBasis storefront fully in framer-clone
 
+> **Update 2026-11-01 (Marlin):** the complete primitives plan comes first, and BusBasis may well stay
+> on Medusa long term. This gap list remains useful as a map of shop capabilities, not as a scheduled
+> migration.
+
 ## Decision and what follows from it
 
 **2026-11-01, Marlin:** framer-clone does not edit a Next.js frontend it does not host. It replaces

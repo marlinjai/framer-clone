@@ -1,9 +1,9 @@
 ---
 type: plan
-status: draft
+status: in-progress
 date: 2026-11-01
 title: "Complete primitives: measuring what framer-clone can express, and rebuilding React components in it"
-summary: "How to prove framer-clone's primitives can express what HTML, CSS and JavaScript can, what a first check of the code found, and how developers could bring React components in by converting them into primitives. Markup and styling can reach 100 percent and be measured; behaviour cannot be a closed list, so it needs behaviour primitives plus one explicit custom code primitive. Nothing here is decided or scheduled yet."
+summary: "How to prove framer-clone's primitives can express what HTML, CSS and JavaScript can, what a first check of the code found, and how developers could bring React components in by converting them into primitives. Markup and styling can reach 100 percent and be measured; behaviour cannot be a closed list, so it needs behaviour primitives plus one explicit custom code primitive. Decided by Marlin on 2026-11-01: steps 1 and 2 are running."
 tags: [framer-clone, primitives, expressiveness, react-import, reusable-components, parity]
 projects: [framer-clone]
 ---
@@ -244,13 +244,14 @@ These props and nodes get dropped by both renderers in a separate change, so exi
 write path are covered. The custom code
 primitive below is the designed replacement, so nothing intended is taken away.
 
-## Open decisions (Marlin's)
+## Decisions (Marlin, 2026-11-01)
 
-1. **Custom code on customer sites.** Is the custom code primitive allowed, for whom, and sandboxed
-   how? This is what lets the word "complete" stand behind behaviour; without it, complete means
-   "everything the primitives cover". Recommendation: allow it, sandboxed in an isolated frame or
-   a separate origin, off by default, visibly marked in the editor.
-2. **Order against BusBasis.** Steps 2 to 6 overlap the "site and design" area of the
-   [BusBasis plan](2026-11-01-busbasis-native-storefront.md); that estimate has not been redone.
-3. **Whether to run step 1 now.** Recommendation: yes, because it is cheap, needs no other decision
-   and turns this plan's estimates into measurements.
+1. **Custom code on customer sites: allowed, sandboxed and off by default.** It runs isolated from
+   the page and the editor and is clearly marked in the editor. This is what lets "complete" stand
+   behind behaviour. The sandbox design is part of step 6.
+2. **Visual state: all three layers.** Element states, component states and page state.
+3. **This plan comes before moving BusBasis.** BusBasis may well stay on Medusa long term, so the
+   [BusBasis plan](2026-11-01-busbasis-native-storefront.md) is no longer the assumed destination.
+   Shop features are instead decided by studying how Medusa solves them (roadmap line "Medusa
+   analysis").
+4. **Steps 1 and 2 start now.** The first score then replaces this plan's estimates.
