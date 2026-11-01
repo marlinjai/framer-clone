@@ -27,10 +27,11 @@ export function isBlockedTag(tag: unknown): boolean {
 /**
  * Whether a prop must not reach the DOM. An event handler is only legitimate as
  * a function (the editor attaches its own); a stored one is a string, which
- * React either drops or throws on.
+ * React drops or throws on for a known element but writes straight into the
+ * markup of a custom element (`<x-y onclick="...">`), in any letter case.
  */
 export function isBlockedProp(name: string, value: unknown): boolean {
-  const blocked = name === 'dangerouslySetInnerHTML' || (/^on[A-Z]/.test(name) && typeof value !== 'function');
+  const blocked = name === 'dangerouslySetInnerHTML' || (/^on/i.test(name) && typeof value !== 'function');
   if (blocked) warnOnce(`the prop ${name}`);
   return blocked;
 }
