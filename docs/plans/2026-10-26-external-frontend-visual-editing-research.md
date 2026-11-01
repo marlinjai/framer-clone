@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: completed
 date: 2026-10-26
 title: "Editing an existing Next.js frontend visually in framer-clone (BusBasis storefront as the case)"
 summary: "Research on what framer-clone would need so the BusBasis storefront (Next.js 16, Medusa 2.19) can be edited visually in it: code components with typed property controls, headless delivery, a canvas that runs the storefront's components, and a BusBasis company. Verdict: about 11 to 16 weeks, half of it the canvas, so the decided Puck plan stays right for BusBasis and its block schemas become framer-clone's first code components later."
@@ -9,6 +9,13 @@ projects: [framer-clone]
 ---
 
 # Editing an existing Next.js frontend visually in framer-clone
+
+> **Answered 2026-11-01 (Marlin): framer-clone does not edit frontends it does not host.** The hosted
+> canvas (point 3) and the delivery API, webhook and preview (point 2) will not be built. Two parts
+> carry on under their own roadmap lines, because framer-clone's own sites need them: typed property
+> controls (point 1) and the immutable published copy (first step of point 2). The route for BusBasis
+> is now [expressing the storefront fully in framer-clone](2026-11-01-busbasis-native-storefront.md).
+> This document stays as the record of the research.
 
 Question from Marlin (2026-10-26): what exactly would framer-clone (Lumitra's hosted Framer-style
 website builder) need so that an existing Next.js frontend, the BusBasis storefront at
@@ -474,14 +481,11 @@ Medusa file ids.
 
 ## Open question for Marlin
 
-**Is "edit a frontend framer-clone does not host" a product direction?** That is the Plasmic and
-Builder.io market, which earlier plans treated as a different market
-(`docs/plans/2026-05-05-cms-data-layer-research.md`). If yes, the hosted canvas (point 3) gets a plan
-and BusBasis is its first customer once the Puck editor has run for a while. If no, framer-clone stops
-after points 1 and 2 (code components and delivery, both useful for its own sites), and BusBasis stays
-on Puck for good.
+Answered on 2026-11-01: no. See the note at the top.
 
 ## Reality
 
 - 2026-10-26: research written from the code on `origin/main` (`79719bb`) and the storefront's
   `main`, with the Puck Phase 0 worktree read as a snapshot. No implementation.
+- 2026-11-01: closed. Direction rejected by Marlin; points 1 and 2's published copy continue on their
+  own roadmap lines, the BusBasis route continues in the [successor plan](2026-11-01-busbasis-native-storefront.md).

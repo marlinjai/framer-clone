@@ -10,9 +10,10 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
 
 ## Open
 
-- [ ] Builder UX gaps: typed property controls for components (a form per component instead of raw props), a navbar component with editable links, theme colours and fonts, and marketing section components (hero, features, pricing, testimonials). These are what stops a non-developer from building a real marketing site in the editor today. Needs a plan before building; the archived ArboSano builder plan of 2026-06-26 (under docs/specs, sections 1 to 3) has the model map and component inventory to start from. The typed-controls part is now designed as point 1 (code components) of the [external frontend research](docs/plans/2026-10-26-external-frontend-visual-editing-research.md). (2026-10-26)
-- [ ] Visual editing of an existing Next.js frontend (the BusBasis storefront as the case): code components with typed property controls, headless delivery of page documents to the external app, a hosted canvas that runs that app's components in an iframe, and the company setup. Researched 2026-10-26, about 11 to 16 weeks; the Puck editor inside the storefront stays BusBasis's tool meanwhile. Waits on Marlin's call whether editing frontends framer-clone does not host is a product direction. See [research](docs/plans/2026-10-26-external-frontend-visual-editing-research.md). (2026-10-26)
-- [ ] An immutable published copy of each page: today save and publish write the same `site_pages` rows, so after a cache miss (restart, deploy, second replica) visitors see the last save instead of the last publish. Publish should write a revision that the public site reads, which also gives history and restore. Found by the [external frontend research](docs/plans/2026-10-26-external-frontend-visual-editing-research.md), point 2. (2026-10-26)
+- [ ] Builder UX gaps: typed property controls for components (a form per component instead of raw props), a navbar component with editable links, theme colours and fonts, and marketing section components (hero, features, pricing, testimonials). These are what stops a non-developer from building a real marketing site in the editor today. Needs a plan before building; the archived ArboSano builder plan of 2026-06-26 (under docs/specs, sections 1 to 3) has the model map and component inventory to start from. The typed-controls design from the external frontend research (control kinds kept as plain data, a form generated from them, a server render branch) still applies. (2026-11-01)
+- [x] Visual editing of an existing Next.js frontend: researched 2026-10-26, about 11 to 16 weeks, and rejected by Marlin on 2026-11-01: framer-clone does not edit frontends it does not host. See [research](docs/plans/2026-10-26-external-frontend-visual-editing-research.md). (2026-11-01)
+- [ ] BusBasis expressed fully in framer-clone: the site served by framer-clone, the shop on its own commerce engine, Medusa retired, about 19 to 27 agent weeks. Most of the gap list is ordinary shop capability (shopper accounts, shipping, discounts, order list, categories, search, quotes). Whether and when BusBasis moves is Marlin's call; until then it stays on Medusa with its Puck editor. See [plan](docs/plans/2026-11-01-busbasis-native-storefront.md). (2026-11-01)
+- [ ] An immutable published copy of each page: today save and publish write the same `site_pages` rows, so after a cache miss (restart, deploy, second replica) visitors see the last save instead of the last publish. Publish should write a revision that the public site reads, which also gives history and restore. Found by the external frontend research. (2026-11-01)
 - [ ] AI-driven page generation: let AI agents write pages directly as MST (MobX-State-Tree, the
   in-memory tree that backs the editor) snapshot JSON, so the data format is the API. Decided and
   in progress since 2026-10-19: phases 1 to 3 (registry-generated schema docs with validation, the
@@ -25,8 +26,9 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   pass), and the properties panel has an Image section for fit, focal point and photo backgrounds
   (done, recorded in the 2026-10-23 design quality plan linked from the plan below). Since
   2026-10-29 a generation (and the layout review) keeps running when the phone switches apps and
-  is collected when the editor comes back, even after iOS reloaded the tab. Phase 4's style references
-  and screenshot loop stay open. See [plan](docs/plans/ai-driven-page-generation.md). (2026-10-29)
+  is collected when the editor comes back, even after iOS reloaded the tab (proven with a reload in the
+  browser; a real iPhone app switch is still Marlin's own check). Phase 4's style references
+  and screenshot loop stay open. See [plan](docs/plans/ai-driven-page-generation.md). (2026-11-01)
 - [x] Motion and effects: an Effects section in the properties panel (appear on scroll, restrained
   hover states, light scroll-linked transforms such as a small image parallax), stored per
   breakpoint like any style, undoable and generatable by the AI, rendered on published pages with
@@ -123,19 +125,21 @@ connections to the suite. The four lines below are in that order.
   engine (replacing the Books' own list), first proven on the owner's test jewellery shop (sample products,
   checkout through Stripe Connect in test mode, receipt in the Books), then instant booking for one
   practitioner (paid online, receipt in the Books), then quotes, then team dispatch; lumitra-booking's slot engine and calendar sync
-  reused as packages. Architecture decided; the catalogue is being built in slices (2026-10-26: slice 1, the
-  company column, migration `020_catalogue_company` and `sites.company_id`; open: the catalogue area, Books
-  lines from the catalogue, the receipt from a paid order, Stripe Connect, the test shop, and rolling 020 out).
+  reused as packages. Architecture decided; the catalogue was built in slices (2026-10-26: slice 1, the
+  company column, migration `020_catalogue_company` and `sites.company_id`). The catalogue and the test shop
+  are built, deployed and proven on production as of 2026-10-27; open: instant booking, quotes, team dispatch.
   See [plan](docs/plans/2026-10-25-business-platform-architecture.md) and
-  [catalogue design](docs/plans/2026-10-25-catalogue-design.md). (2026-10-26)
-- [ ] 3f. Prove Stripe Connect against Stripe in test mode: open the Stripe account (test mode), paste the
+  [catalogue design](docs/plans/2026-10-25-catalogue-design.md). (2026-11-01)
+- [ ] Live payments: the platform runs on Stripe sandbox keys. Going live means live keys and a real shop finishing Stripe onboarding, which is Marlin's yes because it moves real money; prepare a checklist and a rollback first. (2026-11-01)
+- [ ] A real product in the editor: a product page is a template, so the canvas says "no product selected" and the layout can't be judged while designing. Show the first catalogue product by default, with a small switcher on the canvas. (2026-11-01)
+- [x] 3f. Prove Stripe Connect against Stripe in test mode: open the Stripe account (test mode), paste the
   test secret key, the webhook signing secret and the Connect client id into the three placeholders in
   Infisical (project framer-clone), register the webhook endpoint `/api/payments/stripe/webhook` for
   connected accounts, then connect the test shop and pay with a test card. Built against a fake Stripe on
   2026-10-26; see [catalogue design](docs/plans/2026-10-25-catalogue-design.md), "Decided while building
   slice 5". Progress 2026-10-26: the sandbox "Lumitra Sites" in the Lumitra Stripe account has Connect
   (Standard accounts, OAuth) and the webhook; the three keys are in Infisical prod and dev; the test shop's
-  Stripe account finished onboarding and reads "Ready". Open: the test purchases. (2026-10-26)
+  Stripe account finished onboarding and reads "Ready". The test purchases passed on production on 2026-10-26 and 2026-10-27 (orders ORD-000001 to ORD-000006: paid, declined and retried, receipts issued, the 1% fee arrived). (2026-11-01)
 - [x] 3g. Shop pages that link up: a Link component (its target checked as it is typed, or picked from the
   site's pages), and `{{product.href}}` in the binding picker inside a product list or detail, which links
   each product to the site's product page (`products/:handle`, `productPagePath` in `src/lib/pages/slug.ts`).
