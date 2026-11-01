@@ -47,22 +47,34 @@ export function ProductPreviewProvider({
   React.useEffect(() => {
     if (!enabled || !dataSource) return;
     let active = true;
+    // Only the latest request may write: an older, slower response must not replace a newer one.
+    let latestRequest = 0;
+    const load = () => {
+      const request = ++latestRequest;
+      dataSource
+        .listProducts()
+        .then((page) => {
+          if (active && request === latestRequest) {
+            setLoaded({
+              status: 'ready',
+              products: page.products.map((p) => ({ handle: p.handle, title: p.title })),
+            });
+          }
+        })
+        .catch((err: unknown) => {
+          if (active && request === latestRequest) {
+            setLoaded({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+          }
+        });
+    };
     setLoaded({ status: 'loading' });
-    dataSource
-      .listProducts()
-      .then((page) => {
-        if (active) {
-          setLoaded({
-            status: 'ready',
-            products: page.products.map((p) => ({ handle: p.handle, title: p.title })),
-          });
-        }
-      })
-      .catch((err: unknown) => {
-        if (active) setLoaded({ status: 'error', message: err instanceof Error ? err.message : String(err) });
-      });
+    load();
+    // The catalogue can change while the editor stays open (a product deleted or renamed):
+    // re-read it so a chosen product that left falls back to the first one.
+    const unsubscribe = dataSource.subscribe(null, load);
     return () => {
       active = false;
+      unsubscribe();
     };
   }, [enabled, dataSource]);
 
