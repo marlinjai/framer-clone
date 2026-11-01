@@ -501,13 +501,42 @@ describe('the invoice page: review fixes', () => {
     expect(search.getAttribute('aria-activedescendant')).toBe(first.id);
     fireEvent.keyDown(search, { key: 'ArrowDown' });
     const second = screen.getByRole('option', { name: /Beratung/ });
-    await waitFor(() => expect(second.getAttribute('aria-selected')).toBe('true'));
+    expect(second.getAttribute('aria-selected')).toBe('true');
     expect(search.getAttribute('aria-activedescendant')).toBe(second.id);
     fireEvent.keyDown(search, { key: 'ArrowDown' });
-    await waitFor(() => expect(first.getAttribute('aria-selected')).toBe('true')); // it wraps round
+    expect(first.getAttribute('aria-selected')).toBe('true'); // it wraps round
     fireEvent.keyDown(search, { key: 'ArrowUp' });
     fireEvent.keyDown(search, { key: 'Enter' });
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body?.title).toBe('Beratung'));
+  });
+
+  it('an arrow key pressed the moment the products appear is kept', async () => {
+    server({
+      'GET /api/books/catalogue': () => ({
+        status: 200,
+        body: {
+          items: [
+            item({ variantId: 'v0', kind: 'product', title: 'Aaa first' }),
+            item({ variantId: 'v1', title: 'Beratung', unitLabel: 'Std', unitPrice: 9900 }),
+          ],
+        },
+      }),
+    });
+    await opened();
+    // A mutation observer runs straight after the commit that shows the list, before that commit's passive
+    // effects: the key lands in the one gap a later reset could overwrite it from.
+    let pressed = false;
+    const observer = new MutationObserver(() => {
+      const search = screen.queryByRole('combobox', { name: 'Search products and services in the catalogue' });
+      if (pressed || !search || !document.getElementById('product-option-1')) return;
+      pressed = true;
+      fireEvent.keyDown(search, { key: 'ArrowDown' });
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
+    await waitFor(() => expect(pressed).toBe(true));
+    observer.disconnect();
+    expect(screen.getByRole('option', { name: /Beratung/ }).getAttribute('aria-selected')).toBe('true');
   });
 });
 
