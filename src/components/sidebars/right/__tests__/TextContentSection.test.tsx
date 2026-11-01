@@ -173,6 +173,8 @@ describe('TextContentSection on mixed text', () => {
     const [lead, , gap, , , bound] = para.children as ComponentInstance[];
     expect(textRunLabel(para, lead)).toBe('"Hello" before "a very long element..."');
     expect(textRunLabel(para, gap)).toBe('Empty text between "a very long element..." and Image');
+    gap.setTextContent(' ');
+    expect(textRunLabel(para, gap)).toBe('A space between "a very long element..." and Image');
     expect(textRunLabel(para, tail)).toBe('"one two three four five..." after Image, hidden');
     expect(textRunLabel(para, bound)).toBe('Text from data after Image');
   });

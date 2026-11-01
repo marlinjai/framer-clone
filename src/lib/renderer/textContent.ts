@@ -67,7 +67,8 @@ function neighbourName(node: ComponentInstance): string {
 /**
  * What a text run is called in the panel: a short excerpt and the elements on
  * either side, so `Hello <b>bold</b> world` reads as two different fields. A
- * run bound to data shows no stored text, an empty one has none.
+ * run bound to data shows no stored text, an empty one has none, and the space
+ * between two elements is a run too.
  */
 export function textRunLabel(element: ComponentInstance, run: ComponentInstance): string {
   const siblings = element.children as ComponentInstance[];
@@ -75,7 +76,8 @@ export function textRunLabel(element: ComponentInstance, run: ComponentInstance)
   const before = siblings.slice(0, Math.max(at, 0)).reverse().find(child => !isTextNodeType(child.type));
   const after = siblings.slice(at + 1).find(child => !isTextNodeType(child.type));
   const words = excerptOf(run.props?.children);
-  const name = isTextBound(run) ? 'Text from data' : words ? `"${words}"` : 'Empty text';
+  const blank = String(run.props?.children ?? '') === '' ? 'Empty text' : 'A space';
+  const name = isTextBound(run) ? 'Text from data' : words ? `"${words}"` : blank;
   const beside =
     before && after
       ? `between ${neighbourName(before)} and ${neighbourName(after)}`
