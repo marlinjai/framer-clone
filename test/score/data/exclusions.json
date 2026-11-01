@@ -1,0 +1,43 @@
+{
+  "_doc": "Entries left out of the coverage matrix denominator. Every exclusion carries a written reason, and the report lists them. A rule applies to all entries the data packages flag that way; an item names one entry. Nothing is excluded because it fails.",
+  "rules": [
+    {
+      "id": "bcd-deprecated",
+      "appliesTo": ["html-element", "html-global-attribute", "css-property", "css-at-rule"],
+      "reason": "Marked deprecated by @mdn/browser-compat-data: browsers keep it only for old pages and new pages should not use it."
+    },
+    {
+      "id": "mdn-obsolete",
+      "appliesTo": ["css-property", "css-selector", "css-at-rule"],
+      "reason": "Marked obsolete by mdn-data: removed from the standard."
+    },
+    {
+      "id": "mdn-nonstandard",
+      "appliesTo": ["css-property", "css-selector", "css-at-rule"],
+      "reason": "Marked nonstandard by mdn-data: a vendor-only name (mostly -webkit-, -moz- and -ms- prefixes) that is not part of what CSS defines."
+    }
+  ],
+  "items": {
+    "html-element": {
+      "html": "The document shell: the published route and its Next.js layout own it, and a node always sits inside body.",
+      "head": "The document shell: the published route owns it. Head content beyond the search metadata is plan gap 5 (page-level items), not an element-level question.",
+      "body": "The document shell: the published route owns it, and a node always sits inside it.",
+      "title": "Page-level: the page's metadata (PageMetadataModel) writes it, a node cannot.",
+      "meta": "Page-level: outside the component tree by design, and blocked in nodes (blockedNodes.ts). See the security finding in the complete primitives plan.",
+      "base": "Page-level and blocked in nodes (blockedNodes.ts): it would rewrite every link on the page.",
+      "link": "Page-level and blocked in nodes (blockedNodes.ts): an external stylesheet is the same risk as a script. The hosted fonts have their own path.",
+      "script": "Blocked in nodes on purpose (blockedNodes.ts). The designed replacement is the custom code primitive, an open decision in the plan, so it is not a coverage gap until that is decided.",
+      "style": "Blocked in nodes on purpose (blockedNodes.ts). What a style element would add is measured directly by the selector and at-rule rows."
+    },
+    "css-selector": {
+      "Pseudo-classes": "A category heading in mdn-data, not a selector. Each pseudo-class has its own row.",
+      "Pseudo-elements": "A category heading in mdn-data, not a selector. Each pseudo-element has its own row.",
+      "Namespace separator": "Only meaningful with @namespace, itself excluded, and published pages are HTML."
+    },
+    "css-at-rule": {
+      "@charset": "Not authored: the published page is served as UTF-8 by the app and its stylesheet is inline.",
+      "@import": "Blocked on purpose: responsiveCss.ts drops it as an import-capable value. A stored page must not load foreign stylesheets.",
+      "@namespace": "For XML documents; published pages are HTML."
+    }
+  }
+}
