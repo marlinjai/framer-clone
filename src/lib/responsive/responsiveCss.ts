@@ -62,10 +62,21 @@ const SAFE_PROPERTY = /^(?:[A-Za-z][A-Za-z0-9]*|--[A-Za-z0-9_-]+)$/;
  */
 const BREAKOUT_CHARS = /[{}<>\\\u0000-\u001f\u007f]/;
 
-/** Does the `(` at `open` follow the whole identifier `url`, in any case? */
-function isUrlFunction(text: string, open: number): boolean {
-  if (open < 3 || text.slice(open - 3, open).toLowerCase() !== 'url') return false;
-  return open === 3 || !/[A-Za-z0-9_\-\u0080-￿]/.test(text[open - 4]);
+/**
+ * How the browser reads the `(` at `open`, when no quote follows it: as the
+ * start of an unquoted url token, or as a plain block. It is a url token only
+ * when `url` is a name of its own: a name character, `#` or `@` before it pulls
+ * it into a longer identifier, a dimension, a hash or an at-keyword, and then
+ * the url rules do not apply. A non-ASCII character is 'ambiguous': browsers
+ * and the CSS specification differ on which ones are name characters, and the
+ * two readings end the token in different places, so neither can be trusted.
+ */
+function parenKind(text: string, open: number): 'url' | 'block' | 'ambiguous' {
+  if (open < 3 || text.slice(open - 3, open).toLowerCase() !== 'url') return 'block';
+  if (open === 3) return 'url';
+  const before = text[open - 4];
+  if (before >= '\u0080') return 'ambiguous';
+  return /[A-Za-z0-9_#@-]/.test(before) ? 'block' : 'url';
 }
 
 /**
@@ -102,7 +113,9 @@ function isContainedValue(text: string): boolean {
       let body = i + 1;
       while (text[body] === ' ') body++;
       const quoted = text[body] === '"' || text[body] === "'";
-      if (!quoted && isUrlFunction(text, i)) {
+      const kind = quoted ? 'block' : parenKind(text, i);
+      if (kind === 'ambiguous') return false;
+      if (kind === 'url') {
         i = endOfUnquotedUrl(text, body);
         if (i === -1) return false;
       } else {
