@@ -106,10 +106,11 @@ describe('renderComponentNode: primitives', () => {
     expect(img!.childNodes.length).toBe(0);
   });
 
-  it('resolves a registry-id type to its htmlType (image -> img)', () => {
+  it('never reads a stored type as a registry id (image stays image, as on the canvas)', () => {
     const node: ComponentNode = { type: 'image', id: 'i2', props: { src: '/b.png' } };
     const { container } = render(<>{renderComponentNode(node)}</>);
-    expect(container.querySelector('img')).not.toBeNull();
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('image')).not.toBeNull();
   });
 });
 

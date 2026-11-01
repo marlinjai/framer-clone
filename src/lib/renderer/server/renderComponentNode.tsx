@@ -10,10 +10,8 @@
 //     cart-view / checkout-button) are emitted as a `<CommerceIsland>` client
 //     boundary. hydrateBindings leaves these verbatim (runtime islands); they
 //     hydrate client-side against the same-origin /api/commerce/* reads.
-//   - Every other node maps `node.type` to an HTML tag via the SERVER-importable
-//     COMPONENT_REGISTRY (`htmlType`) and emits `React.createElement(tag, props,
-//     children)`. node.type is already an intrinsic tag for editor primitives;
-//     the registry lookup additionally resolves a registry-id type to its tag.
+//   - Every other node emits `React.createElement(node.type, props, children)`:
+//     a stored type is the tag itself, as on the canvas (see resolveHtmlTag).
 //   - Unknown / empty node types degrade GRACEFULLY (render nothing), never throw.
 //
 // NO MST, NO observer(), NO hooks, NO window. The client dispatch
@@ -24,7 +22,6 @@
 // `server-only` and no `'use client'`.
 
 import React from 'react';
-import { COMPONENT_REGISTRY } from '@/lib/componentRegistry';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { isBlockedProp, isBlockedTag } from '@/lib/renderer/blockedNodes';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
@@ -54,15 +51,14 @@ const INTERACTIVE_COMMERCE_KINDS: ReadonlySet<string> = new Set([
 const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects']);
 
 /**
- * Resolve a node's HTML tag. Editor primitives store `type` as the intrinsic
- * tag already (createIntrinsicComponent uses the registry `htmlType`); when a
- * `type` instead names a registry ENTRY id, resolve it to that entry's
- * `htmlType`. An empty / non-string type has no tag (caller renders nothing).
+ * Resolve a node's HTML tag. A stored `type` IS the tag: every write path stores
+ * a registry entry's `htmlType` (the Link component is an `a`, the Form a marked
+ * `div`), and createComponentElement emits `type` unchanged. It is never read as
+ * a registry id, because `form` and `link` are both, and the two renderers must
+ * agree. An empty / non-string type has no tag (caller renders nothing).
  */
 function resolveHtmlTag(type: unknown): string | null {
-  if (typeof type !== 'string' || type.length === 0) return null;
-  const entry = COMPONENT_REGISTRY[type];
-  return entry ? entry.htmlType : type;
+  return typeof type === 'string' && type.length > 0 ? type : null;
 }
 
 /**
