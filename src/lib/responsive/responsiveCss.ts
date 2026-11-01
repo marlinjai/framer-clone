@@ -56,9 +56,8 @@ export const SAFE_PROPERTY = /^(?:[A-Za-z][A-Za-z0-9]*|--[A-Za-z0-9_-]+)$/;
  * quoted or not: `{` `}` open or close a rule, `<` can start `</style>` and end
  * the element (the sheet is written raw, so CSS quoting does not protect it), a
  * backslash starts a CSS escape that can hide any of these or a closing quote,
- * and control characters (newlines included) have no place in a value. Mirrors
- * STYLE_BREAKOUT_CHARS in src/lib/ai/pageGen/validate.ts, plus `<` and `>`, and
- * without `;`, which depends on where it stands: see isContainedValue.
+ * and control characters (newlines included) have no place in a value. `;` is
+ * not here: it depends on where it stands, see isContainedValue.
  */
 const BREAKOUT_CHARS = /[{}<>\\\u0000-\u001f\u007f]/;
 
@@ -100,7 +99,7 @@ function endOfUnquotedUrl(text: string, start: number): number {
  * the browser would carry on through the `;` and `}` that follow it and swallow
  * the rest of the rule.
  */
-function isContainedValue(text: string): boolean {
+export function isContainedValue(text: string): boolean {
   const closers: string[] = [];
   let i = 0;
   while (i < text.length) {
@@ -137,11 +136,7 @@ function isContainedValue(text: string): boolean {
   return closers.length === 0;
 }
 
-/**
- * Script-capable or import-capable CSS. Mirrors UNSAFE_STYLE_VALUE in
- * src/lib/ai/pageGen/validate.ts (copied, not imported: that module pulls in
- * the MST models, which this pure, client-safe module must not).
- */
+/** Script-capable or import-capable CSS, and comments, which hide a `;` from isContainedValue. */
 export const UNSAFE_VALUE = /javascript:|vbscript:|expression\s*\(|<\s*\/?\s*script|@import|behavior\s*:|-moz-binding|\/\*/i;
 
 /** A camelCase style key as a CSS property name, exactly as React writes it. */

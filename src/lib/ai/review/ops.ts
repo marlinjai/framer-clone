@@ -10,8 +10,8 @@
 // Rules:
 //   - nodeId must name a node of the tree; the page root can be restyled but
 //     never removed.
-//   - update_style: `property` must be an editor style key (CSS_PROP_SET,
-//     kebab-case converted). `breakpoint` is null or one of the request's
+//   - update_style: `property` must be a style key the generator keeps
+//     (isAcceptedStyleKey in src/lib/ai/pageGen/schema.ts, kebab-case converted). `breakpoint` is null or one of the request's
 //     breakpoint keys (case-insensitive); the largest breakpoint is normalized
 //     to null, because desktop-first it writes the base value
 //     (src/lib/responsive/cascade.ts). Values follow the generator's rules
@@ -33,9 +33,9 @@
 //     glass, coloured radial orbs, rainbow gradients.
 
 import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
-import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
-import { GENERATION_LIMITS, isSafeSrc } from '@/lib/ai/pageGen/schema';
-import { STYLE_BREAKOUT_CHARS, UNSAFE_STYLE_VALUE } from '@/lib/ai/pageGen/validate';
+import { UNSAFE_VALUE } from '@/lib/responsive/responsiveCss';
+import { GENERATION_LIMITS, isAcceptedStyleKey, isSafeSrc, styleKeyFrom } from '@/lib/ai/pageGen/schema';
+import { STRING_URL_FUNCTION, imageSetUrls, styleValueBreaksOut } from '@/lib/ai/pageGen/validate';
 import { styleValueTell, textTell } from '@/lib/ai/pageGen/tells';
 import { REVIEW_LIMITS, type RejectedOp, type ReviewOp, type ReviewTreeNode } from './protocol';
 
@@ -86,15 +86,15 @@ export function indexReviewTree(tree: ReviewTreeNode): Map<string, IndexedNode> 
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
-const kebabToCamel = (key: string) => key.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 
 /** Why a style value is refused, or null when it is fine. */
 function styleValueProblem(property: string, value: string, node: IndexedNode): string | null {
   if (value.length > GENERATION_LIMITS.maxStyleValueChars) return `value longer than ${GENERATION_LIMITS.maxStyleValueChars} characters`;
-  if (STYLE_BREAKOUT_CHARS.test(value)) return 'value contains ; { } \\ or a control character';
-  if (UNSAFE_STYLE_VALUE.test(value)) return 'unsafe value';
-  for (const m of value.matchAll(URL_RE)) {
-    const url = (m[2] ?? '').trim();
+  if (UNSAFE_VALUE.test(value) || STRING_URL_FUNCTION.test(value)) return 'unsafe value';
+  const urls = [...[...value.matchAll(URL_RE)].map((m) => (m[2] ?? '').trim()), ...imageSetUrls(value)];
+  for (const url of urls) {
+    // A reference inside the page (an SVG clip or mask) brings nothing in.
+    if (url.startsWith('#')) continue;
     if (!isSafeSrc(url)) return 'url() to a disallowed location';
     if (!node.backgroundUrls.has(url)) return 'url() that is not already on this node (the review never adds pictures)';
   }
@@ -139,8 +139,8 @@ export function validateReviewOps(raw: unknown, ctx: OpValidationContext): { ops
       case 'update_style': {
         if (node.type === TEXT_NODE_TYPE) return reject('a text node has no element to style; style its parent');
         const rawProp = typeof item.property === 'string' ? item.property.trim() : '';
-        const property = CSS_PROP_SET.has(rawProp) ? rawProp : kebabToCamel(rawProp);
-        if (!CSS_PROP_SET.has(property)) return reject(`style key ${JSON.stringify(item.property)} is not supported by the editor`);
+        const property = styleKeyFrom(rawProp);
+        if (!isAcceptedStyleKey(property)) return reject(`style key ${JSON.stringify(item.property)} is not supported by the editor`);
         let breakpoint: string | null = null;
         if (item.breakpoint !== null && item.breakpoint !== undefined) {
           const k = typeof item.breakpoint === 'string' ? item.breakpoint.trim().toLowerCase() : '';
@@ -155,7 +155,7 @@ export function validateReviewOps(raw: unknown, ctx: OpValidationContext): { ops
           value = item.value;
         } else if (typeof item.value === 'string') {
           const v = item.value.trim();
-          if (STYLE_BREAKOUT_CHARS.test(item.value)) return reject('value contains ; { } \\ or a control character');
+          if (styleValueBreaksOut(item.value)) return reject('value contains a bare ;, { } \\ or a control character');
           if (!v) {
             value = null;
           } else {

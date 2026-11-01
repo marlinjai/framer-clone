@@ -86,6 +86,29 @@ describe('validateReviewOps', () => {
     expect(rejected).toHaveLength(4);
   });
 
+  it('keeps a ; that is data and refuses one that ends the declaration', () => {
+    const { ops, rejected } = validateReviewOps(
+      [style({ property: 'quotes', value: '";" ";"' }), style({ value: 'red;' }), style({ value: '/* " */ 0; color: red; /* " */' })],
+      ctx(),
+    );
+    expect(ops.map((op) => op.op === 'update_style' && op.value)).toEqual(['";" ";"']);
+    expect(rejected).toHaveLength(2);
+  });
+
+  it('takes the style keys the generator keeps, and never brings a picture in through image-set()', () => {
+    const { ops, rejected } = validateReviewOps(
+      [
+        style({ property: 'clip-path', value: 'circle(50%)' }),
+        style({ property: '--brand', value: '#123456' }),
+        style({ property: 'backgroundImage', value: 'image-set("https://evil.example/a.png" 1x)' }),
+      ],
+      ctx(),
+    );
+    expect(ops.map((op) => op.op === 'update_style' && op.property)).toEqual(['clipPath', '--brand']);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason).toMatch(/never adds pictures/);
+  });
+
   it('allows a url() only when the node already holds that exact photo', () => {
     const scrim = `linear-gradient(rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0.6)), url("${PHOTO}")`;
     const ok = validateReviewOps([style({ nodeId: 'hero', property: 'backgroundImage', value: scrim })], ctx());

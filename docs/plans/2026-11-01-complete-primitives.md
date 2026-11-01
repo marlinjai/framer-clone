@@ -197,6 +197,13 @@ real test. Where the widening corrects this plan:
 - **A value `<` cannot pass the stylesheet.** `attr()` with a type needs `<color>` and the stylesheet
   refuses `<` to protect the style element, so it works inline only.
 
+**The AI generator (2026-11-01).** The validator now accepts what the matrix lists, generated into
+`src/lib/ai/pageGen/webVocabulary.ts` by `pnpm gen:web-vocabulary`, and the prompt keeps teaching its
+short list. Refused on purpose, so these rows stay failed: blocked tags, raw form controls (a form
+only works through the form presets), event handlers, `class`, `nonce`, attributes that send a
+visitor elsewhere, and the data attributes the code reads. An attribute named like a CSS property
+(`width`, `transform`) stays out too: the format reads it as a style, past the style checks.
+
 ## Visual state management
 
 Marlin (2026-11-01): how do we give people a visual way to manage state, such as a hover state or
