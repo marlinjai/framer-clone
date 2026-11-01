@@ -47,6 +47,25 @@ describe('blocked nodes', () => {
     expect(published({ type: 'animate', props: { [name]: value, to: 'x' } })).toBe('<animate to="x"></animate>');
   });
 
+  it.each([
+    ['a', 'HREF', 'javascript:alert(1)'],
+    ['a', 'href', ' jav\tascript:alert(1)'],
+    ['a', 'HrEf', 'VBSCRIPT:x'],
+    ['a', 'xlink:href', 'javascript:x'],
+    ['button', 'FORMACTION', 'javascript:x'],
+    ['form', 'ACTION', 'javascript:x'],
+    ['x-y', 'href', 'data:text/html,x'],
+  ])('drops a script destination on <%s %s>', (type, name, value) => {
+    const html = published({ type, props: { [name]: value, id: 'keep' } });
+    expect(html.toLowerCase()).not.toMatch(/script|data:/);
+    expect(html).toContain('id="keep"');
+  });
+
+  it('keeps ordinary destinations', () => {
+    expect(published({ type: 'a', props: { href: '/shop' } })).toContain('href="/shop"');
+    expect(published({ type: 'img', props: { src: 'data:image/png;base64,AAAA', alt: '' } })).toContain('data:image/png');
+  });
+
   it('keeps animation of a harmless attribute', () => {
     expect(published({ type: 'animate', props: { attributeName: 'opacity' } })).toContain('opacity');
   });

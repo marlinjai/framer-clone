@@ -16,6 +16,20 @@ export const BLOCKED_TAGS: ReadonlySet<string> = new Set([
 // it is judged by the attribute it targets, not by the value it sets.
 const ANIMATION_TARGET_BLOCKED = /^(?:(?:xlink:)?href$|on)/i;
 
+// React only blocks `javascript:` under the exact spelling of a known attribute,
+// so a stored `HREF` or `FORMACTION` reaches the markup. Browsers skip tabs,
+// newlines and spaces inside a scheme, so those are removed before reading it.
+const DESTINATION_ATTRIBUTES: ReadonlySet<string> = new Set([
+  'href', 'xlink:href', 'xlinkhref', 'src', 'action', 'formaction', 'data', 'poster', 'cite', 'background',
+]);
+const SCRIPT_SCHEME = /^(?:javascript:|vbscript:|data:text\/html)/i;
+
+function isScriptDestination(name: string, value: unknown): boolean {
+  if (typeof value !== 'string' || !DESTINATION_ATTRIBUTES.has(name.toLowerCase())) return false;
+   
+  return SCRIPT_SCHEME.test(value.replace(/[\u0000-\u0020\u007f]/g, ''));
+}
+
 const warned = new Set<string>();
 
 function warnOnce(what: string): void {
@@ -31,6 +45,7 @@ function warnOnce(what: string): void {
 export function isDroppedProp(name: string, value: unknown): boolean {
   if (name === 'dangerouslySetInnerHTML') return true;
   if (/^on/i.test(name)) return typeof value !== 'function';
+  if (isScriptDestination(name, value)) return true;
   return name.toLowerCase() === 'attributename' && typeof value === 'string' && ANIMATION_TARGET_BLOCKED.test(value.trim());
 }
 
