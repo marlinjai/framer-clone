@@ -132,6 +132,7 @@ connections to the suite. The four lines below are in that order.
   are built, deployed and proven on production as of 2026-10-27; open: instant booking, quotes, team dispatch.
   See [plan](docs/plans/2026-10-25-business-platform-architecture.md) and
   [catalogue design](docs/plans/2026-10-25-catalogue-design.md). (2026-11-01)
+- [ ] Abandoned checkouts can hold stock indefinitely: an order reserves stock when it is created, but `sweepExpiredPayments` runs only from the pay route, and the order route does not call it. If a buyer stops before paying on the last unit of a shop's only product, the next buyer gets a 409 at order creation and never reaches the pay route, so the hold never ends. Read from code on 2026-11-01, not reproduced. Move the sweep onto a schedule (and run it before order creation); part of the job design in the Medusa analysis. Must be fixed before live payments. (2026-11-01)
 - [ ] Live payments: the platform runs on Stripe sandbox keys. Going live means live keys and a real shop finishing Stripe onboarding, which is Marlin's yes because it moves real money; prepare a checklist and a rollback first. (2026-11-01)
 - [x] A real product in the editor: a product page is a template, so the canvas and the preview now show the first catalogue product, with a small switcher in the editor and the preview toolbar, and a product link in the preview opens that product. The choice stays in the editor session. (2026-11-01)
 - [x] 3f. Prove Stripe Connect against Stripe in test mode: open the Stripe account (test mode), paste the
