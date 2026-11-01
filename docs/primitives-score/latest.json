@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-01T21:04:40.837Z",
+  "generatedAt": "2026-11-01T21:40:00.413Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 33,
+  "durationSeconds": 50,
   "matrix": {
     "surfaces": {
       "format": {
@@ -4880,19 +4880,19 @@
     }
   },
   "corpus": {
-    "passed": 3,
+    "passed": 4,
     "total": 13,
     "checks": {
       "screenshot": {
-        "pass": 49,
+        "pass": 52,
         "total": 87
       },
       "computed-styles": {
-        "pass": 28,
+        "pass": 31,
         "total": 87
       },
       "accessibility-tree": {
-        "pass": 60,
+        "pass": 63,
         "total": 87
       },
       "interaction": {
@@ -4905,18 +4905,18 @@
         "fixture": "mixed-text",
         "group": "edge",
         "source": "hand-written",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "computed-styles": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "accessibility-tree": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           },
           "interaction": {
@@ -4924,80 +4924,7 @@
             "total": 0
           }
         },
-        "failures": [
-          {
-            "fixture": "mixed-text",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "mixed-text",
-            "detail": "0.17 percent of pixels differ"
-          },
-          {
-            "fixture": "mixed-text",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "mixed-text",
-            "detail": "5 differences, first: page: text \"OurfirstshopHelloboldandalinkattheendoft\" became \"OurfirstHelloboldalinkPlainitemItemwithc\""
-          },
-          {
-            "fixture": "mixed-text",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "accessibility-tree",
-            "gap": "mixed-text",
-            "detail": "original \"- article:\\n  - heading \\\"Our first shop\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n    - text: shop\\n  - paragraph:\", replica \"- article:\\n  - heading \\\"Our first\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n "
-          },
-          {
-            "fixture": "mixed-text",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "mixed-text",
-            "detail": "0.22 percent of pixels differ"
-          },
-          {
-            "fixture": "mixed-text",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "mixed-text",
-            "detail": "5 differences, first: page: text \"OurfirstshopHelloboldandalinkattheendoft\" became \"OurfirstHelloboldalinkPlainitemItemwithc\""
-          },
-          {
-            "fixture": "mixed-text",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "accessibility-tree",
-            "gap": "mixed-text",
-            "detail": "original \"- article:\\n  - heading \\\"Our first shop\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n    - text: shop\\n  - paragraph:\", replica \"- article:\\n  - heading \\\"Our first\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n "
-          },
-          {
-            "fixture": "mixed-text",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "mixed-text",
-            "detail": "1.11 percent of pixels differ"
-          },
-          {
-            "fixture": "mixed-text",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "mixed-text",
-            "detail": "13 differences, first: page: text \"OurfirstshopHelloboldandalinkattheendoft\" became \"OurfirstHelloboldalinkPlainitemItemwithc\""
-          },
-          {
-            "fixture": "mixed-text",
-            "viewport": "Mobile",
-            "state": "initial",
-            "check": "accessibility-tree",
-            "gap": "mixed-text",
-            "detail": "original \"- article:\\n  - heading \\\"Our first shop\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n    - text: shop\\n  - paragraph:\", replica \"- article:\\n  - heading \\\"Our first\\\" [level=1]:\\n    - text: Our\\n    - emphasis: first\\n "
-          }
-        ],
+        "failures": [],
         "notMeasured": []
       },
       {
@@ -6629,11 +6556,11 @@
   },
   "roundTrip": {
     "nodesToJsxToNodes": {
-      "pass": 84,
-      "total": 84
+      "pass": 88,
+      "total": 88
     },
     "jsxToNodesToRender": {
-      "pass": 5,
+      "pass": 6,
       "total": 12
     },
     "cases": [
@@ -7018,6 +6945,21 @@
         "pass": true
       },
       {
+        "id": "synthetic: text mixed with an element",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "synthetic: adjacent text nodes",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "synthetic: text mixed with a bound text node",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
         "id": "synthetic: text with awkward characters",
         "direction": "nodes-jsx-nodes",
         "pass": true
@@ -7058,6 +7000,11 @@
         "pass": true
       },
       {
+        "id": "refused: a style on a text node",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
         "id": "static markup",
         "direction": "jsx-nodes-render",
         "pass": true
@@ -7085,12 +7032,7 @@
       {
         "id": "text after an element",
         "direction": "jsx-nodes-render",
-        "pass": false,
-        "gap": "mixed-text",
-        "detail": "reported as left over",
-        "leftOver": [
-          "text with no place in a node: \" world\""
-        ]
+        "pass": true
       },
       {
         "id": "a condition",
@@ -7290,20 +7232,6 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 78
-    },
-    {
-      "id": "mixed-text",
-      "description": "Text mixed with elements: a node holds one string or children, and the renderers drop the string.",
-      "matrixCells": 0,
-      "corpusChecks": 9,
-      "fixtures": [
-        "mixed-text"
-      ],
-      "onlyGapOf": [
-        "mixed-text"
-      ],
-      "roundTripCases": 1,
-      "cost": 10
     },
     {
       "id": "attribute-read-as-style",

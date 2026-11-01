@@ -8,10 +8,11 @@
     "ai": 273
   },
   "corpusFixtures": [
+    "mixed-text",
     "responsive-layout",
     "stylesheet-values",
     "shadcn-card"
   ],
-  "corpusChecks": 137,
-  "roundTrip": 89
+  "corpusChecks": 146,
+  "roundTrip": 94
 }
