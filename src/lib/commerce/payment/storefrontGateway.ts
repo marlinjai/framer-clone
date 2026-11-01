@@ -8,13 +8,14 @@
 //   200 redirect                -> ok with the hosted checkout page (Stripe) to send the buyer to
 //   402 payment_declined        -> declined (the order is closed: the checkout starts a new one)
 //   409 payment_closed          -> closed (paid or closed elsewhere, or expired: check out again)
+//   422 buyer_not_invoiceable   -> refused, with the shop's own message (no money moved, the order keeps waiting)
 //   422 buyer_required / 400    -> invalid (the buyer's details are missing or malformed)
 //   anything else, or no answer -> gateway_error (retryable)
 
 import type { PaymentGateway, PaymentRequest, PaymentResult } from './types';
 
 interface ErrorBody {
-  error?: { code?: string; message?: string };
+  error?: { code?: string; message?: string; field?: 'country' | 'vatId' };
 }
 
 async function errorOf(res: Response): Promise<ErrorBody['error']> {
@@ -63,6 +64,14 @@ export class StorefrontPaymentGateway implements PaymentGateway {
     }
     if (res.status === 409) {
       return { ok: false, code: 'closed', message: error?.message ?? 'the order no longer takes a payment' };
+    }
+    if (res.status === 422 && error?.code === 'buyer_not_invoiceable') {
+      return {
+        ok: false,
+        code: 'refused',
+        message: error.message ?? 'this shop cannot invoice these details. Nothing has been charged.',
+        field: error.field,
+      };
     }
     if (res.status === 422 || res.status === 400) {
       return { ok: false, code: 'invalid', message: 'check the name, email and address: the receipt is made out to them' };

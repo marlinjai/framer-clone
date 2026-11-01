@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 import type { CustomerType } from '../../commerce/db-types';
+import { isVatIdShape, normalizeVatId } from '../../tax/germanVat';
 import { BooksError, constraintName, invalid, sqlState, withDbErrors } from '../errors';
 import { readRecipient } from '../recipients';
 import type { BooksScope } from '../scope';
@@ -45,17 +46,11 @@ export function mapCustomer(row: CustomerRow): Customer {
 }
 
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-const VAT_ID = /^[A-Z]{2}[A-Z0-9+*]{2,13}$/;
-
-/** Upper case, no spaces (the stored form). */
-export function normalizeVatId(value: string): string {
-  return value.replace(/\s+/g, '').toUpperCase();
-}
 
 const vatIdInput = z
   .string()
   .transform(normalizeVatId)
-  .refine((v) => VAT_ID.test(v), 'expected a VAT id such as DE123456789');
+  .refine(isVatIdShape, 'expected a VAT id such as DE123456789');
 const countryInput = z
   .string()
   .transform((v) => v.trim().toUpperCase())

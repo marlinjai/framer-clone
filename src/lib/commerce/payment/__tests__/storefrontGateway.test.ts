@@ -40,6 +40,13 @@ describe('StorefrontPaymentGateway', () => {
     });
   });
 
+  it("passes the shop's own refusal through, with the field to correct", async () => {
+    const message = 'This shop can only invoice addresses in Germany. Nothing has been charged.';
+    const body = { error: { code: 'buyer_not_invoiceable', message, field: 'country' } };
+    const result = await new StorefrontPaymentGateway(answer(422, body) as unknown as typeof fetch).authorize(request);
+    expect(result).toEqual({ ok: false, code: 'refused', message, field: 'country' });
+  });
+
   it.each([
     [402, { error: { code: 'payment_declined', message: 'the card was declined' } }, 'declined'],
     [409, { error: { code: 'payment_closed', message: 'the order is expired' } }, 'closed'],

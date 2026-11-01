@@ -281,6 +281,85 @@ describe('CheckoutButton pay declined (demo decline toggle)', () => {
   });
 });
 
+describe('CheckoutButton a buyer the shop cannot invoice', () => {
+  const REFUSAL = 'This shop can only invoice addresses in Germany. Nothing has been charged.';
+  const field = (container: HTMLElement, key: string) =>
+    container.querySelector(`input[data-checkout-buyer-field="${key}"]`) as HTMLInputElement;
+
+  it('says why without calling it a failed payment, keeps the input and the order, and pays once corrected', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(fakeResponse(201, { orderId: 'order_123', orderNumber: 'ORD-123', totalCents: 4760, currency: 'EUR' }));
+    const authorize = vi
+      .fn<PaymentGateway['authorize']>()
+      .mockResolvedValueOnce({ ok: false, code: 'refused', message: REFUSAL, field: 'country' })
+      .mockResolvedValueOnce({ ok: true, provider: 'demo', transactionId: 'order_123', receiptNumber: '1000' });
+    const { container, getByTestId } = renderCheckout(makeNode(), { id: 'demo', isDemo: true, authorize });
+    await waitForHydratedCart(getByTestId);
+    clickCheckout(container);
+    await waitFor(() => expect(container.querySelector('[data-checkout-pay]')).not.toBeNull());
+    fillBuyer(container);
+    act(() => {
+      fireEvent.change(field(container, 'country'), { target: { value: 'AT' } });
+    });
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
+    });
+
+    const refusal = container.querySelector('[data-checkout-refused]');
+    expect(refusal?.textContent).toBe(REFUSAL);
+    expect(refusal?.getAttribute('role')).toBe('alert');
+    expect(container.querySelector('[data-checkout-payment-declined]')).toBeNull();
+    // Everything typed stays, the field to correct is marked, and the way forward stays open.
+    expect(field(container, 'name').value).toBe('Alex Example');
+    expect(field(container, 'country').value).toBe('AT');
+    expect(field(container, 'country').getAttribute('aria-invalid')).toBe('true');
+    expect(field(container, 'country').getAttribute('aria-describedby')).toBe(refusal?.id);
+    expect(field(container, 'city').getAttribute('aria-invalid')).toBeNull();
+    expect((container.querySelector('button[data-checkout-pay]') as HTMLButtonElement).disabled).toBe(false);
+    expect(container.querySelector('button[data-checkout-cancel]')).not.toBeNull();
+    expect(getByTestId('lines').textContent).toBe(JSON.stringify(SEEDED_LINES));
+
+    // Correcting the field answers the refusal; the same order pays, nothing is placed again.
+    act(() => {
+      fireEvent.change(field(container, 'country'), { target: { value: 'DE' } });
+    });
+    expect(container.querySelector('[data-checkout-refused]')).toBeNull();
+    expect(field(container, 'country').getAttribute('aria-invalid')).toBeNull();
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
+    });
+    await waitFor(() => expect(container.querySelector('[data-checkout-confirmation]')).not.toBeNull());
+    expect(authorize.mock.calls.map(([request]) => request.orderId)).toEqual(['order_123', 'order_123']);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('goes back to the cart and returns to the same order with the input kept and the refusal gone', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(fakeResponse(201, { orderId: 'order_123', orderNumber: 'ORD-123', totalCents: 4760, currency: 'EUR' }));
+    const authorize = vi.fn<PaymentGateway['authorize']>().mockResolvedValue({ ok: false, code: 'refused', message: REFUSAL, field: 'country' });
+    const { container, getByTestId } = renderCheckout(makeNode(), { id: 'demo', isDemo: true, authorize });
+    await waitForHydratedCart(getByTestId);
+    clickCheckout(container);
+    await waitFor(() => expect(container.querySelector('[data-checkout-pay]')).not.toBeNull());
+    fillBuyer(container);
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[data-checkout-pay]')!);
+    });
+    expect(container.querySelector('[data-checkout-refused]')).not.toBeNull();
+
+    act(() => {
+      fireEvent.click(container.querySelector('button[data-checkout-cancel]')!);
+    });
+    clickCheckout(container);
+    await waitFor(() => expect(container.querySelector('[data-checkout-pay]')).not.toBeNull());
+    expect(container.querySelector('[data-checkout-refused]')).toBeNull();
+    expect(field(container, 'name').value).toBe('Alex Example');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('CheckoutButton back from a hosted checkout (Stripe)', () => {
   afterEach(() => {
     window.history.replaceState(null, '', '/');

@@ -183,6 +183,21 @@ export const EU_MEMBER_STATES: ReadonlySet<string> = new Set([
   'IE', 'IT', 'LT', 'LU', 'LV', 'MT', 'NL', 'PL', 'PT', 'RO', 'SE', 'SI', 'SK',
 ]);
 
+/** A VAT id as stored: upper case, no spaces. */
+export function normalizeVatId(value: string): string {
+  return value.replace(/\s+/g, '').toUpperCase();
+}
+
+/** The shape of a normalized VAT id of any member state: what the Books accept on a customer. */
+export function isVatIdShape(normalized: string): boolean {
+  return /^[A-Z]{2}[A-Z0-9+*]{2,13}$/.test(normalized);
+}
+
+/** A normalized German VAT id: DE and nine digits. Whether it exists is not checked. */
+export function isGermanVatId(normalized: string): boolean {
+  return /^DE\d{9}$/.test(normalized);
+}
+
 export interface TaxProfileInput {
   companyTaxStatus: CompanyTaxStatus;
   /** The company's configured exemption note (printed under Section 19). */

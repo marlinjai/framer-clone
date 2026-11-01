@@ -16,6 +16,8 @@
 //   404 not_found            no such order on this storefront (another shop's id answers the same)
 //   409 payment_closed       the order is no longer waiting for a payment (paid, failed, expired, ...)
 //   422 buyer_required       neither the order nor this request carries the buyer's name and address
+//   422 buyer_not_invoiceable  this order cannot get a correct invoice for this buyer (invoiceable.ts): no money
+//                            moves, the order keeps waiting, and { field } names what the buyer can correct
 //
 // The tenant, the company and the site come from the request host only, as for every storefront route.
 
@@ -31,7 +33,9 @@ import {
   sweepExpiredPayments,
   type PaymentOutcome,
 } from '@/server/commerce/payment/payments';
+import { buyerRefusal } from '@/server/commerce/payment/invoiceable';
 import { demoProvider } from '@/server/commerce/payment/provider';
+import { shopTaxProfile } from '@/server/commerce/payment/shopTax';
 import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
 import { toJsonb } from '@/server/books/snapshots';
 
@@ -88,6 +92,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
         'order_payment.buyer as buyer',
         'order_payment.expires_at as expiresAt',
         'order.order_number as orderNumber',
+        'order.kleinunternehmer as pricedWithoutVat',
       ])
       .where('order_payment.tenant_id', '=', companyId)
       .where('order_payment.order_id', '=', orderId)
@@ -98,6 +103,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
         status: payment.status,
       });
     }
+    const stored = buyer ?? readBuyer(payment.buyer as Record<string, unknown>);
+    if (!stored) {
+      return jsonError('buyer_required', 'enter the name and address the receipt is made out to', 422);
+    }
+    // Before anything is kept or any provider is asked: the buyer given with the order is checked as well, and a
+    // refused buyer never replaces the one a hosted checkout that is already open will be invoiced to.
+    const tax = await shopTaxProfile(db, companyId);
+    const refusal = buyerRefusal(stored, { kleinunternehmer: tax.kleinunternehmer && payment.pricedWithoutVat });
+    if (refusal) return jsonError('buyer_not_invoiceable', refusal.message, 422, { field: refusal.field });
     if (buyer) {
       await db
         .updateTable('order_payment')
@@ -106,10 +120,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
         .where('order_id', '=', orderId)
         .where('status', '=', 'pending')
         .execute();
-    }
-    const stored = buyer ?? readBuyer(payment.buyer as Record<string, unknown>);
-    if (!stored) {
-      return jsonError('buyer_required', 'enter the name and address the receipt is made out to', 422);
     }
 
     if (payment.provider === 'stripe') {
