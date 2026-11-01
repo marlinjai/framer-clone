@@ -117,11 +117,29 @@ Nodes to JSX (React's markup syntax) and back must give the same nodes, and JSX 
 must render the same. This keeps the translation honest and doubles as an expressiveness test: if a
 construct cannot survive the trip, the format cannot express it.
 
+"The same nodes" is defined over a normalised form, not raw `ComponentModel` snapshots:
+
+- **Compared as is:** component type, props and attributes, style maps (including breakpoint and
+  state variants), text content and child order.
+- **Normalised away:** node ids and parent or canvas bookkeeping (positions on the editing canvas,
+  selection, expansion state). They are regenerated on import and are not part of the page's
+  meaning.
+- **Bindings** (a node's data bindings) are serialised as an explicit, named prop on the JSX element
+  and parsed back from it, so they survive the trip rather than being lost.
+- **Runtime islands** (forms, commerce, sticky bar) are serialised as named components with their
+  configuration as props, and import maps them back to the same island. An island the importer does
+  not recognise is reported under "whatever is left" below, never flattened to plain markup.
+
+Export is total over this normalised form: every node type the format stores has a defined JSX
+representation, and a node without one fails the round-trip test rather than being skipped.
+
 ### What counts as complete
 
 - Matrix: 100 percent of the included HTML and CSS entries in the format, renderer and canvas
   columns; the panel column reached through a general editor (see below).
-- Corpus: every fixture passes, or its failure is recorded with a reason.
+- Corpus: every in-scope fixture passes. A fixture is excluded only up front, with a written reason
+  (for example, it depends on a server the renderer deliberately does not run), and an excluded
+  fixture leaves the denominator. A known gap is never recorded as a pass.
 - Behaviour: every included WAI-ARIA pattern built from behaviour primitives alone, keyboard support
   included. Whatever cannot be is the defined scope of custom code.
 
@@ -149,7 +167,7 @@ which was justified mainly by outside React components that will no longer exist
 
 ## React import and export
 
-**Export (nodes to React) is straightforward and total,** because nodes already are element trees.
+**Export (nodes to React) is straightforward and total over the normalised form defined under the round trip,** because nodes already are element trees.
 
 **Import (React to nodes) is deliberately layered,** because a component is a program and only part
 of it is markup:
