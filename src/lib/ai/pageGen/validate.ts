@@ -10,7 +10,9 @@
 //     - a registry id used as `type` turned into its preset, a preset whose
 //       type disagrees with `type` wins, an unknown tag becomes a `div`,
 //     - forbidden tags (script, iframe, form, ...) dropped with their subtree,
-//     - text AND children on one node: the text becomes a leading text child,
+//     - text AND children on one node: the text becomes a leading text node
+//       (type "#text", bare text with no element, src/lib/renderer/textNode.ts),
+//     - a "#text" node keeps only its text, and never stands at the top level,
 //     - children on a void tag dropped, missing labels filled,
 //     - an img's alt text kept as the model wrote it: a missing or generic
 //       one is NOT filled here (the preset's "Image" default is removed too),
@@ -50,6 +52,7 @@ import { parseAspectRatio, photoUrlOf, withPhotoUrl } from '@/lib/images/imageSt
 import { normalizeFontFamily } from '@/lib/fonts/registry';
 import ComponentModel, { ComponentTypeEnum, CSS_PROP_SET } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag/voidTags';
+import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { formPropKeysFor, presetFormKind, sanitizeGeneratedFormProps } from '@/lib/forms/generation';
 import {
   BASE_KEY,
@@ -486,6 +489,50 @@ class Validator {
     return { type, preset };
   }
 
+  /**
+   * A text node: bare text among its siblings, so only its text is kept. The
+   * text stays exactly as written ("Hello " keeps its space; a space alone
+   * separates two inline elements), and React escapes it like any other text.
+   */
+  private textNode(
+    raw: Record<string, unknown>,
+    path: string,
+    depth: number,
+    parentId?: string,
+  ): GeneratedNodeSnapshot[] {
+    if (depth === 1) {
+      this.warn(path, 'a #text node must sit inside an element, dropped');
+      return [];
+    }
+    const props = isPlainObject(raw.props) ? raw.props : {};
+    for (const key of Object.keys(props)) {
+      if (key !== 'children') this.warn(path, `prop "${key}" is not allowed on a #text node, dropped`);
+    }
+    if (Array.isArray(raw.children) && raw.children.length > 0) {
+      this.warn(path, `a #text node cannot have children, ${raw.children.length} dropped`);
+    }
+    const text = cleanText(props.children, GENERATION_LIMITS.maxTextChars);
+    if (text === undefined || text === '') {
+      this.warn(path, 'a #text node needs text in props.children, dropped');
+      return [];
+    }
+    if (typeof props.children === 'string' && props.children.length > text.length) {
+      this.warn(path, `text cut to ${GENERATION_LIMITS.maxTextChars} characters`);
+    }
+    this.nodeCount += 1;
+    if (depth > this.maxDepth) this.maxDepth = depth;
+    const snapshot: GeneratedNodeSnapshot = {
+      id: `text-${this.newId()}`,
+      type: TEXT_NODE_TYPE,
+      componentType: ComponentTypeEnum.HOST,
+      label: 'Text',
+      props: { children: text },
+      children: [],
+    };
+    if (parentId) snapshot.parentId = parentId;
+    return [snapshot];
+  }
+
   node(raw: unknown, path: string, depth: number, parentId?: string): GeneratedNodeSnapshot[] {
     if (!isPlainObject(raw)) {
       this.fail(path, 'node must be an object');
@@ -497,6 +544,10 @@ class Validator {
     }
     for (const key of Object.keys(raw)) {
       if (!NODE_KEYS.has(key) && !OWNED_KEYS.has(key)) this.warn(path, `unknown key "${key}" ignored`);
+    }
+
+    if (typeof raw.type === 'string' && raw.type.trim().toLowerCase() === TEXT_NODE_TYPE) {
+      return this.textNode(raw, path, depth, parentId);
     }
 
     const resolved = this.resolveType(path, raw.type, raw.preset);
@@ -701,7 +752,7 @@ class Validator {
       if (text !== undefined && rawChildren.length > 0) {
         // Both text and children: keep both by turning the text into a leading child.
         this.warn(path, 'node had text and children, text moved into a leading text node');
-        rawChildren = [{ type: 'p', preset: 'text', label: 'Text', props: { children: text } }, ...rawChildren];
+        rawChildren = [{ type: TEXT_NODE_TYPE, props: { children: text } }, ...rawChildren];
         text = undefined;
       }
       rawChildren.forEach((child, i) => {

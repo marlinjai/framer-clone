@@ -53,7 +53,7 @@ import {
 import { localeOf, type FieldValue, type FormLocale } from '@/lib/forms/validation';
 import { SUBMIT_PATH, sendForm } from '@/lib/forms/sendForm';
 import { FormFieldView } from './FormFieldView';
-import { renderComponentNode, nodeDomProps } from '../server/renderComponentNode';
+import { renderNodeChildren, nodeDomProps } from '../server/renderComponentNode';
 
 interface FormRuntime {
   formId: string;
@@ -109,7 +109,7 @@ function NestedFormShell({ node, scope }: { node: ComponentNode; scope: BindingS
   return React.createElement(
     'div',
     domProps,
-    (node.children ?? []).map((child, i) => renderComponentNode(child, scope, child.id ?? i)),
+    renderNodeChildren(node, scope),
   );
 }
 
@@ -255,7 +255,7 @@ function LiveForm({ node, scope, renderedAt }: FormIslandProps) {
             </button>
           </div>
         ) : (
-          (node.children ?? []).map((child, i) => renderComponentNode(child, scope, child.id ?? i))
+          renderNodeChildren(node, scope)
         )}
         <p
           id={formErrorId}

@@ -2,6 +2,7 @@
 // (the Data section and the Text section both need it).
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { getComponentEntry } from '@/lib/componentRegistry';
+import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 
 /**
  * Resolve the registry id for a node so we can look up its bindable slots.
@@ -20,6 +21,7 @@ export function getRegistryIdForNode(node: ComponentInstance): string | undefine
 
   switch (node.type) {
     case 'p':
+    case TEXT_NODE_TYPE:
       return 'text';
     case 'a':
       return 'link';

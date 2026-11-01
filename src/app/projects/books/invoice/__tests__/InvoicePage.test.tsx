@@ -501,10 +501,10 @@ describe('the invoice page: review fixes', () => {
     expect(search.getAttribute('aria-activedescendant')).toBe(first.id);
     fireEvent.keyDown(search, { key: 'ArrowDown' });
     const second = screen.getByRole('option', { name: /Beratung/ });
-    expect(second.getAttribute('aria-selected')).toBe('true');
+    await waitFor(() => expect(second.getAttribute('aria-selected')).toBe('true'));
     expect(search.getAttribute('aria-activedescendant')).toBe(second.id);
     fireEvent.keyDown(search, { key: 'ArrowDown' });
-    expect(first.getAttribute('aria-selected')).toBe('true'); // it wraps round
+    await waitFor(() => expect(first.getAttribute('aria-selected')).toBe('true')); // it wraps round
     fireEvent.keyDown(search, { key: 'ArrowUp' });
     fireEvent.keyDown(search, { key: 'Enter' });
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body?.title).toBe('Beratung'));

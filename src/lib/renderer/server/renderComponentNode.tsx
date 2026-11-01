@@ -5,6 +5,7 @@
 // `hydrateBindings`, whose data components are already expanded into concrete
 // primitive subtrees). For each node:
 //
+//   - A text node (src/lib/renderer/textNode.ts) is its text, with no element.
 //   - The four INTERACTIVE commerce kinds (variant-selector / add-to-cart /
 //     cart-view / checkout-button) are emitted as a `<CommerceIsland>` client
 //     boundary. hydrateBindings leaves these verbatim (runtime islands); they
@@ -26,6 +27,7 @@ import React from 'react';
 import { COMPONENT_REGISTRY } from '@/lib/componentRegistry';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { isBlockedProp, isBlockedTag } from '@/lib/renderer/blockedNodes';
+import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { createScope } from '@/lib/bindings/resolver/scope';
@@ -123,9 +125,18 @@ export function nodeHostTag(node: ComponentNode): string {
 
 /** The raw-text child of a node (a string/number `props.children`), or null. */
 function rawTextChild(node: ComponentNode): React.ReactNode {
-  const child = (node.props as any)?.children;
-  if (typeof child === 'string' || typeof child === 'number') return child;
-  return null;
+  return renderableText((node.props as any)?.children);
+}
+
+/**
+ * What goes inside a node's element: its own text, then its child nodes in
+ * order. Exported for the form island, which renders its own wrapper.
+ */
+export function renderNodeChildren(node: ComponentNode, scope: BindingScope): React.ReactNode {
+  const rendered = (node.children ?? []).map((child, index) =>
+    renderComponentNode(child, scope, child.id ?? index),
+  );
+  return ownTextThenChildren(rawTextChild(node), rendered) as React.ReactNode;
 }
 
 /**
@@ -138,6 +149,9 @@ export function renderComponentNode(
   scope: BindingScope = createScope(),
   key: React.Key = node.id ?? 0,
 ): React.ReactNode {
+  // No element at all, so nothing below (a tag, an island, a marker) applies.
+  if (isTextNodeType(node.type)) return rawTextChild(node);
+
   // Checked first: an island below would otherwise mount with this host tag.
   if (isBlockedTag(resolveHtmlTag(node.type))) return null;
 
@@ -186,15 +200,7 @@ export function renderComponentNode(
     return React.createElement(tag, props);
   }
 
-  const childNodes = node.children ?? [];
-  const children: React.ReactNode =
-    childNodes.length > 0
-      ? childNodes.map((child, index) =>
-          renderComponentNode(child, scope, child.id ?? index),
-        )
-      : rawTextChild(node);
-
-  return React.createElement(tag, props, children);
+  return React.createElement(tag, props, renderNodeChildren(node, scope));
 }
 
 export default renderComponentNode;

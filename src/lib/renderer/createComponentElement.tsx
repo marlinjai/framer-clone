@@ -14,6 +14,7 @@ import React from 'react';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag';
 import { isBlockedTag, withoutBlockedProps } from '@/lib/renderer/blockedNodes';
+import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { createScope } from '@/lib/bindings/resolver/scope';
 import CollectionRenderer, {
@@ -102,8 +103,13 @@ export function createComponentElement(
   rawTextChildren?: React.ReactNode,
   options?: CreateComponentElementOptions,
 ): React.ReactNode {
+  // A text node emits no element, so it carries no identity attributes either:
+  // the canvas selects its parent element (EditorUIStore.selectComponent).
+  if (isTextNodeType(component.type)) return renderableText(rawTextChildren);
+
   if (isBlockedTag(component.type)) return null;
 
+  const content = ownTextThenChildren(rawTextChildren, children) as React.ReactNode;
   const identity = options?.identity;
   const safeProps = withoutBlockedProps(finalProps);
   const propsWithIdentity: Record<string, unknown> = identity
@@ -126,7 +132,7 @@ export function createComponentElement(
     // never submitting. The published page renders them as a client island.
     const formKind = formKindOfComponent(component);
     if (formKind) {
-      return createEditorFormElement(formKind, component, propsWithIdentity, children.length ? children : rawTextChildren);
+      return createEditorFormElement(formKind, component, propsWithIdentity, content);
     }
 
     if (isVoidTag(component.type as string)) {
@@ -322,13 +328,12 @@ export function createComponentElement(
       return React.createElement(component.type as any, propsWithIdentity, placeholder);
     }
 
-    const content: React.ReactNode = children.length ? children : rawTextChildren;
     return React.createElement(component.type as any, propsWithIdentity, content);
   }
 
   const Impl = (window as any).__componentRegistry?.[component.type];
   if (Impl) {
-    return <Impl {...propsWithIdentity}>{children}</Impl>;
+    return <Impl {...propsWithIdentity}>{content}</Impl>;
   }
 
   return null;
