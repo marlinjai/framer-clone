@@ -1,7 +1,8 @@
 // The PUBLIC storefront route: SSR-on-request render of a published page.
 //
-// Resolves the site from the request Host (NOT a middleware rewrite: the P1
-// middleware is an auth gate whose matcher leaves public render paths open),
+// Resolves the site from the request Host (NOT a middleware rewrite: on public
+// render paths the middleware passes through, adding only the report-only
+// policy header),
 // loads the matched page snapshot, hydrates CMS + commerce data LIVE per
 // request via `hydrateBindings`, renders the primitive tree server-side, and
 // emits the four interactive commerce kinds as client islands. SEO/OG come from
@@ -59,9 +60,9 @@ interface SitePageProps {
 /**
  * The query string of the request, rebuilt from Next's parsed search params so
  * an old-slug redirect keeps it (`/old?ref=x` -> `/new?ref=x`). Empty or `?...`.
- * A page component never sees the raw URL, and the edge middleware does not
- * run on storefront paths (its matcher is the editor plane plus `/`), so the
- * parsed form is the one available: every key and value survives, with
+ * A page component never sees the raw URL, and the edge middleware only adds a
+ * response header on storefront paths, so the parsed form is the one
+ * available: every key and value survives, with
  * repeated keys grouped together and a bare `?flag` written as `flag=`, which
  * every query parser reads the same way.
  */

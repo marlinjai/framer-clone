@@ -31,6 +31,7 @@
     "catalogue:assign-company": "tsx scripts/catalogue-assign-company.ts",
     "catalogue:seed-test-shop": "tsx --conditions=react-server scripts/catalogue-seed-test-shop.ts",
     "books:import": "tsx scripts/books-import.ts",
+    "csp:report": "tsx scripts/csp-report.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",

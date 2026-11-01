@@ -724,6 +724,25 @@ The F8 neutraliser keeps one accepted edge, stated at the canvas.
    plan treats as a problem for fonts. It would break any site that hot-links images from another host, so
    it is a product and legal trade-off. The review recommends it, with a report-only period first. The
    editor host would need its own decision. **Nothing in this plan depends on the answer.**
+
+   **Report-only exists; enforcing it is Marlin's call.** Published pages carry
+   `Content-Security-Policy-Report-Only` (`src/lib/site/cspReportOnly.ts`, sent from the middleware,
+   never on the editor host or its previews) over `img-src`, `font-src` and `media-src`, allowing the
+   site, `images.unsplash.com`, `data:` and `blob:`. It blocks nothing, and it does not close the
+   residual route: it only measures what enforcing would block. Browsers post to `/api/csp-report`,
+   which keeps a count per site, directive and blocked host and nothing about the visitor. `pnpm
+   csp:report` prints the counts (`deploy/README.md`). Enforcing is the same header without
+   `-Report-Only`, and it would have to be true that:
+
+   - the counts have run long enough over real traffic that the hosts left in them are known, each
+     either added to the policy or accepted as breaking for the site that uses it;
+   - every site owner hot-linking from another host is told first and has a way to bring those files
+     onto the site. Until uploads reach pages there is no such way, so storage must exist and its host
+     be named in the policy (question 2 is the same host);
+   - the editor warns when a page uses an address the policy would block, so a new one does not break
+     silently after publishing;
+   - violations stay measured after enforcing, and the legal view (a third-party image before consent)
+     and the product view (some sites lose images) have been weighed by Marlin.
 2. **`@font-face` from an uploaded font.** `src` takes site paths today, and an uploaded file would live
    on the storage host. Allowing it needs that host named, which is a decision for whichever slice adds
    font upload. Not needed by any slice here.

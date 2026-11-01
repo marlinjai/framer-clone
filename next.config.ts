@@ -55,8 +55,10 @@ const nextConfig: NextConfig = {
   // public/fonts by scripts/sync-fonts.ts) live under a versioned path
   // (/fonts/<family>/<version>/<file>), so they can be cached for a year and
   // never revalidated. Next serves public files with max-age=0 otherwise.
-  // No Content-Security-Policy is set app-wide; the fonts are same-origin on
-  // the editor host and on every published host alike.
+  // No Content-Security-Policy is enforced app-wide; the fonts are same-origin
+  // on the editor host and on every published host alike. Published pages carry
+  // a report-only policy, sent from src/middleware.ts because only the running
+  // server knows EDITOR_HOST: these headers are fixed at build time.
   async headers() {
     return [
       {
