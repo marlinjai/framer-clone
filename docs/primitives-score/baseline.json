@@ -10,12 +10,15 @@
   "corpusFixtures": [
     "mixed-text",
     "hover-focus",
+    "container-query",
+    "print-styles",
     "pseudo-elements",
     "responsive-layout",
     "stylesheet-values",
+    "stylesheet-escapes",
     "shadcn-button",
     "shadcn-card"
   ],
-  "corpusChecks": 208,
-  "roundTrip": 94
+  "corpusChecks": 233,
+  "roundTrip": 95
 }

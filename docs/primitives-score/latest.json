@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-01T22:56:01.603Z",
+  "generatedAt": "2026-11-01T23:47:23.441Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 123,
+  "durationSeconds": 267,
   "matrix": {
     "surfaces": {
       "format": {
@@ -4992,23 +4992,23 @@
     }
   },
   "corpus": {
-    "passed": 7,
-    "total": 13,
+    "passed": 10,
+    "total": 14,
     "checks": {
       "screenshot": {
-        "pass": 66,
-        "total": 87
+        "pass": 74,
+        "total": 90
       },
       "computed-styles": {
-        "pass": 55,
-        "total": 87
+        "pass": 63,
+        "total": 90
       },
       "accessibility-tree": {
-        "pass": 66,
-        "total": 87
+        "pass": 72,
+        "total": 90
       },
       "interaction": {
-        "pass": 21,
+        "pass": 24,
         "total": 48
       }
     },
@@ -5192,14 +5192,14 @@
         "fixture": "container-query",
         "group": "edge",
         "source": "hand-written",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 1,
+            "pass": 3,
             "total": 3
           },
           "computed-styles": {
-            "pass": 1,
+            "pass": 3,
             "total": 3
           },
           "accessibility-tree": {
@@ -5211,163 +5211,33 @@
             "total": 0
           }
         },
-        "failures": [
-          {
-            "fixture": "container-query",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "at-rules",
-            "detail": "0.16 percent of pixels differ"
-          },
-          {
-            "fixture": "container-query",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "at-rules",
-            "detail": "34 differences, first: page: block-size 62px became 94px"
-          },
-          {
-            "fixture": "container-query",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "at-rules",
-            "detail": "0.21 percent of pixels differ"
-          },
-          {
-            "fixture": "container-query",
-            "viewport": "Tablet",
-            "state": "initial",
-            "check": "computed-styles",
-            "gap": "at-rules",
-            "detail": "34 differences, first: page: block-size 62px became 94px"
-          }
-        ],
+        "failures": [],
         "notMeasured": []
       },
       {
         "fixture": "print-styles",
         "group": "edge",
         "source": "hand-written",
-        "pass": false,
+        "pass": true,
         "checks": {
           "screenshot": {
-            "pass": 3,
+            "pass": 6,
             "total": 6
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 6,
             "total": 6
           },
           "accessibility-tree": {
-            "pass": 3,
+            "pass": 6,
             "total": 6
           },
           "interaction": {
-            "pass": 0,
+            "pass": 3,
             "total": 3
           }
         },
-        "failures": [
-          {
-            "fixture": "print-styles",
-            "viewport": "Desktop",
-            "state": "print",
-            "check": "screenshot",
-            "gap": "media-queries",
-            "detail": "5.87 percent of pixels differ"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Desktop",
-            "state": "print",
-            "check": "computed-styles",
-            "gap": "media-queries",
-            "detail": "60 differences, first: page: background-color rgb(255, 255, 255) became rgb(243, 244, 246)"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Desktop",
-            "state": "print",
-            "check": "accessibility-tree",
-            "gap": "media-queries",
-            "detail": "original \"- paragraph: The article text that belongs on paper.\", replica \"- text: Share this page\\n- paragraph: The article text that belongs on paper.\""
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Desktop",
-            "state": "print",
-            "check": "interaction",
-            "gap": "media-queries",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Tablet",
-            "state": "print",
-            "check": "screenshot",
-            "gap": "media-queries",
-            "detail": "4.52 percent of pixels differ"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Tablet",
-            "state": "print",
-            "check": "computed-styles",
-            "gap": "media-queries",
-            "detail": "60 differences, first: page: background-color rgb(255, 255, 255) became rgb(243, 244, 246)"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Tablet",
-            "state": "print",
-            "check": "accessibility-tree",
-            "gap": "media-queries",
-            "detail": "original \"- paragraph: The article text that belongs on paper.\", replica \"- text: Share this page\\n- paragraph: The article text that belongs on paper.\""
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Tablet",
-            "state": "print",
-            "check": "interaction",
-            "gap": "media-queries",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Mobile",
-            "state": "print",
-            "check": "screenshot",
-            "gap": "media-queries",
-            "detail": "6.67 percent of pixels differ"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Mobile",
-            "state": "print",
-            "check": "computed-styles",
-            "gap": "media-queries",
-            "detail": "60 differences, first: page: background-color rgb(255, 255, 255) became rgb(243, 244, 246)"
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Mobile",
-            "state": "print",
-            "check": "accessibility-tree",
-            "gap": "media-queries",
-            "detail": "original \"- paragraph: The article text that belongs on paper.\", replica \"- text: Share this page\\n- paragraph: The article text that belongs on paper.\""
-          },
-          {
-            "fixture": "print-styles",
-            "viewport": "Mobile",
-            "state": "print",
-            "check": "interaction",
-            "gap": "media-queries",
-            "detail": "the replica did not end up where the original did"
-          }
-        ],
+        "failures": [],
         "notMeasured": []
       },
       {
@@ -5426,6 +5296,32 @@
         "fixture": "stylesheet-values",
         "group": "edge",
         "source": "hand-written: ordinary CSS values on a node whose other styles are responsive",
+        "pass": true,
+        "checks": {
+          "screenshot": {
+            "pass": 3,
+            "total": 3
+          },
+          "computed-styles": {
+            "pass": 3,
+            "total": 3
+          },
+          "accessibility-tree": {
+            "pass": 3,
+            "total": 3
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 0
+          }
+        },
+        "failures": [],
+        "notMeasured": []
+      },
+      {
+        "fixture": "stylesheet-escapes",
+        "group": "edge",
+        "source": "hand-written: CSS escapes, angle brackets, a raw SVG and a multi-line grid on nodes in the sheet",
         "pass": true,
         "checks": {
           "screenshot": {
@@ -6169,8 +6065,8 @@
   },
   "roundTrip": {
     "nodesToJsxToNodes": {
-      "pass": 88,
-      "total": 88
+      "pass": 89,
+      "total": 89
     },
     "jsxToNodesToRender": {
       "pass": 6,
@@ -6214,6 +6110,11 @@
       },
       {
         "id": "corpus: stylesheet-values",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "corpus: stylesheet-escapes",
         "direction": "nodes-jsx-nodes",
         "pass": true
       },
@@ -6756,15 +6657,11 @@
       "id": "media-queries",
       "description": "Media queries beyond width: print, dark mode and reduced motion have no home.",
       "matrixCells": 102,
-      "corpusChecks": 12,
-      "fixtures": [
-        "print-styles"
-      ],
-      "onlyGapOf": [
-        "print-styles"
-      ],
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 114
+      "cost": 102
     },
     {
       "id": "behaviour-state",
@@ -6807,17 +6704,15 @@
       "id": "at-rules",
       "description": "At-rules: no way to store @keyframes, @container, @supports, @font-face and the rest.",
       "matrixCells": 50,
-      "corpusChecks": 16,
+      "corpusChecks": 12,
       "fixtures": [
-        "keyframes",
-        "container-query"
+        "keyframes"
       ],
       "onlyGapOf": [
-        "keyframes",
-        "container-query"
+        "keyframes"
       ],
       "roundTripCases": 0,
-      "cost": 66
+      "cost": 62
     },
     {
       "id": "ai-attribute-allowlist",

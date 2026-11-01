@@ -192,7 +192,7 @@ the sheet ever moves to a cached asset, its key must hold the site and the publi
 
 | Threat | Answer |
 |---|---|
-| Closing the `<style>` element (`</style><script>`), which is script on a published site | `<` is refused in selectors and preludes, and in values outside a verified string. Inside one the emitter writes `\3c `, so the output never holds a `<`. `dangerouslySetInnerHTML` writes the text raw, so this check is the one that matters |
+| Closing the `<style>` element (`</style><script>`), which is script on a published site | `<` is refused in selectors and preludes, and in values outside a verified string. Inside one the emitter writes `\3c `, so the output never holds a `<`. A range comparison in `@media` or `@container` is the one `<` read rather than refused, see at-rules, and it does not reach the output either. `dangerouslySetInnerHTML` writes the text raw, so this check is the one that matters |
 | Escaping the rule or the declaration | `{ } ; \` refused, comments refused. Declarations go through the existing `declaration()`, so `isContainedValue` and `UNSAFE_VALUE` apply unchanged |
 | Restyling the editor, because the canvas shares a document with it | Subjects stay in the node, and global names need the `u-` prefix. Tailwind's `animate-spin` is an editor keyframe called `spin`; a stored `@keyframes spin` would have replaced it |
 | Breaking the editor on the canvas (a node that cannot be clicked, a locked node that can) | The canvas sheet never emits editor-owned properties, see the canvas |
@@ -245,9 +245,9 @@ dashed name.
 
 | At-rule | Kind | Stored as | Limits |
 |---|---|---|---|
-| `@media` | Wrapper | `at` | Prelude text checked like a selector, `url(` refused |
-| `@supports` | Wrapper | `at` | Same |
-| `@container` | Wrapper | `at` | Same |
+| `@media` | Wrapper | `at` | Prelude text checked like a selector, `url(` refused. A range comparison holding `<` is rewritten first, see below |
+| `@supports` | Wrapper | `at` | Same, with no range comparisons |
+| `@container` | Wrapper | `at` | Same as `@media` |
 | `@scope` | Wrapper | `at` | Prelude selectors are read-only conditions, checked by the same rules without the `&` |
 | `@starting-style` | Wrapper | `at` | No prelude |
 | `@keyframes` | Definition | `define`, `blocks` | `u-` name; block selectors `from`, `to` or percentages |
@@ -257,6 +257,15 @@ dashed name.
 | `@counter-style` | Definition | `define`, `style` | `u-` name |
 | `@property` | Definition | `define`, `style` | `--u-` name; `syntax` from a fixed list (`"<color>"`, `"<length>"`, `"<number>"`, and so on) |
 | `@position-try` | Definition | `define`, `style` | `--u-` name |
+
+**Range comparisons.** Tailwind's `max-md:` compiles to `@media (width < 48rem)`, and CSS has no escape for a
+`<` outside a string, so refusing the character would refuse real imports. The parser reads the comparison
+and swaps its sides: `(width < 600px)` becomes `(600px > width)` and `(400px <= width < 600px)` becomes
+`(600px > width >= 400px)`, which CSS defines as the same query, unknown features included, where a
+`not` would differ. Only a bare parenthesis or `style()` qualifies, with terms of plain characters and
+operators that point one way. The ordinary prelude check then runs on the result, so a `<` in any other
+shape is still refused, and the emitter and its guards never see one. `props.rules` keeps what was typed:
+only the parsed rule holds the swapped text, so a slice reading `at` from the parser sees the `>` form.
 
 **Not stored on a node:** `@layer`, `@page` and `@view-transition`.
 
@@ -415,7 +424,7 @@ tries to select it, and pressing to drag would show Pressed. State reflected in 
 
 | Condition | On the canvas |
 |---|---|
-| `width`, `height`, `aspect-ratio`, `orientation` with constant numbers, plain or `min-`/`max-` or in range form | Evaluated against the frame's own size when the sheet is built: the block is written or omitted. Tailwind's `lg:` then stays out of the Mobile frame |
+| `width`, `height`, `aspect-ratio`, `orientation` with constant numbers, plain or `min-`/`max-` or in range form, where the name may stand on either side because the parser swaps a `<` | Evaluated against the frame's own size when the sheet is built: the block is written or omitted. Tailwind's `lg:` then stays out of the Mobile frame |
 | A width query that cannot be evaluated (`em`, `calc()`, `or`) | Omitted unless previewed, with a note on the rule's row |
 | Media types and all other media features: `print`, `prefers-*`, `hover`, `pointer`, `forced-colors` and the rest | Dead until previewed, like the pointer states. `screen` and `all` are true |
 | `@supports`, `@container`, `@scope`, `@starting-style` | Real |
@@ -685,6 +694,8 @@ happened. These do not wait for Marlin.
 9. External addresses are refused inside rules and definitions, without limiting `:is()` and `:has()`.
 10. `@layer` is refused as a wrapper.
 11. Generated rules are capped at 24, while everything parseable is accepted.
+12. A range comparison's `<` is rewritten by the parser rather than refused, so `<` still never reaches the
+    sheet.
 
 ## Review findings not adopted
 
