@@ -1,0 +1,319 @@
+// What the render gate fuzz puts on a page: every HTML, SVG and MathML element and
+// attribute of the data the primitive score reads (test/score/lib/universe.ts),
+// with every kind of value that could run, navigate, fetch or embed, in the
+// spellings a browser or React reads alike. Nothing here knows what the gate does.
+//
+// One tier runs in continuous integration and one, RENDER_GATE_FULL=1, crosses all
+// of it. The small tier keeps every element and every data row, with one value on
+// each, and crosses every value and spelling only on the names that navigate or load.
+
+import {
+  htmlElementAttributes,
+  htmlElements,
+  htmlEventHandlers,
+  htmlGlobalAttributes,
+  mathmlAttributes,
+  mathmlElements,
+  svgAttributes,
+  svgElements,
+} from '../score/lib/universe';
+import type { Entry } from '../score/lib/types';
+
+export interface ProbeNode {
+  id: string;
+  type: string;
+  props: Record<string, unknown>;
+  children?: ProbeNode[];
+}
+
+export interface Probe {
+  id: string;
+  /** Readable, for a finding. */
+  what: string;
+  node: ProbeNode;
+  /** A click may leave the page: a plain link is meant to. */
+  mayNavigate?: boolean;
+}
+
+/** Runs in the page: the harness defines it before any markup loads. */
+const run = (id: string) => `__hit('${id}')`;
+export const FOREIGN = 'https://probe.invalid';
+
+type Value = (id: string) => unknown;
+
+/** Every value class that could act. `https` is an ordinary address, the rest must not survive. */
+export const VALUES: Record<string, Value> = {
+  js: (id) => `javascript:${run(id)}`,
+  'js-case': (id) => `JaVaScRiPt:${run(id)}`,
+  'js-tab': (id) => `java\tscript:${run(id)}`,
+  'js-newline': (id) => `java\nscr\ript:${run(id)}`,
+  'js-nul': (id) => `java\u0000script:${run(id)}`,
+  'js-leading': (id) => ` \u0001\t javascript:${run(id)}`,
+  'js-entity': (id) => `&#106;avascript:${run(id)}`,
+  'js-array': (id) => [`javascript:${run(id)}`],
+  vbscript: (id) => `vbscript:${run(id)}`,
+  'data-html': (id) => `data:text/html,<script>parent.${run(id)}</script>`,
+  'data-html-case': (id) => `DaTa:TeXt/HtMl;base64,${btoa(`<script>parent.${run(id)}</script>`)}`,
+  'data-svg': (id) => `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" onload="parent.${run(id)}"/>`,
+  blob: (id) => `blob:${FOREIGN}/${id}`,
+  about: () => 'about:blank',
+  https: (id) => `${FOREIGN}/${id}`,
+  'protocol-relative': (id) => `//probe.invalid/${id}`,
+  backslash: (id) => `\\\\probe.invalid/${id}`,
+  code: (id) => run(id),
+  html: (id) => `<img src=x onerror=${run(id)}>`,
+};
+
+const ROW_VALUES = ['js'];
+const FEW_VALUES = ['js', 'https', 'code'];
+const MAIN_ADDRESS_NAMES = new Set(['href', 'xlink:href', 'xlinkHref', 'src', 'srcset', 'action', 'formaction', 'formAction', 'poster']);
+
+const ADDRESS_NAMES = [
+  'href', 'xlink:href', 'xlinkHref', 'src', 'srcset', 'srcSet', 'action', 'formaction', 'formAction', 'data', 'poster',
+  'cite', 'background', 'ping', 'attributionsrc', 'attributionSrc', 'manifest', 'codebase', 'xml:base', 'xmlBase', 'lowsrc',
+  'dynsrc', 'longdesc', 'usemap', 'profile', 'srcdoc', 'srcDoc',
+];
+
+/** Each host in the parents that give it meaning. */
+const ADDRESS_HOSTS: { type: string; parents?: string[]; props?: Record<string, unknown> }[] = [
+  { type: 'a' },
+  { type: 'area', parents: ['map'], props: { shape: 'default' } },
+  { type: 'form', props: { method: 'get' } },
+  { type: 'button', parents: ['form'], props: { type: 'submit' } },
+  { type: 'input', parents: ['form'], props: { type: 'submit' } },
+  { type: 'input', parents: ['form'], props: { type: 'image' } },
+  { type: 'img' },
+  { type: 'video' },
+  { type: 'source', parents: ['video'] },
+  { type: 'track', parents: ['video'] },
+  { type: 'iframe' },
+  { type: 'embed' },
+  { type: 'object' },
+  { type: 'x-y' },
+  { type: 'a', parents: ['svg'] },
+  { type: 'image', parents: ['svg'] },
+  { type: 'use', parents: ['svg'] },
+  { type: 'feImage', parents: ['svg', 'filter'] },
+  { type: 'a', parents: ['math'] },
+  { type: 'mrow', parents: ['math'] },
+  { type: 'mi', parents: ['math'] },
+];
+
+const TABLE_PARENTS: Record<string, string[]> = {
+  tr: ['table', 'tbody'], td: ['table', 'tbody', 'tr'], th: ['table', 'tbody', 'tr'], tbody: ['table'], thead: ['table'],
+  tfoot: ['table'], caption: ['table'], colgroup: ['table'], col: ['table', 'colgroup'], area: ['map'],
+  option: ['select'], optgroup: ['select'], source: ['video'], track: ['video'], summary: ['details'],
+};
+
+let serial = 0;
+
+function probe(what: string, type: string, parents: string[], make: (id: string) => Omit<ProbeNode, 'id' | 'type'>, mayNavigate = false): Probe {
+  const id = `p${++serial}`;
+  const built = make(id);
+  let node: ProbeNode = { id, type, ...built };
+  [...parents].reverse().forEach((parent, index) => {
+    node = { id: `${id}w${index}`, type: parent, props: {}, children: [node] };
+  });
+  return { id, what, node, ...(mayNavigate ? { mayNavigate: true } : {}) };
+}
+
+const upper = (name: string) => name.toUpperCase();
+const mixed = (name: string) => [...name].map((c, i) => (i % 2 ? c.toUpperCase() : c.toLowerCase())).join('');
+
+const isAddress = (value: string) => value === 'https' || value === 'protocol-relative' || value === 'backslash';
+
+function attributeProbes(type: string, parents: string[], name: string, values: readonly string[], base: Record<string, unknown> = {}): Probe[] {
+  return values.map((value) =>
+    probe(`<${type} ${name}=${value}>`, type, parents, (id) => ({ props: { ...base, [name]: VALUES[value](id), ...(type === 'a' ? { children: 'x' } : {}) } }), isAddress(value)),
+  );
+}
+
+const ROOT: Record<string, string[]> = { html: [], svg: ['svg'], mathml: ['math'] };
+
+function elementProbes(): Probe[] {
+  const of = (entries: Entry[], namespace: string) =>
+    entries.map((e) => {
+      const table = namespace === 'html' ? (TABLE_PARENTS[e.id] ?? []) : [];
+      return probe(`<${e.id}> in ${namespace}`, e.id, [...ROOT[namespace], ...table].filter((p) => p !== e.id), (id) => ({ props: { children: run(id) } }));
+    });
+  return [...of(htmlElements(), 'html'), ...of(svgElements(), 'svg'), ...of(mathmlElements(), 'mathml')];
+}
+
+function rowProbes(values: readonly string[], spellings: readonly ((name: string) => string)[]): Probe[] {
+  const rows: Probe[] = [];
+  const row = (entry: Entry, namespace: string, globalHost: string) => {
+    const dot = entry.id.lastIndexOf('.');
+    const name = dot === -1 ? entry.id : entry.id.slice(dot + 1);
+    if (name.includes('_') || name.includes('*')) return;
+    const tag = dot === -1 || entry.id.startsWith('*') ? globalHost : entry.id.slice(0, dot);
+    const table = namespace === 'html' ? (TABLE_PARENTS[tag] ?? []) : [];
+    const parents = [...ROOT[namespace], ...table].filter((p) => p !== tag);
+    for (const spell of spellings) rows.push(...attributeProbes(tag, parents, spell(name), values));
+  };
+  htmlElementAttributes().forEach((e) => row(e, 'html', 'div'));
+  htmlGlobalAttributes().forEach((e) => row(e, 'html', 'div'));
+  htmlGlobalAttributes().forEach((e) => row(e, 'html', 'x-y'));
+  svgAttributes().forEach((e) => row(e, 'svg', 'rect'));
+  mathmlAttributes().forEach((e) => row(e, 'mathml', 'mi'));
+  return rows;
+}
+
+function handlerProbes(full: boolean): Probe[] {
+  return htmlEventHandlers().flatMap((e) =>
+    (full ? ['div', 'x-y', 'img', 'details'] : ['x-y']).flatMap((type) =>
+      (full ? [e.id, upper(e.id), mixed(e.id)] : [e.id, upper(e.id)]).flatMap((name) => attributeProbes(type, [], name, ['code'])),
+    ),
+  );
+}
+
+function addressProbes(full: boolean): Probe[] {
+  return ADDRESS_HOSTS.flatMap(({ type, parents = [], props }) =>
+    ADDRESS_NAMES.flatMap((name) => {
+      const crossed = full || MAIN_ADDRESS_NAMES.has(name);
+      const spellings = crossed ? [...new Set([name, upper(name), mixed(name)])] : [name];
+      const values = crossed ? Object.keys(VALUES) : FEW_VALUES;
+      return spellings.flatMap((spelling) => attributeProbes(type, parents, spelling, values, props));
+    }),
+  );
+}
+
+/** A `to`, `values` and a shape to click: an animation that could write an address or code. */
+const animated = (attributeName: string, parent: string, parentProps: Record<string, unknown> = {}) =>
+  probe(`<set attributeName=${attributeName}> in <${parent}>`, parent, ['svg'], (id) => ({
+    props: { ...parentProps },
+    children: [
+      { id: `${id}s`, type: 'set', props: { attributeName, to: `javascript:${run(id)}`, begin: '0s' } },
+      { id: `${id}a`, type: 'animate', props: { attributeName, values: `javascript:${run(id)}`, begin: '0s', dur: '1s' } },
+      { id: `${id}r`, type: 'rect', props: { width: 9, height: 9 } },
+    ],
+  }));
+
+function animationProbes(): Probe[] {
+  return ['href', 'xlink:href', 'HREF', ' href', 'XLINK:HREF', 'target', 'onclick', 'onbegin', 'style', 'src', 'action', 'xml:base'].flatMap((name) => [
+    animated(name, 'a', { href: '#x' }),
+    animated(name, 'g'),
+    animated(name, 'image', { href: `${FOREIGN}/img` }),
+  ]);
+}
+
+const hostile = (what: string, type: string, parents: string[], props: (id: string) => Record<string, unknown>, children?: (id: string) => ProbeNode[]) =>
+  probe(what, type, parents, (id) => ({ props: props(id), ...(children ? { children: children(id) } : {}) }));
+
+/** The tag spellings a browser or createElementNS reads as something else. */
+function tagProbes(): Probe[] {
+  const tags = [
+    'SCRIPT', 'ScRiPt', 'script ', ' script', '\tscript', 'script/', 'script>', '<script>', 'scr\u0000ipt', 'ſcript',
+    'svg:script', 'SVG:script', 'x:script', 'x-y:script', 'a-b:script', 'svg:style', 'x:iframe', 'html:script', 'xhtml:script',
+    'svg:a', 'x:a', 'svg:animate', 'x:set', 'math:a', 'iframe ', 'IFRAME', 'x:foreignObject',
+    'plaintext', 'xmp', 'listing', 'noembed', 'noframes', 'noscript', 'textarea', 'title', 'template', 'html', 'head', 'body',
+    'permission', 'fencedframe', 'portal', 'webview', 'applet', 'bgsound', 'basefont', 'isindex', 'keygen', 'menuitem',
+    'marquee', 'layer', 'ilayer', 'nolayer', 'nextid', 'blink', 'spacer', 'annotation-xml', 'font-face', 'color-profile', 'missing-glyph',
+    'a b', 'a"b', '1a', '', '-', 'x-', '-x',
+  ];
+  return tags.flatMap((tag) =>
+    [[], ['svg'], ['math'], ['svg', 'foreignObject']].map((parents) =>
+      hostile(`tag ${JSON.stringify(tag)} in ${parents.join('>') || 'html'}`, tag, parents, (id) => ({
+        children: run(id), href: `javascript:${run(id)}`, onload: run(id),
+      })),
+    ),
+  );
+}
+
+/** What React does with a name beyond writing it: properties, reserved names, shapes JSON can hold. */
+function reactProbes(): Probe[] {
+  const list: Probe[] = [];
+  const properties = ['innerHTML', 'outerHTML', 'innerText', 'outerText', 'textContent', 'srcdoc', 'INNERHTML', 'nonce', 'is', 'shadowRoot', 'attachShadow', 'setHTMLUnsafe'];
+  for (const type of ['x-y', 'my-element', 'div', 'a']) {
+    for (const name of properties) list.push(hostile(`<${type} ${name}=html>`, type, [], (id) => ({ [name]: VALUES.html(id) })));
+  }
+  for (const name of ['dangerouslySetInnerHTML', 'DANGEROUSLYSETINNERHTML', 'dangerouslysetinnerhtml']) {
+    for (const type of ['div', 'x-y']) list.push(hostile(`<${type} ${name}>`, type, [], (id) => ({ [name]: { __html: VALUES.html(id) } })));
+  }
+  list.push(
+    hostile('a __proto__ key holding a handler', 'div', [], (id) => JSON.parse(`{"__proto__":{"onclick":"__hit('${id}')","dangerouslySetInnerHTML":{"__html":"x"}}}`)),
+    hostile('a constructor key', 'div', [], () => JSON.parse('{"constructor":{"prototype":{"x":1}}}')),
+    hostile('a string ref', 'div', [], () => ({ ref: 'x' })),
+    hostile('an object ref', 'div', [], () => ({ ref: { current: 1 } })),
+    hostile('an object key', 'div', [], () => ({ key: { a: 1 } })),
+    hostile('an object as text', 'div', [], () => ({ children: { a: 1 } })),
+    hostile('an element-shaped object as text', 'div', [], () => ({ children: { $$typeof: 'x', type: 'script', props: {} } })),
+    hostile('an array as text', 'div', [], () => ({ children: [{ a: 1 }] })),
+    hostile('an attribute object with a broken toString', 'div', [], () => ({ title: { toString: 'x' } })),
+    hostile('an address object with a broken toString', 'a', [], () => ({ href: { toString: 'x' } })),
+    hostile('a nested array address', 'a', [], (id) => ({ href: [[`javascript:${run(id)}`]] })),
+    hostile('a boolean href', 'a', [], () => ({ href: true })),
+    hostile('a null attribute', 'div', [], () => ({ title: null })),
+    hostile('suppressHydrationWarning as text', 'div', [], () => ({ suppressHydrationWarning: 'x' })),
+    hostile('a form with a script action, submitted', 'form', [], (id) => ({ action: `javascript:${run(id)}` }), (id) => [{ id: `${id}b`, type: 'button', props: { type: 'submit', children: 'x' } }]),
+    hostile('a button pointing at no form', 'button', [], (id) => ({ form: 'nope', formAction: `javascript:${run(id)}` })),
+    hostile('a declarative shadow root', 'template', ['x-y'], () => ({ shadowrootmode: 'open', shadowRootMode: 'open' }), (id) => [{ id: `${id}i`, type: 'img', props: { src: 'x', onerror: run(id) } }]),
+    hostile('an xml:base link', 'a', ['svg'], (id) => ({ 'xml:base': 'javascript:', href: run(id) })),
+    hostile('an event attribute on svg', 'svg', [], (id) => ({ onload: run(id), onLoad: run(id) })),
+    hostile('a marquee handler', 'marquee', [], (id) => ({ onstart: run(id), loop: 1 })),
+    hostile('details toggle', 'details', [], (id) => ({ open: true, ontoggle: run(id) })),
+    hostile('autofocus and onfocus', 'input', [], (id) => ({ autoFocus: true, onfocus: run(id) })),
+    hostile('a popover target', 'button', [], (id) => ({ popovertarget: 'x', onbeforetoggle: run(id) })),
+    hostile('maction', 'maction', ['math'], (id) => ({ actiontype: `statusline#javascript:${run(id)}`, xref: `javascript:${run(id)}` })),
+    hostile('a mathml link', 'mtext', ['math'], (id) => ({ href: `javascript:${run(id)}` })),
+    hostile('use with a data document', 'use', ['svg'], (id) => ({
+      href: `data:image/svg+xml,<svg id="x" xmlns="http://www.w3.org/2000/svg"><image href="x" onerror="parent.${run(id)}"/></svg>#x`,
+    })),
+    hostile('use with a foreign document', 'use', ['svg'], (id) => ({ href: `${FOREIGN}/${id}.svg#x` })),
+    hostile('a link with ping', 'a', [], (id) => ({ href: '#x', ping: `${FOREIGN}/${id}` })),
+    hostile('an image with attribution', 'img', [], (id) => ({ src: `${FOREIGN}/${id}.png`, attributionsrc: `${FOREIGN}/${id}a` })),
+    hostile('an image loading script', 'img', [], (id) => ({ src: `javascript:${run(id)}`, srcset: `javascript:${run(id)} 1x` })),
+    hostile('an http-equiv on a div', 'div', [], () => ({ 'http-equiv': 'refresh', content: `0;url=${FOREIGN}/x` })),
+  );
+  return list;
+}
+
+const STYLE_VALUES: ((id: string) => unknown)[] = [
+  (id) => `red;background:url(${FOREIGN}/${id})`,
+  (id) => `red;background-image:url("${FOREIGN}/${id}")`,
+  (id) => `url(${FOREIGN}/${id});color:red`,
+  (id) => `red}body{background:url(${FOREIGN}/${id})`,
+  (id) => `red</style><script>${run(id)}</script>`,
+  (id) => `red;}</style><img src=x onerror=${run(id)}>`,
+  (id) => `expression(${run(id)})`,
+  (id) => `url(javascript:${run(id)})`,
+  (id) => `@import url(${FOREIGN}/${id})`,
+  (id) => ({ base: `red;background:url(${FOREIGN}/${id})` }),
+  (id) => ({ desktop: `red}</style><script>${run(id)}</script>`, tablet: 'blue' }),
+  () => ({ toString: 'x' }),
+  () => ['red'],
+];
+
+/** Inline style reaching the DOM: a value, a key and shapes a style cannot be. */
+function styleProbes(): Probe[] {
+  const list = STYLE_VALUES.flatMap((value) =>
+    ['color', 'background', '--x', 'fontFamily'].map((key) => hostile(`style ${key}`, 'div', [], (id) => ({ style: { [key]: value(id) } }))),
+  );
+  list.push(
+    hostile('a style string', 'div', [], (id) => ({ style: `color:red;background:url(${FOREIGN}/${id})` })),
+    hostile('a style array', 'div', [], () => ({ style: [{ color: 'red' }] })),
+    hostile('a style number', 'div', [], () => ({ style: 1 })),
+    hostile('a style key with a declaration', 'div', [], (id) => ({ style: { 'color:red;background:url(x)': `url(${FOREIGN}/${id})` } })),
+    hostile('a style key with a breakout', 'div', [], (id) => ({ style: { '</style><script>': run(id) } })),
+    hostile('a STYLE prop', 'div', [], (id) => ({ STYLE: `background:url(${FOREIGN}/${id})` })),
+    hostile('a rule closing its style element', 'div', [], (id) => ({ rules: [{ id: 'r', selector: `&:hover</style><script>${run(id)}</script>`, style: { color: 'red' } }] })),
+    hostile('a rule value closing its style element', 'div', [], (id) => ({ rules: [{ id: 'r', selector: '&:hover', style: { color: `red</style><script>${run(id)}</script>` } }] })),
+    hostile('a rule importing a sheet', 'div', [], (id) => ({ rules: [{ id: 'r', define: `@import url(${FOREIGN}/${id})` }] })),
+    hostile('a rule loading an address', 'div', [], (id) => ({ rules: [{ id: 'r', selector: '&', style: { background: `url(${FOREIGN}/${id})` } }] })),
+    hostile('a style string on a custom element', 'x-y', [], (id) => ({ style: `background:url(${FOREIGN}/${id})` })),
+  );
+  return list;
+}
+
+export function buildProbes(full: boolean): Probe[] {
+  serial = 0;
+  return [
+    ...elementProbes(),
+    ...tagProbes(),
+    ...reactProbes(),
+    ...styleProbes(),
+    ...animationProbes(),
+    ...handlerProbes(full),
+    ...addressProbes(full),
+    ...(full ? rowProbes(Object.keys(VALUES), [(n) => n, upper, mixed]) : rowProbes(ROW_VALUES, [(n) => n])),
+  ];
+}

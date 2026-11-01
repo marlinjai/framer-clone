@@ -111,7 +111,8 @@ export function createComponentElement(
   // A `#` type cannot be a tag, and createElement would throw on it.
   if (isComponentPlaceholderType(component.type)) return null;
 
-  if (isBlockedTag(component.type)) return null;
+  // Only a host's type is a tag: otherwise it names an entry of the registry below.
+  if (component.isHostElement && isBlockedTag(component.type)) return null;
 
   const content = ownTextThenChildren(rawTextChildren, children) as React.ReactNode;
   const identity = options?.identity;
@@ -129,7 +130,7 @@ export function createComponentElement(
     // On the canvas it is a labelled normal block; the preview pins it
     // (HeadlessPageRenderer), the published page through its stylesheet.
     if (isStickyCta(component.props)) {
-      return createStickyCtaElement(propsWithIdentity, options?.mode === 'editor' ? 'editor' : 'preview');
+      return createStickyCtaElement(propsWithIdentity, options?.mode === 'editor' ? 'editor' : 'preview', undefined, finalProps);
     }
 
     // Form components (data-form-kind): static on the canvas and in the preview,

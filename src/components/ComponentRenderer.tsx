@@ -232,7 +232,7 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
     // contenteditable host element.
     finalProps.contentEditable = 'true';
     finalProps.suppressContentEditableWarning = true;
-    finalProps.ref = editRef;
+    finalProps.ref = (el: HTMLElement | null) => { editRef.current = el; };
     finalProps.style = { ...editorStyle, ...EDITING_TEXT_STYLE };
     Object.assign(finalProps, textBoxProps(rawChildren as string, el => el.textContent ?? ''));
   } else if (canMove) {

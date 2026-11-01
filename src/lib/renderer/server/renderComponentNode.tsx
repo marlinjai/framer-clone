@@ -23,7 +23,7 @@
 
 import React from 'react';
 import { isVoidTag } from '@/lib/drag/voidTags';
-import { isBlockedProp, isBlockedTag } from '@/lib/renderer/blockedNodes';
+import { isBlockedProp, isBlockedTag, safeInlineStyle } from '@/lib/renderer/blockedNodes';
 import { isLegacyRulesAttribute } from '@/lib/rules/rules';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
@@ -106,7 +106,8 @@ export function nodeDomProps(node: ComponentNode): Record<string, unknown> {
     if (NON_DOM_PROPS.has(name) || isBlockedProp(name, value)) continue;
     if (name === 'rules' && !isLegacyRulesAttribute(value)) continue;
     if (name === 'style') {
-      const style = flattenStyle(value);
+      const flat = flattenStyle(value);
+      const style = flat && safeInlineStyle(flat);
       if (style && Object.keys(style).length > 0) props.style = style;
       continue;
     }
@@ -174,7 +175,7 @@ export function renderComponentNode(
   // The sticky call to action bar draws its own link; renderPublishedPage
   // moved it to the end of the page and its stylesheet pins it on phones.
   if (isStickyCta(node.props)) {
-    return createStickyCtaElement(nodeDomProps(node), 'published', key);
+    return createStickyCtaElement(nodeDomProps(node), 'published', key, node.props as Record<string, unknown>);
   }
 
   const dataKind = (node.props as any)?.['data-component-kind'];

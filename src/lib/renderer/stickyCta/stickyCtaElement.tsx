@@ -36,13 +36,18 @@ const CANVAS_LABEL_STYLE: React.CSSProperties = {
   userSelect: 'none',
 };
 
-/** The bar with its link, for one surface. `props` are the bar's resolved props (marker and link props included). */
+/**
+ * The bar with its link, for one surface. `props` go on the element, so they have
+ * been through the render gate. `config` holds the link settings, which the gate
+ * rightly drops as attributes: readStickyCta checks them itself.
+ */
 export function createStickyCtaElement(
   props: Record<string, unknown>,
   surface: StickyCtaSurface,
   key?: React.Key,
+  config: Record<string, unknown> = props,
 ): React.ReactElement {
-  const link = readStickyCta(props);
+  const link = readStickyCta(config);
   const domProps = stripStickyCtaProps(props);
   const linkStyle = stickyCtaLinkStyle(link) as React.CSSProperties;
   const label = link.label || 'Call to action';

@@ -274,7 +274,7 @@ async function seedEventsCollection(
  * faithful, minimal snapshot. The tree binds every data surface the smoke
  * exercises against REAL repos.
  */
-function buildHomeSnapshot(args: {
+export function buildHomeSnapshot(args: {
   pageId: string;
   slug: string;
   eventsCollectionId: string;
