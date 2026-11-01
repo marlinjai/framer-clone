@@ -8,7 +8,7 @@ import { render as rtlRender, cleanup, fireEvent, screen, act } from '@testing-l
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { InMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
 import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
-import { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
+import ComponentModel, { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
 import { holdsText } from '@/lib/renderer/textContent';
 import { TextContentSection } from '../sections/TextContentSection';
 import { DataSourceSection } from '../sections/DataSourceSection';
@@ -36,6 +36,7 @@ function seed() {
   editorUI.setCurrentPage(page);
   const root = page.appComponentTree as ComponentInstance;
   const main = root.children[0] as ComponentInstance;
+  main.setProps({ children: undefined }); // the seed's text would become a leading text node
   main.addChildren([
     createIntrinsicComponent('text-para', 'p', { children: 'Hello' }),
     createIntrinsicComponent('heading-1', 'h1', { children: 'Title' }),
@@ -135,5 +136,79 @@ describe('TextContentSection', () => {
     const { para } = seed();
     render(<DataSourceSection component={para} />);
     expect(screen.queryByRole('textbox', { name: 'Text' })).toBeNull();
+  });
+});
+
+describe('TextContentSection on mixed text', () => {
+  const fields = () => screen.getAllByRole('textbox') as HTMLTextAreaElement[];
+
+  /** The paragraph, split by a strong element, plus a closing text node. */
+  function mixed() {
+    const { para } = seed();
+    para.addChild(createIntrinsicComponent('bold', 'strong', { children: 'bold' }));
+    para.addChild(ComponentModel.create({ id: 'tail', type: '#text', componentType: 'host', props: { children: ' world' }, parentId: para.id }));
+    getHistoryStore()!.clear();
+    return { para };
+  }
+
+  it('lists one field per text node, in page order, and none for the element child', () => {
+    const { para } = mixed();
+    render(<TextContentSection component={para} />);
+    expect(fields().map(f => f.value)).toEqual(['Hello', ' world']);
+    expect(screen.getByRole('textbox', { name: 'Text 1' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Text 2' })).toBeTruthy();
+  });
+
+  it('edits one text node as one undo step, leaving the element child and spaces alone', () => {
+    const { para } = mixed();
+    render(<TextContentSection component={para} />);
+    const second = screen.getByRole('textbox', { name: 'Text 2' });
+    fireEvent.focus(second);
+    fireEvent.change(second, { target: { value: ' there ' } });
+    fireEvent.blur(second);
+    expect((para.children as ComponentInstance[]).map(c => c.props.children)).toEqual(['Hello', 'bold', ' there ']);
+    expect(para.children[1].id).toBe('bold');
+    act(() => getHistoryStore()!.undo());
+    expect(para.children[2].props.children).toBe(' world');
+  });
+
+  it('keeps a text node that is emptied, as a layer that can still be typed into', () => {
+    const { para } = mixed();
+    render(<TextContentSection component={para} />);
+    const first = screen.getByRole('textbox', { name: 'Text 1' });
+    fireEvent.focus(first);
+    fireEvent.change(first, { target: { value: '' } });
+    fireEvent.blur(first);
+    expect(para.children).toHaveLength(3);
+    expect(para.children[0].props.children).toBe('');
+  });
+
+  it('shows a numeric text node and a legacy string, so old rows stay editable', () => {
+    const legacy = ComponentModel.create({
+      id: 'legacy',
+      type: 'p',
+      componentType: 'host',
+      props: { children: 'Old ' },
+      children: [
+        { id: 'run', type: '#text', componentType: 'host', parentId: 'legacy', props: { children: 7 } },
+        { id: 'el', type: 'em', componentType: 'host', parentId: 'legacy' },
+      ],
+    });
+    render(<TextContentSection component={legacy} />);
+    expect(fields().map(f => f.value)).toEqual(['Old ', '7']);
+    const first = screen.getByRole('textbox', { name: 'Text 1' });
+    fireEvent.focus(first);
+    fireEvent.change(first, { target: { value: 'New ' } });
+    fireEvent.blur(first);
+    expect(legacy.props.children).toBe('New ');
+    expect(legacy.children).toHaveLength(2);
+  });
+
+  it('shows a text node bound to data as the binding', () => {
+    const { para } = mixed();
+    (para.children[0] as ComponentInstance).setBinding('children', { mode: 'read', expression: '{{row.title}}' });
+    render(<TextContentSection component={para} />);
+    expect(screen.getByText('The text comes from data. Unlink it to type your own.')).toBeTruthy();
+    expect(fields().map(f => f.value)).toEqual([' world']);
   });
 });

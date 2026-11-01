@@ -31,6 +31,7 @@ import {
   DATA_GROUND,
   DATA_GROUND_WRAPPER_ID,
   DATA_INNER_COMPONENT_ID,
+  DATA_TEXT_NODE_ROW,
   DATA_VIEWPORT_ID,
 } from './markers';
 import { classifyZone } from './zoneClassify';
@@ -163,7 +164,9 @@ export function resolveDropTarget(input: ResolveDropTargetInput): ResolveDropTar
 // target. Covers every registry div-based layout component (Container, Stack,
 // Grid, Flex, Card) plus the semantic block containers the seeded app tree
 // uses. Text-leaf tags (p, h1-h6, button, span, a, ...) are deliberately
-// excluded so dropping into them doesn't clobber their string children.
+// excluded: over a paragraph, the middle of a drag means "next to it", and the
+// way to put an element inside text is its Layers row. Nesting never loses the
+// text either way (ComponentModel.addChild turns it into a text node).
 export const CONTAINER_TAGS: ReadonlySet<string> = new Set([
   'div',
   'section',
@@ -199,13 +202,13 @@ function resolveInnerTarget(
 
   const rect = targetEl.getBoundingClientRect();
   const tagName = targetEl.tagName.toLowerCase();
-  const targetCanNest = !isVoidTag(tagName);
+  const targetCanNest = !isVoidTag(tagName) && !targetEl.hasAttribute(DATA_TEXT_NODE_ROW);
   // Allow 'inside' when the tag is a recognised container (even if empty) OR
   // when any tag already has element children. The container allowlist unlocks
   // dropping into freshly-created empty Containers; the child-count fallback
   // keeps the existing "element host that happens to contain stuff" behaviour
   // for anything outside the allowlist. Text-leaf hosts (p / button / h1 with
-  // string-only children) stay protected from accidental clobber.
+  // string-only children) stay plain drop neighbours.
   const isContainerTag = CONTAINER_TAGS.has(tagName);
   const hasElementChildren = targetEl.childElementCount > 0;
   const canAcceptInside = targetCanNest && (isContainerTag || hasElementChildren);

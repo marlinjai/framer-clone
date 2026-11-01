@@ -55,6 +55,7 @@
 // the static-html wave. Do NOT wire any of it here.
 
 import { applyBindings, type Props } from '@/lib/bindings/resolver/applyBindings';
+import { isTextNodeType, renderableText } from '@/lib/renderer/textNode';
 import {
   createScope,
   lookup,
@@ -239,6 +240,12 @@ async function hydrateNode(
   scope: BindingScope,
   repos: HydrationRepos,
 ): Promise<ComponentNode> {
+  // A text node is only its text (which may be bound), whatever else a stored
+  // row carries: no dispatch below applies to it.
+  if (isTextNodeType(node.type)) {
+    return { ...node, props: applyBindings(node, node.props ?? {}, scope).resolvedProps, children: [] };
+  }
+
   const dataKind = node.props?.['data-component-kind'];
   const hasBindings = !!node.bindings && Object.keys(node.bindings).length > 0;
 
@@ -619,8 +626,11 @@ function placeholderNode(node: ComponentNode, dataKind: string): ComponentNode {
       : dataKind === 'record-view'
         ? 'Record view'
         : 'Table view';
+  const props = { ...(node.props ?? {}) };
+  delete (props as Record<string, unknown>).children;
   return {
     ...node,
+    props,
     children: [{ type: 'span', props: { children: `${label} (no binding)` } }],
   };
 }
@@ -642,19 +652,12 @@ function commercePlaceholderNode(node: ComponentNode, dataKind: string): Compone
 
 /**
  * Flatten a hydrated tree to its text content, mirroring how the DOM computes
- * `textContent` for the equivalent preview render: element children win over a
- * raw-text `props.children` (the `content = children.length ? children :
- * rawTextChildren` rule in createComponentElement). A numeric `children` (e.g.
- * a baked price/availability) stringifies the way React renders a number as
- * text. Used by the parity test.
+ * `textContent` for the equivalent preview render: a node's own text, then its
+ * children in order (the rule in src/lib/renderer/textNode.ts). A numeric
+ * `children` (e.g. a baked price/availability) stringifies the way React renders
+ * a number as text. Used by the parity test.
  */
 export function nodeTextContent(node: ComponentNode): string {
-  const kids = node.children ?? [];
-  if (kids.length > 0) {
-    return kids.map(nodeTextContent).join('');
-  }
-  const child = node.props?.children;
-  if (typeof child === 'string') return child;
-  if (typeof child === 'number') return String(child);
-  return '';
+  const own = renderableText(node.props?.children);
+  return `${own ?? ''}${(node.children ?? []).map(nodeTextContent).join('')}`;
 }

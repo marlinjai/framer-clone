@@ -63,7 +63,13 @@ render.
 1. **Text mixed with elements.** A node holds either a text string or child nodes, and the renderers
    drop the string when children exist. In the probe, `<p>` with the text "Hello " and a bold child
    rendered as `<p><b>bold</b></p>`: the text was lost silently. A paragraph with a bold word or a
-   link inside is the most ordinary thing on the web. The fix is a real text node.
+   link inside is the most ordinary thing on the web. The fix is a real text node. **Built 2026-11-01:**
+   a child with `type: '#text'` and its text in `props.children` emits no element, so the DOM is exact
+   (`src/lib/renderer/textNode.ts`). A row holding a string and child nodes is not migrated: every
+   renderer shows the string first. On the canvas a click lands on the element, and selecting a text
+   node selects that element, whose Text section has one field per text node. Inline editing of a
+   text node inside a mixed element is not built, and neither is splitting a text node at the caret,
+   so in the editor an element lands after the text. The AI generator can write mixed text directly.
 2. **CSS that needs a selector.** An inline style cannot say `:hover`, `:focus`, `:nth-child`,
    `::before`, `@keyframes`, `@container` or `@supports`. Today there are three hover presets
    (`lift`, `dim`, `underline`), five appear presets and one scroll preset. Media queries exist only
@@ -120,7 +126,8 @@ construct cannot survive the trip, the format cannot express it.
 "The same nodes" is defined over a normalised form, not raw `ComponentModel` snapshots:
 
 - **Compared as is:** component type, props and attributes, style maps (including breakpoint and
-  state variants), text content and child order.
+  state variants), text content and child order. Compare text and structure, never raw `childNodes`
+  counts: two adjacent text nodes are separated by a `<!-- -->` comment in server-rendered HTML.
 - **Normalised away:** node ids and parent or canvas bookkeeping (positions on the editing canvas,
   selection, expansion state). They are regenerated on import and are not part of the page's
   meaning.
@@ -213,7 +220,7 @@ These are rough judgement estimates in agent time, not measurements. The evaluat
 | Step | What | Rough size |
 |---|---|---|
 | 1 | The matrix, corpus harness and round-trip test, reporting the honest first score (done, [score](../primitives-score/latest.md)) | 1 week |
-| 2 | Text nodes, so mixed text stops losing content | days |
+| 2 | Text nodes, so mixed text stops losing content (built, see gap 1) | days |
 | 3 | A general "any property, any attribute" editor in the panel. This closes the long tail of CSS cheaply; proper controls stay for common properties only, and `CSS_PROP_SET` is not extended by hand | days |
 | 4 | Selector-level styling: element states, keyframe animations and further at-rules, built on how `responsiveCss` already moves style maps into a stylesheet | 1 to 2 weeks |
 | 5 | Reusable components | 2 to 3 weeks |

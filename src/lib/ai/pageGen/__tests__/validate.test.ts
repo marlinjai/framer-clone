@@ -169,6 +169,77 @@ describe('validateGeneration: repairs', () => {
     const div = result.nodes[0];
     expect(div.props.children).toBeUndefined();
     expect(div.children.map((c) => c.props.children)).toEqual(['Intro', 'More']);
+    expect(div.children.map((c) => c.type)).toEqual(['#text', 'p']);
+  });
+
+  describe('text nodes', () => {
+    const para = (children: unknown[]) => ({ nodes: [{ type: 'p', children }] });
+
+    it('accepts text mixed with elements, in order, with spaces kept', () => {
+      const result = ok(para([
+        { type: '#text', props: { children: 'Hello ' } },
+        { type: 'strong', props: { children: 'bold' } },
+        { type: '#text', props: { children: ' ' } },
+        { type: 'em', props: { children: 'word' } },
+      ]));
+      const p = result.nodes[0];
+      expect(p.children.map((c) => [c.type, c.props.children])).toEqual([
+        ['#text', 'Hello '],
+        ['strong', 'bold'],
+        ['#text', ' '],
+        ['em', 'word'],
+      ]);
+      expect(p.children[0].parentId).toBe(p.id);
+      expect(p.children[0].componentType).toBe('host');
+      expect(result.stats.nodeCount).toBe(5);
+    });
+
+    it('keeps only the text: no style, no attributes, no children, however it is spelt', () => {
+      const result = ok(para([
+        {
+          type: ' #TEXT ',
+          preset: 'text',
+          props: { children: 'Hi', style: { color: 'red' }, onClick: 'x', dangerouslySetInnerHTML: { __html: '<b>' } },
+          children: [{ type: 'script' }],
+        },
+      ]));
+      const node = result.nodes[0].children[0];
+      expect(node.type).toBe('#text');
+      expect(node.props).toEqual({ children: 'Hi' });
+      expect(node.children).toEqual([]);
+      expect(result.warnings.filter((w) => w.includes('#text node'))).toHaveLength(4);
+    });
+
+    it('turns a number into text and cuts text at the limit', () => {
+      const long = 'x'.repeat(GENERATION_LIMITS.maxTextChars + 5);
+      const result = ok(para([
+        { type: '#text', props: { children: 12 } },
+        { type: '#text', props: { children: long } },
+      ]));
+      expect(result.nodes[0].children[0].props.children).toBe('12');
+      expect(result.nodes[0].children[1].props.children).toHaveLength(GENERATION_LIMITS.maxTextChars);
+      expect(result.warnings.join(' ')).toContain('text cut');
+    });
+
+    it('drops an empty text node and text that is not text, and says so', () => {
+      const result = ok(para([
+        { type: '#text', props: { children: '' } },
+        { type: '#text' },
+        { type: '#text', props: { children: { a: 1 } } },
+        { type: 'strong', props: { children: 'kept' } },
+      ]));
+      expect(result.nodes[0].children.map((c) => c.type)).toEqual(['strong']);
+      expect(result.warnings.filter((w) => w.includes('needs text'))).toHaveLength(3);
+    });
+
+    it('refuses bare text at the top level', () => {
+      expect(rejected({ nodes: [{ type: '#text', props: { children: 'alone' } }] }).join(' ')).toContain('nothing usable');
+    });
+
+    it('never reaches a void tag or a sticky bar', () => {
+      const result = ok({ nodes: [{ type: 'img', props: { src: '/a.png', alt: 'a' }, children: [{ type: '#text', props: { children: 'x' } }] }] });
+      expect(result.nodes[0].children).toEqual([]);
+    });
   });
 
   it('drops children of a void tag and of a data component', () => {

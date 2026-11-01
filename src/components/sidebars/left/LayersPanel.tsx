@@ -41,7 +41,8 @@ import {
 } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import { ComponentInstance } from '@/models/ComponentModel';
-import { useDragSource } from '@/lib/drag';
+import { DATA_TEXT_NODE_ROW, useDragSource } from '@/lib/drag';
+import { isTextNodeType } from '@/lib/renderer/textNode';
 import { getHistoryStore } from '@/stores/RootStore';
 import {
   collapseAll,
@@ -283,6 +284,9 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
   const isDraggable = !component.isViewportNode && component.hasParent;
   const isHidden = !component.canvasVisible;
   const isLocked = !!component.canvasLocked;
+  // A text node has no element of its own: clicking its row selects the element
+  // it sits in (whose panel edits it), and there is nothing on the canvas to lock.
+  const isTextRow = isTextNodeType(component.type);
   const isDimmed = isHidden || hiddenByAncestor;
   const deletable = canDeleteLayer(component);
   // Width of the hover strip, reserved on the name so it truncates beside the
@@ -330,11 +334,13 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
       icon: isHidden ? <Eye size={14} /> : <EyeOff size={14} />,
       onClick: () => component.toggleCanvasVisibility(),
     },
-    {
-      label: isLocked ? 'Unlock layer' : 'Lock layer',
-      icon: isLocked ? <Unlock size={14} /> : <Lock size={14} />,
-      onClick: () => component.toggleCanvasLock(),
-    },
+    ...(isTextRow
+      ? []
+      : [{
+          label: isLocked ? 'Unlock layer' : 'Lock layer',
+          icon: isLocked ? <Unlock size={14} /> : <Lock size={14} />,
+          onClick: () => component.toggleCanvasLock(),
+        }]),
     ...(hasChildren
       ? [{
           label: isFolded ? 'Expand' : 'Collapse',
@@ -367,6 +373,7 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
         data-inner-component-id={component.id}
         data-layer-row={component.id}
         data-layer-breakpoint={breakpointId}
+        {...(isTextRow ? { [DATA_TEXT_NODE_ROW]: '' } : {})}
         onPointerDown={onPointerDown}
         // @container: the row's own width (after its depth indent) decides
         // whether the full action strip fits beside a readable name.
@@ -470,20 +477,22 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
               {isHidden ? <EyeOff size={13} /> : <Eye size={13} />}
             </button>
 
-            <button
-              type="button"
-              className={actionButtonClass}
-              title={isLocked ? 'Unlock layer' : 'Lock layer'}
-              aria-label={isLocked ? 'Unlock layer' : 'Lock layer'}
-              aria-pressed={isLocked}
-              onPointerDown={stopPointer}
-              onClick={(e) => {
-                e.stopPropagation();
-                component.toggleCanvasLock();
-              }}
-            >
-              {isLocked ? <Lock size={13} /> : <Unlock size={13} />}
-            </button>
+            {!isTextRow && (
+              <button
+                type="button"
+                className={actionButtonClass}
+                title={isLocked ? 'Unlock layer' : 'Lock layer'}
+                aria-label={isLocked ? 'Unlock layer' : 'Lock layer'}
+                aria-pressed={isLocked}
+                onPointerDown={stopPointer}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  component.toggleCanvasLock();
+                }}
+              >
+                {isLocked ? <Lock size={13} /> : <Unlock size={13} />}
+              </button>
+            )}
           </span>
 
           <button

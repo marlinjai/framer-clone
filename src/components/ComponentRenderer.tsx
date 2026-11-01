@@ -13,6 +13,7 @@ import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
 import { createScope, type BindingScope } from '@/lib/bindings/resolver/scope';
 import { EDITING_TEXT_STYLE, startInlineTextEdit } from '@/lib/canvas/inlineTextEdit';
 import { isTextBound } from '@/lib/renderer/textContent';
+import { isTextNodeType } from '@/lib/renderer/textNode';
 
 interface ComponentRendererProps {
   component: ComponentInstance;
@@ -55,8 +56,9 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
   }, [editingId, component.id]);
 
   // Only non-root tree components can be moved. The root of the app tree must
-  // stay put. Text-editing suppresses drag until the user exits edit mode.
-  const canMove = component.hasParent;
+  // stay put. Text-editing suppresses drag until the user exits edit mode. A
+  // text node has no element to press on: it moves from its Layers row.
+  const canMove = component.hasParent && !isTextNodeType(component.type);
   const isEditing = isEditingCopy;
   // Locked in the Layers panel (itself or an ancestor): not selectable or
   // draggable on the canvas. Pointer events pass through to the nearest
@@ -92,7 +94,10 @@ const ComponentRenderer = observer(({ component, breakpointId, allBreakpoints, s
 
   // Text-editing eligibility: a single string-valued `children` and no nested
   // components. Anything with child components renders its own subtree and
-  // isn't safe to turn contenteditable (we'd lose the children).
+  // isn't safe to turn contenteditable (the commit reads the element's whole
+  // textContent, which would flatten them). Text nodes count as children here:
+  // the text of a mixed element is edited in the Text field of the panel, and
+  // an element child of it edits inline as itself.
   // Text bound to data is the binding's: it shows as the binding in the
   // properties panel and is not typed over on the canvas.
   const rawChildren = (resolvedAttributes as any).children;

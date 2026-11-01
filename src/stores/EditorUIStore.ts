@@ -1,16 +1,28 @@
 // src/stores/EditorUIStore.ts
 // UI state store - manages current selections, tools, and transient editor state
-import { types, Instance } from 'mobx-state-tree';
+import { types, Instance, getParentOfType, hasParentOfType } from 'mobx-state-tree';
 import ProjectModel, { ProjectModelType } from '../models/ProjectModel';
 import PageModel, { PageModelType } from '../models/PageModel';
 import ComponentModel, { ComponentInstance } from '../models/ComponentModel';
 import { LEFT_SIDEBAR_DEFAULT_WIDTH, clampLeftSidebarWidth } from '@/lib/layers/sidebarWidth';
+import { isTextNodeType } from '@/lib/renderer/textNode';
 // Removed BreakpointModel - breakpoints are now viewport nodes
 
 // Available tools in our design editor (expanded from basic ToolStore)
 export enum EditorTool {
   GRAB = 'grab',
   SELECT = 'select',
+}
+
+/**
+ * What selecting `component` selects. A text node has no element, so every
+ * consumer of the selection (overlays, handles, the phone toolbar, style
+ * sections) would have nothing to act on: its element stands in, and that
+ * element's Text section edits it. Marks the one place this is decided.
+ */
+function selectionTarget(component: ComponentInstance): ComponentInstance {
+  if (!isTextNodeType(component.type) || !hasParentOfType(component, ComponentModel)) return component;
+  return getParentOfType(component, ComponentModel) as ComponentInstance;
 }
 
 // EditorUI store - manages all UI state and current selections
@@ -175,8 +187,9 @@ const EditorUIStore = types.model('EditorUI', {
       hasViewportContext: !!breakpointId
     });
     
-    self.selectedComponent = component;
-    self.selectedComponents.replace(component ? [component] : []);
+    const target = component && selectionTarget(component);
+    self.selectedComponent = target;
+    self.selectedComponents.replace(target ? [target] : []);
     
     if (breakpointId && self.currentPage) {
       // Component within a viewport - find the viewport node
@@ -206,7 +219,7 @@ const EditorUIStore = types.model('EditorUI', {
    * parent is never selected together with its own children.
    */
   setSelection(components: ComponentInstance[], breakpointId?: string) {
-    const unique = pruneNested(components);
+    const unique = pruneNested([...new Set(components.map(selectionTarget))]);
     if (unique.length === 0) {
       this.clearSelection();
       return;
@@ -227,7 +240,8 @@ const EditorUIStore = types.model('EditorUI', {
    * already selected. Adding a node drops any selected ancestor or
    * descendant of it. Removing the primary promotes the next selected node.
    */
-  toggleInSelection(component: ComponentInstance, breakpointId?: string) {
+  toggleInSelection(picked: ComponentInstance, breakpointId?: string) {
+    const component = selectionTarget(picked);
     const current = self.selectedComponents.filter((c): c is ComponentInstance => !!c);
     if (current.length === 0) {
       this.selectComponent(component, breakpointId);

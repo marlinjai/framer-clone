@@ -21,6 +21,7 @@ function setup() {
   // child rules can be tested.
   const root = page.appComponentTree as ComponentInstance;
   const [main, image] = root.children as ComponentInstance[];
+  main.setProps({ children: undefined }); // the seed's text would become a leading text node
   main.addChildren([createIntrinsicComponent('span-child', 'span', { children: 'Nested' })]);
   const nested = main.children[0] as ComponentInstance;
   const desktop = page.sortedViewportNodes[0];
