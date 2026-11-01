@@ -24,6 +24,7 @@
 import React from 'react';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { isBlockedProp, isBlockedTag } from '@/lib/renderer/blockedNodes';
+import { isRuleList } from '@/lib/rules/rules';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
@@ -47,7 +48,9 @@ const INTERACTIVE_COMMERCE_KINDS: ReadonlySet<string> = new Set([
 // DOM (React would render them as stray attributes). `children` is consumed via
 // the children argument; `query` is the structured data-component query object;
 // `bindings` never lives in props but is denied defensively; `effects` is
-// turned into attributes by applyEffects and denied here defensively too.
+// turned into attributes by applyEffects and denied here defensively too. A
+// `rules` list is the same, see isRuleList: a string there stays the legacy
+// `<table>` attribute it has always been.
 const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects']);
 
 /**
@@ -99,6 +102,7 @@ export function nodeDomProps(node: ComponentNode): Record<string, unknown> {
   const props: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(source)) {
     if (NON_DOM_PROPS.has(name) || isBlockedProp(name, value)) continue;
+    if (name === 'rules' && isRuleList(value)) continue;
     if (name === 'style') {
       const style = flattenStyle(value);
       if (style && Object.keys(style).length > 0) props.style = style;
