@@ -12,7 +12,6 @@
 // on, instead of a blank screen or a 404.
 
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useStore } from '@/hooks/useStore';
@@ -63,13 +62,14 @@ function DemoPreview() {
           The demo project lives only in the browser tab it was made in, and is gone after a full
           reload. To keep your work, use Save in the editor: it saves the demo as a new project.
         </p>
+        {/* Plain anchors on purpose: a full document load drops this layout's editor stylesheet, which a client-side navigation would carry onto a published page. */}
         <div className="flex gap-4 text-sm">
-          <Link href="/projects" className="text-brand hover:underline">
+          <a href="/projects" className="text-brand hover:underline">
             Your projects
-          </Link>
-          <Link href="/" className="text-brand hover:underline">
+          </a>
+          <a href="/" className="text-brand hover:underline">
             Open the demo editor
-          </Link>
+          </a>
         </div>
       </main>
     );
