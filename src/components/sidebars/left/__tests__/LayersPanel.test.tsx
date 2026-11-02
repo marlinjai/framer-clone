@@ -370,7 +370,12 @@ describe('row icons', () => {
     const products = add(root, 'prod-x', 'div', { 'data-component-kind': 'product-list' });
     const form = add(root, 'form-x', 'div', { 'data-form-kind': 'form' });
     const email = add(form, 'email-x', 'div', { 'data-form-kind': 'form-field', fieldType: 'email' });
+    const textBox = add(root, 'textbox-x', 'div', { children: 'Welcome' });
+    const emptySection = add(root, 'empty-x', 'section', {});
     render(<LayersPanel />);
+    // A div holding nothing but text reads as text; an empty section is still a frame.
+    expect(iconOf(textBox)).toContain('lucide-type');
+    expect(iconOf(emptySection)).toContain('lucide-container');
 
     expect(iconOf(main)).toContain('lucide-container');
     expect(iconOf(section)).toContain('lucide-container');

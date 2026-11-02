@@ -68,6 +68,11 @@ function holdsOnlyText(component: ComponentInstance): boolean {
   return component.children.every((child: ComponentInstance) => isTextNodeType(child.type));
 }
 
+/** A plain div holding only text: it renders as a text box, not a layout frame. */
+function isTextBox(component: ComponentInstance): boolean {
+  return component.type === 'div' && holdsOnlyText(component);
+}
+
 /**
  * A layout container's icon, by how it lays out its children: the palette's
  * Grid, Stack (a column) and Flex (a row) entries, else its Container.
@@ -119,7 +124,9 @@ export function layerIconOf(component: ComponentInstance, at?: LayerIconBreakpoi
     case 'image': return COMPONENT_REGISTRY.image.icon;
     case 'link': return COMPONENT_REGISTRY.link.icon;
     case 'text': return Type;
-    case 'container': return layoutIconOf(component, at);
+    // A plain div that holds nothing but text is a text box (the seeded one is); a
+    // landmark (main, section, nav, ...) stays a frame whatever it holds.
+    case 'container': return isTextBox(component) ? Type : layoutIconOf(component, at);
     default: break;
   }
 
@@ -142,7 +149,7 @@ export function layerIconOf(component: ComponentInstance, at?: LayerIconBreakpoi
     default: break;
   }
   if (TABLE_TAGS.has(tag)) return holdsOnlyText(component) ? Type : Sheet;
-  if (CONTAINER_TAGS.has(tag)) return layoutIconOf(component, at);
+  if (CONTAINER_TAGS.has(tag)) return isTextBox(component) ? Type : layoutIconOf(component, at);
   // A list item, a quote, a cell: text when it only holds text, a frame when it holds elements.
   if (holdsOnlyText(component)) return Type;
   if (component.children.length > 0) return layoutIconOf(component, at);
