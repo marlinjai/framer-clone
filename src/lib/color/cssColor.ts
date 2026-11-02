@@ -309,6 +309,10 @@ function polar(chroma: number, hue: number): [number, number] {
   return [chroma * Math.cos(radians), chroma * Math.sin(radians)];
 }
 
+/** A `none` hue beside a chroma above zero, which the engines paint apart (cssColorToRgba). */
+const huelessChroma = (chroma: ColorComponent, hue: ColorComponent): boolean =>
+  hue.kind === 'none' && chroma.kind !== 'none' && chroma.value > 0;
+
 /** In the modern form a bare number for hsl's or hwb's second and third value means percent. */
 const percentOf = (c: ColorComponent): number => (c.kind === 'number' ? c.value / 100 : value(c, 1));
 
@@ -322,8 +326,11 @@ const percentOf = (c: ColorComponent): number => (c.kind === 'number' ? c.value 
  * Undefined where the engines paint a value differently, or in a way the specification
  * leaves open, so it cannot be judged here and a guard reading it fails closed: a Display
  * P3 colour with a channel outside 0 to 1 (`color(display-p3 0 0 100)` paints a light
- * blue, not the clipped blue), and an hwb colour with a negative whiteness or blackness
- * (Chromium paints `hwb(1 -1% 0)` as green 2, WebKit as green 4).
+ * blue, not the clipped blue), an hwb colour with a negative whiteness or blackness
+ * (Chromium paints `hwb(1 -1% 0)` as green 2, WebKit as green 4), and an lch or oklch
+ * colour with a `none` hue and some chroma (Chromium and WebKit on macOS read the hue as
+ * zero, WebKit on Linux paints the chroma away, so `lch(50% 50% none)` is pink in one
+ * and grey in the other).
  */
 export function cssColorToRgba(color: CssColor): Rgba | undefined {
   if (color.form === 'transparent') return { r: 0, g: 0, b: 0, a: 0 };
@@ -354,12 +361,14 @@ export function cssColorToRgba(color: CssColor): Rgba | undefined {
     case 'lab':
       return rgb(fromLinearSrgb(labToLinearSrgb(clamp(value(c1, 100), 100), value(c2, 125), value(c3, 125))));
     case 'lch': {
+      if (huelessChroma(c2, c3)) return undefined;
       const [labA, labB] = polar(Math.max(0, value(c2, 150)), value(c3, 1));
       return rgb(fromLinearSrgb(labToLinearSrgb(clamp(value(c1, 100), 100), labA, labB)));
     }
     case 'oklab':
       return rgb(fromLinearSrgb(oklabToLinearSrgb(clamp(value(c1, 1), 1), value(c2, 0.4), value(c3, 0.4))));
     case 'oklch': {
+      if (huelessChroma(c2, c3)) return undefined;
       const [labA, labB] = polar(Math.max(0, value(c2, 0.4)), value(c3, 1));
       return rgb(fromLinearSrgb(oklabToLinearSrgb(clamp(value(c1, 1), 1), labA, labB)));
     }

@@ -100,5 +100,10 @@ describe('parseColor, the banner guard shape', () => {
     expect(parseColor('hwb(1 -1% 0)')).toBeUndefined();
     expect(parseColor('hwb(1 0 -1%)')).toBeUndefined();
     expect(parseColor('hwb(0 200% 0)')).toEqual({ r: 255, g: 255, b: 255, a: 1 });
+    // A none hue with chroma: grey in WebKit on Linux, coloured elsewhere.
+    expect(parseColor('lch(50% 50% none)')).toBeUndefined();
+    expect(parseColor('oklch(0.5 0.1 none)')).toBeUndefined();
+    // With no chroma the hue does not matter, and every engine paints the same grey.
+    expect(parseColor('oklch(1 0 none)')).toBeDefined();
   });
 });

@@ -178,14 +178,15 @@ describe.each(browsers)('the theme sheet in %s', (_name, type) => {
       for (const [value, [r, g, b, a255]] of painted) {
         const ours = parseColor(value);
         if (!ours) {
-          // The two forms parseColor declines to judge, on purpose (cssColorToRgba): the
+          // The forms parseColor declines to judge, on purpose (cssColorToRgba): the
           // engines paint them apart, so a guard must not trust either reading.
           const read = parseCssColor(value);
           const fraction = (c: ColorComponent) => (c.kind === 'none' ? 0 : c.kind === 'percent' ? c.value / 100 : c.value);
           const declined =
             read?.form === 'function' &&
             ((read.space === 'display-p3' && read.components.some((c) => fraction(c) < 0 || fraction(c) > 1)) ||
-              (read.fn === 'hwb' && read.components.slice(1).some((c) => fraction(c) < 0)));
+              (read.fn === 'hwb' && read.components.slice(1).some((c) => fraction(c) < 0)) ||
+              ((read.fn === 'lch' || read.fn === 'oklch') && read.components[2].kind === 'none' && fraction(read.components[1]) > 0));
           if (!declined) misses.push(`${value}: parseColor read nothing`);
           continue;
         }
