@@ -38,11 +38,16 @@ import {
   Tablet,
   Smartphone,
   MoreHorizontal,
+  Component,
+  Pencil,
+  Unlink,
 } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { DATA_TEXT_NODE_ROW, useDragSource } from '@/lib/drag';
 import { isTextNodeType } from '@/lib/renderer/textNode';
+import { isPlacementType, type PlacementProps } from '@/lib/components/placement';
+import { detachLosesFormHistory } from '@/lib/components/detach';
 import { getHistoryStore } from '@/stores/RootStore';
 import {
   collapseAll,
@@ -74,6 +79,7 @@ function ViewportIcon({ label }: { label: string }) {
 
 // Get component icon based on type
 function getComponentIcon(component: ComponentInstance) {
+  if (isPlacementType(component.type)) return Component;
   switch (component.type) {
     case 'img': return Image;
     case 'button': return Square;
@@ -293,6 +299,9 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
   // buttons instead of running under them (see the row's container query).
   const actionsWidth = layerActionsWidth(3);
   const name = component.displayName as string;
+  // A placement is one row, and its menu reaches the definition.
+  const definitionId = isPlacementType(component.type) ? (component.props as Partial<PlacementProps>).component : undefined;
+  const definition = definitionId ? editorUI.currentProject?.components.get(definitionId) : undefined;
 
   // Open row menu, at the cursor (right-click) or under the More button.
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -328,7 +337,24 @@ const LayerNode = observer(({ component, depth, breakpointId, hiddenByAncestor =
     duplicateLayer(page, editorUI, getHistoryStore(), component);
   };
 
+  const onDetach = () => {
+    const page = editorUI.currentPage;
+    const project = editorUI.currentProject;
+    if (!page || !project) return;
+    const stored = definitionId ? project.definitions[definitionId] : undefined;
+    if (stored && detachLosesFormHistory(stored) && !window.confirm('This component holds a form. A plain copy gets a new form, and past submissions stay with the old one.')) return;
+    const result = project.detachPlacement(page.id, component.id);
+    if (!result.ok) editorUI.setEditorNotice({ kind: 'refused', message: result.message });
+    else if (result.root) editorUI.selectComponent(result.root, breakpointId);
+  };
+
   const menuItems: MenuItem[] = [
+    ...(definition
+      ? [
+          { label: 'Edit component', icon: <Pencil size={14} />, onClick: () => editorUI.enterComponent(definition.id, component.id) },
+          { label: 'Detach', icon: <Unlink size={14} />, onClick: onDetach },
+        ]
+      : []),
     {
       label: isHidden ? 'Show layer' : 'Hide layer',
       icon: isHidden ? <Eye size={14} /> : <EyeOff size={14} />,

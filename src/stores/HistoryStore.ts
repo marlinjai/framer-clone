@@ -9,6 +9,7 @@
 // subtree are recorded, so selection/tool state in EditorUIStore and non-MST
 // pan/zoom transforms stay out of history.
 import {
+  tryResolve,
   types,
   Instance,
   addMiddleware,
@@ -95,7 +96,11 @@ const HistoryStore = types
     labelFor(entry: HistoryEntryInstance): string {
       const path = entry.patches[0]?.path ?? '';
       const short = shortenPath(path);
-      return short ? `${entry.actionName} · ${short}` : entry.actionName;
+      const label = short ? `${entry.actionName} · ${short}` : entry.actionName;
+      // An edit inside a definition reaches every placement, so the entry names it.
+      const inside = /^.*\/components\/[^/]+/.exec(path)?.[0];
+      const definition = inside && self.targetStore ? tryResolve(self.targetStore, inside) as { name?: unknown } | undefined : undefined;
+      return typeof definition?.name === 'string' ? `${definition.name}: ${label}` : label;
     },
   }))
   .actions(self => {
