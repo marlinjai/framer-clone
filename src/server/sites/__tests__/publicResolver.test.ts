@@ -4,6 +4,7 @@ import type { PrismaClient } from '@prisma/client';
 import {
   parseSubdomain,
   resolvePublishedSite,
+  resolvePublishedSiteByKey,
   hostLookupKeys,
   matchPageBySlug,
   resolvePublicIngestionKey,
@@ -71,7 +72,8 @@ function fakePrisma(): PrismaClient {
   const pages: PublishedPageRow[] = [
     { pageId: 'p1', slug: 'about', snapshot: { slug: 'about' } as never },
   ];
-  return {
+  const fake = {
+    $transaction: async (run: (tx: unknown) => Promise<unknown>) => run(fake),
     siteDomain: {
       findUnique: async ({
         where,
@@ -124,7 +126,8 @@ function fakePrisma(): PrismaClient {
         return null;
       },
     },
-  } as unknown as PrismaClient;
+  };
+  return fake as unknown as PrismaClient;
 }
 
 describe('resolvePublishedSite', () => {
@@ -360,5 +363,97 @@ describe('resolveAnalyticsProjectId', () => {
     expect(resolveAnalyticsProjectId(null)).toBe('proj_env');
     delete process.env.ANALYTICS_PROJECT_ID;
     expect(resolveAnalyticsProjectId(null)).toBeNull();
+  });
+});
+
+describe('resolvePublishedSiteByKey with a revision', () => {
+  function prismaWith(
+    publishedRevision: unknown,
+    pages: unknown[] = [],
+    publishedRevisionId: string | null = 'rev',
+  ): PrismaClient {
+    const fake = {
+      $transaction: async (run: (tx: unknown) => Promise<unknown>, options: unknown) => {
+        transactionOptions.push(options);
+        return run(fake);
+      },
+      siteDomain: { findUnique: async () => ({ siteId: 's1' }) },
+      site: {
+        findFirst: async () => ({
+          id: 's1',
+          workspaceId: 'ws',
+          tenantGroupId: 'tg',
+          companyId: 'c',
+          name: 'Working copy name',
+          analyticsProjectId: null,
+          ingestionEndpoint: null,
+          apiKeyRef: null,
+          lumitraEnabled: false,
+          redirects: [],
+          siteSettings: { language: 'fr' },
+          publishedRevisionId,
+          publishedRevision,
+          pages,
+        }),
+      },
+    };
+    return fake as unknown as PrismaClient;
+  }
+
+  const transactionOptions: unknown[] = [];
+
+  it('reads the frozen document, keeping identity and tenancy live', async () => {
+    const site = await resolvePublishedSiteByKey(
+      { kind: 'subdomain', value: 'demo' },
+      prismaWith({
+        number: 4,
+        document: {
+          schemaVersion: 1,
+          name: 'Frozen name',
+          siteSettings: { language: 'de' },
+          pages: [{ pageId: 'p', slug: 'about', snapshot: {} }],
+          components: { nav: {} },
+        },
+      }),
+    );
+    expect(site).toMatchObject({
+      siteId: 's1',
+      workspaceId: 'ws',
+      companyId: 'c',
+      name: 'Frozen name',
+      revisionNumber: 4,
+      components: { nav: {} },
+    });
+    expect(site?.siteSettings.language).toBe('de');
+    expect(site?.pages.map((p) => p.slug)).toEqual(['about']);
+    // One snapshot, so a first save between Prisma's statements cannot empty the site.
+    expect(transactionOptions.at(-1)).toMatchObject({ isolationLevel: 'RepeatableRead' });
+  });
+
+  it('serves the working copy only when the pointer is null', async () => {
+    const site = await resolvePublishedSiteByKey(
+      { kind: 'subdomain', value: 'demo' },
+      prismaWith(null, [{ pageId: 'p', slug: 'draft', snapshot: {} }], null),
+    );
+    expect(site?.revisionNumber).toBeNull();
+    expect(site?.pages.map((p) => p.slug)).toEqual(['draft']);
+  });
+
+  it('throws when the pointer is set but no revision came back', async () => {
+    await expect(
+      resolvePublishedSiteByKey(
+        { kind: 'subdomain', value: 'demo' },
+        prismaWith(null, [{ pageId: 'p', slug: 'draft', snapshot: {} }], 'rev_gone'),
+      ),
+    ).rejects.toThrow('points at a revision that does not exist');
+  });
+
+  it('fails loudly on a damaged revision, never falling through to the working copy', async () => {
+    await expect(
+      resolvePublishedSiteByKey(
+        { kind: 'subdomain', value: 'demo' },
+        prismaWith({ number: 4, document: { name: 'no pages' } }, [{ pageId: 'p', slug: 'draft', snapshot: {} }]),
+      ),
+    ).rejects.toThrow('malformed site revision document');
   });
 });

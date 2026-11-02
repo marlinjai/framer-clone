@@ -12,8 +12,15 @@ import 'server-only';
 // sites, and never touches the tenant-scoped repository or its barrel.
 //
 // Resolution: Host header -> lookup key -> SiteDomain.siteId -> the published
-// Site + its SitePage snapshots. A draft / archived / unknown host resolves to
-// null (the route 404s). No write surface here.
+// Site + its frozen revision (plan 2026-11-01-immutable-published-copy). A draft /
+// archived / unknown host resolves to null (the route 404s). No write surface here.
+//
+// A save never reaches a visitor: only `sites.published_revision_id` decides what
+// is served, and it moves only on publish and rollback. The one exception is a
+// site published before revisions existed, which has no revision yet: it is
+// served its working copy, exactly as before, until its first save or publish
+// freezes those rows (SiteRepository.writeWorkingCopy). That is also the demo
+// seed and the integration fixtures, which write published rows directly.
 //
 // Two kinds of lookup key (hostLookupKeys):
 //   - a SUBDOMAIN label of PUBLIC_SITE_BASE_HOST (`<label>.sites.lumitra.co`),
@@ -26,13 +33,18 @@ import 'server-only';
 // The host is normalized first: port and trailing dot dropped, lowercased, an
 // internationalized name converted to punycode (browsers already send that).
 
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
 import type { PageSnapshotOut } from '@/models/PageModel';
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
 import { parseSiteRedirects, type SiteRedirect } from '@/lib/pages/redirects';
 import { normalizeSiteSettings, type SiteSettings } from '@/lib/site/siteSettings';
 import { parseComponents, type ComponentDefinitions } from '@/lib/components/definition';
+import {
+  parseRevisionDocument,
+  REVISION_SCHEMA_VERSION,
+  type SiteRevisionDocument,
+} from '@/server/sites/revision';
 import { RFC1035_LABEL } from '@/server/sites/subdomain';
 import {
   isClaimableHostname,
@@ -75,14 +87,19 @@ export interface PublishedSite {
   /** Site settings (src/lib/site/siteSettings.ts), always normalized. */
   siteSettings: SiteSettings;
   /**
-   * Reusable component definitions, parsed here and only here, so the cross-request
-   * cache holds them ready and a request never parses them again.
+   * Reusable component definitions, frozen beside `pages` and parsed here and only
+   * here, so the cross-request cache holds them ready and a request never parses
+   * them again.
    */
   components: ComponentDefinitions;
+  /** The revision being served, or null for a site that has none yet (see the file header). */
+  revisionNumber: number | null;
   /**
-   * The row's `updated_at`, which every save moves: what the expansion memo keys on
-   * (src/lib/components/expandedPages.ts). An ISO string, because this object is
-   * cached as JSON. Absent on a site cached before the field, which is not memoised.
+   * What the expansion memo keys on (src/lib/components/expandedPages.ts): the
+   * frozen revision's id, which changes on every publish and rollback, or for a
+   * site with no revision yet the row's `updated_at`, which every save moves. A
+   * string, because this object is cached as JSON. Absent on a site cached before
+   * the field, which is not memoised.
    */
   revision?: string;
 }
@@ -216,7 +233,10 @@ export async function resolvePublishedSiteByKey(
   const siteId = await siteIdForKey(key, prisma);
   if (!siteId) return null;
 
-  const site = await prisma.site.findFirst({
+  // One snapshot: Prisma runs this as one statement per relation, and a first save
+  // committing between them would otherwise yield "no revision, no pages", a site
+  // with nothing on it that the cross-request cache then keeps with no expiry.
+  const site = await prisma.$transaction((tx) => tx.site.findFirst({
     where: { id: siteId, status: 'published' },
     select: {
       id: true,
@@ -232,30 +252,54 @@ export async function resolvePublishedSiteByKey(
       siteSettings: true,
       components: true,
       updatedAt: true,
-      pages: { select: { pageId: true, slug: true, snapshot: true } },
+      publishedRevisionId: true,
+      publishedRevision: { select: { number: true, document: true } },
+      // The working copy, only for a site with no revision: one query either way,
+      // and a revisioned site does not pay for rows it never serves.
+      pages: {
+        where: { site: { publishedRevisionId: null } },
+        select: { pageId: true, slug: true, snapshot: true },
+      },
     },
-  });
+  }), { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, maxWait: 5_000, timeout: 30_000 });
   if (!site) return null;
 
+  // Only a null pointer means "no revision yet". A pointer with no revision behind
+  // it must fail loudly: the working copy here would put drafts live.
+  if (site.publishedRevisionId && !site.publishedRevision) {
+    throw new Error(`site ${site.id} points at a revision that does not exist`);
+  }
+
+  const frozen: SiteRevisionDocument = site.publishedRevision
+    ? parseRevisionDocument(site.publishedRevision.document)
+    : {
+        schemaVersion: REVISION_SCHEMA_VERSION,
+        name: site.name,
+        analyticsProjectId: site.analyticsProjectId,
+        ingestionEndpoint: site.ingestionEndpoint,
+        apiKeyRef: site.apiKeyRef,
+        lumitraEnabled: site.lumitraEnabled,
+        pages: site.pages.map((p) => ({
+          pageId: p.pageId,
+          slug: p.slug,
+          snapshot: p.snapshot as unknown as PageSnapshotOut,
+        })),
+        redirects: parseSiteRedirects(site.redirects),
+        siteSettings: normalizeSiteSettings(site.siteSettings),
+        components: (site.components ?? {}) as Record<string, unknown>,
+      };
+
   return {
+    ...frozen,
     siteId: site.id,
     workspaceId: site.workspaceId,
     tenantGroupId: site.tenantGroupId,
     companyId: site.companyId,
-    name: site.name,
-    analyticsProjectId: site.analyticsProjectId,
-    ingestionEndpoint: site.ingestionEndpoint,
-    apiKeyRef: site.apiKeyRef,
-    lumitraEnabled: site.lumitraEnabled,
-    pages: site.pages.map((p) => ({
-      pageId: p.pageId,
-      slug: p.slug,
-      snapshot: p.snapshot as unknown as PageSnapshotOut,
-    })),
-    redirects: parseSiteRedirects(site.redirects),
-    siteSettings: normalizeSiteSettings(site.siteSettings),
-    components: parseComponents(site.components).definitions,
-    revision: site.updatedAt.toISOString(),
+    components: parseComponents(frozen.components).definitions,
+    revisionNumber: site.publishedRevision?.number ?? null,
+    revision: site.publishedRevisionId
+      ? `revision:${site.publishedRevisionId}`
+      : `working:${site.updatedAt.toISOString()}`,
   };
 }
 

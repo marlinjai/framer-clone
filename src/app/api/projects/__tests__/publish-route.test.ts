@@ -7,7 +7,7 @@
 // these assert the REAL guard + scope-resolution contract without a database:
 //   - the scope is derived from the SERVER session (active workspace -> tenant
 //     -> tenant_group), never from the client body,
-//   - the snapshot round-trips through saveProject then publishProject,
+//   - the snapshot round-trips through publishProject, which saves and freezes it,
 //   - 401 with no session, 403 when not a workspace admin, 400 on a bad body,
 //   - a cross-workspace site id is rejected as the typed 404 envelope.
 // resolveActiveScope and the typed error mapping are kept REAL (only
@@ -89,7 +89,6 @@ function publishReq(body: unknown, opts?: { cookie?: string | null }): Request {
 }
 
 function installRepo(repo: {
-  saveProject?: unknown;
   publishProject?: unknown;
   ensureSiteDomain?: unknown;
   unpublishProject?: unknown;
@@ -126,27 +125,27 @@ afterEach(() => {
 describe('POST /api/projects/publish guard', () => {
   it('401s when there is no session', async () => {
     mockVerifySession.mockResolvedValue(null);
-    const save = vi.fn();
-    installRepo({ saveProject: save, publishProject: vi.fn() });
+    const publish = vi.fn();
+    installRepo({ publishProject: publish });
 
     const res = await POST(publishReq({ project: PROJECT }, { cookie: null }));
 
     expect(res.status).toBe(401);
     expect((await res.json()).error.code).toBe('unauthorized');
-    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
   });
 
   it('403s when the session is valid but the user is not a workspace admin', async () => {
     mockVerifySession.mockResolvedValue(makeSession());
     mockCan.mockResolvedValue(false);
-    const save = vi.fn();
-    installRepo({ saveProject: save, publishProject: vi.fn() });
+    const publish = vi.fn();
+    installRepo({ publishProject: publish });
 
     const res = await POST(publishReq({ project: PROJECT }));
 
     expect(res.status).toBe(403);
     expect((await res.json()).error.code).toBe('forbidden');
-    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
     // The admin check uses the real publishSite -> workspace.admin requirement.
     expect(mockCan).toHaveBeenCalledWith('user-1', 'workspace.admin', {
       type: 'workspace',
@@ -160,15 +159,13 @@ describe('POST /api/projects/publish guard', () => {
     mockVerifySession.mockResolvedValue(makeSession());
     mockCan.mockRejectedValue(new AuthBrainError('OpenFGA check failed: 503', 503));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const save = vi.fn();
     const publish = vi.fn();
-    installRepo({ saveProject: save, publishProject: publish });
+    installRepo({ publishProject: publish });
 
     const res = await POST(publishReq({ project: PROJECT }));
 
     expect(res.status).toBe(503);
     expect((await res.json()).error.code).toBe('authz_unavailable');
-    expect(save).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
@@ -181,12 +178,10 @@ describe('POST /api/projects/publish (authorized)', () => {
     mockCan.mockResolvedValue(true);
   });
 
-  it('round-trips the snapshot through saveProject then publishProject then ensureSiteDomain under the session scope', async () => {
-    const save = vi.fn().mockResolvedValue(undefined);
-    const publish = vi.fn().mockResolvedValue(undefined);
+  it('round-trips the snapshot through publishProject then ensureSiteDomain under the session scope', async () => {
+    const publish = vi.fn().mockResolvedValue({ revision: 7 });
     const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
     installRepo({
-      saveProject: save,
       publishProject: publish,
       ensureSiteDomain: ensure,
     });
@@ -199,25 +194,22 @@ describe('POST /api/projects/publish (authorized)', () => {
     expect(await res.json()).toEqual({
       siteId: 'site_1',
       status: 'published',
+      revision: 7,
       publishedPages: ['', 'about'],
       subdomain: 'demo-abc123',
       liveUrl: null,
     });
-    // Scope comes from the SERVER session, not the body.
-    // ...and only UPDATES an existing site: it never creates (or re-creates a
-    // deleted) one; creating is POST /api/projects.
-    expect(save).toHaveBeenCalledWith(
+    // Scope comes from the SERVER session, not the body. publishProject only
+    // UPDATES an existing site (the repository tests prove it): it never creates
+    // (or re-creates a deleted) one; creating is POST /api/projects.
+    expect(publish).toHaveBeenCalledWith(
       SCOPE,
       expect.objectContaining({ id: 'site_1' }),
-      // The company comes from the session too, and is stamped on the site (sites.company_id).
-      { mustExist: true, companyId: 'tenant-1' },
+      // The company and the publisher come from the session too.
+      { companyId: 'tenant-1', publishedBy: 'user-1' },
     );
-    expect(publish).toHaveBeenCalledWith(SCOPE, 'site_1');
     expect(ensure).toHaveBeenCalledWith(SCOPE, 'site_1');
-    // The pipeline runs in order: save -> publish -> ensureSiteDomain.
-    expect(save.mock.invocationCallOrder[0]).toBeLessThan(
-      publish.mock.invocationCallOrder[0],
-    );
+    // The pipeline runs in order: publish -> ensureSiteDomain.
     expect(publish.mock.invocationCallOrder[0]).toBeLessThan(
       ensure.mock.invocationCallOrder[0],
     );
@@ -226,8 +218,7 @@ describe('POST /api/projects/publish (authorized)', () => {
   it('invalidates the origin render cache for the published subdomain (MT-17)', async () => {
     const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
     installRepo({
-      saveProject: vi.fn().mockResolvedValue(undefined),
-      publishProject: vi.fn().mockResolvedValue(undefined),
+      publishProject: vi.fn().mockResolvedValue({ revision: 1 }),
       ensureSiteDomain: ensure,
     });
 
@@ -242,8 +233,7 @@ describe('POST /api/projects/publish (authorized)', () => {
 
   it('a failing custom-domain revalidation does not turn a committed publish into a failure', async () => {
     installRepo({
-      saveProject: vi.fn().mockResolvedValue(undefined),
-      publishProject: vi.fn().mockResolvedValue(undefined),
+      publishProject: vi.fn().mockResolvedValue({ revision: 1 }),
       ensureSiteDomain: vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' }),
     });
     vi.mocked(revalidateCustomHostsForSiteId).mockRejectedValueOnce(new Error('db hiccup'));
@@ -260,8 +250,7 @@ describe('POST /api/projects/publish (authorized)', () => {
     process.env.PUBLIC_SITE_BASE_HOST = 'sites.lumitra.co';
     const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
     installRepo({
-      saveProject: vi.fn().mockResolvedValue(undefined),
-      publishProject: vi.fn().mockResolvedValue(undefined),
+      publishProject: vi.fn().mockResolvedValue({ revision: 1 }),
       ensureSiteDomain: ensure,
     });
 
@@ -277,8 +266,7 @@ describe('POST /api/projects/publish (authorized)', () => {
     delete process.env.PUBLIC_SITE_BASE_HOST;
     const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
     installRepo({
-      saveProject: vi.fn().mockResolvedValue(undefined),
-      publishProject: vi.fn().mockResolvedValue(undefined),
+      publishProject: vi.fn().mockResolvedValue({ revision: 1 }),
       ensureSiteDomain: ensure,
     });
 
@@ -296,8 +284,7 @@ describe('POST /api/projects/publish (authorized)', () => {
     // already-allocated slug for this site.
     const ensure = vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' });
     installRepo({
-      saveProject: vi.fn().mockResolvedValue(undefined),
-      publishProject: vi.fn().mockResolvedValue(undefined),
+      publishProject: vi.fn().mockResolvedValue({ revision: 1 }),
       ensureSiteDomain: ensure,
     });
 
@@ -315,8 +302,7 @@ describe('POST /api/projects/publish (authorized)', () => {
       .fn()
       .mockRejectedValue(new SubdomainAllocationError('site_1', 5));
     installRepo({
-      saveProject: vi.fn().mockResolvedValue(undefined),
-      publishProject: vi.fn().mockResolvedValue(undefined),
+      publishProject: vi.fn().mockResolvedValue({ revision: 1 }),
       ensureSiteDomain: ensure,
     });
 
@@ -327,36 +313,36 @@ describe('POST /api/projects/publish (authorized)', () => {
   });
 
   it('preserves the full opaque page snapshot when saving (no field stripping)', async () => {
-    const save = vi.fn().mockResolvedValue(undefined);
-    installRepo({ saveProject: save, publishProject: vi.fn() });
+    const publish = vi.fn().mockResolvedValue({ revision: 1 });
+    installRepo({ publishProject: publish });
 
     await POST(publishReq({ project: PROJECT }));
 
-    const savedProject = save.mock.calls[0][1];
+    const savedProject = publish.mock.calls[0][1];
     expect(savedProject.pages.page_home.appComponentTree).toEqual({ kind: 'frame' });
   });
 
   it('400s on a malformed body (no project)', async () => {
-    const save = vi.fn();
-    installRepo({ saveProject: save, publishProject: vi.fn() });
+    const publish = vi.fn();
+    installRepo({ publishProject: publish });
 
     const res = await POST(publishReq({}));
 
     expect(res.status).toBe(400);
     expect((await res.json()).error.code).toBe('bad_body');
-    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
   });
 
   it('rejects a publish of a site id owned by another workspace as a 404 envelope', async () => {
-    const save = vi.fn().mockRejectedValue(new SiteNotFoundError('site_1'));
-    const publish = vi.fn();
-    installRepo({ saveProject: save, publishProject: publish });
+    const publish = vi.fn().mockRejectedValue(new SiteNotFoundError('site_1'));
+    const ensure = vi.fn();
+    installRepo({ publishProject: publish, ensureSiteDomain: ensure });
 
     const res = await POST(publishReq({ project: PROJECT }));
 
     expect(res.status).toBe(404);
     expect((await res.json()).error.code).toBe('site_not_found');
-    expect(publish).not.toHaveBeenCalled();
+    expect(ensure).not.toHaveBeenCalled();
   });
 });
 
@@ -365,9 +351,9 @@ describe('publish of a deleted project', () => {
     mockVerifySession.mockResolvedValue(makeSession());
     mockCan.mockResolvedValue(true);
     const { SiteGoneError } = await import('@/server/sites');
-    const save = vi.fn().mockRejectedValue(new SiteGoneError());
-    const publish = vi.fn();
-    installRepo({ saveProject: save, publishProject: publish });
+    const publish = vi.fn().mockRejectedValue(new SiteGoneError());
+    const ensure = vi.fn();
+    installRepo({ publishProject: publish, ensureSiteDomain: ensure });
 
     const res = await POST(publishReq({ project: PROJECT }));
 
@@ -377,6 +363,6 @@ describe('publish of a deleted project', () => {
     expect(body.error.message).toBe(
       'This project does not exist (any more): it may have been deleted. Your changes were not saved.',
     );
-    expect(publish).not.toHaveBeenCalled();
+    expect(ensure).not.toHaveBeenCalled();
   });
 });
