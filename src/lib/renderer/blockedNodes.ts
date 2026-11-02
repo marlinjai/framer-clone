@@ -77,3 +77,27 @@ export function withoutBlockedProps(props: Record<string, unknown>): Record<stri
   if (!names.some((name) => isBlockedProp(name, props[name]))) return props;
   return Object.fromEntries(names.filter((name) => !isBlockedProp(name, props[name])).map((name) => [name, props[name]]));
 }
+
+// The canvas and the preview run on the signed-in editor's origin, so a stored
+// page must not be able to draw over the editor or send anything from it: a
+// popover sits in the top layer above every panel, and a form inside it is a
+// convincing "sign in again". These stay on the published page, which is the
+// site's own origin.
+const EDITOR_SURFACE_DROPPED: ReadonlySet<string> = new Set([
+  'popover', 'popovertarget', 'popovertargetaction', 'command', 'commandfor',
+  'action', 'formaction', 'formtarget', 'ping',
+]);
+
+/** `props` as the editor surfaces render them; the same object when nothing is dropped. */
+export function withoutEditorSurfaceProps(props: Record<string, unknown>): Record<string, unknown> {
+  const names = Object.keys(props);
+  if (!names.some((name) => EDITOR_SURFACE_DROPPED.has(name.toLowerCase()))) return props;
+  return Object.fromEntries(
+    names.filter((name) => !EDITOR_SURFACE_DROPPED.has(name.toLowerCase())).map((name) => [name, props[name]]),
+  );
+}
+
+/** A form on an editor surface never submits: with no action it would reload the editor. */
+export function refuseSubmit(event: { preventDefault(): void }): void {
+  event.preventDefault();
+}

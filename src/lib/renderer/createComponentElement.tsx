@@ -13,7 +13,7 @@
 import React from 'react';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag';
-import { isBlockedTag, withoutBlockedProps } from '@/lib/renderer/blockedNodes';
+import { isBlockedTag, withoutBlockedProps, refuseSubmit, withoutEditorSurfaceProps } from '@/lib/renderer/blockedNodes';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
@@ -115,7 +115,9 @@ export function createComponentElement(
 
   const content = ownTextThenChildren(rawTextChildren, children) as React.ReactNode;
   const identity = options?.identity;
-  const safeProps = withoutBlockedProps(finalProps);
+  const surfaceProps = withoutEditorSurfaceProps(withoutBlockedProps(finalProps));
+  const safeProps =
+    String(component.type).toLowerCase() === 'form' ? { ...surfaceProps, onSubmit: refuseSubmit } : surfaceProps;
   const propsWithIdentity: Record<string, unknown> = identity
     ? {
         ...safeProps,
