@@ -1125,6 +1125,26 @@ still reach "A late start", which is safe by design.
   On a shared runner the throttled timing is recorded and not asserted. The rules it proves are also in `runtime.test.ts`, which `pnpm test` runs, except the hang
   and real events, which need a browser.
 
+## Decided in slice B4
+
+**Open question 1 is answered:** core 5 kilobytes and `rove` 3 hold with all three axes, because of the first decision below and the key rules moving beside it. `runtimeSize.test.ts` holds all three limits.
+
+**A third chunk, `verbs.ts`, deviating from "The runtime",** which B3 started with `dialog` and the key rules. The contract has core, `rove` and the broker. With the native verbs in it the core had no room left. They are in a chunk fetched only by a program that uses one, with a limit of 2.5 kilobytes that this contract adds, since it also holds the key rules, and `compileProgram` records which chunks a program needs, and the island fetches them **together with the core,** because a second round trip after the first would come out of the gate's margin.
+
+**Also decided while building it, say so if you disagree:**
+
+- **Axes.** On `grid`, `first` and `last` are the row's ends, or the grid's with Ctrl held, so Ctrl+Home needs no verb of its own. On `tree`, `up` goes to the parent item and `down` to the first child, and `next` and `prev` run through what is visible. On `line`, `up` and `down` are `prev` and `next`. These are the axis details B8 was told it might add, and no verb was added.
+- **`page-up` and `page-down` move 5 items or rows,** clamped and never wrapping.
+- **Typeahead keeps what was typed for 500 ms,** and one key repeated cycles through what starts with it.
+- **An item belongs to the nearest group,** so a menu inside a menubar keeps its own items.
+- **The Tab stop follows the focus** on a click, and moves off an item that a change of state hid.
+- **An active option with no `id` gets a generated one,** since `aria-activedescendant` needs a target.
+- **`filter` puts an item's own inline `display` back,** rather than clearing it.
+- **`navigate` runs only on a published page.** A preview or the editor is never navigated away by this verb. Their own handling is B9 and B10.
+- **`form` calls `reset` from the prototype,** so a field named `reset` cannot shadow it.
+- **`rate` and `volume` are clamped to what the browser takes,** and a value that is no number is dropped.
+- `effect` reaches the effects runtime by its own dynamic import, so it costs nothing until it runs. It plays once, since `reveal` marks an element shown.
+
 ## Fixed after the review of B3 and B4
 
 The review (`2026-11-02-behaviour-model-review.md`, "Slice B3 and B4", probes beside it) found four things blocking and two to fix before real pages. All are fixed, on top of the render gate of #234.

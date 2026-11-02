@@ -17,9 +17,10 @@ export default function BehaviourIsland({ program }: { program: BehaviourProgram
     Promise.all([
       import('@/lib/behaviour/runtime'),
       program.verbs ? import('@/lib/behaviour/verbs') : undefined,
+      program.rove ? import('@/lib/behaviour/rove') : undefined,
     ]).then(
-      ([{ startBehaviour }, verbs]) => {
-        if (!left) stop = startBehaviour({ container: document, program, surface: 'published', verbs: verbs?.createVerbs, keys: verbs });
+      ([{ startBehaviour }, verbs, rove]) => {
+        if (!left) stop = startBehaviour({ container: document, program, surface: 'published', verbs: verbs?.createVerbs, keys: verbs, rove: rove?.createRover });
       },
       (error: unknown) => {
         console.error('Page behaviour did not load: showing everything.', error);

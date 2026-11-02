@@ -23,9 +23,10 @@
 // and the sequence goes on. An error it did not expect stops the runtime and lowers the
 // gate, so nothing stays hidden behind a dead runtime.
 //
-// What touches the page beyond state is in a chunk that loads beside this one, only when
-// the program needs it: `verbs.ts`, which also holds the key rules. A verb with no chunk
-// here warns, as for any verb it does not know, and with no rules no key fires.
+// What touches the page beyond state is in two chunks that load beside this one, each
+// only when the program needs it: `rove.ts` for focus groups, and `verbs.ts` for the native
+// and value actions, which also holds the key rules. A verb with no chunk here warns, as
+// for any verb it does not know, and with no rules no key fires.
 //
 // PURE and client-safe: no React, no MST. It imports leaves only (names.ts, dom.ts),
 // because the parser would not fit the size limit test beside it.
@@ -33,7 +34,7 @@
 import type { Action, Expression } from './format';
 import { attrOf, childrenOf, closestTo, every, hasAttr, holds, isConnected, isElement, isMatch, one, parentOf, setAttr, toggleAttr, upFrom } from './dom';
 import { GATE_GLOBAL, NODE_ATTR, ROW_ATTR, SCOPE_ATTR, VARIANT_ATTR, isBooleanAttribute, stateAttribute } from './names';
-import type { BehaviourProgram, CreateVerbs, Kit, KeyRules, ProgramBinding, ProgramEntry, ProgramState, ProgramTrigger, Run } from './program';
+import type { BehaviourProgram, CreateRover, CreateVerbs, Kit, KeyRules, ProgramBinding, ProgramEntry, ProgramState, ProgramTrigger, Run } from './program';
 
 export interface StartBehaviourOptions {
   /** What the page is in: the document, or a preview or canvas frame. */
@@ -42,6 +43,8 @@ export interface StartBehaviourOptions {
   /** The attribute holding a node's key. The canvas has its own. */
   nodeAttr?: string;
   surface: 'published' | 'preview' | 'canvas';
+  /** `createRover` of rove.ts, when the program has a focus group. */
+  rove?: CreateRover;
   /** `createVerbs` of verbs.ts, when the program has a native or value action. */
   verbs?: CreateVerbs;
   /** The key rules of keys.ts, in the same chunk, when the program has a key trigger. Without them no key fires. */
@@ -106,7 +109,7 @@ const NO_ENTRIES: readonly ProgramEntry[] = [];
 const hasValue = (value: unknown): boolean => value !== undefined && !Number.isNaN(value);
 const hasVerb = (action: Action, verbs: readonly string[]): boolean => verbs.some((verb) => verb in action);
 
-export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surface, verbs, keys }: StartBehaviourOptions): () => void {
+export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surface, rove, verbs, keys }: StartBehaviourOptions): () => void {
   const doc = (container.ownerDocument ?? container) as Document;
   const view = doc.defaultView as Window & typeof globalThis;
   const entries = new Map(Object.entries(program.nodes));
@@ -124,6 +127,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   const timers = new Set<number>();
   const seen = new WeakSet<Element>();
   const adopted = new WeakSet<Element>();
+  const groups = new Set<Element>();
   const stops: (() => void)[] = [];
   const held = new Map<string, Event>();
   const opening: [Element, ProgramTrigger][] = [];
@@ -314,6 +318,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
       return evaluate(Object.hasOwn(cases, key) ? cases[key] : form.default, run);
     }
     if ('row' in form) return rowOf(run.el);
+    if ('active' in form) return rover?.active(form.active as string, run);
     if ('pointer' in form) return pointerAt(x as Extract<Expression, { pointer: string }>, run);
     if ('event' in form) {
       if (form.event === 'value') return eventValue(run.el);
@@ -360,6 +365,8 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
       if (!isConnected(el)) bound.delete(el);
       else for (const binding of entryOf(el)?.bind ?? []) applyBinding(el, binding);
     }
+    // A change of state can hide the item holding a group's Tab stop.
+    if (rover) groups.forEach((group) => rover.sync(group));
   });
 
   // ---- budget ------------------------------------------------------------
@@ -459,6 +466,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
       if (dirty) flush();
     },
   };
+  const rover = rove?.(kit);
   const runVerb = verbs?.(kit);
 
   // ---- actions -----------------------------------------------------------
@@ -535,7 +543,10 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     if ('cancel' in action) return cancel(action.cancel, run.el);
     if ('delay' in action) schedule(action, run);
     else if ('emit' in action) emit(action.emit, run);
-    else if (runVerb) runVerb(action, run);
+    else if ('rove' in action && rover) {
+      kit.settle();
+      rover.move(action.rove, action.move, run);
+    } else if (runVerb && !('rove' in action)) runVerb(action, run);
     else warn('no such action', run.trigger.id);
     return true;
   };
@@ -683,6 +694,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
       scopes.set(el, cells);
     }
     if (entry.bind) bound.add(el);
+    if (entry.group) groups.add(el);
     if (entry.on?.some(({ on }) => on.startsWith('view-'))) watch(el);
     for (const trigger of entry.on ?? []) {
       if (trigger.on === 'every') startEvery(el, trigger);
@@ -747,7 +759,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
       touch();
     }));
     mutations.observe(container, { childList: true, subtree: true });
-    stops.push(() => mutations.disconnect(), () => intersection?.disconnect());
+    stops.push(() => mutations.disconnect(), () => intersection?.disconnect(), () => rover?.stop());
 
     const page = gate();
     if (page && !page.ready()) {

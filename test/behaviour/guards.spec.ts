@@ -162,6 +162,36 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
       await el('open-all').click();
       await expect.poll(() => page.locator('[data-fcs-o="true"]').count(), { timeout: 15_000 }).toBe(OPENED);
       expect(warnings.filter((text) => /unprompted|too often/.test(text))).toEqual([]);
+
+  describe('finding 4, sound', () => {
+    it('leaves a pause alone: no timer can start the sound again', async () => {
+      await goTo('sound');
+      await el('pay').click();
+      await page.waitForTimeout(1500);
+      expect(await page.evaluate(() => (document.querySelector('audio') as HTMLAudioElement).paused)).toBe(true);
+    });
+  });
+
+  describe('finding 5: many small triggers', () => {
+    it('stops them, warns, and leaves the main thread answering', async () => {
+      await goTo('stacked');
+      await expect.poll(() => warnings.filter((text) => text.includes('timers off')).length, { timeout: 15_000 }).toBe(1);
+      const ticks = await page.evaluate(() => new Promise<{ ticks: number; longest: number }>((resolve) => {
+        let last = performance.now();
+        let longest = 0;
+        let count = 0;
+        const timer = setInterval(() => {
+          const now = performance.now();
+          longest = Math.max(longest, now - last);
+          last = now;
+          count += 1;
+          if (count === 100) {
+            clearInterval(timer);
+            resolve({ ticks: count, longest });
+          }
+        }, 10);
+      }));
+      expect(ticks.longest).toBeLessThan(300);
     });
   });
 
