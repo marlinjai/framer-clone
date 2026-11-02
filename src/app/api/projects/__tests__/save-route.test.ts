@@ -221,7 +221,7 @@ describe('POST /api/projects/save slug rules (real repository)', () => {
     );
     const prisma = {
       site: {
-        findUnique: vi.fn(async () => ({ id: 'site_1', workspaceId: 'ws_marlin', redirects: [] })),
+        findUnique: vi.fn(async () => ({ id: 'site_1', workspaceId: 'ws_marlin', redirects: [], erasureEpoch: 0 })),
         upsert: vi.fn(async () => ({})),
         // The editor's Save only UPDATEs an existing site (mustExist).
         updateMany: vi.fn(async () => ({ count: 1 })),
