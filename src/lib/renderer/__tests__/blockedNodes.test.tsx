@@ -202,6 +202,22 @@ describe('blocked nodes', () => {
     expect(published({ type: 'animate', props: { attributeName: 'opacity' } })).toContain('opacity');
   });
 
+  it.each(['popover', 'POPOVER', 'popoverTarget', 'popovertargetaction', 'command', 'commandFor', 'action', 'formAction', 'formtarget', 'ping'])(
+    'drops %s on the editor surfaces',
+    (name) => {
+      const html = editor('div', { [name]: 'x', id: 'keep' });
+      expect(html).toBe('<div id="keep"></div>');
+    },
+  );
+
+  it('never lets a stored form submit from an editor surface', () => {
+    const element = createComponentElement({ type: 'form', props: {}, isHostElement: true } as never, { action: 'https://evil.test/steal' }, []) as React.ReactElement<{ action?: string; onSubmit: (e: { preventDefault(): void }) => void }>;
+    expect(element.props.action).toBeUndefined();
+    let stopped = false;
+    element.props.onSubmit({ preventDefault: () => { stopped = true; } });
+    expect(stopped).toBe(true);
+  });
+
   it('keeps the handlers the editor attaches, which are functions', () => {
     const onClick = () => {};
     const element = createComponentElement({ type: 'div', props: {}, isHostElement: true } as never, { onClick }, []) as React.ReactElement<{ onClick: unknown }>;

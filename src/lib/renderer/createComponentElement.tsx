@@ -14,7 +14,13 @@ import React from 'react';
 import { getParent, hasParent, isStateTreeNode } from 'mobx-state-tree';
 import { ComponentInstance } from '@/models/ComponentModel';
 import { isVoidTag } from '@/lib/drag';
-import { isBlockedTag, withoutBlockedProps, withoutDocumentId } from '@/lib/renderer/blockedNodes';
+import {
+  isBlockedTag,
+  withoutBlockedProps,
+  withoutDocumentId,
+  refuseSubmit,
+  withoutEditorSurfaceProps,
+} from '@/lib/renderer/blockedNodes';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
@@ -131,7 +137,9 @@ export function createComponentElement(
 
   const content = ownTextThenChildren(rawTextChildren, children) as React.ReactNode;
   const identity = options?.identity;
-  const safeProps = withoutDocumentId(component.type, withoutBlockedProps(finalProps));
+  const surfaceProps = withoutEditorSurfaceProps(withoutDocumentId(component.type, withoutBlockedProps(finalProps)));
+  const safeProps =
+    String(component.type).toLowerCase() === 'form' ? { ...surfaceProps, onSubmit: refuseSubmit } : surfaceProps;
   const propsWithIdentity: Record<string, unknown> = identity
     ? {
         ...safeProps,
