@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T04:59:15.160Z",
+  "generatedAt": "2026-11-02T05:19:42.639Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 261,
+  "durationSeconds": 347,
   "matrix": {
     "surfaces": {
       "format": {
@@ -5106,15 +5106,15 @@
     }
   },
   "corpus": {
-    "passed": 11,
+    "passed": 0,
     "total": 14,
     "checks": {
       "screenshot": {
-        "pass": 77,
+        "pass": 51,
         "total": 90
       },
       "computed-styles": {
-        "pass": 69,
+        "pass": 0,
         "total": 90
       },
       "accessibility-tree": {
@@ -5122,7 +5122,7 @@
         "total": 90
       },
       "interaction": {
-        "pass": 27,
+        "pass": 0,
         "total": 48
       }
     },
@@ -5131,14 +5131,14 @@
         "fixture": "mixed-text",
         "group": "edge",
         "source": "hand-written",
-        "pass": true,
+        "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "accessibility-tree": {
@@ -5150,21 +5150,70 @@
             "total": 0
           }
         },
-        "failures": [],
+        "failures": [
+          {
+            "fixture": "mixed-text",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.46 percent of pixels differ"
+          },
+          {
+            "fixture": "mixed-text",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "274 differences, first: page: block-size 194.875px became 144px"
+          },
+          {
+            "fixture": "mixed-text",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.59 percent of pixels differ"
+          },
+          {
+            "fixture": "mixed-text",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "274 differences, first: page: block-size 194.875px became 144px"
+          },
+          {
+            "fixture": "mixed-text",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "1.87 percent of pixels differ"
+          },
+          {
+            "fixture": "mixed-text",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "268 differences, first: page: block-size 218.875px became 168px"
+          }
+        ],
         "notMeasured": []
       },
       {
         "fixture": "hover-focus",
         "group": "edge",
         "source": "hand-written",
-        "pass": true,
+        "pass": false,
         "checks": {
           "screenshot": {
             "pass": 15,
             "total": 15
           },
           "computed-styles": {
-            "pass": 15,
+            "pass": 0,
             "total": 15
           },
           "accessibility-tree": {
@@ -5172,25 +5221,242 @@
             "total": 15
           },
           "interaction": {
-            "pass": 12,
+            "pass": 0,
             "total": 12
           }
         },
-        "failures": [],
+        "failures": [
+          {
+            "fixture": "hover-focus",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "51 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Desktop",
+            "state": "hover button",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "51 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Desktop",
+            "state": "hover button",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Desktop",
+            "state": "pressed button",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "51 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Desktop",
+            "state": "pressed button",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Desktop",
+            "state": "keyboard focus button",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "50 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Desktop",
+            "state": "keyboard focus button",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Desktop",
+            "state": "focus field",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "51 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Desktop",
+            "state": "focus field",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "51 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Tablet",
+            "state": "hover button",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "51 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Tablet",
+            "state": "hover button",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Tablet",
+            "state": "pressed button",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "51 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Tablet",
+            "state": "pressed button",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Tablet",
+            "state": "keyboard focus button",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "50 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Tablet",
+            "state": "keyboard focus button",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Tablet",
+            "state": "focus field",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "51 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Tablet",
+            "state": "focus field",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "51 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Mobile",
+            "state": "hover button",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "51 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Mobile",
+            "state": "hover button",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Mobile",
+            "state": "pressed button",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "51 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Mobile",
+            "state": "pressed button",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Mobile",
+            "state": "keyboard focus button",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "50 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Mobile",
+            "state": "keyboard focus button",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Mobile",
+            "state": "focus field",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "51 differences, first: page: block-size 48px became 96px"
+          },
+          {
+            "fixture": "hover-focus",
+            "viewport": "Mobile",
+            "state": "focus field",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          }
+        ],
         "notMeasured": []
       },
       {
         "fixture": "keyframes",
         "group": "edge",
         "source": "hand-written",
-        "pass": true,
+        "pass": false,
         "checks": {
           "screenshot": {
             "pass": 6,
             "total": 6
           },
           "computed-styles": {
-            "pass": 6,
+            "pass": 0,
             "total": 6
           },
           "accessibility-tree": {
@@ -5198,25 +5464,98 @@
             "total": 6
           },
           "interaction": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           }
         },
-        "failures": [],
+        "failures": [
+          {
+            "fixture": "keyframes",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "64 differences, first: page: block-size 80px became 128px"
+          },
+          {
+            "fixture": "keyframes",
+            "viewport": "Desktop",
+            "state": "half way through the animation",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "64 differences, first: page: block-size 80px became 128px"
+          },
+          {
+            "fixture": "keyframes",
+            "viewport": "Desktop",
+            "state": "half way through the animation",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "keyframes",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "64 differences, first: page: block-size 80px became 128px"
+          },
+          {
+            "fixture": "keyframes",
+            "viewport": "Tablet",
+            "state": "half way through the animation",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "64 differences, first: page: block-size 80px became 128px"
+          },
+          {
+            "fixture": "keyframes",
+            "viewport": "Tablet",
+            "state": "half way through the animation",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "keyframes",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "64 differences, first: page: block-size 80px became 128px"
+          },
+          {
+            "fixture": "keyframes",
+            "viewport": "Mobile",
+            "state": "half way through the animation",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "64 differences, first: page: block-size 80px became 128px"
+          },
+          {
+            "fixture": "keyframes",
+            "viewport": "Mobile",
+            "state": "half way through the animation",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          }
+        ],
         "notMeasured": []
       },
       {
         "fixture": "container-query",
         "group": "edge",
         "source": "hand-written",
-        "pass": true,
+        "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "accessibility-tree": {
@@ -5228,21 +5567,70 @@
             "total": 0
           }
         },
-        "failures": [],
+        "failures": [
+          {
+            "fixture": "container-query",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.16 percent of pixels differ"
+          },
+          {
+            "fixture": "container-query",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "163 differences, first: page: block-size 62px became 110px"
+          },
+          {
+            "fixture": "container-query",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.21 percent of pixels differ"
+          },
+          {
+            "fixture": "container-query",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "163 differences, first: page: block-size 62px became 110px"
+          },
+          {
+            "fixture": "container-query",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.22 percent of pixels differ"
+          },
+          {
+            "fixture": "container-query",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "159 differences, first: page: block-size 94px became 142px"
+          }
+        ],
         "notMeasured": []
       },
       {
         "fixture": "print-styles",
         "group": "edge",
         "source": "hand-written",
-        "pass": true,
+        "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 6,
+            "pass": 5,
             "total": 6
           },
           "computed-styles": {
-            "pass": 6,
+            "pass": 0,
             "total": 6
           },
           "accessibility-tree": {
@@ -5250,25 +5638,106 @@
             "total": 6
           },
           "interaction": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           }
         },
-        "failures": [],
+        "failures": [
+          {
+            "fixture": "print-styles",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "74 differences, first: page: block-size 88px became 136px"
+          },
+          {
+            "fixture": "print-styles",
+            "viewport": "Desktop",
+            "state": "print",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "66 differences, first: page: border-block-end-color rgb(0, 0, 0) became oklch(0.92 0.004 286.32)"
+          },
+          {
+            "fixture": "print-styles",
+            "viewport": "Desktop",
+            "state": "print",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "print-styles",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "74 differences, first: page: block-size 88px became 136px"
+          },
+          {
+            "fixture": "print-styles",
+            "viewport": "Tablet",
+            "state": "print",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "66 differences, first: page: border-block-end-color rgb(0, 0, 0) became oklch(0.92 0.004 286.32)"
+          },
+          {
+            "fixture": "print-styles",
+            "viewport": "Tablet",
+            "state": "print",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "print-styles",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.11 percent of pixels differ"
+          },
+          {
+            "fixture": "print-styles",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "74 differences, first: page: block-size 88px became 136px"
+          },
+          {
+            "fixture": "print-styles",
+            "viewport": "Mobile",
+            "state": "print",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "66 differences, first: page: border-block-end-color rgb(0, 0, 0) became oklch(0.92 0.004 286.32)"
+          },
+          {
+            "fixture": "print-styles",
+            "viewport": "Mobile",
+            "state": "print",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          }
+        ],
         "notMeasured": []
       },
       {
         "fixture": "pseudo-elements",
         "group": "edge",
         "source": "hand-written",
-        "pass": true,
+        "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "accessibility-tree": {
@@ -5280,21 +5749,70 @@
             "total": 0
           }
         },
-        "failures": [],
+        "failures": [
+          {
+            "fixture": "pseudo-elements",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.13 percent of pixels differ"
+          },
+          {
+            "fixture": "pseudo-elements",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "158 differences, first: page: block-size 192px became 208px"
+          },
+          {
+            "fixture": "pseudo-elements",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.17 percent of pixels differ"
+          },
+          {
+            "fixture": "pseudo-elements",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "158 differences, first: page: block-size 192px became 208px"
+          },
+          {
+            "fixture": "pseudo-elements",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.52 percent of pixels differ"
+          },
+          {
+            "fixture": "pseudo-elements",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "158 differences, first: page: block-size 192px became 208px"
+          }
+        ],
         "notMeasured": []
       },
       {
         "fixture": "responsive-layout",
         "group": "edge",
         "source": "hand-written: what the format claims to hold, so a passing control for the harness",
-        "pass": true,
+        "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "accessibility-tree": {
@@ -5306,21 +5824,70 @@
             "total": 0
           }
         },
-        "failures": [],
+        "failures": [
+          {
+            "fixture": "responsive-layout",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.23 percent of pixels differ"
+          },
+          {
+            "fixture": "responsive-layout",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "284 differences, first: page: block-size 182px became 278px"
+          },
+          {
+            "fixture": "responsive-layout",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.30 percent of pixels differ"
+          },
+          {
+            "fixture": "responsive-layout",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "284 differences, first: page: block-size 316px became 380px"
+          },
+          {
+            "fixture": "responsive-layout",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.66 percent of pixels differ"
+          },
+          {
+            "fixture": "responsive-layout",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "284 differences, first: page: block-size 411.594px became 443.594px"
+          }
+        ],
         "notMeasured": []
       },
       {
         "fixture": "stylesheet-values",
         "group": "edge",
         "source": "hand-written: ordinary CSS values on a node whose other styles are responsive",
-        "pass": true,
+        "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "accessibility-tree": {
@@ -5332,21 +5899,70 @@
             "total": 0
           }
         },
-        "failures": [],
+        "failures": [
+          {
+            "fixture": "stylesheet-values",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "1.93 percent of pixels differ"
+          },
+          {
+            "fixture": "stylesheet-values",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "64 differences, first: hero: border-block-end-color rgb(0, 0, 0) became oklch(0.92 0.004 286.32)"
+          },
+          {
+            "fixture": "stylesheet-values",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "1.52 percent of pixels differ"
+          },
+          {
+            "fixture": "stylesheet-values",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "64 differences, first: hero: border-block-end-color rgb(0, 0, 0) became oklch(0.92 0.004 286.32)"
+          },
+          {
+            "fixture": "stylesheet-values",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.84 percent of pixels differ"
+          },
+          {
+            "fixture": "stylesheet-values",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "64 differences, first: hero: border-block-end-color rgb(0, 0, 0) became oklch(0.92 0.004 286.32)"
+          }
+        ],
         "notMeasured": []
       },
       {
         "fixture": "stylesheet-escapes",
         "group": "edge",
         "source": "hand-written: CSS escapes, angle brackets, a raw SVG and a multi-line grid on nodes in the sheet",
-        "pass": true,
+        "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "accessibility-tree": {
@@ -5358,21 +5974,70 @@
             "total": 0
           }
         },
-        "failures": [],
+        "failures": [
+          {
+            "fixture": "stylesheet-escapes",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "1.01 percent of pixels differ"
+          },
+          {
+            "fixture": "stylesheet-escapes",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "145 differences, first: hero: block-size 120px became 176px"
+          },
+          {
+            "fixture": "stylesheet-escapes",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.82 percent of pixels differ"
+          },
+          {
+            "fixture": "stylesheet-escapes",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "145 differences, first: hero: block-size 120px became 176px"
+          },
+          {
+            "fixture": "stylesheet-escapes",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "1.00 percent of pixels differ"
+          },
+          {
+            "fixture": "stylesheet-escapes",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "143 differences, first: hero: border-block-end-color rgb(0, 0, 0) became oklch(0.92 0.004 286.32)"
+          }
+        ],
         "notMeasured": []
       },
       {
         "fixture": "shadcn-button",
         "group": "component",
         "source": "shadcn/ui Button (src/components/ui/button.tsx)",
-        "pass": true,
+        "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 12,
+            "pass": 8,
             "total": 12
           },
           "computed-styles": {
-            "pass": 12,
+            "pass": 0,
             "total": 12
           },
           "accessibility-tree": {
@@ -5380,25 +6045,226 @@
             "total": 12
           },
           "interaction": {
-            "pass": 9,
+            "pass": 0,
             "total": 9
           }
         },
-        "failures": [],
+        "failures": [
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "54 differences, first: page: block-size 36px became 84px"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Desktop",
+            "state": "hover default",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "54 differences, first: page: block-size 36px became 84px"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Desktop",
+            "state": "hover default",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Desktop",
+            "state": "hover outline",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "54 differences, first: page: block-size 36px became 84px"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Desktop",
+            "state": "hover outline",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Desktop",
+            "state": "keyboard focus",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "54 differences, first: page: block-size 36px became 84px"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Desktop",
+            "state": "keyboard focus",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "54 differences, first: page: block-size 36px became 84px"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Tablet",
+            "state": "hover default",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "54 differences, first: page: block-size 36px became 84px"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Tablet",
+            "state": "hover default",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Tablet",
+            "state": "hover outline",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "54 differences, first: page: block-size 36px became 84px"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Tablet",
+            "state": "hover outline",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Tablet",
+            "state": "keyboard focus",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "54 differences, first: page: block-size 36px became 84px"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Tablet",
+            "state": "keyboard focus",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.12 percent of pixels differ"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "54 differences, first: page: block-size 84px became 132px"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Mobile",
+            "state": "hover default",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.12 percent of pixels differ"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Mobile",
+            "state": "hover default",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "54 differences, first: page: block-size 84px became 132px"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Mobile",
+            "state": "hover default",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Mobile",
+            "state": "hover outline",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.12 percent of pixels differ"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Mobile",
+            "state": "hover outline",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "54 differences, first: page: block-size 84px became 132px"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Mobile",
+            "state": "hover outline",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Mobile",
+            "state": "keyboard focus",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.12 percent of pixels differ"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Mobile",
+            "state": "keyboard focus",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "54 differences, first: page: block-size 84px became 132px"
+          },
+          {
+            "fixture": "shadcn-button",
+            "viewport": "Mobile",
+            "state": "keyboard focus",
+            "check": "interaction",
+            "gap": "published-base",
+            "detail": "the replica did not end up where the original did"
+          }
+        ],
         "notMeasured": []
       },
       {
         "fixture": "shadcn-card",
         "group": "component",
         "source": "shadcn/ui Card",
-        "pass": true,
+        "pass": false,
         "checks": {
           "screenshot": {
             "pass": 3,
             "total": 3
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "accessibility-tree": {
@@ -5410,7 +6276,32 @@
             "total": 0
           }
         },
-        "failures": [],
+        "failures": [
+          {
+            "fixture": "shadcn-card",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "223 differences, first: page: block-size 178px became 226px"
+          },
+          {
+            "fixture": "shadcn-card",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "223 differences, first: page: block-size 178px became 226px"
+          },
+          {
+            "fixture": "shadcn-card",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "204 differences, first: page: block-size 178px became 226px"
+          }
+        ],
         "notMeasured": []
       },
       {
@@ -5420,11 +6311,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 7,
+            "pass": 5,
             "total": 12
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 0,
             "total": 12
           },
           "accessibility-tree": {
@@ -5440,10 +6331,26 @@
           {
             "fixture": "radix-accordion",
             "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "248 differences, first: page: block-size 106px became 154px"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Desktop",
+            "state": "click opens the first item",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.11 percent of pixels differ"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Desktop",
             "state": "click opens the first item",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "26 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
+            "detail": "264 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
           },
           {
             "fixture": "radix-accordion",
@@ -5467,7 +6374,7 @@
             "state": "arrow key moves to the next trigger",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "0.36 percent of pixels differ"
+            "detail": "0.41 percent of pixels differ"
           },
           {
             "fixture": "radix-accordion",
@@ -5475,7 +6382,7 @@
             "state": "arrow key moves to the next trigger",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "29 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
+            "detail": "265 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
           },
           {
             "fixture": "radix-accordion",
@@ -5499,7 +6406,7 @@
             "state": "hover trigger-one",
             "check": "computed-styles",
             "gap": "selector-styles",
-            "detail": "3 differences, first: trigger-one: text-decoration underline became none"
+            "detail": "251 differences, first: page: block-size 106px became 154px"
           },
           {
             "fixture": "radix-accordion",
@@ -5512,154 +6419,178 @@
           {
             "fixture": "radix-accordion",
             "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "248 differences, first: page: block-size 106px became 154px"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
             "state": "click opens the first item",
             "check": "screenshot",
             "gap": "behaviour-state",
+            "detail": "0.14 percent of pixels differ"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "click opens the first item",
+            "check": "computed-styles",
+            "gap": "behaviour-state",
+            "detail": "264 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "click opens the first item",
+            "check": "accessibility-tree",
+            "gap": "behaviour-state",
+            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\" [expanded]\\n- region \\\"Is it accessible?\\\": Yes. It\", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\""
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "click opens the first item",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "arrow key moves to the next trigger",
+            "check": "screenshot",
+            "gap": "behaviour-state",
+            "detail": "0.54 percent of pixels differ"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "arrow key moves to the next trigger",
+            "check": "computed-styles",
+            "gap": "behaviour-state",
+            "detail": "265 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "arrow key moves to the next trigger",
+            "check": "accessibility-tree",
+            "gap": "behaviour-state",
+            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\"Is it styled?\\\" [level=3]:\\n  - button \", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "arrow key moves to the next trigger",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "hover trigger-one",
+            "check": "computed-styles",
+            "gap": "selector-styles",
+            "detail": "251 differences, first: page: block-size 106px became 154px"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Tablet",
+            "state": "hover trigger-one",
+            "check": "interaction",
+            "gap": "selector-styles",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "220 differences, first: page: block-size 106px became 154px"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "click opens the first item",
+            "check": "screenshot",
+            "gap": "behaviour-state",
+            "detail": "0.44 percent of pixels differ"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "click opens the first item",
+            "check": "computed-styles",
+            "gap": "behaviour-state",
+            "detail": "242 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "click opens the first item",
+            "check": "accessibility-tree",
+            "gap": "behaviour-state",
+            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\" [expanded]\\n- region \\\"Is it accessible?\\\": Yes. It\", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\""
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "click opens the first item",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "arrow key moves to the next trigger",
+            "check": "screenshot",
+            "gap": "behaviour-state",
+            "detail": "1.31 percent of pixels differ"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "arrow key moves to the next trigger",
+            "check": "computed-styles",
+            "gap": "behaviour-state",
+            "detail": "243 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "arrow key moves to the next trigger",
+            "check": "accessibility-tree",
+            "gap": "behaviour-state",
+            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\"Is it styled?\\\" [level=3]:\\n  - button \", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "arrow key moves to the next trigger",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-accordion",
+            "viewport": "Mobile",
+            "state": "hover trigger-one",
+            "check": "screenshot",
+            "gap": "published-base",
             "detail": "0.12 percent of pixels differ"
           },
           {
             "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "click opens the first item",
-            "check": "computed-styles",
-            "gap": "behaviour-state",
-            "detail": "26 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "click opens the first item",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\" [expanded]\\n- region \\\"Is it accessible?\\\": Yes. It\", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\""
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "click opens the first item",
-            "check": "interaction",
-            "gap": "behaviour-state",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "arrow key moves to the next trigger",
-            "check": "screenshot",
-            "gap": "behaviour-state",
-            "detail": "0.47 percent of pixels differ"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "arrow key moves to the next trigger",
-            "check": "computed-styles",
-            "gap": "behaviour-state",
-            "detail": "29 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "arrow key moves to the next trigger",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\"Is it styled?\\\" [level=3]:\\n  - button \", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "arrow key moves to the next trigger",
-            "check": "interaction",
-            "gap": "behaviour-state",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "hover trigger-one",
-            "check": "computed-styles",
-            "gap": "selector-styles",
-            "detail": "3 differences, first: trigger-one: text-decoration underline became none"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Tablet",
-            "state": "hover trigger-one",
-            "check": "interaction",
-            "gap": "selector-styles",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "click opens the first item",
-            "check": "screenshot",
-            "gap": "behaviour-state",
-            "detail": "0.39 percent of pixels differ"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "click opens the first item",
-            "check": "computed-styles",
-            "gap": "behaviour-state",
-            "detail": "26 differences, first: page: text \"Isitaccessible?Yes.Itfollowsthepattern.I\" became \"Isitaccessible?Isitstyled?\""
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "click opens the first item",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\" [expanded]\\n- region \\\"Is it accessible?\\\": Yes. It\", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\""
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "click opens the first item",
-            "check": "interaction",
-            "gap": "behaviour-state",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "arrow key moves to the next trigger",
-            "check": "screenshot",
-            "gap": "behaviour-state",
-            "detail": "1.11 percent of pixels differ"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "arrow key moves to the next trigger",
-            "check": "computed-styles",
-            "gap": "behaviour-state",
-            "detail": "29 differences, first: page: text \"Isitaccessible?Isitstyled?Yes.WithplainC\" became \"Isitaccessible?Isitstyled?\""
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "arrow key moves to the next trigger",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\\"Is it styled?\\\" [level=3]:\\n  - button \", replica \"- heading \\\"Is it accessible?\\\" [level=3]:\\n  - button \\\"Is it accessible?\\\"\\n- heading \\"
-          },
-          {
-            "fixture": "radix-accordion",
-            "viewport": "Mobile",
-            "state": "arrow key moves to the next trigger",
-            "check": "interaction",
-            "gap": "behaviour-state",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-accordion",
             "viewport": "Mobile",
             "state": "hover trigger-one",
             "check": "computed-styles",
             "gap": "selector-styles",
-            "detail": "3 differences, first: trigger-one: text-decoration underline became none"
+            "detail": "223 differences, first: page: block-size 106px became 154px"
           },
           {
             "fixture": "radix-accordion",
@@ -5679,11 +6610,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 7,
+            "pass": 6,
             "total": 9
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 0,
             "total": 9
           },
           "accessibility-tree": {
@@ -5699,10 +6630,18 @@
           {
             "fixture": "radix-tabs",
             "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "171 differences, first: page: block-size 62px became 110px"
+          },
+          {
+            "fixture": "radix-tabs",
+            "viewport": "Desktop",
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "28 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
+            "detail": "191 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5726,7 +6665,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "22 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
+            "detail": "187 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5743,6 +6682,14 @@
             "check": "interaction",
             "gap": "behaviour-state",
             "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-tabs",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "171 differences, first: page: block-size 62px became 110px"
           },
           {
             "fixture": "radix-tabs",
@@ -5750,7 +6697,7 @@
             "state": "arrow key changes the tab",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "0.11 percent of pixels differ"
+            "detail": "0.12 percent of pixels differ"
           },
           {
             "fixture": "radix-tabs",
@@ -5758,7 +6705,7 @@
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "28 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
+            "detail": "191 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5782,7 +6729,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "22 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
+            "detail": "187 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5799,6 +6746,14 @@
             "check": "interaction",
             "gap": "behaviour-state",
             "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-tabs",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "163 differences, first: page: block-size 62px became 110px"
           },
           {
             "fixture": "radix-tabs",
@@ -5806,7 +6761,7 @@
             "state": "arrow key changes the tab",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "0.33 percent of pixels differ"
+            "detail": "0.39 percent of pixels differ"
           },
           {
             "fixture": "radix-tabs",
@@ -5814,7 +6769,7 @@
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "28 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
+            "detail": "187 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5836,9 +6791,17 @@
             "fixture": "radix-tabs",
             "viewport": "Mobile",
             "state": "click changes the tab",
+            "check": "screenshot",
+            "gap": "published-base",
+            "detail": "0.12 percent of pixels differ"
+          },
+          {
+            "fixture": "radix-tabs",
+            "viewport": "Mobile",
+            "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "22 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
+            "detail": "183 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5870,7 +6833,7 @@
             "total": 9
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 0,
             "total": 9
           },
           "accessibility-tree": {
@@ -5886,39 +6849,15 @@
           {
             "fixture": "radix-dialog",
             "viewport": "Desktop",
-            "state": "click opens the dialog",
-            "check": "screenshot",
-            "gap": "behaviour-state",
-            "detail": "94.68 percent of pixels differ"
-          },
-          {
-            "fixture": "radix-dialog",
-            "viewport": "Desktop",
-            "state": "click opens the dialog",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "behaviour-state",
-            "detail": "9 differences, first: page: pointer-events none became auto"
+            "gap": "published-base",
+            "detail": "40 differences, first: page: block-size 38px became 86px"
           },
           {
             "fixture": "radix-dialog",
             "viewport": "Desktop",
             "state": "click opens the dialog",
-            "check": "accessibility-tree",
-            "gap": "behaviour-state",
-            "detail": "original \"- dialog \\\"Edit profile\\\":\\n  - heading \\\"Edit profile\\\" [level=2]\\n  - paragraph: Make changes here.\\n  - button \\\"Save\\\"\", replica \"- button \\\"Edit profile\\\"\""
-          },
-          {
-            "fixture": "radix-dialog",
-            "viewport": "Desktop",
-            "state": "click opens the dialog",
-            "check": "interaction",
-            "gap": "behaviour-state",
-            "detail": "the replica did not end up where the original did"
-          },
-          {
-            "fixture": "radix-dialog",
-            "viewport": "Desktop",
-            "state": "Enter opens the dialog",
             "check": "screenshot",
             "gap": "behaviour-state",
             "detail": "94.69 percent of pixels differ"
@@ -5926,10 +6865,42 @@
           {
             "fixture": "radix-dialog",
             "viewport": "Desktop",
+            "state": "click opens the dialog",
+            "check": "computed-styles",
+            "gap": "behaviour-state",
+            "detail": "49 differences, first: page: block-size 38px became 86px"
+          },
+          {
+            "fixture": "radix-dialog",
+            "viewport": "Desktop",
+            "state": "click opens the dialog",
+            "check": "accessibility-tree",
+            "gap": "behaviour-state",
+            "detail": "original \"- dialog \\\"Edit profile\\\":\\n  - heading \\\"Edit profile\\\" [level=2]\\n  - paragraph: Make changes here.\\n  - button \\\"Save\\\"\", replica \"- button \\\"Edit profile\\\"\""
+          },
+          {
+            "fixture": "radix-dialog",
+            "viewport": "Desktop",
+            "state": "click opens the dialog",
+            "check": "interaction",
+            "gap": "behaviour-state",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-dialog",
+            "viewport": "Desktop",
+            "state": "Enter opens the dialog",
+            "check": "screenshot",
+            "gap": "behaviour-state",
+            "detail": "94.70 percent of pixels differ"
+          },
+          {
+            "fixture": "radix-dialog",
+            "viewport": "Desktop",
             "state": "Enter opens the dialog",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "12 differences, first: page: pointer-events none became auto"
+            "detail": "51 differences, first: page: block-size 38px became 86px"
           },
           {
             "fixture": "radix-dialog",
@@ -5946,6 +6917,14 @@
             "check": "interaction",
             "gap": "behaviour-state",
             "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "radix-dialog",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "40 differences, first: page: block-size 38px became 86px"
           },
           {
             "fixture": "radix-dialog",
@@ -5961,7 +6940,7 @@
             "state": "click opens the dialog",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "9 differences, first: page: pointer-events none became auto"
+            "detail": "49 differences, first: page: block-size 38px became 86px"
           },
           {
             "fixture": "radix-dialog",
@@ -5993,7 +6972,7 @@
             "state": "Enter opens the dialog",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "12 differences, first: page: pointer-events none became auto"
+            "detail": "51 differences, first: page: block-size 38px became 86px"
           },
           {
             "fixture": "radix-dialog",
@@ -6014,10 +6993,18 @@
           {
             "fixture": "radix-dialog",
             "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "published-base",
+            "detail": "40 differences, first: page: block-size 38px became 86px"
+          },
+          {
+            "fixture": "radix-dialog",
+            "viewport": "Mobile",
             "state": "click opens the dialog",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "78.24 percent of pixels differ"
+            "detail": "78.25 percent of pixels differ"
           },
           {
             "fixture": "radix-dialog",
@@ -6025,7 +7012,7 @@
             "state": "click opens the dialog",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "9 differences, first: page: pointer-events none became auto"
+            "detail": "49 differences, first: page: block-size 38px became 86px"
           },
           {
             "fixture": "radix-dialog",
@@ -6049,7 +7036,7 @@
             "state": "Enter opens the dialog",
             "check": "screenshot",
             "gap": "behaviour-state",
-            "detail": "78.29 percent of pixels differ"
+            "detail": "78.30 percent of pixels differ"
           },
           {
             "fixture": "radix-dialog",
@@ -6057,7 +7044,7 @@
             "state": "Enter opens the dialog",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "12 differences, first: page: pointer-events none became auto"
+            "detail": "51 differences, first: page: block-size 38px became 86px"
           },
           {
             "fixture": "radix-dialog",
@@ -6113,16 +7100,16 @@
             "viewport": "Desktop",
             "state": "initial",
             "check": "screenshot",
-            "gap": "empty-custom-property",
-            "detail": "1.12 percent of pixels differ"
+            "gap": "unclassified",
+            "detail": "1.65 percent of pixels differ"
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "15 differences on 15 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "545 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-home",
@@ -6137,16 +7124,16 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "screenshot",
-            "gap": "empty-custom-property",
-            "detail": "1.12 percent of pixels differ"
+            "gap": "unclassified",
+            "detail": "1.65 percent of pixels differ"
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "15 differences on 15 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "545 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-home",
@@ -6161,7 +7148,7 @@
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "empty-custom-property",
+            "gap": "unclassified",
             "detail": "the replica did not end up where the original did"
           },
           {
@@ -6169,16 +7156,16 @@
             "viewport": "Tablet",
             "state": "initial",
             "check": "screenshot",
-            "gap": "empty-custom-property",
-            "detail": "1.44 percent of pixels differ"
+            "gap": "unclassified",
+            "detail": "2.09 percent of pixels differ"
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Tablet",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "15 differences on 15 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "545 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-home",
@@ -6193,16 +7180,16 @@
             "viewport": "Mobile",
             "state": "initial",
             "check": "screenshot",
-            "gap": "empty-custom-property",
-            "detail": "2.28 percent of pixels differ"
+            "gap": "unclassified",
+            "detail": "3.22 percent of pixels differ"
           },
           {
             "fixture": "busbasis-home",
             "viewport": "Mobile",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "15 differences on 15 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "545 differences on 531 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-home",
@@ -6275,15 +7262,20 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.011184740823412698,
+            "ratio": 0.01648104228670635,
             "elementsCompared": 531,
-            "elementsDiffering": 15,
-            "differences": 15,
+            "elementsDiffering": 531,
+            "differences": 545,
             "byGap": {
+              "unclassified": 530,
               "empty-custom-property": 14,
               "blocked-embedded-content": 1
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                530
+              ],
               [
                 "background-image",
                 9
@@ -6305,15 +7297,20 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.011184740823412698,
+            "ratio": 0.01648104228670635,
             "elementsCompared": 531,
-            "elementsDiffering": 15,
-            "differences": 15,
+            "elementsDiffering": 531,
+            "differences": 545,
             "byGap": {
+              "unclassified": 530,
               "empty-custom-property": 14,
               "blocked-embedded-content": 1
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                530
+              ],
               [
                 "background-image",
                 9
@@ -6335,15 +7332,20 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.014433958625898975,
+            "ratio": 0.020886527086258988,
             "elementsCompared": 531,
-            "elementsDiffering": 15,
-            "differences": 15,
+            "elementsDiffering": 531,
+            "differences": 545,
             "byGap": {
+              "unclassified": 530,
               "empty-custom-property": 14,
               "blocked-embedded-content": 1
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                530
+              ],
               [
                 "background-image",
                 9
@@ -6365,15 +7367,20 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.02275654370894391,
+            "ratio": 0.03216196732356409,
             "elementsCompared": 531,
-            "elementsDiffering": 15,
-            "differences": 15,
+            "elementsDiffering": 531,
+            "differences": 545,
             "byGap": {
+              "unclassified": 530,
               "empty-custom-property": 14,
               "blocked-embedded-content": 1
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                530
+              ],
               [
                 "background-image",
                 9
@@ -6401,7 +7408,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -6422,41 +7429,73 @@
             "fixture": "busbasis-store",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.65 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "815 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "Desktop",
+            "state": "hover e26",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.65 percent of pixels differ"
           },
           {
             "fixture": "busbasis-store",
             "viewport": "Desktop",
             "state": "hover e26",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "815 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-store",
             "viewport": "Desktop",
             "state": "hover e26",
             "check": "interaction",
-            "gap": "empty-custom-property",
+            "gap": "unclassified",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-store",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.81 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "815 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-store",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "1.03 percent of pixels differ"
           },
           {
             "fixture": "busbasis-store",
             "viewport": "Mobile",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "815 differences on 753 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-store",
@@ -6521,14 +7560,43 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.006506822459222083,
             "elementsCompared": 753,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 753,
+            "differences": 815,
             "byGap": {
+              "unclassified": 813,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                753
+              ],
+              [
+                "padding-block-end",
+                10
+              ],
+              [
+                "padding-bottom",
+                10
+              ],
+              [
+                "padding-inline-end",
+                10
+              ],
+              [
+                "padding-inline-start",
+                10
+              ],
+              [
+                "padding-left",
+                10
+              ],
+              [
+                "padding-right",
+                10
+              ],
               [
                 "backdrop-filter",
                 2
@@ -6538,14 +7606,43 @@
           {
             "viewport": "Desktop",
             "state": "hover e26",
-            "ratio": 0,
+            "ratio": 0.006506822459222083,
             "elementsCompared": 753,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 753,
+            "differences": 815,
             "byGap": {
+              "unclassified": 813,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                753
+              ],
+              [
+                "padding-block-end",
+                10
+              ],
+              [
+                "padding-bottom",
+                10
+              ],
+              [
+                "padding-inline-end",
+                10
+              ],
+              [
+                "padding-inline-start",
+                10
+              ],
+              [
+                "padding-left",
+                10
+              ],
+              [
+                "padding-right",
+                10
+              ],
               [
                 "backdrop-filter",
                 2
@@ -6555,14 +7652,43 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.00811230420949584,
             "elementsCompared": 753,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 753,
+            "differences": 815,
             "byGap": {
+              "unclassified": 813,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                753
+              ],
+              [
+                "padding-block-end",
+                10
+              ],
+              [
+                "padding-bottom",
+                10
+              ],
+              [
+                "padding-inline-end",
+                10
+              ],
+              [
+                "padding-inline-start",
+                10
+              ],
+              [
+                "padding-left",
+                10
+              ],
+              [
+                "padding-right",
+                10
+              ],
               [
                 "backdrop-filter",
                 2
@@ -6572,14 +7698,43 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.010311373320222878,
             "elementsCompared": 753,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 753,
+            "differences": 815,
             "byGap": {
+              "unclassified": 813,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                753
+              ],
+              [
+                "padding-block-end",
+                10
+              ],
+              [
+                "padding-bottom",
+                10
+              ],
+              [
+                "padding-inline-end",
+                10
+              ],
+              [
+                "padding-inline-start",
+                10
+              ],
+              [
+                "padding-left",
+                10
+              ],
+              [
+                "padding-right",
+                10
+              ],
               [
                 "backdrop-filter",
                 2
@@ -6595,7 +7750,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -6616,41 +7771,73 @@
             "fixture": "busbasis-search",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.64 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-search",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "822 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-search",
+            "viewport": "Desktop",
+            "state": "hover e26",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.64 percent of pixels differ"
           },
           {
             "fixture": "busbasis-search",
             "viewport": "Desktop",
             "state": "hover e26",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "822 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-search",
             "viewport": "Desktop",
             "state": "hover e26",
             "check": "interaction",
-            "gap": "empty-custom-property",
+            "gap": "unclassified",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-search",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.78 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-search",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "822 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-search",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "1.03 percent of pixels differ"
           },
           {
             "fixture": "busbasis-search",
             "viewport": "Mobile",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "822 differences on 760 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-search",
@@ -6707,14 +7894,43 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.006353973526988051,
             "elementsCompared": 760,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 760,
+            "differences": 822,
             "byGap": {
+              "unclassified": 820,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                760
+              ],
+              [
+                "padding-block-end",
+                10
+              ],
+              [
+                "padding-bottom",
+                10
+              ],
+              [
+                "padding-inline-end",
+                10
+              ],
+              [
+                "padding-inline-start",
+                10
+              ],
+              [
+                "padding-left",
+                10
+              ],
+              [
+                "padding-right",
+                10
+              ],
               [
                 "backdrop-filter",
                 2
@@ -6724,14 +7940,43 @@
           {
             "viewport": "Desktop",
             "state": "hover e26",
-            "ratio": 0,
+            "ratio": 0.006353973526988051,
             "elementsCompared": 760,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 760,
+            "differences": 822,
             "byGap": {
+              "unclassified": 820,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                760
+              ],
+              [
+                "padding-block-end",
+                10
+              ],
+              [
+                "padding-bottom",
+                10
+              ],
+              [
+                "padding-inline-end",
+                10
+              ],
+              [
+                "padding-inline-start",
+                10
+              ],
+              [
+                "padding-left",
+                10
+              ],
+              [
+                "padding-right",
+                10
+              ],
               [
                 "backdrop-filter",
                 2
@@ -6741,14 +7986,43 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.0077849669603524225,
             "elementsCompared": 760,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 760,
+            "differences": 822,
             "byGap": {
+              "unclassified": 820,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                760
+              ],
+              [
+                "padding-block-end",
+                10
+              ],
+              [
+                "padding-bottom",
+                10
+              ],
+              [
+                "padding-inline-end",
+                10
+              ],
+              [
+                "padding-inline-start",
+                10
+              ],
+              [
+                "padding-left",
+                10
+              ],
+              [
+                "padding-right",
+                10
+              ],
               [
                 "backdrop-filter",
                 2
@@ -6758,14 +8032,43 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.010340871845296624,
             "elementsCompared": 760,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 760,
+            "differences": 822,
             "byGap": {
+              "unclassified": 820,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                760
+              ],
+              [
+                "padding-block-end",
+                10
+              ],
+              [
+                "padding-bottom",
+                10
+              ],
+              [
+                "padding-inline-end",
+                10
+              ],
+              [
+                "padding-inline-start",
+                10
+              ],
+              [
+                "padding-left",
+                10
+              ],
+              [
+                "padding-right",
+                10
+              ],
               [
                 "backdrop-filter",
                 2
@@ -6781,7 +8084,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -6802,41 +8105,73 @@
             "fixture": "busbasis-category",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.50 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-category",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "280 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-category",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.50 percent of pixels differ"
           },
           {
             "fixture": "busbasis-category",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "280 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-category",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "empty-custom-property",
+            "gap": "unclassified",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-category",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.66 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-category",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "280 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-category",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.91 percent of pixels differ"
           },
           {
             "fixture": "busbasis-category",
             "viewport": "Mobile",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "280 differences on 278 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-category",
@@ -6893,14 +8228,19 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.0050187317251461985,
             "elementsCompared": 278,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 278,
+            "differences": 280,
             "byGap": {
+              "unclassified": 278,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                278
+              ],
               [
                 "backdrop-filter",
                 2
@@ -6910,14 +8250,19 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0,
+            "ratio": 0.0050187317251461985,
             "elementsCompared": 278,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 278,
+            "differences": 280,
             "byGap": {
+              "unclassified": 278,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                278
+              ],
               [
                 "backdrop-filter",
                 2
@@ -6927,14 +8272,19 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.006591550715870135,
             "elementsCompared": 278,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 278,
+            "differences": 280,
             "byGap": {
+              "unclassified": 278,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                278
+              ],
               [
                 "backdrop-filter",
                 2
@@ -6944,14 +8294,19 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.009053466603204822,
             "elementsCompared": 278,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 278,
+            "differences": 280,
             "byGap": {
+              "unclassified": 278,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                278
+              ],
               [
                 "backdrop-filter",
                 2
@@ -6967,7 +8322,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -6988,41 +8343,73 @@
             "fixture": "busbasis-collection",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.50 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-collection",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "482 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-collection",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.50 percent of pixels differ"
           },
           {
             "fixture": "busbasis-collection",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "482 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-collection",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "empty-custom-property",
+            "gap": "unclassified",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-collection",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.46 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-collection",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "482 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-collection",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.86 percent of pixels differ"
           },
           {
             "fixture": "busbasis-collection",
             "viewport": "Mobile",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "482 differences on 480 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-collection",
@@ -7071,14 +8458,19 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.004958102455454151,
             "elementsCompared": 480,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 480,
+            "differences": 482,
             "byGap": {
+              "unclassified": 480,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                480
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7088,14 +8480,19 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0,
+            "ratio": 0.004958102455454151,
             "elementsCompared": 480,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 480,
+            "differences": 482,
             "byGap": {
+              "unclassified": 480,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                480
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7105,14 +8502,19 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.004613450816407806,
             "elementsCompared": 480,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 480,
+            "differences": 482,
             "byGap": {
+              "unclassified": 480,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                480
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7122,14 +8524,19 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.008568611033584519,
             "elementsCompared": 480,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 480,
+            "differences": 482,
             "byGap": {
+              "unclassified": 480,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                480
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7145,7 +8552,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -7166,41 +8573,73 @@
             "fixture": "busbasis-product",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.34 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-product",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "5 differences on 5 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "555 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-product",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.34 percent of pixels differ"
           },
           {
             "fixture": "busbasis-product",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "5 differences on 5 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "555 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-product",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "empty-custom-property",
+            "gap": "unclassified",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-product",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.39 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-product",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "5 differences on 5 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "555 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-product",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.65 percent of pixels differ"
           },
           {
             "fixture": "busbasis-product",
             "viewport": "Mobile",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "5 differences on 5 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "555 differences on 484 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-product",
@@ -7257,14 +8696,43 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.00008023648648648648,
+            "ratio": 0.0033850144787644786,
             "elementsCompared": 484,
-            "elementsDiffering": 5,
-            "differences": 5,
+            "elementsDiffering": 484,
+            "differences": 555,
             "byGap": {
+              "unclassified": 550,
               "empty-custom-property": 5
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                484
+              ],
+              [
+                "padding-block-end",
+                11
+              ],
+              [
+                "padding-bottom",
+                11
+              ],
+              [
+                "padding-inline-end",
+                11
+              ],
+              [
+                "padding-inline-start",
+                11
+              ],
+              [
+                "padding-left",
+                11
+              ],
+              [
+                "padding-right",
+                11
+              ],
               [
                 "backdrop-filter",
                 4
@@ -7278,14 +8746,43 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0.00008023648648648648,
+            "ratio": 0.0033850144787644786,
             "elementsCompared": 484,
-            "elementsDiffering": 5,
-            "differences": 5,
+            "elementsDiffering": 484,
+            "differences": 555,
             "byGap": {
+              "unclassified": 550,
               "empty-custom-property": 5
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                484
+              ],
+              [
+                "padding-block-end",
+                11
+              ],
+              [
+                "padding-bottom",
+                11
+              ],
+              [
+                "padding-inline-end",
+                11
+              ],
+              [
+                "padding-inline-start",
+                11
+              ],
+              [
+                "padding-left",
+                11
+              ],
+              [
+                "padding-right",
+                11
+              ],
               [
                 "backdrop-filter",
                 4
@@ -7299,14 +8796,43 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.00011122484478698352,
+            "ratio": 0.003906668138514237,
             "elementsCompared": 484,
-            "elementsDiffering": 5,
-            "differences": 5,
+            "elementsDiffering": 484,
+            "differences": 555,
             "byGap": {
+              "unclassified": 550,
               "empty-custom-property": 5
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                484
+              ],
+              [
+                "padding-block-end",
+                11
+              ],
+              [
+                "padding-bottom",
+                11
+              ],
+              [
+                "padding-inline-end",
+                11
+              ],
+              [
+                "padding-inline-start",
+                11
+              ],
+              [
+                "padding-left",
+                11
+              ],
+              [
+                "padding-right",
+                11
+              ],
               [
                 "backdrop-filter",
                 4
@@ -7320,14 +8846,43 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0.00023135464231354642,
+            "ratio": 0.006481409001956947,
             "elementsCompared": 484,
-            "elementsDiffering": 5,
-            "differences": 5,
+            "elementsDiffering": 484,
+            "differences": 555,
             "byGap": {
+              "unclassified": 550,
               "empty-custom-property": 5
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                484
+              ],
+              [
+                "padding-block-end",
+                11
+              ],
+              [
+                "padding-bottom",
+                11
+              ],
+              [
+                "padding-inline-end",
+                11
+              ],
+              [
+                "padding-inline-start",
+                11
+              ],
+              [
+                "padding-left",
+                11
+              ],
+              [
+                "padding-right",
+                11
+              ],
               [
                 "backdrop-filter",
                 4
@@ -7347,7 +8902,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -7368,41 +8923,73 @@
             "fixture": "busbasis-cart-empty",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.41 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-cart-empty",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-cart-empty",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.41 percent of pixels differ"
           },
           {
             "fixture": "busbasis-cart-empty",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-cart-empty",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "empty-custom-property",
+            "gap": "unclassified",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-cart-empty",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.55 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-cart-empty",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-cart-empty",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.90 percent of pixels differ"
           },
           {
             "fixture": "busbasis-cart-empty",
             "viewport": "Mobile",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-cart-empty",
@@ -7451,14 +9038,19 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.004084986162361624,
             "elementsCompared": 198,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 198,
+            "differences": 200,
             "byGap": {
+              "unclassified": 198,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                198
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7468,14 +9060,19 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0,
+            "ratio": 0.004084986162361624,
             "elementsCompared": 198,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 198,
+            "differences": 200,
             "byGap": {
+              "unclassified": 198,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                198
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7485,14 +9082,19 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.005478885488595941,
             "elementsCompared": 198,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 198,
+            "differences": 200,
             "byGap": {
+              "unclassified": 198,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                198
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7502,14 +9104,19 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.00895718090555214,
             "elementsCompared": 198,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 198,
+            "differences": 200,
             "byGap": {
+              "unclassified": 198,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                198
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7525,7 +9132,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -7546,41 +9153,73 @@
             "fixture": "busbasis-checkout-no-cart",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.36 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-checkout-no-cart",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "192 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-checkout-no-cart",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.36 percent of pixels differ"
           },
           {
             "fixture": "busbasis-checkout-no-cart",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "192 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-checkout-no-cart",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "empty-custom-property",
+            "gap": "unclassified",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-checkout-no-cart",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.46 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-checkout-no-cart",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "192 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-checkout-no-cart",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.89 percent of pixels differ"
           },
           {
             "fixture": "busbasis-checkout-no-cart",
             "viewport": "Mobile",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "192 differences on 190 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-checkout-no-cart",
@@ -7629,14 +9268,19 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.0035883315640481248,
             "elementsCompared": 190,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 190,
+            "differences": 192,
             "byGap": {
+              "unclassified": 190,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                190
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7646,14 +9290,19 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0,
+            "ratio": 0.0035883315640481248,
             "elementsCompared": 190,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 190,
+            "differences": 192,
             "byGap": {
+              "unclassified": 190,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                190
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7663,14 +9312,19 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.004552447052089296,
             "elementsCompared": 190,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 190,
+            "differences": 192,
             "byGap": {
+              "unclassified": 190,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                190
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7680,14 +9334,19 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.008927374301675978,
             "elementsCompared": 190,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 190,
+            "differences": 192,
             "byGap": {
+              "unclassified": 190,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                190
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7703,7 +9362,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -7724,41 +9383,73 @@
             "fixture": "busbasis-privacy",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.68 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-privacy",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-privacy",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.68 percent of pixels differ"
           },
           {
             "fixture": "busbasis-privacy",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-privacy",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "empty-custom-property",
+            "gap": "unclassified",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-privacy",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "1.05 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-privacy",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-privacy",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "1.74 percent of pixels differ"
           },
           {
             "fixture": "busbasis-privacy",
             "viewport": "Mobile",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-privacy",
@@ -7799,14 +9490,19 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.0067592872036874455,
             "elementsCompared": 224,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 224,
+            "differences": 226,
             "byGap": {
+              "unclassified": 224,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                224
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7816,14 +9512,19 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0,
+            "ratio": 0.0067592872036874455,
             "elementsCompared": 224,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 224,
+            "differences": 226,
             "byGap": {
+              "unclassified": 224,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                224
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7833,14 +9534,19 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.01046703844287299,
             "elementsCompared": 224,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 224,
+            "differences": 226,
             "byGap": {
+              "unclassified": 224,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                224
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7850,14 +9556,19 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.017395543175487464,
             "elementsCompared": 224,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 224,
+            "differences": 226,
             "byGap": {
+              "unclassified": 224,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                224
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7873,7 +9584,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -7894,41 +9605,73 @@
             "fixture": "busbasis-terms",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.77 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-terms",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "242 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-terms",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.77 percent of pixels differ"
           },
           {
             "fixture": "busbasis-terms",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "242 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-terms",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "empty-custom-property",
+            "gap": "unclassified",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-terms",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "1.17 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-terms",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "242 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-terms",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "1.87 percent of pixels differ"
           },
           {
             "fixture": "busbasis-terms",
             "viewport": "Mobile",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "242 differences on 240 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-terms",
@@ -7969,14 +9712,19 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.007669121480709072,
             "elementsCompared": 240,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 240,
+            "differences": 242,
             "byGap": {
+              "unclassified": 240,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                240
+              ],
               [
                 "backdrop-filter",
                 2
@@ -7986,14 +9734,19 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0,
+            "ratio": 0.007669121480709072,
             "elementsCompared": 240,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 240,
+            "differences": 242,
             "byGap": {
+              "unclassified": 240,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                240
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8003,14 +9756,19 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.011740726090014064,
             "elementsCompared": 240,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 240,
+            "differences": 242,
             "byGap": {
+              "unclassified": 240,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                240
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8020,14 +9778,19 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.018726506749204713,
             "elementsCompared": 240,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 240,
+            "differences": 242,
             "byGap": {
+              "unclassified": 240,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                240
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8043,7 +9806,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -8064,41 +9827,73 @@
             "fixture": "busbasis-login",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.46 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-login",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-login",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.46 percent of pixels differ"
           },
           {
             "fixture": "busbasis-login",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-login",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "empty-custom-property",
+            "gap": "unclassified",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-login",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.65 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-login",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-login",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "1.09 percent of pixels differ"
           },
           {
             "fixture": "busbasis-login",
             "viewport": "Mobile",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "226 differences on 224 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-login",
@@ -8147,14 +9942,19 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.004574356979030144,
             "elementsCompared": 224,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 224,
+            "differences": 226,
             "byGap": {
+              "unclassified": 224,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                224
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8164,14 +9964,19 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0,
+            "ratio": 0.004574356979030144,
             "elementsCompared": 224,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 224,
+            "differences": 226,
             "byGap": {
+              "unclassified": 224,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                224
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8181,14 +9986,19 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.00650354752833138,
             "elementsCompared": 224,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 224,
+            "differences": 226,
             "byGap": {
+              "unclassified": 224,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                224
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8198,14 +10008,19 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.010936042136945072,
             "elementsCompared": 224,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 224,
+            "differences": 226,
             "byGap": {
+              "unclassified": 224,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                224
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8221,7 +10036,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -8242,41 +10057,73 @@
             "fixture": "busbasis-request-reset",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.47 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-request-reset",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-request-reset",
+            "viewport": "Desktop",
+            "state": "hover e41",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.47 percent of pixels differ"
           },
           {
             "fixture": "busbasis-request-reset",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-request-reset",
             "viewport": "Desktop",
             "state": "hover e41",
             "check": "interaction",
-            "gap": "empty-custom-property",
+            "gap": "unclassified",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-request-reset",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.62 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-request-reset",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-request-reset",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "1.15 percent of pixels differ"
           },
           {
             "fixture": "busbasis-request-reset",
             "viewport": "Mobile",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "200 differences on 198 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-request-reset",
@@ -8325,14 +10172,19 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.004705022235112142,
             "elementsCompared": 198,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 198,
+            "differences": 200,
             "byGap": {
+              "unclassified": 198,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                198
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8342,14 +10194,19 @@
           {
             "viewport": "Desktop",
             "state": "hover e41",
-            "ratio": 0,
+            "ratio": 0.004705022235112142,
             "elementsCompared": 198,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 198,
+            "differences": 200,
             "byGap": {
+              "unclassified": 198,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                198
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8359,14 +10216,19 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.006160975772097977,
             "elementsCompared": 198,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 198,
+            "differences": 200,
             "byGap": {
+              "unclassified": 198,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                198
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8376,14 +10238,19 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.011469812630117973,
             "elementsCompared": 198,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 198,
+            "differences": 200,
             "byGap": {
+              "unclassified": 198,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                198
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8399,7 +10266,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 4,
+            "pass": 0,
             "total": 4
           },
           "computed-styles": {
@@ -8420,41 +10287,73 @@
             "fixture": "busbasis-shop-unavailable",
             "viewport": "Desktop",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.52 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-shop-unavailable",
+            "viewport": "Desktop",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "175 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-shop-unavailable",
+            "viewport": "Desktop",
+            "state": "hover e26",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.52 percent of pixels differ"
           },
           {
             "fixture": "busbasis-shop-unavailable",
             "viewport": "Desktop",
             "state": "hover e26",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "175 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-shop-unavailable",
             "viewport": "Desktop",
             "state": "hover e26",
             "check": "interaction",
-            "gap": "empty-custom-property",
+            "gap": "unclassified",
             "detail": "the replica did not end up where the original did"
           },
           {
             "fixture": "busbasis-shop-unavailable",
             "viewport": "Tablet",
             "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "0.75 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-shop-unavailable",
+            "viewport": "Tablet",
+            "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "175 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-shop-unavailable",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "1.08 percent of pixels differ"
           },
           {
             "fixture": "busbasis-shop-unavailable",
             "viewport": "Mobile",
             "state": "initial",
             "check": "computed-styles",
-            "gap": "empty-custom-property",
-            "detail": "2 differences on 2 elements, first: e3: backdrop-filter blur(12px) became none"
+            "gap": "unclassified",
+            "detail": "175 differences on 173 elements, first: e0: -webkit-font-smoothing auto became antialiased"
           },
           {
             "fixture": "busbasis-shop-unavailable",
@@ -8495,14 +10394,19 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.005248274539877301,
             "elementsCompared": 173,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 173,
+            "differences": 175,
             "byGap": {
+              "unclassified": 173,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                173
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8512,14 +10416,19 @@
           {
             "viewport": "Desktop",
             "state": "hover e26",
-            "ratio": 0,
+            "ratio": 0.005248274539877301,
             "elementsCompared": 173,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 173,
+            "differences": 175,
             "byGap": {
+              "unclassified": 173,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                173
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8529,14 +10438,19 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.007525774467245462,
             "elementsCompared": 173,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 173,
+            "differences": 175,
             "byGap": {
+              "unclassified": 173,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                173
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8546,14 +10460,19 @@
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.010842853865565497,
             "elementsCompared": 173,
-            "elementsDiffering": 2,
-            "differences": 2,
+            "elementsDiffering": 173,
+            "differences": 175,
             "byGap": {
+              "unclassified": 173,
               "empty-custom-property": 2
             },
             "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                173
+              ],
               [
                 "backdrop-filter",
                 2
@@ -8569,11 +10488,11 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "computed-styles": {
-            "pass": 3,
+            "pass": 0,
             "total": 3
           },
           "accessibility-tree": {
@@ -8586,6 +10505,54 @@
           }
         },
         "failures": [
+          {
+            "fixture": "busbasis-not-found",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "8.04 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-not-found",
+            "viewport": "Desktop",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "unclassified",
+            "detail": "10 differences on 10 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-not-found",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "6.31 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-not-found",
+            "viewport": "Tablet",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "unclassified",
+            "detail": "10 differences on 10 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
+          {
+            "fixture": "busbasis-not-found",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "screenshot",
+            "gap": "unclassified",
+            "detail": "9.76 percent of pixels differ"
+          },
+          {
+            "fixture": "busbasis-not-found",
+            "viewport": "Mobile",
+            "state": "initial",
+            "check": "computed-styles",
+            "gap": "unclassified",
+            "detail": "10 differences on 10 elements, first: e0: -webkit-font-smoothing auto became antialiased"
+          },
           {
             "fixture": "busbasis-not-found",
             "viewport": "all",
@@ -8601,37 +10568,79 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.0804248046875,
             "elementsCompared": 10,
-            "elementsDiffering": 0,
-            "differences": 0,
-            "byGap": {},
-            "byProperty": []
+            "elementsDiffering": 10,
+            "differences": 10,
+            "byGap": {
+              "unclassified": 10
+            },
+            "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                10
+              ]
+            ]
           },
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.06305313110351562,
             "elementsCompared": 10,
-            "elementsDiffering": 0,
-            "differences": 0,
-            "byGap": {},
-            "byProperty": []
+            "elementsDiffering": 10,
+            "differences": 10,
+            "byGap": {
+              "unclassified": 10
+            },
+            "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                10
+              ]
+            ]
           },
           {
             "viewport": "Mobile",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.0975832083958021,
             "elementsCompared": 10,
-            "elementsDiffering": 0,
-            "differences": 0,
-            "byGap": {},
-            "byProperty": []
+            "elementsDiffering": 10,
+            "differences": 10,
+            "byGap": {
+              "unclassified": 10
+            },
+            "byProperty": [
+              [
+                "-webkit-font-smoothing",
+                10
+              ]
+            ]
           }
         ]
       }
     ],
     "gaps": [
+      {
+        "id": "unclassified",
+        "pages": [
+          "busbasis-home",
+          "busbasis-store",
+          "busbasis-search",
+          "busbasis-category",
+          "busbasis-collection",
+          "busbasis-product",
+          "busbasis-cart-empty",
+          "busbasis-checkout-no-cart",
+          "busbasis-privacy",
+          "busbasis-terms",
+          "busbasis-login",
+          "busbasis-request-reset",
+          "busbasis-shop-unavailable",
+          "busbasis-not-found"
+        ],
+        "needs": 0,
+        "styleDifferences": 19702
+      },
       {
         "id": "page-level-css",
         "pages": [
@@ -9492,6 +11501,68 @@
       "cost": 360
     },
     {
+      "id": "unclassified",
+      "description": "A difference no rule explains yet. Investigate before trusting the score.",
+      "matrixCells": 0,
+      "corpusChecks": 123,
+      "fixtures": [
+        "busbasis-home",
+        "busbasis-store",
+        "busbasis-search",
+        "busbasis-category",
+        "busbasis-collection",
+        "busbasis-product",
+        "busbasis-cart-empty",
+        "busbasis-checkout-no-cart",
+        "busbasis-privacy",
+        "busbasis-terms",
+        "busbasis-login",
+        "busbasis-request-reset",
+        "busbasis-shop-unavailable",
+        "busbasis-not-found"
+      ],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 123
+    },
+    {
+      "id": "published-base",
+      "description": "The published route ships the root layout's sheet to every visitor (Tailwind's reset, the theme, the base layer), so a page written for browser defaults does not get them: box sizing, heading sizes, list markers, border and outline colours, form controls. Measured, not guessed: the same replica matches its original on a page without the base.",
+      "matrixCells": 0,
+      "corpusChecks": 122,
+      "fixtures": [
+        "mixed-text",
+        "hover-focus",
+        "keyframes",
+        "container-query",
+        "print-styles",
+        "pseudo-elements",
+        "responsive-layout",
+        "stylesheet-values",
+        "stylesheet-escapes",
+        "shadcn-button",
+        "shadcn-card",
+        "radix-accordion",
+        "radix-tabs",
+        "radix-dialog"
+      ],
+      "onlyGapOf": [
+        "mixed-text",
+        "hover-focus",
+        "keyframes",
+        "container-query",
+        "print-styles",
+        "pseudo-elements",
+        "responsive-layout",
+        "stylesheet-values",
+        "stylesheet-escapes",
+        "shadcn-button",
+        "shadcn-card"
+      ],
+      "roundTripCases": 0,
+      "cost": 122
+    },
+    {
       "id": "ai-tag-allowlist",
       "description": "The AI generator validator refuses this tag on purpose: blocked in every renderer, or a raw form control, which only works through the form presets.",
       "matrixCells": 116,
@@ -9533,10 +11604,7 @@
         "radix-tabs",
         "radix-dialog"
       ],
-      "onlyGapOf": [
-        "radix-tabs",
-        "radix-dialog"
-      ],
+      "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 93
     },
@@ -9571,30 +11639,6 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 70
-    },
-    {
-      "id": "empty-custom-property",
-      "description": "A custom property with an empty value, such as `--tw-blur: ;`, is dropped on its way into the page stylesheet, so every var() list that reads it goes invalid. Tailwind writes these for filter, backdrop-filter and gradients.",
-      "matrixCells": 0,
-      "corpusChecks": 69,
-      "fixtures": [
-        "busbasis-home",
-        "busbasis-store",
-        "busbasis-search",
-        "busbasis-category",
-        "busbasis-collection",
-        "busbasis-product",
-        "busbasis-cart-empty",
-        "busbasis-checkout-no-cart",
-        "busbasis-privacy",
-        "busbasis-terms",
-        "busbasis-login",
-        "busbasis-request-reset",
-        "busbasis-shop-unavailable"
-      ],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 69
     },
     {
       "id": "attribute-read-as-style",

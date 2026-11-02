@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type Page } from 'playwright';
 import { build } from 'esbuild';
 import { FIXTURES, fixtureFile, readFixtureFile, type Fixture, type FixtureState } from './corpus/fixtures';
-import { BREAKPOINTS, publishedDocument, renderPublished } from './lib/published';
+import { BREAKPOINTS, bareDocument, publishedDocument, renderPublished } from './lib/published';
 import { MAX_DIFF_RATIO, diffComputed, diffRatio, takeSnapshot, type Snapshot } from './lib/compare';
 import { OUT_DIR, writeOut } from './lib/io';
 import type { CheckName, CorpusFailure, CorpusResult, GapId } from './lib/types';
@@ -65,7 +65,9 @@ describe('parity corpus', () => {
 
     for (const fixture of FIXTURES) {
       const original = await originalDocument(fixture);
-      const replica = publishedDocument(fixture.published ? await fixture.published() : renderPublished(fixture.tree()));
+      const output = fixture.published ? await fixture.published() : renderPublished(fixture.tree());
+      const replica = publishedDocument(output);
+      const bare = bareDocument(output);
       const failures: CorpusFailure[] = [];
       const checks: CorpusResult['checks'] = {
         screenshot: { pass: 0, total: 0 },
@@ -101,6 +103,24 @@ describe('parity corpus', () => {
           await left.close();
           await right.close();
 
+          /** Which checks would pass without the page base: those failures are the base's, whatever the fixture is about. */
+          const passesBare = async (): Promise<Set<CheckName>> => {
+            // A state that cannot be applied on the bare page is not the base's doing: it keeps the fixture's own gap.
+            const page = await open(browser, bare, viewport, fixture, state).catch(() => undefined);
+            if (!page) return new Set();
+            const snapshot = await takeSnapshot(page);
+            await page.close();
+            const pixels = diffRatio(a.png, snapshot.png, path.join(OUT_DIR, 'scratch.png')) <= MAX_DIFF_RATIO;
+            const styles = diffComputed(a.computed, snapshot.computed).count === 0;
+            const tree = a.aria === snapshot.aria;
+            const passing: CheckName[] = [];
+            if (pixels) passing.push('screenshot');
+            if (styles) passing.push('computed-styles');
+            if (tree) passing.push('accessibility-tree');
+            if (pixels && styles && tree) passing.push('interaction');
+            return new Set(passing);
+          };
+
           if (!state) initialOriginal = a;
           else if (initialOriginal && !state.media) {
             const unchanged =
@@ -118,12 +138,16 @@ describe('parity corpus', () => {
           // interaction it is the state that did not change. So the state decides there.
           const gap: GapId = state ? state.gap : computed.textLost ? 'mixed-text' : computed.pseudo ? 'selector-styles' : fixture.initialGap;
 
-          record(breakpoint.label, stateId, 'screenshot', gap, ratio <= MAX_DIFF_RATIO, `${(ratio * 100).toFixed(2)} percent of pixels differ`);
+          const landed = !interactionError && ratio <= MAX_DIFF_RATIO && computed.count === 0 && a.aria === b.aria;
+          const fromBase = landed ? new Set<CheckName>() : await passesBare();
+          const gapOf = (check: CheckName): GapId => (fromBase.has(check) ? 'published-base' : gap);
+
+          record(breakpoint.label, stateId, 'screenshot', gapOf('screenshot'), ratio <= MAX_DIFF_RATIO, `${(ratio * 100).toFixed(2)} percent of pixels differ`);
           record(
             breakpoint.label,
             stateId,
             'computed-styles',
-            gap,
+            gapOf('computed-styles'),
             computed.count === 0,
             `${computed.count} differences, first: ${computed.firstDetail}`,
           );
@@ -131,13 +155,12 @@ describe('parity corpus', () => {
             breakpoint.label,
             stateId,
             'accessibility-tree',
-            gap,
+            gapOf('accessibility-tree'),
             a.aria === b.aria,
             `original ${JSON.stringify(a.aria.slice(0, 120))}, replica ${JSON.stringify(b.aria.slice(0, 120))}`,
           );
           if (state) {
-            const landed = !interactionError && ratio <= MAX_DIFF_RATIO && computed.count === 0 && a.aria === b.aria;
-            record(breakpoint.label, stateId, 'interaction', gap, landed, interactionError ?? 'the replica did not end up where the original did');
+            record(breakpoint.label, stateId, 'interaction', gapOf('interaction'), landed, interactionError ?? 'the replica did not end up where the original did');
           }
         }
       }

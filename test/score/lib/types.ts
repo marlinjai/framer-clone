@@ -81,6 +81,7 @@ export const GAPS = {
   'roundtrip-not-representable': 'A construct that cannot survive nodes to JSX and back, because the format has nowhere to put it.',
   'import-dynamic-logic': 'JSX that is a program, not markup: reported as left over by the static import, as the plan requires.',
   'reusable-components': 'A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.',
+  'published-base': 'The published route ships the root layout\'s sheet to every visitor (Tailwind\'s reset, the theme, the base layer), so a page written for browser defaults does not get them: box sizing, heading sizes, list markers, border and outline colours, form controls. Measured, not guessed: the same replica matches its original on a page without the base.',
   'shop-feature-missing': 'A real BusBasis page depends on a shop feature that is not built: the page stays failed however close its pixels are.',
   'layout-difference': 'Same declarations, different geometry or pixels, for a reason other than the gaps above.',
   'harness-limit': 'Not a product gap: the harness cannot yet decide this cell, so it is not counted as a pass.',
