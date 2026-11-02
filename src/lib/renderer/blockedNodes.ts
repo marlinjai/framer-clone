@@ -270,13 +270,16 @@ const EDITOR_SURFACE_DROPPED: ReadonlySet<string> = new Set([
   'action', 'form', 'formaction', 'formenctype', 'formmethod', 'formtarget', 'ping',
 ]);
 
-/** `props` as the editor surfaces render them; the same object when nothing is dropped. */
-export function withoutEditorSurfaceProps(props: Record<string, unknown>): Record<string, unknown> {
+/**
+ * `props` as this tag renders them on the editor surfaces; the same object when
+ * nothing is dropped. On MathML's `mo`, `form` is only how an operator is laid out.
+ */
+export function withoutEditorSurfaceProps(tag: unknown, props: Record<string, unknown>): Record<string, unknown> {
+  const isOperator = typeof tag === 'string' && tag.toLowerCase() === 'mo';
+  const dropped = (name: string) => EDITOR_SURFACE_DROPPED.has(name.toLowerCase()) && !(isOperator && name === 'form');
   const names = Object.keys(props);
-  if (!names.some((name) => EDITOR_SURFACE_DROPPED.has(name.toLowerCase()))) return props;
-  return Object.fromEntries(
-    names.filter((name) => !EDITOR_SURFACE_DROPPED.has(name.toLowerCase())).map((name) => [name, props[name]]),
-  );
+  if (!names.some(dropped)) return props;
+  return Object.fromEntries(names.filter((name) => !dropped(name)).map((name) => [name, props[name]]));
 }
 
 /** A form on an editor surface never submits: with no action it would reload the editor. */

@@ -208,6 +208,10 @@ describe('blocked nodes', () => {
     expect(published({ type: 'button', props: { [name]: 'x' } }).toLowerCase()).toContain(name.toLowerCase());
   });
 
+  it('keeps form on a MathML operator, where it only sets the layout', () => {
+    expect(editor('mo', { form: 'prefix' })).toBe('<mo form="prefix"></mo>');
+  });
+
   it.each(['ID', 'Id', 'iD'])('refuses the member id in the spelling %s', (name) => {
     expect(published({ type: 'input', props: { [name]: 'parentElement' } }).toLowerCase()).not.toContain('id=');
     expect(editor('input', { [name]: 'parentElement' }).toLowerCase()).not.toContain('id=');

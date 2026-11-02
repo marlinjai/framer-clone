@@ -144,7 +144,7 @@ export function createComponentElement(
 
   const content = ownTextThenChildren(rawTextChildren, children) as React.ReactNode;
   const identity = options?.identity;
-  const surfaceProps = withoutEditorSurfaceProps(withoutClobberingId(component.type, withoutBlockedProps(finalProps)));
+  const surfaceProps = withoutEditorSurfaceProps(component.type, withoutClobberingId(component.type, withoutBlockedProps(finalProps)));
   const safeProps =
     String(component.type).toLowerCase() === 'form' ? { ...surfaceProps, onSubmit: refuseSubmit } : surfaceProps;
   const propsWithIdentity: Record<string, unknown> = identity
