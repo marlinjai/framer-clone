@@ -1085,7 +1085,16 @@ export const FIXTURES: Fixture[] = [
     states: [
       { id: 'click opens the menu', gap: 'reusable-components', apply: (page) => el(page, 'menu-button').click() },
       {
-        id: 'Enter opens the menu and Escape closes it',
+        id: 'Enter opens the menu',
+        gap: 'reusable-components',
+        apply: async (page) => {
+          await page.keyboard.press('Tab');
+          await page.keyboard.press('Tab');
+          await page.keyboard.press('Enter');
+        },
+      },
+      {
+        id: 'Escape closes the open menu',
         gap: 'reusable-components',
         apply: async (page) => {
           await page.keyboard.press('Tab');
