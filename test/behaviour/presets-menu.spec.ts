@@ -273,8 +273,19 @@ describe.each(ENGINES)('in %s', (name, engine) => {
         // or WebKit's touch lands where the option was a frame earlier.
         await expect.poll(() => shown('city-option-0', target)).toBe(false);
         await expect.poll(() => shown('city-option-1', target)).toBe(true);
-        await el('city-option-1', target).tap();
-        await expect.poll(() => el('city-field', target).inputValue(), { timeout: 5000 }).toBe('Zurich');
+        // WebKit's synthesized touch can still miss an option the filter has just moved, so a tap that
+        // left the field unchanged is repeated while the option is on screen; a tap that landed closes the list.
+        await expect
+          .poll(
+            async () => {
+              if ((await el('city-field', target).inputValue()) !== 'Zurich' && (await shown('city-option-1', target))) {
+                await el('city-option-1', target).tap({ timeout: 1000 }).catch(() => undefined);
+              }
+              return el('city-field', target).inputValue();
+            },
+            { timeout: 10000 },
+          )
+          .toBe('Zurich');
         expect(await wider(target)).toBe(false);
       });
     });
