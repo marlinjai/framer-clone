@@ -14,6 +14,7 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react';
+import { getSnapshot } from 'mobx-state-tree';
 import ProjectModel from '@/models/ProjectModel';
 import PublishButton from '../PublishButton';
 import { SiteAddressProvider, useSiteAddress } from '@/contexts/SiteAddressContext';
@@ -233,6 +234,25 @@ describe('PublishButton legal check', () => {
     expect(screen.getByTestId('publish-legal-notice').textContent).toMatch(/Impressum: \d+ parts in \[square brackets\]/);
     fireEvent.click(screen.getByRole('button', { name: 'Open Impressum' }));
     expect(setCurrentPage).toHaveBeenCalledWith(page);
+  });
+
+  it('lists a component that will not show and opens the page holding it', () => {
+    const project = (currentStore.editorUI.currentProject as ReturnType<typeof makeProject>);
+    const page = project.pagesArray[0];
+    const stored = getSnapshot(page.appComponentTree) as Record<string, unknown>;
+    page.setAppComponentTree({
+      ...stored,
+      children: [{ id: 'gone', type: '#component', componentType: 'host', props: { component: 'footer' } }],
+    } as never);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(<PublishButton />);
+    fireEvent.click(screen.getByRole('button', { name: /publish/i }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    const notice = screen.getByRole('dialog');
+    expect(notice.textContent).toContain('Some components will not show');
+    expect(notice.textContent).toContain('no longer exists');
+    expect(screen.getByRole('button', { name: `Open ${page.metadata.title}` })).toBeTruthy();
+    warn.mockRestore();
   });
 
   it('publishes straight away for a site without business data', () => {

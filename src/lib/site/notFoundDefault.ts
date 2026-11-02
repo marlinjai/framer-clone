@@ -3,9 +3,12 @@
 // The default 404 of a published site that has not designed its own 404 page
 // (plan decision 3): copy in the site's language, the site's name, and the
 // look of its home page (font, text and background colour, the first filled
-// button's colour), so a miss still looks like the site. PURE.
+// button's colour), so a miss still looks like the site. A button inside a
+// reusable component counts, with a colour passed to it as an input. PURE, apart
+// from the expansion memo.
 
 import type { PublishedPageRow } from '@/server/sites/publicResolver';
+import { literalPage, type ExpandableSite } from '@/lib/components/expandedPages';
 
 export interface NotFoundCopy {
   eyebrow: string;
@@ -113,10 +116,11 @@ function* walk(root: NodeLike | undefined, limit = 400): Generator<NodeLike> {
  * the first section's background when the root has none), and the first
  * filled link or button as the accent. Anything missing keeps the default.
  */
-export function siteLookFromPages(pages: readonly PublishedPageRow[]): SiteLook {
+export function siteLookFromPages(site: ExpandableSite & { pages: readonly PublishedPageRow[] }): SiteLook {
+  const { pages } = site;
   const home =
     pages.find((p) => p.slug.split('/').filter(Boolean).length === 0) ?? pages[0];
-  const root = (home?.snapshot as { appComponentTree?: NodeLike } | undefined)?.appComponentTree;
+  const root = (home ? literalPage(site, home).root : null) as NodeLike | null;
   if (!root) return DEFAULT_LOOK;
   const look: SiteLook = { ...DEFAULT_LOOK };
   const style = root.props?.style ?? {};

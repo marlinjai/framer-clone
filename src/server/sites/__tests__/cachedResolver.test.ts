@@ -91,6 +91,7 @@ const findFirst = vi.fn(
         ingestionEndpoint: null,
         apiKeyRef: null,
         lumitraEnabled: false,
+        updatedAt: new Date(0),
         pages: [{ pageId: 'p1', slug: '', snapshot: { slug: '' } }],
       };
     }
@@ -104,6 +105,7 @@ const findFirst = vi.fn(
         ingestionEndpoint: null,
         apiKeyRef: null,
         lumitraEnabled: false,
+        updatedAt: new Date(0),
         pages: [{ pageId: 'p2', slug: '', snapshot: { slug: '' } }],
       };
     }

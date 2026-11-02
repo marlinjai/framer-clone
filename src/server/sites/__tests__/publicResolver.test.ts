@@ -113,6 +113,7 @@ function fakePrisma(): PrismaClient {
             ingestionEndpoint: 'https://ingest',
             apiKeyRef: 'AP_KEY_REF_X',
             lumitraEnabled: true,
+            updatedAt: new Date(0),
             redirects: [
               { from: 'old-about', pageId: 'p1', createdAt: '2026-10-21T10:00:00.000Z' },
               'malformed',

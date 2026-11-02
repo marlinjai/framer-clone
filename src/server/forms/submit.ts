@@ -57,7 +57,7 @@ import type { CommerceDB } from '@/server/commerce/db-types';
 import type { PublishedSite } from '@/server/sites/publicResolver';
 import { boundedText } from '@/server/books/http/boundedBody';
 import { jsonError } from '@/lib/api/respond';
-import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToComponentNode';
+import { adaptedPage, siteFormIds } from '@/lib/components/expandedPages';
 import {
   FORM_LIMITS,
   TRANSPORT_FIELDS,
@@ -174,14 +174,20 @@ interface LocatedForm {
   form: FormTreeNode;
 }
 
-/** The form in the published site, on whichever page holds it (component ids are unique; first match). */
-export function locateForm(site: Pick<PublishedSite, 'pages' | 'components'>, formId: string): LocatedForm | null {
-  for (const page of site.pages) {
-    const root = snapshotToComponentNode(page.snapshot, site.components).root;
-    const form = findFormNode<FormTreeNode>(root as FormTreeNode | null, formId);
-    if (form) return { pageId: page.pageId, pageSlug: page.slug, form };
-  }
-  return null;
+/**
+ * The form in the published site, on whichever page holds it (component ids are
+ * unique; first match). Resolved from the site's form id list, because this runs
+ * before the rate limit: an anonymous POST with a random `formId` expands nothing.
+ */
+export function locateForm(
+  site: Pick<PublishedSite, 'pages' | 'components'> & Partial<Pick<PublishedSite, 'siteId' | 'revision'>>,
+  formId: string,
+): LocatedForm | null {
+  const pageId = siteFormIds(site).get(formId);
+  const page = pageId === undefined ? undefined : site.pages.find((candidate) => candidate.pageId === pageId);
+  if (!page) return null;
+  const form = findFormNode<FormTreeNode>(adaptedPage(site, page).root as FormTreeNode | null, formId);
+  return form ? { pageId: page.pageId, pageSlug: page.slug, form } : null;
 }
 
 // ---------- the no-JavaScript answers ----------

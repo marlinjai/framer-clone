@@ -13,6 +13,7 @@ import { getSnapshot } from 'mobx-state-tree';
 import { Scale } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import { findPlaceholders } from '@/lib/legal/templates';
+import { literalPageTree } from '@/lib/renderer/server/snapshotToComponentNode';
 
 interface NodeLike {
   props?: { children?: unknown } | null;
@@ -36,7 +37,11 @@ const LegalTemplateNotice = observer(() => {
   const { editorUI } = useStore();
   const page = editorUI.currentPage;
   if (!page || !page.metadata.legalTemplate) return null;
-  const count = treePlaceholders(getSnapshot(page.appComponentTree) as NodeLike).length;
+  const { root } = literalPageTree(
+    { appComponentTree: getSnapshot(page.appComponentTree), canvasNodes: getSnapshot(page.canvasNodes) },
+    editorUI.currentProject?.definitions ?? {},
+  );
+  const count = treePlaceholders(root as NodeLike | null).length;
   return (
     <div
       role="note"

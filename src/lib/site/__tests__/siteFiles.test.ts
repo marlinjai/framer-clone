@@ -10,6 +10,8 @@ import {
   sitemapEntries,
 } from '../siteFiles';
 
+const SITE = { components: {} };
+
 function page(pageId: string, slug: string, extra: Record<string, unknown> = {}, tree?: unknown): PublishedPageRow {
   return {
     pageId,
@@ -85,7 +87,7 @@ describe('dynamicPagePlan', () => {
   });
 
   it('lists CMS rows for a :id record view bound to a literal collection', () => {
-    expect(dynamicPagePlan(page('p', 'blog/:id', {}, recordView('col_posts')))).toEqual({
+    expect(dynamicPagePlan(SITE, page('p', 'blog/:id', {}, recordView('col_posts')))).toEqual({
       kind: 'cms-rows',
       param: 'id',
       collectionId: 'col_posts',
@@ -93,10 +95,10 @@ describe('dynamicPagePlan', () => {
   });
 
   it('refuses an expression binding, a wrong param name, or more than one dynamic segment', () => {
-    expect(dynamicPagePlan(page('p', 'blog/:id', {}, recordView('{{page.params.c}}')))).toBeNull();
-    expect(dynamicPagePlan(page('p', 'blog/:slug', {}, recordView('col_posts')))).toBeNull();
-    expect(dynamicPagePlan(page('p', ':cat/:id', {}, recordView('col_posts')))).toBeNull();
-    expect(dynamicPagePlan(page('p', 'about', {}, recordView('col_posts')))).toBeNull();
+    expect(dynamicPagePlan(SITE, page('p', 'blog/:id', {}, recordView('{{page.params.c}}')))).toBeNull();
+    expect(dynamicPagePlan(SITE, page('p', 'blog/:slug', {}, recordView('col_posts')))).toBeNull();
+    expect(dynamicPagePlan(SITE, page('p', ':cat/:id', {}, recordView('col_posts')))).toBeNull();
+    expect(dynamicPagePlan(SITE, page('p', 'about', {}, recordView('col_posts')))).toBeNull();
   });
 
   it('lists products for a bound :handle product detail page', () => {
@@ -105,11 +107,11 @@ describe('dynamicPagePlan', () => {
       type: 'div',
       children: [{ id: 'pd', type: 'div', props: { 'data-component-kind': 'product-detail' }, bindings: { product: { mode: 'read', expression: 'commerce' } } }],
     };
-    expect(dynamicPagePlan(page('p', 'shop/:handle', {}, tree))).toEqual({ kind: 'commerce-products', param: 'handle' });
+    expect(dynamicPagePlan(SITE, page('p', 'shop/:handle', {}, tree))).toEqual({ kind: 'commerce-products', param: 'handle' });
   });
 
   it('leaves out a page with no detail node', () => {
-    expect(dynamicPagePlan(page('p', 'shop/:handle'))).toBeNull();
+    expect(dynamicPagePlan(SITE, page('p', 'shop/:handle'))).toBeNull();
   });
 });
 

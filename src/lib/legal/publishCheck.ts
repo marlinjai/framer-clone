@@ -3,10 +3,18 @@
 // What the publish flow warns about before a site goes live (plan
 // docs/plans/2026-10-23-published-site-essentials.md, decision 5): a site
 // that carries business data but has no Impressum (German law requires one
-// for a business site), and legal pages that still hold [placeholders]. A
+// for a business site), legal pages that still hold [placeholders], and reusable
+// components that will not show. A footer can be a component, and the Impressum
+// link goes with it, so what expansion leaves out has to reach the owner. A
 // warning, never a gate: the owner can publish anyway. PURE.
+//
+// Only expansion is checked here. A page that runs over its budget on rows from
+// data is not known until a visitor loads it, and is logged there.
 
 import type { BusinessInfo } from '@/lib/site/siteSettings';
+import type { ComponentDefinitions, RefusedDefinition } from '@/lib/components/definition';
+import type { ExpansionFailureKind } from '@/lib/components/expand';
+import { literalPageTree, type LiteralPageSource } from '@/lib/renderer/server/snapshotToComponentNode';
 import { LEGAL_KINDS, findLegalPage, type LegalKind, type LegalPageLike } from './legalPages';
 import { findPlaceholders } from './templates';
 
@@ -18,8 +26,24 @@ interface NodeLike {
 export interface PublishCheckPage extends LegalPageLike {
   id: string;
   metadata: { legalTemplate?: string; title: string };
-  /** The page's component tree (snapshot or instance with props and children). */
-  tree: NodeLike | null | undefined;
+  /** The stored page: placements are expanded from it. */
+  snapshot: LiteralPageSource;
+}
+
+/** The site's reusable components, as the check needs them. */
+export interface PublishCheckComponents {
+  definitions: ComponentDefinitions;
+  /** Stored definitions that could not be read, so their placements show nothing. */
+  refused: readonly RefusedDefinition[];
+}
+
+/** Something reusable that will not show on the live site. */
+export interface ComponentIssue {
+  /** The page it shows on, absent for a definition's own problem. */
+  pageId?: string;
+  /** The page's title, or the definition's id. */
+  title: string;
+  message: string;
 }
 
 export interface LegalPlaceholderIssue {
@@ -34,7 +58,17 @@ export interface PublishCheck {
   missingImpressum: boolean;
   /** Legal pages that still contain [placeholders]. */
   placeholders: LegalPlaceholderIssue[];
+  /** Placements that render nothing, and definitions that could not be read. */
+  components: ComponentIssue[];
 }
+
+const FAILURE_COPY: Record<ExpansionFailureKind, string> = {
+  'missing-definition': 'a component placed here no longer exists, so it shows nothing',
+  cycle: 'a component placed here contains itself, so it shows nothing',
+  'too-deep': 'components are nested too deeply here, so the innermost show nothing',
+  unrenderable: 'a component placed here cannot be read, so it shows nothing',
+  'over-budget': 'this page holds too much component content, so the later components show nothing',
+};
 
 /** True when the owner has entered any business data (the site is a business site). */
 export function hasBusinessData(b: BusinessInfo): boolean {
@@ -55,22 +89,41 @@ function countPlaceholders(root: NodeLike | null | undefined): number {
   return count;
 }
 
-export function checkBeforePublish(business: BusinessInfo, pages: PublishCheckPage[]): PublishCheck {
+export function checkBeforePublish(
+  business: BusinessInfo,
+  pages: PublishCheckPage[],
+  { definitions, refused }: PublishCheckComponents,
+): PublishCheck {
+  const trees = new Map(pages.map((page) => [page.id, literalPageTree(page.snapshot, definitions)]));
+
   const placeholders: LegalPlaceholderIssue[] = [];
   for (const kind of LEGAL_KINDS) {
     const page = findLegalPage(pages, kind);
     // Only pages made from the template: an owner's own page is theirs to word.
     if (!page || page.metadata.legalTemplate !== kind) continue;
-    const count = countPlaceholders(page.tree);
+    const count = countPlaceholders(trees.get(page.id)?.root as NodeLike | null | undefined);
     if (count > 0) placeholders.push({ kind, pageId: page.id, title: page.metadata.title, count });
   }
+
+  const components: ComponentIssue[] = refused.map(({ id, reason }) => ({
+    title: id,
+    message: `this component cannot be read, so it shows nothing wherever it is placed (${reason})`,
+  }));
+  for (const page of pages) {
+    const kinds = new Set(trees.get(page.id)?.budget.failures.map((failure) => failure.kind));
+    for (const kind of kinds) {
+      components.push({ pageId: page.id, title: page.metadata.title, message: FAILURE_COPY[kind] });
+    }
+  }
+
   return {
     missingImpressum: hasBusinessData(business) && !findLegalPage(pages, 'impressum'),
     placeholders,
+    components,
   };
 }
 
 /** True when there is something to warn about. */
 export function hasPublishIssues(check: PublishCheck): boolean {
-  return check.missingImpressum || check.placeholders.length > 0;
+  return check.missingImpressum || check.placeholders.length > 0 || check.components.length > 0;
 }

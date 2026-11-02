@@ -152,7 +152,7 @@ beforeEach(() => {
   deniedAction = null;
   process.env.EDITOR_HOST = 'app.lumitra.co';
   sites = [
-    { id: 'site_pub', workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra', name: 'Bakery', status: 'published' },
+    { id: 'site_pub', workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra', name: 'Bakery', status: 'published', updatedAt: new Date(0) },
     { id: 'site_draft', workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra', name: 'Scratch', status: 'draft' },
     { id: 'site_foreign', workspaceId: 'ws_other', tenantGroupId: 'tg_other', name: 'Theirs', status: 'published' },
   ];
