@@ -11,3 +11,4 @@ export { DisclosureButton } from './DisclosureButton';
 export { FIELD_CONTROL, FIELD_LABEL } from './field';
 export { parseStyleValue, formatStyleValue } from './DimensionInput';
 export { BreakpointSourceDot } from './BreakpointSourceDot';
+export { NormalOnly } from './NormalOnly';

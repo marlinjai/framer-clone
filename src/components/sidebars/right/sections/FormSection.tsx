@@ -306,7 +306,7 @@ export const FormSection = observer(({ component }: FormSectionProps) => {
   if (!kind) return null;
   const title = kind === 'form' ? 'Form' : kind === 'form-field' ? 'Field' : 'Submit button';
   return (
-    <CollapsibleSection title={title} icon={<ClipboardList size={14} />}>
+    <CollapsibleSection title={title} icon={<ClipboardList size={14} />} normalOnly>
       {kind === 'form' && <FormSettingsControls component={component} />}
       {kind === 'form-field' && <FieldControls component={component} />}
       {kind === 'form-submit' && <SubmitControls component={component} />}
