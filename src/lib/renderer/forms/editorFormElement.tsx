@@ -26,6 +26,7 @@ import {
   stripFormConfigProps,
   type FormKind,
 } from '@/lib/forms/definition';
+import { withoutClobberingId } from '@/lib/renderer/blockedNodes';
 import { FormFieldView } from './FormFieldView';
 
 const preventSubmit = (e: React.FormEvent) => e.preventDefault();
@@ -62,7 +63,8 @@ export function createEditorFormElement(
     // The text the host renderer resolved (inline text editing writes it), else a default.
     const label = typeof children === 'string' || typeof children === 'number' ? children : 'Send';
     delete (domProps as any).children;
-    return React.createElement('button', { ...domProps, type: 'button' }, label);
+    // Always a button, whatever the node's type.
+    return React.createElement('button', { ...withoutClobberingId('button', domProps), type: 'button' }, label);
   }
   delete (domProps as any).children;
   const form = enclosingForm(component);
