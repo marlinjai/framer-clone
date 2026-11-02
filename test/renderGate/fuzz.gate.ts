@@ -27,7 +27,7 @@ const BROWSERS: [string, BrowserType][] = [['chromium', chromium], ['webkit', we
  * leave canary showed. So a batch holds fewer of what a click can take away.
  */
 const MAX_NAVIGATING = 60;
-const mayLeave = (probe: Probe) => /^<(?:a|area|form|button|input)\b|^a stored form/i.test(probe.what);
+const mayLeave = (probe: Probe) => /^<(?:a|area|form|button|input)\b|^a stored form|^spelled/i.test(probe.what);
 
 function batches(probes: readonly Probe[]): Probe[][] {
   const out: Probe[][] = [];

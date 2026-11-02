@@ -101,6 +101,11 @@ describe('applyResponsiveStyles', () => {
     expect(props.style).toBeUndefined();
   });
 
+  it.each(['className', 'class'])('takes the names this step issues out of a stored %s', (name) => {
+    const root: ComponentNode = { type: 'div', id: 'n', props: { [name]: 'keep fc-other FC_X' } };
+    expect((applyResponsiveStyles(root, BPS).root.props as Record<string, unknown>)[name]).toBe('keep');
+  });
+
   it('logs dropped unsafe declarations once per page', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const root: ComponentNode = {

@@ -285,10 +285,11 @@ export function applyResponsiveStyles(
         }
         props[name] = value;
       }
-      if (typeof props.className === 'string') {
-        const className = withoutIssuedClasses(props.className);
-        if (className) props.className = className;
-        else delete props.className;
+      for (const name of ['className', 'class']) {
+        if (typeof props[name] !== 'string') continue;
+        const className = withoutIssuedClasses(props[name]);
+        if (className) props[name] = className;
+        else delete props[name];
       }
       const classes: string[] = [];
       const stored = props.style;

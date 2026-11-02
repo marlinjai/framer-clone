@@ -159,6 +159,11 @@ describe('blocked nodes', () => {
     expect(editor(type, { name, alt: 'x' })).not.toContain('name=');
   });
 
+  it.each(['ID', 'Id'])('refuses <img %s=createElement>, which would replace a method of document', (name) => {
+    expect(published({ type: 'img', props: { [name]: 'createElement', name: 'kept', alt: 'x' } }).toLowerCase()).not.toContain('createelement');
+    expect(published({ type: 'img', props: { id: 'ok', [name]: 'createElement', alt: 'x' } })).toContain('id="ok"');
+  });
+
   it('keeps a member name as an ordinary id off an img', () => {
     expect(published({ type: 'label', props: { id: 'name' } })).toContain('id="name"');
     expect(published({ type: 'section', props: { id: 'links' } })).toContain('id="links"');
@@ -170,6 +175,37 @@ describe('blocked nodes', () => {
   ])('refuses <%s id=%s>, which replaces a member of its form', (type, id) => {
     expect(published({ type, props: { id, alt: 'x' } })).not.toContain('id=');
     expect(editor(type, { id, alt: 'x' })).not.toContain('id=');
+  });
+
+  it.each(['ACTION', 'Action', 'METHOD', 'CLASS', 'Class', 'CLASSNAME', 'STYLE', 'CHILDREN', 'KEY', 'REF', 'ID', 'NAME', 'HREF', 'TYPE', 'FORM', 'FORMACTION', 'FormMethod', 'FORMTARGET', 'FORMENCTYPE', 'DATA-FORM-KIND', 'DATA-COMPONENT-KIND'])(
+    'refuses %s, another spelling of a name a renderer reads',
+    (name) => {
+      expect(published({ type: 'div', props: { [name]: 'x', id: 'keep' } })).toBe('<div id="keep"></div>');
+      expect(editor('div', { [name]: 'x', id: 'keep' })).toBe('<div id="keep"></div>');
+    },
+  );
+
+  it('keeps stored names as written, in the spellings React and SVG use', () => {
+    const svg = published({ type: 'svg', props: { viewBox: '0 0 9 9', preserveAspectRatio: 'none' } });
+    expect(svg).toContain('viewBox="0 0 9 9"');
+    expect(svg).toContain('preserveAspectRatio="none"');
+    expect(published({ type: 'path', props: { strokeWidth: 2, strokeLinecap: 'round' } })).toBe('<path stroke-width="2" stroke-linecap="round"></path>');
+    expect(published({ type: 'form', props: { noValidate: true, encType: 'text/plain' } })).toContain('encType="text/plain"');
+    expect(published({ type: 'button', props: { formAction: '/x', formMethod: 'post' } })).toContain('formAction="/x"');
+    expect(published({ type: 'div', props: { className: 'a' } })).toBe('<div class="a"></div>');
+    expect(published({ type: 'div', props: { class: 'a' } })).toContain('class="a"');
+  });
+
+  it('keeps a live form on its own address, whatever a stored name spells', () => {
+    const html = published({ type: 'div', props: { 'data-form-kind': 'form', ACTION: 'https://elsewhere.example/', Method: 'get' } });
+    expect(html.toLowerCase()).not.toContain('elsewhere');
+    expect(html.match(/action=/gi)).toHaveLength(1);
+    expect(html.match(/method=/gi)).toHaveLength(1);
+  });
+
+  it.each(['form', 'formAction', 'formaction', 'formMethod', 'formmethod', 'formTarget', 'formEncType', 'formenctype'])('drops %s on the editor surfaces only', (name) => {
+    expect(editor('button', { [name]: 'x' })).toBe('<button></button>');
+    expect(published({ type: 'button', props: { [name]: 'x' } }).toLowerCase()).toContain(name.toLowerCase());
   });
 
   it.each(['ID', 'Id', 'iD'])('refuses the member id in the spelling %s', (name) => {

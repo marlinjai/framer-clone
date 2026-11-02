@@ -396,6 +396,37 @@ function formMemberProbes(full: boolean): Probe[] {
   ]);
 }
 
+/**
+ * A name in another case. Markup does not care, so `ACTION` is `action`, and the first
+ * of the two wins where a renderer writes its own value after a stored one.
+ */
+function spellingProbes(): Probe[] {
+  const list: Probe[] = [];
+  const marked = (kind: string, props: ProbeNode['props']) => ({ 'data-form-kind': kind, ...props });
+  const submit = (id: string): ProbeNode => ({ id: `${id}s`, type: 'button', props: marked('form-submit', { children: 'x' }) });
+  for (const name of ['ACTION', 'Action', 'aCTION']) {
+    list.push(hostile(`a stored form with ${name} elsewhere`, 'div', [], (id) => marked('form', { [name]: `${FOREIGN}/${id}` }), (id) => [submit(id)]));
+  }
+  for (const name of ['METHOD', 'ENCTYPE', 'TARGET']) {
+    list.push(hostile(`a stored form with ${name}`, 'div', [], () => marked('form', { [name]: name === 'TARGET' ? '_blank' : 'get' }), (id) => [submit(id)]));
+  }
+  for (const name of ['FORMACTION', 'FormAction', 'fORMaCTION']) {
+    list.push(hostile(`a stored form with a button ${name} elsewhere`, 'div', [], () => marked('form', {}), (id) => [
+      { id: `${id}s`, type: 'button', props: { [name]: `${FOREIGN}/${id}`, type: 'submit', children: 'x' } },
+    ]));
+  }
+  for (const name of ['ID', 'Id', 'iD']) {
+    list.push(hostile(`<img ${name}=createElement> with a name`, 'img', [], () => ({ [name]: 'createElement', name: 'kept', src: '/x.png', alt: '' })));
+  }
+  // The whole vocabulary, by what could run or leave, in both spellings on what acts on an address.
+  for (const name of [...RENDERED_ATTRIBUTES].filter((attribute) => upper(attribute) !== attribute)) {
+    for (const spelled of [upper(name), mixed(name)]) {
+      for (const type of ['a', 'form']) list.push(hostile(`spelled ${spelled} on <${type}>`, type, [], (id) => ({ [spelled]: VALUES.js(id) })));
+    }
+  }
+  return list;
+}
+
 /** A paint or filter attribute reaching a file. A reference inside the page is how SVG works. */
 function cssReferenceProbes(): Probe[] {
   // Not `filter`: the model reads that as a style on the canvas, where an image may load.
@@ -475,6 +506,7 @@ export function buildProbes(full: boolean): Probe[] {
     ...rendererAttributeProbes(),
     ...nameProbes(full),
     ...formMemberProbes(full),
+    ...spellingProbes(),
     ...cssReferenceProbes(),
     ...renderedNameProbes(),
     ...componentTypeProbes(),

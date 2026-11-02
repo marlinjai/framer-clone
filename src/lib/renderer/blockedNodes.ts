@@ -12,7 +12,7 @@
 import { REVIEWED_ANIMATED_ATTRIBUTES } from '@/lib/ai/pageGen/reviewedVocabulary';
 import { FORM_CONFIG_PROPS, FORM_SHADOWING_NAMES } from '@/lib/forms/definition';
 import { DOM_MEMBER_NAMES } from '@/lib/renderer/domMemberNames.generated';
-import { isRenderedAttribute, isRenderedTag } from '@/lib/renderer/renderVocabulary';
+import { isOtherSpelling, isRenderedAttribute, isRenderedTag } from '@/lib/renderer/renderVocabulary';
 import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { STICKY_CTA_PROP_KEYS } from '@/lib/stickyCta/stickyCta';
 import { SAFE_PROPERTY, UNSAFE_VALUE, cssValueText, isContainedValue } from '@/lib/responsive/responsiveCss';
@@ -112,7 +112,7 @@ export function isDroppedProp(name: string, value: unknown): boolean {
   if (name === 'dangerouslySetInnerHTML') return true;
   if (typeof value === 'function') return false;
   const lower = name.toLowerCase();
-  return !isRenderedAttribute(lower) || isUnsafeValue(lower, value);
+  return isOtherSpelling(name) || !isRenderedAttribute(lower) || isUnsafeValue(lower, value);
 }
 
 /** The rule alone, for the panel: whether a node with this tag renders nothing. */
@@ -218,13 +218,12 @@ export function isDroppedId(tag: unknown, id: unknown): boolean {
   return name === 'img' || name === 'image' ? DOM_MEMBERS.has(id) : FORM_NAMED_TAGS.has(name) && FORM_SHADOWING_NAMES.has(id);
 }
 
-/** `props` without an `id` that replaces a member, in any spelling: React writes `ID` as it stands. */
+/** `props` without an `id` that replaces a member. Another spelling of `id` is refused before this. */
 export function withoutClobberingId(tag: unknown, props: Record<string, unknown>): Record<string, unknown> {
-  const names = Object.keys(props);
-  const dropped = names.filter((name) => name.toLowerCase() === 'id' && isDroppedId(tag, props[name]));
-  if (dropped.length === 0) return props;
-  for (const name of dropped) warnOnce(`the id ${String(props[name])}`);
-  return Object.fromEntries(names.filter((name) => !dropped.includes(name)).map((name) => [name, props[name]]));
+  if (!isDroppedId(tag, props.id)) return props;
+  const { id, ...rest } = props;
+  warnOnce(`the id ${String(id)}`);
+  return rest;
 }
 
 /** `props` without its blocked keys and unsafe style; the same object when there are none. */
@@ -245,7 +244,7 @@ export function withoutBlockedProps(props: Record<string, unknown>): Record<stri
 // site's own origin.
 const EDITOR_SURFACE_DROPPED: ReadonlySet<string> = new Set([
   'popover', 'popovertarget', 'popovertargetaction', 'command', 'commandfor',
-  'action', 'formaction', 'formtarget', 'ping',
+  'action', 'form', 'formaction', 'formenctype', 'formmethod', 'formtarget', 'ping',
 ]);
 
 /** `props` as the editor surfaces render them; the same object when nothing is dropped. */
