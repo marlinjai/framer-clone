@@ -596,10 +596,17 @@ export function renderReport(score: Score): string {
   return lines.join('\n');
 }
 
-export function writeScore(score: Score): void {
-  fs.mkdirSync(REPORT_DIR, { recursive: true });
-  fs.writeFileSync(path.join(REPORT_DIR, 'latest.json'), `${JSON.stringify(score, null, 2)}\n`);
-  fs.writeFileSync(path.join(REPORT_DIR, 'latest.md'), renderReport(score));
+/**
+ * Writes latest.json and latest.md into `dir`. A run writes them beside its probe results
+ * (test/score/.out, not committed); only the run on main publishes them to
+ * docs/primitives-score (run.ts --publish, .github/workflows/score.yml), so a pull request
+ * never carries the report and never conflicts on it. What a pull request changes in the
+ * score shows in its baseline.json rows.
+ */
+export function writeScore(score: Score, dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'latest.json'), `${JSON.stringify(score, null, 2)}\n`);
+  fs.writeFileSync(path.join(dir, 'latest.md'), renderReport(score));
 }
 
 const BASELINE_FILE = () => path.join(REPORT_DIR, 'baseline.json');
