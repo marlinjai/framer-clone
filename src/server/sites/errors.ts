@@ -88,6 +88,24 @@ export class InvalidPageSlugError extends SiteRepositoryError {
 }
 
 /**
+ * The settings or a page name an uploaded image (`/site-images/<sha256>.<ext>`)
+ * this site does not store: typed by hand, copied from another site, or deleted
+ * since it was chosen. Nothing was written. 422.
+ */
+export class SiteImageMissingError extends SiteRepositoryError {
+  readonly path: string;
+
+  constructor(path: string) {
+    super(
+      'site_image_missing',
+      `The image ${path} is not stored for this site (it may have been deleted). Upload the image again, or remove it from the settings, then save.`,
+      422,
+    );
+    this.path = path;
+  }
+}
+
+/**
  * A rename lost a race: the caller named the project it expected to rename
  * (`expectedName`), and the stored name is different, because someone renamed
  * it in the meantime. Nothing was written. Carries the current name so the

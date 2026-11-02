@@ -36,6 +36,7 @@ export {
   SiteVersionRequiredError,
   ErasePreviewStaleError,
   NothingToEraseError,
+  SiteImageMissingError,
   siteRepositoryErrorResponse,
 } from './errors';
 

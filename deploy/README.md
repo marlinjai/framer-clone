@@ -34,6 +34,17 @@ development). Phase 1 of the RUNBOOK has explicit records for `app.lumitra.co` a
 `demo.sites.lumitra.co`; phase 2 adds the `*.sites.lumitra.co` wildcard so every
 publish gets a live address.
 
+**No cache may sit in front of site hosts without a purge.** Every one of these
+records, and the custom-domain target, is DNS only (`proxied = false` in the infra
+repository's `deployments/framer-clone/main.tf`), and custom domains must point at
+the origin's address. Uploaded site images (`/site-images/*`, the favicon and
+sharing images) are served `public, max-age=31536000, immutable`, and deleting an
+unused one is correct only because nothing between the visitor and this app keeps a
+copy. Turning on Cloudflare proxying, or any other edge cache, for `*.sites.lumitra.co`,
+`demo.sites.lumitra.co` or customer domains therefore needs a purge of
+`/site-images/<file>` on every host of the site whenever an image is deleted
+(`DELETE /api/projects/<id>/images/<sha256>`), before or together with that change.
+
 ### Who can use the editor
 
 The editor works per company (an auth-brain tenant) and only for companies that

@@ -46,7 +46,9 @@ import {
   SiteVersionRequiredError,
   ErasePreviewStaleError,
   NothingToEraseError,
+  SiteImageMissingError,
 } from './errors';
+import { namedSiteImages } from '@/lib/site/siteImages';
 import { findProjectSlugProblem } from '@/lib/pages/slug';
 import { pickPrimaryHost } from './primaryHost';
 import { nextSiteRedirects, parseSiteRedirects } from '@/lib/pages/redirects';
@@ -534,6 +536,25 @@ export class SiteRepository {
       storedSlugs,
     );
     if (problem) throw new InvalidPageSlugError(problem.pageId, problem.code, problem.message);
+
+    // Uploaded images (src/lib/site/siteImages.ts): each one the settings or a
+    // page names must be stored for THIS site, or a visitor would get a broken
+    // icon or sharing image. Read in this transaction, so an image deleted by a
+    // concurrent delete (which takes this site row first, src/server/sites/
+    // siteImages.ts) cannot slip through.
+    const named = namedSiteImages(
+      persisted.siteSettings,
+      persisted.pages.map((p) => (p.snapshot as { metadata?: { ogImage?: unknown } }).metadata?.ogImage),
+    );
+    if (named.size > 0) {
+      const stored = await tx.siteImage.findMany({
+        where: { siteId: persisted.siteId, sha256: { in: [...named.keys()] } },
+        select: { sha256: true },
+      });
+      const have = new Set(stored.map((s) => s.sha256));
+      const missing = [...named].find(([sha256]) => !have.has(sha256));
+      if (missing) throw new SiteImageMissingError(missing[1]);
+    }
 
     // A site published before revisions existed is served from these very rows
     // (publicResolver.ts). Freeze them before they change: the save goes on
