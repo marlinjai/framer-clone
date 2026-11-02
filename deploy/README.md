@@ -30,7 +30,10 @@ arm64 runner.
 | `<label>.PUBLIC_SITE_BASE_HOST` (production: `<label>.sites.lumitra.co`) | the published site whose `SiteDomain.subdomain` is `<label>`, if that site is `published`; anything else is a 404 |
 
 With `EDITOR_HOST` unset, every host counts as the editor host (local
-development). Phase 1 of the RUNBOOK has explicit records for `app.lumitra.co` and
+development). `localhost` and `127.0.0.1` count as the editor host only outside
+production: in production they are published hosts, so a server action that Next
+forwards between workers (that hop arrives as `Host: localhost:<port>`) gets a 404;
+keep each server action imported by the pages that call it. Phase 1 of the RUNBOOK has explicit records for `app.lumitra.co` and
 `demo.sites.lumitra.co`; phase 2 adds the `*.sites.lumitra.co` wildcard so every
 publish gets a live address.
 

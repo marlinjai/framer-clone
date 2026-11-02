@@ -19,7 +19,7 @@
 //     `/editor`, `/api/sites`, `/api/admin` patterns are gone;
 //   - a published page carries the report-only policy and nothing else does:
 //     a page path on the editor host is matched but never gated or marked.
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { middleware, config } from '../middleware';
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
@@ -359,8 +359,14 @@ describe('middleware: the report-only policy of published pages', () => {
 
   it('does not mark an API answer on a published host, though the matcher brings API routes here', async () => {
     process.env.EDITOR_HOST = EDITOR;
-    for (const path of ['/api/cms/rows', '/api/commerce/products', '/api/forms/submit', '/api/health', '/api/csp-report']) {
-      const res = await middleware(req(`https://${PUBLISHED}${path}`, { host: PUBLISHED }));
+    for (const [method, path] of [
+      ['GET', '/api/cms/collections/c1/rows'],
+      ['GET', '/api/commerce/products'],
+      ['POST', '/api/forms/submit'],
+      ['GET', '/api/health'],
+      ['POST', '/api/csp-report'],
+    ]) {
+      const res = await middleware(new NextRequest(`https://${PUBLISHED}${path}`, { method, headers: { host: PUBLISHED } }));
       expect(isNext(res), path).toBe(true);
       expect(policy(res), path).toBeNull();
     }
@@ -430,16 +436,19 @@ describe('middleware: the report-only policy of published pages', () => {
     expect(matchesPublishedPages('/file.svg')).toBe(true);
   });
 
-  it('marks /preview on a published host and never on the editor host', async () => {
+  it('refuses /preview on a published host with an unmarked 404, and serves it unmarked on the editor host', async () => {
     process.env.EDITOR_HOST = EDITOR;
-    expect(policy(await middleware(req(`https://${PUBLISHED}/preview`, { host: PUBLISHED })))).toBe(PUBLISHED_REPORT_ONLY_POLICY);
+    const published = await middleware(req(`https://${PUBLISHED}/preview`, { host: PUBLISHED }));
+    expect(published.status).toBe(404);
+    expect(isNext(published)).toBe(false);
+    expect(policy(published)).toBeNull();
     const editor = await middleware(req(`https://${EDITOR}/preview`, { host: EDITOR }));
     expect(policy(editor)).toBeNull();
     expect(isNext(editor)).toBe(true);
     expect(editor.headers.get('location')).toBeNull();
   });
 
-  it('leaves API routes, build output, what is inside /images, /fonts and /site-images, and the per-host files unmatched', () => {
+  it('leaves API routes (matched by their own entry), build output, one site image and the per-host files out of this entry', () => {
     for (const path of [
       '/api/cms/x',
       '/api/commerce/orders',
@@ -448,8 +457,6 @@ describe('middleware: the report-only policy of published pages', () => {
       '/api/forms/submit',
       '/_next/static/chunk.js',
       '/_next/image',
-      '/fonts/inter/5/a.woff2',
-      '/images/a.png',
       `/site-images/${'a'.repeat(64)}.png`,
       '/favicon.ico',
       '/robots.txt',
@@ -457,6 +464,29 @@ describe('middleware: the report-only policy of published pages', () => {
       '/site.webmanifest',
     ]) {
       expect(matchesPublishedPages(path), path).toBe(false);
+    }
+  });
+
+  it('matches /images/*, /fonts/* and deeper /site-images paths: a missing file there is a site catch-all page path', () => {
+    for (const path of ['/fonts/inter/5/a.woff2', '/images/a.png', '/images/x', '/fonts/x', '/site-images/a/b', '/_nextx']) {
+      expect(matchesPublishedPages(path), path).toBe(true);
+    }
+  });
+
+  it('refuses a server action and a post on those paths on a published host, and lets a read through with the policy', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    for (const path of ['/images/x', '/fonts/x', '/site-images/a/b']) {
+      for (const method of ['GET', 'POST']) {
+        const action = await middleware(
+          new NextRequest(`https://${PUBLISHED}${path}`, { method, headers: { host: PUBLISHED, 'next-action': 'a1b2c3' } }),
+        );
+        expect(action.status, `${method} ${path} with next-action`).toBe(404);
+      }
+      const post = await middleware(new NextRequest(`https://${PUBLISHED}${path}`, { method: 'POST', headers: { host: PUBLISHED } }));
+      expect(post.status, `POST ${path}`).toBe(404);
+      const read = await middleware(req(`https://${PUBLISHED}${path}`, { host: PUBLISHED }));
+      expect(isNext(read), `GET ${path}`).toBe(true);
+      expect(policy(read), `GET ${path}`).not.toBeNull();
     }
   });
 });
@@ -617,9 +647,216 @@ describe('middleware: machine door hardening', () => {
     }
   });
 
-  it('forwards a cookie request on those paths untouched', async () => {
+  it('on a published host, a bearer opens nothing the allowlist does not name, and spellings of the editor plane 404 as JSON', async () => {
     process.env.EDITOR_HOST = EDITOR;
-    const res = await middleware(call('/about', { cookie: 'lumitra_session=valid' }, { method: 'GET', host: PUBLISHED }));
+    const both = { authorization: BEARER, cookie: 'lumitra_session=valid' };
+    for (const path of ['/api/mcp', '/api/MCP', '/API/Mcp', '//api/mcp', '/api/%6Dcp/stream', '/API/PROJECTS', '/api/%70rojects/save']) {
+      const variants: Record<string, string>[] = [both, { cookie: 'lumitra_session=valid' }, {}];
+      for (const headers of variants) {
+        const res = await middleware(call(path, headers, { host: PUBLISHED }));
+        expect(res.status, path).toBe(404);
+        expect((await res.json()).error.code, path).toBe('not_found');
+      }
+    }
+    for (const path of ['/Projects', '/PROJECTS/p1', '/%70rojects/p1/preview']) {
+      const res = await middleware(call(path, both, { method: 'GET', host: PUBLISHED }));
+      expect(res.status, path).toBe(404);
+      expect(isNext(res)).toBe(false);
+    }
+    // A bearer on an editor-only route that is not in the editor-plane list is
+    // refused by the allowlist all the same.
+    for (const path of ['/api/catalog/products', '/api/payments/stripe/account', '/preview']) {
+      const res = await middleware(call(path, both, { method: 'GET', host: PUBLISHED }));
+      expect(res.status, path).toBe(404);
+    }
+    // What the allowlist does serve still goes on without the cookies.
+    const form = await middleware(call('/api/forms/submit', both, { host: PUBLISHED }));
+    expect(isNext(form)).toBe(true);
+    expect(forwarded(form)).not.toContain('cookie');
+  });
+
+  it('forwards a cookie request on the editor host untouched', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(call('/about', { cookie: 'lumitra_session=valid' }, { method: 'GET' }));
+    expect(isNext(res)).toBe(true);
     expect(res.headers.get('x-middleware-override-headers')).toBeNull();
+  });
+});
+
+describe('middleware: a forwarded server action (Host: localhost) fails closed in production', () => {
+  // Next forwards a server action its own bundle lacks to the worker holding
+  // it; Node 22's fetch drops the caller's Host, so that hop arrives as
+  // `Host: localhost:<port>`. In production that is a published host, and the
+  // action must get a 404, never run (src/lib/editorHost.ts).
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('refuses a next-action request with Host: localhost:<port> in production, on editor and page paths', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    vi.stubEnv('NODE_ENV', 'production');
+    for (const host of ['localhost:3000', '127.0.0.1:3000']) {
+      for (const path of ['/projects/p1', '/projects', '/about', '/']) {
+        const res = await middleware(
+          new NextRequest(`http://${host}${path}`, {
+            method: 'POST',
+            headers: { host, 'next-action': 'a1b2c3', cookie: 'lumitra_session=valid', 'sec-fetch-site': 'same-origin' },
+          }),
+        );
+        expect(res.status, `${host} ${path}`).toBe(404);
+        expect(isNext(res)).toBe(false);
+      }
+    }
+  });
+
+  it('still runs it on localhost outside production (development)', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    vi.stubEnv('NODE_ENV', 'development');
+    const res = await middleware(
+      new NextRequest('http://localhost:3000/projects/p1', {
+        method: 'POST',
+        headers: { host: 'localhost:3000', 'next-action': 'a1b2c3', cookie: 'lumitra_session=valid', 'sec-fetch-site': 'same-origin' },
+      }),
+    );
+    expect(isNext(res)).toBe(true);
+  });
+});
+
+describe('middleware: the cross-origin check compares the Origin with the Host header', () => {
+  const post = (headers: Record<string, string>) =>
+    new NextRequest(`https://${EDITOR}/api/projects/save`, {
+      method: 'POST',
+      headers: { host: EDITOR, cookie: 'lumitra_session=valid', ...headers },
+    });
+
+  it('refuses another origin even when X-Forwarded-Host claims to be that origin', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(post({ origin: 'https://evil.example', 'x-forwarded-host': 'evil.example' }));
+    expect(res.status).toBe(403);
+    expect((await res.json()).error.code).toBe('cross_origin_refused');
+  });
+
+  it('lets the editor write to itself whatever X-Forwarded-Host says', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(post({ origin: `https://${EDITOR}`, 'x-forwarded-host': 'evil.example' }));
+    expect(isNext(res)).toBe(true);
+  });
+});
+
+describe('middleware: OPTIONS, RSC requests and trailing slashes on a published host', () => {
+  const call = (path: string, method = 'GET', headers: Record<string, string> = {}) =>
+    new NextRequest(`https://${PUBLISHED}${path}`, { method, headers: { host: PUBLISHED, ...headers } });
+
+  it('answers OPTIONS with a 404 on a published host (no allowlisted route lists it) and passes it on the editor host', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    for (const path of ['/', '/about', '/api/forms/submit', '/api/commerce/products', '/api/commerce/orders']) {
+      expect((await middleware(call(path, 'OPTIONS'))).status, path).toBe(404);
+    }
+    const editor = await middleware(
+      new NextRequest(`https://${EDITOR}/api/commerce/products`, { method: 'OPTIONS', headers: { host: EDITOR } }),
+    );
+    expect(isNext(editor)).toBe(true);
+  });
+
+  it('serves an RSC request (?_rsc= or RSC: 1) to an allowed page as a read, with the cookie filter, and refuses it on an editor page', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const cookie = 'lumitra_session=valid';
+    for (const [path, headers] of [
+      ['/about?_rsc=abc12', {}],
+      ['/about', { rsc: '1' }],
+      ['/products/classic-tee?_rsc=x', { rsc: '1', 'next-router-state-tree': '%5B%5D' }],
+    ] as [string, Record<string, string>][]) {
+      const res = await middleware(call(path, 'GET', { cookie, ...headers }));
+      expect(isNext(res), path).toBe(true);
+      expect((res.headers.get('x-middleware-override-headers') ?? '').split(','), path).not.toContain('cookie');
+    }
+    const home = await middleware(call('/?_rsc=abc12', 'GET', { rsc: '1' }));
+    expect(rewriteTarget(home)).not.toBeNull();
+    for (const [path, headers] of [
+      ['/preview?_rsc=abc12', {}],
+      ['/projects', { rsc: '1' }],
+      ['/about?_rsc=abc12', { 'next-action': 'a1b2c3' }],
+    ] as [string, Record<string, string>][]) {
+      expect((await middleware(call(path, 'GET', headers))).status, path).toBe(404);
+    }
+  });
+
+  it('treats a trailing slash on an API entry like the entry itself', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    expect(isNext(await middleware(call('/api/forms/submit/', 'POST')))).toBe(true);
+    expect(isNext(await middleware(call('/api/commerce/products/', 'GET')))).toBe(true);
+    expect(isNext(await middleware(call('/api/commerce/orders/o1/pay/', 'POST')))).toBe(true);
+    for (const [path, method] of [
+      ['/api/forms/submit/', 'GET'],
+      ['/api/cms/collections/', 'POST'],
+      ['/api/mcp/', 'POST'],
+      ['/api/projects/', 'GET'],
+      ['/api/catalog/products/', 'GET'],
+      ['/api/payments/stripe/webhook/', 'POST'],
+    ]) {
+      const res = await middleware(call(path, method));
+      expect(res.status, `${method} ${path}`).toBe(404);
+      expect((await res.json()).error.code).toBe('not_found');
+    }
+  });
+});
+
+describe('middleware: a published host forwards only the cookies the published plane reads', () => {
+  const call = (path: string, cookie: string | null, init: { method?: string } = {}) =>
+    new NextRequest(`https://${PUBLISHED}${path}`, {
+      method: init.method ?? 'GET',
+      headers: cookie === null ? { host: PUBLISHED } : { host: PUBLISHED, cookie },
+    });
+  const overridden = (res: Response) => (res.headers.get('x-middleware-override-headers') ?? '').split(',').filter(Boolean);
+  const forwardedCookie = (res: Response) => res.headers.get('x-middleware-request-cookie');
+  const APEX = 'lumitra_session=valid; framer_company=t1; framer_ws=w1; lumitra_variants_pub=a';
+
+  it('drops the apex session, the company selectors and every other cookie, on pages, the home and the allowlisted APIs', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const cases: [string, string][] = [
+      ['/about', 'GET'],
+      ['/', 'GET'],
+      ['/api/forms/submit', 'POST'],
+      ['/api/commerce/orders', 'POST'],
+      ['/api/commerce/orders/o1/pay', 'POST'],
+      ['/api/cms/collections', 'GET'],
+      ['/api/commerce/products', 'GET'],
+    ];
+    for (const [path, method] of cases) {
+      const res = await middleware(call(path, APEX, { method }));
+      expect(isNext(res) || rewriteTarget(res) !== null, path).toBe(true);
+      // The forwarded header set (x-middleware-override-headers) no longer has a cookie.
+      expect(overridden(res), path).toContain('host');
+      expect(overridden(res), path).not.toContain('cookie');
+      expect(forwardedCookie(res), path).toBeNull();
+    }
+  });
+
+  it(`keeps ${MAPS_CONSENT_COOKIE} and nothing else, and still reads it for the policy`, async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(call('/about', `lumitra_session=valid; ${MAPS_CONSENT_COOKIE}=1; framer_company=t1`));
+    expect(forwardedCookie(res)).toBe(`${MAPS_CONSENT_COOKIE}=1`);
+    expect(res.headers.get(CSP_REPORT_ONLY_HEADER)).toBe(PUBLISHED_REPORT_ONLY_POLICY_MAPS);
+  });
+
+  it('touches nothing when only kept cookies, or none, arrive', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    for (const cookie of [`${MAPS_CONSENT_COOKIE}=1`, null]) {
+      const res = await middleware(call('/about', cookie));
+      expect(isNext(res)).toBe(true);
+      expect(res.headers.get('x-middleware-override-headers')).toBeNull();
+    }
+  });
+
+  it('drops every cookie, the kept one too, from a bearer request', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(
+      new NextRequest(`https://${PUBLISHED}/about`, {
+        headers: { host: PUBLISHED, authorization: 'Bearer not-a-real-key', cookie: `${MAPS_CONSENT_COOKIE}=1; lumitra_session=v` },
+      }),
+    );
+    expect(overridden(res)).toContain('authorization');
+    expect(overridden(res)).not.toContain('cookie');
+    expect(forwardedCookie(res)).toBeNull();
   });
 });
