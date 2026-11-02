@@ -44,7 +44,8 @@ import {
   type StoredRule,
 } from '@/lib/rules/rules';
 import { isRootStyleKey } from '@/lib/rules/rootProperties';
-import { findRuleIndex, moveRuleTo, namedState, namedStateOf, orderRules } from '@/lib/rules/states';
+import { findRuleIndex, moveRuleTo, namedState, namedStateOf, orderRules, stateRuleId } from '@/lib/rules/states';
+import type { StateDefinition } from '@/lib/components/definition';
 import { compactBehaviour } from '@/lib/behaviour/format';
 
 export type PropsRecord = Record<string, any>;
@@ -132,7 +133,7 @@ function addStoredRules(node: { type: string; props?: Record<string, any> | null
     if (!parsed.ok) return parsed;
     list.push(stored);
   }
-  node.props = withRules(currentProps, orderRules(list));
+  node.props = withRules(currentProps, orderRules(list, owningDefinitionStates(node).map((state) => state.id)));
   return { ok: true };
 }
 
@@ -164,6 +165,24 @@ function findPageBreakpoints(node: unknown): PageBreakpoint[] {
           label: (v.label as string | undefined) || 'Breakpoint',
         })),
       ) as PageBreakpoint[];
+    }
+  }
+  return [];
+}
+
+/**
+ * The states of the component definition holding `node`, in their order, or an
+ * empty list on a page. Duck-typed for the reason above: a definition is the
+ * parent of its page, and has `states` and `inputs` beside it.
+ */
+function owningDefinitionStates(node: unknown): readonly StateDefinition[] {
+  let current: any = node;
+  while (current && hasMstParent(current)) {
+    current = getParent(current);
+    if (current && typeof current === 'object' && 'canvasNodes' in current && 'viewportNodes' in current) {
+      if (!hasMstParent(current)) return [];
+      const owner: any = getParent(current);
+      return owner && owner.page === current && Array.isArray(owner.states) && 'inputs' in owner ? owner.states : [];
     }
   }
   return [];
@@ -281,6 +300,11 @@ const ComponentModel: any = ComponentBase
     /** The breakpoints of the page this component is on, largest first (empty when not on a page). */
     get pageBreakpoints(): PageBreakpoint[] {
       return findPageBreakpoints(self);
+    },
+
+    /** The states of the component definition this node is in, in their order. Empty on a page. */
+    get componentStates(): readonly StateDefinition[] {
+      return owningDefinitionStates(self);
     },
   }))
   .views(self => ({
@@ -613,6 +637,10 @@ const ComponentModel: any = ComponentBase
     //
     // `ruleId` may name a state that has no rule yet ('hover'), which the first
     // value creates in its place in the list. Clearing a value there stores nothing.
+    // Inside a component definition it may also name one of the component's states
+    // (`state-<id>`): that rule stays `selector: '&'` with `componentState`, which
+    // the parser refuses until expansion compiles it, and it sorts after every other
+    // rule in the order of the component's states.
     setRuleStyle(ruleId: string, property: string, value: any, breakpointId?: string): RuleWrite {
       const refusal = refuseRules(self.type);
       if (refusal) return refusal;
@@ -621,8 +649,10 @@ const ComponentModel: any = ComponentBase
       const index = findRuleIndex(rules, ruleId);
       const existing = rules[index];
       if (existing && isDefinitionRule(existing)) return { ok: false, reason: 'A definition is edited as text.' };
-      const state = namedState(ruleId);
-      if (!existing && !state) return { ok: false, reason: 'That rule no longer exists.' };
+      const componentStates = self.componentStates;
+      const componentState = componentStates.find((candidate) => stateRuleId(candidate.id) === ruleId);
+      const state = componentState ? undefined : namedState(ruleId);
+      if (!existing && !state && !componentState) return { ok: false, reason: 'That rule no longer exists.' };
       if (!existing && rules.length >= MAX_RULES_PER_NODE) return { ok: false, reason: `A node holds at most ${MAX_RULES_PER_NODE} rules.` };
       // A rule that does not parse is dropped whole, so one bad value here would
       // silently take every other value of the state off the page.
@@ -644,9 +674,11 @@ const ComponentModel: any = ComponentBase
         ? undefined
         : existing
           ? { ...(existing as SelectorRule), style }
-          : { id: state!.id, selector: state!.selector, ...(state!.at ? { at: [...state!.at] } : {}), style };
+          : componentState
+            ? ({ id: ruleId, componentState: componentState.id, selector: '&', style } as SelectorRule)
+            : { id: state!.id, selector: state!.selector, ...(state!.at ? { at: [...state!.at] } : {}), style };
       const list = existing ? rules.flatMap((rule, i) => (i !== index ? [rule] : updated ? [updated] : [])) : [...rules, updated!];
-      self.props = withRules(currentProps, orderRules(list));
+      self.props = withRules(currentProps, orderRules(list, componentStates.map((candidate) => candidate.id)));
       return { ok: true };
     },
 
@@ -691,7 +723,10 @@ const ComponentModel: any = ComponentBase
       const stored = { ...rule, id: rules[index].id } as StoredRule;
       const parsed = parseRule(stored, { pageRoot: isPageRoot(self) });
       if (!parsed.ok) return parsed;
-      self.props = withRules(currentProps, orderRules(rules.map((existing, i) => (i === index ? stored : existing))));
+      self.props = withRules(
+        currentProps,
+        orderRules(rules.map((existing, i) => (i === index ? stored : existing)), self.componentStates.map((state) => state.id)),
+      );
       return { ok: true };
     },
 
