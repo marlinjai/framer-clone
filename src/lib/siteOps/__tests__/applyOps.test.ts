@@ -200,7 +200,7 @@ describe('applyOperations: refusals write nothing', () => {
   });
 
   it('rejects text with a long dash, markup or on a container', async () => {
-    expect((await refused([{ op: 'updateText', nodeId: 'title', text: 'Fresh — daily' }]))[0].reason).toBeTruthy();
+    expect((await refused([{ op: 'updateText', nodeId: 'title', text: 'Fresh \u2014 daily' }]))[0].reason).toBeTruthy();
     expect((await refused([{ op: 'updateText', nodeId: 'title', text: '<b>x</b>' }]))[0].reason).toMatch(/markup/);
     expect((await refused([{ op: 'updateText', nodeId: 'hero', text: 'x' }]))[0].reason).toMatch(/plain text/);
   });
