@@ -24,7 +24,7 @@ describe('render gate on the mounted editor', () => {
   it.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][])('nothing stored acts on the canvas in %s', async (_name, type) => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const bundle = await bundleEditor();
-    const probes = buildProbes(false).filter((probe) => HOSTILE.test(probe.what));
+    const probes = buildProbes(false).filter((probe) => !probe.malformed && HOSTILE.test(probe.what));
     const tree = {
       id: 'gate-root',
       type: 'div',

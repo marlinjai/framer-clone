@@ -1,42 +1,42 @@
 {
-  "generatedAt": "2026-11-02T00:59:45.514Z",
+  "generatedAt": "2026-11-02T02:13:09.812Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 81,
+  "durationSeconds": 125,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1715,
+        "pass": 1702,
         "fail": 131,
         "notTested": 0,
-        "total": 1846
+        "total": 1833
       },
       "renderer": {
-        "pass": 1675,
+        "pass": 1662,
         "fail": 171,
         "notTested": 0,
-        "total": 1846
+        "total": 1833
       },
       "canvas": {
-        "pass": 1510,
+        "pass": 1497,
         "fail": 336,
         "notTested": 0,
-        "total": 1846
+        "total": 1833
       },
       "panel": {
-        "pass": 1083,
-        "fail": 763,
+        "pass": 1071,
+        "fail": 762,
         "notTested": 0,
-        "total": 1846
+        "total": 1833
       },
       "ai": {
-        "pass": 1336,
-        "fail": 510,
+        "pass": 1337,
+        "fail": 496,
         "notTested": 0,
-        "total": 1846
+        "total": 1833
       }
     },
     "byKind": {
@@ -74,66 +74,66 @@
       },
       "html-global-attribute": {
         "format": {
-          "pass": 39,
+          "pass": 36,
           "fail": 0,
           "notTested": 0,
-          "total": 39
+          "total": 36
         },
         "renderer": {
-          "pass": 39,
+          "pass": 36,
           "fail": 0,
           "notTested": 0,
-          "total": 39
+          "total": 36
         },
         "canvas": {
-          "pass": 39,
+          "pass": 36,
           "fail": 0,
           "notTested": 0,
-          "total": 39
+          "total": 36
         },
         "panel": {
-          "pass": 39,
+          "pass": 36,
           "fail": 0,
           "notTested": 0,
-          "total": 39
+          "total": 36
         },
         "ai": {
           "pass": 31,
-          "fail": 8,
+          "fail": 5,
           "notTested": 0,
-          "total": 39
+          "total": 36
         }
       },
       "html-element-attribute": {
         "format": {
-          "pass": 248,
+          "pass": 239,
           "fail": 0,
           "notTested": 0,
-          "total": 248
+          "total": 239
         },
         "renderer": {
-          "pass": 225,
+          "pass": 216,
           "fail": 23,
           "notTested": 0,
-          "total": 248
+          "total": 239
         },
         "canvas": {
-          "pass": 217,
+          "pass": 208,
           "fail": 31,
           "notTested": 0,
-          "total": 248
+          "total": 239
         },
         "panel": {
-          "pass": 225,
+          "pass": 216,
           "fail": 23,
           "notTested": 0,
-          "total": 248
+          "total": 239
         },
         "ai": {
           "pass": 99,
-          "fail": 149,
+          "fail": 140,
           "notTested": 0,
-          "total": 248
+          "total": 239
         }
       },
       "html-event-handler": {
@@ -202,34 +202,34 @@
       },
       "svg-attribute": {
         "format": {
-          "pass": 328,
+          "pass": 327,
           "fail": 0,
           "notTested": 0,
-          "total": 328
+          "total": 327
         },
         "renderer": {
-          "pass": 328,
+          "pass": 327,
           "fail": 0,
           "notTested": 0,
-          "total": 328
+          "total": 327
         },
         "canvas": {
-          "pass": 328,
+          "pass": 327,
           "fail": 0,
           "notTested": 0,
-          "total": 328
+          "total": 327
         },
         "panel": {
           "pass": 0,
-          "fail": 328,
+          "fail": 327,
           "notTested": 0,
-          "total": 328
+          "total": 327
         },
         "ai": {
-          "pass": 287,
-          "fail": 41,
+          "pass": 288,
+          "fail": 39,
           "notTested": 0,
-          "total": 328
+          "total": 327
         }
       },
       "mathml-element": {
@@ -521,7 +521,7 @@
         }
       }
     },
-    "included": 1846,
+    "included": 1833,
     "excluded": [
       {
         "kind": "html-element",
@@ -694,6 +694,26 @@
         "reason": "Marked deprecated by @mdn/browser-compat-data: browsers keep it only for old pages and new pages should not use it."
       },
       {
+        "kind": "html-global-attribute",
+        "id": "drawable",
+        "reason": "Refused by the render gate until someone judges what it does: an experimental name in the data, with no standard behind it and no use on a page."
+      },
+      {
+        "kind": "html-global-attribute",
+        "id": "is",
+        "reason": "Refused by the render gate: it would turn an element into a customized built-in, which only a script can define, and custom code is the route that could bring one."
+      },
+      {
+        "kind": "html-global-attribute",
+        "id": "nonce",
+        "reason": "Refused by the render gate: a nonce vouches for a script or style that the page itself did not write, and a stored one could only ever undermine a Content-Security-Policy."
+      },
+      {
+        "kind": "html-element-attribute",
+        "id": "a.attributionsourceid",
+        "reason": "Refused by the render gate: attribution reporting sends a browser report to a third party, which a page must not do on its owner's data alone."
+      },
+      {
         "kind": "html-element-attribute",
         "id": "a.attributionsrc",
         "reason": "Marked deprecated by @mdn/browser-compat-data: browsers keep it only for old pages and new pages should not use it."
@@ -730,6 +750,11 @@
       },
       {
         "kind": "html-element-attribute",
+        "id": "a.ping",
+        "reason": "Refused by the render gate (src/lib/renderer/renderVocabulary.ts): a click would send a request to a third address the visitor never sees. Links and the behaviour model cover what it is for."
+      },
+      {
+        "kind": "html-element-attribute",
         "id": "a.rev",
         "reason": "Marked deprecated by @mdn/browser-compat-data: browsers keep it only for old pages and new pages should not use it."
       },
@@ -762,6 +787,11 @@
         "kind": "html-element-attribute",
         "id": "area.nohref",
         "reason": "Marked deprecated by @mdn/browser-compat-data: browsers keep it only for old pages and new pages should not use it."
+      },
+      {
+        "kind": "html-element-attribute",
+        "id": "area.ping",
+        "reason": "Refused by the render gate (src/lib/renderer/renderVocabulary.ts): a click would send a request to a third address the visitor never sees. Links and the behaviour model cover what it is for."
       },
       {
         "kind": "html-element-attribute",
@@ -1695,8 +1725,38 @@
       },
       {
         "kind": "html-element-attribute",
+        "id": "template.shadowrootclonable",
+        "reason": "Refused by the render gate: a declarative shadow root hides content from the owner's stylesheet and rules, and nothing a node can author would use it. Custom code is the route that could bring it, and this row returns with it."
+      },
+      {
+        "kind": "html-element-attribute",
+        "id": "template.shadowrootcustomelementregistry",
+        "reason": "Refused by the render gate: a declarative shadow root hides content from the owner's stylesheet and rules, and nothing a node can author would use it. Custom code is the route that could bring it, and this row returns with it."
+      },
+      {
+        "kind": "html-element-attribute",
+        "id": "template.shadowrootdelegatesfocus",
+        "reason": "Refused by the render gate: a declarative shadow root hides content from the owner's stylesheet and rules, and nothing a node can author would use it. Custom code is the route that could bring it, and this row returns with it."
+      },
+      {
+        "kind": "html-element-attribute",
+        "id": "template.shadowrootmode",
+        "reason": "Refused by the render gate: a declarative shadow root hides content from the owner's stylesheet and rules, and nothing a node can author would use it. Custom code is the route that could bring it, and this row returns with it."
+      },
+      {
+        "kind": "html-element-attribute",
         "id": "template.shadowrootreferencetarget",
         "reason": "Not on a standards track in @mdn/browser-compat-data: a single vendor's experiment that no standard defines."
+      },
+      {
+        "kind": "html-element-attribute",
+        "id": "template.shadowrootserializable",
+        "reason": "Refused by the render gate: a declarative shadow root hides content from the owner's stylesheet and rules, and nothing a node can author would use it. Custom code is the route that could bring it, and this row returns with it."
+      },
+      {
+        "kind": "html-element-attribute",
+        "id": "template.shadowrootslotassignment",
+        "reason": "Refused by the render gate: a declarative shadow root hides content from the owner's stylesheet and rules, and nothing a node can author would use it. Custom code is the route that could bring it, and this row returns with it."
       },
       {
         "kind": "html-element-attribute",
@@ -1852,6 +1912,11 @@
         "kind": "svg-attribute",
         "id": "a.interestfor",
         "reason": "Not on a standards track in @mdn/browser-compat-data: a single vendor's experiment that no standard defines."
+      },
+      {
+        "kind": "svg-attribute",
+        "id": "a.ping",
+        "reason": "Refused by the render gate (src/lib/renderer/renderVocabulary.ts): a click would send a request to a third address the visitor never sees. Links and the behaviour model cover what it is for."
       },
       {
         "kind": "svg-attribute",
@@ -3321,7 +3386,6 @@
       "html-global-attribute:data_attributes": "pass pass pass pass ai-attribute-allowlist",
       "html-global-attribute:dir": "pass pass pass pass pass",
       "html-global-attribute:draggable": "pass pass pass pass pass",
-      "html-global-attribute:drawable": "pass pass pass pass ai-attribute-allowlist",
       "html-global-attribute:elementtiming": "pass pass pass pass pass",
       "html-global-attribute:enterkeyhint": "pass pass pass pass pass",
       "html-global-attribute:exportparts": "pass pass pass pass pass",
@@ -3333,9 +3397,7 @@
       "html-global-attribute:id": "pass pass pass pass pass",
       "html-global-attribute:inert": "pass pass pass pass pass",
       "html-global-attribute:inputmode": "pass pass pass pass pass",
-      "html-global-attribute:is": "pass pass pass pass ai-attribute-allowlist",
       "html-global-attribute:lang": "pass pass pass pass pass",
-      "html-global-attribute:nonce": "pass pass pass pass ai-attribute-allowlist",
       "html-global-attribute:part": "pass pass pass pass pass",
       "html-global-attribute:popover": "pass pass pass pass ai-attribute-allowlist",
       "html-global-attribute:slot": "pass pass pass pass pass",
@@ -3348,11 +3410,9 @@
       "html-global-attribute:writingsuggestions": "pass pass pass pass pass",
       "html-global-attribute:role": "pass pass pass pass pass",
       "html-global-attribute:aria-*": "pass pass pass pass pass",
-      "html-element-attribute:a.attributionsourceid": "pass pass pass pass ai-attribute-allowlist",
       "html-element-attribute:a.download": "pass pass pass pass pass",
       "html-element-attribute:a.href": "pass pass pass pass pass",
       "html-element-attribute:a.hreflang": "pass pass pass pass pass",
-      "html-element-attribute:a.ping": "pass pass pass pass ai-attribute-allowlist",
       "html-element-attribute:a.referrerpolicy": "pass pass pass pass ai-attribute-allowlist",
       "html-element-attribute:a.rel": "pass pass pass pass pass",
       "html-element-attribute:a.target": "pass pass pass pass ai-attribute-allowlist",
@@ -3362,7 +3422,6 @@
       "html-element-attribute:area.download": "pass pass pass pass pass",
       "html-element-attribute:area.href": "pass pass pass pass pass",
       "html-element-attribute:area.hreflang": "pass pass pass pass pass",
-      "html-element-attribute:area.ping": "pass pass pass pass ai-attribute-allowlist",
       "html-element-attribute:area.referrerpolicy": "pass pass pass pass ai-attribute-allowlist",
       "html-element-attribute:area.rel": "pass pass pass pass pass",
       "html-element-attribute:area.shape": "pass pass pass pass pass",
@@ -3551,12 +3610,6 @@
       "html-element-attribute:td.headers": "pass pass pass pass pass",
       "html-element-attribute:td.rowspan": "pass pass pass pass pass",
       "html-element-attribute:template.for": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:template.shadowrootclonable": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:template.shadowrootcustomelementregistry": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:template.shadowrootdelegatesfocus": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:template.shadowrootmode": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:template.shadowrootserializable": "pass pass pass pass ai-tag-allowlist",
-      "html-element-attribute:template.shadowrootslotassignment": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:textarea.autocomplete": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:textarea.cols": "pass pass pass pass ai-tag-allowlist",
       "html-element-attribute:textarea.dirname": "pass pass pass pass ai-tag-allowlist",
@@ -3760,13 +3813,12 @@
       "svg-attribute:a.download": "pass pass pass panel-no-general-editor pass",
       "svg-attribute:a.href": "pass pass pass panel-no-general-editor pass",
       "svg-attribute:a.hreflang": "pass pass pass panel-no-general-editor pass",
-      "svg-attribute:a.ping": "pass pass pass panel-no-general-editor ai-attribute-allowlist",
       "svg-attribute:a.referrerpolicy": "pass pass pass panel-no-general-editor ai-attribute-allowlist",
       "svg-attribute:a.rel": "pass pass pass panel-no-general-editor pass",
       "svg-attribute:a.systemLanguage": "pass pass pass panel-no-general-editor pass",
       "svg-attribute:a.target": "pass pass pass panel-no-general-editor ai-attribute-allowlist",
       "svg-attribute:a.type": "pass pass pass panel-no-general-editor pass",
-      "svg-attribute:animate.attributeName": "pass pass pass panel-no-general-editor ai-attribute-allowlist",
+      "svg-attribute:animate.attributeName": "pass pass pass panel-no-general-editor pass",
       "svg-attribute:animate.attributeType": "pass pass pass panel-no-general-editor pass",
       "svg-attribute:animate.dur": "pass pass pass panel-no-general-editor pass",
       "svg-attribute:animate.fill": "pass pass pass panel-no-general-editor pass",
@@ -6589,12 +6641,12 @@
     {
       "id": "panel-no-general-editor",
       "description": "What the Custom section of the properties panel, the general style and attribute editor, cannot write: SVG and MathML attributes.",
-      "matrixCells": 361,
+      "matrixCells": 360,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 361
+      "cost": 360
     },
     {
       "id": "selector-styles",
@@ -6621,12 +6673,12 @@
     {
       "id": "ai-tag-allowlist",
       "description": "The AI generator validator refuses this tag on purpose: blocked in every renderer, or a raw form control, which only works through the form presets.",
-      "matrixCells": 122,
+      "matrixCells": 116,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 122
+      "cost": 116
     },
     {
       "id": "media-queries",
@@ -6667,23 +6719,13 @@
     },
     {
       "id": "blocked-embedded-content",
-      "description": "Embedded content dropped by blockedNodes.ts (iframe, object, embed, ...), although these are ordinary content elements.",
+      "description": "What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones).",
       "matrixCells": 78,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 78
-    },
-    {
-      "id": "ai-attribute-allowlist",
-      "description": "The AI generator validator refuses this attribute on purpose, or a tree lost a raw form control (see the tag gap).",
-      "matrixCells": 59,
-      "corpusChecks": 0,
-      "fixtures": [],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 59
     },
     {
       "id": "page-level-css",
@@ -6704,6 +6746,16 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 52
+    },
+    {
+      "id": "ai-attribute-allowlist",
+      "description": "The AI generator validator refuses this attribute on purpose, or a tree lost a raw form control (see the tag gap).",
+      "matrixCells": 51,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 51
     },
     {
       "id": "at-rules",
@@ -7327,7 +7379,6 @@
       "aria-valuemax",
       "aria-valuemin",
       "aria-valuenow",
-      "attributionsourceid",
       "autoCapitalize",
       "autoComplete",
       "autoCorrect",
@@ -7369,7 +7420,6 @@
       "disabled",
       "download",
       "draggable",
-      "drawable",
       "effects",
       "elementtiming",
       "encType",
@@ -7397,7 +7447,6 @@
       "id",
       "inert",
       "inputMode",
-      "is",
       "ismap",
       "kind",
       "label",
@@ -7416,12 +7465,10 @@
       "muted",
       "name",
       "noValidate",
-      "nonce",
       "open",
       "optimum",
       "part",
       "pattern",
-      "ping",
       "placeholder",
       "playsInline",
       "popover",
@@ -7440,12 +7487,6 @@
       "rows",
       "scope",
       "selected",
-      "shadowrootclonable",
-      "shadowrootcustomelementregistry",
-      "shadowrootdelegatesfocus",
-      "shadowrootmode",
-      "shadowrootserializable",
-      "shadowrootslotassignment",
       "shape",
       "size",
       "sizes",
