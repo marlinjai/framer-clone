@@ -823,7 +823,7 @@ panel lists, renames, reorders, retypes and removes them.
 | `createComponentFromSelection` | One `ProjectModel` action | The original nodes |
 | `removeInput`, `changeInputType` | One, patching every page and definition | The input, its bindings and every value |
 | `removeState` | One, patching every node holding its rules | The state, its rules, triggers and placements' choices |
-| `deleteComponent` | One, patching every page and definition | The definition and every placement |
+| `deleteDefinition` | One, patching every page and definition | The definition and every placement |
 | `detachPlacement` | One | The placement |
 
 These are actions on `ProjectModel`, not on `PageModel`, because they cross pages. A page action cannot record patches

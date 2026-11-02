@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { isPlacementType } from '@/lib/components/placement';
 import { types, Instance, SnapshotIn, SnapshotOut, getParent, hasParent as hasMstParent } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
@@ -77,8 +78,12 @@ export type RuleWrite = { ok: true } | { ok: false; reason: string };
 
 /** A text node has no element, so a rule would have nothing to apply to. */
 function refuseRules(type: string): RuleWrite | null {
+  if (isPlacementType(type)) return { ok: false, reason: 'A component is styled in its definition, so a placement holds no rules.' };
   return isTextNodeType(type) ? { ok: false, reason: 'Text has no element of its own, so it holds no rules.' } : null;
 }
+
+/** All a placement binds: its input values and its initial state. */
+const isPlacementSlot = (slot: string) => slot === 'state' || slot.startsWith('input.');
 
 /** New props with this list, or with none when it is empty, so saved pages stay unchanged. */
 function withRules(props: Record<string, any>, rules: StoredRule[]): Record<string, any> {
@@ -330,6 +335,10 @@ const ComponentModel: any = ComponentBase
         console.warn(`[ComponentModel] a text node cannot hold children, ${child.id} not added`);
         return;
       }
+      if (isPlacementType(self.type)) {
+        console.warn(`[ComponentModel] a placement holds no children, ${child.id} not added`);
+        return;
+      }
       if (isTextNodeType(child.type) && refusesBareText(self.type)) {
         console.warn(`[ComponentModel] a browser would move text out of <${self.type}>, ${child.id} not added`);
         return;
@@ -346,8 +355,8 @@ const ComponentModel: any = ComponentBase
     },
     
     addChildren(children: ComponentInstance[]) {
-      if (isTextNodeType(self.type)) {
-        console.warn('[ComponentModel] a text node cannot hold children, none added');
+      if (isTextNodeType(self.type) || isPlacementType(self.type)) {
+        console.warn('[ComponentModel] a text node or a placement cannot hold children, none added');
         return;
       }
       moveOwnTextToChild(self);
@@ -644,6 +653,7 @@ const ComponentModel: any = ComponentBase
     // Replace the string text content of this component. Used for inline
     // editing of text / button / heading nodes. Leaves other props untouched.
     setTextContent(value: string) {
+      if (isPlacementType(self.type)) return;
       self.props = { ...self.props, children: value };
     },
 
@@ -654,6 +664,8 @@ const ComponentModel: any = ComponentBase
       const next: Record<string, unknown> = { ...(self.props as Record<string, unknown>) };
       for (const [key, value] of Object.entries(patch)) {
         if (key === 'style') continue;
+        // The definition is the one place content lives.
+        if (isPlacementType(self.type) && (key === 'children' || key === 'rules')) continue;
         if (value === undefined) delete next[key];
         else next[key] = value;
       }
@@ -664,7 +676,7 @@ const ComponentModel: any = ComponentBase
     // whole rule (src/lib/styles/customEditor.ts); the panel shows its message,
     // and a refused tag leaves the node as it was. One action, so one undo step.
     setTag(tag: string) {
-      if (tagRefusal(tag, contentOf(self))) return;
+      if (isPlacementType(self.type) || tagRefusal(tag, contentOf(self))) return;
       self.type = tag;
     },
 
@@ -694,6 +706,7 @@ const ComponentModel: any = ComponentBase
     // `data-bindings-binding-shape-on-component-model` and the
     // multiplayer track's MST-projection design.
     setBinding(slot: string, binding: BindingEntry) {
+      if (isPlacementType(self.type) && !isPlacementSlot(slot)) return;
       // Replace the entire frozen record (MST requirement for frozen
       // types). Spread keeps every other slot intact.
       self.bindings = { ...self.bindings, [slot]: binding };

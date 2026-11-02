@@ -1,13 +1,37 @@
 // src/models/ProjectModel.ts
 // Domain model for projects - contains multiple pages and project-level settings
 import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
-import { types, Instance, SnapshotIn, SnapshotOut, getSnapshot } from 'mobx-state-tree';
-import type { ComponentDefinitions } from '@/lib/components/definition';
-import { COMPONENT_LIMITS, isPlacementType, type PlacementProps } from '@/lib/components/placement';
+import {
+  addDisposer,
+  addMiddleware,
+  getRoot,
+  getSnapshot,
+  recordPatches,
+  types,
+  Instance,
+  SnapshotIn,
+  SnapshotOut,
+} from 'mobx-state-tree';
+import {
+  contentModelRefusal,
+  placementRefusal,
+  stateRefusal,
+  type ComponentDefinitions,
+  type RefusedDefinition,
+  type StateDefinition,
+} from '@/lib/components/definition';
+import { detachRefusal, detachedTree, type StoredNode } from '@/lib/components/detach';
+import { mapNodeProps } from '@/lib/components/breakpoints';
+import { inputDefinitionRefusal, mayBindToSlot, parseInputValue, type InputDefinition } from '@/lib/components/inputs';
+import { parseExpression } from '@/lib/bindings/resolver/expression';
+import { COMPONENT_LIMITS, PLACEMENT_TYPE, isPlacementType, serializedBytes, type PlacementProps } from '@/lib/components/placement';
+import { extractBreakpoints } from '@/lib/renderer/server/componentSnapshot';
+import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { literalPageTree } from '@/lib/renderer/server/snapshotToComponentNode';
 import { v4 as uuidv4 } from 'uuid';
-import PageModel, { PageModelType } from './PageModel';
+import PageModel, { PageModelType, type InsertTarget } from './PageModel';
 import { ComponentDefinitionModel, parseModelComponents, type ComponentDefinitionInstance } from './ComponentDefinitionModel';
+import { takeBackRefusedEdit } from '@/stores/HistoryStore';
 import ComponentModel, { createIntrinsicComponent, createViewportNode, type ComponentInstance, type ComponentSnapshotIn } from './ComponentModel';
 import { isDynamicSegment, productPagePath, suggestSlug, validateSlug, type SlugValidation } from '@/lib/pages/slug';
 import {
@@ -210,6 +234,49 @@ function planHomeChange(
   return moved;
 }
 
+/** What a component action did. A refusal says why, so the panel can show it. */
+export type ComponentActionResult<T = object> = ({ ok: true } & T) | { ok: false; message: string };
+
+/** The definitions these patches touched, by id. Paths are relative to the project. */
+function touchedDefinitions(patches: readonly { path: string }[]): Set<string> {
+  const ids = new Set<string>();
+  for (const { path } of patches) {
+    const [, root, id] = path.split('/');
+    if (root === 'components' && id) ids.add(id);
+  }
+  return ids;
+}
+
+/** Every node of a tree, itself first. */
+function eachNode(root: ComponentInstance, visit: (node: ComponentInstance) => void): void {
+  visit(root);
+  root.children.forEach((child: ComponentInstance) => eachNode(child, visit));
+}
+
+/** The nodes of a page or a definition's page: the tree and whatever floats beside it. */
+function nodesOfPage(page: PageModelType): ComponentInstance[] {
+  const nodes: ComponentInstance[] = [];
+  eachNode(page.appComponentTree as unknown as ComponentInstance, node => nodes.push(node));
+  for (const canvasNode of page.canvasNodes.values()) {
+    eachNode(canvasNode as unknown as ComponentInstance, node => nodes.push(node));
+  }
+  return nodes;
+}
+
+function nodesInclude(root: ComponentInstance, test: (node: ComponentInstance) => boolean): boolean {
+  let found = false;
+  eachNode(root, node => {
+    found = found || test(node);
+  });
+  return found;
+}
+
+/** The input id a binding reads, when it reads one. */
+function boundInputId(entry: { mode?: string; expression?: string }): string | undefined {
+  const path = entry.mode === 'read' ? parseExpression(entry.expression ?? '')?.path : undefined;
+  return path?.[0] === 'input' ? path[1] : undefined;
+}
+
 /** The site's definitions as plain data, which is what expansion reads. */
 function definitionsOf(project: { components: unknown }): ComponentDefinitions {
   return getSnapshot(project.components as Parameters<typeof getSnapshot>[0]) as unknown as ComponentDefinitions;
@@ -261,6 +328,77 @@ export const ProjectModel = types
     ),
 
   })
+  .volatile(() => ({
+    // What the publish check cannot see in the model: definitions the load skipped
+    // and edits undone for going over a limit. Never saved and never an undo step.
+    refusedComponents: [] as RefusedDefinition[],
+  }))
+  .actions(self => ({
+    noteRefusedComponents(refused: readonly RefusedDefinition[]) {
+      const same = (a: RefusedDefinition, b: RefusedDefinition) => a.id === b.id && a.reason === b.reason;
+      // An edit refused again replaces its earlier entry with a new object, so a
+      // publish that acknowledged the earlier one does not clear this one too.
+      const kept = self.refusedComponents.filter(old => !refused.some(entry => entry.edit && same(old, entry)));
+      const fresh = refused.filter(entry => entry.edit || !kept.some(old => same(old, entry)));
+      if (fresh.length > 0 || kept.length !== self.refusedComponents.length) {
+        self.refusedComponents = [...kept, ...fresh.map(entry => ({ ...entry }))];
+      }
+    },
+    // What the load skipped, as the stored value now says. A project loaded over
+    // itself keeps its volatile state, so the earlier load's entries must go.
+    replaceLoadRefusals(refused: readonly RefusedDefinition[]) {
+      self.refusedComponents = [...self.refusedComponents.filter(({ edit }) => edit), ...refused.map(entry => ({ ...entry }))];
+    },
+    // Once a publish went out past the warning: only the edits it listed. One
+    // refused while the request was out is not in what went out, and stays.
+    clearRefusedEdits(acknowledged: readonly RefusedDefinition[]) {
+      self.refusedComponents = self.refusedComponents.filter(entry => !entry.edit || !acknowledged.includes(entry));
+    },
+  }))
+  .actions(self => ({
+    // A definition over its size is refused whole when it is next read, and the
+    // Save after that would take it out of the column. Stopping that at the last
+    // moment is the only place that sees every edit: a typed sentence, a pasted
+    // image address, a generated subtree, any action on any node inside. So each
+    // top-level action that touched a definition is measured, and undone whole if
+    // it took one over. Undo and redo apply patches and are not edits.
+    afterCreate() {
+      addDisposer(self, addMiddleware(self, (call, next) => {
+        if (call.type !== 'action' || call.parentActionEvent || call.name.startsWith('@')) {
+          next(call);
+          return;
+        }
+        const recorder = recordPatches(self);
+        next(call, result => {
+          recorder.stop();
+          const limit = COMPONENT_LIMITS.definitionBytes;
+          const sizeOf = (id: string) => {
+            const definition = self.components.get(id);
+            return definition ? serializedBytes(getSnapshot(definition)) : 0;
+          };
+          const after = new Map([...touchedDefinitions(recorder.patches)].map(id => [id, sizeOf(id)]));
+          const over = [...after].filter(([, size]) => size > limit);
+          if (over.length === 0) return result;
+          takeBackRefusedEdit(() => recorder.undo());
+          // One that already was too big may still shrink, and that edit stands.
+          const grew = over.filter(([id, size]) => size > sizeOf(id));
+          if (grew.length === 0) {
+            recorder.replay();
+            return result;
+          }
+          const [id] = grew[0];
+          const name = self.components.get(id)?.name ?? id;
+          const message = `${name} would be larger than ${Math.round(limit / 1024)} kilobytes, so this edit was undone.`;
+          console.warn(`[ProjectModel] ${message}`);
+          self.noteRefusedComponents([{ id: name, reason: message, edit: true }]);
+          getRoot<{ editorUI?: { setEditorNotice?: (notice: { kind: 'refused'; message: string }) => void } }>(self)
+            .editorUI?.setEditorNotice?.({ kind: 'refused', message });
+          const refused = !!result && typeof result === 'object' && 'ok' in result;
+          return refused ? { ok: false, message } : undefined;
+        });
+      }));
+    },
+  }))
   .actions(self => {
   // A page's slug is locked when it is THE home page: it has the empty slug
   // and no other page does. An extra empty-slug page in an older project may
@@ -269,7 +407,306 @@ export const ProjectModel = types
     const page = self.pages.get(pageId);
     return !!page && page.slug === '' && homePageCount(self.pages.values()) <= 1;
   };
+  // The page with this id, among the pages or inside a definition.
+  const pageById = (pageId: string): PageModelType | undefined => {
+    const page = self.pages.get(pageId);
+    if (page) return page;
+    for (const definition of self.components.values()) {
+      if (definition.page.id === pageId) return definition.page as PageModelType;
+    }
+    return undefined;
+  };
+  const allPages = (): PageModelType[] => [
+    ...self.pages.values(),
+    ...Array.from(self.components.values(), definition => definition.page as PageModelType),
+  ];
+  const placementsOf = (definitionId: string): Array<{ page: PageModelType; node: ComponentInstance }> =>
+    allPages().flatMap(page =>
+      nodesOfPage(page)
+        .filter(node => isPlacementType(node.type) && (node.props as Partial<PlacementProps>).component === definitionId)
+        .map(node => ({ page, node })),
+    );
+  const parentOf = (page: PageModelType, node: ComponentInstance): ComponentInstance | undefined =>
+    nodesOfPage(page).find(candidate => candidate.children.includes(node));
+  const nameRefusal = (name: string, except?: string): string | undefined => {
+    if (!name) return 'Give the component a name.';
+    const taken = Array.from(self.components.values()).some(other => other.id !== except && other.name === name);
+    return taken ? `There is already a component called ${name}.` : undefined;
+  };
+  const inputWithout = (node: ComponentInstance, inputId: string) => {
+    const { inputs } = node.props as Partial<PlacementProps>;
+    if (inputs && inputId in inputs) {
+      const { [inputId]: _gone, ...rest } = inputs;
+      void _gone;
+      node.setProps({ inputs: Object.keys(rest).length > 0 ? rest : undefined });
+    }
+    node.clearBinding(`input.${inputId}`);
+  };
+  // Replace a placement with its plain copy, in the holder's breakpoints.
+  const detachNode = (page: PageModelType, node: ComponentInstance): ComponentActionResult<{ root?: ComponentInstance }> => {
+    const stored = node.props as Partial<PlacementProps>;
+    const definition = definitionsOf(self)[stored.component ?? ''];
+    if (!definition) return { ok: false, message: 'This component no longer exists.' };
+    const refusal = detachRefusal(definition);
+    if (refusal) return { ok: false, message: refusal };
+    const takenIds = new Set(nodesOfPage(page).flatMap(({ props }) => {
+      const id = (props as { id?: unknown }).id;
+      return typeof id === 'string' ? [id] : [];
+    }));
+    const tree = detachedTree(getSnapshot(node) as unknown as StoredNode, {
+      definition,
+      holderBreakpoints: extractBreakpoints(getSnapshot(page.canvasNodes)),
+      takenIds,
+      newId: uuidv4,
+    });
+    const parent = parentOf(page, node);
+    if (!parent) {
+      // Floating beside the page: the copy keeps the spot.
+      // Read before the removal: MST destroys a node taken out of its map.
+      const { canvasNodeType, canvasX, canvasY } = node;
+      page.removeCanvasNode(node.id);
+      if (!tree) return { ok: true };
+      const floating = ComponentModel.create({
+        ...(tree as unknown as ComponentSnapshotIn),
+        canvasNodeType,
+        canvasX,
+        canvasY,
+      });
+      page.addCanvasNode(floating);
+      return { ok: true, root: page.getCanvasNode(floating.id) };
+    }
+    const index = parent.children.findIndex((child: ComponentInstance) => child.id === node.id);
+    parent.removeChild(node.id);
+    if (!tree) return { ok: true };
+    const root = ComponentModel.create({ ...(tree as unknown as ComponentSnapshotIn), parentId: parent.id });
+    parent.addChild(root, index);
+    return { ok: true, root };
+  };
+
   return {
+
+    // ---- Reusable components (docs/plans/2026-11-02-reusable-components.md) ----
+    //
+    // These cross pages, so they are actions here: a page action could not record
+    // patches on another page's subtree as one user step. Each is one history
+    // entry. A size limit is enforced for all of them by the guard in afterCreate.
+
+    // Make a component from selected nodes of one parent. Several become one under
+    // a `div`, as does a node with no element of its own, since a definition root
+    // needs one. The selection becomes one placement, and undo restores it.
+    createComponentFromSelection(pageId: string, nodeIds: readonly string[], rawName: string): ComponentActionResult<{ definitionId: string; placement: ComponentInstance }> {
+      const name = rawName.trim();
+      const page = pageById(pageId);
+      if (!page) return { ok: false, message: 'This page no longer exists.' };
+      if (self.components.size >= COMPONENT_LIMITS.definitionsPerSite) {
+        return { ok: false, message: `A site has at most ${COMPONENT_LIMITS.definitionsPerSite} components.` };
+      }
+      const taken = nameRefusal(name);
+      if (taken) return { ok: false, message: taken };
+      const nodes = nodeIds.map(id => page.findComponent(id));
+      if (nodes.length === 0 || nodes.some(node => !node)) return { ok: false, message: 'Select the elements to make a component from.' };
+      const selected = nodes as ComponentInstance[];
+      const parent = parentOf(page, selected[0]);
+      if (!parent || selected.some(node => !parent.children.includes(node))) {
+        return { ok: false, message: 'Select elements next to each other on the page. The page itself cannot become a component.' };
+      }
+      const inOrder = (parent.children as ComponentInstance[]).filter(child => nodeIds.includes(child.id));
+      if (inOrder.some(node => nodesInclude(node, n => isStickyCta(n.props)))) {
+        return { ok: false, message: 'A sticky bar is one per page, so a component cannot hold it.' };
+      }
+
+      const frames = defaultViewportSnapshots();
+      const from = extractBreakpoints(getSnapshot(page.canvasNodes));
+      const to = extractBreakpoints(frames);
+      const toDefinition = (snapshot: StoredNode): StoredNode => ({
+        ...snapshot,
+        props: mapNodeProps(snapshot.props ?? {}, from, to),
+        children: (snapshot.children ?? []).map(toDefinition),
+      });
+      const stored = inOrder.map(node => toDefinition(getSnapshot(node) as unknown as StoredNode));
+      const needsWrapper = stored.length > 1 || stored[0].type.startsWith('#');
+      const wrapperId = `root-${uuidv4()}`;
+      const tree: StoredNode = needsWrapper
+        ? { id: wrapperId, type: 'div', componentType: 'host', label: name, props: {}, children: stored.map(node => ({ ...node, parentId: wrapperId })) }
+        : { ...stored[0], parentId: undefined };
+
+      const definitionId = uuidv4();
+      // The same checks a placement meets, run on the site as it would be after this,
+      // before anything changes: the new root may not suit the parent it lands in, and
+      // on a definition page the new level may push a chain past the nesting limit.
+      const next = {
+        ...definitionsOf(self),
+        [definitionId]: { id: definitionId, name, page: { appComponentTree: tree }, inputs: [], states: [] },
+      } as unknown as ComponentDefinitions;
+      const holder = Array.from(self.components.values()).find(definition => definition.page === page)?.id;
+      const ancestorTags: string[] = [];
+      for (let up: ComponentInstance | undefined = parent; up; up = up.parentId ? page.findComponent(up.parentId) : undefined) {
+        ancestorTags.push(up.type);
+      }
+      const placementRefused = placementRefusal(next, holder, definitionId) ?? contentModelRefusal(next, definitionId, ancestorTags);
+      if (placementRefused) return { ok: false, message: placementRefused };
+      const index = parent.children.findIndex((child: ComponentInstance) => child.id === inOrder[0].id);
+      for (const node of inOrder) parent.removeChild(node.id);
+      self.components.set(definitionId, {
+        id: definitionId,
+        name,
+        page: {
+          id: `page-${definitionId}`,
+          metadata: { title: name },
+          appComponentTree: tree as unknown as ComponentSnapshotIn,
+          canvasNodes: frames,
+        },
+        inputs: [],
+        states: [],
+      });
+      const placement = createIntrinsicComponent(`component-${uuidv4()}`, PLACEMENT_TYPE as never, { component: definitionId });
+      placement.setLabel(name);
+      parent.addChild(placement, index);
+      self.metadata.updatedAt = new Date();
+      return { ok: true, definitionId, placement };
+    },
+
+    placeComponent(pageId: string, definitionId: string, target: InsertTarget): ComponentActionResult<{ placement: ComponentInstance }> {
+      const page = pageById(pageId);
+      if (!page) return { ok: false, message: 'This page no longer exists.' };
+      const definition = self.components.get(definitionId);
+      if (!definition) return { ok: false, message: 'That component no longer exists.' };
+      const refusal = page.placementRefusal(definitionId, target);
+      if (refusal) return { ok: false, message: refusal };
+      const placement = page.insertPlacement(definitionId, definition.name, target);
+      if (!placement) return { ok: false, message: 'The component could not be placed there.' };
+      self.metadata.updatedAt = new Date();
+      return { ok: true, placement };
+    },
+
+    renameDefinition(definitionId: string, rawName: string): ComponentActionResult {
+      const name = rawName.trim();
+      const definition = self.components.get(definitionId);
+      if (!definition) return { ok: false, message: 'That component no longer exists.' };
+      const taken = nameRefusal(name, definitionId);
+      if (taken) return { ok: false, message: taken };
+      definition.setName(name);
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
+    addInput(definitionId: string, input: InputDefinition): ComponentActionResult {
+      const definition = self.components.get(definitionId);
+      if (!definition) return { ok: false, message: 'That component no longer exists.' };
+      if (definition.inputs.length >= COMPONENT_LIMITS.inputsPerDefinition) {
+        return { ok: false, message: `A component has at most ${COMPONENT_LIMITS.inputsPerDefinition} inputs.` };
+      }
+      const refusal = inputDefinitionRefusal(input);
+      if (refusal) return { ok: false, message: refusal };
+      if (definition.inputs.some(other => other.id === input.id)) return { ok: false, message: 'This component already has that input.' };
+      definition.setInputs([...definition.inputs, input]);
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
+    // The value and every binding to it go, across all pages and definitions, in one
+    // step. A kept value would mean nothing and come back wrong if the id returned.
+    removeInput(definitionId: string, inputId: string): ComponentActionResult {
+      const definition = self.components.get(definitionId);
+      if (!definition) return { ok: false, message: 'That component no longer exists.' };
+      if (!definition.inputs.some(input => input.id === inputId)) return { ok: false, message: 'That input no longer exists.' };
+      for (const node of nodesOfPage(definition.page as PageModelType)) {
+        for (const [slot, entry] of Object.entries(node.bindings)) {
+          if (boundInputId(entry as { mode?: string; expression?: string }) === inputId) node.clearBinding(slot);
+        }
+      }
+      for (const { node } of placementsOf(definitionId)) inputWithout(node, inputId);
+      definition.setInputs(definition.inputs.filter(input => input.id !== inputId));
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
+    // Values that pass the new type stay and the rest go, in one step. A binding the
+    // new type may not hold goes too: rendering would refuse it. The dialog first
+    // shows `inputTypeChangeLoss`.
+    changeInputType(definitionId: string, next: InputDefinition): ComponentActionResult {
+      const definition = self.components.get(definitionId);
+      if (!definition) return { ok: false, message: 'That component no longer exists.' };
+      if (!definition.inputs.some(input => input.id === next.id)) return { ok: false, message: 'That input no longer exists.' };
+      const refusal = inputDefinitionRefusal(next);
+      if (refusal) return { ok: false, message: refusal };
+      for (const { node } of placementsOf(definitionId)) {
+        const value = (node.props as Partial<PlacementProps>).inputs?.[next.id];
+        if (value !== undefined && !parseInputValue(next, value).ok) inputWithout(node, next.id);
+      }
+      for (const node of nodesOfPage(definition.page as PageModelType)) {
+        for (const [slot, entry] of Object.entries(node.bindings)) {
+          const reads = boundInputId(entry as { mode?: string; expression?: string }) === next.id;
+          if (reads && !mayBindToSlot(next.type, slot)) node.clearBinding(slot);
+        }
+      }
+      definition.setInputs(definition.inputs.map(input => (input.id === next.id ? next : input)));
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
+    addState(definitionId: string, state: StateDefinition): ComponentActionResult {
+      const definition = self.components.get(definitionId);
+      if (!definition) return { ok: false, message: 'That component no longer exists.' };
+      if (definition.states.length >= COMPONENT_LIMITS.statesPerDefinition) {
+        return { ok: false, message: `A component has at most ${COMPONENT_LIMITS.statesPerDefinition} states.` };
+      }
+      const refusal = stateRefusal(state);
+      if (refusal) return { ok: false, message: refusal };
+      if (definition.states.some(other => other.id === state.id)) return { ok: false, message: 'This component already has that state.' };
+      definition.setStates([...definition.states, state]);
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
+    // The state, its rules, `noScriptState`, and the placements starting on it. The
+    // `choice` state and triggers compiled from states arrive with custom states,
+    // which extend this.
+    removeState(definitionId: string, stateId: string): ComponentActionResult {
+      const definition = self.components.get(definitionId);
+      if (!definition) return { ok: false, message: 'That component no longer exists.' };
+      if (!definition.states.some(state => state.id === stateId)) return { ok: false, message: 'That state no longer exists.' };
+      for (const node of nodesOfPage(definition.page as PageModelType)) {
+        const rules = (node.props as { rules?: unknown }).rules;
+        if (!Array.isArray(rules)) continue;
+        for (const rule of rules as { id: string; componentState?: string }[]) {
+          if (rule.componentState === stateId) node.removeRule(rule.id);
+        }
+      }
+      for (const { node } of placementsOf(definitionId)) {
+        if ((node.props as Partial<PlacementProps>).state === stateId) node.setProps({ state: undefined });
+      }
+      definition.setStates(
+        definition.states
+          .filter(state => state.id !== stateId)
+          .map(state => (state.implies?.includes(stateId) ? { ...state, implies: state.implies.filter(id => id !== stateId) } : state)),
+      );
+      if (definition.noScriptState === stateId) definition.setNoScriptState(undefined);
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
+    detachPlacement(pageId: string, placementId: string): ComponentActionResult<{ root?: ComponentInstance }> {
+      const page = pageById(pageId);
+      const node = page?.findComponent(placementId);
+      if (!page || !node || !isPlacementType(node.type)) return { ok: false, message: 'That component is no longer here.' };
+      const result = detachNode(page, node);
+      if (result.ok) self.metadata.updatedAt = new Date();
+      return result;
+    },
+
+    // Every placement becomes a plain copy, across all pages and definitions, so
+    // pages look the same. Nothing changes when any of them cannot.
+    deleteDefinition(definitionId: string): ComponentActionResult {
+      const definition = self.components.get(definitionId);
+      if (!definition) return { ok: false, message: 'That component no longer exists.' };
+      const refusal = detachRefusal(definitionsOf(self)[definitionId]);
+      if (refusal) return { ok: false, message: refusal };
+      for (const { page, node } of placementsOf(definitionId)) detachNode(page, node);
+      self.components.delete(definitionId);
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
 
     // Add a new page to the project
     addPage(page: SnapshotIn<typeof PageModel>) {
@@ -763,6 +1200,19 @@ export const ProjectModel = types
     // The reusable components as plain data, for expansion.
     get definitions(): ComponentDefinitions {
       return definitionsOf(self);
+    },
+
+    // How many placements would lose their value to changeInputType.
+    inputTypeChangeLoss(definitionId: string, next: InputDefinition): number {
+      let lost = 0;
+      for (const page of [...self.pages.values(), ...Array.from(self.components.values(), d => d.page as PageModelType)]) {
+        for (const node of nodesOfPage(page)) {
+          const { component, inputs } = node.props as Partial<PlacementProps>;
+          const value = isPlacementType(node.type) && component === definitionId ? inputs?.[next.id] : undefined;
+          if (value !== undefined && !parseInputValue(next, value).ok) lost++;
+        }
+      }
+      return lost;
     },
 
     // True when the page's slug cannot change: it is the project's only home

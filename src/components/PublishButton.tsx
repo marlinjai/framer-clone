@@ -74,7 +74,7 @@ const PublishButton = observer(() => {
           metadata: { title: p.metadata.title, legalTemplate: p.metadata.legalTemplate },
           snapshot: getSnapshot(p),
         })),
-        { definitions: project.definitions, refused: [] },
+        { definitions: project.definitions, refused: project.refusedComponents },
       );
       if (hasPublishIssues(check)) {
         setState({ kind: 'confirm', check });
@@ -84,6 +84,8 @@ const PublishButton = observer(() => {
     setState({ kind: 'publishing' });
     try {
       const snapshot = getSnapshot(project);
+      // The edits refused up to this snapshot are the ones this publish leaves out.
+      const acknowledged = [...project.refusedComponents];
       const res = await fetch('/api/projects/publish', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -99,6 +101,7 @@ const PublishButton = observer(() => {
       }
       // The server now holds exactly this project (see openProject).
       markServerVersion(project.id, snapshot as ProjectContent);
+      project.clearRefusedEdits(acknowledged);
       const ok = payload as
         | { publishedPages?: unknown; liveUrl?: unknown; subdomain?: unknown }
         | null;

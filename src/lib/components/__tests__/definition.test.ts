@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { extractBreakpoints } from '@/lib/renderer/server/snapshotToComponentNode';
-import { parseComponents } from '../definition';
+import { cycleReason, parseComponents, placedDefinitionIds, wouldCycle } from '../definition';
 import { COMPONENT_LIMITS, isComponentPlaceholderType, isMissingType, isPlacementType, serializedBytes } from '../placement';
 
 const ID = '2f6c1a9e-0000-4000-8000-000000000001';
@@ -182,5 +182,30 @@ describe('placement types', () => {
     expect(isComponentPlaceholderType('#missing')).toBe(true);
     expect(isComponentPlaceholderType('#text')).toBe(false);
     expect(isComponentPlaceholderType('div')).toBe(false);
+  });
+});
+
+describe('wouldCycle', () => {
+  const tree = (...placed: string[]) => ({
+    type: 'div',
+    children: [{ type: 'section', children: placed.map(component => ({ type: '#component', props: { component } })) }],
+  });
+  const defs = (shape: Record<string, string[]>) =>
+    Object.fromEntries(Object.entries(shape).map(([id, placed]) => [id, { id, name: id, page: { appComponentTree: tree(...placed) } }])) as never;
+
+  it('finds what a tree places, nested anywhere', () => {
+    expect(placedDefinitionIds(tree('a', 'b'))).toEqual(['a', 'b']);
+  });
+
+  it('names the path a placement would close', () => {
+    const definitions = defs({ card: [], grid: ['card'], page: ['grid'] });
+    expect(wouldCycle(definitions, 'card', 'page')).toEqual(['card', 'page', 'grid', 'card']);
+    expect(wouldCycle(definitions, 'card', 'card')).toEqual(['card', 'card']);
+    expect(cycleReason(definitions, ['card', 'grid', 'card'])).toBe('card contains grid, which contains card.');
+  });
+
+  it('is null when nothing closes, and ends on a cycle stored already', () => {
+    expect(wouldCycle(defs({ card: [], grid: ['card'] }), 'grid', 'card')).toBeNull();
+    expect(wouldCycle(defs({ a: ['b'], b: ['a'], c: [] }), 'c', 'a')).toBeNull();
   });
 });

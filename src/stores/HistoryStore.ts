@@ -18,6 +18,8 @@ import {
   IAnyStateTreeNode,
   IJsonPatch,
   addDisposer,
+  getSnapshot,
+  SnapshotIn,
 } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -30,6 +32,23 @@ const HistoryEntryModel = types.model('HistoryEntry', {
 });
 
 export type HistoryEntryInstance = Instance<typeof HistoryEntryModel>;
+
+// True while ProjectModel's size guard takes back an edit it refused.
+let takingBackRefusedEdit = false;
+
+/**
+ * Runs the undo of a refused edit. That edit's entry is already in, because the
+ * guard sits below this store's middleware in the call, so the entry goes, and the
+ * undo records none: there is nothing to step back through.
+ */
+export function takeBackRefusedEdit(undo: () => void): void {
+  takingBackRefusedEdit = true;
+  try {
+    undo();
+  } finally {
+    takingBackRefusedEdit = false;
+  }
+}
 
 // Max entries kept. Older ones are trimmed from the front.
 const MAX_HISTORY = 500;
@@ -51,6 +70,13 @@ const HistoryStore = types
     // A batch collects patches from many actions into one history entry. Used
     // for continuous gestures (drag, resize) where per-frame mutations would
     // otherwise flood history with 60 entries per second.
+    // What the newest entry pushed out (the redo tail, and any front entries
+    // trimmed for budget), so taking a refused edit back puts it all back.
+    displaced: undefined as {
+      entryId: string;
+      trimmed: SnapshotIn<typeof HistoryEntryModel>[];
+      tail: SnapshotIn<typeof HistoryEntryModel>[];
+    } | undefined,
     batch: undefined as {
       name: string;
       patches: IJsonPatch[];
@@ -129,6 +155,10 @@ const HistoryStore = types
               self.batch.inversePatches.push(...recorder.inversePatches);
               return;
             }
+            if (takingBackRefusedEdit) {
+              this.forgetLastEntry();
+              return;
+            }
             this.recordEntry(
               call.name,
               recorder.patches,
@@ -152,21 +182,42 @@ const HistoryStore = types
       ) {
         withoutRecording(() => {
           // Drop redo tail — any new action invalidates it.
-          if (self.undoIdx < self.history.length) {
-            self.history.splice(self.undoIdx);
-          }
+          const tail = self.undoIdx < self.history.length
+            ? self.history.slice(self.undoIdx).map(entry => ({ ...getSnapshot(entry) }))
+            : [];
+          if (tail.length > 0) self.history.splice(self.undoIdx);
+          const entryId = uuidv4();
           self.history.push({
-            id: uuidv4(),
+            id: entryId,
             actionName,
             timestamp: Date.now(),
             patches,
             inversePatches,
           });
           // Trim from the front once over budget.
+          let trimmed: SnapshotIn<typeof HistoryEntryModel>[] = [];
           if (self.history.length > MAX_HISTORY) {
-            self.history.splice(0, self.history.length - MAX_HISTORY);
+            const over = self.history.length - MAX_HISTORY;
+            trimmed = self.history.slice(0, over).map(entry => ({ ...getSnapshot(entry) }));
+            self.history.splice(0, over);
           }
+          self.displaced = { entryId, trimmed, tail };
           self.undoIdx = self.history.length;
+        });
+      },
+
+      forgetLastEntry() {
+        withoutRecording(() => {
+          const lastId = self.history[self.undoIdx - 1]?.id;
+          self.history.splice(self.undoIdx - 1, 1);
+          self.undoIdx -= 1;
+          // The refused edit's entry took the redo tail with it: put that back.
+          const displaced = self.displaced;
+          self.displaced = undefined;
+          if (!displaced || lastId === undefined || displaced.entryId !== lastId) return;
+          if (displaced.trimmed.length > 0) self.history.unshift(...displaced.trimmed);
+          if (displaced.tail.length > 0) self.history.push(...displaced.tail);
+          self.undoIdx = self.history.length - displaced.tail.length;
         });
       },
 
