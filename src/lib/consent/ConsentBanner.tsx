@@ -16,12 +16,51 @@
 //
 // Styled from the site's look (font, text and background colour, the accent
 // of its first filled button: src/lib/site/notFoundDefault.ts), neutral when
-// the site sets none.
+// the site sets none, or when a colour pair or a font it sets cannot be shown to
+// read (legibleLook).
+//
+// A rule on `:root` reaches everything the banner inherits, so BANNER_PINNED sets
+// each of those on its root. An element's own value beats an inherited one, even
+// an `!important` one. src/lib/rules/rootProperties.ts holds the list.
 
 import React from 'react';
-import type { SiteLook } from '@/lib/site/notFoundDefault';
+import { legibleLook, type SiteLook } from '@/lib/site/notFoundDefault';
+import { DEFAULT_PAGE_BASE, type PageBase } from '@/lib/site/pageBase';
 import type { TrackerPayload } from '@/lib/renderer/publish/trackerSnippet';
 import { CONSENT_BANNER_ID, consentCopy, consentCss, consentRuntimeScript } from './consent';
+
+/**
+ * What the banner would otherwise inherit from the document, at the values a page
+ * with no rule on `:root` gives it. Those depend on the site's page base: the reset
+ * smooths fonts and sets a tab size of 4, the browser base takes both back out.
+ */
+export function bannerPinned(base: PageBase): React.CSSProperties {
+  return base === 'browser' ? { ...BANNER_PINNED, ...BROWSER_BASE } : BANNER_PINNED;
+}
+
+const BROWSER_BASE: React.CSSProperties = {
+  MozOsxFontSmoothing: 'auto',
+  tabSize: 8,
+  textSizeAdjust: 'auto',
+  WebkitFontSmoothing: 'auto',
+  WebkitTextSizeAdjust: 'auto',
+};
+
+/** The pins on the default base. */
+export const BANNER_PINNED: React.CSSProperties = {
+  accentColor: 'auto',
+  colorScheme: 'normal',
+  fontFeatureSettings: 'normal',
+  fontVariationSettings: 'normal',
+  fontWeight: 400,
+  letterSpacing: 'normal',
+  MozOsxFontSmoothing: 'grayscale',
+  tabSize: 4,
+  textRendering: 'auto',
+  textSizeAdjust: '100%',
+  WebkitFontSmoothing: 'antialiased',
+  WebkitTextSizeAdjust: '100%',
+};
 
 export interface ConsentBannerProps {
   /** The tracker to load after consent (validated by buildTrackerPayload). */
@@ -31,9 +70,12 @@ export interface ConsentBannerProps {
   look: SiteLook;
   /** Path of the site's privacy policy page, when it has one. */
   privacyHref?: string | null;
+  /** The site's page base, which decides what the banner's pins match. */
+  pageBase?: PageBase;
 }
 
-export function ConsentBanner({ tracker, language, look, privacyHref }: ConsentBannerProps) {
+export function ConsentBanner({ tracker, language, look: siteLook, privacyHref, pageBase = DEFAULT_PAGE_BASE }: ConsentBannerProps) {
+  const look = legibleLook(siteLook);
   const copy = consentCopy(language);
   const titleId = `${CONSENT_BANNER_ID}-title`;
   const textId = `${CONSENT_BANNER_ID}-text`;
@@ -85,6 +127,7 @@ export function ConsentBanner({ tracker, language, look, privacyHref }: ConsentB
           fontSize: 15,
           lineHeight: 1.5,
           textAlign: 'left',
+          ...bannerPinned(pageBase),
         }}
       >
         <h2 id={titleId} style={{ margin: 0, fontSize: 17, fontWeight: 700, lineHeight: 1.3, color: 'inherit', fontFamily: 'inherit' }}>

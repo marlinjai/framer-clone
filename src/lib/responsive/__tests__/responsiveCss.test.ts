@@ -6,6 +6,7 @@ import {
   buildResponsiveCss,
   cssPropertyName,
   cssValueText,
+  hasExternalAddress,
   maxWidthBelow,
   type DroppedDeclaration,
 } from '../responsiveCss';
@@ -229,6 +230,54 @@ describe('buildResponsiveCss', () => {
       expect(css({ backgroundImage: { 'bp-tablet': image } })).toBe(
         `@media (max-width:1199.98px){\n.fc-a.fc-a{background-image:${image}}\n}`,
       );
+    });
+  });
+
+  describe('an empty custom property', () => {
+    it('is written, because a var() list reading it goes invalid without it', () => {
+      expect(css({ '--tw-blur': ' ', color: { base: 'red' } })).toContain('.fc-a.fc-a{--tw-blur: ;color:red}');
+    });
+
+    it.each(['  ', '\t', '\n', '\r\n', '\f', ' \n\t '])('reads %j as that one value', (value) => {
+      expect(cssValueText('--x', value)).toBe(' ');
+      expect(css({ '--x': value })).toBe('.fc-a.fc-a{--x: }');
+    });
+
+    it('follows a breakpoint like any value', () => {
+      expect(css({ '--x': { base: ' ', 'bp-phone': '1px' } })).toContain('.fc-a.fc-a{--x: }');
+    });
+
+    it('stays nothing when the stored value is nothing, as React drops it', () => {
+      expect(cssValueText('--x', '')).toBeUndefined();
+      expect(cssValueText('--x', null)).toBeUndefined();
+      expect(css({ '--x': '' })).toBe('');
+    });
+
+    it('stays nothing on a real property, where it would be invalid', () => {
+      expect(cssValueText('color', ' ')).toBeUndefined();
+      expect(css({ color: ' ' })).toBe('');
+    });
+
+    it.each([
+      ' ;color:red',
+      ' ;}body{display:none',
+      '; ',
+      ' }',
+      ' {',
+      '/**/',
+      ' /* */ ',
+      ' </style>',
+      ' \u0000',
+      ' \\',
+      ' url(',
+    ])('gives nothing a way out with %j', (value) => {
+      const dropped: DroppedDeclaration[] = [];
+      expect(css({ '--x': value }, (d) => dropped.push(d))).toBe('');
+      expect(dropped).toEqual([{ className: 'fc-a', property: '--x', reason: 'unsafe-value' }]);
+    });
+
+    it('is no address to a rule', () => {
+      expect(hasExternalAddress(' ')).toBe(false);
     });
   });
 

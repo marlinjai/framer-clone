@@ -274,6 +274,11 @@ function findStickyCta(node: ComponentInstance): ComponentInstance | undefined {
 
 const PageModel = PageWithComponents
   .views(self => ({
+  /** True for a definition's page, which is never a document of its own. */
+  get isDefinitionPage(): boolean {
+    return owningDefinition(self) !== undefined;
+  },
+
   /** Why a moved node may not land on `target`, or undefined when it may. */
   dropRefusal(componentId: string, target: InsertTarget): string | undefined {
     const component = findComponentInPage(self, componentId);

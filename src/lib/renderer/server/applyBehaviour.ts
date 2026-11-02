@@ -210,11 +210,11 @@ export function applyBehaviour(root: ComponentNode): BehaviourResult {
   let marks = 0;
 
   /** Rows repeat one list against the same state, so a page reads each pairing once. */
-  const readConditional = (list: unknown[], states: ReadonlyMap<string, StateValue>, nodeId: string): ReadRules => {
-    const signature = `${JSON.stringify([...states.values()])}\u0000${JSON.stringify(list)}`;
+  const readConditional = (list: unknown[], states: ReadonlyMap<string, StateValue>, nodeId: string, pageRoot: boolean): ReadRules => {
+    const signature = `${pageRoot}\u0000${JSON.stringify([...states.values()])}\u0000${JSON.stringify(list)}`;
     const known = readLists.get(signature);
     if (known) return known;
-    const read = readRules({ rules: list }, { states });
+    const read = readRules({ rules: list }, { states, pageRoot });
     readLists.set(signature, read);
     for (const { index, reason, rule } of read.refused) {
       const id = (rule as { id?: unknown } | null)?.id;
@@ -233,7 +233,7 @@ export function applyBehaviour(root: ComponentNode): BehaviourResult {
     if (!holdsCondition(list) && !behaviour?.showWhen && noScript !== 'hide') return null;
 
     if (list.length > 0) {
-      const read = readConditional(list, reach.states, nodeId);
+      const read = readConditional(list, reach.states, nodeId, node === root && !node.placementRoot);
       rules.push(...read.rules.filter((rule) => hasGate || rule.kind !== 'selector' || rule.gate !== 'off'));
       delete props.rules;
     }

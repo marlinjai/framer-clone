@@ -241,6 +241,26 @@ export function parseFontFamilyList(value: string): string[] {
   return out.map(unquote).filter((n) => n.length > 0);
 }
 
+/** Every name a stack from this registry can hold, in lower case, with the text the registry writes for it. */
+const PLATFORM_FONT_NAMES: ReadonlyMap<string, string> = new Map(
+  [...FONT_LIBRARY.map(fontStack), SYSTEM_FONT_STACK]
+    .flatMap((stack) => stack.split(','))
+    .map((written): [string, string] => [unquote(written).toLowerCase(), written.trim()]),
+);
+
+/**
+ * The list as this registry writes it, or null when a family in it does not come from
+ * the registry or its fallbacks. A stored `@font-face` cannot take one of these names,
+ * because it must start `u-`, so the result cannot name a font with empty glyphs. The
+ * registry's own text is returned, never the stored one, so a spelling the browser
+ * would refuse, such as `system-ui,,sans-serif`, cannot reach a declaration.
+ */
+export function platformFontStack(value: string): string | null {
+  const names = parseFontFamilyList(value);
+  const written = names.map((name) => PLATFORM_FONT_NAMES.get(name.toLowerCase()));
+  return written.length > 0 && written.every((text) => text !== undefined) ? written.join(', ') : null;
+}
+
 /**
  * The family list inside a `font` shorthand ("italic 600 48px/1.1 'Fraunces', serif"):
  * everything after the size token (a length or a size keyword, with an optional

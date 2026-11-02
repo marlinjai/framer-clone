@@ -14,7 +14,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from '@/hooks/useStore';
 import { cn } from '@/lib/utils';
-import type { ComponentInstance } from '@/models/ComponentModel';
+import { isPageRoot, type ComponentInstance } from '@/models/ComponentModel';
 import { isDefinitionRule, parseCssText, readRules, ruleCssText, storedRulesOf, type RuleDraft, type StoredRule } from '@/lib/rules/rules';
 import { asNamedState, findRuleIndex, namedState, namedStateOf, ruleLabel } from '@/lib/rules/states';
 import { FIELD_CONTROL } from './primitives';
@@ -51,7 +51,7 @@ const RawRuleField = observer(({ target, onClose }: { target: ComponentInstance;
   useEffect(() => field.current?.focus(), []);
 
   const add = () => {
-    const { rules, refused } = parseCssText(text);
+    const { rules, refused } = parseCssText(text, { pageRoot: isPageRoot(target) });
     if (refused.length > 0) return setError(`${refused[0].text}: ${refused[0].reason}.`);
     if (rules.length === 0) return setError('Type a selector, such as :nth-child(2n), or a CSS rule.');
 
@@ -125,7 +125,7 @@ const DefinitionEditor = observer(({ target, rule }: { target: ComponentInstance
   const [error, setError] = useState<string | null>(null);
 
   const apply = () => {
-    const { rules, refused } = parseCssText(text);
+    const { rules, refused } = parseCssText(text, { pageRoot: isPageRoot(target) });
     if (refused.length > 0) return setError(`${refused[0].text}: ${refused[0].reason}.`);
     const [draft] = rules;
     if (rules.length !== 1 || !draft || !('define' in draft)) return setError('This field holds one definition.');
@@ -167,7 +167,7 @@ const StateSwitch = observer(({ variant = 'docked' }: { variant?: 'docked' | 'sh
   if (!target) return null;
 
   const rules = storedRulesOf(target.props);
-  const { refused } = readRules(target.props);
+  const { refused } = readRules(target.props, { pageRoot: isPageRoot(target) });
   const refusedRule = (rule: StoredRule) => refused.find((entry) => entry.rule === rule);
   const customRules = rules.filter((rule) => !namedStateOf(rule));
   const active = editorUI.activeRule;

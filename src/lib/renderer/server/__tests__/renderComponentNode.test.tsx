@@ -4,6 +4,7 @@
 //   - void tags emit without children; unknown/empty types degrade (no throw)
 import React from 'react';
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { render, cleanup, waitFor } from '@testing-library/react';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import {
@@ -244,5 +245,12 @@ describe('renderComponentNode: interactive commerce islands', () => {
       expect(button).not.toBeNull();
       expect(button.disabled).toBe(false);
     });
+  });
+});
+
+describe('an empty custom property inline', () => {
+  it('reaches the attribute React writes, and a stored nothing does not', () => {
+    const html = renderToStaticMarkup(<>{renderComponentNode({ id: 'a', type: 'div', props: { style: { '--tw-blur': ' ', '--gone': '' } } })}</>);
+    expect(html).toContain('style="--tw-blur:"');
   });
 });
