@@ -73,8 +73,17 @@ describe('surfaceThemeSheet', () => {
     expect(css).not.toContain('@font-face');
   });
 
-  it('on the browser base, grounds a frame on the canvas colour of its scheme', () => {
-    expect(surfaceThemeSheet(themeOf('dark'), 'browser').startsWith('[data-fc-theme=frame]{background-color:Canvas}')).toBe(true);
+  it('grounds a frame per base and mode, before the theme so the document block still wins', () => {
+    const browserGround = '[data-fc-theme=frame]{background-color:Canvas;color:CanvasText}';
+    const resetGround = '[data-fc-theme=frame]:where(.dark){background-color:var(--background);color:var(--foreground)}';
+    for (const mode of [undefined, 'system', 'light', 'dark'] as const) {
+      const browser = surfaceThemeSheet(themeOf(mode, { color: ref(ID.ink) }), 'browser');
+      const reset = surfaceThemeSheet(themeOf(mode, { color: ref(ID.ink) }), 'reset');
+      expect(browser.startsWith(browserGround), `browser ${mode}`).toBe(true);
+      expect(reset.startsWith(resetGround), `reset ${mode}`).toBe(true);
+      // The document block's colour comes after the ground at the same specificity.
+      for (const sheet of [browser, reset]) expect(sheet.indexOf('color:var(--fc-t-in000001)')).toBeGreaterThan(sheet.indexOf('}'));
+    }
   });
 
   it('gives a forced dark frame its dark values and a system frame both, by attribute', () => {

@@ -21,8 +21,11 @@
 //   - base `reset`: the editor's base layer paints `body` with `--background` and
 //     `--foreground`, which only `class="dark"` changes, so only a forced `dark` frame
 //     needs them; every other frame already shows that white.
-//   - base `browser`: that layer is rolled back, so the page shows the canvas colour of
-//     its colour scheme, which is what `Canvas` is on the frame.
+//   - base `browser`: that layer is rolled back, so the page shows the canvas colour and
+//     text colour of its colour scheme, `Canvas` and `CanvasText` on the frame. The page
+//     base's surface sheet writes `CanvasText` on the frame too, but the ground does not
+//     lean on it: a dark ground must never meet the editor's near-black text, whatever
+//     else is mounted (T3 code review, finding 1).
 //
 // PURE and client-safe.
 
@@ -36,7 +39,7 @@ export const THEME_MODE_ATTRIBUTE = 'data-fc-theme-mode';
 /** A frame's ground before the document block: see the header. Constant text. */
 function groundCss(base: PageBase): string {
   return base === 'browser'
-    ? '[data-fc-theme=frame]{background-color:Canvas}'
+    ? '[data-fc-theme=frame]{background-color:Canvas;color:CanvasText}'
     : '[data-fc-theme=frame]:where(.dark){background-color:var(--background);color:var(--foreground)}';
 }
 
