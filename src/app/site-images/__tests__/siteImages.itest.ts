@@ -101,9 +101,9 @@ async function makeSite(label: string, options: { published?: boolean } = {}): P
   const id = randomUUID();
   const scope: TenantScope = { workspaceId: `ws_img_${label}_${randomUUID().slice(0, 8)}`, tenantGroupId: randomUUID() };
   const repo = getSiteRepository();
-  await repo.saveProject(scope, project(id));
+  const { version } = await repo.saveProject(scope, project(id));
   createdSites.push(id);
-  if (options.published !== false) await repo.publishProject(scope, project(id));
+  if (options.published !== false) await repo.publishProject(scope, project(id), { expectedVersion: version });
   const { subdomain } = await repo.ensureSiteDomain(scope, id);
   return { id, scope, companyId: randomUUID(), host: `${subdomain}.example.com` };
 }
