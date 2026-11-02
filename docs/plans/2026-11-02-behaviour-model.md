@@ -212,19 +212,23 @@ A closed JSON form, at most 6 levels deep, and total: it cannot throw or loop.
 | `{ event: 'value' }` | The value of **the node holding the trigger**, never of `event.target`, so a wrapper cannot read a field inside it |
 | `{ event: 'key' }`, `{ event: 'newState' }` | The key pressed; `newState` of a `toggle` or `beforetoggle` |
 | `{ pointer: 'x' \| 'y', of: node, as: 'px' \| 'percent' }` | The pointer's position relative to a node |
-| `{ active: groupNode }` | The text of a group's active item |
+| `{ active: groupNode }` | The text of a group's active item. A source of the taint rule |
 | `{ row: 'index' }` | The clone's position in its Collection |
 
 **The taint rule,** enforced by `parseBehaviour` over the whole expression, so a derived value is caught.
 
-- **Sources:** `{ event: 'value' }`, `{ event: 'key' }`, and `{ get }` or `{ map }` of `text` state. The value of a
-  `range`, `select`, `checkbox` or `radio` is a choice among fixed values and is not a source.
-- **Allowed sinks:** `set` on `text` state, a `text` binding, and `filter`'s text.
+- **Sources:** `{ event: 'value' }`, `{ event: 'key' }`, `{ active }`, and `{ get }` or `{ map }` of `text` state. The value
+  of a `range`, `select`, `checkbox` or `radio` is a choice among fixed values and is not a source.
+- **Allowed sinks:** `set` on `text` state, a `text` binding, and `filter`'s text. A bare `{ active }` may also go into
+  `setProp` of `value` on a text entry control, which is how Enter copies an option in a `combobox`.
 - **Everything else is refused:** `if`, `set` on other types, `setProp`, `cssVar`, `attr`, `when`, `showWhen`,
   `reads`.
 - **Keys:** a printable key never matches while the event's target is a text entry control, checked at run time
   as well as at parse, because a wrapper hears its descendants. `keys` on a document-scope trigger may name only
   non-printable keys.
+- **Per keystroke:** a trigger on `selectionchange`, or on `input` or `beforeinput` unless it sits on a fixed-value control
+  and does not hear the whole page, holds no `if` and runs only what repeating leaves unchanged: `set` of a literal, any
+  `set` on `text` state, `filter`, and `rove` with `clear`.
 - **Islands:** no trigger may sit on a field that `formKindOf` or a commerce kind claims, except `change` on
   non-text types.
 
@@ -262,10 +266,10 @@ address that leaves the site also against `navigator.userActivation.isActive` at
 is missing. It is refused inside `delay`. An external address is a person's panel choice; the AI generator never
 gets one (decision M6).
 
-**User-input verbs.** `focus`, `rove` and `dialog` with `showModal` run only from `click`, `keydown` or `keyup`,
-except that `showModal` may run from `page-ready` or `view-enter` on a published page. So nothing steals focus from
-a timer, a `blur` or a frame, and all `focus` and `rove` in `blur` or `focusout` triggers are refused, directly or
-under `delay`.
+**User-input verbs.** `focus`, `rove`, `dialog` with `showModal`, `show` or `toggle`, and `popover` with `show` or `toggle`
+run only from `click`, `keydown` or `keyup`, except that `showModal` may run from `page-ready` or `view-enter` on a
+published page, and `rove` with `clear`, which moves no focus. So nothing steals focus from a timer, a `blur` or a frame,
+and all of these in `blur` or `focusout` triggers are refused, directly or under `delay`.
 
 **Family refusal.** A native verb is refused inside a trigger on the events it causes: `popover`, `details` and
 `dialog` in `toggle`, `beforetoggle`, `close` or `cancel`; `media` in media events; `fullscreen` in `fullscreenchange`;
@@ -321,9 +325,10 @@ The pass:
    `aria-labelledby`, `aria-describedby`, `aria-owns`, `aria-activedescendant`, `popovertarget`, `commandfor` and `#`
    links follow, through the helper the components contract defines for placements, moved to
    `src/lib/renderer/idRefs.ts`. A test walks the published HTML for duplicate ids and dangling references.
-7. Adds `data-fc-n="<classKey ?? id>"` only to nodes a trigger, binding, group or target needs.
+7. Adds `data-fc-n="<classKey ?? id>"` only to nodes a trigger, a binding that can change, a declared state, a group or a
+   target needs.
 8. Removes `behaviour`, and returns the program: a table keyed on `classKey ?? id`, so 500 rows or twelve placements
-   share one entry.
+   share one entry. Rows that repeat an entry are charged to the page's caps once.
 
 **A page with none ships nothing.** With no `behaviour` on any node and no custom code block the pass returns the same
 tree object: no attribute, no gate, no script, no island. The proof is a browser counting bytes over the network on
@@ -334,6 +339,11 @@ with a repeated `id` inside a Collection, a bug today, gets it fixed.
 **A page with state and no trigger** can never change, so it has no gate and no runtime. Its `when` rules are emitted
 without the gate prefix and read the server's attributes, which needs no script. Rules with `gate: 'off'` and
 `noScript: 'hide'` are dropped there, since nothing is waiting for a script.
+
+**Nodes sharing a key can differ.** A placement with its own trigger, or a row whose bound `type` changes what parses, shares
+its key with a node that runs something else. So the program holds a list per key, and an element after the first entry
+carries `data-fc-v="<index>"`. References stay on the key, and what a reference may rely on is what holds for every node
+sharing it, so a key one island shares reads as an island.
 
 **Tabs and carousels from data.** `{ row: 'index' }` lets a Collection produce "tab 3 selects panel 3": `set` from the
 index on click, and a panel's `showWhen` comparing the two. Proven in the prototype.
@@ -976,6 +986,55 @@ The fleet plan gives contracts to a fresh review agent before fan-out, and the r
 12. Presets expand to ordinary nodes, native elements first.
 13. The AI generator is taught presets, gets no external `navigate`, and never writes custom code.
 14. Effects are not subsumed.
+
+## Decided in slice B2
+
+B1 left three leaks open and B2 closes them in the parser, because a refusal in one place holds on every path that parses. Each
+is the same shape: a value that started as typing, or a move nobody asked for, passed through something the first rule did not
+treat as a source.
+
+1. **`popover` with `show` or `toggle` is a focus move, always, as `dialog` with `show` already was.** Showing a popover runs the
+   popover focusing steps, so from `every` it takes the keyboard to an `autofocus` child. Refusing only when the target holds one was
+   considered and rejected: a client island renders content the parser cannot see, a key shared across rows can differ per row, and
+   the check would fail open on exactly what it exists to stop. Nothing in the prototype needs a popover opened by anything but a
+   press: `tooltip` is `showWhen`, `menu-button` opens from a press. `hide` stays free, as `dialog` `close` does, since focus returns
+   only from inside the element. `dialog` with `toggle` was a gap of the same kind and is closed with it.
+2. **What fires per keystroke may not build up.** `step` on `input` counts what was typed into a reflected number, and the taint rule
+   cannot see it, because no typed value moves. Refusing `step` alone is not enough: `toggle` gives parity, a `set` reading state
+   counts, `emit` and `delay` hand the count to a trigger that may, a native `toggle` comes back through `newState`, any `rove` but
+   `clear` moves an index, and two `if`s on each other's flags count in unary. So these triggers hold no `if` and run a closed list
+   of what repeating leaves unchanged, and the rule covers `selectionchange` and any wrapper, since a wrapper hears what is typed in
+   an island's field. A fixed-value control is exempt because it hears only itself, so `slider-multithumb` keeps its `input`. The
+   prototype's `combobox` needs nothing outside the list. A `keydown` is already held by the printable key rule.
+3. **`{ active }` is a source.** `filter` decides which items can become active, so the active item's text answers what was typed,
+   and `set` of a `choice` from it reached reflected state. Tainting it only where a `filter` reaches the group needs a page-wide scan
+   that a role or a nested list can get wrong, for no preset's benefit, so it is always a source. Enter in a `combobox` still works:
+   a bare `{ active }` may go into `setProp` of `value` on a text entry control, a property no selector reads, on a control that
+   already holds typed text.
+
+**What is still open, stated.** Visibility from `filter` can reach a reflected value by another door: a `view-enter` on an item, or a
+transition caused by what is left. The same goes for an `aria-activedescendant` a selector reads. These are the residual route of
+decision 7, which needs an author who also controls CSS, and only a policy on published pages closes it (M5).
+
+**Also decided while building it, say so if you disagree:**
+
+- A `when` needs the state on the node's path, so `readRules` takes it as a context, and without one refuses `when` and `gate`. The
+  pass reads a node's list and leaves the result in `compiledRules` on the node, which the snapshot adapter cannot carry from a save.
+- A `when` goes straight after the rule's class, not at the end of the selector, since nothing may follow a pseudo-element.
+- Stored `data-fc-n`, `data-fc-i`, `data-fc-v`, `data-fc-scope` and `data-fcs-*` are dropped again on any page the pass works on, though
+  `expand.ts` strips stored `data-fc-*` first. One on a checkout field would make it a target past every island refusal, so this
+  guarantee does not rest on what called the pass. The list stays exact, since `hoistStickyCta` has written a `data-fc-` of its own by then.
+- A node with no stable key holds no behaviour: nothing could find it.
+- Expansion marks a placement root with `placementRoot: true` on the node, beside `classKey`, which `expand.ts` now writes. Like
+  `cloneIndex`, it ends at `applyResponsiveStyles`, so it never crosses to an island.
+- A binding slot named `behaviour` is skipped by `applyBindings`, so a row cannot write into a behaviour past the `{{binding}}` refusal.
+- Step 6 changes an `id` only where it repeats. An `id` bound per row is already unique, and rewriting it would break its anchors. A
+  bound id reference that can change in a clone is refused, because one program entry cannot write a different id per row.
+- `value` on a form control is written as `defaultValue`. As a prop, React would own the field and a person could not change it.
+- Without a trigger on a press, `noScript` does not default to `hide`: a `toggle` trigger mirrors what the element does natively. A
+  control with a native job (a link, a field, `popovertarget`) keeps working without the script and is not hidden.
+- Until B3, nothing starts the runtime, so a page with a trigger drops its gate after 3 seconds with the console error. Only hand-written
+  JSON can reach that today.
 
 ## Review findings not adopted
 

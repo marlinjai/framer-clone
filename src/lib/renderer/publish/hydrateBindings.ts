@@ -97,6 +97,7 @@ import type {
   ProductPage,
   ProductVariantDTO,
 } from '@/lib/commerce/types';
+import type { ParsedRule } from '@/lib/rules/rules';
 
 /**
  * A build-time, serializable component node. This is the plain-data shape the
@@ -131,6 +132,12 @@ export interface ComponentNode {
    * product. Plain DTO data, so it crosses the client boundary with the node.
    */
   islandFrames?: BindingFrame[];
+  /** On the root a placement expanded to: a scope, with or without state. Ends at applyResponsiveStyles. */
+  placementRoot?: boolean;
+  /** On a Collection or Product list row: its position, which the behaviour pass reads. Ends at applyResponsiveStyles. */
+  cloneIndex?: number;
+  /** Set by applyBehaviour, never stored: what stands in for `props.rules`. Ends at applyResponsiveStyles. */
+  compiledRules?: ParsedRule[];
 }
 
 /**
@@ -413,7 +420,10 @@ async function hydrateCopies(
   const paid = cost
     ? scopes.filter((_, index) => index === 0 || repos.budget.charge(cost.nodes, cost.bytes))
     : scopes;
-  const copies = await Promise.all(paid.map((scope) => hydrateNode(template, scope, repos)));
+  const copies = await Promise.all(paid.map(async (scope, cloneIndex) => {
+    const copy = await hydrateNode(template, scope, repos);
+    return copy && { ...copy, cloneIndex };
+  }));
   return copies.filter((copy) => copy !== null);
 }
 

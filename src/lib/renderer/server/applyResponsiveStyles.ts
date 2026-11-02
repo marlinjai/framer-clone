@@ -49,6 +49,11 @@
 // `fc-` and `fc_` names belong to this step, so a stored className cannot hold one:
 // it would take another node's styles, a step sideways out of that node.
 //
+// A node the behaviour pass worked on brings `compiledRules`: its list read against
+// the state on its path, with `showWhen` and `noScript` added. That stands in for
+// `props.rules`, and it ends here, with what marks a clone or a placement root, so none
+// of them crosses to an island.
+//
 // hydrateBindings clones a template subtree per collection row, so one id can
 // appear many times. Identical rules share one class; a different rule under
 // the same id gets a numbered class, in walk order, so output is deterministic.
@@ -137,6 +142,7 @@ const FIELD_SIZING = 'a control cannot size itself to its text on a page with ru
 export function applyResponsiveStyles(
   root: ComponentNode,
   breakpoints: readonly BreakpointRef[],
+  options: { gated?: boolean } = {},
 ): ResponsiveStylesResult {
   const breakpointIds = new Set(breakpoints.map(b => b.id));
   const primaryId = largestFirst(breakpoints)[0]?.id;
@@ -204,6 +210,7 @@ export function applyResponsiveStyles(
   };
 
   const readNode = (node: ComponentNode): ReadRules | null => {
+    if (node.compiledRules) return { rules: node.compiledRules, refused: [] };
     const stored = (node.props as Record<string, unknown> | undefined)?.rules;
     if (!isRuleList(stored) || isTextNodeType(node.type)) return null;
     const signature = stored.some(holdsTooManyBlocks) ? null : JSON.stringify(stored);
@@ -255,6 +262,9 @@ export function applyResponsiveStyles(
   const visit = (node: ComponentNode, insideReachingRule: boolean): ComponentNode => {
     // The mark ends here: a commerce island's node crosses to the client as it is.
     const { hoverPreset, ...next }: ComponentNode = node;
+    delete next.compiledRules;
+    delete next.cloneIndex;
+    delete next.placementRoot;
     const read = readNode(node);
     const selectorRules = (read?.rules ?? []).filter((rule): rule is ParsedSelectorRule => rule.kind === 'selector');
     for (const rule of read?.rules ?? []) if (rule.kind === 'definition') claimDefinition(node, rule);
@@ -336,6 +346,7 @@ export function applyResponsiveStyles(
     hoverPresets: [...hoverPresets],
     authored,
     fieldGuard: hasRules,
+    gated: options.gated,
     onDropRule: ({ className, ruleId, reason }: DroppedRule) => problems.push({ node: className, rule: ruleId, reason }),
   });
   if (dropped.length + kept.length + problems.length > 0) {

@@ -23,6 +23,8 @@ import { DEFAULT_LOOK, type SiteLook } from '@/lib/site/notFoundDefault';
 import { renderComponentNode } from './renderComponentNode';
 import { applyResponsiveStyles } from './applyResponsiveStyles';
 import { applyEffects } from './applyEffects';
+import { applyBehaviour, type BehaviourProgram } from './applyBehaviour';
+import { behaviourBootScript } from '@/lib/behaviour/gate';
 import EffectsIsland from './EffectsIsland';
 import { publishedEffectsBootScript } from '@/lib/effects/effects';
 import { LENIS_CSS } from '@/lib/effects/smoothScroll';
@@ -108,6 +110,8 @@ export interface RenderedPage {
    * never part of the HTML.
    */
   analyticsGated: boolean;
+  /** The page's stored behaviour as data, for the runtime. Null when nothing on it can change. */
+  behaviour: BehaviourProgram | null;
 }
 
 /**
@@ -160,17 +164,21 @@ export async function renderPublishedPage(
   }
   const hydrated = sticky.root;
 
+  // Stored behaviour becomes attributes, rules and a program, after the rows and
+  // the bar are in their final place and before anything reads the rules it adds.
+  const behaviour = applyBehaviour(hydrated);
+
   // Responsive styles leave the inline style for a per-page stylesheet of
   // max-width media queries (desktop-first, the editor's cascade). Done on the
   // hydrated tree so cloned collection rows and the commerce islands (which
   // receive these props across the client boundary) carry the classes too.
   // Lazy images below the hero, a priority hero (src/lib/renderer/server/imageLoading.tsx).
-  const images = applyImageLoading(hydrated);
+  const images = applyImageLoading(behaviour.root);
   // Effects next: they become data attributes plus custom properties in
   // `style`, which the responsive pass then moves into the stylesheet per
   // breakpoint like any responsive style. The hover presets land in that sheet too.
   const effects = applyEffects(images.root, breakpoints);
-  const responsive = applyResponsiveStyles(effects.root, breakpoints);
+  const responsive = applyResponsiveStyles(effects.root, breakpoints, { gated: behaviour.hasGate });
   // The self-hosted web fonts the page uses, scanned before the responsive
   // rewrite moves styles into classes (src/lib/fonts/registry.ts).
   const fonts = publishedFontAssets(hydrated);
@@ -211,6 +219,11 @@ export async function renderPublishedPage(
           // without JavaScript) unless the visitor asks for reduced motion.
           <script data-fc-effects-boot="" dangerouslySetInnerHTML={{ __html: publishedEffectsBootScript() }} />
         ) : null}
+        {behaviour.hasGate ? (
+          // Parsed and run before the content it gates, so the first paint shows the
+          // first state. Without JavaScript it never runs and every panel shows.
+          <script data-fc-behaviour-boot="" dangerouslySetInnerHTML={{ __html: behaviourBootScript() }} />
+        ) : null}
         {sticky.bar ? (
           // Pins the bar on the smallest breakpoint, pads the page and lifts
           // the consent banner above it. Constant text apart from numbers.
@@ -227,5 +240,6 @@ export async function renderPublishedPage(
       </>
     ),
     analyticsGated: tracker !== null,
+    behaviour: behaviour.program,
   };
 }

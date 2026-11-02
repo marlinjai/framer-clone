@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { StateValue } from '@/lib/behaviour/format';
 import {
   MAX_RULES_PER_NODE,
   PROPERTY_SYNTAXES,
@@ -773,5 +774,50 @@ describe('hasExternalAddress: a plain value that a rule could read through var()
     ['nothing', undefined],
   ])('leaves %s alone', (_, value) => {
     expect(hasExternalAddress(value)).toBe(false);
+  });
+});
+
+describe('a condition on a rule', () => {
+  const states = new Map<string, StateValue>([
+    ['s1', { id: 's1', name: 'Open', type: 'boolean', initial: false }],
+    ['t', { id: 't', name: 'Typed', type: 'text', initial: '' }],
+  ]);
+  const rule = (extra: object) => ({ id: 'r', selector: '&', style: { color: 'red' }, ...extra });
+
+  it('needs the state in reach, which only the behaviour pass has', () => {
+    expect(parseRule(rule({ when: { state: 's1', eq: true } }))).toMatchObject({ ok: false, reason: expect.stringMatching(/no state/) });
+    expect(parseRule(rule({ gate: 'off' }))).toMatchObject({ ok: false, reason: expect.stringMatching(/no state/) });
+  });
+
+  it('reads a condition to a selector', () => {
+    expect(parseRule(rule({ when: { state: 's1', eq: true } }), { states })).toMatchObject({
+      ok: true,
+      value: { when: ':where([data-fcs-s1="true"] *, [data-fcs-s1="true"])' },
+    });
+  });
+
+  it('refuses text state, so what a visitor types decides nothing', () => {
+    expect(parseRule(rule({ when: { state: 't', eq: 'x' } }), { states }).ok).toBe(false);
+  });
+
+  it('refuses the row, which a shared class cannot read', () => {
+    const numbered = new Map<string, StateValue>([['n', { id: 'n', name: 'N', type: 'number', initial: 0 }]]);
+    expect(parseRule(rule({ when: { state: 'n', eq: { row: 'index' } } }), { states: numbered }).ok).toBe(false);
+  });
+
+  it('takes one gate value', () => {
+    expect(parseRule(rule({ gate: 'off' }), { states })).toMatchObject({ ok: true, value: { gate: 'off' } });
+    expect(parseRule(rule({ gate: 'on' }), { states }).ok).toBe(false);
+  });
+
+  it('holds none on a definition', () => {
+    const definition = { id: 'd', define: '@keyframes u-a', blocks: [{ selector: 'from', style: { opacity: 0 } }] };
+    expect(parseRule({ ...definition, when: { state: 's1', eq: true } }, { states }).ok).toBe(false);
+    expect(parseRule({ ...definition, gate: 'off' }, { states }).ok).toBe(false);
+  });
+
+  it('refuses a component state that was never compiled, which would be the permanent look', () => {
+    expect(parseRule(rule({ componentState: 'open' }), { states }).ok).toBe(false);
+    expect(parseRule(rule({ componentState: 'open' })).ok).toBe(false);
   });
 });

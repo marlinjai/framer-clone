@@ -272,7 +272,7 @@ describe('expressions', () => {
     accepted(setNum({ map: 'c', cases: { a: 1, b: { get: 'n' } }, default: 0 }));
     accepted(setNum({ row: 'index' }));
     accepted(setNum({ pointer: 'x', of: 'box', as: 'percent' }));
-    accepted(click({ set: 'c', value: { active: 'grp' } }));
+    accepted(click({ set: 't', value: { active: 'grp' } }));
   });
 
   it('holds the depth limit exactly', () => {
@@ -445,6 +445,121 @@ describe('the taint rule', () => {
     expect(parseCondition({ state: 't', eq: 'x' }, { states: STATES })).toMatchObject({ ok: false });
     expect(parseCondition({ state: 'n', eq: { row: 'index' } }, { states: STATES })).toMatchObject({ ok: false });
     expect(parseCondition({ all: [{ state: 'b', eq: true }, { not: { state: 'c', eq: 'a' } }] }, { states: STATES })).toMatchObject({ ok: true });
+  });
+});
+
+describe('the leaks closed with the compile step', () => {
+  describe('a popover from something other than a press', () => {
+    const OPENS = [{ popover: 'box', op: 'show' }, { popover: 'box', op: 'toggle' }, { dialog: 'dlg', op: 'toggle' }];
+
+    it('is a focus move, since showing one runs its focusing steps', () => {
+      for (const action of OPENS) {
+        for (const event of ['every', 'view-enter', 'page-ready', 'custom:go', 'mouseenter', 'focus', 'change']) {
+          refused({ ...on(event, action), ...(event === 'every' ? { ms: 1000 } : {}) }, /only from a press/);
+        }
+        refused(on('blur', action), /could hold focus/);
+        refused(on('focusout', { delay: 20, do: [action] }), /could hold focus/);
+        refused(on('every', { delay: 20, do: [action] }), /./);
+      }
+    });
+
+    it('still answers a press', () => {
+      for (const action of OPENS) {
+        accepted(click(action));
+        accepted(key(['ArrowDown'], action));
+        refused(key(['Tab'], action), /answering Tab/);
+      }
+    });
+
+    it('can always close, as a dialog can', () => {
+      accepted(on('blur', { popover: 'box', op: 'hide' }));
+      accepted({ ...on('every', { popover: 'box', op: 'hide' }), ms: 1000 });
+      accepted({ ...on('every', { dialog: 'dlg', op: 'close' }), ms: 1000 });
+    });
+  });
+
+  describe('what fires per keystroke', () => {
+    const TYPED = ['input', 'beforeinput', 'selectionchange'];
+    const BUILDS_UP: [string, unknown][] = [
+      ['step', { step: 'n' }],
+      ['toggle', { toggle: 'b' }],
+      ['a set reading state', { set: 'n', value: { add: [{ get: 'n' }, 1] } }],
+      ['a set flipping state', { set: 'b', value: { not: { get: 'b' } } }],
+      ['emit', { emit: 'tick' }],
+      ['a delay', { delay: 20, do: [{ set: 'b', value: true }] }],
+      ['a native toggle', { popover: 'box', op: 'hide' }],
+      ['a details toggle', { details: 'det', op: 'toggle' }],
+      ['a move', { rove: 'grp', move: 'clear', extra: true }],
+      ['setProp', { setProp: 'field', prop: 'disabled', value: true }],
+      ['media', { media: 'vid', op: 'play' }],
+      ['effect', { effect: 'box' }],
+      ['cancel', { cancel: 'k' }],
+    ];
+
+    it('may not build up, on the field or on anything around it', () => {
+      for (const event of TYPED) {
+        for (const [name, action] of BUILDS_UP) {
+          expect(trigger(on(event, action), textInput).length, `${name} on ${event}`).toBeGreaterThan(0);
+          expect(trigger(on(event, action), { id: 'self', type: 'form' }).length, `${name} around a field, on ${event}`).toBeGreaterThan(0);
+        }
+      }
+      refused(on('input', { step: 'n' }), /per keystroke/, textInput);
+      refused(on('input', { rove: 'grp', move: 'next' }), /only from a press|per keystroke/, textInput);
+    });
+
+    it('holds no condition, since two flags gated on each other count', () => {
+      refused({ ...on('input', { set: 'b', value: true }), if: { state: 'on', eq: true } }, /per keystroke/, textInput);
+    });
+
+    it('holds for a fixed value control that hears the whole page', () => {
+      refused({ ...on('input', { step: 'n' }), scope: 'document' }, /per keystroke/, range);
+      refused(on('selectionchange', { step: 'n' }), /per keystroke/, range);
+    });
+
+    it('leaves what repeating does not change', () => {
+      for (const event of TYPED) {
+        accepted(on(event, { set: 'b', value: true }), textInput);
+        accepted(on(event, { set: 'c', value: 'b' }), textInput);
+        accepted(on(event, { set: 't', value: { get: 't' } }), textInput);
+        accepted(on(event, { filter: 'box', role: 'option', text: 'x' }), textInput);
+        accepted(on(event, { rove: 'grp', move: 'clear' }), textInput);
+      }
+      accepted(on('input', { set: 't', value: { event: 'value' } }), textInput);
+    });
+
+    it('leaves a fixed value control alone, which hears only itself', () => {
+      accepted(on('input', { step: 'n' }), range);
+      accepted({ ...on('input', { set: 'n', value: { clamp: [{ event: 'value' }, 0, { get: 'n' }] } }), if: { state: 'b', eq: true } }, range);
+    });
+
+    it('leaves a named key, which carries nothing typed', () => {
+      accepted(key(['Backspace'], { step: 'n' }), textInput);
+    });
+  });
+
+  describe('an active item', () => {
+    it('is a source, since filter decides what can be active', () => {
+      const clean = /typed text/;
+      refused(click({ set: 'c', value: { active: 'grp' } }), clean);
+      refused(click({ set: 'b', value: { eq: [{ active: 'grp' }, 'a'] } }), clean);
+      refused(click({ set: 'n', value: { map: 'c', cases: { a: { active: 'grp' } } } }), /./);
+      refused({ ...click({ toggle: 'b' }), if: { eq: [{ active: 'grp' }, 'a'] } }, clean);
+      refused({ ...click({ toggle: 'b' }), if: { not: { eq: [{ active: 'grp' }, 'a'] } } }, clean);
+      refused(click({ setProp: 'box', prop: 'disabled', value: { eq: [{ active: 'grp' }, 'a'] } }), clean);
+      refused(click({ media: 'vid', op: 'seek', value: { active: 'grp' } }), /./);
+    });
+
+    it('flows where typed text may', () => {
+      accepted(click({ set: 't', value: { active: 'grp' } }));
+      accepted(click({ filter: 'box', role: 'option', text: { active: 'grp' } }));
+    });
+
+    it('copies into a text field and nowhere else, whole', () => {
+      accepted(click({ setProp: 'field', prop: 'value', value: { active: 'grp' } }));
+      refused(click({ setProp: 'box', prop: 'value', value: { active: 'grp' } }), /typed text/);
+      refused(click({ setProp: 'field', prop: 'min', value: { active: 'grp' } }), /typed text/);
+      refused(click({ setProp: 'field', prop: 'value', value: { eq: [{ active: 'grp' }, 'a'] } }), /typed text/);
+    });
   });
 });
 
@@ -1143,6 +1258,34 @@ describe('remapBehaviourRefs', () => {
     let deep: unknown = { focus: 'a' };
     for (let i = 0; i < 5000; i++) deep = { do: [deep] };
     expect(() => remapBehaviourRefs({ id: 'r', props: { behaviour: deep } }, ids)).not.toThrow();
+  });
+});
+
+describe('a whole tree, once its rows exist', () => {
+  const rows = (count: number, row: (index: number) => BehaviourNode): BehaviourNode => ({ id: 'list', type: 'ul', children: Array.from({ length: count }, (_, index) => row(index)) });
+
+  it('charges rows that repeat one entry once', () => {
+    const on16 = Array.from({ length: 16 }, (_, index) => ({ id: `t${index}`, on: 'click', do: [{ emit: 'x' }] }));
+    const tree = rows(200, () => ({ id: 'row', type: 'li', props: { behaviour: { on: on16 } } }));
+    const read = readBehaviourTree(tree);
+    expect(read.refused).toEqual([]);
+    expect(read.behaviours.size).toBe(200);
+  });
+
+  it('charges rows that differ in what parses', () => {
+    const big = (index: number) => ({ id: 'row', type: 'li', props: { behaviour: { state: [{ ...text('s'), name: `${'x'.repeat(120)}${index}` }], on: Array.from({ length: 64 }, (_, at) => ({ id: `t${at}`, on: 'click', do: [{ emit: 'x' }] })) } } });
+    expect(readBehaviourTree(rows(40, big)).refused.length).toBeGreaterThan(0);
+  });
+
+  it('refuses a node no reference could find', () => {
+    const read = readBehaviourTree({ type: 'div', props: { behaviour: { state: [bool('s')] } }, children: [{ id: 'a', type: 'div', props: { behaviour: { showWhen: { state: 's', eq: true } } } }] });
+    expect(read.refused.map((entry) => entry.reason).join()).toMatch(/no stable id/);
+    expect(read.refused.map((entry) => entry.reason).join()).toMatch(/no state s/);
+    expect(read.behaviours.size).toBe(0);
+  });
+
+  it('does not charge a text node twice for what it never held', () => {
+    expect(readBehaviourTree({ type: '#text', props: { behaviour: {} } }).refused).toHaveLength(1);
   });
 });
 

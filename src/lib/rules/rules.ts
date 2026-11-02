@@ -41,8 +41,16 @@
 //   - The editor. Global names must carry the `u-` prefix, because on the canvas
 //     the document is the editor itself.
 //
+// A rule's `when` reads page state (docs/plans/2026-11-02-behaviour-model.md). Which
+// state exists depends on where the node stands, so `when` and `gate` are read only
+// with the state in reach, which the behaviour pass supplies. Without it they are
+// refused: with no state on the page, a condition could never hold, and a `gate: 'off'`
+// rule would wear the no-JavaScript look forever.
+//
 // PURE and client-safe: no React, no MST, no new dependency.
 
+import { conditionSelector } from '@/lib/behaviour/behaviourDom';
+import { parseCondition, type Condition, type StateValue } from '@/lib/behaviour/format';
 import {
   MAX_DEFINITION_BLOCKS,
   PROPERTY_SYNTAXES,
@@ -67,6 +75,10 @@ export interface SelectorRule {
   at?: string[];
   /** Exactly the shape of `props.style`: scalars and responsive maps. */
   style: Record<string, unknown>;
+  /** Applies only while this holds, read from the node's scopes, behind the gate. */
+  when?: Condition;
+  /** Applies only where the gate is down: a page that never had one drops the rule. */
+  gate?: 'off';
 }
 
 /** One global definition, kept on a node so it travels with that node. */
@@ -94,6 +106,19 @@ export interface ParsedSelectorRule {
   parts: string[];
   at: string[];
   style: Record<string, unknown>;
+  /** The rule's `when` as selector text with no specificity. */
+  when?: string;
+  /**
+   * `off` applies where the gate is down. `on` applies behind it with no `when`, which
+   * only the behaviour pass writes, for a condition a shared class cannot read.
+   */
+  gate?: 'on' | 'off';
+}
+
+/** What a rule may read beyond itself. */
+export interface RuleContext {
+  /** The state on the node's path. */
+  states?: ReadonlyMap<string, StateValue>;
 }
 
 /** A definition the parser accepted. */
@@ -601,7 +626,22 @@ function refusedBody(style: unknown, options: { maps: boolean; skip?: string }):
 
 const RULE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-function parseSelectorRule(rule: Record<string, unknown>, id: string): Parsed<ParsedSelectorRule> {
+/** What a rule's `when` and `gate` come to, or why they are refused. */
+function readCondition(rule: Record<string, unknown>, context: RuleContext): Parsed<Pick<ParsedSelectorRule, 'when' | 'gate'>> {
+  // A component state is compiled before any parser sees it, so one that reaches
+  // here was missed, and without its condition it would be the permanent look.
+  if (rule.componentState !== undefined) return refuse('a component state has not been compiled');
+  if (rule.gate !== undefined && rule.gate !== 'off') return refuse("gate is 'off'");
+  if ((rule.gate !== undefined || rule.when !== undefined) && !context.states) return refuse('no state is in reach of this rule');
+  const gate = rule.gate === 'off' ? ({ gate: 'off' } as const) : {};
+  if (rule.when === undefined) return accept(gate);
+  const when = parseCondition(rule.when, { states: context.states ?? new Map() });
+  return when.ok ? accept({ ...gate, when: conditionSelector(when.value) }) : when;
+}
+
+function parseSelectorRule(rule: Record<string, unknown>, id: string, context: RuleContext): Parsed<ParsedSelectorRule> {
+  const condition = readCondition(rule, context);
+  if (!condition.ok) return condition;
   const selector = parseSelector(rule.selector);
   if (!selector.ok) return selector;
   if (rule.at !== undefined && !Array.isArray(rule.at)) return refuse('at is a list of wrappers');
@@ -615,18 +655,19 @@ function parseSelectorRule(rule: Record<string, unknown>, id: string): Parsed<Pa
   }
   const reason = refusedBody(rule.style, { maps: true });
   if (reason) return refuse(reason);
-  return accept({ kind: 'selector', id, parts: selector.value, at, style: rule.style as Record<string, unknown> });
+  return accept({ kind: 'selector', id, parts: selector.value, at, style: rule.style as Record<string, unknown>, ...condition.value });
 }
 
 /** One stored rule, whole or refused. Untrusted input of any shape is fine here. */
-export function parseRule(rule: unknown): Parsed<ParsedRule> {
+export function parseRule(rule: unknown, context: RuleContext = {}): Parsed<ParsedRule> {
   if (!isPlainObject(rule)) return refuse('a rule is an object');
   const { id } = rule;
   if (typeof id !== 'string' || !RULE_ID.test(id)) return refuse('a rule needs a short id');
   const isSelector = rule.selector !== undefined;
   const isDefinition = rule.define !== undefined;
   if (isSelector === isDefinition) return refuse('a rule is either a selector or a definition');
-  return isSelector ? parseSelectorRule(rule, id) : parseDefinition(rule, id);
+  if (isSelector) return parseSelectorRule(rule, id, context);
+  return rule.when !== undefined || rule.gate !== undefined ? refuse('a definition is global, so it holds no condition') : parseDefinition(rule, id);
 }
 
 /** A stored rule that will not reach a stylesheet, and why. */
@@ -646,13 +687,13 @@ export interface ReadRules {
  * Anything but a list is no rules at all, so a `<table rules="all">` stays an
  * attribute. Beyond the node's cap, later rules are refused.
  */
-export function readRules(props: unknown): ReadRules {
+export function readRules(props: unknown, context: RuleContext = {}): ReadRules {
   const stored = isPlainObject(props) ? props.rules : undefined;
   const result: ReadRules = { rules: [], refused: [] };
   if (!isRuleList(stored)) return result;
   const seen = new Set<string>();
   stored.forEach((rule, index) => {
-    const parsed = parseRule(rule);
+    const parsed = parseRule(rule, context);
     const refused = (reason: string) => result.refused.push({ index, rule, reason });
     if (!parsed.ok) refused(parsed.reason);
     else if (seen.has(parsed.value.id)) refused('another rule on this node has the same id');

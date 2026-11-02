@@ -22,6 +22,7 @@
 //
 // PURE: no React, no MST, no server-only.
 
+import { withFollowedRefs } from '@/lib/renderer/idRefs';
 import type { ComponentDefinition, ComponentDefinitions } from '@/lib/components/definition';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
@@ -226,24 +227,10 @@ function pathId(prefix: string, id: string): string {
   return path.length > MAX_PATH ? `p-${stableHash(path)}` : path;
 }
 
-// React prop names beside the attribute names: both are stored.
-const SINGLE_REFERENCES = ['for', 'htmlFor', 'aria-activedescendant', 'popovertarget', 'popoverTarget', 'commandfor', 'commandFor'];
-const LIST_REFERENCES = ['aria-controls', 'aria-labelledby', 'aria-describedby', 'aria-owns'];
-
 function rewriteReferences(node: ComponentNode, renamed: ReadonlyMap<string, string>): ComponentNode {
-  const props: Record<string, unknown> = { ...node.props };
-  const swap = (id: string) => renamed.get(id) ?? id;
-  for (const name of SINGLE_REFERENCES) {
-    if (typeof props[name] === 'string') props[name] = swap(props[name]);
-  }
-  for (const name of LIST_REFERENCES) {
-    const value = props[name];
-    if (typeof value === 'string') props[name] = value.split(/\s+/).map(swap).join(' ');
-  }
-  if (typeof props.href === 'string' && props.href.startsWith('#')) props.href = `#${swap(props.href.slice(1))}`;
   return {
     ...node,
-    ...(node.props ? { props: props as ComponentNode['props'] } : {}),
+    ...(node.props ? { props: withFollowedRefs(node.props, renamed) as ComponentNode['props'] } : {}),
     ...(node.children ? { children: node.children.map(child => rewriteReferences(child, renamed)) } : {}),
   };
 }
@@ -395,7 +382,7 @@ export function expandPlacements(
       ...(node.id ? { classKey: node.id } : {}),
       ...(node.children ? { children: node.children.map(copy) } : {}),
     });
-    return { ...copy(tree, 0), id: placementId };
+    return { ...copy(tree, 0), id: placementId, placementRoot: true };
   };
 
   /** Walks one expansion, in order, giving a repeated `id` attribute a stable suffix. */

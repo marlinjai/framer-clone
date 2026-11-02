@@ -15,6 +15,8 @@ import { FIXTURES } from '../../../../../test/score/corpus/fixtures';
 import type { CommerceServerRepository, ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
 import type { BreakpointRef } from '@/lib/responsive/cascade';
+import { hydrateBindings } from '@/lib/renderer/publish/hydrateBindings';
+import { applyBehaviour } from '../applyBehaviour';
 import { renderPublishedPage } from '../renderPublishedPage';
 
 const REFERENCE = path.join(__dirname, '__fixtures__/pagesWithoutBehaviour.json');
@@ -102,5 +104,13 @@ describe('a page with no behaviour', () => {
     const reference = JSON.parse(fs.readFileSync(REFERENCE, 'utf8')) as Record<string, string>;
     expect(Object.keys(rendered)).toEqual(Object.keys(reference));
     for (const id of Object.keys(reference)) expect(rendered[id], id).toBe(reference[id]);
+  });
+
+  it('comes back from the pass as the same tree, so nothing can have changed', async () => {
+    for (const { tree } of pages) {
+      const hydrated = await hydrateBindings(tree(), {}, { cmsRepo, commerceRepo });
+      expect(applyBehaviour(hydrated)).toEqual({ root: hydrated, program: null, hasGate: false });
+      expect(applyBehaviour(hydrated).root).toBe(hydrated);
+    }
   });
 });
