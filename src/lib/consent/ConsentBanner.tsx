@@ -31,7 +31,7 @@ import { DEFAULT_PAGE_BASE, type PageBase } from '@/lib/site/pageBase';
 import type { SiteTheme } from '@/lib/site/theme';
 import type { TrackerPayload } from '@/lib/renderer/publish/trackerSnippet';
 import { CONSENT_BANNER_Z_INDEX } from '@/lib/styles/stacking';
-import { CONSENT_BANNER_ID, consentCopy, consentCss, consentRuntimeScript } from './consent';
+import { CONSENT_BANNER_ID, consentCopy, consentCss, consentRuntimeScript, type ConsentCategory } from './consent';
 
 /**
  * What the banner would otherwise inherit from the document, at the values a page
@@ -67,8 +67,10 @@ export const BANNER_PINNED: React.CSSProperties = {
 };
 
 export interface ConsentBannerProps {
-  /** The tracker to load after consent (validated by buildTrackerPayload). */
-  tracker: TrackerPayload;
+  /** The tracker to load after analytics consent (validated by buildTrackerPayload), null when the page has none. */
+  tracker: TrackerPayload | null;
+  /** What the page asks about; `analytics` alone when not given. */
+  categories?: readonly ConsentCategory[];
   /** The site language (Site settings), BCP 47. */
   language: string;
   look: SiteLook;
@@ -80,9 +82,9 @@ export interface ConsentBannerProps {
   theme?: SiteTheme;
 }
 
-export function ConsentBanner({ tracker, language, look: siteLook, privacyHref, pageBase = DEFAULT_PAGE_BASE, theme }: ConsentBannerProps) {
+export function ConsentBanner({ tracker, categories = ['analytics'], language, look: siteLook, privacyHref, pageBase = DEFAULT_PAGE_BASE, theme }: ConsentBannerProps) {
   const look = legibleLook(siteLook, theme);
-  const copy = consentCopy(language);
+  const copy = consentCopy(language, categories);
   const titleId = `${CONSENT_BANNER_ID}-title`;
   const textId = `${CONSENT_BANNER_ID}-text`;
   const button: React.CSSProperties = {
@@ -160,7 +162,7 @@ export function ConsentBanner({ tracker, language, look: siteLook, privacyHref, 
           </button>
         </div>
       </div>
-      <script data-fc-consent-runtime="" dangerouslySetInnerHTML={{ __html: consentRuntimeScript({ tracker }) }} />
+      <script data-fc-consent-runtime="" dangerouslySetInnerHTML={{ __html: consentRuntimeScript({ tracker, categories }) }} />
     </>
   );
 }

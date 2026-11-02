@@ -48,6 +48,8 @@ import { createEditorFormElement, formKindOfComponent } from '@/lib/renderer/for
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { formKindOf } from '@/lib/forms/definition';
 import { createStickyCtaElement } from '@/lib/renderer/stickyCta/stickyCtaElement';
+import { isMapEmbed } from '@/lib/mapEmbed/mapEmbed';
+import { createMapEmbedElement } from '@/lib/renderer/mapEmbed/mapEmbedElement';
 
 // The six Track C commerce kinds. Disjoint from the CMS kinds, so the commerce
 // branch in createComponentElement can claim them without touching the CMS path.
@@ -219,6 +221,12 @@ export function createComponentElement(
     // (HeadlessPageRenderer), the published page through its stylesheet.
     if (isStickyCta(component.props)) {
       return createStickyCtaElement(propsWithIdentity, options?.mode === 'editor' ? 'editor' : 'preview', undefined, finalProps);
+    }
+
+    // A Google Maps embed is its placeholder on the canvas and in the preview:
+    // both run on the editor's origin, and nothing there contacts Google.
+    if (isMapEmbed(component.props)) {
+      return createMapEmbedElement(propsWithIdentity, options?.mode === 'editor' ? 'editor' : 'preview', undefined, finalProps);
     }
 
     // Form components (data-form-kind): static on the canvas and in the preview,

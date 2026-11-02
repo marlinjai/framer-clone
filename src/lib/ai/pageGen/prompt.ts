@@ -10,6 +10,7 @@ import { stableStringify } from '@/lib/ai/serializers/normalize';
 import { buildSchemaDocs } from './schemaDocs';
 import { FORMS_PROMPT } from './promptSections/forms';
 import { STICKY_CTA_PROMPT } from './promptSections/stickyCta';
+import { MAP_EMBED_PROMPT } from './promptSections/mapEmbed';
 import { BASE_KEY, type BreakpointKey } from './schema';
 import type { PageGenTarget } from './protocol';
 import { siteContextText, type SiteContext } from './promptSections/siteContext';
@@ -180,7 +181,7 @@ export function emitPageTool(): BetaTool {
 
 /** The cached system prefix: instructions plus the registry-generated docs. */
 export function stableSystemText(): string {
-  return `${INSTRUCTIONS}\n\n${buildSchemaDocs()}\n\n${FORMS_PROMPT}\n\n${STICKY_CTA_PROMPT}`;
+  return `${INSTRUCTIONS}\n\n${buildSchemaDocs()}\n\n${FORMS_PROMPT}\n\n${STICKY_CTA_PROMPT}\n\n${MAP_EMBED_PROMPT}`;
 }
 
 export interface RequestContextInput {

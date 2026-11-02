@@ -59,6 +59,10 @@ import {
   type Weekday,
 } from '@/lib/site/siteSettings';
 import { LEGAL_KINDS, LEGAL_TITLES, findLegalPage, legalLanguage, type LegalKind } from '@/lib/legal/legalPages';
+import { mapsPrivacyCheck } from '@/lib/legal/publishCheck';
+import { literalPageTree } from '@/lib/renderer/server/snapshotToComponentNode';
+import { getSnapshot } from 'mobx-state-tree';
+import { GoogleMapsPrivacyHint } from './GoogleMapsPrivacyHint';
 
 const fieldLabel = 'text-[11px] font-semibold uppercase tracking-wide text-muted-foreground';
 const inputBase =
@@ -260,6 +264,11 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
   const legalLang = legalLanguage(candidate.language);
   const legalPages = LEGAL_KINDS.map((kind) => ({ kind, page: findLegalPage(project.pagesArray, kind) }));
   const analyticsOn = project.lumitra.enabled;
+  // A Google Maps embed anywhere on the site: the privacy policy must name it.
+  const mapsCheck = mapsPrivacyCheck(project.pagesArray, (id) => {
+    const page = project.getPage(id);
+    return page ? (literalPageTree(getSnapshot(page), project.definitions).root as never) : null;
+  });
 
   const languageSelectValue = customLanguage ? 'other' : draft.language;
 
@@ -592,9 +601,25 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
             <p className="text-[12px] text-foreground">
               {analyticsOn
                 ? 'Shown to visitors, because analytics is on (once the deploy has an analytics key configured). The analytics script loads only after a visitor accepts; declining loads nothing. Visitors can change their choice from the cookie settings link in the footer.'
-                : 'Not shown: nothing on your site stores data on visitors\' devices that needs consent (analytics is off).'}
+                : mapsCheck
+                  ? 'Shown on pages with a Google Map: the map loads only after a visitor accepts, on the banner or with the map\'s own "Load map" button. Declining loads nothing. Visitors can change their choice from the cookie settings link in the footer.'
+                  : 'Not shown: nothing on your site stores data on visitors\' devices that needs consent (analytics is off).'}
             </p>
+            {analyticsOn && mapsCheck && (
+              <p className="text-[12px] text-foreground">
+                On pages with a Google Map the banner also asks about the map, which loads only after a visitor accepts.
+              </p>
+            )}
           </div>
+          {mapsCheck && (
+            <GoogleMapsPrivacyHint
+              className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-950"
+              language={candidate.language}
+              check={mapsCheck}
+              onCreatePrivacy={() => openOrCreateLegal('privacy')}
+              onOpenPrivacy={() => openOrCreateLegal('privacy')}
+            />
+          )}
         </section>
       </DialogBody>
       <DialogFooter>

@@ -82,6 +82,7 @@ describe('revisionPublishCheck', () => {
     });
     expect(revisionPublishCheck(doc)).toEqual({
       missingImpressum: true,
+      maps: null,
       placeholders: [{ kind: 'privacy', pageId: 'privacy', title: 'Datenschutz', count: 1 }],
       components: [],
     });
@@ -97,6 +98,7 @@ describe('revisionPublishCheck', () => {
   it('finds nothing on a site with no business data', () => {
     expect(revisionPublishCheck(parseRevisionDocument({ schemaVersion, pages: [PAGE] }))).toEqual({
       missingImpressum: false,
+      maps: null,
       placeholders: [],
       components: [],
     });

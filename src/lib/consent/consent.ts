@@ -14,11 +14,22 @@
 // the visitor accepts. Declining loads nothing at all (not even the config
 // globals). A site where nothing needs consent gets no banner and no runtime.
 //
+// Consent is asked per category (CONSENT_CATEGORIES): `analytics` for the tracker,
+// `maps` for Google Maps embeds (src/lib/mapEmbed/mapEmbed.ts), which load Google
+// content and so need consent before anything contacts Google. A page asks only
+// for the categories it uses. The banner's Accept and Decline answer all of them;
+// a map's own "Load map" answers `maps` alone.
+//
 // The choice itself is stored in localStorage under CONSENT_STORAGE_KEY as
-// `{"v":1,"analytics":true|false,"at":"<ISO time>"}`. That entry is strictly
-// necessary (it is how the site remembers the visitor said no) and needs no
-// consent. Bumping CONSENT_VERSION (when what the site measures changes)
-// makes every stored choice invalid, so visitors are asked again.
+// `{"v":1,"analytics":true|false,"maps":true|false,"at":"<ISO time>"}`, where a
+// category not yet answered is absent. That entry is strictly necessary (it is
+// how the site remembers the visitor said no) and needs no consent. A new
+// category is a new field, not a new version: an existing answer stays valid for
+// what it answered, and only the new question is asked. Bumping CONSENT_VERSION
+// (when what a category covers changes) makes every stored choice invalid, so
+// visitors are asked again. The `maps` answer is mirrored in the first-party
+// cookie CONSENT_MAPS_COOKIE, also strictly necessary, so the edge middleware can
+// measure a Google frame without that consent (src/lib/site/cspReportOnly.ts).
 //
 // The runtime is hand-written ES5 in a string, run inline right after the
 // banner's server-rendered markup, before hydration: a stored "yes" loads the
@@ -29,6 +40,7 @@
 
 import { safeJson, type TrackerPayload } from '@/lib/renderer/publish/trackerSnippet';
 import { COOKIE_SETTINGS_HASH, legalLanguage, type LegalLanguage } from '@/lib/legal/legalPages';
+import { MAPS_CONSENT_COOKIE } from '@/lib/site/cspReportOnly';
 
 /** The localStorage key holding the visitor's choice. */
 export const CONSENT_STORAGE_KEY = 'lumitra-consent';
@@ -43,24 +55,37 @@ export const CONSENT_BANNER_ID = 'fc-consent';
 export const TRACKER_SESSION_PREFIX = 'ap_';
 export const TRACKER_COOKIE = 'lumitra_variants_pub';
 
+/** The cookie mirroring a `maps` grant, read by the edge middleware (cspReportOnly.ts). */
+export const CONSENT_MAPS_COOKIE = MAPS_CONSENT_COOKIE;
+
+/** What a visitor is asked about, each answered on its own. */
+export const CONSENT_CATEGORIES = ['analytics', 'maps'] as const;
+export type ConsentCategory = (typeof CONSENT_CATEGORIES)[number];
+
 export type ConsentChoice = 'granted' | 'denied';
 
 export interface StoredConsent {
   v: number;
-  analytics: boolean;
+  analytics?: boolean;
+  maps?: boolean;
   at: string;
 }
 
 /**
- * The stored choice from the raw localStorage value, or null when there is
- * none, it is unreadable or it was stored for another version.
+ * The stored choice for one category from the raw localStorage value, or null
+ * when there is none, it is unreadable, it was stored for another version, or
+ * that category was never answered.
  */
-export function parseStoredConsent(raw: string | null, version: number = CONSENT_VERSION): ConsentChoice | null {
+export function parseStoredConsent(
+  raw: string | null,
+  version: number = CONSENT_VERSION,
+  category: ConsentCategory = 'analytics',
+): ConsentChoice | null {
   if (!raw) return null;
   try {
     const value = JSON.parse(raw) as Partial<StoredConsent> | null;
-    if (!value || value.v !== version || typeof value.analytics !== 'boolean') return null;
-    return value.analytics ? 'granted' : 'denied';
+    if (!value || value.v !== version || typeof value[category] !== 'boolean') return null;
+    return value[category] ? 'granted' : 'denied';
   } catch {
     return null;
   }
@@ -76,11 +101,31 @@ export interface ConsentCopy {
   label: string;
 }
 
+type Purposes = 'analytics' | 'maps' | 'both';
+
+const BODY: Record<LegalLanguage, Record<Purposes, string>> = {
+  de: {
+    analytics:
+      'Mit Ihrer Einwilligung erfassen wir, wie diese Website genutzt wird (Lumitra Analytics), und speichern dafür Daten in Ihrem Browser. Ohne Einwilligung wird nichts erfasst. Sie können Ihre Wahl jederzeit unter „Cookie-Einstellungen“ im Seitenfuß ändern.',
+    maps:
+      'Diese Seite zeigt Karten von Google Maps. Sie werden erst mit Ihrer Einwilligung geladen; dabei erhält Google (Google Ireland Limited) Daten wie Ihre IP-Adresse. Ohne Einwilligung wird keine Verbindung zu Google hergestellt. Sie können Ihre Wahl jederzeit unter „Cookie-Einstellungen“ im Seitenfuß ändern.',
+    both:
+      'Mit Ihrer Einwilligung erfassen wir, wie diese Website genutzt wird (Lumitra Analytics), und speichern dafür Daten in Ihrem Browser, und wir laden Karten von Google Maps, wobei Google (Google Ireland Limited) Daten wie Ihre IP-Adresse erhält. Ohne Einwilligung geschieht beides nicht. Sie können Ihre Wahl jederzeit unter „Cookie-Einstellungen“ im Seitenfuß ändern.',
+  },
+  en: {
+    analytics:
+      'With your consent we measure how this website is used (Lumitra Analytics) and store data in your browser for it. Without consent nothing is measured. You can change your choice at any time under "Cookie settings" in the footer.',
+    maps:
+      'This page shows maps from Google Maps. They load only with your consent, and Google (Google Ireland Limited) then receives data such as your IP address. Without consent nothing contacts Google. You can change your choice at any time under "Cookie settings" in the footer.',
+    both:
+      'With your consent we measure how this website is used (Lumitra Analytics) and store data in your browser for it, and we load maps from Google Maps, which gives Google (Google Ireland Limited) data such as your IP address. Without consent neither happens. You can change your choice at any time under "Cookie settings" in the footer.',
+  },
+};
+
 const COPY: Record<LegalLanguage, ConsentCopy> = {
   de: {
     title: 'Datenschutz-Einstellungen',
-    body:
-      'Mit Ihrer Einwilligung erfassen wir, wie diese Website genutzt wird (Lumitra Analytics), und speichern dafür Daten in Ihrem Browser. Ohne Einwilligung wird nichts erfasst. Sie können Ihre Wahl jederzeit unter „Cookie-Einstellungen“ im Seitenfuß ändern.',
+    body: BODY.de.analytics,
     accept: 'Akzeptieren',
     decline: 'Ablehnen',
     privacyLink: 'Datenschutzerklärung',
@@ -88,8 +133,7 @@ const COPY: Record<LegalLanguage, ConsentCopy> = {
   },
   en: {
     title: 'Privacy settings',
-    body:
-      'With your consent we measure how this website is used (Lumitra Analytics) and store data in your browser for it. Without consent nothing is measured. You can change your choice at any time under "Cookie settings" in the footer.',
+    body: BODY.en.analytics,
     accept: 'Accept',
     decline: 'Decline',
     privacyLink: 'Privacy policy',
@@ -97,32 +141,48 @@ const COPY: Record<LegalLanguage, ConsentCopy> = {
   },
 };
 
-/** The banner copy for a BCP 47 tag: German for `de*`, English otherwise. */
-export function consentCopy(language: string): ConsentCopy {
-  return COPY[legalLanguage(language)];
+/**
+ * The banner copy for a BCP 47 tag (German for `de*`, English otherwise), naming
+ * what the page asks about.
+ */
+export function consentCopy(language: string, categories: readonly ConsentCategory[] = ['analytics']): ConsentCopy {
+  const lang = legalLanguage(language);
+  const analytics = categories.includes('analytics');
+  const maps = categories.includes('maps');
+  const purposes: Purposes = analytics && maps ? 'both' : maps ? 'maps' : 'analytics';
+  return { ...COPY[lang], body: BODY[lang][purposes] };
 }
 
-/** What the runtime needs: the version, the storage key and the tracker to load. */
+/** What the runtime needs: the categories asked, the version, the storage key and the tracker to load. */
 export interface ConsentRuntimeConfig {
-  tracker: TrackerPayload;
+  /** The tracker to load after `analytics` consent, null when the page has none. */
+  tracker: TrackerPayload | null;
+  /** What this page asks about. Without it, `analytics` alone (the runtime's first contract). */
+  categories?: readonly ConsentCategory[];
   version?: number;
   storageKey?: string;
 }
 
 /**
  * The inline runtime. Defines `window.__lumitraConsent` with `open()`,
- * `accept()`, `decline()`, `get()` and `version`, then:
- *   - a stored "yes" for this version loads the tracker at once;
- *   - a stored "no" keeps the banner hidden and loads nothing;
- *   - no (valid) choice shows the banner, without moving focus (it is not
- *     modal and sits first in the reading order).
+ * `accept()`, `decline()`, `grant(category)`, `get(category)` (the analytics
+ * answer without one), `categories` and `version`, then:
+ *   - a stored "yes" to analytics for this version loads the tracker at once;
+ *   - every category this page asks about already answered keeps the banner
+ *     hidden;
+ *   - otherwise the banner shows, without moving focus (it is not modal and
+ *     sits first in the reading order).
  * Any link to `#cookie-settings` (the footer's "Cookie settings") reopens it
  * and moves focus to it; Escape closes a reopened banner and gives focus back
- * to the link. Accepting loads the tracker (and calls the loader's
- * `enableTracking` when it exposes one); declining after an earlier "yes"
- * removes what the tracker stored and reloads the page so nothing keeps
- * running. Storage that throws (sandboxed frames, some private modes) keeps
- * the choice for this page view only.
+ * to the link. Accept answers every category of the page with yes and Decline
+ * with no. `grant(category)` answers one (a map's "Load map" button) and closes
+ * the banner when nothing else is open. Accepting analytics loads the tracker
+ * (and calls the loader's `enableTracking` when it exposes one); declining it
+ * after an earlier "yes" removes what the tracker stored and reloads the page so
+ * nothing keeps running. Every other answer is announced as a `lumitra:consent`
+ * event whose detail names the category (`{maps:true}`), which the map islands
+ * listen to: a "no" removes a loaded map. Storage that throws (sandboxed frames,
+ * some private modes) keeps the choice for this page view only.
  *
  * While the banner is open, nothing of the page sits in the top layer, which is
  * above every z-index (the z-index cap is src/lib/styles/stacking.ts): opening
@@ -140,17 +200,30 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     hash: COOKIE_SETTINGS_HASH,
     prefix: TRACKER_SESSION_PREFIX,
     cookie: TRACKER_COOKIE,
-    tracker: input.tracker,
+    mapsCookie: CONSENT_MAPS_COOKIE,
+    all: CONSENT_CATEGORIES,
+    cats: (input.categories ?? ['analytics']).filter((c) => (CONSENT_CATEGORIES as readonly string[]).includes(c)),
+    tracker: input.tracker ?? null,
   };
   return (
     '(function(){' +
     `var C=${safeJson(config)};` +
-    'var w=window,d=document,el=d.getElementById(C.id),mem=null,loaded=false,opener=null;' +
-    // The stored choice for this version, or null.
-    'function read(){try{var raw=w.localStorage.getItem(C.key);if(!raw)return null;var r=JSON.parse(raw);' +
-    "if(!r||r.v!==C.v||typeof r.analytics!=='boolean')return null;return r.analytics?'granted':'denied';}catch(e){return null;}}" +
-    'function current(){var r=read();return r!==null?r:mem;}' +
-    "function write(yes){mem=yes?'granted':'denied';try{w.localStorage.setItem(C.key,JSON.stringify({v:C.v,analytics:yes,at:new Date().toISOString()}));}catch(e){}}" +
+    'var w=window,d=document,el=d.getElementById(C.id),mem={},loaded=false,opener=null;' +
+    'function known(c){return C.all.indexOf(c)!==-1;}' +
+    'function asks(c){return C.cats.indexOf(c)!==-1;}' +
+    // The stored record for this version, or null.
+    'function stored(){try{var raw=w.localStorage.getItem(C.key);if(!raw)return null;var r=JSON.parse(raw);' +
+    "if(!r||typeof r!=='object'||r.v!==C.v)return null;return r;}catch(e){return null;}}" +
+    // One category's answer: the stored one, else this page view's (storage that throws).
+    "function state(c){var r=stored(),x=r&&typeof r[c]==='boolean'?r[c]:(typeof mem[c]==='boolean'?mem[c]:null);return x===null?null:(x?'granted':'denied');}" +
+    // Whether this page still has a question nobody answered.
+    'function pending(){for(var i=0;i<C.cats.length;i++)if(state(C.cats[i])===null)return true;return false;}' +
+    // Keeps every other category's answer: answering maps never touches analytics.
+    "function write(p){var r=stored()||{},o={v:C.v},k,i;for(i=0;i<C.all.length;i++){k=C.all[i];if(typeof r[k]==='boolean')o[k]=r[k];}" +
+    'for(k in p){if(Object.prototype.hasOwnProperty.call(p,k)&&known(k)){o[k]=p[k];mem[k]=p[k];}}o.at=new Date().toISOString();' +
+    'try{w.localStorage.setItem(C.key,JSON.stringify(o));}catch(e){}' +
+    "if(typeof p.maps==='boolean'){try{d.cookie=C.mapsCookie+(p.maps?'=1; path=/; max-age=31536000; SameSite=Lax':'=; path=/; max-age=0; SameSite=Lax');}catch(e){}}}" +
+    "function emit(c,yes){var x={};x[c]=yes;try{w.dispatchEvent(new CustomEvent('lumitra:consent',{detail:x}));}catch(e){}}" +
     // Load the tracker. It is an ES module that only exports init() and
     // enableTracking() (analytics-platform packages/tracker), so a classic
     // <script src> cannot run it: import it, init it with the site's public
@@ -187,10 +260,13 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     ".observe(d.documentElement,{subtree:true,attributes:true,attributeFilter:['open']});}catch(e){}" +
     'function show(focus){if(!el)return;el.hidden=false;clear();if(focus){try{el.focus();}catch(e){}}}' +
     'function hide(){if(!el)return;el.hidden=true;var o=opener;opener=null;if(o&&o.focus&&d.contains(o)){try{o.focus();}catch(e){}}}' +
-    'function choose(yes){var before=current();write(yes);hide();if(yes){load();return;}' +
-    "forget();if(before==='granted'||loaded){try{w.location.reload();}catch(e){}}}" +
+    "function choose(yes){var before=state('analytics'),p={},i;for(i=0;i<C.cats.length;i++)p[C.cats[i]]=yes;write(p);hide();" +
+    "for(i=0;i<C.cats.length;i++){if(C.cats[i]==='analytics'){if(yes)load();}else emit(C.cats[i],yes);}" +
+    "if(!yes&&asks('analytics')){forget();if(before==='granted'||loaded){try{w.location.reload();}catch(e){}}}}" +
+    // One category, from a control outside the banner that names it (a map's "Load map").
+    "function grant(c){if(!known(c))return;var p={};p[c]=true;write(p);if(c==='analytics')load();else emit(c,true);if(up()&&!pending())hide();}" +
     'function open(){var a=d.activeElement;opener=a&&a!==d.body&&!(el&&el.contains(a))?a:null;show(true);}' +
-    'w.__lumitraConsent={open:open,accept:function(){choose(true);},decline:function(){choose(false);},get:function(){return current();},version:C.v};' +
+    "w.__lumitraConsent={open:open,accept:function(){choose(true);},decline:function(){choose(false);},grant:grant,get:function(c){return state(c||'analytics');},categories:C.cats.slice(),version:C.v};" +
     "d.addEventListener('click',function(ev){var t=ev.target;while(t&&t.nodeType===1){" +
     // Only the banner's own buttons answer: a choice nobody made is not consent.
     "if(el&&el.contains(t)&&t.hasAttribute('data-fc-consent-accept')){ev.preventDefault();choose(true);return;}" +
@@ -198,8 +274,8 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     "var h=t.tagName==='A'?(t.getAttribute('href')||''):'';" +
     'if(h&&h.slice(-C.hash.length)===C.hash){ev.preventDefault();opener=t;show(true);return;}' +
     't=t.parentNode;}});' +
-    "d.addEventListener('keydown',function(ev){if((ev.key==='Escape'||ev.key==='Esc')&&el&&!el.hidden&&current()!==null){hide();}});" +
-    "var c=current();if(c==='granted')load();else if(c===null)show(false);" +
+    "d.addEventListener('keydown',function(ev){if((ev.key==='Escape'||ev.key==='Esc')&&el&&!el.hidden&&!pending()){hide();}});" +
+    "if(state('analytics')==='granted')load();if(pending())show(false);" +
     'if(w.location&&w.location.hash===C.hash)show(true);' +
     '})();'
   );

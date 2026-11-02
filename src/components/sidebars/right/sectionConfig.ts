@@ -2,9 +2,10 @@ import { ComponentInstance } from '@/models/ComponentModel';
 import { formKindOf } from '@/lib/forms/definition';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
+import { isMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 
-export type ComponentCategory = 'viewport' | 'placement' | 'container' | 'text' | 'link' | 'image' | 'generic' | 'form' | 'formField' | 'formSubmit' | 'stickyCta';
-export type SectionId = 'component' | 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles' | 'effects' | 'form' | 'stickyCta' | 'link' | 'custom';
+export type ComponentCategory = 'viewport' | 'placement' | 'container' | 'text' | 'link' | 'image' | 'generic' | 'form' | 'formField' | 'formSubmit' | 'stickyCta' | 'mapEmbed';
+export type SectionId = 'component' | 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles' | 'effects' | 'form' | 'stickyCta' | 'mapEmbed' | 'link' | 'custom';
 
 // Exported so the AI page generator's schema docs (src/lib/ai/pageGen/schema.ts)
 // offer exactly the tags this properties panel knows how to edit.
@@ -22,6 +23,8 @@ export function getComponentCategory(component: ComponentInstance): ComponentCat
   if (formKind === 'form-submit') return 'formSubmit';
   // The sticky call to action bar is a div, but not a layout container.
   if (isStickyCta(component.props)) return 'stickyCta';
+  // The map embed is a div whose content the renderers draw.
+  if (isMapEmbed(component.props)) return 'mapEmbed';
   if (component.type === 'img') return 'image';
   if (component.type === 'a') return 'link';
   if (TEXT_TYPES.has(component.type)) return 'text';
@@ -53,4 +56,7 @@ export const SECTION_MAP: Record<ComponentCategory, SectionId[]> = {
   // Pinned by the published page, so no size, position or effects; the bar's
   // look is the Styles section, the font of its label Typography.
   stickyCta:  ['stickyCta', 'typography', 'styles', 'custom'],
+  // The map first; the box is sized and styled like any block. No layout: its
+  // content is the placeholder or the map, never children.
+  mapEmbed:   ['mapEmbed', 'size', 'position', 'typography', 'styles', 'effects', 'custom'],
 };

@@ -4,7 +4,7 @@ import type { NextRequest } from 'next/server';
 // that pulls `server-only` + Prisma, which cannot run in the edge middleware.
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
 import { isEditorHost as isEditorHostname } from '@/lib/editorHost';
-import { CSP_REPORT_ONLY_HEADER, PUBLISHED_REPORT_ONLY_POLICY } from '@/lib/site/cspReportOnly';
+import { CSP_REPORT_ONLY_HEADER, MAPS_CONSENT_COOKIE, reportOnlyPolicy } from '@/lib/site/cspReportOnly';
 
 /**
  * The coarse edge auth gate for framer-clone.
@@ -64,10 +64,11 @@ function isCrossOriginWrite(request: NextRequest): boolean {
 /**
  * A published page's response, carrying the report-only policy
  * (src/lib/site/cspReportOnly.ts). Only a document on a published host gets it:
- * the editor host never does, and it never blocks anything.
+ * the editor host never does, and it never blocks anything. Google Maps frames
+ * are allowed only for a visitor whose maps consent the cookie records.
  */
-function withReportOnlyPolicy(response: NextResponse): NextResponse {
-  response.headers.set(CSP_REPORT_ONLY_HEADER, PUBLISHED_REPORT_ONLY_POLICY);
+function withReportOnlyPolicy(request: NextRequest, response: NextResponse): NextResponse {
+  response.headers.set(CSP_REPORT_ONLY_HEADER, reportOnlyPolicy(request.cookies.get(MAPS_CONSENT_COOKIE)?.value === '1'));
   return response;
 }
 
@@ -98,7 +99,7 @@ export async function middleware(request: NextRequest) {
       // auth-brain login). A rewrite (NOT redirect): the visitor's URL stays `/`,
       // the required catch-all `(site)/[...slug]` route receives the sentinel
       // segment and resolves it as the home request.
-      return withReportOnlyPolicy(NextResponse.rewrite(new URL(`/${HOME_REWRITE_SENTINEL}`, request.url)));
+      return withReportOnlyPolicy(request, NextResponse.rewrite(new URL(`/${HOME_REWRITE_SENTINEL}`, request.url)));
     }
     // Editor host root: preserve EXACTLY today's behavior. The editor `/` is NOT
     // auth-bounced here; it loads client-only and owns its own auth. Do NOT start
@@ -145,7 +146,7 @@ export async function middleware(request: NextRequest) {
     // only runs on the editor host): those are not pages, so they pass unmarked.
     const { pathname } = request.nextUrl;
     if (pathname === '/api' || pathname.startsWith('/api/')) return NextResponse.next();
-    return withReportOnlyPolicy(NextResponse.next());
+    return withReportOnlyPolicy(request, NextResponse.next());
   }
 
   // The matcher runs this for every API route so the cross-origin check above

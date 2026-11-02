@@ -12,9 +12,10 @@
 //
 // Before publishing it checks the legal pages (src/lib/legal/publishCheck.ts):
 // a site with business data but no Impressum, or a legal page that still
-// holds [placeholders], gets an in-page notice first (never a browser
-// dialog) with a one-click "Create Impressum" (or "Open <page>") and
-// "Publish anyway". A warning, not a gate.
+// holds [placeholders], or a Google Maps embed the privacy policy does not
+// name, gets an in-page notice first (never a browser dialog) with a one-click
+// "Create Impressum" (or "Open <page>", "Create privacy policy"), the suggested
+// Google Maps wording, and "Publish anyway". A warning, not a gate.
 'use client';
 
 import React from 'react';
@@ -27,6 +28,8 @@ import { markServerVersion, type ProjectContent } from '@/stores/openProject';
 import { useSiteAddress } from '@/contexts/SiteAddressContext';
 import { TopBarStatus } from './TopBarStatus';
 import { checkBeforePublish, hasPublishIssues, type PublishCheck } from '@/lib/legal/publishCheck';
+import type { LegalKind } from '@/lib/legal/legalPages';
+import { GoogleMapsPrivacyHint } from '@/components/site/GoogleMapsPrivacyHint';
 
 type PublishState =
   | { kind: 'idle' }
@@ -140,9 +143,9 @@ const PublishButton = observer(() => {
 
   const publishing = state.kind === 'publishing';
 
-  const createImpressum = () => {
+  const createLegal = (kind: LegalKind) => {
     if (!project) return;
-    const { page } = project.createLegalPage('impressum');
+    const { page } = project.createLegalPage(kind);
     rootStore.editorUI.setCurrentPage(page);
     setState({ kind: 'idle' });
   };
@@ -194,7 +197,8 @@ const PublishButton = observer(() => {
       {state.kind === 'confirm' && (
         <PublishLegalNotice
           check={state.check}
-          onCreateImpressum={createImpressum}
+          language={project?.site.language ?? 'en'}
+          onCreateLegal={createLegal}
           onOpenPage={openPage}
           onPublishAnyway={() => void publish(true)}
           onCancel={() => setState({ kind: 'idle' })}
@@ -219,7 +223,9 @@ PublishButton.displayName = 'PublishButton';
 
 interface PublishLegalNoticeProps {
   check: PublishCheck;
-  onCreateImpressum: () => void;
+  /** The site language, for the suggested Google Maps wording. */
+  language: string;
+  onCreateLegal: (kind: LegalKind) => void;
   onOpenPage: (pageId: string) => void;
   onPublishAnyway: () => void;
   onCancel: () => void;
@@ -230,12 +236,13 @@ interface PublishLegalNoticeProps {
  * and "Publish anyway". Takes focus when it appears (the owner just clicked
  * Publish and must read it) and closes on Escape.
  */
-function PublishLegalNotice({ check, onCreateImpressum, onOpenPage, onPublishAnyway, onCancel }: PublishLegalNoticeProps) {
+function PublishLegalNotice({ check, language, onCreateLegal, onOpenPage, onPublishAnyway, onCancel }: PublishLegalNoticeProps) {
   const ref = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     ref.current?.focus();
   }, []);
   const first = check.placeholders[0] ?? check.components.find((issue) => issue.pageId !== undefined);
+  const maps = check.maps && check.maps.status !== 'named' ? check.maps : null;
   return (
     <div
       ref={ref}
@@ -257,7 +264,9 @@ function PublishLegalNotice({ check, onCreateImpressum, onOpenPage, onPublishAny
       <p id="publish-legal-title" className="text-[13px] font-semibold">
         {check.missingImpressum
           ? 'Your site has no Impressum yet'
-          : check.placeholders.length > 0
+          : maps
+            ? 'Your privacy policy must name Google Maps'
+            : check.placeholders.length > 0
             ? 'Your legal pages still have placeholders'
             : 'Some components will not show'}
       </p>
@@ -267,6 +276,14 @@ function PublishLegalNotice({ check, onCreateImpressum, onOpenPage, onPublishAny
             German law requires an Impressum on a business website. Create one from your business details in one click,
             then review it.
           </p>
+        )}
+        {maps && (
+          <GoogleMapsPrivacyHint
+            language={language}
+            check={maps}
+            onCreatePrivacy={() => onCreateLegal('privacy')}
+            onOpenPrivacy={maps.privacyPageId ? () => onOpenPage(maps.privacyPageId as string) : undefined}
+          />
         )}
         {check.placeholders.length > 0 && (
           <ul className="list-disc pl-4">
@@ -295,7 +312,7 @@ function PublishLegalNotice({ check, onCreateImpressum, onOpenPage, onPublishAny
           Publish anyway
         </Button>
         {check.missingImpressum ? (
-          <Button type="button" variant="brand" size="sm" onClick={onCreateImpressum}>
+          <Button type="button" variant="brand" size="sm" onClick={() => onCreateLegal('impressum')}>
             Create Impressum
           </Button>
         ) : first?.pageId ? (

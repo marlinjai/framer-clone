@@ -14,9 +14,9 @@
 //     hosting on Hetzner servers in Germany, server logs, self-hosted fonts,
 //     form submissions stored without IP addresses, Lumitra Analytics only
 //     after consent (and what it stores), stock photos hotlinked from Unsplash.
-//     The analytics, Unsplash and form sections appear only when the project
-//     uses them (TemplateFacts), so the policy never claims what the site does
-//     not do.
+//     Google Maps embeds only after consent (src/lib/mapEmbed). The analytics,
+//     Unsplash, form and Google Maps sections appear only when the project uses
+//     them (TemplateFacts), so the policy never claims what the site does not do.
 //   - What the owner must judge (dispute resolution, retention periods, the
 //     supervisory authority, a data transfer basis) is a placeholder that says
 //     what to check.
@@ -24,7 +24,8 @@
 //     page created from them (never published).
 
 import { hasAddress, type BusinessInfo } from '@/lib/site/siteSettings';
-import { CONSENT_STORAGE_KEY } from '@/lib/consent/consent';
+import { CONSENT_MAPS_COOKIE, CONSENT_STORAGE_KEY } from '@/lib/consent/consent';
+import { isMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 import { LEGAL_TITLES, legalLanguage, type LegalKind, type LegalLanguage } from './legalPages';
 
 export type LegalBlock =
@@ -41,6 +42,8 @@ export interface TemplateFacts {
   unsplash: boolean;
   /** Some page has a form (submissions are stored per company, without IP). */
   forms: boolean;
+  /** Some page embeds a Google Map (it loads only after consent). */
+  maps: boolean;
 }
 
 export interface LegalTemplateInput {
@@ -243,6 +246,11 @@ function privacyDe(b: BusinessInfo, facts: TemplateFacts, date: Date): LegalBloc
       },
       { kind: 'p', text: `Anbieter von Lumitra Analytics: ${placeholder('Name und Anschrift des Anbieters laut Auftragsverarbeitungsvertrag; Ort der Datenverarbeitung prüfen')}` },
     );
+  } else if (facts.maps) {
+    blocks.push(
+      { kind: 'h2', text: `${n++}. Cookies und Speicher auf Ihrem Gerät` },
+      { kind: 'p', text: 'Ohne Ihre Einwilligung setzt diese Website keine Cookies und speichert keine Daten auf Ihrem Gerät, die einer Einwilligung bedürfen. Eine Reichweitenmessung findet nicht statt. Was nach einer Einwilligung in Karten von Google Maps geschieht, steht im Abschnitt zu Google Maps.' },
+    );
   } else {
     blocks.push(
       { kind: 'h2', text: `${n++}. Cookies und Speicher auf Ihrem Gerät` },
@@ -271,6 +279,7 @@ function privacyDe(b: BusinessInfo, facts: TemplateFacts, date: Date): LegalBloc
       },
     );
   }
+  if (facts.maps) blocks.push(...googleMapsBlocks('de', n++));
   blocks.push(
     { kind: 'h2', text: `${n++}. Schriftarten` },
     { kind: 'p', text: 'Die Schriftarten dieser Website werden von unserem eigenen Server ausgeliefert. Es wird keine Verbindung zu Google oder anderen Schriftanbietern hergestellt.' },
@@ -332,6 +341,11 @@ function privacyEn(b: BusinessInfo, facts: TemplateFacts, date: Date): LegalBloc
       },
       { kind: 'p', text: `Provider of Lumitra Analytics: ${placeholder('Name and address of the provider as stated in the data processing agreement; check where the data is processed')}` },
     );
+  } else if (facts.maps) {
+    blocks.push(
+      { kind: 'h2', text: `${n++}. Cookies and storage on your device` },
+      { kind: 'p', text: 'Without your consent this website sets no cookies and stores no data on your device that requires consent. No audience measurement takes place. What happens after you consent to maps from Google Maps is described in the section on Google Maps.' },
+    );
   } else {
     blocks.push(
       { kind: 'h2', text: `${n++}. Cookies and storage on your device` },
@@ -360,6 +374,7 @@ function privacyEn(b: BusinessInfo, facts: TemplateFacts, date: Date): LegalBloc
       },
     );
   }
+  if (facts.maps) blocks.push(...googleMapsBlocks('en', n++));
   blocks.push(
     { kind: 'h2', text: `${n++}. Fonts` },
     { kind: 'p', text: 'The fonts of this website are served from our own server. No connection to Google or any other font provider is made.' },
@@ -449,6 +464,35 @@ const DESCRIPTIONS: Record<LegalLanguage, Record<LegalKind, (site: string) => st
   },
 };
 
+/**
+ * The privacy policy section on Google Maps, without its number: the template's
+ * section and the wording the editor suggests when a site embeds a map (the
+ * publish dialog, Site settings) are this one text.
+ */
+export const GOOGLE_MAPS_PRIVACY: Record<LegalLanguage, { title: string; paragraphs: string[] }> = {
+  de: {
+    title: 'Karten von Google Maps',
+    paragraphs: [
+      'Auf dieser Website binden wir Karten von Google Maps ein. Anbieter ist die Google Ireland Limited, Gordon House, Barrow Street, Dublin 4, Irland. Eine Karte wird erst geladen, wenn Sie einwilligen: über „Karte laden“ an der Karte oder über das Einwilligungsbanner. Bis dahin wird keine Verbindung zu Google hergestellt, und ein Link „In Google Maps öffnen“ führt ohne Einbindung zur Karte.',
+      `Nach Ihrer Einwilligung ruft Ihr Browser die Karte von Servern von Google ab. Google erhält dabei Ihre IP-Adresse, technische Daten Ihres Browsers und die Adresse der aufgerufenen Seite und kann Cookies setzen. Dabei können Daten an die Google LLC in den USA übermittelt werden. ${placeholder('Prüfen, ob die Übermittlung auf das EU-US Data Privacy Framework gestützt werden kann, und die Grundlage ergänzen')} Rechtsgrundlage ist Ihre Einwilligung nach Art. 6 Abs. 1 lit. a DSGVO und § 25 Abs. 1 TDDDG.`,
+      `Ihre Entscheidung speichern wir im lokalen Speicher Ihres Browsers (localStorage, Eintrag "${CONSENT_STORAGE_KEY}") und, wenn Sie Karten erlauben, im Cookie "${CONSENT_MAPS_COOKIE}". Das ist technisch erforderlich (§ 25 Abs. 2 Nr. 2 TDDDG). Sie können Ihre Einwilligung jederzeit mit Wirkung für die Zukunft widerrufen, über den Link "Cookie-Einstellungen" im Seitenfuß. Datenschutzerklärung von Google: https://policies.google.com/privacy`,
+    ],
+  },
+  en: {
+    title: 'Maps from Google Maps',
+    paragraphs: [
+      'This website embeds maps from Google Maps. The provider is Google Ireland Limited, Gordon House, Barrow Street, Dublin 4, Ireland. A map loads only once you consent: through "Load map" on the map or through the consent banner. Until then nothing contacts Google, and an "Open in Google Maps" link leads to the map without embedding it.',
+      `After your consent your browser fetches the map from Google's servers. Google then receives your IP address, technical data about your browser and the address of the page you are on, and may set cookies. Data may be transferred to Google LLC in the USA in the process. ${placeholder('Check whether the transfer can rely on the EU-US Data Privacy Framework and add the basis')} The legal basis is your consent according to Art. 6 (1) (a) GDPR and section 25 (1) TDDDG.`,
+      `We store your choice in your browser's local storage (localStorage, entry "${CONSENT_STORAGE_KEY}") and, when you allow maps, in the cookie "${CONSENT_MAPS_COOKIE}". This is technically necessary (section 25 (2) no. 2 TDDDG). You can withdraw your consent at any time with effect for the future through the "Cookie settings" link in the footer. Google privacy policy: https://policies.google.com/privacy`,
+    ],
+  },
+};
+
+function googleMapsBlocks(lang: LegalLanguage, n: number): LegalBlock[] {
+  const section = GOOGLE_MAPS_PRIVACY[lang];
+  return [{ kind: 'h2', text: `${n}. ${section.title}` }, ...section.paragraphs.map((text): LegalBlock => ({ kind: 'p', text }))];
+}
+
 /** Build a legal page template from the business data. */
 export function buildLegalTemplate(input: LegalTemplateInput): LegalTemplate {
   const lang = legalLanguage(input.language);
@@ -477,18 +521,20 @@ interface NodeLike {
 
 const UNSPLASH = /(^|[("'\s])https:\/\/images\.unsplash\.com\//;
 
-/** Unsplash images and forms anywhere in these page trees (bounded walk). */
+/** Unsplash images, forms and Google Maps embeds anywhere in these page trees (bounded walk). */
 export function factsFromTrees(roots: Iterable<NodeLike | null | undefined>, analytics: boolean): TemplateFacts {
   let unsplash = false;
   let forms = false;
+  let maps = false;
   let seen = 0;
   for (const root of roots) {
     const stack: NodeLike[] = root ? [root] : [];
-    while (stack.length > 0 && seen < 20000 && !(unsplash && forms)) {
+    while (stack.length > 0 && seen < 20000 && !(unsplash && forms && maps)) {
       const node = stack.pop()!;
       seen++;
       const props = node.props ?? {};
       if (props['data-form-kind'] === 'form') forms = true;
+      if (isMapEmbed(props)) maps = true;
       if (!unsplash) {
         const src = props.src;
         const style = props.style as Record<string, unknown> | undefined;
@@ -499,5 +545,5 @@ export function factsFromTrees(roots: Iterable<NodeLike | null | undefined>, ana
       if (Array.isArray(node.children)) stack.push(...node.children);
     }
   }
-  return { analytics, unsplash, forms };
+  return { analytics, unsplash, forms, maps };
 }

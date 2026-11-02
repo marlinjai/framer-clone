@@ -36,6 +36,8 @@ import FormIsland, { FormFieldIsland, FormSubmitIsland } from '../forms/FormIsla
 import { formKindOf } from '@/lib/forms/definition';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { createStickyCtaElement } from '../stickyCta/stickyCtaElement';
+import { isMapEmbed, MAP_EMBED_PROP_KEYS, stripMapEmbedProps } from '@/lib/mapEmbed/mapEmbed';
+import MapEmbedIsland from '../mapEmbed/MapEmbedIsland';
 
 /** The four interactive commerce kinds emitted as client islands (never baked
  *  server-side). Mirrors INTERACTIVE_COMMERCE_KINDS in hydrateBindings. */
@@ -192,6 +194,14 @@ export function renderComponentNode(
   // moved it to the end of the page and its stylesheet pins it on phones.
   if (isStickyCta(node.props)) {
     return createStickyCtaElement(nodeDomProps(node), 'published', key, node.props as Record<string, unknown>);
+  }
+
+  // A Google Maps embed: a placeholder until the visitor consents, then the frame,
+  // drawn by its island from an address it rebuilds (src/lib/mapEmbed/mapEmbed.ts).
+  if (isMapEmbed(node.props)) {
+    const source = (node.props ?? {}) as Record<string, unknown>;
+    const config = Object.fromEntries(MAP_EMBED_PROP_KEYS.filter((name) => name in source).map((name) => [name, source[name]]));
+    return <MapEmbedIsland key={key} domProps={stripMapEmbedProps(nodeDomProps(node))} config={config} />;
   }
 
   const dataKind = (node.props as any)?.['data-component-kind'];
