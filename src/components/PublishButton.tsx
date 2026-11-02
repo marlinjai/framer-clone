@@ -114,6 +114,11 @@ const PublishButton = observer(() => {
         return;
       }
       if (result.kind === 'error') {
+        // Published, but a later step failed: this snapshot is what the server
+        // holds, so the next Save must not meet it as someone else's change.
+        if (result.writtenVersion !== undefined) {
+          markServerVersion(project.id, snapshot as ProjectContent, result.writtenVersion);
+        }
         setState({ kind: 'error', message: result.message });
         return;
       }

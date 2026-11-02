@@ -211,6 +211,32 @@ describe('Publish and the version lock', () => {
   });
 });
 
+describe('a publish that committed before a later step failed', () => {
+  it('shows the error and adopts the written version, so the next Save is not a conflict with itself', async () => {
+    const project = openServerProject(2);
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ error: { code: 'subdomain_allocation_failed', message: 'No address.', writtenVersion: 3 } }),
+          { status: 500 },
+        ),
+      )
+      .mockResolvedValueOnce(ok({ siteId: project.id, savedPages: [''], version: 4 }));
+    render(
+      <>
+        <PublishButton />
+        <SaveButton />
+      </>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^publish$/i }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('No address.'));
+    expect(knownServerVersion(project.id)).toBe(3);
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(knownServerVersion(project.id)).toBe(4));
+    expect(sentVersion(1)).toBe(3);
+  });
+});
+
 describe('resume after a reload (openProject)', () => {
   it('a version that moved while this tab had no unsaved work: the newer copy and its version are taken', () => {
     const id = `site_lock_${++siteSeq}`;

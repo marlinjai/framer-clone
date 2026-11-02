@@ -311,7 +311,10 @@ describe('POST /api/projects/publish (authorized)', () => {
     const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1 }));
 
     expect(res.status).toBe(500);
-    expect((await res.json()).error.code).toBe('subdomain_allocation_failed');
+    const body = await res.json();
+    expect(body.error.code).toBe('subdomain_allocation_failed');
+    // The publish itself committed: the editor learns the version it moved to.
+    expect(body.error.writtenVersion).toBe(2);
   });
 
   it('preserves the full opaque page snapshot when saving (no field stripping)', async () => {
@@ -405,6 +408,13 @@ describe('publish version lock', () => {
     expect(body.error).toMatchObject({ code: 'site_changed', currentVersion: 5 });
     expect(publish.mock.calls[0][2]).toMatchObject({ expectedVersion: 3 });
     expect(ensure).not.toHaveBeenCalled();
+  });
+
+  it('a publish refused before anything committed carries no writtenVersion', async () => {
+    installRepo({ publishProject: vi.fn().mockRejectedValue(new Error('db down')) });
+    const res = await POST(publishReq({ project: PROJECT, expectedVersion: 1 }));
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).not.toHaveProperty('writtenVersion');
   });
 
   it.each([[0], [-1], [1.5], ['2']])('an expectedVersion of %j is a malformed body (400)', async (value) => {

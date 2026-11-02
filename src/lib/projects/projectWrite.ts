@@ -7,12 +7,14 @@
 //   - ok: the server wrote it and answered the site's new version;
 //   - conflict: 409 `site_changed`, the project moved on to `currentVersion`
 //     and nothing was written (SiteChangedDialog asks what to do);
-//   - error: anything else, as a sentence to show.
+//   - error: anything else, as a sentence to show. A publish that committed
+//     before a later step failed says so with `writtenVersion`: the server
+//     then holds exactly the sent snapshot at that version.
 
 export type ProjectWriteResult =
   | { kind: 'ok'; payload: Record<string, unknown>; version: number }
   | { kind: 'conflict'; currentVersion: number }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; message: string; writtenVersion?: number };
 
 export async function postProjectWrite(
   url: '/api/projects/save' | '/api/projects/publish',
@@ -32,13 +34,16 @@ export async function postProjectWrite(
   }
   const payload: unknown = await res.json().catch(() => null);
   if (!res.ok) {
-    const error = (payload as { error?: { code?: unknown; message?: unknown; currentVersion?: unknown } } | null)?.error;
+    const error = (
+      payload as { error?: { code?: unknown; message?: unknown; currentVersion?: unknown; writtenVersion?: unknown } } | null
+    )?.error;
     if (res.status === 409 && error?.code === 'site_changed' && typeof error.currentVersion === 'number') {
       return { kind: 'conflict', currentVersion: error.currentVersion };
     }
     return {
       kind: 'error',
       message: typeof error?.message === 'string' ? error.message : `${failedLabel} (${res.status}).`,
+      ...(typeof error?.writtenVersion === 'number' ? { writtenVersion: error.writtenVersion } : {}),
     };
   }
   const body = (payload ?? {}) as Record<string, unknown>;

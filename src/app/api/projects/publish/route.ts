@@ -21,7 +21,8 @@
 // company (`no_active_company`) / no company with Sites (`sites_not_enabled`), 400 malformed body, 404 cross-workspace site id, 500 otherwise.
 // The version lock: the body names `expectedVersion`; missing -> 400
 // `version_required`, stale -> 409 `site_changed` with `currentVersion`, and
-// nothing is written or frozen. Success answers the new `version`. A
+// nothing is written or frozen. Success answers the new `version`; a failure
+// after the publish committed carries it as `error.writtenVersion`. A
 // publish failure is never swallowed into a silent success.
 //
 // Runs on the Node runtime because the repository reaches Postgres through
@@ -100,6 +101,9 @@ async function handlePOST(req: Request): Promise<Response> {
   let subdomain: string;
   let revision: number;
   let version: number;
+  // Set once the publish transaction has committed: a later step failing must
+  // not hide that the working copy moved to this version.
+  let written: number | undefined;
   try {
     const repo = getSiteRepository();
     ({ revision, version } = await repo.publishProject(scope, project, {
@@ -107,6 +111,7 @@ async function handlePOST(req: Request): Promise<Response> {
       publishedBy: session.user.id,
       expectedVersion,
     }));
+    written = version;
     // ensureSiteDomain is idempotent: a re-publish returns the SAME slug, so the
     // live URL is stable across publish/unpublish/re-publish cycles.
     ({ subdomain } = await repo.ensureSiteDomain(scope, project.id));
@@ -124,16 +129,14 @@ async function handlePOST(req: Request): Promise<Response> {
       console.error('[sites] custom-domain cache revalidation failed for ' + project.id, err);
     });
   } catch (err) {
-    // A project deleted while this publish was running (before the address
-    // allocation) surfaces as a plain not-found from the later steps: answer
-    // with the same message a Save gets.
-    if (err instanceof SiteNotFoundError) return siteRepositoryErrorResponse(new SiteGoneError());
-    if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
-    return jsonError(
-      'publish_failed',
-      err instanceof Error ? err.message : 'failed to publish site',
-      500,
-    );
+    const failure = publishFailure(err);
+    // The publish committed and a later step (the address, the cache) failed:
+    // the working copy IS this snapshot now, at `written`. The error carries it
+    // as `writtenVersion`, so the editor adopts it instead of meeting its own
+    // change as a conflict on the next Save.
+    if (written === undefined) return failure;
+    const body = (await failure.json()) as { error: Record<string, unknown> };
+    return Response.json({ error: { ...body.error, writtenVersion: written } }, { status: failure.status });
   }
 
   // Compose the live URL from the server-read base host. Unset (local dev)
@@ -154,6 +157,16 @@ async function handlePOST(req: Request): Promise<Response> {
     subdomain,
     liveUrl,
   });
+}
+
+/** The error envelope for a publish that threw. */
+function publishFailure(err: unknown): Response {
+  // A project deleted while this publish was running (before the address
+  // allocation) surfaces as a plain not-found from the later steps: answer
+  // with the same message a Save gets.
+  if (err instanceof SiteNotFoundError) return siteRepositoryErrorResponse(new SiteGoneError());
+  if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
+  return jsonError('publish_failed', err instanceof Error ? err.message : 'failed to publish site', 500);
 }
 
 // An auth-brain outage during session verify answers JSON 503 `auth_unavailable`,
