@@ -81,7 +81,7 @@ import { createSseStream, SSE_HEADERS } from '@/lib/ai/sse';
 import { logAiCall, startAiCallTimer, type AiCallStatus } from '@/lib/ai/aiLogger';
 import { recordUsage } from '@/lib/ai/aiUsageStub';
 import { GENERATION_LIMITS, deriveBreakpointKeys, type BreakpointKey } from '@/lib/ai/pageGen/schema';
-import { validateGeneration, type GenerationResult } from '@/lib/ai/pageGen/validate';
+import { addressesHeldBy, validateGeneration, type GenerationResult } from '@/lib/ai/pageGen/validate';
 import {
   EMIT_TOOL_NAME,
   briefMessage,
@@ -520,6 +520,7 @@ async function runGeneration(args: RunArgs): Promise<void> {
         const outcome = validateGeneration(toolUse.input, {
           breakpoints,
           allowStickyCta: body.target.kind === 'newPage',
+          heldAddresses: addressesHeldBy(body.target.kind === 'newPage' ? null : body.target.context),
         });
         if (outcome.ok) {
           const screened = screenTells(outcome.result, breakpoints, essentials);

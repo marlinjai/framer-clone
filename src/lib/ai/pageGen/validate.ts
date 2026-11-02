@@ -38,7 +38,10 @@
 //     - props.rules kept through the real parser (src/lib/rules/rules.ts) with
 //       each body through the style checks: a rule with anything refused is
 //       dropped whole, at most MAX_GENERATED_RULES per generation, an
-//       `animation` moved behind the reduced-motion gate (./promptSections/rules.ts),
+//       `animation` moved behind the reduced-motion gate with the start values it
+//       reveals, nothing that reads a visitor's state or looks beyond the node,
+//       and on a generation that keeps a rule no address on another host in
+//       Normal or an img, but what the request's context held (./promptSections/rules.ts),
 //     - responsive-map keys matched to the request's breakpoint keys
 //       (case-insensitive, label match), unknown keys dropped,
 //     - ids assigned fresh and `parentId` set on every nested node (a whole
@@ -90,19 +93,28 @@ import { WEB_ATTRIBUTE_PROP_NAMES } from './webVocabulary';
 import { EFFECTS_PROP, cleanGeneratedEffects } from './promptSections/effects';
 import {
   MAX_GENERATED_RULES,
+  MAX_GENERATED_RULE_WEIGHT,
+  MAX_GENERATED_SELECTOR_PARTS,
   REDUCED_MOTION_GATE,
   RULES_PROP,
+  hidesContent,
   isMotionKey,
   isReducedMotionGate,
   motionValueProblem,
   namesGeneratedKeyframes,
+  ruleWeight,
+  selectorProblem,
+  storedKeyframesIn,
+  wrapperProblem,
 } from './promptSections/rules';
 import { styleValueTell, textTell } from './tells';
 import {
   RULE_ID,
   holdsTooManyBlocks,
+  isDefinitionRule,
   isRuleList,
   parseRule,
+  storedRulesOf,
   type DefinitionRule,
   type SelectorRule,
   type StoredRule,
@@ -177,6 +189,12 @@ export interface ValidateContext {
    * (replace / insert) never get one. Defaults to false.
    */
   allowStickyCta?: boolean;
+  /**
+   * What the selected component already holds (addressesHeldBy). A generation with a
+   * rule keeps no address on another host but these: they are the owner's, and a
+   * regeneration must not take them.
+   */
+  heldAddresses?: ReadonlySet<string>;
 }
 
 /**
@@ -443,6 +461,8 @@ class Validator {
   appearCount = 0;
   /** Rules stored so far (capped: a state on everything is a tell). */
   ruleCount = 0;
+  /** What those rules cost the sheet, so a generation cannot spend the page's budget. */
+  ruleWeight = 0;
   maxDepth = 0;
   private readonly bpKeys: Map<string, string>;
   /** Breakpoint keys, largest breakpoint first (the editor's primary breakpoint). */
@@ -749,6 +769,9 @@ class Validator {
    * a hover. `freshId` names the rule that split off.
    */
   private selectorRules(path: string, raw: Record<string, unknown>, id: string, freshId: () => string): SelectorRule[] | string {
+    if (typeof raw.selector === 'string' && raw.selector.length > GENERATION_LIMITS.maxStyleValueChars) {
+      return `a selector longer than ${GENERATION_LIMITS.maxStyleValueChars} characters`;
+    }
     const style = this.declarations(path, raw.style);
     if (!style) return 'a declaration was refused, or it has none';
     // Everything the model sent is read, so a `when` or a `gate` is refused rather than
@@ -756,7 +779,10 @@ class Validator {
     const read = parseRule({ ...raw, id, style });
     if (!read.ok) return read.reason;
     if (read.value.kind !== 'selector') return 'a rule is either a selector or a definition';
-    const at = read.value.at;
+    const { at, parts } = read.value;
+    if (parts.length > MAX_GENERATED_SELECTOR_PARTS) return `a selector with more than ${MAX_GENERATED_SELECTOR_PARTS} parts`;
+    const refused = parts.map(selectorProblem).find(Boolean) ?? at.map(wrapperProblem).find(Boolean);
+    if (refused) return refused;
     const rule: SelectorRule = { id, selector: raw.selector as string, ...(at.length > 0 ? { at } : {}), style };
     const motion = Object.keys(style).filter(isMotionKey);
     if (motion.length === 0 || at.some(isReducedMotionGate)) return [rule];
@@ -792,6 +818,13 @@ class Validator {
     return rules;
   }
 
+  private weightOf(rule: StoredRule): number {
+    if (isDefinitionRule(rule)) return ruleWeight(rule, 1, 1);
+    const parsed = parseRule(rule);
+    const parts = parsed.ok && parsed.value.kind === 'selector' ? parsed.value.parts.length : 1;
+    return ruleWeight(rule, parts, Object.values(rule.style).some(isPlainObject) ? Math.max(this.orderedKeys.length, 1) : 1);
+  }
+
   /** The stored form of props.rules, capped across the generation like appear effects. */
   private rules(path: string, raw: unknown[]): StoredRule[] {
     const kept: StoredRule[] = [];
@@ -806,8 +839,14 @@ class Validator {
       if (typeof rules === 'string') this.warn(`${path}.rules[${index}]`, `rule dropped: ${rules}`);
       else if (rules.length > room) this.warn(`${path}.rules[${index}]`, `rule dropped: more than ${MAX_GENERATED_RULES} rules in one generation`);
       else {
+        const weight = rules.reduce((sum, rule) => sum + this.weightOf(rule), 0);
+        if (this.ruleWeight + weight > MAX_GENERATED_RULE_WEIGHT) {
+          this.warn(`${path}.rules[${index}]`, 'rule dropped: the rules of this generation are too long');
+          continue;
+        }
         kept.push(...rules);
         this.ruleCount += rules.length;
+        this.ruleWeight += weight;
       }
     }
     return kept;
@@ -1395,6 +1434,127 @@ function dropExpandingSvgs(nodes: GeneratedNodeSnapshot[], v: Validator): Genera
   return kept;
 }
 
+/** The properties each stored `@keyframes` of a generation moves, by name. */
+function keyframeProperties(nodes: GeneratedNodeSnapshot[]): Map<string, Set<string>> {
+  const moved = new Map<string, Set<string>>();
+  const read = (node: GeneratedNodeSnapshot): void => {
+    for (const rule of storedRulesOf(node.props)) {
+      if (!isDefinitionRule(rule) || !/^@keyframes /i.test(rule.define)) continue;
+      const name = rule.define.split(/\s+/)[1];
+      const properties = moved.get(name) ?? new Set<string>();
+      for (const block of rule.blocks ?? []) Object.keys(block.style).forEach((key) => properties.add(key));
+      moved.set(name, properties);
+    }
+    node.children.forEach(read);
+  };
+  nodes.forEach(read);
+  return moved;
+}
+
+const sameList = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((entry, index) => entry === b[index]);
+
+/**
+ * Put an animation's start values behind the reduced-motion gate with it. Otherwise
+ * `{opacity:0;animation:u-in 1s forwards}` leaves the content invisible for the very
+ * visitor who asked for less motion, because the animation that reveals it never
+ * runs. That takes what a keyframes of this generation moves and anything that hides
+ * the node, from the rules with the same selector and, for `&`, from Normal: an honest
+ * model writes the start value there as often as in the rule. Whatever a hover's
+ * colour has to do with neither stays where it is.
+ */
+function gateStartValues(nodes: GeneratedNodeSnapshot[]): void {
+  const moved = keyframeProperties(nodes);
+  const visit = (node: GeneratedNodeSnapshot): void => {
+    node.children.forEach(visit);
+    const rules = storedRulesOf(node.props);
+    const isGated = (rule: StoredRule): rule is SelectorRule => !isDefinitionRule(rule) && (rule.at ?? []).some(isReducedMotionGate);
+    for (const gated of rules.filter(isGated)) {
+      const motion = Object.keys(gated.style).filter(isMotionKey);
+      if (motion.length === 0) continue;
+      const moves = new Set(motion.flatMap((key) => storedKeyframesIn(gated.style[key])).flatMap((name) => [...(moved.get(name) ?? [])]));
+      const take = (from: Record<string, unknown>, keys: string[]): void => {
+        for (const key of keys) {
+          gated.style[key] ??= from[key];
+          delete from[key];
+        }
+      };
+      const otherAt = (gated.at ?? []).filter((wrapper) => !isReducedMotionGate(wrapper));
+      for (const rule of rules) {
+        if (isDefinitionRule(rule) || rule === gated || rule.selector !== gated.selector || !sameList(rule.at ?? [], otherAt)) continue;
+        take(rule.style, Object.keys(rule.style).filter((key) => moves.has(key) || hidesContent(key, rule.style[key])));
+      }
+      const normal = node.props.style;
+      if (gated.selector === '&' && isPlainObject(normal)) {
+        take(normal, Object.keys(normal).filter((key) => hidesContent(key, normal[key])));
+        if (Object.keys(normal).length === 0) delete node.props.style;
+      }
+    }
+    const left = rules.filter((rule) => isDefinitionRule(rule) || Object.keys(rule.style).length > 0);
+    if (left.length !== rules.length) node.props[RULES_PROP] = left;
+  };
+  nodes.forEach(visit);
+}
+
+/** True for an address that loads from a host that is neither this site nor the stock library. */
+function isForeignAddress(url: string, held: ReadonlySet<string>): boolean {
+  return !url.startsWith('#') && !isSitePath(url) && !isUnsplashPhotoUrl(url) && !held.has(url);
+}
+
+/** The addresses a selected component holds, to pass as ValidateContext.heldAddresses. */
+export function addressesHeldBy(context: unknown): Set<string> {
+  const held = new Set<string>();
+  const read = (value: unknown, key?: string): void => {
+    if (typeof value === 'string') {
+      if (key === 'src') held.add(value.trim());
+      for (const url of scanCssValue(value).urls) held.add(url);
+    } else if (Array.isArray(value)) {
+      value.forEach((entry) => read(entry));
+    } else if (isPlainObject(value)) {
+      for (const [name, entry] of Object.entries(value)) read(entry, name);
+    }
+  };
+  read(context);
+  return held;
+}
+
+/**
+ * A rule can switch on what Normal holds, so a generation with both can report what a
+ * visitor does to any host. The allow list in selectorProblem shuts the states, but
+ * `&:hover` and a media condition remain, and a generated page needs no foreign host:
+ * its photos are stock and its files are the site's. So with a rule kept, nothing
+ * else loads from elsewhere. The address goes rather than the rule, because a brief
+ * can name an address, and only the owner's own addresses are worth keeping.
+ */
+function dropForeignAddresses(nodes: GeneratedNodeSnapshot[], v: Validator, held: ReadonlySet<string>): void {
+  const anyRule = (list: GeneratedNodeSnapshot[]): boolean => list.some((node) => storedRulesOf(node.props).length > 0 || anyRule(node.children));
+  if (!anyRule(nodes)) return;
+  const foreign = (value: unknown): boolean => typeof value === 'string' && scanCssValue(value).urls.some((url) => isForeignAddress(url, held));
+  const visit = (node: GeneratedNodeSnapshot): void => {
+    node.children.forEach(visit);
+    const warn = (what: string) => v.warnings.push(`${node.label}: ${what} from another host beside a rule, dropped`);
+    if (node.type === 'img' && typeof node.props.src === 'string' && isForeignAddress(node.props.src, held)) {
+      warn('an image');
+      node.props.src = PLACEHOLDER_IMAGE_SRC;
+    }
+    const style = node.props.style;
+    if (!isPlainObject(style)) return;
+    for (const [key, value] of Object.entries(style)) {
+      if (isPlainObject(value)) {
+        for (const [mapKey, entry] of Object.entries(value)) {
+          if (!foreign(entry)) continue;
+          warn(`style.${key}`);
+          delete value[mapKey];
+        }
+        if (Object.keys(value).length === 0) delete style[key];
+      } else if (foreign(value)) {
+        warn(`style.${key}`);
+        delete style[key];
+      }
+    }
+  };
+  nodes.forEach(visit);
+}
+
 /**
  * The sticky call to action's rules: only on a new page, at most one, with a
  * label and a safe link, as the last top-level node (it is a page-level bar,
@@ -1456,6 +1616,8 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
   // Decided before any svg is dropped: a page past the limit was cut short, and must not pass for being under it.
   const overLimit = v.nodeCount > GENERATION_LIMITS.maxNodes;
   const nodes = dropExpandingSvgs(scopeIds(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v), v);
+  gateStartValues(nodes);
+  dropForeignAddresses(nodes, v, ctx.heldAddresses ?? new Set());
 
   if (overLimit) {
     v.errors.push(`${v.nodeCount} nodes exceed the limit of ${GENERATION_LIMITS.maxNodes}: produce a smaller page`);

@@ -70,6 +70,7 @@ export const GAPS = {
   'blocked-embedded-content': 'What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones).',
   'panel-no-general-editor': 'What the Custom section of the properties panel, the general style and attribute editor, cannot write: SVG and MathML attributes.',
   'panel-no-tag-choice': 'The tag picker of the Custom section does not offer SVG and MathML elements.',
+  'ai-rule-refused': 'A rule that reads what a visitor does or looks beyond its node: stored and rendered, but refused to the generator on purpose, because a generation must not be able to report a visitor. See "AI output" in the selector styling plan.',
   'ai-style-allowlist': 'The AI generator validator drops a CSS property it does not know.',
   'ai-tag-allowlist': 'The AI generator validator refuses this tag on purpose: blocked in every renderer, or a raw form control, which only works through the form presets.',
   'ai-attribute-allowlist': 'The AI generator validator refuses this attribute on purpose, or a tree lost a raw form control (see the tag gap).',

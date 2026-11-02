@@ -9,8 +9,13 @@ import { HOVER_GATE, NAMED_STATES, namedStateOf } from '@/lib/rules/states';
 import { readRules } from '@/lib/rules/rules';
 import { breakpointKeyMap, toEditorSnapshot } from '../apply';
 import { deriveBreakpointKeys } from '../schema';
-import { MAX_GENERATED_ANIMATION_RUNS, MAX_GENERATED_RULES, REDUCED_MOTION_GATE } from '../promptSections/rules';
-import { validateGeneration } from '../validate';
+import {
+  MAX_GENERATED_ANIMATION_RUNS,
+  MAX_GENERATED_RULES,
+  MAX_GENERATED_SELECTOR_PARTS,
+  REDUCED_MOTION_GATE,
+} from '../promptSections/rules';
+import { addressesHeldBy, validateGeneration } from '../validate';
 
 const inputs = [
   { label: 'Desktop', minWidth: 1280 },
@@ -358,6 +363,183 @@ describe('generated rules: hostile text', () => {
   });
 });
 
+describe('generated rules: what a generation may read', () => {
+  it.each([
+    // The review's payloads, each of which fired in Chromium before this.
+    '&:is(html:has(input[type=checkbox]:checked) *)',
+    '&:has(input[type=email]:not(:placeholder-shown)) > u',
+    '&:has(input[type=email]:not(:placeholder-shown):valid) > i',
+    '&:has(input[type=checkbox]:checked) > b',
+    '&:is(html:has([data-fc-consent]:not([hidden])) *)',
+    '&:target',
+    '&:is(html:has(input:checked) *)',
+    '&:has(~ * input:checked)',
+    '&:is(:has(~ * input:checked))',
+    '&:not(:has(~ * input:checked))',
+    '&:where(:has(~ * input:checked))',
+    '&:has(img, ~ * input:checked)',
+    '&:has(~input:checked)',
+    '&:has( ~ input:checked)',
+    '&:has(+ * input:checked)',
+    '&:is(:target)',
+    '&:target-within',
+    '&:lang(de)',
+    '&:dir(rtl)',
+    // Same reach, in forms the review did not list.
+    '&:has(|| td)',
+    '&:is(html *)',
+    '&:where(html *)',
+    '&:not(html *)',
+    '&:not(.fc-a *)',
+    '&:has(:is(html:has(a:hover) *))',
+    '&:nth-child(1 of html:has(a:hover) *)',
+    '&:is(a, html *)',
+    '& > :is(html *)',
+    '&:visited',
+    '&:CHECKED',
+    '&:user-valid',
+    '&:-webkit-autofill',
+    '&:is(:not(:checked))',
+    '&:future-state-nobody-has-named',
+  ])('refuses %s', (selector) => {
+    refused({ id: 'a', selector, style: { display: 'block' } });
+  });
+
+  it.each([
+    '&:hover',
+    '&:focus-within',
+    '&:has(> a:hover)',
+    '&:has(img)',
+    '&:not(.x)',
+    '&:is(a, b)',
+    '&:where(a)',
+    '&:is(.dark *)',
+    '&:is(.dark *):hover',
+    '&:nth-last-of-type(2n + 1)',
+    '&:empty',
+    '&::first-letter',
+    '&[data-x=":checked"]',
+  ])('keeps %s', (selector) => {
+    expect(rulesFrom({ id: 'a', selector, style: { color: 'red' } }).rules).toHaveLength(1);
+  });
+
+  it.each(['@scope (html:has(input:checked))', '@scope (.a) to (.b)', '@SCOPE (html)'])('refuses %s', (wrapper) => {
+    refused(hover({ display: 'block' }, { at: [wrapper] }));
+  });
+
+  it('keeps @scope with no prelude', () => {
+    expect(rulesFrom(hover({ color: 'red' }, { at: ['@scope'] })).rules).toHaveLength(1);
+  });
+
+  const evil = 'url(https://evil.test/c/x)';
+  const withRule = (style: Record<string, unknown>) => ({ type: 'div', props: { style, rules: [hover({ color: 'red' })] } });
+
+  it('drops an address on another host from a generation that keeps a rule', () => {
+    const { nodes, warnings } = run([withRule({ display: 'none', backgroundImage: evil })]);
+    expect(nodes[0].props.style).toEqual({ display: 'none' });
+    expect(nodes[0].props.rules).toHaveLength(1);
+    expect(warnings.join(' ')).toContain('from another host beside a rule');
+  });
+
+  it('looks in every node, in every breakpoint and in every way of loading one', () => {
+    const { nodes } = run([
+      { type: 'a', props: { rules: [hover({ color: 'red' })] } },
+      { type: 'div', props: { style: { backgroundImage: { base: 'none', mobile: evil } } } },
+      { type: 'div', props: { style: { backgroundImage: 'image-set("https://evil.test/c/y" 1x)' } } },
+      { type: 'div', props: { style: { listStyleImage: evil, cursor: `${evil}, auto`, maskImage: evil, content: evil } } },
+      { type: 'section', children: [{ type: 'img', props: { src: 'https://evil.test/c/z.png', alt: 'A bike' } }] },
+    ]);
+    expect(JSON.stringify(nodes)).not.toContain('evil.test');
+    expect(nodes[1].props.style).toEqual({ backgroundImage: { base: 'none' } });
+  });
+
+  it('leaves a generation with no rule, a site path, an anchor and the stock library alone', () => {
+    expect(run([{ type: 'div', props: { style: { backgroundImage: evil } } }]).nodes[0].props.style).toEqual({ backgroundImage: evil });
+    const style = { backgroundImage: 'url(/hero.png)', clipPath: 'url(#cut)' };
+    expect(run([withRule(style)]).nodes[0].props.style).toEqual(style);
+    const photo = 'https://images.unsplash.com/photo-1?w=800';
+    const { nodes } = run([{ type: 'img', props: { src: photo, alt: 'A bike', 'data-credit-name': 'A', 'data-credit-url': 'https://unsplash.com/@a', 'data-credit-source-url': 'https://unsplash.com/photos/a', rules: [hover({ opacity: 0.8 })] } }]);
+    expect(nodes[0].props.src).toBe(photo);
+  });
+
+  it('keeps what the selected component already held', () => {
+    const context = { props: { style: { backgroundImage: { base: 'url("https://owner.example/hero.png")' } } }, children: [{ props: { src: 'https://owner.example/logo.png' } }] };
+    const held = addressesHeldBy(context);
+    const out = validateGeneration(
+      {
+        nodes: [
+          { type: 'div', props: { style: { backgroundImage: 'url(https://owner.example/hero.png)' }, rules: [hover({ color: 'red' })] }, children: [
+            { type: 'img', props: { src: 'https://owner.example/logo.png', alt: 'Logo' } },
+            { type: 'img', props: { src: 'https://evil.test/c/new.png', alt: 'New' } },
+          ] },
+        ],
+      },
+      { breakpoints, heldAddresses: held },
+    );
+    if (!out.ok) throw new Error(out.errors.join('; '));
+    const [root] = out.result.nodes;
+    expect(root.props.style).toEqual({ backgroundImage: 'url(https://owner.example/hero.png)' });
+    expect(root.children[0].props.src).toBe('https://owner.example/logo.png');
+    expect(root.children[1].props.src).not.toContain('evil.test');
+  });
+
+  it('runs the review\'s whole form attack to nothing', () => {
+    const hidden = (name: string) => ({ display: 'none', backgroundImage: `url(https://evil.test/c/${name})` });
+    const { nodes, warnings } = run([
+      {
+        type: 'div',
+        props: { rules: [
+          { id: 'a', selector: '&:has(input[type=email]:not(:placeholder-shown)) > u', style: { display: 'block' } },
+          { id: 'b', selector: '&:has(input[type=email]:not(:placeholder-shown):valid) > i', style: { display: 'block' } },
+          { id: 'c', selector: '&:has(input[type=checkbox]:checked) > b', style: { display: 'block' } },
+        ] },
+        children: [
+          { preset: 'form', children: [{ preset: 'formEmail', props: { name: 'email', label: 'Email', placeholder: 'you' } }, { preset: 'formCheckbox', props: { name: 'news', label: 'News' } }, { preset: 'formSubmit' }] },
+          { type: 'u', props: { style: hidden('form-typed') } },
+          { type: 'i', props: { style: hidden('form-email-valid') } },
+          { type: 'b', props: { style: hidden('form-ticked') } },
+        ],
+      },
+    ]);
+    expect('rules' in nodes[0].props).toBe(false);
+    expect(warnings.filter((warning) => warning.includes('rule dropped'))).toHaveLength(3);
+  });
+});
+
+describe('generated rules: the page budget', () => {
+  const parts = (count: number) => Array.from({ length: count }, (_, i) => `&:nth-child(${i + 1})`).join(',');
+
+  it('refuses a selector list past its cap, and one too long in total', () => {
+    refused({ id: 'a', selector: parts(2100), style: { color: 'red' } });
+    refused({ id: 'a', selector: parts(MAX_GENERATED_SELECTOR_PARTS + 1), style: { color: 'red' } });
+    expect(rulesFrom({ id: 'a', selector: parts(MAX_GENERATED_SELECTOR_PARTS), style: { color: 'red' } }).rules).toHaveLength(1);
+    const long = Array.from({ length: 8 }, () => `&:is(.${'a'.repeat(120)})`).join(',');
+    expect(long.length).toBeGreaterThan(700);
+    refused({ id: 'a', selector: long, style: { color: 'red' } });
+  });
+
+  it('cannot take an owner\'s later rule by count', () => {
+    const { nodes } = run([{ type: 'div', props: { rules: [{ id: 'a', selector: parts(2100), style: { color: 'red' } }] } }]);
+    const owner = { id: 'owner', type: 'a', props: { rules: [{ id: 'h', selector: '&:hover', style: { color: 'rgb(9, 9, 9)' } }] } };
+    expect(sheetOf([...nodes, owner])).toContain('rgb(9, 9, 9)');
+  });
+
+  it('cannot take an owner\'s later rule by weight, at the full size of every limit', () => {
+    const value = `linear-gradient(#000, #111) ${'0 '.repeat(330)}`.trim();
+    const style = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`--u-${i}`, value]));
+    const heavy = (i: number) => ({ id: `r${i}`, selector: parts(MAX_GENERATED_SELECTOR_PARTS), style });
+    const { nodes, warnings } = run([{ type: 'div', props: { rules: Array.from({ length: 12 }, (_, i) => heavy(i)) } }]);
+    expect(warnings.join(' ')).toContain('too long');
+    const owner = { id: 'owner', type: 'a', props: { rules: [{ id: 'h', selector: '&:hover', style: { color: 'rgb(9, 9, 9)' } }] } };
+    expect(sheetOf([...nodes, owner])).toContain('rgb(9, 9, 9)');
+  });
+
+  it('leaves room for a real page: every taught rule, on a map, at the cap', () => {
+    const list = Array.from({ length: MAX_GENERATED_RULES }, (_, i) => hover({ color: { base: 'red', mobile: 'blue' } }, { id: `r${i}` }));
+    expect(rulesFrom(...list).rules).toHaveLength(MAX_GENERATED_RULES);
+  });
+});
+
 describe('generated rules: motion', () => {
   const list = (value: unknown, key = 'animation') => hover({ [key]: value });
 
@@ -375,6 +557,13 @@ describe('generated rules: motion', () => {
     ['u-x 1s ease 0s 999999', 'animation'],
     ['1e9', 'animationIterationCount'],
     ['var(--name)', 'animationName'],
+    // The review's: a string hiding text in a timing function, a !, a string before a number.
+    ['"linear(",u-m 1s infinite,")"', 'animation'],
+    ['u-m 1s 1000000!important', 'animation'],
+    ['"u-m"1000000 1s', 'animation'],
+    ['steps(2)1000000 u-m', 'animation'],
+    ['1!important', 'animationIterationCount'],
+    ["'linear(' infinite ')'", 'animation'],
   ])('refuses %s in %s', (value, key) => {
     refused(list(value, key));
   });
@@ -394,6 +583,65 @@ describe('generated rules: motion', () => {
   it('wraps it once, and does not take a negated gate for it', () => {
     expect(rulesFrom(hover({ animationName: 'u-x' }, { at: ['@media (prefers-reduced-motion:no-preference)'] })).rules[0].at).toHaveLength(1);
     expect(rulesFrom(hover({ animationName: 'u-x' }, { at: ['@media not (prefers-reduced-motion: no-preference)'] })).rules[0].at).toHaveLength(2);
+  });
+
+  describe('start values', () => {
+    const keyframes = { id: 'k', define: '@keyframes u-in', blocks: [{ selector: 'from', style: { opacity: 0, translate: '0 20px' } }, { selector: 'to', style: { opacity: 1, translate: '0 0' } }] };
+
+    it('keeps the review\'s reveal behind the gate whole, or a reduced visitor never sees the text', () => {
+      const { rules } = rulesFrom({ id: 'r', selector: '&', style: { opacity: 0, animation: 'u-in 1s forwards' } });
+      expect(rules).toEqual([expect.objectContaining({ selector: '&', at: [REDUCED_MOTION_GATE], style: { animation: 'u-in 1s forwards', opacity: 0 } })]);
+    });
+
+    it.each([
+      ['opacity', '0'],
+      ['opacity', 0],
+      ['opacity', '0.0'],
+      ['opacity', '0%'],
+      ['opacity', { base: 1, mobile: 0 }],
+      ['visibility', 'hidden'],
+      ['display', 'none'],
+    ])('holds %s: %s', (key, value) => {
+      const { rules } = rulesFrom({ id: 'r', selector: '&', style: { [key]: value, animation: 'u-other 1s forwards' } });
+      expect(rules).toHaveLength(1);
+      expect(rules[0].at).toEqual([REDUCED_MOTION_GATE]);
+    });
+
+    it('holds what a keyframes of this generation moves, wherever that keyframes stands', () => {
+      const { nodes } = run([
+        { type: 'div', props: { rules: [{ id: 'r', selector: '&', style: { translate: '0 20px', color: 'red', animation: 'u-in 1s' } }] } },
+        { type: 'div', props: { rules: [keyframes] } },
+      ]);
+      expect(nodes[0].props.rules).toEqual([
+        { id: 'r', selector: '&', style: { color: 'red' } },
+        expect.objectContaining({ at: [REDUCED_MOTION_GATE], style: { animation: 'u-in 1s', translate: '0 20px' } }),
+      ]);
+    });
+
+    it('takes a start value from another rule on the same selector, and from Normal', () => {
+      const { nodes } = run([
+        {
+          type: 'div',
+          props: {
+            style: { opacity: 0, color: 'blue' },
+            rules: [{ id: 'a', selector: '&', style: { visibility: 'hidden' } }, { id: 'b', selector: '&', style: { animation: 'u-in 1s forwards' } }],
+          },
+        },
+      ]);
+      expect(nodes[0].props.style).toEqual({ color: 'blue' });
+      expect(nodes[0].props.rules).toEqual([
+        { id: 'b', selector: '&', at: [REDUCED_MOTION_GATE], style: { animation: 'u-in 1s forwards', visibility: 'hidden', opacity: 0 } },
+      ]);
+    });
+
+    it('leaves another selector and a plain colour where they are', () => {
+      const { rules } = rulesFrom(
+        { id: 'a', selector: '&:focus-visible', style: { opacity: 0 } },
+        hover({ color: 'red', animation: 'u-in 1s' }),
+      );
+      expect(rules[0]).toEqual({ id: 'a', selector: '&:focus-visible', style: { opacity: 0 } });
+      expect(rules[1]).toEqual({ id: 'r', selector: '&:hover', style: { color: 'red' } });
+    });
   });
 
   it('moves only the animation, so a visitor who asked for less motion keeps the rest of the state', () => {
@@ -424,6 +672,15 @@ describe('generated rules: motion', () => {
       ['animationName', '"u-x"'],
       ['animation', 'u-x 1s infinite'],
       ['animationIterationCount', 'infinite'],
+      // The review's: CSS needs no separator after a `)` or before a string.
+      ['animation', 'steps(2)u-m 1s'],
+      ['animation', '1s"u-m"'],
+      ['animation', 'cubic-bezier(0,0,1,1)u-m 1s'],
+      ['animationName', 'none,"x""u-m"'],
+      // And the same bypasses of the count, in Normal.
+      ['animation', '"linear(",fade 1s infinite,")"'],
+      ['animation', 'fade 1s 1000000!important'],
+      ['animation', '"fade"1000000 1s'],
     ]) {
       const { nodes, warnings } = run([{ type: 'div', props: { style: { [key]: value } } }]);
       expect(nodes[0].props.style ?? {}).toEqual({});

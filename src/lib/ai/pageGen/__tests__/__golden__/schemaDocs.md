@@ -88,7 +88,8 @@ Optional "props.rules": a list of {"id": "<short, unique on the node>", "selecto
 - Rhythm, on the parent of a repeated row: "selector":"& > :nth-child(2n)".
 - A dark look, only when the brief asks for one: "selector":"&","at":["@media (prefers-color-scheme: dark)"].
 A rule holds no url(). At most 24 rules per generation: keep states for links and buttons, never
-every card. A rule that does not fit these rules is dropped whole.
+every card. A rule that does not fit these rules is dropped whole. On a generation with a rule, an image from
+another host is dropped: use imageQuery or a site path.
 
 ## Fonts
 

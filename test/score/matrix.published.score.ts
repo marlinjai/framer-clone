@@ -252,7 +252,7 @@ function probeRule(probe: RuleProbe, key: string, gap: GapId, presetNote?: strin
   const out = (generate({ type: 'div', props: { rules: [rule] } }).node?.props.rules ?? []) as unknown[];
   // Acceptance alone earns the cell: the label says the prompt does not ask for it.
   const taught = TAUGHT_RULE_ROWS.has(key.slice(key.indexOf(':') + 1));
-  results.ai[key] = out.some((kept) => JSON.stringify(kept) === JSON.stringify(rule)) ? pass(taught ? undefined : ACCEPTED_NOT_TAUGHT) : fail(gap);
+  results.ai[key] = out.some((kept) => JSON.stringify(kept) === JSON.stringify(rule)) ? pass(taught ? undefined : ACCEPTED_NOT_TAUGHT) : fail(reached && stored ? 'ai-rule-refused' : gap);
 }
 
 /** A row the route owns: it is left red on purpose, whatever a node could hold. */
