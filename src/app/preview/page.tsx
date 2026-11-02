@@ -63,6 +63,7 @@ function DemoPreview() {
           reload. To keep your work, use Save in the editor: it saves the demo as a new project.
         </p>
         {/* Plain anchors on purpose: a full document load drops this layout's editor stylesheet, which a client-side navigation would carry onto a published page. */}
+        {/* eslint-disable @next/next/no-html-link-for-pages */}
         <div className="flex gap-4 text-sm">
           <a href="/projects" className="text-brand hover:underline">
             Your projects
@@ -70,6 +71,7 @@ function DemoPreview() {
           <a href="/" className="text-brand hover:underline">
             Open the demo editor
           </a>
+          {/* eslint-enable @next/next/no-html-link-for-pages */}
         </div>
       </main>
     );
