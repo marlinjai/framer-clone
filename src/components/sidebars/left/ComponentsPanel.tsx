@@ -63,6 +63,7 @@ const ComponentsPanel = observer(({ onTapInsert }: ComponentsPanelProps = {}) =>
   const dataComponents = listComponentsByCategory('data');
   const commerceComponents = listComponentsByCategory('commerce');
   const formComponents = listComponentsByCategory('form');
+  const interactiveComponents = listComponentsByCategory('interactive');
 
   return (
     <div className="space-y-4">
@@ -92,6 +93,20 @@ const ComponentsPanel = observer(({ onTapInsert }: ComponentsPanelProps = {}) =>
           ))}
         </div>
       </div>
+
+      {interactiveComponents.length > 0 && (
+        <div>
+          <div className="flex items-center space-x-2 mb-3">
+            <h3 className="text-sm font-medium text-foreground">Interactive</h3>
+            <Plus size={14} className="text-muted-foreground" />
+          </div>
+          <div className="space-y-1">
+            {interactiveComponents.map((entry) => (
+              <ComponentItem key={entry.id} entry={entry} onTapInsert={onTapInsert} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {dataComponents.length > 0 && (
         <div>

@@ -13,9 +13,12 @@ describe('serializeRegistry', () => {
     expect(a).toBe(b);
   });
 
-  it('emits one entry per registry item', () => {
+  it('emits one entry per registry item but a behaviour preset', () => {
     const out = serializeRegistry();
-    expect(out.length).toBe(Object.keys(COMPONENT_REGISTRY).length);
+    const presets = Object.values(COMPONENT_REGISTRY).filter((entry) => entry.preset);
+    expect(presets.length).toBeGreaterThan(0);
+    expect(out.length).toBe(Object.keys(COMPONENT_REGISTRY).length - presets.length);
+    expect(out.map((entry) => entry.type)).not.toContain(presets[0].id);
   });
 
   it('sorts entries alphabetically by type', () => {

@@ -73,6 +73,13 @@ const everything = (): ComponentNode =>
     node('bar', 'div', { 'data-sticky-cta': 'bar', ctaLabel: 'Book', ctaHref: '#top' }),
   ]);
 
+/**
+ * A fixture built from a behaviour preset is a page with behaviour, so it has no place here.
+ * Read from the tree each run builds, since a fixture's node ids come from a counter.
+ */
+const holdsBehaviour = (node: ComponentNode): boolean =>
+  (node.props as Record<string, unknown> | undefined)?.behaviour !== undefined || (node.children ?? []).some(holdsBehaviour);
+
 const pages: { id: string; tree: () => ComponentNode }[] = [
   ...FIXTURES.map(({ id, tree }) => ({ id, tree })),
   { id: 'everything', tree: everything },
@@ -81,7 +88,9 @@ const pages: { id: string; tree: () => ComponentNode }[] = [
 async function renderAll(): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   for (const { id, tree } of pages) {
-    const { body } = await renderPublishedPage({ root: tree(), pageParams: {}, cmsRepo, commerceRepo, breakpoints: BPS });
+    const root = tree();
+    if (holdsBehaviour(root)) continue;
+    const { body } = await renderPublishedPage({ root, pageParams: {}, cmsRepo, commerceRepo, breakpoints: BPS });
     out[id] = renderToStaticMarkup(<>{body}</>);
   }
   return out;
@@ -110,7 +119,9 @@ describe('a page with no behaviour', () => {
 
   it('comes back from the pass as the same tree, so nothing can have changed', async () => {
     for (const { tree } of pages) {
-      const hydrated = await hydrateBindings(tree(), {}, { cmsRepo, commerceRepo });
+      const root = tree();
+      if (holdsBehaviour(root)) continue;
+      const hydrated = await hydrateBindings(root, {}, { cmsRepo, commerceRepo });
       expect(applyBehaviour(hydrated)).toEqual({ root: hydrated, program: null, hasGate: false });
       expect(applyBehaviour(hydrated).root).toBe(hydrated);
     }

@@ -46,8 +46,9 @@ export async function takeSnapshot(page: Page, options: SnapshotOptions = {}): P
     const facts: Record<string, ElementFacts> = {};
     document.querySelectorAll('[data-parity-id]').forEach((el) => {
       facts[el.getAttribute('data-parity-id') as string] = {
-        // Words only: the source indentation of a hand-written page is not content.
-        text: (el.textContent ?? '').replace(/\s+/g, ''),
+        // Words only, and only those rendered: the source indentation of a hand-written page is not
+        // content, and a page that keeps an inactive panel in the DOM hidden shows what the original shows.
+        text: ((el as HTMLElement).innerText ?? el.textContent ?? '').replace(/\s+/g, ''),
         styles: dump(getComputedStyle(el)),
         before: getComputedStyle(el, '::before').content,
         after: getComputedStyle(el, '::after').content,

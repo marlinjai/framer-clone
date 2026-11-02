@@ -31,7 +31,9 @@ export type SerializedRegistry = Array<{
  *                       as the props of a freshly-inserted component
  */
 export function serializeRegistry(): SerializedRegistry {
+  // A behaviour preset's defaults are not what it inserts, so it is no entry to copy from.
   const entries = Object.values(COMPONENT_REGISTRY)
+    .filter((entry) => !entry.preset)
     .map((entry) => ({
       acceptsChildren: !isVoidTag(entry.htmlType),
       defaults: entry.defaultProps,
