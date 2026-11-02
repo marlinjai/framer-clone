@@ -85,7 +85,9 @@ describe.each(ENGINES)('generated output in %s', (name, engine) => {
       expect(await details().isVisible()).toBe(false);
       await reveal().click();
       await expect.poll(() => details().isVisible()).toBe(true);
-      await open('plain');
+      // A page with no behaviour has no gate to wait for.
+      await page.goto(`${origin}/plain`);
+      await page.waitForLoadState('networkidle');
       await page.goBack();
       await page.waitForLoadState('networkidle');
       await expect.poll(() => details().isVisible()).toBe(false);
