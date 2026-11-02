@@ -10,10 +10,14 @@ projects: [framer-clone]
 
 # SVG controls
 
-Read against `main` at `46d92528`. Open pull requests this plan depends on or touches, none merged when it was written: #306 (the Theme
+Read against `main` at `46d92528`. Open pull requests (PRs) this plan depends on or touches, none merged when it was written: #306 (the Theme
 panel and token chips in the colour input, theme slice T4), #308 (the Lumitra Sites agent plugin plan, an MCP (Model Context Protocol) endpoint
 whose write tools share the editor's operations), #309 (a Framer comparison column for the score) and #310 (honest row icons in the Layers
 panel and the page root folded into the breakpoint row). Nothing here is built yet; this plan specifies and decides.
+
+Terms used throughout: HTML (HyperText Markup Language, the page markup), CSS (Cascading Style Sheets), XML (Extensible Markup
+Language, the syntax an SVG file is written in), KiB (kibibyte, 1,024 bytes). ISC and MIT are two short permissive open source licences, named
+after the Internet Systems Consortium and the Massachusetts Institute of Technology.
 
 ## Why this, and why now
 
@@ -84,8 +88,11 @@ Each is decided here under the global rule that a question with one defensible a
 2. **One parser in every place: `saxes`.** A strict streaming XML parser (ISC licence, version 6.0.0, already in the tree as a dependency of jsdom),
    promoted to a direct dependency. It runs the same in the browser and on the server, so the editor's paste and the plugin's `insert_svg` cannot
    read one file two ways. It never fetches anything and never expands an external entity. Not `DOMParser`: it does not exist on the server, and two
-   parsers are two bug sites. Before parsing: the text is capped in bytes, and any `<!DOCTYPE` is refused outright (it is the only way to declare
-   an entity, so the "billion laughs" expansion cannot start; real exports put nothing there that matters).
+   parsers are two bug sites. Before parsing the text is capped in bytes. A `<!DOCTYPE>` with no internal subset (no `[...]`), which Adobe
+   Illustrator's older SVG export and older Inkscape write on nearly every file, is read and ignored. One with an internal subset is refused,
+   because that is the only place an entity can be declared, so the "billion laughs" expansion (entities that nest into gigabytes) cannot start.
+   V4 also verifies that `saxes` defines no entity from a document type at all (a reference like `&lol;` must fail as undefined), which is the real
+   guarantee; the refusal is a second one.
 3. **What happens to each awkward construct on import:**
 
    | Construct | On import | Why |
@@ -96,18 +103,21 @@ Each is decided here under the global rule that a question with one defensible a
    | Ids | Every id inside the `svg` gets the import's own suffix through `scopeIds`, with every reference rewritten | Two pasted logos that both say `id="a"` would otherwise paint each other's gradients |
    | `foreignObject` | Dropped with its subtree and a warning | Its content is HTML; a file has no business smuggling HTML into a page. The tag picker inside `svg` still offers it, because a person choosing it in the editor is not a file carrying it in. The two differ on purpose |
    | `image` with an external or `data:` address | Dropped with a warning that says to place the picture as an image node | The validator allows only site paths; a raster inside a vector is better as an image the site's image handling owns |
-   | `title` | Its text becomes the root's accessible name (see Accessibility); the element is dropped | One way to name a graphic |
+   | `title` | The first `title` directly under the root is kept as the graphic's name (see Accessibility); every other `title` is dropped | One way to name a graphic, the one screen readers read best |
+   | Text in a font the site cannot host | The validator replaces a `font-family` outside the self-hosted library with the library default; the dialog says so: "Text set in Helvetica will use Inter. Outline the text in your design tool to keep it exactly." | Logos with live text exist; changing their font without a word would be a silent failure |
    | `desc`, `metadata`, comments, processing instructions, `xml:space`, editor namespaces (`inkscape:`, `sodipodi:`, `sketch:`) | Dropped silently, counted in the report | Inert noise from design tools |
    | `xlink:href` | Read as `href` | The modern spelling; one spelling to check |
    | No `viewBox` but a width and height | `viewBox="0 0 w h"` is written | Without it the graphic cannot scale |
-   | Root `width` and `height` | Become the root's size in `style` through `svgAttributeAsStyle`; height becomes `auto` when the person keeps the aspect (the default) | An inline `svg` with a `viewBox`, a width and `height: auto` keeps its aspect in current browsers |
+   | Root `width` and `height` | Become the root's size in `style` through `svgAttributeAsStyle`; height becomes `auto` when the person keeps the aspect (the default) | An inline `svg` with a `viewBox`, a width and `height: auto` keeps its aspect; corpus fixture 1 proves it in V1, so a failure there is a finding, not a surprise |
    | Animation (`animate`, `animateTransform`, `set`) | Kept when its `attributeName` is on the reviewed list, dropped otherwise | The gate already refuses the classic `attributeName="href"` attack |
 
 4. **Paint is stored as style, geometry as attributes.** `fill`, `stroke`, `stroke-width`, `stroke-linecap`, `stroke-linejoin`,
    `stroke-dasharray`, `stroke-opacity`, `fill-opacity`, `fill-rule`, `opacity`, `stop-color` and `stop-opacity` are CSS properties, so the
    controls write them into `style`. That gives breakpoints, the state switch and theme references with no new code, because a presentation
    attribute cannot hold `var()` and a style can. `d`, `points`, `cx`, `viewBox`, `preserveAspectRatio` and the rest stay attributes. On import,
-   presentation attributes are moved into `style` the same way, so a pasted logo is recolourable per state at once.
+   presentation attributes are moved into `style` the same way, so a pasted logo is recolourable per state at once. Order matters: in SVG a
+   presentation attribute sits below every stylesheet rule, so the import applies the attributes first and lets the inlined `<style>` rules
+   overwrite them (Illustrator's `.cls-1{fill:#1d1d1b}` beats `fill="#000"` on the same path), and a `style` attribute last of all.
 5. **Import limits are their own, passed to the validator.** `validateGeneration` gains an optional `limits` field in its context; the generator
    passes nothing and keeps `GENERATION_LIMITS`. The import passes `SVG_IMPORT_LIMITS`: at most 512 KiB of text, 1500 elements, depth 32,
    100,000 characters per geometry attribute, the same expansion budget of 1000. A real icon is 1 to 10 elements; an exported logo is 10 to 300;
@@ -176,7 +186,7 @@ The import is a short flow with derived state: the parsed tree and its warnings 
 
 ## Canvas and Layers
 
-- **Layers panel** (`src/components/sidebars/left/LayersPanel.tsx`). PR #310 is changing its row icons and the root row now, so this describes
+- **Layers panel** (`src/components/sidebars/left/LayersPanel.tsx`). Pull request #310 is changing its row icons and the root row now, so this describes
   behaviour, not code: an `svg` row is collapsed by default and expands to its children; each row's label is the element's `id` from the file
   when it has one (designers name layers, and Figma writes those names into ids), with the import suffix hidden, otherwise the tag name; an icon
   from the picker is labelled "Icon: house". Selecting a row selects that element on the canvas. Dragging a row obeys decision 8.
@@ -314,7 +324,8 @@ token"). A deleted token stays behind as a tombstone in that plan, so a logo nev
 - **Decorative** writes `aria-hidden="true"` on the root and nothing else.
 - **Meaningful** writes `role="img"` and an accessible name. The name is a `title` child referenced by `aria-labelledby` (the most widely read
   form across screen readers for inline SVG); `scopeIds` already rewrites `aria-labelledby` with the id suffix. The Graphic section shows one
-  field, Name; the `title` node is the editor's to manage and hidden in Layers.
+  field, Name; the `title` node is the editor's to manage, and the Layers panel shows it as a row labelled Name rather than as a bare `title`
+  (V6), so nothing in the tree is invisible.
 - **Imports** start Meaningful, with the file's `title` as the name when it had one. A meaningful graphic with no name is listed by the publish
   check (`checkBeforePublish`) as "A graphic has no name for screen readers", with a button that selects it.
 - **Icons** start Decorative. An icon that is the only content of a link or button needs the name on that link or button, which the existing
