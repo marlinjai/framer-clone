@@ -253,6 +253,6 @@ export interface OrderRepository {
   /** Insert one snapshot line item belonging to an order. */
   insertLineItem(db: Kysely<CommerceDB>, input: CreateOrderLineItemInput): Promise<OrderLineItemRow>;
 
-  /** Re-read an order by its request_id (the idempotency key), or undefined. */
-  findByRequestId(db: Kysely<CommerceDB>, requestId: string): Promise<OrderRow | undefined>;
+  /** Re-read a company's order by its request_id (the idempotency key, unique per company), or undefined. */
+  findByRequestId(db: Kysely<CommerceDB>, tenantId: string, requestId: string): Promise<OrderRow | undefined>;
 }

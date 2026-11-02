@@ -25,6 +25,7 @@ import { paymentAccount } from './022_payment_account';
 import { shopMail } from './023_shop_mail';
 import { receiptPaidOn } from './024_receipt_paid_on';
 import { commerceJob } from './025_commerce_job';
+import { orderRequestKey } from './026_order_request_key';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -126,6 +127,7 @@ import { commerceJob } from './025_commerce_job';
  *   024_receipt_paid_on    : the day a shop receipt was paid
  *   025_commerce_job       : the shop's durable work (commerce_job): written in the
  *                            transaction that needs it, claimed under a lease
+ *   026_order_request_key  : the order key is unique per company, not per schema
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -154,4 +156,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   shopMail,
   receiptPaidOn,
   commerceJob,
+  orderRequestKey,
 ];

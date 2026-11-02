@@ -13,7 +13,7 @@ import 'server-only';
 // src/server/commerce/order/createOrder.ts, which calls these primitives inside
 // the ONE transaction it owns.
 //
-// Errors surface: a UNIQUE(request_id)/UNIQUE(order_number) violation, an FK
+// Errors surface: a UNIQUE(tenant_id, request_id)/UNIQUE(order_number) violation, an FK
 // violation, or a CHECK violation (e.g. a negative total tripping the money
 // floor, or total != subtotal + tax_amount) propagates to the caller, whose
 // transaction rolls back. Nothing is caught-and-ignored here.
@@ -112,10 +112,15 @@ export const orderRepository: OrderRepository = {
       .executeTakeFirstOrThrow();
   },
 
-  findByRequestId(db: Kysely<CommerceDB>, requestId: string): Promise<OrderRow | undefined> {
+  findByRequestId(
+    db: Kysely<CommerceDB>,
+    tenantId: string,
+    requestId: string,
+  ): Promise<OrderRow | undefined> {
     return db
       .selectFrom('order')
       .selectAll()
+      .where('tenant_id', '=', tenantId)
       .where('request_id', '=', requestId)
       .executeTakeFirst();
   },

@@ -183,7 +183,7 @@ describe('POST /api/commerce/orders tenancy (D4: tenant from the HOST)', () => {
       TG_A,
       expect.objectContaining({ tenantId: COMPANY_A, siteId: 'site_a' }),
     );
-    expect(readTotalMock).toHaveBeenCalledWith(SCOPED_A, 'order_created');
+    expect(readTotalMock).toHaveBeenCalledWith(SCOPED_A, COMPANY_A, 'order_created');
   });
 
   it('returns 403 when the host does not resolve to a published site', async () => {

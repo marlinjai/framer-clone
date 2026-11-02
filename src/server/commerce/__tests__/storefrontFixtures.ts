@@ -122,6 +122,7 @@ export async function createPublishedSite(
   fx: StorefrontFixtures,
   tenantGroupId: string,
   label: string,
+  companyId: string = DEMO_COMPANY_ID,
 ): Promise<{ host: string; siteId: string; workspaceId: string }> {
   const subdomain = `${label}-${randomUUID().slice(0, 8)}`;
   const workspaceId = `ws-${subdomain}`;
@@ -129,8 +130,9 @@ export async function createPublishedSite(
     data: {
       workspaceId,
       tenantGroupId,
-      // The company the site sells for (sites.company_id): the fixtures seed the demo company's catalogue.
-      companyId: DEMO_COMPANY_ID,
+      // The company the site sells for (sites.company_id): the fixtures seed the demo company's catalogue
+      // unless told otherwise.
+      companyId,
       name: `Store ${label}`,
       status: 'published',
       projectCreatedAt: new Date(),
@@ -167,46 +169,47 @@ export interface SeededProduct {
  */
 export async function seedBuyableProduct(
   db: Kysely<CommerceDB>,
-  opts: { title: string; handle: string; amountCents: number; stocked: number; currency?: string },
+  opts: { title: string; handle: string; amountCents: number; stocked: number; currency?: string; tenantId?: string },
 ): Promise<SeededProduct> {
+  const tenantId = opts.tenantId ?? DEMO_COMPANY_ID;
   const now = new Date();
   const productId = randomUUID();
   await db
     .insertInto('product')
     // Net-priced, as the shop's catalogue was before price bases existed (the orders tests add VAT on top).
-    .values({ tenant_id: DEMO_COMPANY_ID, status: 'published', price_basis: 'net', id: productId, title: opts.title, handle: opts.handle, updated_at: now })
+    .values({ tenant_id: tenantId, status: 'published', price_basis: 'net', id: productId, title: opts.title, handle: opts.handle, updated_at: now })
     .execute();
 
   const optionId = randomUUID();
   await db
     .insertInto('product_option')
-    .values({ tenant_id: DEMO_COMPANY_ID, id: optionId, product_id: productId, title: 'Color', updated_at: now })
+    .values({ tenant_id: tenantId, id: optionId, product_id: productId, title: 'Color', updated_at: now })
     .execute();
   const valueId = randomUUID();
   await db
     .insertInto('product_option_value')
-    .values({ tenant_id: DEMO_COMPANY_ID, id: valueId, option_id: optionId, value: 'Red', updated_at: now })
+    .values({ tenant_id: tenantId, id: valueId, option_id: optionId, value: 'Red', updated_at: now })
     .execute();
 
   const variantId = randomUUID();
   const sku = `SKU-${randomUUID()}`;
   await db
     .insertInto('product_variant')
-    .values({ tenant_id: DEMO_COMPANY_ID, id: variantId, product_id: productId, title: 'Red', sku, updated_at: now })
+    .values({ tenant_id: tenantId, id: variantId, product_id: productId, title: 'Red', sku, updated_at: now })
     .execute();
   await db
     .insertInto('product_variant_option')
-    .values({ tenant_id: DEMO_COMPANY_ID, variant_id: variantId, option_id: optionId, option_value_id: valueId })
+    .values({ tenant_id: tenantId, variant_id: variantId, option_id: optionId, option_value_id: valueId })
     .execute();
 
   const priceSetId = randomUUID();
   await db
     .insertInto('price_set')
-    .values({ tenant_id: DEMO_COMPANY_ID, id: priceSetId, variant_id: variantId, updated_at: now })
+    .values({ tenant_id: tenantId, id: priceSetId, variant_id: variantId, updated_at: now })
     .execute();
   await db
     .insertInto('price')
-    .values({ tenant_id: DEMO_COMPANY_ID,
+    .values({ tenant_id: tenantId,
       id: randomUUID(),
       price_set_id: priceSetId,
       currency_code: opts.currency ?? 'EUR',

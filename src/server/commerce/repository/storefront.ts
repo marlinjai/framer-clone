@@ -237,15 +237,18 @@ export async function resolveOrderLines(
 
 /**
  * The server-authoritative total (integer cents) and currency of a committed
- * order, or null when no such order exists in this tenant group.
+ * order, or null when this company has no such order: companies of one tenant
+ * group share a schema, so the id alone does not keep them apart.
  */
 export async function readOrderTotal(
   db: Kysely<CommerceDB>,
+  tenantId: string,
   orderId: string,
 ): Promise<{ totalCents: number; currency: string; orderNumber: string } | null> {
   const row = await db
     .selectFrom('order')
     .select(['total', 'currency_code', 'order_number'])
+    .where('tenant_id', '=', tenantId)
     .where('id', '=', orderId)
     .executeTakeFirst();
   return row ? { totalCents: row.total, currency: row.currency_code, orderNumber: row.order_number } : null;
