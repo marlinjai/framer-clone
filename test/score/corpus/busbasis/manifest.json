@@ -1,0 +1,1824 @@
+{
+  "_doc": "Held out: see README.md. Regenerated only by test/score/busbasis/rebuild.ts after a new capture of the live site. The score refuses to run when a file does not match its hash here.",
+  "source": "https://basiscampberlin.de, read only, logged out, through dev-browser-auto (headless automation Chrome)",
+  "pages": [
+    {
+      "slug": "home",
+      "pageType": "home",
+      "source": "https://basiscampberlin.de/de",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:56:39.831Z",
+      "elements": 533,
+      "hoverTarget": "e41",
+      "inventory": {
+        "nodes": 542,
+        "rules": 741,
+        "nodesWithRules": 531,
+        "refused": {}
+      },
+      "unread": 15,
+      "rootTook": [
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight"
+      ],
+      "rootVariables": 132,
+      "rootLeft": [
+        "boxSizing",
+        "border",
+        "borderColor",
+        "maxWidth",
+        "scrollBehavior",
+        "overflowX"
+      ],
+      "fidelity": {
+        "desktop": {
+          "values": 255307,
+          "different": 1766,
+          "scrollHeightLive": 6072,
+          "scrollHeightFrozen": 6048,
+          "top": [
+            [
+              "inline-size",
+              174
+            ],
+            [
+              "perspective-origin",
+              174
+            ],
+            [
+              "transform-origin",
+              174
+            ],
+            [
+              "width",
+              174
+            ],
+            [
+              "block-size",
+              16
+            ],
+            [
+              "height",
+              16
+            ]
+          ]
+        },
+        "tablet": {
+          "values": 255307,
+          "different": 1945,
+          "scrollHeightLive": 7887,
+          "scrollHeightFrozen": 7833,
+          "top": [
+            [
+              "inline-size",
+              213
+            ],
+            [
+              "perspective-origin",
+              213
+            ],
+            [
+              "transform-origin",
+              213
+            ],
+            [
+              "width",
+              213
+            ],
+            [
+              "block-size",
+              27
+            ],
+            [
+              "height",
+              27
+            ]
+          ]
+        },
+        "mobile": {
+          "values": 255307,
+          "different": 1976,
+          "scrollHeightLive": 9976,
+          "scrollHeightFrozen": 9895,
+          "top": [
+            [
+              "inline-size",
+              217
+            ],
+            [
+              "perspective-origin",
+              217
+            ],
+            [
+              "transform-origin",
+              217
+            ],
+            [
+              "width",
+              217
+            ],
+            [
+              "block-size",
+              24
+            ],
+            [
+              "height",
+              24
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "slug": "store",
+      "pageType": "product list",
+      "source": "https://basiscampberlin.de/de/store",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:51:13.249Z",
+      "elements": 753,
+      "hoverTarget": "e26",
+      "inventory": {
+        "nodes": 775,
+        "rules": 1125,
+        "nodesWithRules": 753,
+        "refused": {}
+      },
+      "unread": 15,
+      "rootTook": [
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight"
+      ],
+      "rootVariables": 132,
+      "rootLeft": [
+        "boxSizing",
+        "border",
+        "borderColor",
+        "maxWidth",
+        "scrollBehavior",
+        "overflowX"
+      ],
+      "fidelity": {
+        "desktop": {
+          "values": 360687,
+          "different": 967,
+          "scrollHeightLive": 2385,
+          "scrollHeightFrozen": 2391,
+          "top": [
+            [
+              "transform-origin",
+              193
+            ],
+            [
+              "inline-size",
+              192
+            ],
+            [
+              "width",
+              192
+            ],
+            [
+              "perspective-origin",
+              189
+            ],
+            [
+              "block-size",
+              71
+            ],
+            [
+              "height",
+              71
+            ]
+          ]
+        },
+        "tablet": {
+          "values": 360687,
+          "different": 1205,
+          "scrollHeightLive": 3421,
+          "scrollHeightFrozen": 3405,
+          "top": [
+            [
+              "inline-size",
+              241
+            ],
+            [
+              "transform-origin",
+              241
+            ],
+            [
+              "width",
+              241
+            ],
+            [
+              "perspective-origin",
+              237
+            ],
+            [
+              "block-size",
+              85
+            ],
+            [
+              "height",
+              85
+            ]
+          ]
+        },
+        "mobile": {
+          "values": 360687,
+          "different": 1218,
+          "scrollHeightLive": 4038,
+          "scrollHeightFrozen": 4068,
+          "top": [
+            [
+              "inline-size",
+              246
+            ],
+            [
+              "transform-origin",
+              246
+            ],
+            [
+              "width",
+              246
+            ],
+            [
+              "perspective-origin",
+              239
+            ],
+            [
+              "block-size",
+              73
+            ],
+            [
+              "height",
+              73
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "slug": "search",
+      "pageType": "search",
+      "source": "https://basiscampberlin.de/de/store?q=bremse",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:51:54.055Z",
+      "elements": 760,
+      "hoverTarget": "e26",
+      "inventory": {
+        "nodes": 796,
+        "rules": 1139,
+        "nodesWithRules": 760,
+        "refused": {}
+      },
+      "unread": 15,
+      "rootTook": [
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight"
+      ],
+      "rootVariables": 132,
+      "rootLeft": [
+        "boxSizing",
+        "border",
+        "borderColor",
+        "maxWidth",
+        "scrollBehavior",
+        "overflowX"
+      ],
+      "fidelity": {
+        "desktop": {
+          "values": 364040,
+          "different": 1042,
+          "scrollHeightLive": 2421,
+          "scrollHeightFrozen": 2427,
+          "top": [
+            [
+              "transform-origin",
+              210
+            ],
+            [
+              "inline-size",
+              209
+            ],
+            [
+              "perspective-origin",
+              209
+            ],
+            [
+              "width",
+              209
+            ],
+            [
+              "block-size",
+              72
+            ],
+            [
+              "height",
+              72
+            ]
+          ]
+        },
+        "tablet": {
+          "values": 364040,
+          "different": 1200,
+          "scrollHeightLive": 3421,
+          "scrollHeightFrozen": 3405,
+          "top": [
+            [
+              "inline-size",
+              239
+            ],
+            [
+              "transform-origin",
+              239
+            ],
+            [
+              "width",
+              239
+            ],
+            [
+              "perspective-origin",
+              238
+            ],
+            [
+              "block-size",
+              85
+            ],
+            [
+              "height",
+              85
+            ]
+          ]
+        },
+        "mobile": {
+          "values": 364040,
+          "different": 1253,
+          "scrollHeightLive": 4038,
+          "scrollHeightFrozen": 4068,
+          "top": [
+            [
+              "inline-size",
+              257
+            ],
+            [
+              "transform-origin",
+              257
+            ],
+            [
+              "width",
+              257
+            ],
+            [
+              "perspective-origin",
+              241
+            ],
+            [
+              "block-size",
+              73
+            ],
+            [
+              "height",
+              73
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "slug": "category",
+      "pageType": "category",
+      "source": "https://basiscampberlin.de/de/categories/mercedes-benz-baumuster-309-310-313-duedos-motor",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:52:29.063Z",
+      "elements": 278,
+      "hoverTarget": "e41",
+      "inventory": {
+        "nodes": 284,
+        "rules": 389,
+        "nodesWithRules": 278,
+        "refused": {}
+      },
+      "unread": 15,
+      "rootTook": [
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight"
+      ],
+      "rootVariables": 132,
+      "rootLeft": [
+        "boxSizing",
+        "border",
+        "borderColor",
+        "maxWidth",
+        "scrollBehavior",
+        "overflowX"
+      ],
+      "fidelity": {
+        "desktop": {
+          "values": 133162,
+          "different": 377,
+          "scrollHeightLive": 1368,
+          "scrollHeightFrozen": 1368,
+          "top": [
+            [
+              "inline-size",
+              85
+            ],
+            [
+              "perspective-origin",
+              85
+            ],
+            [
+              "transform-origin",
+              85
+            ],
+            [
+              "width",
+              85
+            ],
+            [
+              "grid-template-columns",
+              4
+            ],
+            [
+              "caret-color",
+              3
+            ]
+          ]
+        },
+        "tablet": {
+          "values": 133162,
+          "different": 430,
+          "scrollHeightLive": 1679,
+          "scrollHeightFrozen": 1653,
+          "top": [
+            [
+              "inline-size",
+              91
+            ],
+            [
+              "perspective-origin",
+              91
+            ],
+            [
+              "transform-origin",
+              91
+            ],
+            [
+              "width",
+              91
+            ],
+            [
+              "block-size",
+              13
+            ],
+            [
+              "height",
+              13
+            ]
+          ]
+        },
+        "mobile": {
+          "values": 133162,
+          "different": 430,
+          "scrollHeightLive": 2101,
+          "scrollHeightFrozen": 2101,
+          "top": [
+            [
+              "inline-size",
+              89
+            ],
+            [
+              "perspective-origin",
+              89
+            ],
+            [
+              "transform-origin",
+              89
+            ],
+            [
+              "width",
+              89
+            ],
+            [
+              "caret-color",
+              6
+            ],
+            [
+              "color",
+              6
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "slug": "collection",
+      "pageType": "collection",
+      "source": "https://basiscampberlin.de/de/collections/favoriten",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:52:48.337Z",
+      "elements": 480,
+      "hoverTarget": "e41",
+      "inventory": {
+        "nodes": 485,
+        "rules": 637,
+        "nodesWithRules": 480,
+        "refused": {}
+      },
+      "unread": 15,
+      "rootTook": [
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight"
+      ],
+      "rootVariables": 132,
+      "rootLeft": [
+        "boxSizing",
+        "border",
+        "borderColor",
+        "maxWidth",
+        "scrollBehavior",
+        "overflowX"
+      ],
+      "fidelity": {
+        "desktop": {
+          "values": 229920,
+          "different": 1213,
+          "scrollHeightLive": 2295,
+          "scrollHeightFrozen": 2301,
+          "top": [
+            [
+              "inline-size",
+              255
+            ],
+            [
+              "transform-origin",
+              255
+            ],
+            [
+              "width",
+              255
+            ],
+            [
+              "perspective-origin",
+              251
+            ],
+            [
+              "block-size",
+              74
+            ],
+            [
+              "height",
+              74
+            ]
+          ]
+        },
+        "tablet": {
+          "values": 229920,
+          "different": 1251,
+          "scrollHeightLive": 4213,
+          "scrollHeightFrozen": 4185,
+          "top": [
+            [
+              "inline-size",
+              262
+            ],
+            [
+              "transform-origin",
+              262
+            ],
+            [
+              "width",
+              262
+            ],
+            [
+              "perspective-origin",
+              258
+            ],
+            [
+              "block-size",
+              82
+            ],
+            [
+              "height",
+              82
+            ]
+          ]
+        },
+        "mobile": {
+          "values": 229920,
+          "different": 1419,
+          "scrollHeightLive": 3656,
+          "scrollHeightFrozen": 3583,
+          "top": [
+            [
+              "inline-size",
+              283
+            ],
+            [
+              "transform-origin",
+              283
+            ],
+            [
+              "width",
+              283
+            ],
+            [
+              "perspective-origin",
+              279
+            ],
+            [
+              "block-size",
+              109
+            ],
+            [
+              "height",
+              109
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "slug": "product",
+      "pageType": "product detail",
+      "source": "https://basiscampberlin.de/de/products/11d3-32",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:53:10.188Z",
+      "elements": 484,
+      "hoverTarget": "e41",
+      "inventory": {
+        "nodes": 489,
+        "rules": 654,
+        "nodesWithRules": 484,
+        "refused": {}
+      },
+      "unread": 15,
+      "rootTook": [
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight"
+      ],
+      "rootVariables": 132,
+      "rootLeft": [
+        "boxSizing",
+        "border",
+        "borderColor",
+        "maxWidth",
+        "scrollBehavior",
+        "overflowX"
+      ],
+      "fidelity": {
+        "desktop": {
+          "values": 231836,
+          "different": 1160,
+          "scrollHeightLive": 2588,
+          "scrollHeightFrozen": 2590,
+          "top": [
+            [
+              "inline-size",
+              246
+            ],
+            [
+              "transform-origin",
+              246
+            ],
+            [
+              "width",
+              246
+            ],
+            [
+              "perspective-origin",
+              242
+            ],
+            [
+              "block-size",
+              64
+            ],
+            [
+              "height",
+              64
+            ]
+          ]
+        },
+        "tablet": {
+          "values": 231836,
+          "different": 1221,
+          "scrollHeightLive": 3136,
+          "scrollHeightFrozen": 3114,
+          "top": [
+            [
+              "inline-size",
+              255
+            ],
+            [
+              "transform-origin",
+              255
+            ],
+            [
+              "width",
+              255
+            ],
+            [
+              "perspective-origin",
+              251
+            ],
+            [
+              "block-size",
+              75
+            ],
+            [
+              "height",
+              75
+            ]
+          ]
+        },
+        "mobile": {
+          "values": 231836,
+          "different": 1275,
+          "scrollHeightLive": 3080,
+          "scrollHeightFrozen": 3066,
+          "top": [
+            [
+              "inline-size",
+              257
+            ],
+            [
+              "transform-origin",
+              257
+            ],
+            [
+              "width",
+              257
+            ],
+            [
+              "perspective-origin",
+              253
+            ],
+            [
+              "block-size",
+              80
+            ],
+            [
+              "height",
+              80
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "slug": "cart-empty",
+      "pageType": "cart",
+      "source": "https://basiscampberlin.de/de/cart",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:53:29.827Z",
+      "elements": 198,
+      "hoverTarget": "e41",
+      "inventory": {
+        "nodes": 203,
+        "rules": 283,
+        "nodesWithRules": 198,
+        "refused": {}
+      },
+      "unread": 15,
+      "rootTook": [
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight"
+      ],
+      "rootVariables": 132,
+      "rootLeft": [
+        "boxSizing",
+        "border",
+        "borderColor",
+        "maxWidth",
+        "scrollBehavior",
+        "overflowX"
+      ],
+      "fidelity": {
+        "desktop": {
+          "values": 94842,
+          "different": 218,
+          "scrollHeightLive": 1355,
+          "scrollHeightFrozen": 1355,
+          "top": [
+            [
+              "inline-size",
+              46
+            ],
+            [
+              "perspective-origin",
+              46
+            ],
+            [
+              "transform-origin",
+              46
+            ],
+            [
+              "width",
+              46
+            ],
+            [
+              "caret-color",
+              3
+            ],
+            [
+              "color",
+              3
+            ]
+          ]
+        },
+        "tablet": {
+          "values": 94842,
+          "different": 283,
+          "scrollHeightLive": 1619,
+          "scrollHeightFrozen": 1593,
+          "top": [
+            [
+              "inline-size",
+              55
+            ],
+            [
+              "perspective-origin",
+              55
+            ],
+            [
+              "transform-origin",
+              55
+            ],
+            [
+              "width",
+              55
+            ],
+            [
+              "block-size",
+              13
+            ],
+            [
+              "height",
+              13
+            ]
+          ]
+        },
+        "mobile": {
+          "values": 94842,
+          "different": 287,
+          "scrollHeightLive": 1627,
+          "scrollHeightFrozen": 1627,
+          "top": [
+            [
+              "inline-size",
+              54
+            ],
+            [
+              "perspective-origin",
+              54
+            ],
+            [
+              "transform-origin",
+              54
+            ],
+            [
+              "width",
+              54
+            ],
+            [
+              "caret-color",
+              6
+            ],
+            [
+              "color",
+              6
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "slug": "checkout-no-cart",
+      "pageType": "checkout",
+      "source": "https://basiscampberlin.de/de/checkout",
+      "status": 404,
+      "capturedAt": "2026-11-02T02:53:44.042Z",
+      "elements": 190,
+      "hoverTarget": "e41",
+      "inventory": {
+        "nodes": 195,
+        "rules": 273,
+        "nodesWithRules": 190,
+        "refused": {}
+      },
+      "unread": 15,
+      "rootTook": [
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight"
+      ],
+      "rootVariables": 132,
+      "rootLeft": [
+        "boxSizing",
+        "border",
+        "borderColor",
+        "maxWidth",
+        "scrollBehavior",
+        "overflowX"
+      ],
+      "fidelity": {
+        "desktop": {
+          "values": 91010,
+          "different": 202,
+          "scrollHeightLive": 1413,
+          "scrollHeightFrozen": 1413,
+          "top": [
+            [
+              "inline-size",
+              42
+            ],
+            [
+              "perspective-origin",
+              42
+            ],
+            [
+              "transform-origin",
+              42
+            ],
+            [
+              "width",
+              42
+            ],
+            [
+              "caret-color",
+              3
+            ],
+            [
+              "color",
+              3
+            ]
+          ]
+        },
+        "tablet": {
+          "values": 91010,
+          "different": 267,
+          "scrollHeightLive": 1773,
+          "scrollHeightFrozen": 1747,
+          "top": [
+            [
+              "inline-size",
+              51
+            ],
+            [
+              "perspective-origin",
+              51
+            ],
+            [
+              "transform-origin",
+              51
+            ],
+            [
+              "width",
+              51
+            ],
+            [
+              "block-size",
+              13
+            ],
+            [
+              "height",
+              13
+            ]
+          ]
+        },
+        "mobile": {
+          "values": 91010,
+          "different": 263,
+          "scrollHeightLive": 1432,
+          "scrollHeightFrozen": 1432,
+          "top": [
+            [
+              "inline-size",
+              48
+            ],
+            [
+              "perspective-origin",
+              48
+            ],
+            [
+              "transform-origin",
+              48
+            ],
+            [
+              "width",
+              48
+            ],
+            [
+              "caret-color",
+              6
+            ],
+            [
+              "color",
+              6
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "slug": "privacy",
+      "pageType": "content: privacy",
+      "source": "https://basiscampberlin.de/de/privacy",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:53:58.555Z",
+      "elements": 224,
+      "hoverTarget": "e41",
+      "inventory": {
+        "nodes": 240,
+        "rules": 314,
+        "nodesWithRules": 224,
+        "refused": {}
+      },
+      "unread": 15,
+      "rootTook": [
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight"
+      ],
+      "rootVariables": 132,
+      "rootLeft": [
+        "boxSizing",
+        "border",
+        "borderColor",
+        "maxWidth",
+        "scrollBehavior",
+        "overflowX"
+      ],
+      "fidelity": {
+        "desktop": {
+          "values": 107296,
+          "different": 210,
+          "scrollHeightLive": 2278,
+          "scrollHeightFrozen": 2278,
+          "top": [
+            [
+              "inline-size",
+              43
+            ],
+            [
+              "perspective-origin",
+              43
+            ],
+            [
+              "transform-origin",
+              43
+            ],
+            [
+              "width",
+              43
+            ],
+            [
+              "caret-color",
+              3
+            ],
+            [
+              "color",
+              3
+            ]
+          ]
+        },
+        "tablet": {
+          "values": 107296,
+          "different": 391,
+          "scrollHeightLive": 2430,
+          "scrollHeightFrozen": 2404,
+          "top": [
+            [
+              "inline-size",
+              82
+            ],
+            [
+              "perspective-origin",
+              82
+            ],
+            [
+              "transform-origin",
+              82
+            ],
+            [
+              "width",
+              82
+            ],
+            [
+              "block-size",
+              13
+            ],
+            [
+              "height",
+              13
+            ]
+          ]
+        },
+        "mobile": {
+          "values": 107296,
+          "different": 388,
+          "scrollHeightLive": 2872,
+          "scrollHeightFrozen": 2872,
+          "top": [
+            [
+              "inline-size",
+              79
+            ],
+            [
+              "perspective-origin",
+              79
+            ],
+            [
+              "transform-origin",
+              79
+            ],
+            [
+              "width",
+              79
+            ],
+            [
+              "caret-color",
+              6
+            ],
+            [
+              "color",
+              6
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "slug": "terms",
+      "pageType": "content: terms",
+      "source": "https://basiscampberlin.de/de/terms",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:54:13.143Z",
+      "elements": 240,
+      "hoverTarget": "e41",
+      "inventory": {
+        "nodes": 264,
+        "rules": 331,
+        "nodesWithRules": 240,
+        "refused": {}
+      },
+      "unread": 15,
+      "rootTook": [
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight"
+      ],
+      "rootVariables": 132,
+      "rootLeft": [
+        "boxSizing",
+        "border",
+        "borderColor",
+        "maxWidth",
+        "scrollBehavior",
+        "overflowX"
+      ],
+      "fidelity": {
+        "desktop": {
+          "values": 114960,
+          "different": 211,
+          "scrollHeightLive": 2877,
+          "scrollHeightFrozen": 2877,
+          "top": [
+            [
+              "inline-size",
+              43
+            ],
+            [
+              "perspective-origin",
+              43
+            ],
+            [
+              "transform-origin",
+              43
+            ],
+            [
+              "width",
+              43
+            ],
+            [
+              "caret-color",
+              3
+            ],
+            [
+              "color",
+              3
+            ]
+          ]
+        },
+        "tablet": {
+          "values": 114960,
+          "different": 458,
+          "scrollHeightLive": 3133,
+          "scrollHeightFrozen": 3081,
+          "top": [
+            [
+              "inline-size",
+              94
+            ],
+            [
+              "perspective-origin",
+              94
+            ],
+            [
+              "transform-origin",
+              94
+            ],
+            [
+              "width",
+              94
+            ],
+            [
+              "block-size",
+              22
+            ],
+            [
+              "height",
+              22
+            ]
+          ]
+        },
+        "mobile": {
+          "values": 114960,
+          "different": 464,
+          "scrollHeightLive": 3929,
+          "scrollHeightFrozen": 3877,
+          "top": [
+            [
+              "inline-size",
+              91
+            ],
+            [
+              "perspective-origin",
+              91
+            ],
+            [
+              "transform-origin",
+              91
+            ],
+            [
+              "width",
+              91
+            ],
+            [
+              "block-size",
+              17
+            ],
+            [
+              "height",
+              17
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "slug": "login",
+      "pageType": "account: login",
+      "source": "https://basiscampberlin.de/de/account",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:54:28.443Z",
+      "elements": 228,
+      "hoverTarget": "e41",
+      "inventory": {
+        "nodes": 233,
+        "rules": 333,
+        "nodesWithRules": 224,
+        "refused": {}
+      },
+      "unread": 15,
+      "rootTook": [
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight"
+      ],
+      "rootVariables": 132,
+      "rootLeft": [
+        "boxSizing",
+        "border",
+        "borderColor",
+        "maxWidth",
+        "scrollBehavior",
+        "overflowX"
+      ],
+      "fidelity": {
+        "desktop": {
+          "values": 109212,
+          "different": 2126,
+          "scrollHeightLive": 1526,
+          "scrollHeightFrozen": 1526,
+          "top": [
+            [
+              "inline-size",
+              47
+            ],
+            [
+              "perspective-origin",
+              47
+            ],
+            [
+              "transform-origin",
+              47
+            ],
+            [
+              "width",
+              47
+            ],
+            [
+              "caret-color",
+              7
+            ],
+            [
+              "color",
+              7
+            ]
+          ]
+        },
+        "tablet": {
+          "values": 109212,
+          "different": 2216,
+          "scrollHeightLive": 1732,
+          "scrollHeightFrozen": 1706,
+          "top": [
+            [
+              "inline-size",
+              63
+            ],
+            [
+              "perspective-origin",
+              63
+            ],
+            [
+              "transform-origin",
+              63
+            ],
+            [
+              "width",
+              63
+            ],
+            [
+              "block-size",
+              17
+            ],
+            [
+              "height",
+              17
+            ]
+          ]
+        },
+        "mobile": {
+          "values": 109212,
+          "different": 2293,
+          "scrollHeightLive": 1796,
+          "scrollHeightFrozen": 1772,
+          "top": [
+            [
+              "inline-size",
+              73
+            ],
+            [
+              "perspective-origin",
+              73
+            ],
+            [
+              "transform-origin",
+              73
+            ],
+            [
+              "width",
+              73
+            ],
+            [
+              "block-size",
+              18
+            ],
+            [
+              "height",
+              18
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "slug": "request-reset",
+      "pageType": "account: password reset",
+      "source": "https://basiscampberlin.de/de/request-reset",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:54:42.809Z",
+      "elements": 198,
+      "hoverTarget": "e41",
+      "inventory": {
+        "nodes": 204,
+        "rules": 302,
+        "nodesWithRules": 198,
+        "refused": {}
+      },
+      "unread": 15,
+      "rootTook": [
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight"
+      ],
+      "rootVariables": 132,
+      "rootLeft": [
+        "boxSizing",
+        "border",
+        "borderColor",
+        "maxWidth",
+        "scrollBehavior",
+        "overflowX"
+      ],
+      "fidelity": {
+        "desktop": {
+          "values": 94842,
+          "different": 206,
+          "scrollHeightLive": 1293,
+          "scrollHeightFrozen": 1293,
+          "top": [
+            [
+              "inline-size",
+              43
+            ],
+            [
+              "perspective-origin",
+              43
+            ],
+            [
+              "transform-origin",
+              43
+            ],
+            [
+              "width",
+              43
+            ],
+            [
+              "caret-color",
+              3
+            ],
+            [
+              "color",
+              3
+            ]
+          ]
+        },
+        "tablet": {
+          "values": 94842,
+          "different": 271,
+          "scrollHeightLive": 1591,
+          "scrollHeightFrozen": 1565,
+          "top": [
+            [
+              "inline-size",
+              52
+            ],
+            [
+              "perspective-origin",
+              52
+            ],
+            [
+              "transform-origin",
+              52
+            ],
+            [
+              "width",
+              52
+            ],
+            [
+              "block-size",
+              13
+            ],
+            [
+              "height",
+              13
+            ]
+          ]
+        },
+        "mobile": {
+          "values": 94842,
+          "different": 321,
+          "scrollHeightLive": 1441,
+          "scrollHeightFrozen": 1441,
+          "top": [
+            [
+              "inline-size",
+              61
+            ],
+            [
+              "perspective-origin",
+              61
+            ],
+            [
+              "transform-origin",
+              61
+            ],
+            [
+              "width",
+              61
+            ],
+            [
+              "caret-color",
+              6
+            ],
+            [
+              "color",
+              6
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "slug": "shop-unavailable",
+      "pageType": "shop kill switch",
+      "source": "https://basiscampberlin.de/de/shop-unavailable",
+      "status": 200,
+      "capturedAt": "2026-11-02T02:54:56.384Z",
+      "elements": 173,
+      "hoverTarget": "e26",
+      "inventory": {
+        "nodes": 178,
+        "rules": 238,
+        "nodesWithRules": 173,
+        "refused": {}
+      },
+      "unread": 15,
+      "rootTook": [
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight"
+      ],
+      "rootVariables": 132,
+      "rootLeft": [
+        "boxSizing",
+        "border",
+        "borderColor",
+        "maxWidth",
+        "scrollBehavior",
+        "overflowX"
+      ],
+      "fidelity": {
+        "desktop": {
+          "values": 82867,
+          "different": 206,
+          "scrollHeightLive": 1141,
+          "scrollHeightFrozen": 1141,
+          "top": [
+            [
+              "inline-size",
+              43
+            ],
+            [
+              "perspective-origin",
+              43
+            ],
+            [
+              "transform-origin",
+              43
+            ],
+            [
+              "width",
+              43
+            ],
+            [
+              "caret-color",
+              3
+            ],
+            [
+              "color",
+              3
+            ]
+          ]
+        },
+        "tablet": {
+          "values": 82867,
+          "different": 271,
+          "scrollHeightLive": 1293,
+          "scrollHeightFrozen": 1267,
+          "top": [
+            [
+              "inline-size",
+              52
+            ],
+            [
+              "perspective-origin",
+              52
+            ],
+            [
+              "transform-origin",
+              52
+            ],
+            [
+              "width",
+              52
+            ],
+            [
+              "block-size",
+              13
+            ],
+            [
+              "height",
+              13
+            ]
+          ]
+        },
+        "mobile": {
+          "values": 82867,
+          "different": 275,
+          "scrollHeightLive": 1453,
+          "scrollHeightFrozen": 1453,
+          "top": [
+            [
+              "inline-size",
+              51
+            ],
+            [
+              "perspective-origin",
+              51
+            ],
+            [
+              "transform-origin",
+              51
+            ],
+            [
+              "width",
+              51
+            ],
+            [
+              "caret-color",
+              6
+            ],
+            [
+              "color",
+              6
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "slug": "not-found",
+      "pageType": "not found",
+      "source": "https://basiscampberlin.de/de/search",
+      "status": 404,
+      "capturedAt": "2026-11-02T02:55:09.144Z",
+      "elements": 10,
+      "hoverTarget": null,
+      "inventory": {
+        "nodes": 11,
+        "rules": 11,
+        "nodesWithRules": 10,
+        "refused": {}
+      },
+      "unread": 15,
+      "rootTook": [
+        "textSizeAdjust",
+        "tabSize",
+        "fontFeatureSettings",
+        "fontVariationSettings",
+        "WebkitTapHighlightColor",
+        "fontFamily",
+        "lineHeight"
+      ],
+      "rootVariables": 132,
+      "rootLeft": [
+        "boxSizing",
+        "border",
+        "borderColor",
+        "maxWidth",
+        "scrollBehavior",
+        "overflowX"
+      ],
+      "fidelity": {
+        "desktop": {
+          "values": 4790,
+          "different": 0,
+          "scrollHeightLive": 800,
+          "scrollHeightFrozen": 800,
+          "top": []
+        },
+        "tablet": {
+          "values": 4790,
+          "different": 0,
+          "scrollHeightLive": 1024,
+          "scrollHeightFrozen": 1024,
+          "top": []
+        },
+        "mobile": {
+          "values": 4790,
+          "different": 0,
+          "scrollHeightLive": 667,
+          "scrollHeightFrozen": 667,
+          "top": []
+        }
+      }
+    }
+  ],
+  "sha256": {
+    "busbasis.css": "8fb3cfb16e51b6b779a10d35b2535bb85c6be355589ba1c5e4301c39a92df9f5",
+    "pages/cart-empty.computed.json.gz": "590820d8a89540b6070e2d841b6c4561a9c1d27e7a4426dec339747d80e06f0e",
+    "pages/cart-empty.html": "aba8e3471422ddd0f34e8c9da8adc706b4fad973d32abb1705e897192894263c",
+    "pages/cart-empty.tree.json.gz": "066ea3597d6a22103e4b40b4a365d93823412fe94396c2dede19e1afaa3f8077",
+    "pages/category.computed.json.gz": "5450ca94ecd975836f7d95ec5e14389d04236c747ca47618f15312a133936bdc",
+    "pages/category.html": "e2cbd4f07b8b566a32a7af4cc6042eb603922bf26cd218d999f5d9c4874c2beb",
+    "pages/category.tree.json.gz": "d17cf9cb909a51b27e55924b1abcc03dae7a5ddd996fbf66f64bc598c31fdd78",
+    "pages/checkout-no-cart.computed.json.gz": "e55b0ec9004bc9e6066bcdd03695d496fd4ad7af747614e94782a9cdb43d01a6",
+    "pages/checkout-no-cart.html": "cc71916525d48c376b40db20109025ac407d06dcd39af20f8e78555b437c2a0b",
+    "pages/checkout-no-cart.tree.json.gz": "13b5cb123e7787fddcd9286f18ab9df60f539cb8e471b64e68ef2ae5f756421b",
+    "pages/collection.computed.json.gz": "9a02509931f6e43d2f02966469fd5684841bff0b0421f22eee450bac779ac428",
+    "pages/collection.html": "8cc95538a495b2484423cd70e554e39d8721005d2786150ea6fedcc5ce926d89",
+    "pages/collection.tree.json.gz": "e171fea567212e41c5c80b3159f956cf546ba756db99908b522f62cf78561271",
+    "pages/home.computed.json.gz": "f465ad82ecb4a46632b04c47322790dec9207bbdc2bf25c4c79dcf3c03e64117",
+    "pages/home.html": "55d61f7b7ce943570c265220e45e92a4bb42b97ab86c6aeb4abcafbc666f8923",
+    "pages/home.tree.json.gz": "39c3a7d84a9a81801d46a4a3c78bb45af440b34278f7b118391b8f9d9fb2d15c",
+    "pages/login.computed.json.gz": "62beeecb3155986a09368cc474bf535781b56c71204d403db310bee1a5b7bb85",
+    "pages/login.html": "dbc8038c2ee96697897beeed3b258811648dc73e6402fe6bb348a2f87823039d",
+    "pages/login.tree.json.gz": "d5a024b7219a89128ba152f9726040b395811a08c0c5504c7b025612535f9a85",
+    "pages/not-found.computed.json.gz": "463f4ee6b01927e477d5d51e6274cf74fd5685b9df8da80be46f931817e99308",
+    "pages/not-found.html": "9329cd119fd1e1b10f1159917f2e4d142b596a629e837e1d1a144d1b98259383",
+    "pages/not-found.tree.json.gz": "991fa98857880b5d2ae084fe52cfd2764dcee8878be2d3ed35cd0f34bab56822",
+    "pages/privacy.computed.json.gz": "df30c6be4b1766827198de659cab914a2a8aa0096356f81ada606aa8783bf6e1",
+    "pages/privacy.html": "870419dc3a142393d3421a28bcedbc12fce1e5b3825527d564ac8ab364410b9c",
+    "pages/privacy.tree.json.gz": "f4eaa63e4b88f3214c2ceac895a99f9c4c9d8e74e629fd2983c73eb20eeb1c95",
+    "pages/product.computed.json.gz": "ac9660e1b4d8b3242bfd350f1ac57357daed171759c08b7c0ca98d8daf73570c",
+    "pages/product.html": "1018558658144174044bdfdb0957c3d0054283087cd0efbeb9c0cdaed14d14ef",
+    "pages/product.tree.json.gz": "260c3bca90ce8389bd86f12d6f699f208905615b4072fae3be30c98390b9c02b",
+    "pages/request-reset.computed.json.gz": "f345b44794248cc74c859bfa82c136ba76544eabe7db106f0d3e4f278015a16a",
+    "pages/request-reset.html": "73de387d450ec571bb007d519bd6cbbc4e000bb5e0c912ac5c2687e21a89bd3f",
+    "pages/request-reset.tree.json.gz": "8a8a6d31e26de01b756c975df2ab4bcbbec77b0cac73122f09f1583947700db9",
+    "pages/search.computed.json.gz": "96368c4293a12468874fcef570b13361254968f33da5a7dc4b9dafd821464c4e",
+    "pages/search.html": "f97799359e63a939fb2fa1af969f9404348eecf4fe2e5acda367bbc8600adabd",
+    "pages/search.tree.json.gz": "a20b335f5644533833753debaff930ab7f535d354157b92cf11b459052ff96cc",
+    "pages/shop-unavailable.computed.json.gz": "9140af4ad8d94c3a9b85012c864553735f9ca11ba553582c68e76139ac76131f",
+    "pages/shop-unavailable.html": "ecc143747885df08a6580ea63e2c743ecb6df61ab545fe0d21e7147c8df7ce39",
+    "pages/shop-unavailable.tree.json.gz": "67c751df2709baabc37d1aa749cc7dbe87333b6c396dced6f83d3740bd881188",
+    "pages/store.computed.json.gz": "d48b6c5ad541fdc4377be37676270ac1a8699b11b1e832b1a0e126440564ef3d",
+    "pages/store.html": "9766c27e4eacc01e0c3042125db704438bbece12c34315a762dab61036666cd5",
+    "pages/store.tree.json.gz": "1665118aa40b0213b570a6faef977acd53c9294ca1fbc94b7c476515398ab042",
+    "pages/terms.computed.json.gz": "fdcc156ddc6d54632941b627c3648a97070de34bf070e4efb6f0a379f361172a",
+    "pages/terms.html": "591adc0b2a3b4d661c47d547bdf49a66440adccd718b400df4e210d506766b60",
+    "pages/terms.tree.json.gz": "ce1e68c58e21ed512ba9ea830788c422ce06062fd04eca254de2057db9a8734a"
+  }
+}

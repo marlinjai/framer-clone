@@ -1,0 +1,188 @@
+// The held-out corpus: real pages of the BusBasis storefront, frozen from the live
+// site, next to node trees lifted from them. "Every BusBasis page passes" is the stop
+// condition of the primitive stream, so a page passes only when every check passes at
+// every breakpoint AND it needs nothing that is not built. See test/score/corpus/busbasis.
+//
+// A refused hash stops the run: nothing here may change without a new capture.
+
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import zlib from 'node:zlib';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { chromium, type Browser, type Page } from 'playwright';
+import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
+import { MAX_DIFF_RATIO, diffComputed, diffRatio, takeSnapshot, type ComputedDiff, type Snapshot } from './lib/compare';
+import { BREAKPOINTS, publishedDocument, renderPublished, type PublishedOutput } from './lib/published';
+import { OUT_DIR, writeOut } from './lib/io';
+import { BUSBASIS_PAGES } from './busbasis/pages';
+import { CORPUS_DIR, SHARED_SHEET, SHEET_MARKER } from './busbasis/freeze';
+import { classifyDifferences } from './busbasis/classify';
+import type { CheckName, CorpusFailure, CorpusResult, GapId, PageDifference } from './lib/types';
+
+const TIMEOUT = 15 * 60 * 1000;
+
+interface ManifestPage {
+  slug: string;
+  pageType: string;
+  source: string;
+  capturedAt: string;
+  status: number;
+  hoverTarget: string | null;
+}
+
+interface Manifest {
+  pages: ManifestPage[];
+  sha256: Record<string, string>;
+}
+
+function readManifest(): Manifest {
+  const manifest = JSON.parse(fs.readFileSync(path.join(CORPUS_DIR, 'manifest.json'), 'utf8')) as Manifest;
+  for (const [name, expected] of Object.entries(manifest.sha256)) {
+    const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(CORPUS_DIR, name))).digest('hex');
+    if (actual !== expected) throw new Error(`held-out fixture changed: ${name}. These files come from a capture, never from a slice.`);
+  }
+  return manifest;
+}
+
+const readTree = (slug: string) =>
+  JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(CORPUS_DIR, 'pages', `${slug}.tree.json.gz`))).toString()) as ComponentNode;
+
+function originalDocument(slug: string): string {
+  const css = fs.readFileSync(path.join(CORPUS_DIR, SHARED_SHEET), 'utf8');
+  return fs.readFileSync(path.join(CORPUS_DIR, 'pages', `${slug}.html`), 'utf8').replace(SHEET_MARKER, () => `<style>${css}</style>`);
+}
+
+/** Moving parts stopped at their start on both sides, so a snapshot is repeatable. */
+async function settle(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    document.getAnimations().forEach((animation) => {
+      animation.pause();
+      animation.currentTime = 0;
+    });
+    document.querySelectorAll('svg').forEach((svg) => {
+      svg.pauseAnimations();
+      svg.setCurrentTime(0);
+    });
+  });
+}
+
+async function open(browser: Browser, html: string, viewport: { width: number; height: number }, hover: string | null): Promise<Page> {
+  const page = await browser.newPage({ viewport, reducedMotion: 'no-preference', colorScheme: 'dark' });
+  page.setDefaultTimeout(5000);
+  // A frozen page holds no address. If one slips through it must fail, not depend on the network.
+  await page.route('**/*', (route) => route.abort());
+  await page.setContent(html);
+  await page.waitForFunction(() => document.querySelector('[data-parity-id]') !== null);
+  await settle(page);
+  if (hover) {
+    await page.locator(`[data-parity-id="${hover}"]`).hover();
+    await page.waitForTimeout(350);
+    await settle(page);
+  }
+  return page;
+}
+
+describe('held-out BusBasis pages', () => {
+  let browser: Browser;
+
+  beforeAll(async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    browser = await chromium.launch();
+  });
+  afterAll(async () => {
+    await browser?.close();
+  });
+
+  it('compares every captured page at every breakpoint', { timeout: TIMEOUT }, async () => {
+    const manifest = readManifest();
+    const results: CorpusResult[] = [];
+
+    for (const listed of BUSBASIS_PAGES) {
+      const meta = manifest.pages.find((page) => page.slug === listed.slug);
+      if (!meta) throw new Error(`${listed.slug} is listed but has no capture`);
+      const original = originalDocument(listed.slug);
+      const output: PublishedOutput = renderPublished(readTree(listed.slug));
+      const replica = publishedDocument(output);
+
+      const fixture = `busbasis-${listed.slug}`;
+      const failures: CorpusFailure[] = [];
+      const differences: PageDifference[] = [];
+      const checks: CorpusResult['checks'] = {
+        screenshot: { pass: 0, total: 0 },
+        'computed-styles': { pass: 0, total: 0 },
+        'accessibility-tree': { pass: 0, total: 0 },
+        interaction: { pass: 0, total: 0 },
+      };
+      const record = (viewport: string, state: string, check: CheckName, gap: GapId, ok: boolean, detail: string) => {
+        checks[check].total += 1;
+        if (ok) checks[check].pass += 1;
+        else failures.push({ fixture, viewport, state, check, gap, detail: detail.slice(0, 240) });
+      };
+
+      for (const breakpoint of BREAKPOINTS) {
+        const viewport = { width: breakpoint.width, height: breakpoint.height };
+        let initial: Snapshot | undefined;
+
+        // Hover is a desktop state, and each full-page comparison costs seconds.
+        const hoverHere = meta.hoverTarget && breakpoint.id === 'desktop';
+        for (const stateId of [undefined, ...(hoverHere ? [`hover ${meta.hoverTarget}`] : [])]) {
+          const hover = stateId ? meta.hoverTarget : null;
+          const left = await open(browser, original, viewport, hover);
+          let right: Page;
+          let interactionError: string | undefined;
+          try {
+            right = await open(browser, replica, viewport, hover);
+          } catch (error) {
+            interactionError = (error instanceof Error ? error.message : String(error)).split('\n')[0];
+            right = await open(browser, replica, viewport, null);
+          }
+          const a = await takeSnapshot(left, { withoutVariables: true });
+          const b = await takeSnapshot(right, { withoutVariables: true });
+          await left.close();
+          await right.close();
+
+          const label = stateId ?? 'initial';
+          if (!stateId) initial = a;
+          else if (initial) {
+            const unchanged = diffComputed(initial.computed, a.computed).count === 0 && initial.aria === a.aria;
+            expect(unchanged, `${fixture}: "${label}" changes nothing on the original`).toBe(false);
+          }
+
+          const file = path.join(OUT_DIR, 'diffs', `${fixture}-${breakpoint.id}-${label.replace(/\W+/g, '-')}.png`);
+          const ratio = diffRatio(a.png, b.png, file);
+          const computed: ComputedDiff = diffComputed(a.computed, b.computed);
+          const classified = classifyDifferences(computed);
+          const gap: GapId = computed.textLost ? 'mixed-text' : computed.count === 0 && stateId ? 'selector-styles' : classified.top;
+          const ariaGap: GapId = computed.byProperty.missing ? 'blocked-embedded-content' : gap;
+          differences.push({ viewport: breakpoint.label, state: label, ratio, elementsCompared: Object.keys(a.computed).length, elementsDiffering: computed.elements.length, differences: computed.count, byGap: classified.byGap, byProperty: classified.topProperties });
+
+          record(breakpoint.label, label, 'screenshot', gap, ratio <= MAX_DIFF_RATIO, `${(ratio * 100).toFixed(2)} percent of pixels differ`);
+          record(breakpoint.label, label, 'computed-styles', gap, computed.count === 0, `${computed.count} differences on ${computed.elements.length} elements, first: ${computed.firstDetail}`);
+          record(breakpoint.label, label, 'accessibility-tree', ariaGap, a.aria === b.aria, `original ${JSON.stringify(a.aria.slice(0, 120))}, replica ${JSON.stringify(b.aria.slice(0, 120))}`);
+          if (stateId) {
+            const landed = !interactionError && ratio <= MAX_DIFF_RATIO && computed.count === 0 && a.aria === b.aria;
+            record(breakpoint.label, label, 'interaction', gap, landed, interactionError ?? 'the replica did not end up where the original did');
+          }
+        }
+      }
+
+      for (const need of listed.needs) record('all', `needs: ${need.id}`, 'interaction', need.gap, false, need.reason);
+
+      results.push({
+        fixture,
+        group: 'held-out',
+        source: `${meta.source}, captured ${meta.capturedAt.slice(0, 10)}, answered ${meta.status}`,
+        pass: failures.length === 0,
+        checks,
+        failures,
+        notMeasured: [],
+        pageType: listed.pageType,
+        differences,
+      });
+    }
+
+    writeOut('busbasis', results);
+  });
+});

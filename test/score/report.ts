@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { componentEntries, dataVersions, scoredEntries } from './lib/universe';
 import { REPORT_DIR, readOut } from './lib/io';
+import { UNCAPTURED_PAGES, type UncapturedPage } from './busbasis/pages';
 import {
   GAPS,
   ROW_KINDS,
@@ -90,6 +91,39 @@ function patternPanelCells(patterns: PatternsOut, panel: SurfaceResults, detail:
   return out;
 }
 
+/** One gap across the real pages: a blocked need counts once per page, a difference once per computed value. */
+export interface BusbasisGap {
+  id: GapId;
+  pages: string[];
+  needs: number;
+  styleDifferences: number;
+}
+
+/** Ranked by how many real pages it stops, then by how much of them it moves. */
+function busbasisGaps(pages: CorpusResult[]): BusbasisGap[] {
+  const gaps = new Map<GapId, BusbasisGap>();
+  const entry = (id: GapId) => {
+    const found = gaps.get(id) ?? { id, pages: [], needs: 0, styleDifferences: 0 };
+    gaps.set(id, found);
+    return found;
+  };
+  for (const page of pages) {
+    for (const failure of page.failures) {
+      const gap = entry(failure.gap);
+      if (!gap.pages.includes(page.fixture)) gap.pages.push(page.fixture);
+      if (failure.state.startsWith('needs: ')) gap.needs += 1;
+    }
+    for (const difference of page.differences ?? []) {
+      for (const [id, count] of Object.entries(difference.byGap)) {
+        const gap = entry(id as GapId);
+        if (!gap.pages.includes(page.fixture)) gap.pages.push(page.fixture);
+        gap.styleDifferences += count as number;
+      }
+    }
+  }
+  return [...gaps.values()].sort((a, b) => b.pages.length - a.pages.length || b.styleDifferences - a.styleDifferences);
+}
+
 export interface Score {
   generatedAt: string;
   versions: Record<string, string>;
@@ -107,6 +141,14 @@ export interface Score {
     total: number;
     checks: CorpusResult['checks'];
     fixtures: CorpusResult[];
+  };
+  /** The held-out real pages. Kept apart from `corpus`, whose checks the ratchet sums. */
+  busbasis: {
+    passed: number;
+    total: number;
+    pages: CorpusResult[];
+    gaps: BusbasisGap[];
+    uncaptured: UncapturedPage[];
   };
   roundTrip: {
     nodesToJsxToNodes: { pass: number; total: number };
@@ -139,6 +181,7 @@ export function buildScore(durationSeconds?: number): Score {
   const namespaces = readOut<SurfaceResults>('namespaces');
   const fixtures = readOut<CorpusResult[]>('corpus');
   const cases = readOut<RoundTripCase[]>('roundtrip');
+  const pages = readOut<CorpusResult[]>('busbasis');
 
   // Markup that holds the tag is not yet an SVG or MathML element: the browser decides that.
   for (const [key, cell] of Object.entries(namespaces)) {
@@ -204,8 +247,9 @@ export function buildScore(durationSeconds?: number): Score {
   const gapIds = Object.keys(GAPS) as GapId[];
   const gaps = gapIds
     .map((id) => {
-      const inFixtures = fixtures.filter((f) => f.failures.some((x) => x.gap === id));
-      const corpusFailures = fixtures.flatMap((f) => f.failures.filter((x) => x.gap === id)).length;
+      const everyFixture = [...fixtures, ...pages];
+      const inFixtures = everyFixture.filter((f) => f.failures.some((x) => x.gap === id));
+      const corpusFailures = everyFixture.flatMap((f) => f.failures.filter((x) => x.gap === id)).length;
       const onlyGapOf = inFixtures.filter((f) => f.failures.every((x) => x.gap === id)).map((f) => f.fixture);
       const roundTripCases = cases.filter((c) => !c.pass && c.gap === id).length;
       const matrixCells = gapCells.get(id) ?? 0;
@@ -235,6 +279,7 @@ export function buildScore(durationSeconds?: number): Score {
       rows,
     },
     corpus: { passed: fixtures.filter((f) => f.pass).length, total: fixtures.length, checks: corpusChecks, fixtures },
+    busbasis: { passed: pages.filter((p) => p.pass).length, total: pages.length, pages, gaps: busbasisGaps(pages), uncaptured: UNCAPTURED_PAGES },
     roundTrip: { nodesToJsxToNodes: direction('nodes-jsx-nodes'), jsxToNodesToRender: direction('jsx-nodes-render'), cases },
     gaps,
     panel: detail,
@@ -248,7 +293,7 @@ function table(head: string[], rows: string[][]): string {
 const escapeCell = (text: string) => text.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 
 export function renderReport(score: Score): string {
-  const { matrix, corpus, roundTrip, gaps } = score;
+  const { matrix, corpus, busbasis, roundTrip, gaps } = score;
   const lines: string[] = [];
   const push = (...text: string[]) => lines.push(...text, '');
 
@@ -276,6 +321,7 @@ export function renderReport(score: Score): string {
       [
         ...SURFACES.map((s) => [`Matrix: ${SURFACE_LABEL[s]}`, ratio(matrix.surfaces[s])]),
         ['Parity corpus: fixtures that pass entirely', ratio({ pass: corpus.passed, total: corpus.total })],
+        ['BusBasis pages: held-out real pages that pass entirely', ratio({ pass: busbasis.passed, total: busbasis.total })],
         ['Round trip: all cases', ratio({ pass: rtPass, total: rtTotal })],
       ],
     ),
@@ -330,6 +376,43 @@ export function renderReport(score: Score): string {
     ),
   );
 
+  push('## BusBasis pages (held out)');
+  push(
+    `The stop condition of the primitive stream is that every BusBasis page passes, so these are real pages of basiscampberlin.de frozen from the live site, not small fixtures, and ${UNCAPTURED_PAGES.length} more page types are listed below as not captured. Each tree is lifted mechanically by \`test/score/busbasis/lift.ts\`, one rule set for all pages, with no page-specific code. The checks are the corpus checks, except that custom properties are not compared (their effect shows in what reads them) and images and video are same-size placeholders, so image content is not compared. A page also fails on everything under "needs": a page that matches pixel for pixel is not that page while what it exists for does not work. The files are held out: nothing in \`test/score/corpus/busbasis\` changes without a new capture, and the run stops when a hash does not match.`,
+  );
+  const worst = (page: CorpusResult, read: (d: NonNullable<CorpusResult['differences']>[number]) => number) => Math.max(0, ...(page.differences ?? []).map(read));
+  push(
+    table(
+      ['Page type', 'Source', 'Result', 'Screenshots', 'Computed styles', 'Accessibility tree', 'Hover', 'Worst pixels differing', 'Worst elements differing', 'Blocked by'],
+      busbasis.pages.map((p) => {
+        const needs = p.failures.filter((f) => f.state.startsWith('needs: '));
+        const hover = { pass: p.checks.interaction.pass, total: p.checks.interaction.total - needs.length };
+        const compared = worst(p, (d) => d.elementsCompared);
+        return [
+          escapeCell(p.pageType ?? p.fixture),
+          escapeCell(p.source),
+          p.pass ? 'pass' : 'fail',
+          `${p.checks.screenshot.pass}/${p.checks.screenshot.total}`,
+          `${p.checks['computed-styles'].pass}/${p.checks['computed-styles'].total}`,
+          `${p.checks['accessibility-tree'].pass}/${p.checks['accessibility-tree'].total}`,
+          `${hover.pass}/${hover.total}`,
+          `${(worst(p, (d) => d.ratio) * 100).toFixed(1)} percent`,
+          `${worst(p, (d) => d.elementsDiffering)} of ${compared}`,
+          escapeCell(needs.map((f) => f.state.slice('needs: '.length)).join('; ') || 'none'),
+        ];
+      }),
+    ),
+  );
+  push('Gaps on these pages, most pages first. "Needs" counts pages a missing feature stops; "Style differences" counts computed values across every viewport.');
+  push(
+    table(
+      ['Gap', 'Pages', 'Needs', 'Style differences', 'What it is'],
+      busbasis.gaps.map((g) => [`\`${g.id}\``, String(g.pages.length), String(g.needs), String(g.styleDifferences), escapeCell(GAPS[g.id])]),
+    ),
+  );
+  push('Not captured, and still counted against the stop condition:');
+  push(table(['Page type', 'Address', 'Why'], busbasis.uncaptured.map((p) => [escapeCell(p.pageType), escapeCell(p.path), escapeCell(p.reason)])));
+
   push('## Round trip');
   push(
     `Nodes to JSX (React's markup syntax) to nodes, over the plan's normalised form: ${ratio(roundTrip.nodesToJsxToNodes)}. Static JSX to nodes, rendered against what React renders from the same JSX, and exported again: ${ratio(roundTrip.jsxToNodesToRender)}. The export and import live in \`test/score/roundtrip/jsx.ts\` and go no further than this test needs.`,
@@ -374,7 +457,7 @@ export function renderReport(score: Score): string {
     '- **The whole published page.** The corpus uses `applyResponsiveStyles` and `renderComponentNode`, without `hydrateBindings`, effects, the sticky bar, or the consent and font wrappers, and only in Chromium.',
     '- **WAI-ARIA conformance.** A contract is the primary keyboard path of a pattern, not its whole page in the Guide.',
     '- **Page-level items:** head tags, design tokens and page-wide scripts (gap 5 of the plan) have no rows, and script and style elements are excluded with a reason.',
-    '- **The BusBasis storefront,** the part of the corpus that would say how often a real shop hits each gap. So the corpus is 13 small fixtures chosen to find gaps, and its pass rate is no estimate of real pages.',
+    '- **Script on the BusBasis pages.** A frozen page holds no script, so menus, modals, filters and the gallery cannot run on the original. They stand under "needs" as failures rather than as compared states. A page is frozen in one state: logged out, no cart, the first visit.',
     '- **React import beyond static JSX.** Tailwind classes, props as inputs and the AI rebuild step of the plan are not built.',
   );
 
@@ -414,7 +497,7 @@ function baselineOf(score: Score): Baseline {
   return {
     _doc: 'The ratchet floor, not a cache: pnpm score:primitives fails when any number drops below this. Raising it is a deliberate commit: pnpm score:primitives --update-baseline.',
     matrix: Object.fromEntries(SURFACES.map((s) => [s, score.matrix.surfaces[s].pass])) as Record<Surface, number>,
-    corpusFixtures: score.corpus.fixtures.filter((f) => f.pass).map((f) => f.fixture),
+    corpusFixtures: [...score.corpus.fixtures, ...score.busbasis.pages].filter((f) => f.pass).map((f) => f.fixture),
     corpusChecks: Object.values(score.corpus.checks).reduce((sum, c) => sum + c.pass, 0),
     roundTrip: score.roundTrip.nodesToJsxToNodes.pass + score.roundTrip.jsxToNodesToRender.pass,
   };
