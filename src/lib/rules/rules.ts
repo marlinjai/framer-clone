@@ -61,6 +61,7 @@
 import { isRootStyleKey } from './rootProperties';
 import { conditionSelector } from '@/lib/behaviour/behaviourDom';
 import { parseCondition, type Condition, type StateValue } from '@/lib/behaviour/format';
+import { isPlatformMarker } from '@/lib/renderer/platformAttributes';
 import {
   MAX_DEFINITION_BLOCKS,
   PROPERTY_SYNTAXES,
@@ -253,12 +254,17 @@ function refusedNames(text: string): string | null {
       const match = ATTRIBUTE.exec(text);
       if (!match) return 'it holds an attribute selector that cannot be read';
       const [, name, operator, value] = match;
+      // The canvas wraps content in these and a page does not, so a rule reading one shows the editor
+      // one thing and a visitor another. Any case, any depth: inside `:is`, `:where`, `:not` and `:has` alike.
+      if (isPlatformMarker(name)) return `${name} belongs to the editor or the renderer, so a rule cannot read it`;
       if (operator && name.toLowerCase() === 'value') {
         return 'an attribute selector on value with an operator would read what a visitor types';
       }
       if (value && /^fc[-_]/i.test(unquote(value).trim())) {
         return 'names starting fc- or fc_ belong to the renderer and change on duplicate';
       }
+      const refused = refusedRendererAttribute(name, operator, value);
+      if (refused) return refused;
       i = ATTRIBUTE.lastIndex;
     } else {
       outside += ch;
@@ -266,6 +272,27 @@ function refusedNames(text: string): string | null {
     }
   }
   return /\.fc[-_]/i.test(outside) ? 'names starting fc- or fc_ belong to the renderer and change on duplicate' : null;
+}
+
+/** Operators that read one class of the attribute, so a kept class is all they can match. */
+const CLASS_READERS: ReadonlySet<string> = new Set(['*=', '^=', '~=', '|=']);
+
+/**
+ * Why an attribute selector on `style`, `id` or `class` is refused, or null. The renderer writes all three, and not
+ * the same way on both surfaces: a node's Normal is inline on the canvas and in the sheet on a page with rules, and
+ * the page adds its own classes. So `&[style]` or `&:not([class])` showed the editor one thing and a visitor another
+ * (in Chromium, on the mounted editor). An id or a stored class is read with `#id` or `.name`, which the canvas renders
+ * as stored. A class reader stays for what an import keeps under `u-c-`, which only a stored class can hold.
+ */
+function refusedRendererAttribute(name: string, operator: string | undefined, value: string | undefined): string | null {
+  const lower = name.toLowerCase();
+  if (lower === 'style') return 'the renderer writes style, and not the same way in the editor and on a page';
+  if (lower === 'id') return 'the renderer writes id, so a rule reads an id with #id';
+  if (lower !== 'class') return null;
+  const operand = value === undefined ? '' : unquote(value);
+  return operator && CLASS_READERS.has(operator) && operand.startsWith('u-c-') && operand.length > 'u-c-'.length
+    ? null
+    : 'the renderer writes class, so a rule reads a class with .name, or a kept u-c- class with *=, ^=, ~= or |=';
 }
 
 /** The text split on its top-level commas. Call only on text that balances. */

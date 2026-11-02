@@ -180,6 +180,80 @@ describe('openProject compares reusable components too', () => {
   });
 });
 
+describe('openProject compares the site theme and head items too', () => {
+  const ACCENT = { id: 'ab12cd34', name: 'Accent', kind: 'color', light: '#ff0000' };
+
+  function withTheme(light: string | null, head: unknown[] = []): ProjectSnapshotOut {
+    const snap = JSON.parse(JSON.stringify(serverSnapshot())) as ProjectSnapshotOut;
+    const tokens = light === null ? [] : [{ ...ACCENT, light }];
+    (snap as { siteSettings: unknown }).siteSettings = { ...snap.siteSettings, theme: { tokens, document: {} }, head };
+    return snap;
+  }
+
+  it('a second tab with unsaved work of its own, reloading after a token edit, is warned and told the theme moved', () => {
+    openProject(store, withTheme('#ff0000'));
+    store.editorUI.currentProject!.createPage('Unsaved here');
+    const out = openProject(store, withTheme('#00ff00'));
+    expect(out.keptWorkingCopy).toBe(true);
+    expect(out.changedElsewhere).toBe(true);
+    expect(out.changedSiteParts).toEqual(['theme']);
+    expect(changedElsewhereMessage(out.changedDefinitions, out.changedSiteParts)).toContain('the site theme (colours, fonts and colour mode)');
+  });
+
+  it('with no unsaved work here, takes the theme saved elsewhere', () => {
+    openProject(store, withTheme('#ff0000'));
+    const out = openProject(store, withTheme('#00ff00'));
+    expect(out.keptWorkingCopy).toBe(false);
+    expect(store.editorUI.currentProject!.site.theme.tokens[0]).toMatchObject({ light: '#00ff00' });
+  });
+
+  it('an unsaved token edit here, with the server unchanged, keeps the working copy', () => {
+    const base = withTheme('#ff0000');
+    openProject(store, base);
+    const project = store.editorUI.currentProject!;
+    expect(project.updateTheme({ ...project.site.theme, mode: 'dark' })).toEqual({ ok: true });
+    const out = openProject(store, base);
+    expect(out.keptWorkingCopy).toBe(true);
+    expect(out.changedElsewhere).toBe(false);
+    expect(store.editorUI.currentProject!.site.theme.mode).toBe('dark');
+  });
+
+  it('a token edit here against a theme changed elsewhere is a conflict too', () => {
+    openProject(store, withTheme('#ff0000'));
+    const project = store.editorUI.currentProject!;
+    project.updateTheme({ ...project.site.theme, mode: 'dark' });
+    const out = openProject(store, withTheme('#00ff00'));
+    expect(out.changedElsewhere).toBe(true);
+    expect(out.changedSiteParts).toEqual(['theme']);
+  });
+
+  it('site head items changed elsewhere are named too', () => {
+    openProject(store, withTheme(null));
+    store.editorUI.currentProject!.createPage('Unsaved here');
+    const out = openProject(store, withTheme(null, [{ kind: 'meta', name: 'author', content: 'x' }]));
+    expect(out.changedSiteParts).toEqual(['head']);
+    expect(changedElsewhereMessage([], out.changedSiteParts)).toContain("the site's head items");
+  });
+
+  it('a server copy from before the keys existed compares equal to an empty theme', () => {
+    const base = withTheme(null);
+    openProject(store, base);
+    const old = JSON.parse(JSON.stringify(base)) as ProjectSnapshotOut;
+    delete (old.siteSettings as { theme?: unknown }).theme;
+    delete (old.siteSettings as { head?: unknown }).head;
+    store.editorUI.currentProject!.createPage('Unsaved here');
+    expect(openProject(store, old).changedElsewhere).toBe(false);
+  });
+
+  it('other site settings are not compared, as before', () => {
+    const base = withTheme(null);
+    openProject(store, base);
+    store.editorUI.currentProject!.createPage('Unsaved here');
+    const renamed = { ...base, siteSettings: { ...base.siteSettings, siteName: 'Elsewhere' } } as ProjectSnapshotOut;
+    expect(openProject(store, renamed).changedElsewhere).toBe(false);
+  });
+});
+
 describe('openProject when the server copy changed meanwhile', () => {
   function savedElsewhere(): ProjectSnapshotOut {
     // Same project, a page added by another tab or person and saved.

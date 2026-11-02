@@ -104,4 +104,36 @@ describe('site settings on a real database', () => {
     });
     expect((await repo.loadProject(SCOPE, SITE_ID)).site).toEqual(normalizeSiteSettings({}));
   });
+
+  it('keeps the stored theme and head items through a save from a tab that predates them, and an explicit empty one clears them', async () => {
+    const repo = getSiteRepository();
+    const theme = {
+      mode: 'system',
+      tokens: [
+        { id: 'ab12cd34', name: 'Ink', kind: 'color', light: '#111111', dark: '#eeeeee' },
+        { id: 'cd34ef56', name: 'Odd', kind: 'color', light: 'bad;value' },
+        { id: 'ef56ab12', name: 'Old', kind: 'color', light: '#222222', deleted: true },
+      ],
+      document: { color: 'var(--fc-t-ab12cd34)' },
+    };
+    const head = [{ kind: 'meta', name: 'author', content: 'Bäckerei Müller' }];
+    await repo.saveProject(SCOPE, project({ language: 'de', theme, head }), { mustExist: true });
+    const saved = (await repo.loadProject(SCOPE, SITE_ID)).site;
+    expect(saved.theme).toEqual(normalizeSiteSettings({ theme }).theme);
+    expect(saved.theme.tokens[1]).toMatchObject({ light: 'bad;value', broken: true });
+    expect(saved.head).toEqual(head);
+
+    // A tab built before the keys existed sends neither: the stored ones stay.
+    await repo.saveProject(SCOPE, project({ language: 'en' }), { mustExist: true });
+    const kept = (await repo.loadProject(SCOPE, SITE_ID)).site;
+    expect(kept.language).toBe('en');
+    expect(kept.theme).toEqual(saved.theme);
+    expect(kept.head).toEqual(head);
+
+    // A build that knows them sends both, so a real clear still works.
+    await repo.saveProject(SCOPE, project({ language: 'en', theme: { tokens: [], document: {} }, head: [] }), { mustExist: true });
+    const cleared = (await repo.loadProject(SCOPE, SITE_ID)).site;
+    expect(cleared.theme).toEqual({ tokens: [], document: {} });
+    expect(cleared.head).toEqual([]);
+  });
 });

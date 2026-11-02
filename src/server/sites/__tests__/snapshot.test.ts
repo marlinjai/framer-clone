@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { getSnapshot } from 'mobx-state-tree';
 import ProjectModel from '@/models/ProjectModel';
 import {
+  mergeKeptSiteSettings,
   projectToPersisted,
   persistedToProjectSnapshot,
   type SiteRowData,
@@ -41,6 +42,53 @@ describe('projectToPersisted and reusable components', () => {
     expect('components' in projectToPersisted(oldShape as never)).toBe(false);
     expect('components' in projectToPersisted({ ...base, components: null } as never)).toBe(false);
     expect('components' in projectToPersisted({ ...base, components: ['card'] } as never)).toBe(false);
+  });
+});
+
+describe('projectToPersisted and the kept site settings keys', () => {
+  const base = { ...getSnapshot(makeProjectWithPages()) } as Record<string, unknown>;
+  const theme = { tokens: [{ id: 'ab12cd34', name: 'Ink', kind: 'color', light: '#111111' }], document: {} };
+
+  it('carries theme and head when the body holds them, empty ones included', () => {
+    const full = projectToPersisted({ ...base, siteSettings: { theme, head: [] } } as never).siteSettings;
+    expect(full.theme).toEqual(theme);
+    expect(full.head).toEqual([]);
+    const live = projectToPersisted(makeProjectWithPages()).siteSettings;
+    expect(live.theme).toEqual({ tokens: [], document: {} });
+    expect(live.head).toEqual([]);
+  });
+
+  it('has neither key for a body from a build before they existed, so the save keeps the stored ones', () => {
+    const old = projectToPersisted({ ...base, siteSettings: { language: 'de' } } as never).siteSettings;
+    expect('theme' in old).toBe(false);
+    expect('head' in old).toBe(false);
+    expect(old.language).toBe('de');
+    expect('theme' in projectToPersisted({ ...base, siteSettings: undefined } as never).siteSettings).toBe(false);
+    // null is the usual way to say nothing: it counts as absent, so it keeps the stored value too.
+    const nulls = projectToPersisted({ ...base, siteSettings: { theme: null, head: null } } as never).siteSettings;
+    expect('theme' in nulls).toBe(false);
+    expect('head' in nulls).toBe(false);
+    const stored = { theme: { mode: 'dark', tokens: [{ id: 'aaaaaaaa', name: 'A', kind: 'color', light: '#123' }], document: {} } };
+    expect(mergeKeptSiteSettings(nulls, stored).theme).toEqual(stored.theme);
+  });
+
+  it('mergeKeptSiteSettings takes a missing key from the stored row and a present one from the body', () => {
+    const stored = { language: 'de', theme, head: [{ kind: 'meta', name: 'author', content: 'x' }] };
+    const kept = mergeKeptSiteSettings(projectToPersisted({ ...base, siteSettings: { language: 'en' } } as never).siteSettings, stored);
+    expect(kept.language).toBe('en');
+    expect(kept.theme).toEqual(theme);
+    expect(kept.head).toEqual(stored.head);
+    const cleared = mergeKeptSiteSettings(projectToPersisted({ ...base, siteSettings: { theme: {}, head: [] } } as never).siteSettings, stored);
+    expect(cleared.theme).toEqual({ tokens: [], document: {} });
+    expect(cleared.head).toEqual([]);
+    // A brand-new site has no stored row.
+    expect(mergeKeptSiteSettings(projectToPersisted({ ...base, siteSettings: {} } as never).siteSettings, undefined).theme).toEqual({ tokens: [], document: {} });
+  });
+
+  it('reads a bare theme key from an older build without throwing', () => {
+    const odd = projectToPersisted({ ...base, siteSettings: { theme: 'x', head: 'y' } } as never).siteSettings;
+    expect(odd.theme).toEqual({ tokens: [], document: {} });
+    expect(odd.head).toEqual([]);
   });
 });
 
