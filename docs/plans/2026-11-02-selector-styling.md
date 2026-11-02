@@ -143,7 +143,7 @@ the implied set from `states.ts`, so the rule is written in one place.
 | `renderComponentNode` (`NON_DOM_PROPS`) | Denies an array defensively, as it does `effects` |
 | `createComponentElement` | No change: it only sees `finalProps` built from `getResolvedProps` |
 | `snapshotToComponentNode`, `hydrateBindings` | Pass it through. A cloned row carries its rules. A `{{binding}}` in a rule value contains `{` and is refused: bindings do not reach rules |
-| `applyEffects` | Replaces `data-fx-h` with the preset's shared class, see migration |
+| `applyEffects` | Replaces `data-fx-h` with a mark on the node, which `applyResponsiveStyles` turns into the preset's shared class, see migration |
 | `collectPageFonts` (`fonts/registry.ts`) | Also scans `rules[].style`, or a family used only on Hover is never loaded |
 | `yjsDocShape.ts` | No change. Multiplayer has not shipped, and `rules` falls through as plain JSON. The real shape is chosen when multiplayer lands |
 | `validate.ts`, `ai/review/ops.ts` | Accept through the parser and `style()`, see AI |
@@ -564,9 +564,12 @@ request from the stored snapshot, so anything slice 5 changes reaches every live
 republish. That is why a preset must not behave like an authored rule.
 
 **Hover.** `effects.hover` stays stored forever, as the name of a preset. `hoverPresetRules(kind)` in
-`effects.ts` returns the rule text with the same numbers. `applyEffects` adds a shared class, `fc_fx-lift`,
+`effects.ts` returns the rule text with the same numbers. A node gets a shared class, `fc_fx-lift`,
 `fc_fx-dim` or `fc_fx-underline`, in place of `data-fx-h`. Each kind used on the page is emitted once, in
-place 3 of the sheet, through the same emitter.
+place 3 of the sheet, through the same emitter. `applyEffects` only leaves a mark on the node, and
+`applyResponsiveStyles` issues the class: that step removes every stored `fc_` name, and it is the one that
+calls the emitter. A mark set after hydration is one no stored page can spell, where an exception for
+`fc_fx-` would have had to tell a stored name from an issued one, a `className` map included.
 
 | Kind | Rules on the shared class, same specificity and order as today |
 |---|---|
@@ -579,7 +582,8 @@ and any value the sheet would refuse. **There is no visible change at deploy,** 
 inline beats the preset today: `dim` over an inline `opacity` still does nothing until someone authors a
 Hover. The size is also right: one shared block rather than about 362 bytes per node. A person's own
 Hover rule is (0,3,0), so it wins over the preset's (0,2,0), and the two need no detach step. Adding that
-rule is what moves the node's Normal, under decision 5.
+rule is what moves the node's Normal, under decision 5. Place 3 does change one tie, on no saved page: a
+rule with the bare selector `&` is (0,2,0) and now comes after the preset, so it wins under the pointer.
 
 This depends on the media wrappers, which is why it comes after slice 3. The published page moves first;
 once the preview takes the same path in slice 6, `EFFECTS_BASE_CSS`, `FX_ATTR.hover` and the `data-fx-h`
@@ -589,7 +593,8 @@ throughout.
 **Precondition of slice 5.** A read-only count over saved snapshots: how many preset nodes hold a value
 the sheet refuses. Slice 5 itself cannot lose these, but it sizes what the first authored rule on such a
 node will do, and no such value exists in `src`, so the risk is only visible in stored data. Workers do
-not touch production, so the operator runs it and writes the number in the slice's pull request.
+not touch production, so the operator runs it and writes the number in the slice's pull request. Run on
+2026-11-02: 221 stored nodes across the 7 saved production pages, 0 with `effects`, 0 with a hover preset.
 
 **Appear and scroll stay.** Keyframes could hold a reveal, but what triggers it is
 `IntersectionObserver` in `runtime.ts`, plus a promise that nothing is hidden without JavaScript, and a

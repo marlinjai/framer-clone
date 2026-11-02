@@ -8,11 +8,14 @@ import {
   compactEffects,
   effectDomAcrossBreakpoints,
   effectDomForBreakpoint,
+  hoverPresetClass,
+  hoverPresetRules,
   normalizeAppear,
   normalizeScroll,
   publishedEffectsBootScript,
   resolveEffects,
   startStateCss,
+  type HoverKind,
 } from '../effects';
 
 const BPS = [
@@ -95,6 +98,42 @@ describe('DOM output', () => {
 
   it('returns nothing for an element with only none effects', () => {
     expect(effectDomAcrossBreakpoints({ appear: none }, BPS)).toBeUndefined();
+  });
+
+  it('across breakpoints a hover is the preset, not an attribute: the page gives it a shared class', () => {
+    const dom = effectDomAcrossBreakpoints({ hover: 'dim' }, BPS)!;
+    expect(dom.hover).toBe('dim');
+    expect(dom.attributes).toEqual({});
+    expect(dom.needsRuntime).toBe(false);
+  });
+});
+
+describe('hover preset rules', () => {
+  // The preview's text and the published rules are one set of numbers under one set of gates.
+  const asAttribute = (kind: HoverKind) => (text: string) => text.replace(`.${hoverPresetClass(kind)}`, `[${FX_ATTR.hover}=${kind}]`);
+
+  it.each(['dim', 'underline', 'lift'] as const)('%s has the rule text of the preview, on one class', (kind) => {
+    for (const { wrappers, text } of hoverPresetRules(kind)) {
+      expect(wrappers).toHaveLength(1);
+      const gate = EFFECTS_BASE_CSS.indexOf(`${wrappers[0]}{`);
+      expect(gate).toBeGreaterThanOrEqual(0);
+      const block = EFFECTS_BASE_CSS.slice(gate, EFFECTS_BASE_CSS.indexOf('\n}', gate));
+      const rule = asAttribute(kind)(text);
+      if (rule.includes(':hover')) expect(block).toContain(rule);
+      else expect(block).toContain(rule.slice(rule.indexOf('{')));
+    }
+  });
+
+  it('none has no rules', () => {
+    expect(hoverPresetRules('none')).toEqual([]);
+  });
+
+  it('lift does not move under reduced motion, while dim and underline stay', () => {
+    const gatedOnPointerAlone = (kind: HoverKind) =>
+      hoverPresetRules(kind).some(({ wrappers, text }) => text.includes(':hover') && !wrappers[0].includes('prefers-reduced-motion'));
+    expect(gatedOnPointerAlone('lift')).toBe(false);
+    expect(gatedOnPointerAlone('dim')).toBe(true);
+    expect(gatedOnPointerAlone('underline')).toBe(true);
   });
 });
 

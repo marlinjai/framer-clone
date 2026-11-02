@@ -303,6 +303,8 @@ export interface EffectDomOutput {
   style: Record<string, unknown>;
   /** The node needs the client runtime (an appear or a parallax somewhere). */
   needsRuntime: boolean;
+  /** The hover preset, on a surface that gives it a shared class instead of an attribute (the published page). */
+  hover?: HoverKind;
 }
 
 /**
@@ -360,7 +362,6 @@ export function effectDomAcrossBreakpoints(
   if (anyAppear) attributes[FX_ATTR.appear] = '';
   if (anyStagger) attributes[FX_ATTR.stagger] = '';
   if (anyParallax) attributes[FX_ATTR.parallax] = '';
-  if (hover !== 'none') attributes[FX_ATTR.hover] = hover;
 
   const needsRuntime = anyAppear || anyParallax;
   const style: Record<string, unknown> = {};
@@ -378,26 +379,67 @@ export function effectDomAcrossBreakpoints(
       style[name] = map;
     }
   }
-  return { attributes, style, needsRuntime };
+  return { attributes, style, needsRuntime, hover };
 }
 
 // ---------- the stylesheets ----------
 
+/** A real pointer: a tap would otherwise leave hover stuck on a phone. */
+const POINTER_GATE = '@media (hover:hover) and (pointer:fine)';
+/** A real pointer, with motion allowed. */
+const MOTION_GATE = '@media (hover:hover) and (pointer:fine) and (prefers-reduced-motion:no-preference)';
+
+const HOVER_TRANSITION = `transition:translate ${HOVER_DURATION_MS}ms ease,opacity ${HOVER_DURATION_MS}ms ease`;
+const HOVER_DIM = `opacity:${HOVER_DIM_OPACITY}`;
+const HOVER_UNDERLINE = 'text-decoration-line:underline;text-underline-offset:0.2em';
+const HOVER_LIFT = `translate:0 -${HOVER_LIFT_PX}px`;
+
 /**
- * The always-on effects CSS: hover feedback only. Hover moves only on a real
- * pointer, and its motion is off under reduced motion (dim and underline stay,
- * they are state changes, not movement). Never `transition: all`.
+ * The always-on effects CSS of the preview: hover feedback only. Hover moves only
+ * on a real pointer, and its motion is off under reduced motion (dim and underline
+ * stay, they are state changes, not movement). Never `transition: all`.
  */
 export const EFFECTS_BASE_CSS = [
-  '@media (hover:hover) and (pointer:fine){',
-  `[${FX_ATTR.hover}=dim]:hover{opacity:${HOVER_DIM_OPACITY}}`,
-  `[${FX_ATTR.hover}=underline]:hover{text-decoration-line:underline;text-underline-offset:0.2em}`,
+  `${POINTER_GATE}{`,
+  `[${FX_ATTR.hover}=dim]:hover{${HOVER_DIM}}`,
+  `[${FX_ATTR.hover}=underline]:hover{${HOVER_UNDERLINE}}`,
   '}',
-  '@media (hover:hover) and (pointer:fine) and (prefers-reduced-motion:no-preference){',
-  `[${FX_ATTR.hover}=lift],[${FX_ATTR.hover}=dim]{transition:translate ${HOVER_DURATION_MS}ms ease,opacity ${HOVER_DURATION_MS}ms ease}`,
-  `[${FX_ATTR.hover}=lift]:hover{translate:0 -${HOVER_LIFT_PX}px}`,
+  `${MOTION_GATE}{`,
+  `[${FX_ATTR.hover}=lift],[${FX_ATTR.hover}=dim]{${HOVER_TRANSITION}}`,
+  `[${FX_ATTR.hover}=lift]:hover{${HOVER_LIFT}}`,
   '}',
 ].join('\n');
+
+/** The shared class a hover preset gives a node on the published page. */
+export function hoverPresetClass(kind: HoverKind): string {
+  return `fc_fx-${kind}`;
+}
+
+/**
+ * One kind's rules for the published sheet, emitted once per page. The same numbers
+ * and gates as EFFECTS_BASE_CSS, and a single class where it has one attribute, so
+ * the specificity is the same too: Normal does not move, whatever beats a preset
+ * today still does, and a person's Hover rule at (0,3,0) beats this at (0,2,0).
+ */
+export function hoverPresetRules(kind: HoverKind): { wrappers: readonly string[]; text: string }[] {
+  const node = `.${hoverPresetClass(kind)}`;
+  switch (kind) {
+    case 'dim':
+      return [
+        { wrappers: [POINTER_GATE], text: `${node}:hover{${HOVER_DIM}}` },
+        { wrappers: [MOTION_GATE], text: `${node}{${HOVER_TRANSITION}}` },
+      ];
+    case 'underline':
+      return [{ wrappers: [POINTER_GATE], text: `${node}:hover{${HOVER_UNDERLINE}}` }];
+    case 'lift':
+      return [
+        { wrappers: [MOTION_GATE], text: `${node}{${HOVER_TRANSITION}}` },
+        { wrappers: [MOTION_GATE], text: `${node}:hover{${HOVER_LIFT}}` },
+      ];
+    default:
+      return [];
+  }
+}
 
 /**
  * The start-state CSS: an appear element (or each child of a staggered one)

@@ -82,6 +82,7 @@ import {
   parseExpression,
 } from '@/lib/bindings/resolver/expression';
 import type { BindingEntry, BindingsRecord } from '@/lib/bindings/types';
+import type { HoverKind } from '@/lib/effects/effects';
 import type { Query, Row } from '@/lib/bindings/dataSource/types';
 // Type-only import: erased at compile time, so this module pulls in NO
 // server-only / adapter-prisma runtime code and stays Node-evaluable.
@@ -117,6 +118,12 @@ export interface ComponentNode {
    * twelve cards share their CSS. Spreading a node keeps both.
    */
   classKey?: string;
+  /**
+   * The hover preset, from applyEffects to applyResponsiveStyles, which turns it into
+   * a shared class. On the node rather than in `className`, because that step removes
+   * every stored `fc_` name, and no stored page can spell a mark set after hydration.
+   */
+  hoverPreset?: HoverKind;
   /**
    * On an interactive commerce island only: the commerce frames (product, variant, availability) of the
    * source it sits in, as the hydrator resolved them. The island is shipped verbatim and rendered later

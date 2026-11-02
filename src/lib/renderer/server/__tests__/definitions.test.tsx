@@ -278,6 +278,13 @@ describe('the page caps', () => {
     expect(dropped).toEqual([{ className: 'fc_r-a', ruleId: 'h', reason: 'the page is over its rule limit' }]);
   });
 
+  it('leaves a hover preset out of both caps: a full page keeps it', () => {
+    const definitions = Array.from({ length: MAX_RULES_PER_PAGE + 3 }, (_, index) => ({ node: 'n', rule: parsed(keyframes(`u-${index}`)) }));
+    expect(buildResponsiveCss([], BPS, { definitions, hoverPresets: ['dim'] })).toContain('.fc_fx-dim:hover{opacity:0.8}');
+    const authored = [{ className: 'fc_r-a', rules: [{ kind: 'selector' as const, id: 'h', parts: ['&:hover'], at: [], style: { color: 'red' } }] }];
+    expect(buildResponsiveCss([], BPS, { hoverPresets: ['dim'], authored })).toContain('.fc_r-a.fc_r-a:hover{color:red}');
+  });
+
   it('counts bytes, because one data: font can outweigh any rule count', () => {
     const dropped: DroppedRule[] = [];
     const font = (size: number, id: string) => ({ node: 'n', rule: parsed(face({ src: `url(data:font/woff2;base64,${'A'.repeat(size)})`, fontWeight: id }, id)) });
