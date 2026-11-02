@@ -537,8 +537,16 @@ describe('triggers', () => {
 
   it('holds a chain of delays to the action cap, without recursing past it', () => {
     let deep: unknown = { toggle: 'b' };
-    for (let i = 0; i < 3000; i++) deep = { delay: 16, do: [deep] };
+    for (let i = 0; i < 300; i++) deep = { delay: 16, do: [deep] };
     refused(click(deep), /at most 16/);
+  });
+
+  it('refuses a program nested too deep to serialize whole, without throwing', () => {
+    let deep: unknown = { toggle: 'b' };
+    for (let i = 0; i < 100_000; i++) deep = { delay: 16, do: [deep] };
+    const read = parseBehaviour({ id: 'a', type: 'div', props: { behaviour: { on: [click(deep)] } } });
+    expect(read.behaviour).toBeNull();
+    expect(read.refused[0].entry).toBe('behaviour');
   });
 });
 
