@@ -36,7 +36,8 @@ describe('projectToPersisted and reusable components', () => {
   });
 
   it('has no key at all for an old-shape body, or for a value that is no record', () => {
-    const { components: _omitted, ...oldShape } = base;
+    const oldShape = { ...base };
+    delete oldShape.components;
     expect('components' in projectToPersisted(oldShape as never)).toBe(false);
     expect('components' in projectToPersisted({ ...base, components: null } as never)).toBe(false);
     expect('components' in projectToPersisted({ ...base, components: ['card'] } as never)).toBe(false);

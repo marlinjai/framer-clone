@@ -167,7 +167,8 @@ describe('openProject compares reusable components too', () => {
   it('a snapshot with no components key compares equal to none', () => {
     const base = withDefinition(null);
     openProject(store, base);
-    const { components: _omitted, ...oldShape } = base;
+    const oldShape: Partial<ProjectSnapshotOut> = { ...base };
+    delete oldShape.components;
     const out = openProject(store, oldShape as ProjectSnapshotOut);
     expect(out.keptWorkingCopy).toBe(true);
     expect(out.changedElsewhere).toBe(false);
