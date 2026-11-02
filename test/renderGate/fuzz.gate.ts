@@ -39,7 +39,19 @@ describe('render gate', () => {
   });
 
   it.each(BROWSERS)('nothing stored acts on a page in %s', async (name, type) => {
-    const browser = await type.launch();
+    let browser = await type.launch();
+    // A browser that dies under a long run costs that batch one retry. A second
+    // death is reported: unlike a clean run, it says nothing about the probes.
+    const withRestart = async (list: Probe[], surface: Surface, tag: string): Promise<Finding[]> => {
+      try {
+        return await runBatch(browser, name, surface, list, tag, bundle);
+      } catch {
+        if (!browser.isConnected()) browser = await type.launch();
+        return runBatch(browser, name, surface, list, tag, bundle).catch((error) => [
+          { browser: name, surface, probe: tag, what: 'a batch', detector: 'blind' as const, detail: String(error).slice(0, 160) },
+        ]);
+      }
+    };
     const probes = buildProbes(FULL).filter((probe) => !ONLY_PROBES || ONLY_PROBES.test(probe.what));
     const findings: Finding[] = [];
     try {
@@ -47,7 +59,7 @@ describe('render gate', () => {
         const queue = batches(probes).map((list, index) => ({ list, tag: `b${index}` }));
         const worker = async () => {
           for (let job = queue.shift(); job; job = queue.shift()) {
-            findings.push(...(await runBatch(browser, name, surface, job.list, job.tag, bundle)));
+            findings.push(...(await withRestart(job.list, surface, job.tag)));
           }
         };
         await Promise.all(Array.from({ length: WORKERS }, worker));
