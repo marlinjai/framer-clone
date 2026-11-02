@@ -114,6 +114,21 @@ describe('blocked nodes', () => {
     for (const piece of ['href="tel:+49"', 'target="_blank"', 'draggable="false"', 'label="x"', 'data-credit-name="x"', 'class="x"']) expect(html).toContain(piece);
   });
 
+  it('reports nothing for the settings a renderer reads from a node', () => {
+    const warn = vi.mocked(console.warn);
+    warn.mockClear();
+    const props = { formName: 'x', options: ['a'], ctaLabel: 'x', ctaHref: '/x', buttonBackground: 'red', query: {}, rules: [] };
+    published({ type: 'div', props });
+    editor('div', props);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('writes no query object on the canvas, like the published page', () => {
+    const props = { 'data-component-kind': 'collection', label: 'x', query: { limit: 1 } };
+    expect(editor('div', props)).not.toContain('query');
+    expect(published({ type: 'div', props })).not.toContain('query');
+  });
+
   it('keeps animation of a harmless attribute', () => {
     expect(published({ type: 'animate', props: { attributeName: 'opacity' } })).toContain('opacity');
   });

@@ -10,7 +10,9 @@
 // a handler. test/renderGate tries all of it in real browsers.
 
 import { REVIEWED_ANIMATED_ATTRIBUTES } from '@/lib/ai/pageGen/reviewedVocabulary';
+import { FORM_CONFIG_PROPS } from '@/lib/forms/definition';
 import { isRenderedAttribute, isRenderedTag } from '@/lib/renderer/renderVocabulary';
+import { STICKY_CTA_PROP_KEYS } from '@/lib/stickyCta/stickyCta';
 import { SAFE_PROPERTY, UNSAFE_VALUE, cssValueText, isContainedValue } from '@/lib/responsive/responsiveCss';
 
 /**
@@ -98,6 +100,10 @@ export function isBlockedTag(tag: unknown): boolean {
   return true;
 }
 
+/** Settings the renderers read from the node. Off the element, as they should be, so nothing to report. */
+const isSettingsProp = (name: string): boolean =>
+  FORM_CONFIG_PROPS.has(name) || (STICKY_CTA_PROP_KEYS as readonly string[]).includes(name) || name === 'query' || name === 'bindings' || name === 'effects' || name === 'rules';
+
 /**
  * Whether a prop must not reach the DOM. React drops some of this for a known
  * element, but it writes a stored handler straight into the markup of a custom
@@ -106,7 +112,7 @@ export function isBlockedTag(tag: unknown): boolean {
  */
 export function isBlockedProp(name: string, value: unknown): boolean {
   const blocked = isDroppedProp(name, value);
-  if (blocked) warnOnce(`the prop ${name}`);
+  if (blocked && !isSettingsProp(name)) warnOnce(`the prop ${name}`);
   return blocked;
 }
 
