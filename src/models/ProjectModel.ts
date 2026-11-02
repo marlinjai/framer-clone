@@ -204,6 +204,11 @@ const ProjectMetadataModel = types.model('ProjectMetadata', {
   // Timestamps
   createdAt: types.optional(types.Date, () => new Date()),
   updatedAt: types.optional(types.Date, () => new Date()),
+
+  // The site's erasure epoch when this copy was loaded (`sites.erasure_epoch`). Save and
+  // Publish send it, and the server refuses an older one: a tab opened before personal data
+  // was erased could otherwise write the value back. Never changed in the editor.
+  erasureEpoch: types.optional(types.number, 0),
 });
 
 

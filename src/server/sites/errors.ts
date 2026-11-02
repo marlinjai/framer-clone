@@ -152,6 +152,38 @@ export class SiteRevisionNotFoundError extends SiteRepositoryError {
 }
 
 /**
+ * A Save or Publish from an editor tab loaded before personal data was erased
+ * from this site (its erasure epoch is older than the site's): the tab may still
+ * hold the erased value and would write it back. Nothing was written. 409.
+ */
+export class SiteErasedSinceLoadError extends SiteRepositoryError {
+  constructor() {
+    super(
+      'erased_since_load',
+      'Personal data was erased from this project after this tab loaded it. Reload the page to continue. Changes not saved in this tab cannot be saved, since they may still hold the erased data.',
+      409,
+    );
+  }
+}
+
+/**
+ * An erase whose preview no longer matches what is stored: a publish, a save, a
+ * rollback or another erase came in between. Nothing changed. 409.
+ */
+export class ErasePreviewStaleError extends SiteRepositoryError {
+  constructor() {
+    super('erase_preview_stale', 'The project changed since the search. Search again, then erase.', 409);
+  }
+}
+
+/** An erase that found nothing it may rewrite. Nothing changed. 409. */
+export class NothingToEraseError extends SiteRepositoryError {
+  constructor() {
+    super('nothing_to_erase', 'Nothing left to erase for this search.', 409);
+  }
+}
+
+/**
  * Map any {@link SiteRepositoryError} to its Track-0 error envelope. A route
  * matches `instanceof SiteRepositoryError` once and returns this.
  */

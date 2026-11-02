@@ -19,6 +19,10 @@ import 'server-only';
 //   4. the auth-brain permission on that workspace: `viewSite` to read,
 //      `manageDomain` (workspace admin) to change            -> else 403
 //      (OpenFGA not answering                   -> 503 authz_unavailable)
+//   5. with `requireCompanyOwner`, the session's role on the company that holds
+//      the workspace must be `owner`             -> else 403 owner_required
+//      (erasing personal data: OpenFGA has no workspace owner, and the role
+//      comes from the server-verified session, never from the client)
 //   An unknown project answers the same 403 as a foreign one, so a project's
 //   existence never leaks.
 
@@ -44,7 +48,7 @@ export interface DomainProject {
 }
 
 export type DomainProjectResult =
-  | { ok: true; project: DomainProject }
+  | { ok: true; project: DomainProject; userId: string }
   | { ok: false; response: Response };
 
 function forbidden(): DomainProjectResult {
@@ -54,8 +58,9 @@ function forbidden(): DomainProjectResult {
 export async function authorizeDomainProject(
   req: Request,
   projectId: string,
-  action: Extract<FramerAction, 'viewSite' | 'manageDomain' | 'publishSite'>,
+  action: Extract<FramerAction, 'viewSite' | 'manageDomain' | 'publishSite' | 'eraseSiteData'>,
   prisma: PrismaClient = getPrismaClient(),
+  options: { requireCompanyOwner?: boolean } = {},
 ): Promise<DomainProjectResult> {
   if (!isEditorHost(req.headers.get('host'))) {
     return { ok: false, response: jsonError('not_found', 'not found', 404) };
@@ -98,5 +103,17 @@ export async function authorizeDomainProject(
   }
   if (!allowed) return forbidden();
 
-  return { ok: true, project: site };
+  if (options.requireCompanyOwner) {
+    const company = Array.isArray(session.tenants)
+      ? session.tenants.find((tenant) => tenant?.id === scope.companyId)
+      : undefined;
+    if (company?.role !== 'owner') {
+      return {
+        ok: false,
+        response: jsonError('owner_required', "Only the company's owner can do this.", 403),
+      };
+    }
+  }
+
+  return { ok: true, project: site, userId: session.user.id };
 }

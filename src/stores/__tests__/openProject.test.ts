@@ -308,6 +308,54 @@ describe('openProject when the server copy changed meanwhile', () => {
 
 });
 
+describe('openProject after personal data was erased (plan 2026-11-01-immutable-published-copy)', () => {
+  /** The server copy after an erase: a business detail rewritten, which no compared part shows, and the epoch moved. */
+  function erased(from: ProjectSnapshotOut = serverSnapshot()): ProjectSnapshotOut {
+    const snap = JSON.parse(JSON.stringify(from)) as ProjectSnapshotOut;
+    return {
+      ...snap,
+      metadata: { ...snap.metadata, erasureEpoch: 1 },
+      siteSettings: { ...snap.siteSettings, business: { ...snap.siteSettings.business, managingDirectors: ['[entfernt]'] } },
+    } as ProjectSnapshotOut;
+  }
+
+  it('no unsaved work here: takes the server copy, epoch included', () => {
+    const base = serverSnapshot();
+    openProject(store, base);
+    // Pages, components, theme and head are the same: only the epoch tells the copies apart.
+    const out = openProject(store, erased(base));
+    expect(out.keptWorkingCopy).toBe(false);
+    expect(store.editorUI.currentProject!.metadata.erasureEpoch).toBe(1);
+    expect(store.editorUI.currentProject!.siteSettings.business.managingDirectors).toEqual(['[entfernt]']);
+  });
+
+  it('unsaved work here: keeps it at the old epoch and warns, so its Save is refused by the server', () => {
+    const base = serverSnapshot();
+    openProject(store, base);
+    store.editorUI.currentProject!.createPage('Unsaved here');
+    const out = openProject(store, erased(base));
+    expect(out.keptWorkingCopy).toBe(true);
+    expect(out.changedElsewhere).toBe(true);
+    expect(store.editorUI.currentProject!.metadata.erasureEpoch).toBe(0);
+  });
+
+  it('a copy with no baseline in this tab is compared by its epoch alone, without failing', () => {
+    // A project in the store with no baseline recorded for it (ingested without openProject).
+    const base = serverSnapshot();
+    const unknown = { ...base, id: 'site_no_baseline' } as ProjectSnapshotOut;
+    store.projectStore.ingestProjectSnapshot(unknown);
+    const out = openProject(store, erased(unknown));
+    expect(out.changedElsewhere).toBe(true);
+    expect(out.changedDefinitions).toEqual([]);
+  });
+
+  it('the same epoch on both sides changes nothing', () => {
+    const snap = erased();
+    openProject(store, snap);
+    expect(openProject(store, JSON.parse(JSON.stringify(snap)) as ProjectSnapshotOut).keptWorkingCopy).toBe(true);
+  });
+});
+
 describe('restoreStashedDemo (back on `/` after choosing a company or signing in)', () => {
   it('brings the stashed demo project back as the demo, on the requested page', async () => {
     const { stashDemoProject } = await import('@/lib/projects/demoStash');

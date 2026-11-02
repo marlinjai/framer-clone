@@ -389,6 +389,23 @@ during that window and either republish it, or clear `published_revision_id` for
 path (it serves its rows until its next save or publish freezes them). Which sites: `status = 'published'` with
 `updated_at` after the noted time.
 
+## Erasing personal data: one container only
+
+The owner's erase tool (plan `docs/plans/2026-11-01-immutable-published-copy.md`, "Erasing personal data from the
+history") rewrites the database in one transaction, which every container sees at once. The copies a container keeps
+for itself are cleaned only in **the container that ran the erase**: the origin cache (`unstable_cache`, revalidated
+and its files under `.next/cache/fetch-cache` deleted) and the expanded page trees in memory.
+
+**So the app must run as a single container while erasing is in use.** With a second replica, that replica keeps
+serving its cached copy of the site, the erased value included, with no time limit (the cache entries carry no
+`revalidate`), until it restarts. The app cannot reach other instances: there is no shared cache handler and no list of
+running instances. Before scaling out, add one (a shared cache handler for Next, for example on Redis, plus a broadcast
+for the in-memory trees), or restart every replica after each erase. The same limit already applied to publish and
+rollback, where it only delays an update; for an erase it is a privacy failure.
+
+Migration `20261102230000_site_erasures` is additive. Erase only once every container runs the new code: an older
+container neither refuses Save from editor tabs loaded before the erase nor knows the new cache key.
+
 ## Operator commands (from a checkout, against a forwarded database)
 
 | Command | Use |

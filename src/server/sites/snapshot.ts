@@ -76,6 +76,11 @@ export interface PersistedSite {
   projectCreatedAt: number;
   /** ProjectModel.metadata.updatedAt as epoch ms. */
   projectUpdatedAt: number;
+  /**
+   * The erasure epoch the editor loaded (ProjectModel.metadata.erasureEpoch), 0 when
+   * the snapshot has none. Never written: only compared with `sites.erasure_epoch`.
+   */
+  erasureEpoch: number;
   /** One entry per MST page. */
   pages: PersistedPage[];
   /**
@@ -105,6 +110,12 @@ export function mergeKeptSiteSettings(saved: PersistedSiteSettings, stored: unkn
     theme: saved.theme ?? previous.theme,
     head: saved.head ?? previous.head,
   });
+}
+
+/** A snapshot's erasure epoch: a non-negative integer, else 0 (a tab from before the field). */
+function erasureEpochOf(metadata: unknown): number {
+  const value = (metadata as { erasureEpoch?: unknown } | undefined)?.erasureEpoch;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
 /**
@@ -173,6 +184,7 @@ export function projectToPersisted(
     // MST `types.Date` serializes to epoch ms in the SnapshotOut.
     projectCreatedAt: snap.metadata.createdAt as number,
     projectUpdatedAt: snap.metadata.updatedAt as number,
+    erasureEpoch: erasureEpochOf(snap.metadata),
     pages,
     ...components,
   };
@@ -198,6 +210,8 @@ export interface SiteRowData {
   /** Persistence-layer Date columns (Prisma returns `Date`). */
   projectCreatedAt: Date;
   projectUpdatedAt: Date;
+  /** `sites.erasure_epoch`; absent reads as 0. */
+  erasureEpoch?: number;
   pages: Array<{ pageId: string; snapshot: unknown }>;
 }
 
@@ -237,6 +251,7 @@ export function persistedToProjectSnapshot(row: SiteRowData): ProjectSnapshotIn 
       // round-trip instead of resetting to "now".
       createdAt: row.projectCreatedAt.getTime(),
       updatedAt: row.projectUpdatedAt.getTime(),
+      erasureEpoch: row.erasureEpoch ?? 0,
     },
     pages,
     siteSettings: normalizeSiteSettings(row.siteSettings),

@@ -191,17 +191,26 @@ export function openProject(
   if (existing) {
     const working = getSnapshot(existing);
     const workingContent = versionContent(working);
-    const serverChanged = baseline !== undefined && !sameVersion(serverContent, baseline);
+    // An erase of personal data moves the epoch, and this tab's copy may still
+    // hold the erased value anywhere (also in parts not compared here), so it
+    // counts as a change on the server: an untouched tab takes the server copy,
+    // and one with unsaved work is warned (its Save is refused with an older epoch).
+    const erasedSince = (snapshot.metadata?.erasureEpoch ?? 0) > (working.metadata?.erasureEpoch ?? 0);
+    const serverChanged = erasedSince || (baseline !== undefined && !sameVersion(serverContent, baseline));
     const workingChanged = baseline === undefined || !sameVersion(workingContent, baseline);
     if (!serverChanged) keep = true; // nothing new on the server: keep this tab's work
     else if (workingChanged) {
       keep = true; // both changed: keep the work here, warn before a Save
       changedElsewhere = true;
       // A definition deleted over there is only named by this tab's copy.
-      changedDefinitions = changedDefinitionIds(baseline, serverContent)
-        .map((id) => definitionName(snapshot.components, id) ?? definitionName(working.components, id) ?? id)
-        .sort((a, b) => a.localeCompare(b));
-      changedSite = changedSiteParts(baseline, serverContent);
+      // Compared with this tab's baseline; without one (only an erase tells the
+      // versions apart) nothing more specific can be named.
+      if (baseline !== undefined) {
+        changedDefinitions = changedDefinitionIds(baseline, serverContent)
+          .map((id) => definitionName(snapshot.components, id) ?? definitionName(working.components, id) ?? id)
+          .sort((a, b) => a.localeCompare(b));
+        changedSite = changedSiteParts(baseline, serverContent);
+      }
     }
   }
 

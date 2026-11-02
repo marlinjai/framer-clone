@@ -12,8 +12,19 @@ import {
   resolveIngestionEndpoint,
   resolveAnalyticsProjectId,
   HOME_REWRITE_SENTINEL,
+  revisionMemoKey,
   type PublishedPageRow,
 } from '../publicResolver';
+
+describe('revisionMemoKey', () => {
+  it('keeps the key of a revision no erase touched, and changes it with every rewrite', () => {
+    expect(revisionMemoKey('rev_1', null)).toBe('revision:rev_1');
+    const first = revisionMemoKey('rev_1', new Date('2026-11-02T10:00:00.000Z'));
+    const second = revisionMemoKey('rev_1', new Date('2026-11-02T11:00:00.000Z'));
+    expect(first).toBe('revision:rev_1:2026-11-02T10:00:00.000Z');
+    expect(new Set([revisionMemoKey('rev_1', null), first, second]).size).toBe(3);
+  });
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
