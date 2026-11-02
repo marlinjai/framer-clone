@@ -18,9 +18,11 @@ import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { isAlive } from 'mobx-state-tree';
 import type { ComponentInstance } from '@/models/ComponentModel';
+import type { PageModelType } from '@/models/PageModel';
 import ComponentRenderer from './ComponentRenderer';
 import PageFontFaces from '@/lib/fonts/PageFontFaces';
-import { CanvasRuleStyles } from '@/lib/rules/CanvasRuleStyles';
+import { CanvasRuleStyles, type CanvasRuleStylesProps } from '@/lib/rules/CanvasRuleStyles';
+import type { SurfaceNode } from '@/lib/rules/surfaceSheet';
 import GroundWrapper from './GroundWrapper';
 import { useStore } from '@/hooks/useStore';
 import { useDragSource } from '@/lib/drag';
@@ -30,9 +32,11 @@ import {
 } from '@/lib/canvas/viewportFrame';
 import {
   createScope,
+  pushInputFrame,
   pushPageFrame,
   type BindingScope,
 } from '@/lib/bindings/resolver/scope';
+import { defaultValuesAt } from '@/lib/components/frameInputs';
 import { useProductPageParams } from '@/lib/commerce/productPreview';
 
 // Parse a CSS length into pixels for GroundWrapper sizing. Accepts a raw
@@ -61,6 +65,16 @@ const FLOATING_FALLBACK_HEIGHT = 160;
 const FRAME_FALLBACK_WIDTH = 400;
 const FRAME_FALLBACK_HEIGHT = 600;
 
+// Apart from ResponsivePageRenderer, so an edit redraws these and not every frame:
+// both read the page's expansion, which changes with any node.
+const PageFonts = observer(({ page }: { page: PageModelType }) => <PageFontFaces roots={page.canvasFontRoots} />);
+
+// The expanded page, so a rule inside a definition shows on each placement of it.
+const PageRuleStyles = observer(({ page, ...sheet }: { page: PageModelType } & Pick<CanvasRuleStylesProps, 'frames' | 'breakpoints'>) => {
+  const { root, floating } = page.expansion;
+  return <CanvasRuleStyles {...sheet} tree={root as SurfaceNode} floating={floating as SurfaceNode[]} />;
+});
+
 const ResponsivePageRenderer = observer(() => {
   const rootStore = useStore();
   const project = rootStore.editorUI.currentProject;
@@ -84,15 +98,19 @@ const ResponsivePageRenderer = observer(() => {
   // params; only a product page gets a param, the product being previewed. The
   // product page path makes `{{product.href}}` resolve as on the published site.
   const rootScope: BindingScope = pushPageFrame(createScope(), pageParams, project.productPagePath);
+  // A definition drawn on its own canvas shows its defaults, through the frame a
+  // placement uses. Its maps are keyed on its own frames, so each frame reads its own.
+  const inputs = page.definitionInputs;
+  const scopeOf = (breakpointId: string): BindingScope =>
+    inputs ? pushInputFrame(rootScope, defaultValuesAt(inputs, { id: breakpointId, breakpoints }, rootScope)) : rootScope;
 
   return (
     <>
       {/* The self-hosted web fonts the page uses (src/lib/fonts/registry.ts). */}
-      <PageFontFaces roots={[appComponentTree, ...page.floatingElements]} />
+      <PageFonts page={page} />
       {/* props.rules, for every frame. Here and not beside a node: see the component. */}
-      <CanvasRuleStyles
-        tree={appComponentTree}
-        floating={page.floatingElements}
+      <PageRuleStyles
+        page={page}
         frames={viewportNodes.map(viewport => ({
           breakpointId: viewport.breakpointId!,
           width: viewport.viewportWidth ?? FRAME_FALLBACK_WIDTH,
@@ -107,7 +125,7 @@ const ResponsivePageRenderer = observer(() => {
           viewport={viewport}
           appComponentTree={appComponentTree}
           breakpoints={breakpoints}
-          scope={rootScope}
+          scope={scopeOf(viewport.breakpointId!)}
         />
       ))}
 
@@ -117,7 +135,7 @@ const ResponsivePageRenderer = observer(() => {
           key={element.id}
           element={element}
           breakpoints={breakpoints}
-          scope={rootScope}
+          scope={scopeOf('')}
         />
       ))}
     </>

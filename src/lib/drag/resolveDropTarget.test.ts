@@ -470,3 +470,21 @@ describe('resolveDropTarget on a Layers row', () => {
     expect(resolveAtMiddle(row).target).toMatchObject({ kind: 'sibling', siblingId: 'run' });
   });
 });
+
+describe('resolveDropTarget on a placement', () => {
+  const source: DragSource = { kind: 'create', registryId: 'text' };
+
+  it('offers before and after, never inside, whatever the root tag and its children', () => {
+    const root = el('div', { 'data-inner-component-id': 'p1', 'data-placement-root': 'desk-c-root' });
+    el('h3', { 'data-inner-component-id': 'c-title' }, root);
+    document.body.appendChild(root);
+    stubRect(root, { top: 0, height: 100 });
+    stubHitStack([root]);
+
+    for (const [clientY, position] of [[10, 'before'], [50, 'after'], [90, 'after']] as const) {
+      const out = resolveDropTarget({ pointer: { clientX: 50, clientY }, transform: NO_TRANSFORM, source });
+      expect(out.target).toEqual({ kind: 'sibling', siblingId: 'p1', position });
+      expect(out.indicator?.kind).toBe(position);
+    }
+  });
+});
