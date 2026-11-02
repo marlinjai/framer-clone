@@ -157,4 +157,41 @@ describe('carousel', () => {
     expect(behaviourOf(after).state?.[0]).toMatchObject({ max: 3 });
     expect(refusals(after)).toEqual([]);
   });
+
+  it('counts only slides, and leaves anything else in the slides container alone', () => {
+    const base = carousel({ seed: 'a1' });
+    const heading = { id: 'a1-note', type: 'h3', props: { children: 'Note' } };
+    const slidesNode = base.children?.[1] as PresetNode;
+    const edited = { ...base, children: [base.children?.[0] as PresetNode, { ...slidesNode, children: [...(slidesNode.children ?? []), heading] }] };
+    const after = addSlide(edited, 'Fourth');
+    const container = after.children?.[1] as PresetNode;
+    const note = container.children?.find((child) => child.id === 'a1-note') as PresetNode;
+    expect(behaviourOf(note)).toEqual({});
+    expect(propsOf(note)['aria-label']).toBeUndefined();
+    expect(behaviourOf(after).state?.[0]).toMatchObject({ max: 3 });
+    const slides = container.children?.filter((child) => propsOf(child)['aria-roledescription'] === 'slide') ?? [];
+    expect(slides.map((slide) => propsOf(slide)['aria-label'])).toEqual(['1 of 4', '2 of 4', '3 of 4', '4 of 4']);
+  });
+
+  it('does not take a timer a person added for the preset rotation', () => {
+    const base = carousel({ seed: 'a1' });
+    const own: Trigger = { id: 'own-timer', on: 'every', ms: 4000, do: [{ emit: 'tick' }] };
+    const after = addSlide(withProps(base, { behaviour: { ...behaviourOf(base), on: [own] } }), 'Fourth');
+    expect(behaviourOf(after).on?.map((trigger) => trigger.id)).toEqual(['own-timer']);
+    expect(behaviourOf(after).state?.some((state) => state.id.endsWith('-playing'))).toBe(false);
+  });
+
+  it('gives a copied slide fresh DOM ids with its own references following', () => {
+    const base = carousel({ seed: 'a1' });
+    const slidesNode = base.children?.[1] as PresetNode;
+    const [first, ...rest] = slidesNode.children ?? [];
+    const title = { id: 'a1-slide-title', type: 'h3', props: { id: 'slide-title', children: 'Title' } };
+    const slide = withProps({ ...(rest.at(-1) as PresetNode), children: [title] }, { 'aria-labelledby': 'slide-title' });
+    const edited = { ...base, children: [base.children?.[0] as PresetNode, { ...slidesNode, children: [first, ...rest.slice(0, -1), slide] }] } as PresetNode;
+    const after = addSlide(edited, 'Fourth');
+    const copy = (after.children?.[1] as PresetNode).children?.at(-1) as PresetNode;
+    const copiedTitle = copy.children?.[0] as PresetNode;
+    expect(propsOf(copiedTitle).id).not.toBe('slide-title');
+    expect(propsOf(copy)['aria-labelledby']).toBe(propsOf(copiedTitle).id);
+  });
 });

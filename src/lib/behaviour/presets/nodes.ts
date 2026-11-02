@@ -17,6 +17,7 @@
 // PURE: no React, no MST.
 
 import { remapBehaviourRefs, type Binding, type StateValue, type StoredBehaviour, type Trigger, type Action } from '../format';
+import { renewCopyIds } from '@/lib/renderer/idRefs';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 
 /** A node as a preset writes it. `label` is what Layers calls it. */
@@ -118,5 +119,6 @@ export function copyItem(root: PresetNode, item: PresetNode): PresetNode {
     ids.set(at.id, id);
     return { ...at, id, ...(at.children ? { children: at.children.map(renew) } : {}) };
   };
-  return remapBehaviourRefs(renew(item), ids);
+  const copy = renew(item);
+  return remapBehaviourRefs(renewCopyIds(copy, copy.id), ids);
 }

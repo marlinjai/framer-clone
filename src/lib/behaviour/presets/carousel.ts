@@ -44,9 +44,9 @@ export function deriveCarousel(root: PresetNode, firstRotateMs?: number): Preset
   const slide = stateIdOn(root, 'slide');
   const playing = stateIdOn(root, 'playing');
   const hovered = stateIdOn(root, 'hovered');
-  const slides = slidesNode.children ?? [];
+  const slides = (slidesNode.children ?? []).filter(isSlide);
   const last = Math.max(0, slides.length - 1);
-  const rotateMs = behaviourOf(root).on?.find((trigger) => trigger.on === 'every')?.ms ?? firstRotateMs;
+  const rotateMs = behaviourOf(root).on?.find((trigger) => trigger.on === 'every' && trigger.preset === true)?.ms ?? firstRotateMs;
   const rotates = rotateMs !== undefined;
   const stop: Action[] = rotates ? [{ set: playing, value: false }] : [];
   const pressed = (by: 1 | -1): Trigger[] => [{ id: 'press', on: 'click', do: [...stop, { step: slide, by, wrap: true }] }];
@@ -67,8 +67,11 @@ export function deriveCarousel(root: PresetNode, firstRotateMs?: number): Preset
     });
   };
 
-  const slideEntry = (node: PresetNode, index: number): PresetNode =>
-    derived(withProps(node, { 'aria-label': `${index + 1} of ${slides.length}` }), { showWhen: { state: slide, eq: index } });
+  const slideEntry = (node: PresetNode): PresetNode => {
+    if (!isSlide(node)) return node;
+    const index = slides.indexOf(node);
+    return derived(withProps(node, { 'aria-label': `${index + 1} of ${slides.length}` }), { showWhen: { state: slide, eq: index } });
+  };
 
   return derived({
     ...root,
@@ -78,7 +81,7 @@ export function deriveCarousel(root: PresetNode, firstRotateMs?: number): Preset
       const live = rotates
         ? derived(child, { bind: [{ attr: 'aria-live', from: { map: playing, cases: { true: 'off', false: 'polite' } } }] })
         : withProps(child, { 'aria-live': 'polite' });
-      return { ...live, children: slides.map(slideEntry) };
+      return { ...live, children: slidesNode.children?.map(slideEntry) };
     }),
   }, {
     state: [
@@ -130,7 +133,7 @@ export function carousel({ seed, label = 'Highlights', slides = ['First slide', 
 export function addSlide(root: PresetNode, text: string): PresetNode {
   const children = root.children ?? [];
   const slidesNode = children.find((child) => child.children?.some(isSlide));
-  const last = slidesNode?.children?.at(-1);
+  const last = slidesNode?.children?.filter(isSlide).at(-1);
   if (!slidesNode || !last) return root;
   const slide = withProps(copyItem(root, last), { children: text });
   return deriveCarousel({
