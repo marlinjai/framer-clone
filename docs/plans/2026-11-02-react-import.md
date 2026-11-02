@@ -202,7 +202,7 @@ interface ImportLine {
   kind: LineKind;           // closed list, below
   disposition: Disposition;
   detail: string;           // from fixed templates, so it holds no source text
-  next: NextAction[];       // 'rewrite' | 'accept' | 'add-tokens' | 'add-entry' | 'rebuild-with-ai' | 'custom-code' | 'use-system-dark'
+  next: NextAction[];       // 'rewrite' | 'accept' | 'add-tokens' | 'add-entry' | 'rebuild-with-ai' | 'custom-code'
   nodeKey?: string;         // the node it landed on or would have, so the report can select it
 }
 
@@ -357,12 +357,12 @@ everything and letting the later rule win would be wrong, because Tailwind sorts
 | `@layer` around anything but `utilities`, in the compile output | Not read. Base styles are the page's, and the source's own base is read as data, see "Tokens" | |
 | Any selector `parseRule` still refuses | `left`, kind `refused-rule`, with the parser's reason | |
 
-**Tokens.** `bg-primary` compiles to `var(--primary)`, and theme tokens are a separate gap with no home yet (`:root` stays red
-under `page-level-css`). Worse, a real published page has the editor's own `--primary` in scope, so an unresolved token shows
+**Tokens.** `bg-primary` compiles to `var(--primary)`. Worse, a real published page has the editor's own `--primary` in scope, so an unresolved token shows
 the wrong colour with no error. So on the root of the import go every token a used value reaches, transitively, and **always the base-reached
 tokens the source defines**: `--border`, `--ring` and any token named in its `@layer base`, whose `@apply` classes are compiled as candidates to find
-them. No utility names those, so "reached" alone left a foreign theme on the editor's colours [proven]. The `.dark` values become one rule
-`&:is(.dark *)` on that root. When theme tokens land, these move there, and nothing else changes.
+them. No utility names those, so "reached" alone left a foreign theme on the editor's colours [proven]. Each colour or font among them becomes a site token, and the root keeps
+its name as an alias, `--primary: var(--fc-t-<id>)`, with the `.dark` value in that token's dark slot, because the base sheet reads `--border` by name. Everything else stays on the root, and its `.dark` values become a `@media (prefers-color-scheme: dark)` rule on the root, like `dark:` below. The
+[theme contract](2026-11-02-theme-and-head.md), "The React importer's theme lines", holds the rules, and nothing below the root changes.
 
 - A source with no such base rule has `currentcolor` borders, so a `border` class on it gets an explicit `borderColor: currentcolor`, or the page's rule
   would colour it **[unproven]**.
@@ -372,10 +372,9 @@ them. No utility names those, so "reached" alone left a foreign theme on the edi
 global, so they do not belong in a node's rule cap: `readRules` counts definitions under their own `MAX_DEFINITIONS_PER_NODE`, and the page budget still
 applies.
 
-**`dark:` is dead on a published page today.** `src/app/layout.tsx` writes `className="light"` on `html` [code], so with shadcn's
-`&:is(.dark *)` the rule lands, as the selector contract says, and never matches. One line says so, with `use-system-dark`,
-which rewrites to `@media (prefers-color-scheme: dark)`. A project without that `@custom-variant` gets the media form anyway, and
-that works.
+**`dark:` always becomes the media form.** `src/app/layout.tsx` writes `className="light"` on `html` [code], so with shadcn's
+`&:is(.dark *)` the rule would land, as the selector contract says, and never match. So every `dark:` is rewritten to
+`@media (prefers-color-scheme: dark)`, which the theme contract answers in every site mode.
 
 **Breakpoints.** The defaults are Desktop 1280, Tablet 768, Mobile 320 [code], with overrides under `max-width` queries. A map is written per
 property, and only when it is exact:
@@ -845,7 +844,7 @@ developer's own component is a new fixture, which is why the report, not the sco
 - **Vue and Svelte.** No.
 - **Tailwind version 3 semantics.** The compiler is version 4, so class names mostly work and a changed default is a difference the corpus
   would not see. The report says which compiler ran.
-- **A site-wide theme.** Tokens land on the import's root until theme tokens exist.
+- **A site's mode and document styles.** An import adds tokens and never chooses those.
 - **Replacing an existing definition from a re-import.**
 - **Page-level CSS from an import:** `html` and `body` rules stay `left`, under the existing gap `page-level-css`.
 
@@ -858,7 +857,7 @@ The fleet plan gives contracts to a fresh review agent before fan-out, so these 
 3. Constant Tailwind preamble, with tokens read as data. A `tailwind.config.js` is not read. Custom utilities are reported.
 4. `hover:` takes the Hover state's stricter gate.
 5. `color-mix` fallbacks are dropped, because every browser Tailwind 4 supports has it.
-6. Tokens land on the import's root, base-reached ones always. `body` colours stay on the page. Breakpoints map only when exact.
+6. Tokens become site tokens with aliases on the import's root, base-reached ones always. `body` colours stay on the page. Breakpoints map only when exact.
 7. `cn` runs the real `tailwind-merge` on literals, and a table wrapped by it orders rules by source layer.
 8. A `left` line blocks placing until a person accepts it.
 9. AI runs only on a press, per region, with a mandatory preview and a scan. The CLI has none.

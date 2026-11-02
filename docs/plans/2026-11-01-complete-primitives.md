@@ -83,7 +83,8 @@ render.
 4. **Reuse.** No reusable component was found in the data models, the registry or the left panel.
    A navbar on ten pages is ten copies.
 5. **Page-level items.** Head tags beyond the SEO metadata, shared design tokens (theme colours and
-   fonts as variables), and page-wide scripts have no model.
+   fonts as variables), and page-wide scripts have no model. Tokens and head items are specified in the
+   [theme and head contract](2026-11-02-theme-and-head.md); page-wide scripts belong to custom code.
 
 ## The evaluation
 
