@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: decided
 date: 2026-11-02
 title: "A 3D scene primitive: declarative three.js scenes that a person without code can build"
 summary: "A `scene` node (a div marked `data-scene` with `props.scene`, like the map embed) describes a 3D scene as data: models from the site's model library, material roles and curated presets, an environment preset, camera keyframes, and a timeline driven by scroll progress, time or page state. The server renders a required poster and the node's children; a lazy island loads three.js only when a scene is on the page and WebGL works. Models live in Storage Brain on Cloudflare R2 behind a content-addressed route, validated and re-encoded at upload. Eleven slices, about 34 to 47 agent days. The forcing case is the hand-built Grothe truck wash hero, measured side by side against the same scene as a sandboxed custom code block: not buildable under the sandbox contract Marlin accepted, buildable with stated losses under the widening the custom code plan proposes."
@@ -620,6 +620,8 @@ first a person without code can use.
 - **No GSAP.** The timeline and intros are our own code, which keeps the bundle budget.
 
 ## For Marlin to decide
+
+**Answered by Marlin on 2026-11-02:** D1, keep the default quotas, with 3D included in every plan until pricing is decided.
 
 - **D1, quotas.** Defaults above: 8 megabytes per model, 12 per scene, 200 per site. They set what storage and egress cost
   Lumitra per customer and whether 3D becomes a paid tier. Recommended: the defaults, with 3D in every plan until pricing is

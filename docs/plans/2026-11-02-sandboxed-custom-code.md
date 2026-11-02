@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: decided
 date: 2026-11-02
 title: "Sandboxed custom code: the box service, the frame, the bridge, authoring and the slices to build them"
 summary: "Turns the accepted sandbox contract of the behaviour plan into buildable slices. A small Node service on its own registrable domain (one host, lumitrausercontent.com recommended) serves each block as a content-addressed document per site, with a sandbox Content Security Policy, no cookies, no network and frame requests only. The published page builds the frame itself, never from stored data; the editor canvas never runs it. A broker in the page's runtime talks to the frame over one MessageChannel port with typed reads and writes. Code enters only through a guarded route behind a per-site enable step with an audit table, travels with published revisions by hash, and is reachable by the erase tool. AI and import may propose a block, never write one. Eight slices (C1 to C8) plus one operator step, about 20 worker sessions as judgement. The forcing case, the Grothe truck wash three.js scene, cannot be carried under the accepted 256 kilobyte, no-network contract at all; slice C8 proposes the smallest widening that would carry it (own-host assets, a pinned library shelf), as decisions M11 to M15 for Marlin."
@@ -535,6 +535,8 @@ Total C1 to C7: about 17 sessions plus O1; with C8 about 20. B4 and B11 are beha
 the renderer files. C1 and O1 are the only ones touching infrastructure.
 
 ## For Marlin
+
+**Answered by Marlin on 2026-11-02:** M2 yes, `lumitrausercontent.com`, bought through Lumitra Mail's own buy-a-domain flow (a separate session in the email-editor repo is doing the purchase and reports back); M10 the default below; M11, M12 (three.js first), M14 and M15 yes; M13 yes if C8's probe holds. M9, the lawyer's reading before C7, still stands. C8 is therefore in scope, not a proposal.
 
 One line each, with the default that holds if he says nothing different.
 
