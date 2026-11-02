@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T12:43:47.820Z",
+  "generatedAt": "2026-11-02T13:29:55.293Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 325,
+  "durationSeconds": 314,
   "matrix": {
     "surfaces": {
       "format": {
@@ -5107,24 +5107,24 @@
     }
   },
   "corpus": {
-    "passed": 13,
-    "total": 16,
+    "passed": 15,
+    "total": 20,
     "checks": {
       "screenshot": {
-        "pass": 85,
-        "total": 96
+        "pass": 100,
+        "total": 141
       },
       "computed-styles": {
-        "pass": 72,
-        "total": 96
+        "pass": 111,
+        "total": 141
       },
       "accessibility-tree": {
-        "pass": 84,
-        "total": 96
+        "pass": 117,
+        "total": 141
       },
       "interaction": {
-        "pass": 27,
-        "total": 48
+        "pass": 30,
+        "total": 81
       }
     },
     "fixtures": [
@@ -6150,6 +6150,763 @@
           }
         ],
         "notMeasured": [],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
+      },
+      {
+        "fixture": "component-cards",
+        "group": "component",
+        "source": "hand-written: three placements of one card definition with different inputs, against three handwritten cards",
+        "pass": true,
+        "checks": {
+          "screenshot": {
+            "pass": 3,
+            "total": 3
+          },
+          "computed-styles": {
+            "pass": 3,
+            "total": 3
+          },
+          "accessibility-tree": {
+            "pass": 3,
+            "total": 3
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 0
+          }
+        },
+        "failures": [],
+        "notMeasured": [
+          "That each node with a class has one CSS block, not one per placement: the corpus compares pixels, computed styles and the accessibility tree, never the sheet",
+          "Inner parity ids repeat across placements, as they do in the original, so their styles are compared on the last card; each cell is compared on its own, text included"
+        ],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
+      },
+      {
+        "fixture": "component-navbar",
+        "group": "component",
+        "source": "hand-written: the contract's navbar (a tone input, Closed and Open, Escape, Open kept without a script), collapsing at every width",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 6,
+            "total": 12
+          },
+          "computed-styles": {
+            "pass": 6,
+            "total": 12
+          },
+          "accessibility-tree": {
+            "pass": 6,
+            "total": 12
+          },
+          "interaction": {
+            "pass": 3,
+            "total": 9
+          }
+        },
+        "failures": [
+          {
+            "fixture": "component-navbar",
+            "viewport": "Desktop",
+            "state": "click opens the menu",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "4.58 percent of pixels differ"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Desktop",
+            "state": "click opens the menu",
+            "check": "computed-styles",
+            "gap": "reusable-components",
+            "detail": "54 differences, first: page: text \"LumenMenuRoomsEventsContactWelcomeAguest\" became \"LumenMenuWelcomeAguesthouseintheoldtown.\""
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Desktop",
+            "state": "click opens the menu",
+            "check": "accessibility-tree",
+            "gap": "reusable-components",
+            "detail": "original \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - button \\\"Menu\\\" [expanded]\\n  - navigation \\\"Main\\\":\\n    - link \\\"Rooms\\\":\\n      \", replica \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - button \\\"Menu\\\" [expanded]\\n- mai"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Desktop",
+            "state": "click opens the menu",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Desktop",
+            "state": "the script failed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "4.58 percent of pixels differ"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Desktop",
+            "state": "the script failed",
+            "check": "computed-styles",
+            "gap": "reusable-components",
+            "detail": "54 differences, first: page: text \"LumenRoomsEventsContactWelcomeAguesthous\" became \"LumenWelcomeAguesthouseintheoldtown.\""
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Desktop",
+            "state": "the script failed",
+            "check": "accessibility-tree",
+            "gap": "reusable-components",
+            "detail": "original \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - navigation \\\"Main\\\":\\n    - link \\\"Rooms\\\":\\n      - /url: /rooms\\n    - link \\\"Ev\", replica \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n- main:\\n  - heading \\\"Welcome\\\" [leve"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Desktop",
+            "state": "the script failed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Tablet",
+            "state": "click opens the menu",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "3.69 percent of pixels differ"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Tablet",
+            "state": "click opens the menu",
+            "check": "computed-styles",
+            "gap": "reusable-components",
+            "detail": "54 differences, first: page: text \"LumenMenuRoomsEventsContactWelcomeAguest\" became \"LumenMenuWelcomeAguesthouseintheoldtown.\""
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Tablet",
+            "state": "click opens the menu",
+            "check": "accessibility-tree",
+            "gap": "reusable-components",
+            "detail": "original \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - button \\\"Menu\\\" [expanded]\\n  - navigation \\\"Main\\\":\\n    - link \\\"Rooms\\\":\\n      \", replica \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - button \\\"Menu\\\" [expanded]\\n- mai"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Tablet",
+            "state": "click opens the menu",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Tablet",
+            "state": "the script failed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "3.69 percent of pixels differ"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Tablet",
+            "state": "the script failed",
+            "check": "computed-styles",
+            "gap": "reusable-components",
+            "detail": "54 differences, first: page: text \"LumenRoomsEventsContactWelcomeAguesthous\" became \"LumenWelcomeAguesthouseintheoldtown.\""
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Tablet",
+            "state": "the script failed",
+            "check": "accessibility-tree",
+            "gap": "reusable-components",
+            "detail": "original \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - navigation \\\"Main\\\":\\n    - link \\\"Rooms\\\":\\n      - /url: /rooms\\n    - link \\\"Ev\", replica \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n- main:\\n  - heading \\\"Welcome\\\" [leve"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Tablet",
+            "state": "the script failed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Mobile",
+            "state": "click opens the menu",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "14.32 percent of pixels differ"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Mobile",
+            "state": "click opens the menu",
+            "check": "computed-styles",
+            "gap": "reusable-components",
+            "detail": "54 differences, first: page: text \"LumenMenuRoomsEventsContactWelcomeAguest\" became \"LumenMenuWelcomeAguesthouseintheoldtown.\""
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Mobile",
+            "state": "click opens the menu",
+            "check": "accessibility-tree",
+            "gap": "reusable-components",
+            "detail": "original \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - button \\\"Menu\\\" [expanded]\\n  - navigation \\\"Main\\\":\\n    - link \\\"Rooms\\\":\\n      \", replica \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - button \\\"Menu\\\" [expanded]\\n- mai"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Mobile",
+            "state": "click opens the menu",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Mobile",
+            "state": "the script failed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "14.32 percent of pixels differ"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Mobile",
+            "state": "the script failed",
+            "check": "computed-styles",
+            "gap": "reusable-components",
+            "detail": "54 differences, first: page: text \"LumenRoomsEventsContactWelcomeAguesthous\" became \"LumenWelcomeAguesthouseintheoldtown.\""
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Mobile",
+            "state": "the script failed",
+            "check": "accessibility-tree",
+            "gap": "reusable-components",
+            "detail": "original \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n  - navigation \\\"Main\\\":\\n    - link \\\"Rooms\\\":\\n      - /url: /rooms\\n    - link \\\"Ev\", replica \"- banner:\\n  - link \\\"Lumen\\\":\\n    - /url: /\\n- main:\\n  - heading \\\"Welcome\\\" [leve"
+          },
+          {
+            "fixture": "component-navbar",
+            "viewport": "Mobile",
+            "state": "the script failed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          }
+        ],
+        "notMeasured": [
+          "One definition on two pages: the corpus compares one document per fixture, so only this page is measured",
+          "Scripts turned off entirely: every page runs with scripts on, so the no-script state is the one a failed script leaves, the behaviour gate removed"
+        ],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
+      },
+      {
+        "fixture": "component-collection",
+        "group": "component",
+        "source": "hand-written: one card definition placed as a Collection's row template, its inputs bound to each row",
+        "pass": true,
+        "checks": {
+          "screenshot": {
+            "pass": 3,
+            "total": 3
+          },
+          "computed-styles": {
+            "pass": 3,
+            "total": 3
+          },
+          "accessibility-tree": {
+            "pass": 3,
+            "total": 3
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 0
+          }
+        },
+        "failures": [],
+        "notMeasured": [
+          "Inner parity ids repeat across rows, as they do in the original, so their styles are compared on the last row; the list is compared whole, text included"
+        ],
+        "defaultBase": {
+          "pass": 0,
+          "total": 3
+        }
+      },
+      {
+        "fixture": "component-states",
+        "group": "component",
+        "source": "hand-written: a plan tile with Hover, Pressed and Focused (on the tile and on a descendant) and a custom Selected state a click cycles",
+        "pass": false,
+        "checks": {
+          "screenshot": {
+            "pass": 3,
+            "total": 27
+          },
+          "computed-styles": {
+            "pass": 27,
+            "total": 27
+          },
+          "accessibility-tree": {
+            "pass": 21,
+            "total": 27
+          },
+          "interaction": {
+            "pass": 0,
+            "total": 24
+          }
+        },
+        "failures": [
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "hover",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.12 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "hover",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "hover, the script failed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.12 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "hover, the script failed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "pressed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.12 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "pressed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "pressed, the script failed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.12 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "pressed, the script failed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "keyboard focus",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.24 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "keyboard focus",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "keyboard focus, the script failed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.24 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "keyboard focus, the script failed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "click selects the tile",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "1.42 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "click selects the tile",
+            "check": "accessibility-tree",
+            "gap": "reusable-components",
+            "detail": "original \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:\\n    - button \\\"Yearly 120 francs a\", replica \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "click selects the tile",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "Space selects the tile",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "1.47 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "Space selects the tile",
+            "check": "accessibility-tree",
+            "gap": "reusable-components",
+            "detail": "original \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:\\n    - button \\\"Yearly 120 francs a\", replica \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Desktop",
+            "state": "Space selects the tile",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "hover",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.15 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "hover",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "hover, the script failed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.15 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "hover, the script failed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "pressed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.15 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "pressed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "pressed, the script failed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.15 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "pressed, the script failed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "keyboard focus",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.32 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "keyboard focus",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "keyboard focus, the script failed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.32 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "keyboard focus, the script failed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "click selects the tile",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "1.85 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "click selects the tile",
+            "check": "accessibility-tree",
+            "gap": "reusable-components",
+            "detail": "original \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:\\n    - button \\\"Yearly 120 francs a\", replica \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "click selects the tile",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "Space selects the tile",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "1.92 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "Space selects the tile",
+            "check": "accessibility-tree",
+            "gap": "reusable-components",
+            "detail": "original \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:\\n    - button \\\"Yearly 120 francs a\", replica \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Tablet",
+            "state": "Space selects the tile",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "hover",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.72 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "hover",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "hover, the script failed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.72 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "hover, the script failed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "pressed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.72 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "pressed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "pressed, the script failed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "0.72 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "pressed, the script failed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "keyboard focus",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "1.61 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "keyboard focus",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "keyboard focus, the script failed",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "1.61 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "keyboard focus, the script failed",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "click selects the tile",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "10.24 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "click selects the tile",
+            "check": "accessibility-tree",
+            "gap": "reusable-components",
+            "detail": "original \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:\\n    - button \\\"Yearly 120 francs a\", replica \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "click selects the tile",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "Space selects the tile",
+            "check": "screenshot",
+            "gap": "reusable-components",
+            "detail": "11.22 percent of pixels differ"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "Space selects the tile",
+            "check": "accessibility-tree",
+            "gap": "reusable-components",
+            "detail": "original \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:\\n    - button \\\"Yearly 120 francs a\", replica \"- list:\\n  - listitem:\\n    - button \\\"Monthly 12 francs a month\\\" [pressed]\\n  - listitem:"
+          },
+          {
+            "fixture": "component-states",
+            "viewport": "Mobile",
+            "state": "Space selects the tile",
+            "check": "interaction",
+            "gap": "reusable-components",
+            "detail": "the replica did not end up where the original did"
+          }
+        ],
+        "notMeasured": [
+          "Scripts turned off entirely: every page runs with scripts on, so the first three states are also run with the behaviour gate removed, which is what a failed script leaves",
+          "Inner parity ids repeat across placements, as they do in the original, so their styles are compared on the second tile; each cell is compared on its own, text included"
+        ],
         "defaultBase": {
           "pass": 0,
           "total": 3
@@ -7844,7 +8601,7 @@
   "roundTrip": {
     "nodesToJsxToNodes": {
       "pass": 126,
-      "total": 126
+      "total": 130
     },
     "jsxToNodesToRender": {
       "pass": 11,
@@ -7930,6 +8687,34 @@
         "id": "corpus: radix-dialog",
         "direction": "nodes-jsx-nodes",
         "pass": true
+      },
+      {
+        "id": "corpus: component-cards",
+        "direction": "nodes-jsx-nodes",
+        "pass": false,
+        "gap": "roundtrip-not-representable",
+        "detail": "type \"#component\" is not a JSX tag"
+      },
+      {
+        "id": "corpus: component-navbar",
+        "direction": "nodes-jsx-nodes",
+        "pass": false,
+        "gap": "roundtrip-not-representable",
+        "detail": "type \"#component\" is not a JSX tag"
+      },
+      {
+        "id": "corpus: component-collection",
+        "direction": "nodes-jsx-nodes",
+        "pass": false,
+        "gap": "roundtrip-not-representable",
+        "detail": "type \"#component\" is not a JSX tag"
+      },
+      {
+        "id": "corpus: component-states",
+        "direction": "nodes-jsx-nodes",
+        "pass": false,
+        "gap": "roundtrip-not-representable",
+        "detail": "type \"#component\" is not a JSX tag"
       },
       {
         "id": "pattern: accordion",
@@ -8630,6 +9415,22 @@
       "cost": 316
     },
     {
+      "id": "reusable-components",
+      "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
+      "matrixCells": 70,
+      "corpusChecks": 78,
+      "fixtures": [
+        "component-navbar",
+        "component-states"
+      ],
+      "onlyGapOf": [
+        "component-navbar",
+        "component-states"
+      ],
+      "roundTripCases": 0,
+      "cost": 148
+    },
+    {
       "id": "ai-tag-allowlist",
       "description": "The AI generator validator refuses this tag on purpose: blocked in every renderer, or a raw form control, which only works through the form presets.",
       "matrixCells": 116,
@@ -8660,16 +9461,6 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 87
-    },
-    {
-      "id": "reusable-components",
-      "description": "A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.",
-      "matrixCells": 70,
-      "corpusChecks": 0,
-      "fixtures": [],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 70
     },
     {
       "id": "page-level-css",
@@ -8778,6 +9569,16 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 5
+    },
+    {
+      "id": "roundtrip-not-representable",
+      "description": "A construct that cannot survive nodes to JSX and back, because the format has nowhere to put it.",
+      "matrixCells": 0,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 4,
+      "cost": 4
     },
     {
       "id": "mixed-text",

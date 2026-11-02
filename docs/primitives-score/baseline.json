@@ -21,9 +21,11 @@
     "stylesheet-escapes",
     "shadcn-button",
     "shadcn-card",
+    "component-cards",
+    "component-collection",
     "busbasis-not-found"
   ],
-  "corpusChecks": 268,
+  "corpusChecks": 286,
   "roundTrip": 137,
   "import": {
     "honestyFailures": 0,
