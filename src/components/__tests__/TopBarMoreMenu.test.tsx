@@ -60,6 +60,7 @@ vi.mock('@/components/ai/VisualReview', () => ({ PolishPageButton: stub('Polish'
 vi.mock('@/components/domains/DomainsButton', () => ({ __esModule: true, default: stub('Domains') }));
 vi.mock('@/components/site/SiteSettingsDialog', () => ({ __esModule: true, default: stub('Site settings') }));
 vi.mock('@/components/forms/FormSubmissionsButton', () => ({ __esModule: true, default: stub('Form submissions') }));
+vi.mock('@/components/PublishedVersionsButton', () => ({ __esModule: true, default: stub('Published versions') }));
 vi.mock('@/components/SaveButton', () => ({ __esModule: true, default: () => <button type="button">Save</button> }));
 vi.mock('@/components/PublishButton', () => ({ __esModule: true, default: () => <button type="button">Publish</button> }));
 
@@ -87,7 +88,7 @@ describe('compact top bar', () => {
       expect(screen.getByRole('button', { name })).toBeTruthy();
     }
     // The wide-only triggers carry the class that hides them in the compact bar.
-    for (const label of ['Generate', 'Polish', 'Domains', 'Site settings', 'Form submissions']) {
+    for (const label of ['Generate', 'Polish', 'Published versions', 'Domains', 'Site settings', 'Form submissions']) {
       expect(screen.getByRole('button', { name: `${label} button` }).className).toContain('max-lg:hidden');
     }
     expect(screen.getByRole('button', { name: 'More actions' }).className).toContain('lg:hidden');
@@ -100,6 +101,7 @@ describe('compact top bar', () => {
     expect(items).toEqual([
       'Generate with AI',
       'Polish with AI',
+      'Published versions',
       'Domains',
       'Site settings',
       'Form submissions',
@@ -110,6 +112,7 @@ describe('compact top bar', () => {
   it.each([
     ['Generate with AI', 'Generate'],
     ['Polish with AI', 'Polish'],
+    ['Published versions', 'Published versions'],
     ['Domains', 'Domains'],
     ['Site settings', 'Site settings'],
     ['Form submissions', 'Form submissions'],

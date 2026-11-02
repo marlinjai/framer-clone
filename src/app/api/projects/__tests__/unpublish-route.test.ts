@@ -103,7 +103,6 @@ function publishReq(body: unknown): Request {
 
 function installRepo(repo: {
   unpublishProject?: unknown;
-  saveProject?: unknown;
   publishProject?: unknown;
   ensureSiteDomain?: unknown;
 }) {
@@ -249,8 +248,7 @@ describe('POST /api/projects/unpublish (authorized)', () => {
     // the SAME slug across publishes; unpublishProject does NOT touch the domain
     // row, so the slug survives the publish -> unpublish -> re-publish cycle.
     const repo = {
-      saveProject: vi.fn().mockResolvedValue(undefined),
-      publishProject: vi.fn().mockResolvedValue(undefined),
+      publishProject: vi.fn().mockResolvedValue({ revision: 1 }),
       ensureSiteDomain: vi.fn().mockResolvedValue({ subdomain: 'demo-abc123' }),
       unpublishProject: vi.fn().mockResolvedValue(undefined),
     };

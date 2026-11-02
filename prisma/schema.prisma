@@ -210,6 +210,15 @@ enum DomainVerificationStatus {
   @@schema("public")
 }
 
+/// How a revision came to be: a `publish`, or the `baseline` that froze what a
+/// site published before revisions existed was serving (see SiteRevision).
+enum SiteRevisionKind {
+  publish
+  baseline
+
+  @@schema("public")
+}
+
 enum SiteExperimentStatus {
   draft
   running
@@ -276,6 +285,14 @@ model Site {
   // sole company, src/server/commerce/storefrontTenant.ts).
   companyId String? @map("company_id")
 
+  // The revision visitors are served (docs/plans/2026-11-01-immutable-published-copy.md). NULL for a site
+  // that has none yet: never published, or published before revisions existed, in which case the public
+  // resolver serves the working copy until the first save or publish freezes it. NO ACTION, not SET NULL:
+  // losing a live revision must fail loudly, never fall through to serving drafts. It is checked at the end
+  // of the statement, so the cascade from deleting the site passes.
+  publishedRevisionId String?       @map("published_revision_id")
+  publishedRevision   SiteRevision? @relation("SitePublishedRevision", fields: [publishedRevisionId], references: [id], onDelete: NoAction)
+
   // Persistence-layer timestamps (when the ROW was written), set by the DB.
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -284,9 +301,12 @@ model Site {
   domains     SiteDomain[]
   experiments SiteExperiment[]
   cspReports  CspReportCount[]
+  revisions   SiteRevision[]   @relation("SiteRevisions")
 
   @@index([workspaceId])
   @@index([tenantGroupId])
+  // Deleting a revision makes the foreign key check look here.
+  @@index([publishedRevisionId])
   @@map("sites")
   @@schema("public")
 }
@@ -324,6 +344,43 @@ model SitePage {
   @@index([tenantGroupId])
   @@index([siteId])
   @@map("site_pages")
+  @@schema("public")
+}
+
+/// One frozen copy of everything a visitor can read of a site, written only by
+/// publish (and once by the first save of a site published before revisions
+/// existed). Never updated: rollback moves `sites.published_revision_id`.
+/// `document` is the SiteRevisionDocument of src/server/sites/revision.ts, one
+/// JSON value so pages and components can never mix versions, read through
+/// parseRevisionDocument, so a new frozen field needs no migration.
+model SiteRevision {
+  id String @id @default(uuid())
+
+  siteId String @map("site_id")
+
+  // --- hard isolation boundary (both indexed), denormalised from the Site ---
+  workspaceId   String @map("workspace_id")
+  tenantGroupId String @map("tenant_group_id")
+
+  // 1, 2, 3... per site. Never reused: pruning removes only the oldest.
+  number   Int
+  kind     SiteRevisionKind @default(publish)
+  document Json
+
+  // The auth-brain user who published; NULL for a baseline, which nobody chose.
+  publishedBy String? @map("published_by")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  site Site @relation("SiteRevisions", fields: [siteId], references: [id], onDelete: Cascade)
+
+  // The sites this revision is live on: its own site, or none.
+  liveOn Site[] @relation("SitePublishedRevision")
+
+  @@unique([siteId, number])
+  @@index([workspaceId])
+  @@index([tenantGroupId])
+  @@map("site_revisions")
   @@schema("public")
 }
 

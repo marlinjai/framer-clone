@@ -7,8 +7,9 @@
 // SitePage rows via the P1 site repository — and STOPS there. Unlike
 // /api/projects/publish, it NEVER transitions the Site status: saveProject
 // preserves `Site.status` on update, so saving a draft keeps it draft and
-// saving a published site keeps it published. This is the path that lets a
-// loaded real project be edited and persisted without going live.
+// saving a published site keeps it published. Visitors read the revision the
+// last publish froze, never these rows, so this is the path that lets a loaded
+// real project be edited and persisted without going live.
 //
 // HARD ISOLATION (the whole point of P1): the TenantScope this writes under is
 // resolved from the SERVER-VERIFIED auth-brain session (the session's active

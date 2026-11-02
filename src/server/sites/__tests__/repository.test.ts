@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { getSnapshot } from 'mobx-state-tree';
 import { Prisma } from '@prisma/client';
 import ProjectModel from '@/models/ProjectModel';
-import { SiteRepository, type TenantScope } from '../repository';
+import { REVISIONS_KEPT, SiteRepository, type TenantScope } from '../repository';
 import {
   SiteNotFoundError,
   SiteNameConflictError,
@@ -61,10 +61,17 @@ function makeFakePrisma() {
     create: vi.fn(),
     deleteMany: vi.fn(),
   };
+  const siteRevision = {
+    findFirst: vi.fn(async () => null as unknown),
+    create: vi.fn(async () => ({ id: 'rev_new' }) as unknown),
+    deleteMany: vi.fn(),
+  };
   const prisma = {
+    $queryRaw: vi.fn<(...args: unknown[]) => Promise<unknown[]>>(async () => []),
     site,
     sitePage,
     siteDomain,
+    siteRevision,
     // Typed with the options argument (tests read it from the calls); the fake only runs the callback.
     $transaction: vi.fn<(fn: (tx: unknown) => Promise<unknown>, opts?: unknown) => Promise<unknown>>(async (fn): Promise<unknown> => fn(prisma)),
   };
@@ -391,6 +398,9 @@ describe('SiteRepository.saveProject concurrency', () => {
     await repo.saveProject(SCOPE, project());
     expect(prisma.$transaction.mock.calls[0][1]).toEqual({
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      // Room for a body at the 10 MB limit; Prisma's default is 5 seconds.
+      maxWait: 5_000,
+      timeout: 30_000,
     });
   });
 
@@ -547,29 +557,148 @@ describe('SiteRepository.renameSite', () => {
 });
 
 describe('SiteRepository.publishProject', () => {
-  it('flips status to published scoped by id AND workspace_id', async () => {
+  const PROJECT = {
+    id: 'site_1',
+    metadata: { title: 'S', description: '', createdAt: 1, updatedAt: 2 },
+    pages: {},
+  } as never;
+
+  /** A stored site in the caller's workspace, as the transaction reads it. */
+  function storedSite(over: Record<string, unknown> = {}) {
+    prisma.site.findUnique.mockResolvedValue({
+      id: 'site_1', workspaceId: 'ws_marlin', redirects: [], status: 'draft', publishedRevisionId: null, ...over,
+    });
+    prisma.site.findFirst.mockResolvedValue({
+      name: 'S', analyticsProjectId: null, ingestionEndpoint: null, apiKeyRef: null, lumitraEnabled: false,
+      redirects: [], siteSettings: {}, pages: [],
+    });
     prisma.site.updateMany.mockResolvedValue({ count: 1 });
-    await repo.publishProject(SCOPE, 'site_1');
+  }
+
+  it('flips status to published and points at the new revision, scoped by id AND workspace_id', async () => {
+    storedSite();
+    await expect(repo.publishProject(SCOPE, PROJECT)).resolves.toEqual({ revision: 1 });
     expect(prisma.site.updateMany).toHaveBeenCalledWith({
       where: { id: 'site_1', workspaceId: 'ws_marlin' },
-      data: { status: 'published' },
+      data: { status: 'published', publishedRevisionId: 'rev_new' },
     });
   });
 
-  it('throws SiteNotFoundError when no row in the workspace matched', async () => {
-    // A site id owned by another workspace matches zero rows: refuse, do not
-    // flip a foreign tenant's status.
-    prisma.site.updateMany.mockResolvedValue({ count: 0 });
-    await expect(
-      repo.publishProject(SCOPE, 'site_other_ws'),
-    ).rejects.toBeInstanceOf(SiteNotFoundError);
+  it('stamps the tenant scope and the publisher on the revision, and numbers it after the newest', async () => {
+    storedSite();
+    prisma.siteRevision.findFirst.mockResolvedValue({ number: 41 });
+    await expect(repo.publishProject(SCOPE, PROJECT, { publishedBy: 'user-1' })).resolves.toEqual({ revision: 42 });
+    expect(prisma.siteRevision.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        siteId: 'site_1', workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra', number: 42, kind: 'publish', publishedBy: 'user-1',
+      }),
+    }));
+  });
+
+  it('runs in one transaction that locks the site row first, with room for a body at the limit', async () => {
+    storedSite();
+    await repo.publishProject(SCOPE, PROJECT);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    // Not SERIALIZABLE: that made publishes of unrelated sites abort each other.
+    expect(prisma.$transaction.mock.calls[0][1]).toEqual({ maxWait: 5_000, timeout: 30_000 });
+    const [sql, siteId] = prisma.$queryRaw.mock.calls[0] as [TemplateStringsArray, string];
+    expect(sql.join('?')).toBe('SELECT id FROM public.sites WHERE id = ? FOR UPDATE');
+    expect(siteId).toBe('site_1');
+    expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(prisma.site.findUnique.mock.invocationCallOrder[0]);
+  });
+
+  it('keeps the newest revisions and prunes the rest', async () => {
+    storedSite();
+    prisma.siteRevision.findFirst.mockResolvedValue({ number: 40 });
+    await repo.publishProject(SCOPE, PROJECT);
+    expect(prisma.siteRevision.deleteMany).toHaveBeenCalledWith({
+      where: { siteId: 'site_1', number: { lte: 41 - REVISIONS_KEPT } },
+    });
+  });
+
+  it('throws SiteNotFoundError for a site in another workspace, flipping nothing', async () => {
+    // A site id owned by another workspace: refuse, do not flip a foreign tenant's status.
+    storedSite({ workspaceId: 'ws_other' });
+    await expect(repo.publishProject(SCOPE, PROJECT)).rejects.toBeInstanceOf(SiteNotFoundError);
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
+    expect(prisma.siteRevision.create).not.toHaveBeenCalled();
+  });
+
+  it('throws SiteGoneError for a deleted site: publish only ever updates', async () => {
+    prisma.site.findUnique.mockResolvedValue(null);
+    await expect(repo.publishProject(SCOPE, PROJECT)).rejects.toBeInstanceOf(SiteGoneError);
+    expect(prisma.siteRevision.create).not.toHaveBeenCalled();
   });
 
   it('rejects an empty scope', async () => {
     await expect(
-      repo.publishProject({ workspaceId: '', tenantGroupId: 'tg' }, 'site_1'),
+      repo.publishProject({ workspaceId: '', tenantGroupId: 'tg' }, PROJECT),
     ).rejects.toBeInstanceOf(InvalidTenantScopeError);
     expect(prisma.site.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('SiteRepository.rollbackToRevision', () => {
+  it('moves the pointer and sets published, scoped by id AND workspace_id', async () => {
+    prisma.site.findFirst.mockResolvedValue({ id: 'site_1' });
+    prisma.siteRevision.findFirst.mockResolvedValue({ id: 'rev_3' });
+    await repo.rollbackToRevision(SCOPE, 'site_1', 3);
+    expect(prisma.siteRevision.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { siteId: 'site_1', workspaceId: 'ws_marlin', number: 3 },
+    }));
+    expect(prisma.site.updateMany).toHaveBeenCalledWith({
+      where: { id: 'site_1', workspaceId: 'ws_marlin' },
+      data: { status: 'published', publishedRevisionId: 'rev_3' },
+    });
+  });
+
+  it('a site in another workspace reads as missing', async () => {
+    prisma.site.findFirst.mockResolvedValue(null);
+    await expect(repo.rollbackToRevision(SCOPE, 'site_other', 1)).rejects.toBeInstanceOf(SiteNotFoundError);
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('an unknown number changes nothing', async () => {
+    prisma.site.findFirst.mockResolvedValue({ id: 'site_1' });
+    await expect(repo.rollbackToRevision(SCOPE, 'site_1', 9)).rejects.toMatchObject({ code: 'revision_not_found', status: 404 });
+    expect(prisma.site.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty scope', async () => {
+    await expect(
+      repo.rollbackToRevision({ workspaceId: '', tenantGroupId: 'tg' }, 'site_1', 1),
+    ).rejects.toBeInstanceOf(InvalidTenantScopeError);
+  });
+});
+
+describe('SiteRepository.listRevisions', () => {
+  it('lists newest first, names the live number, and loads no documents', async () => {
+    const at = new Date('2026-11-01T10:00:00Z');
+    prisma.site.findFirst.mockResolvedValue({
+      status: 'published',
+      publishedRevisionId: 'rev_1',
+      revisions: [
+        { id: 'rev_2', number: 2, kind: 'publish', publishedBy: 'user-1', createdAt: at },
+        { id: 'rev_1', number: 1, kind: 'baseline', publishedBy: null, createdAt: at },
+      ],
+    });
+    const list = await repo.listRevisions(SCOPE, 'site_1');
+    expect(list).toEqual({
+      status: 'published',
+      live: 1,
+      revisions: [
+        { number: 2, kind: 'publish', publishedBy: 'user-1', createdAt: at },
+        { number: 1, kind: 'baseline', publishedBy: null, createdAt: at },
+      ],
+    });
+    const query = prisma.site.findFirst.mock.calls[0][0] as { where: unknown; select: { revisions: { select: object } } };
+    expect(query.where).toEqual({ id: 'site_1', workspaceId: 'ws_marlin' });
+    expect(query.select.revisions.select).not.toHaveProperty('document');
+  });
+
+  it('a missing or foreign site throws SiteNotFoundError', async () => {
+    prisma.site.findFirst.mockResolvedValue(null);
+    await expect(repo.listRevisions(SCOPE, 'site_x')).rejects.toBeInstanceOf(SiteNotFoundError);
   });
 });
 

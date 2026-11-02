@@ -13,6 +13,8 @@ export {
   type TenantScope,
   type SiteSummary,
   type DeletedSite,
+  type SiteRevisionList,
+  type SiteRevisionSummary,
 } from './repository';
 
 export {
@@ -23,6 +25,7 @@ export {
   SiteDeleteConfirmationError,
   InvalidTenantScopeError,
   InvalidPageSlugError,
+  SiteRevisionNotFoundError,
   siteRepositoryErrorResponse,
 } from './errors';
 

@@ -41,6 +41,7 @@ function site(
     redirects: [],
     siteSettings: normalizeSiteSettings({}),
     components,
+    revisionNumber: 1,
     pages: pages.map((p) => ({
       pageId: p.pageId,
       slug: p.slug,
