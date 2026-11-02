@@ -9,6 +9,7 @@
 // repository passes down.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { getSnapshot } from 'mobx-state-tree';
 import { Prisma } from '@prisma/client';
 import ProjectModel from '@/models/ProjectModel';
 import { SiteRepository, type TenantScope } from '../repository';
@@ -219,6 +220,47 @@ describe('SiteRepository.saveProject', () => {
 
     const upsertArg = prisma.site.upsert.mock.calls[0][0];
     expect(upsertArg.where).toEqual({ id: 'site_save' });
+  });
+});
+
+describe('SiteRepository.saveProject keeps the theme and the head items a body lacks', () => {
+  const STORED_THEME = { mode: 'dark', tokens: [{ id: 'ab12cd34', name: 'Ink', kind: 'color', light: '#111111' }], document: {} };
+  const STORED_HEAD = [{ kind: 'meta', name: 'author', content: 'Marlin' }];
+
+  function body(siteSettings: Record<string, unknown>) {
+    const p = ProjectModel.create({ id: 'site_keep', metadata: { title: 'Keep', description: '' }, pages: {} });
+    p.createPage('Home');
+    return { ...getSnapshot(p), siteSettings } as never;
+  }
+
+  beforeEach(() => {
+    prisma.site.findUnique.mockResolvedValue({
+      id: 'site_keep',
+      workspaceId: 'ws_marlin',
+      redirects: [],
+      siteSettings: { language: 'de', theme: STORED_THEME, head: STORED_HEAD },
+    });
+    prisma.site.updateMany.mockResolvedValue({ count: 1 });
+    prisma.sitePage.upsert.mockResolvedValue({});
+    prisma.sitePage.deleteMany.mockResolvedValue({ count: 0 });
+  });
+
+  const written = () => prisma.site.updateMany.mock.calls[0][0].data.siteSettings;
+
+  it('a body from a tab built before the keys existed keeps the stored theme and head', async () => {
+    await repo.saveProject(SCOPE, body({ language: 'en', siteName: 'New name' }), { mustExist: true });
+    expect(written()).toMatchObject({ language: 'en', siteName: 'New name', theme: STORED_THEME, head: STORED_HEAD });
+  });
+
+  it('a body carrying the keys writes them, and an explicit empty theme clears the stored one', async () => {
+    await repo.saveProject(SCOPE, body({ theme: { tokens: [], document: {} }, head: [] }), { mustExist: true });
+    expect(written().theme).toEqual({ tokens: [], document: {} });
+    expect(written().head).toEqual([]);
+  });
+
+  it('reads the stored settings in the same transaction it writes them', async () => {
+    await repo.saveProject(SCOPE, body({}), { mustExist: true });
+    expect(prisma.site.findUnique.mock.calls[0][0].select).toMatchObject({ siteSettings: true });
   });
 });
 

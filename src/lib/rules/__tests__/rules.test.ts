@@ -85,7 +85,7 @@ describe('parseSelector: what it accepts', () => {
     '& > li + li',
     '& col || td',
     '&:is(h1, h2)',
-    '&[class*="c-a1"]',
+    '&[class*="u-c-a1"]',
     '&:hover, &:focus',
     '& a, & b, & c',
   ])('accepts %s', (text) => {
@@ -213,6 +213,71 @@ describe('parseSelector: its refusals', () => {
     ['a nested attribute', '&:has([class^="fc-"])'],
   ])('refuses a renderer name: %s', (_, text) => {
     expect(selectorRefused(text)).toMatch(/fc-/);
+  });
+
+  // What a canvas wraps content in and a page does not: reading one shows the editor one thing and a visitor another.
+  it.each([
+    ['an ancestor through :is', '&:is([data-ground] *)'],
+    ['upper case', '&:is([DATA-GROUND] *)'],
+    ['a namespace', '&:is([*|data-ground] *)'],
+    ['through :where', '&:where([data-viewport-id] *)'],
+    ['a group variant', '&:is(:where(.group)[data-viewport-id] *)'],
+    ['the camera', '&:is([data-camera-transform] *)'],
+    ['the root pointer', '&:is(:root[data-pointer] *)'],
+    ['inside :has on html', '&:is(html:has([data-ground]) *)'],
+    ['inside :not', '&:not([data-editor-ui])'],
+    ['the renderer mark inside the node', '&:has([data-fc-n])'],
+    ['a state mark', '&[data-fcs-s1="true"]'],
+    ['with a value', '&:is([data-breakpoint-id="x"] *)'],
+  ])('refuses a platform attribute: %s', (_, text) => {
+    expect(selectorRefused(text)).toMatch(/belongs to the editor or the renderer/);
+  });
+
+  it.each([
+    ['the runtime show mark', '&[data-u-on]'],
+    ['roving focus', '&:has([data-u-active])'],
+    ['around it', '&:is([data-u-on] *)'],
+  ])('refuses a mark only a published page carries: %s', (_, text) => {
+    expect(selectorRefused(text)).toMatch(/belongs to the editor or the renderer/);
+  });
+
+  // The renderer writes style, id and class, and not the same way on the canvas as on a page (proven on the mounted editor).
+  it.each([
+    ['style on the node', '&[style]'],
+    ['a style substring', '&[style*="width"]'],
+    ['no style', '&:not([style])'],
+    ['style inside', '&:has([style*="10px"])'],
+    ['style on an ancestor', '&:is([style*="transform"] *)'],
+    ['upper case', '&[STYLE]'],
+    ['id on an ancestor', '&:is([id^="ground-wrapper"] *)'],
+    ['any id', '&[id]'],
+    ['class on the node', '&[class]'],
+    ['no class', '&:not([class])'],
+    ['a class substring', '&[class*="fc"]'],
+    ['a class on an ancestor', '&:is([class*="ground-wrap"] *)'],
+    ['a class word', '&:is([class~="ground-wrapper"] *)'],
+    ['the whole class', '&[class="u-c-x"]'],
+    ['a class suffix', '&[class$="u-c-x"]'],
+    ['a bare prefix', '&[class^="u-c-"]'],
+    ['a namespace', '&[*|class*="x"]'],
+  ])('refuses a renderer attribute: %s', (_, text) => {
+    expect(selectorRefused(text)).toMatch(/the renderer writes/);
+  });
+
+  it('reads a stored class and id by name, and a kept class by its prefix', () => {
+    for (const text of ['&.mine', '&#own', '& .kid', '&:has(.kid)', '& [class*="u-c-size-"]', '&[class^="u-c-icon"]', '&[class~="u-c-x" i]', '&[class|="u-c-btn"]']) {
+      expect(selectorRefused(text)).toBeUndefined();
+    }
+  });
+
+  it('refuses a platform attribute in an @scope prelude', () => {
+    expect(parseWrapper('@scope ([data-ground]) to ([data-fc-n])')).toMatchObject({ ok: false });
+  });
+
+  it('lets a rule read what authors and the platform write for it', () => {
+    for (const text of ['&:where([data-u-v-variant="outline"])', '&:is([data-u-c-1a2b3c4d] *)', '&[data-state="open"]', '&:is([data-slot="card"] *)', '&[data-groundless]']) {
+      expect(selectorRefused(text)).toBeUndefined();
+    }
   });
 
   it('lets a class through that only starts alike, since the check is for stability', () => {

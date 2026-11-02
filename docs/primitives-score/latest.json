@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-02T08:33:22.577Z",
+  "generatedAt": "2026-11-02T09:06:15.699Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 256,
+  "durationSeconds": 271,
   "matrix": {
     "surfaces": {
       "format": {
@@ -5811,7 +5811,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "mixed-text",
-            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourname.\" became \"AccountPasswordChangeyourname.Changeyour\""
+            "detail": "1 differences, first: content-password: text \"\" became \"Changeyourpassword.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5819,7 +5819,7 @@
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
+            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5835,7 +5835,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
+            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5851,7 +5851,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "mixed-text",
-            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourname.\" became \"AccountPasswordChangeyourname.Changeyour\""
+            "detail": "1 differences, first: content-password: text \"\" became \"Changeyourpassword.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5859,7 +5859,7 @@
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
+            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5875,7 +5875,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
+            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5891,7 +5891,7 @@
             "state": "initial",
             "check": "computed-styles",
             "gap": "mixed-text",
-            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourname.\" became \"AccountPasswordChangeyourname.Changeyour\""
+            "detail": "1 differences, first: content-password: text \"\" became \"Changeyourpassword.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5899,7 +5899,7 @@
             "state": "arrow key changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
+            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
           },
           {
             "fixture": "radix-tabs",
@@ -5915,7 +5915,7 @@
             "state": "click changes the tab",
             "check": "computed-styles",
             "gap": "behaviour-state",
-            "detail": "3 differences, first: page: text \"AccountPasswordChangeyourpassword.\" became \"AccountPasswordChangeyourname.Changeyour\""
+            "detail": "1 differences, first: content-account: text \"\" became \"Changeyourname.\""
           },
           {
             "fixture": "radix-tabs",
