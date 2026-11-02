@@ -35,6 +35,13 @@ const page = (): ComponentNode =>
       behaviour: { on: [{ id: 't1', on: 'click', do: [{ toggle: 'open' }] }], bind: [{ attr: 'aria-expanded', from: { get: 'open' } }] },
     }),
     node('panel', 'div', { children: 'The details', behaviour: { showWhen: { state: 'open', eq: true } } }),
+    // Near the top, so at 390 pixels it is on the screen above the phone's bar, whatever the fonts.
+    node(
+      'scroller',
+      'div',
+      { style: { height: '60px', width: '200px', overflow: 'auto' } },
+      ...[0, 1, 2].map((index) => node(`row-${index}`, 'div', { children: `Row ${index}`, style: { height: '60px' } })),
+    ),
     node('more', 'details', {}, node('more-summary', 'summary', { children: 'More' }), node('more-body', 'p', { children: 'Inside more' })),
     node('agree', 'input', { id: 'agree', type: 'checkbox' }),
     node('agree-label', 'label', { htmlFor: 'agree', children: 'Agree' }),
@@ -46,12 +53,6 @@ const page = (): ComponentNode =>
     // As wide as its word, so a double press at its centre lands on the text.
     node('target', 'p', { id: 'target', children: 'Target', style: { width: 'fit-content' } }),
     node('sheet', 'form', { action: '/sink' }, node('q', 'input', { type: 'text', name: 'q', 'aria-label': 'Query' }), node('send', 'button', { type: 'submit', children: 'Send' })),
-    node(
-      'scroller',
-      'div',
-      { style: { height: '60px', width: '200px', overflow: 'auto' } },
-      ...[0, 1, 2].map((index) => node(`row-${index}`, 'div', { children: `Row ${index}`, style: { height: '60px' } })),
-    ),
     node('show', 'button', { type: 'button', children: 'Show dialog', behaviour: { on: [{ id: 't2', on: 'click', do: [{ dialog: 'dlg', op: 'showModal' }] }] } }),
     node('dlg', 'dialog', { id: 'dlg' }, node('inside', 'button', { type: 'button', children: 'Inside' })),
     node('hoverer', 'p', {
@@ -411,9 +412,12 @@ describe.each(ENGINES)('in %s', (name, engine) => {
       const scroller = inFrames(page, 'scroller').last();
       const box = await scroller.boundingBox();
       if (!box) throw new Error('the scroller has no box');
+      const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      // The finger has to land on the scroller itself, not off the screen or on the editor's bar.
+      expect(await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('[data-inner-component-id="scroller"]'), point)).toBe(true);
       const before = await camera(page);
       const cdp = await page.context().newCDPSession(page);
-      await cdp.send('Input.synthesizeScrollGesture', { x: box.x + box.width / 2, y: box.y + box.height / 2, yDistance: -40, gestureSourceType: 'touch', speed: 400 });
+      await cdp.send('Input.synthesizeScrollGesture', { ...point, yDistance: -40, gestureSourceType: 'touch', speed: 400 });
       await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
       expect(await camera(page)).toBe(before);
     }
