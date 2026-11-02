@@ -8,12 +8,14 @@
 //      linked to the order, its lines and total those of the order, its service date the order's day;
 //   2. declined (backtrack): the payment fails, the reserved stock goes back, no receipt; a new checkout works;
 //   3. webhook twice (resume): a repeated event changes nothing and issues no second receipt; a receipt that
-//      failed (the Books not set up yet) is issued on the next delivery once they are;
+//      failed (the Books not set up yet) is issued by its job once they are, while a repeated delivery writes nothing;
 //   4. late (re-entry): an expired payment released its stock; a late success with the stock still there is
 //      paid and gets its receipt, with the stock gone it is refunded and the order stays closed.
 // The expiry sweep on its own: two sweeps at once release once (each truly waiting on the same payment row), a
 // payment racing a sweep ends paid with its stock held, and one payment that cannot be closed keeps no other
 // from closing.
+// Since slice B4 a payment that becomes paid writes its receipt's job, and `settle` below runs it as a route does
+// right after the event; receiptJob.itest.ts covers the job itself.
 // All data is synthetic.
 
 import { randomUUID } from 'node:crypto';
@@ -23,6 +25,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { catalogRepository } from '../../repository/catalog';
 import { pricingRepository } from '../../repository/pricing';
 import { createOrder } from '../../order/createOrder';
+import { emitCommerceEvent } from '../../jobs/emit';
+import { runJobNow } from '../../jobs/run';
 import { ExpirySweepError, handlePaymentEvent, platformFee, sweepExpiredPayments, type PaymentDeps } from '../payments';
 import { demoProvider, type PaymentEvent, type PaymentProvider } from '../provider';
 import { berlinDay, ensureReceipt } from '../receipt';
@@ -95,9 +99,34 @@ async function newShop(opts: { books?: boolean } = {}): Promise<Shop> {
       tgId: env.tgId,
       provider: () => recordingProvider,
       receipt: (orderId) => ensureReceipt(scope, contacts, orderId, { now: clock.now }),
+      emit: (trx, e) => emitCommerceEvent(trx, e),
       now: () => clock.now,
     },
   };
+}
+
+const MINUTE = 60 * 1000;
+
+/** What a run of the job worker needs to act as this shop: its payment wiring and its clock. */
+function jobOptions() {
+  return {
+    paymentDeps: (_group: unknown, tenantId: string) => {
+      if (tenantId !== shop.company) throw new Error(`a job of company ${tenantId} reached the wiring of ${shop.company}`);
+      return shop.deps;
+    },
+    now: () => shop.clock.now,
+  };
+}
+
+/**
+ * Apply an event as a route does: the payment's change, then the first attempt at each job it wrote. Answers the
+ * outcome with the receipt as the payment holds it afterwards.
+ */
+async function settle(e: PaymentEvent) {
+  const outcome = await handlePaymentEvent(shop.deps, e);
+  for (const id of outcome.jobIds) await runJobNow({ id: env.tgId, db: env.appDb }, shop.company, id, jobOptions());
+  const row = await payment(e.orderId);
+  return { ...outcome, receiptDocumentId: row.receipt_document_id, receiptError: row.receipt_error };
 }
 
 beforeEach(async () => {
@@ -206,12 +235,12 @@ describe('paying an order and its receipt', () => {
   it('each receipt is made out to the buyer as entered for its order, even under a name an earlier order used', async () => {
     const ring = await stockedRing(3, 4999);
     const first = await placeOrder(ring, 1);
-    await handlePaymentEvent(shop.deps, event(first, 'payment_succeeded'));
+    await settle(event(first, 'payment_succeeded'));
     // The same name buys again from another address, with another email: the contacts database knows one person
     // of that name, but this invoice must carry this order's address.
     const moved: BuyerInput = { ...BUYER, email: 'alex.new@example.com', addressLine1: 'Neue Straße 9', postalCode: '10115', city: 'Berlin' };
     const second = await placeOrder(ring, 1, moved);
-    await handlePaymentEvent(shop.deps, event(second, 'payment_succeeded'));
+    await settle(event(second, 'payment_succeeded'));
 
     const snapshot = async (orderId: string) => {
       const row = await env.ownerDb
@@ -229,10 +258,10 @@ describe('paying an order and its receipt', () => {
   it('a buyer of the same name with another VAT id gets no receipt showing the first buyer\'s tax identity', async () => {
     const ring = await stockedRing(3, 4999);
     const first = await placeOrder(ring, 1);
-    await handlePaymentEvent(shop.deps, event(first, 'payment_succeeded'));
+    await settle(event(first, 'payment_succeeded'));
     const business: BuyerInput = { ...BUYER, vatId: 'DE123456789' };
     const second = await placeOrder(ring, 1, business);
-    const outcome = await handlePaymentEvent(shop.deps, event(second, 'payment_succeeded'));
+    const outcome = await settle(event(second, 'payment_succeeded'));
     expect(outcome).toMatchObject({ status: 'paid', receiptDocumentId: null, receiptError: 'TAX_IDENTITY_MISMATCH' });
     expect(await receiptsOf(second)).toEqual([]);
   });
@@ -245,7 +274,7 @@ describe('paying an order and its receipt', () => {
     expect(opened.expires_at.getTime() - shop.clock.now.getTime()).toBe(30 * 60 * 1000);
     expect(await reserved(ring.item)).toBe(2);
 
-    const outcome = await handlePaymentEvent(shop.deps, event(orderId, 'payment_succeeded', { amount: 9998, currency: 'EUR' }));
+    const outcome = await settle(event(orderId, 'payment_succeeded', { amount: 9998, currency: 'EUR' }));
     expect(outcome).toMatchObject({ status: 'paid', duplicate: false, receiptError: null });
     const [receipt] = await receiptsOf(orderId);
     expect(receipt).toMatchObject({ id: outcome.receiptDocumentId, status: 'issued', document_number: '1000', total: 9998 });
@@ -282,7 +311,7 @@ describe('paying an order and its receipt', () => {
     await demoProvider.start(
       { tenantId: shop.company, orderId, orderNumber: 'x', amount: 4900, currency: 'EUR', applicationFeeAmount: 49, buyerEmail: BUYER.email, simulateDecline: true },
       async (e) => {
-        outcome = await handlePaymentEvent(shop.deps, e);
+        outcome = await settle(e);
       },
     );
     expect(outcome).toMatchObject({ status: 'failed', receiptDocumentId: null });
@@ -292,47 +321,59 @@ describe('paying an order and its receipt', () => {
 
     // The last unit is free again: a new checkout reserves and pays it.
     const again = await placeOrder(ring);
-    expect((await handlePaymentEvent(shop.deps, event(again, 'payment_succeeded'))).status).toBe('paid');
+    expect((await settle(event(again, 'payment_succeeded'))).status).toBe('paid');
   });
 
   it('webhook twice: the repeat changes nothing and issues no second receipt', async () => {
     const ring = await stockedRing(2);
     const orderId = await placeOrder(ring);
     const e = event(orderId, 'payment_succeeded');
-    const first = await handlePaymentEvent(shop.deps, e);
-    const second = await handlePaymentEvent(shop.deps, e);
-    expect(second).toEqual({ ...first, duplicate: true });
+    const first = await settle(e);
+    const second = await settle(e);
+    expect(second).toEqual({ ...first, duplicate: true, jobIds: [] });
     expect(await receiptsOf(orderId)).toHaveLength(1);
     // A different event saying the same: also nothing new.
-    const third = await handlePaymentEvent(shop.deps, event(orderId, 'payment_succeeded'));
+    const third = await settle(event(orderId, 'payment_succeeded'));
     expect(third).toMatchObject({ status: 'paid', duplicate: false, receiptDocumentId: first.receiptDocumentId });
     expect(await receiptsOf(orderId)).toHaveLength(1);
     // A failure arriving after the success changes nothing either.
-    expect((await handlePaymentEvent(shop.deps, event(orderId, 'payment_failed'))).status).toBe('paid');
+    expect((await settle(event(orderId, 'payment_failed'))).status).toBe('paid');
     expect(await reserved(ring.item)).toBe(1);
   });
 
-  it('resume: a receipt the Books could not issue yet is issued on the next delivery once they can', async () => {
+  it('resume: a receipt the Books could not issue yet is issued by its job once they can, not by a repeat', async () => {
     shop = await newShop({ books: false });
     const ring = await stockedRing(2);
     const orderId = await placeOrder(ring);
     const e = event(orderId, 'payment_succeeded');
-    const first = await handlePaymentEvent(shop.deps, e);
+    const first = await settle(e);
     expect(first).toMatchObject({ status: 'paid', receiptDocumentId: null, receiptError: 'SETTINGS_MISSING' });
-    expect((await payment(orderId)).receipt_error).toBe('SETTINGS_MISSING');
     expect(await receiptsOf(orderId)).toEqual([]);
 
     await initCompany(booksScope(env.appDb, env.tgId, shop.company, { recipients: shop.dir }), { taxStatus: 'regular' });
-    const retried = await handlePaymentEvent(shop.deps, e);
-    expect(retried).toMatchObject({ status: 'paid', duplicate: true, receiptError: null });
-    expect(retried.receiptDocumentId).not.toBeNull();
-    expect(await payment(orderId)).toMatchObject({ receipt_error: null, receipt_document_id: retried.receiptDocumentId });
+    // A repeated delivery is a repeat: it writes no job and issues nothing.
+    const repeated = await settle(e);
+    expect(repeated).toMatchObject({ status: 'paid', duplicate: true, jobIds: [], receiptDocumentId: null });
+    // The job's next attempt, a minute later, issues it.
+    const job = await env.ownerDb
+      .selectFrom('commerce_job')
+      .select(['id', 'status', 'last_error'])
+      .where('tenant_id', '=', shop.company)
+      .where('kind', '=', 'receipt_issue')
+      .executeTakeFirstOrThrow();
+    expect(job).toMatchObject({ status: 'pending', last_error: 'SETTINGS_MISSING' });
+    shop.clock.now = new Date(shop.clock.now.getTime() + MINUTE);
+    expect(await runJobNow({ id: env.tgId, db: env.appDb }, shop.company, job.id, jobOptions())).toMatchObject({ outcome: 'done' });
+    const after = await payment(orderId);
+    expect(after.receipt_error).toBeNull();
+    expect(after.receipt_document_id).not.toBeNull();
+    expect(await receiptsOf(orderId)).toHaveLength(1);
   });
 
   it('no buyer yet: paid, the receipt waits for the buyer', async () => {
     const ring = await stockedRing(2);
     const orderId = await placeOrder(ring, 1, null);
-    const outcome = await handlePaymentEvent(shop.deps, event(orderId, 'payment_succeeded'));
+    const outcome = await settle(event(orderId, 'payment_succeeded'));
     expect(outcome).toMatchObject({ status: 'paid', receiptDocumentId: null, receiptError: 'BUYER_MISSING' });
   });
 
@@ -356,7 +397,7 @@ describe('paying an order and its receipt', () => {
     expect((await payment(orderId)).status).toBe('expired');
     expect(await reserved(ring.item)).toBe(0);
 
-    const late = await handlePaymentEvent(shop.deps, event(orderId, 'payment_succeeded'));
+    const late = await settle(event(orderId, 'payment_succeeded'));
     expect(late).toMatchObject({ status: 'paid', receiptError: null });
     expect(await reserved(ring.item)).toBe(1);
     expect(await receiptsOf(orderId)).toHaveLength(1);
@@ -366,11 +407,11 @@ describe('paying an order and its receipt', () => {
   it('declined, then paid in the same checkout: the paid payment keeps no closing time or decline code', async () => {
     const ring = await stockedRing(2);
     const orderId = await placeOrder(ring);
-    await handlePaymentEvent(shop.deps, event(orderId, 'payment_failed', { failureCode: 'card_declined' }));
+    await settle(event(orderId, 'payment_failed', { failureCode: 'card_declined' }));
     expect(await payment(orderId)).toMatchObject({ status: 'failed', failure_code: 'card_declined' });
     expect((await payment(orderId)).closed_at).not.toBeNull();
 
-    expect((await handlePaymentEvent(shop.deps, event(orderId, 'payment_succeeded'))).status).toBe('paid');
+    expect((await settle(event(orderId, 'payment_succeeded'))).status).toBe('paid');
     expect(await payment(orderId)).toMatchObject({ status: 'paid', failure_code: null, closed_at: null });
     expect(await reserved(ring.item)).toBe(1);
   });
@@ -378,20 +419,20 @@ describe('paying an order and its receipt', () => {
   it('late with the stock gone: refunded in full, the order stays closed, no receipt', async () => {
     const ring = await stockedRing(1);
     const orderId = await placeOrder(ring);
-    expect((await handlePaymentEvent(shop.deps, event(orderId, 'checkout_cancelled'))).status).toBe('cancelled');
+    expect((await settle(event(orderId, 'checkout_cancelled'))).status).toBe('cancelled');
     // Someone else buys the last unit meanwhile.
     const other = await placeOrder(ring);
-    await handlePaymentEvent(shop.deps, event(other, 'payment_succeeded'));
+    await settle(event(other, 'payment_succeeded'));
 
     const late = event(orderId, 'payment_succeeded');
-    const outcome = await handlePaymentEvent(shop.deps, late);
+    const outcome = await settle(late);
     expect(outcome).toMatchObject({ status: 'refunded', receiptDocumentId: null });
     expect(await payment(orderId)).toMatchObject({ status: 'refunded', failure_code: 'stock_gone' });
     expect(shop.refunds).toEqual([`demo_pi_${orderId}`]);
     expect(await receiptsOf(orderId)).toEqual([]);
     expect(await reserved(ring.item)).toBe(1);
     // Delivered again: nothing changes, no second refund.
-    expect((await handlePaymentEvent(shop.deps, late)).duplicate).toBe(true);
+    expect((await settle(late)).duplicate).toBe(true);
     expect(shop.refunds).toHaveLength(1);
   });
 });
@@ -492,7 +533,7 @@ describe('the expiry sweep', () => {
 
     await raceOnPaymentRow<unknown>(orderId, [
       () => sweepExpiredPayments(shop.deps, shop.company),
-      () => handlePaymentEvent(shop.deps, event(orderId, 'payment_succeeded')),
+      () => settle(event(orderId, 'payment_succeeded')),
     ]);
     expect((await payment(orderId)).status).toBe('paid');
     expect(await reserved(ring.item)).toBe(1);
@@ -507,7 +548,7 @@ describe('the expiry sweep', () => {
     await sweepExpiredPayments(shop.deps, shop.company);
     const next = await placeOrder(ring);
 
-    const late = await handlePaymentEvent(shop.deps, event(abandoned, 'payment_succeeded'));
+    const late = await settle(event(abandoned, 'payment_succeeded'));
     expect(late).toMatchObject({ status: 'refunded', receiptDocumentId: null });
     expect(await payment(abandoned)).toMatchObject({ status: 'refunded', failure_code: 'stock_gone' });
     expect(shop.refunds).toEqual([`demo_pi_${abandoned}`]);
@@ -520,7 +561,7 @@ describe('the expiry sweep', () => {
     const orderId = await placeOrder(ring);
     runOutWindow();
     await sweepExpiredPayments(shop.deps, shop.company);
-    await handlePaymentEvent(shop.deps, event(orderId, 'payment_succeeded'));
+    await settle(event(orderId, 'payment_succeeded'));
 
     runOutWindow();
     expect(await sweepExpiredPayments(shop.deps, shop.company)).toEqual([]);
@@ -590,7 +631,7 @@ describe('021_order_payment guarantees, for every role', () => {
       '42501',
     );
 
-    const paid = await handlePaymentEvent(shop.deps, event(orderId, 'payment_succeeded'));
+    const paid = await settle(event(orderId, 'payment_succeeded'));
     expect(await rejectionCode(update(env.ownerDb, { receipt_document_id: null }))).toBe('BK018');
     expect(await rejectionCode(update(env.ownerDb, { status: 'pending' }))).toBe('BK018');
     // The buyer is fixed once the payment is decided.
@@ -601,7 +642,7 @@ describe('021_order_payment guarantees, for every role', () => {
   it('a recorded provider event never changes or goes (BK019; the app role holds no right to try)', async () => {
     const ring = await stockedRing(3);
     const orderId = await placeOrder(ring);
-    await handlePaymentEvent(shop.deps, event(orderId, 'payment_failed'));
+    await settle(event(orderId, 'payment_failed'));
     const tamper = env.ownerDb.updateTable('payment_event').set({ event_type: 'payment_succeeded' }).where('order_id', '=', orderId);
     expect(await rejectionCode(tamper.execute())).toBe('BK019');
     expect(await rejectionCode(env.ownerDb.deleteFrom('payment_event').where('order_id', '=', orderId).execute())).toBe('BK019');

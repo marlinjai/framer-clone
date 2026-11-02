@@ -20,13 +20,14 @@ import {
 } from '@/server/books/__tests__/booksFixtures';
 import { JOB_BACKFILLS, runJobBackfills } from '../../jobs/backfills';
 import { claimJob, requeueJob } from '../../jobs/claim';
-import { runNextJob } from '../../jobs/run';
+import { emitCommerceEvent } from '../../jobs/emit';
+import { runJobNow, runNextJob } from '../../jobs/run';
 import { defineJobKind, JOB_LEASE_MS, MAX_OPEN_CLAIMS, type JobContext } from '../../jobs/types';
 import { createOrder } from '../../order/createOrder';
 import { catalogRepository } from '../../repository/catalog';
 import { pricingRepository } from '../../repository/pricing';
 import type { BuyerInput } from '../buyer';
-import { paymentExpiryKind } from '../expiryJob';
+import { PAYMENT_EXPIRY_KIND, paymentExpiryKind } from '../expiryJob';
 import { ExpirySweepError, handlePaymentEvent, sweepExpiredPayments, type PaymentDeps } from '../payments';
 import { demoProvider, type PaymentEvent, type PaymentProvider } from '../provider';
 import { ensureReceipt } from '../receipt';
@@ -79,6 +80,7 @@ async function newShop(opts: { books?: boolean } = {}): Promise<Shop> {
       tgId: env.tgId,
       provider: () => provider,
       receipt: (orderId) => ensureReceipt(scope, contacts, orderId, { now: clock.now }),
+      emit: (trx, e) => emitCommerceEvent(trx, e),
       now: () => clock.now,
     },
   };
@@ -160,7 +162,8 @@ async function placeOrder(ring: Ring, company = shop.company, quantity = 1): Pro
   return result.orderId;
 }
 
-const worker = () => ({ now: () => clock.now });
+// The worker here runs the expiry job only: a paid order's receipt job (slice B4) has its own suite, receiptJob.itest.ts.
+const worker = () => ({ now: () => clock.now, kinds: { [PAYMENT_EXPIRY_KIND]: paymentExpiryKind } });
 const group = () => ({ id: env.tgId, db: env.appDb });
 const runJob = () => runNextJob(group(), worker());
 
@@ -188,7 +191,13 @@ function expiryOf(orderId: string): PaymentEvent {
   return event(orderId, 'checkout_expired', { eventId: `expiry:${orderId}`, providerPaymentId: undefined });
 }
 
-const pay = (orderId: string) => handlePaymentEvent(shop.deps, event(orderId, 'payment_succeeded'));
+/** Pay as a route does: the payment's change, then the first attempt at the receipt job it wrote (slice B4). */
+async function pay(orderId: string) {
+  const outcome = await handlePaymentEvent(shop.deps, event(orderId, 'payment_succeeded'));
+  for (const id of outcome.jobIds) await runJobNow(group(), shop.company, id, { paymentDeps: () => shop.deps, now: () => clock.now });
+  const row = await payment(orderId);
+  return { ...outcome, receiptDocumentId: row.receipt_document_id, receiptError: row.receipt_error };
+}
 
 async function payment(orderId: string) {
   return env.ownerDb.selectFrom('order_payment').selectAll().where('order_id', '=', orderId).executeTakeFirstOrThrow();
@@ -502,7 +511,7 @@ describe('R: resume', () => {
   });
 
   it('the backfill keeps a job that exists, and never brings back a finished one', async () => {
-    expect(JOB_BACKFILLS.map((backfill) => backfill.name)).toEqual(['payment_expiry']);
+    expect(JOB_BACKFILLS.map((backfill) => backfill.name)).toEqual(['payment_expiry', 'receipt_issue']);
     const ring = await stockedRing(2);
     const orderId = await placeOrder(ring);
     const written = await jobOf(orderId);

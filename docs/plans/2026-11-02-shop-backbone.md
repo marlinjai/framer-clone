@@ -1147,3 +1147,11 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
   once confirmed, the request is set once and the buyer fixed (BK018), and another buyer gets 409 `buyer_fixed`. The demo refusal stays the pay route's first
   check. Left open on purpose: Stripe made the session but its answer was lost, then the buyer changed details; Stripe refuses the new request and the route
   answers 500, with nothing charged twice.
+- 2026-11-02: B4 built: `payment/receiptJob.ts`, the `payment.paid` consumer, `issueReceipt` in `payments.ts`, the receipt backfill, the webhook answering 200 once the
+  payment commits, and the demo pay route awaiting the first attempt. The import cycle is broken by bound methods, not handles: `payments.ts` never imports the registry,
+  so `PaymentDeps` gains `emit` (wired to `emitCommerceEvent` in `deps.ts`), the consumer writes through `jobs/schedule.ts`, and `JobPayments` gains `issueReceipt`, bound to
+  the job's company in `run.ts`. `JobRunOptions.paymentDeps` lets tests hand in their wiring. `PaymentOutcome` drops `receiptDocumentId` and `receiptError` for
+  `jobIds`; callers read the receipt from the payment. Decided beyond the text: the receipt job refuses (`dead` at once) `TOTALS_MISMATCH`, `TAX_IDENTITY_MISMATCH`,
+  `TAX_CASE_UNSUPPORTED`, `BUYER_MISSING`, `ORDER_NOT_FOUND`, `REVERSE_CHARGE_NOT_ALLOWED` and `INVALID_INPUT`, since a retry can only fail the same way; an archived contact
+  or customer retries, because a person restoring it heals it with no button to press. `TAX_PROFILE_MISMATCH` joins the list in B11. A `NOT_PAID` from the Books ends the
+  job `done`. Its deadline is 8 minutes: the signal reaches nothing in `ensureReceipt`, so it only has to sit under the lease.

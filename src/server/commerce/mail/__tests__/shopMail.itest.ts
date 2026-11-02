@@ -24,6 +24,8 @@ vi.mock('server-only', () => ({}));
 import { catalogRepository } from '../../repository/catalog';
 import { pricingRepository } from '../../repository/pricing';
 import { createOrder } from '../../order/createOrder';
+import { emitCommerceEvent } from '../../jobs/emit';
+import { runJobNow } from '../../jobs/run';
 import { handlePaymentEvent, sweepExpiredPayments, type PaymentDeps } from '../../payment/payments';
 import { demoProvider, type PaymentEvent } from '../../payment/provider';
 import { ensureReceipt } from '../../payment/receipt';
@@ -109,6 +111,7 @@ function newShop(): Shop {
     tgId: env.tgId,
     provider: () => demoProvider,
     receipt: (orderId) => ensureReceipt(scope, contacts, orderId, { now: clock.now }),
+    emit: (trx, event) => emitCommerceEvent(trx, event),
     now: () => clock.now,
     deliverMail: (tenantId, orderId, kind) => {
       attempts.push(deliverShopMail(outbox, tenantId, orderId, kind));
@@ -167,11 +170,24 @@ async function placeOrder(ring: Awaited<ReturnType<typeof stockedRing>>) {
   return result.orderId;
 }
 
-/** Handle a payment event, then wait for the first mail attempts it started. */
-async function pay(event: PaymentEvent) {
-  const outcome = await handlePaymentEvent(shop.deps, event);
+/**
+ * Handle a payment event and run the receipt job it wrote, as a route starts it (slice B4), then wait for the first mail
+ * attempts that started. `deps` stands in for a process that wires the payment differently (one that dies before the
+ * mail's first attempt). Answers the outcome with the receipt as the payment holds it afterwards.
+ */
+async function pay(event: PaymentEvent, deps: PaymentDeps = shop.deps) {
+  const outcome = await handlePaymentEvent(deps, event);
+  for (const jobId of outcome.jobIds) {
+    await runJobNow({ id: env.tgId, db: env.appDb }, shop.company, jobId, { paymentDeps: () => deps, now: () => shop.clock.now });
+  }
   await Promise.all(shop.attempts.splice(0));
-  return outcome;
+  const row = await env.ownerDb
+    .selectFrom('order_payment')
+    .select('receipt_document_id')
+    .where('tenant_id', '=', shop.company)
+    .where('order_id', '=', event.orderId)
+    .executeTakeFirstOrThrow();
+  return { ...outcome, receiptDocumentId: row.receipt_document_id };
 }
 
 function paid(orderId: string, extra: Partial<PaymentEvent> = {}): PaymentEvent {
@@ -346,7 +362,7 @@ describe('the buyer hears of a paid order', () => {
     await connect();
     const orderId = await placeOrder(await stockedRing(2));
     // The process dies before the first attempt: the hand-off is never made.
-    await handlePaymentEvent({ ...shop.deps, deliverMail: undefined }, paid(orderId));
+    await pay(paid(orderId), { ...shop.deps, deliverMail: undefined });
     expect(await mailRow(orderId)).toMatchObject({ status: 'pending', attempts: 0 });
     expect(await sweepShopMail(shop.outbox)).toBe(1);
     expect(await mailRow(orderId)).toMatchObject({ status: 'sent' });
@@ -379,7 +395,7 @@ describe('the buyer hears of a paid order', () => {
     shop.outbox = { ...shop.outbox, mail: shop.mail };
     await connect();
     const orderId = await placeOrder(await stockedRing(2));
-    await handlePaymentEvent({ ...shop.deps, deliverMail: undefined }, paid(orderId));
+    await pay(paid(orderId), { ...shop.deps, deliverMail: undefined });
     const [first, second] = await Promise.all([
       deliverShopMail(shop.outbox, shop.company, orderId, 'order_confirmation'),
       deliverShopMail(shop.outbox, shop.company, orderId, 'order_confirmation'),

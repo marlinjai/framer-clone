@@ -1,7 +1,7 @@
 // src/server/commerce/jobs/__tests__/policy.test.ts
 //
-// The parts of the job engine that need no database: the backoff schedule, the policy check, and the empty production
-// registries (nothing runs on the engine until the slices that move work onto it). The engine itself is proved
+// The parts of the job engine that need no database: the backoff schedule, the policy check, and the production
+// registries (what runs on the engine so far, and the receipt job's refusals). The engine itself is proved
 // against real Postgres in jobs.itest.ts.
 
 import { describe, expect, it } from 'vitest';
@@ -9,6 +9,7 @@ import { z } from 'zod';
 
 import { COMMERCE_CONSUMERS, JOB_KINDS } from '../consumers';
 import { paymentExpiryConsumer } from '../../payment/expiryJob';
+import { RECEIPT_REFUSALS, receiptIssueConsumer } from '../../payment/receiptJob';
 import { backoffMs } from '../run';
 import { defineJobKind, JOB_LEASE_MS, type JobPolicy } from '../types';
 
@@ -49,10 +50,28 @@ describe('defineJobKind', () => {
 });
 
 describe('the production registries', () => {
-  it('hold the expiry job and nothing else yet', () => {
-    expect(Object.keys(JOB_KINDS)).toEqual(['payment_expiry']);
+  it('hold the expiry job and the receipt job, and nothing else yet', () => {
+    expect(Object.keys(JOB_KINDS)).toEqual(['payment_expiry', 'receipt_issue']);
     expect(COMMERCE_CONSUMERS['order.placed']).toEqual([paymentExpiryConsumer]);
-    expect(Object.values(COMMERCE_CONSUMERS).flat()).toEqual([paymentExpiryConsumer]);
+    expect(COMMERCE_CONSUMERS['payment.paid']).toEqual([receiptIssueConsumer]);
+    expect(Object.values(COMMERCE_CONSUMERS).flat()).toEqual([paymentExpiryConsumer, receiptIssueConsumer]);
+  });
+
+  it('give the receipt job the policy of section 1.8: 1, 5, 15, 60 minutes, then 6 hours, for 30 days', () => {
+    expect(JOB_KINDS.receipt_issue.policy).toMatchObject({
+      backoffMinutes: [1, 5, 15, 60],
+      laterMinutes: 360,
+      giveUpAfterMs: 30 * 24 * 60 * 60 * 1000,
+    });
+  });
+
+  it('refuse a receipt only for what a retry cannot heal, and retry what a person or time can', () => {
+    for (const code of ['TOTALS_MISMATCH', 'TAX_IDENTITY_MISMATCH', 'TAX_CASE_UNSUPPORTED', 'BUYER_MISSING', 'ORDER_NOT_FOUND']) {
+      expect(RECEIPT_REFUSALS.has(code)).toBe(true);
+    }
+    for (const code of ['SETTINGS_MISSING', 'COUNTER_MISSING', 'SENDER_INCOMPLETE', 'RECIPIENT_UNAVAILABLE', 'CONTACT_ARCHIVED', 'CUSTOMER_ARCHIVED', 'Error']) {
+      expect(RECEIPT_REFUSALS.has(code)).toBe(false);
+    }
   });
 
   it('give the expiry job the policy of section 1.8: 1, 5, 15, 60 minutes, then 6 hours, for 3 days', () => {

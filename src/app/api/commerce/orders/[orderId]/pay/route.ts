@@ -5,7 +5,8 @@
 // Pays an order placed on this storefront (docs/plans/2026-10-25-catalogue-design.md, slices 4 and 5).
 //   - DEMO provider: moves no money and decides at once; its answer goes through the same handler a real
 //     provider's webhook uses (src/server/commerce/payment/payments.ts), so a paid order gets its receipt in
-//     the company's Books exactly as with Stripe.
+//     the company's Books exactly as with Stripe: through its job (receiptJob.ts), whose first attempt this route
+//     awaits, so the answer names the receipt or why it is not there yet. A failed attempt is retried by the job.
 //   - Stripe: a hosted Checkout Session on the company's own Stripe account (a direct charge with the 1%
 //     platform fee); the buyer is sent there and the outcome arrives through the webhook.
 //
@@ -47,6 +48,7 @@ import { demoCheckoutAllowed } from '@/server/commerce/payment/demoCheckout';
 import { chooseCheckoutRequest, confirmCheckoutRequest } from '@/server/commerce/payment/checkoutRequest';
 import { PAYMENTS_UNAVAILABLE_MESSAGE, receiptReadiness } from '@/server/commerce/payment/receiptReadiness';
 import { demoProvider, type ProviderId } from '@/server/commerce/payment/provider';
+import { runJobNow } from '@/server/commerce/jobs/run';
 import { shopTaxProfile } from '@/server/commerce/payment/shopTax';
 import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
 import { toJsonb } from '@/server/books/snapshots';
@@ -218,23 +220,39 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
       },
     );
     if (!outcome) throw new Error(`the demo provider reported nothing for order ${orderId}`);
+    // The receipt's first attempt, awaited so the answer can name it. The payment stands whatever happens here: a
+    // failure is kept on the payment and retried by the job, and a worker that got there first is simply waited out by
+    // reading the payment after.
+    for (const jobId of outcome.jobIds) {
+      try {
+        await runJobNow({ id: tenantGroupId, db }, companyId, jobId);
+      } catch (err) {
+        console.error(`[payments] order ${orderId}: the first attempt at job ${jobId} failed to run; the worker retries it:`, err);
+      }
+    }
 
     if (outcome.status === 'failed') {
       return jsonError('payment_declined', 'the card was declined (a simulated decline, no money moved)', 402, {
         status: outcome.status,
       });
     }
+    const after = await db
+      .selectFrom('order_payment')
+      .select(['receipt_document_id', 'receipt_error'])
+      .where('tenant_id', '=', companyId)
+      .where('order_id', '=', orderId)
+      .executeTakeFirstOrThrow();
     let receipt: { documentId: string; number: string | null } | null = null;
-    if (outcome.receiptDocumentId) {
+    if (after.receipt_document_id) {
       const doc = await db
         .selectFrom('sales_document')
         .select('document_number')
         .where('tenant_id', '=', companyId)
-        .where('id', '=', outcome.receiptDocumentId)
+        .where('id', '=', after.receipt_document_id)
         .executeTakeFirst();
-      receipt = { documentId: outcome.receiptDocumentId, number: doc?.document_number ?? null };
+      receipt = { documentId: after.receipt_document_id, number: doc?.document_number ?? null };
     }
-    return Response.json({ status: outcome.status, receipt, receiptError: outcome.receiptError });
+    return Response.json({ status: outcome.status, receipt, receiptError: after.receipt_error });
   } catch (err) {
     return commerceServerFault('commerce_payment_failed', FAILED_MESSAGE, 'pay order', err);
   }
