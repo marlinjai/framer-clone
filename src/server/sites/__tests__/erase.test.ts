@@ -18,6 +18,7 @@ import {
   normalizeEraseValue,
   redactedId,
   redactedPath,
+  redactionMatcher,
   REDACTED_SEGMENT,
   replacementProblem,
   rewriteDocument,
@@ -150,6 +151,20 @@ describe('matching: whole words by default (review finding 4)', () => {
   ])('%s is not found inside %s', (value, text) => {
     expect(findMatches({ text }, REV, match(value))).toHaveLength(0);
     expect(findMatches({ text }, REV, match(value, { insideWords: true })).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ['Beck', 'Lu\u0308beck', 'a decomposed umlaut before it'],
+    ['Anna', 'Anna\u0308', 'a decomposed umlaut after it'],
+    ['Esse', 'Messe Essen', 'a longer word on either side'],
+    ['234', '1234567', 'digits around it'],
+  ])('%s is not found in %s (%s): a combining mark belongs to its letter', (value, text) => {
+    expect(findMatches({ text }, REV, match(value))).toHaveLength(0);
+  });
+
+  it('still finds a whole decomposed word', () => {
+    expect(findMatches({ text: 'in Lu\u0308beck' }, REV, match('Lübeck'))).toHaveLength(1);
+    expect(findMatches({ text: 'Mu\u0308ller.' }, REV, match('Müller'))).toHaveLength(1);
   });
 
   it('still finds the word next to punctuation, digits aside', () => {
@@ -311,23 +326,54 @@ describe('protected: addresses, links into them, image and file addresses (revie
     ]);
   });
 
+  it.each([
+    ['href', 'max-mustermann'],
+    ['href', './max-mustermann'],
+    ['href', '../team/max-mustermann'],
+    ['href', 'team/max-mustermann?tab=bio#top'],
+    ['navigate', 'max-mustermann'],
+    ['navigate', './max-mustermann'],
+  ])('protects a relative %s %s as an address (recheck finding 3)', (key, value) => {
+    const doc = { behaviour: { on: [{ do: [{ [key]: value }] }] }, props: { [key]: value } };
+    const found = findMatches(doc, REV, match('max-mustermann'));
+    expect(found.length).toBe(2);
+    expect(found.every((m) => m.blocked === 'address')).toBe(true);
+  });
+
   it('a mail or phone link is the personal data itself, so it stays erasable', () => {
     const mail = { props: { href: 'mailto:max@bakery.example', title: 'tel:+4930123' } };
     expect(blockedOf(mail, 'max@bakery.example')).toEqual([['/props/href', null]]);
   });
 });
 
-describe('the audit path (review finding 3)', () => {
+describe('the audit path (review finding 3, recheck finding 2)', () => {
+  const holds = (value: string, over: Partial<EraseQuery> = {}) => redactionMatcher({ value, caseSensitive: false, ...over });
+
   it('replaces a key holding the value with a marker', () => {
-    const m = match('Max Mustermann');
-    expect(redactedPath('/siteSettings/people/Max Mustermann/label', m)).toBe(`/siteSettings/people/${REDACTED_SEGMENT}/label`);
-    expect(redactedPath('/siteSettings/people/max~1mustermann~0x/label', match('max/mustermann', { insideWords: true }))).toBe(
+    const h = holds('Max Mustermann');
+    expect(redactedPath('/siteSettings/people/Max Mustermann/label', h)).toBe(`/siteSettings/people/${REDACTED_SEGMENT}/label`);
+    expect(redactedPath('/siteSettings/people/max~1mustermann~0x/label', holds('max/mustermann'))).toBe(
       `/siteSettings/people/${REDACTED_SEGMENT}/label`,
     );
-    expect(redactedPath('/pages/0/snapshot/props/children', m)).toBe('/pages/0/snapshot/props/children');
-    expect(redactedId('page-max-mustermann', match('max-mustermann'))).toBe(REDACTED_SEGMENT);
-    expect(redactedId('home', m)).toBe('home');
-    expect(redactedId(null, m)).toBeNull();
+    expect(redactedPath('/pages/0/snapshot/props/children', h)).toBe('/pages/0/snapshot/props/children');
+    expect(redactedId('page-max-mustermann', holds('max-mustermann'))).toBe(REDACTED_SEGMENT);
+    expect(redactedId('home', h)).toBe('home');
+    expect(redactedId(null, h)).toBeNull();
+  });
+
+  it.each([
+    ['Max Mustermanns Team', 'a genitive, inside a word'],
+    ['max-mustermann', 'hyphens for spaces'],
+    ['max_mustermann', 'underscores for spaces'],
+    ['max.mustermann', 'dots for spaces'],
+    ['Max-Mustermann-Team', 'separators all along'],
+  ])('masks %s (%s), wider than a whole-word search', (segment) => {
+    const h = holds('Max Mustermann');
+    expect(redactedPath(`/siteSettings/people/${segment}/label`, h)).toBe(`/siteSettings/people/${REDACTED_SEGMENT}/label`);
+  });
+
+  it('masks a segment for a value typed with separators too', () => {
+    expect(redactedPath('/people/Max Mustermann/label', holds('max-mustermann'))).toBe(`/people/${REDACTED_SEGMENT}/label`);
   });
 });
 

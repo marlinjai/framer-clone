@@ -196,7 +196,8 @@ export function eraseMatcher(query: EraseQuery): () => RegExp {
     parts.push(charPattern(ch, query.caseSensitive));
   }
   let source = parts.join('');
-  if (query.insideWords !== true) source = `(?<![\\p{L}\\p{N}])${source}(?![\\p{L}\\p{N}])`;
+  // A combining mark belongs to its letter: `Beck` must not end where decomposed `Lübeck`'s umlaut does.
+  if (query.insideWords !== true) source = `(?<![\\p{L}\\p{M}\\p{N}])${source}(?![\\p{L}\\p{M}\\p{N}])`;
   const flags = query.caseSensitive ? 'gu' : 'giu';
   return () => new RegExp(source, flags);
 }
@@ -284,9 +285,12 @@ function blockedAt(path: readonly Segment[], text: string): EraseBlockReason | n
   if (ID_FRAGMENT_NAMES.has(key.toLowerCase()) && text.trim().startsWith('#')) return 'structural';
   // A whole value that is a `#fragment` points at an id wherever it is stored.
   if (/^#[^\s#]+$/.test(text.trim())) return 'structural';
-  if (LINK_KEYS.has(key) && /^\/(?!\/)/.test(text.trim())) return 'address';
+  // A link is one address, rooted or relative (`/team`, `team`, `./team`, `../team/max`):
+  // cutting it sends visitors elsewhere. Only a mail or phone link is the data itself.
+  if (LINK_KEYS.has(key) && !/\s/.test(text.trim()) && !/^(?:mailto|tel|sms):/i.test(text.trim())) {
+    return isFileAddress(text) ? 'url' : 'address';
+  }
   if (URL_KEYS.has(key)) return 'url';
-  if ((LINK_KEYS.has(key) || URL_KEYS.has(key)) && isFileAddress(text)) return 'url';
   if (isFileAddress(text) && !/\s/.test(text.trim())) return 'url';
   return null;
 }
@@ -337,27 +341,41 @@ function pointer(path: readonly Segment[]): string {
 /** The marker an audit path holds where a key held the value. */
 export const REDACTED_SEGMENT = '[value]';
 
+/** `-`, `_` and `.` read as spaces when deciding what to mask: `max-mustermann` is the same name. */
+const SEPARATORS = /[-_.]+/g;
+
 /**
- * A JSON pointer with every segment the query finds replaced by REDACTED_SEGMENT,
- * so a map keyed by the value (`/people/Max Mustermann/label`) never carries it
- * into the audit row.
+ * What the audit masks, wider than the search on purpose: inside words (a
+ * genitive, `Mustermanns Team`), and with `-`, `_` and `.` read as spaces on both
+ * sides (`max-mustermann`, `max_mustermann`). Throws EraseQueryError for a value
+ * outside the bounds, as the search does.
  */
-export function redactedPath(path: string, matcher: () => RegExp): string {
+export function redactionMatcher(query: EraseQuery): (segment: string) => boolean {
+  const matcher = eraseMatcher({ ...query, value: query.value.replace(SEPARATORS, ' '), insideWords: true });
+  return (segment) => matcher().test(segment.replace(SEPARATORS, ' '));
+}
+
+/**
+ * A JSON pointer with every segment that may hold the value replaced by
+ * REDACTED_SEGMENT, so a map keyed by the value (`/people/Max Mustermann/label`)
+ * never carries it into the audit row.
+ */
+export function redactedPath(path: string, holdsValue: (segment: string) => boolean): string {
   if (path === '') return path;
   return path
     .slice(1)
     .split('/')
     .map((raw) => {
       const segment = raw.replace(/~1/g, '/').replace(/~0/g, '~');
-      return matcher().test(segment) ? REDACTED_SEGMENT : raw;
+      return holdsValue(segment) ? REDACTED_SEGMENT : raw;
     })
     .map((s) => `/${s}`)
     .join('');
 }
 
 /** An id that may hold the value is redacted like a path segment. */
-export function redactedId(id: string | null, matcher: () => RegExp): string | null {
-  return id !== null && matcher().test(id) ? REDACTED_SEGMENT : id;
+export function redactedId(id: string | null, holdsValue: (segment: string) => boolean): string | null {
+  return id !== null && holdsValue(id) ? REDACTED_SEGMENT : id;
 }
 
 function locationKey(location: EraseLocation): string {

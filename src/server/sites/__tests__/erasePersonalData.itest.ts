@@ -472,7 +472,12 @@ describe('the review of #283: only what was shown and ticked, protected places, 
   it('keeps a key holding the value out of the audit row', async () => {
     const repo = getSiteRepository();
     const withMap = project(VALUE) as unknown as { pages: { home: { appComponentTree: { props: Record<string, unknown> } } } };
-    withMap.pages.home.appComponentTree.props.people = { [VALUE]: { label: VALUE } };
+    // Keys the whole-word search would not find (a genitive, a slug form) are masked all the same.
+    withMap.pages.home.appComponentTree.props.people = {
+      [VALUE]: { label: VALUE },
+      'max-mustermann': { label: VALUE },
+      'Max Mustermanns Team': { label: VALUE },
+    };
     await repo.publishProject(scope, withMap as never);
 
     const preview = await repo.searchPersonalData(scope, siteId, QUERY);

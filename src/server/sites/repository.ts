@@ -59,6 +59,7 @@ import {
   matchesToken,
   redactedId,
   redactedPath,
+  redactionMatcher,
   replacementProblem,
   rewriteDocument,
   type EraseArea,
@@ -257,13 +258,13 @@ function workingDocument(site: {
 }
 
 /** A place as the audit keeps it: a key or an id that holds the value is replaced by a marker. */
-function placeOf(match: EraseMatch, matcher: () => RegExp): ErasurePlace {
+function placeOf(match: EraseMatch, holdsValue: (segment: string) => boolean): ErasurePlace {
   return {
     location: match.location.kind,
     revision: match.location.kind === 'revision' ? match.location.number : null,
-    pageId: redactedId(match.pageId, matcher),
+    pageId: redactedId(match.pageId, holdsValue),
     area: match.area,
-    path: redactedPath(match.path, matcher),
+    path: redactedPath(match.path, holdsValue),
   };
 }
 
@@ -1042,7 +1043,8 @@ export class SiteRepository {
       // revisions: a tab loaded long ago may hold it even if the working copy does not.
       await tx.site.updateMany({ where, data: { erasureEpoch: { increment: 1 } } });
 
-      const places = erased.map((match) => placeOf(match, matcher));
+      const holdsValue = redactionMatcher(query);
+      const places = erased.map((match) => placeOf(match, holdsValue));
       const audit = await tx.siteErasure.create({
         data: {
           siteId,
