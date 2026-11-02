@@ -23,6 +23,7 @@ import {
 } from '@/lib/renderer/blockedNodes';
 import { isTextNodeType, ownTextThenChildren, renderableText } from '@/lib/renderer/textNode';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
+import { boundValue } from '@/lib/components/expand';
 import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { createScope } from '@/lib/bindings/resolver/scope';
 import CollectionRenderer, {
@@ -125,6 +126,10 @@ export function createComponentElement(
   rawTextChildren?: React.ReactNode,
   options?: CreateComponentElementOptions,
 ): React.ReactNode {
+  // A bound `visible` that resolves to exactly false takes the node out, as on the
+  // published page. Anything else keeps it: a binding that fails shows content.
+  if (options?.scope && boundValue(component.bindings?.visible, options.scope) === false) return null;
+
   // A text node emits no element, so it carries no identity attributes either:
   // the canvas selects its parent element (EditorUIStore.selectComponent).
   if (isTextNodeType(component.type)) return renderableText(rawTextChildren);

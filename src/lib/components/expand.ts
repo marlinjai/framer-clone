@@ -122,6 +122,19 @@ export interface PlacementInstance {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 
+/** What hydration needs of a placement. A value from data sits in its bindings, under `input.<id>`. */
+export function placementInstance(
+  props: Pick<PlacementProps, 'inputs'>,
+  bindings: BindingsRecord | undefined,
+  inputDefinitions: InputDefinition[],
+): PlacementInstance {
+  return {
+    inputs: props.inputs ?? {},
+    bindings: Object.fromEntries(Object.entries(bindings ?? {}).filter(([slot]) => slot.startsWith('input.'))),
+    inputDefinitions,
+  };
+}
+
 export function placementInstanceOf(props: unknown): PlacementInstance | undefined {
   const instance = isRecord(props) ? props.instance : undefined;
   // Expansion writes this, but a stored page is opaque JSON, so its shape is checked here.
@@ -247,7 +260,7 @@ export function stableHash(text: string): string {
 }
 
 /** `formId` is capped at 200 in submit.ts, and six uuid segments are already 226. */
-function pathId(prefix: string, id: string): string {
+export function pathId(prefix: string, id: string): string {
   const path = `${prefix}__${id}`;
   return path.length > MAX_PATH ? `p-${stableHash(path)}` : path;
 }
@@ -467,11 +480,7 @@ export function expandPlacements(
     }
 
     const placementId = node.id ?? `p-${stableHash(`${stack.join('>')}>${id}`)}`;
-    const instance: PlacementInstance = {
-      inputs: props.inputs ?? {},
-      bindings: Object.fromEntries(Object.entries(node.bindings ?? {}).filter(([slot]) => slot.startsWith('input.'))),
-      inputDefinitions: ready.inputs,
-    };
+    const instance = placementInstance(props, node.bindings, ready.inputs);
     const tree = withIdentity(ready.tree, placementId);
     const rootProps = { ...tree.props } as Record<string, unknown>;
     if (props.style !== undefined) rootProps.style = mergeStyle(rootProps.style, props.style);

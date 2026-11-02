@@ -152,7 +152,10 @@ export function buildScore(durationSeconds?: number): Score {
   Object.assign(results.panel, patternPanelCells(patterns, results.panel, detail));
 
   // A promise nothing has measured yet fails, so it can never count as kept.
-  const measured = readOut<Partial<Record<Surface, SurfaceResults>>>('components');
+  const measured = {
+    ...readOut<Partial<Record<Surface, SurfaceResults>>>('components'),
+    canvas: readOut<SurfaceResults>('components-canvas'),
+  };
   for (const entry of componentEntries()) {
     const key = rowKey(entry.kind, entry.id);
     for (const surface of SURFACES) {
