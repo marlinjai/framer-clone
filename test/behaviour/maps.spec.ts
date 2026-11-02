@@ -19,6 +19,7 @@ import { chromium, webkit, type Browser, type BrowserContext, type BrowserType, 
 import { getPrismaClient } from '@/server/db';
 import { node, type StoredNode } from './pages';
 import { publishPages } from './site';
+import { CONSENT_TAP_GUARD_MS } from '@/lib/consent/consent';
 
 const SHARE = 'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2419.6!2d13.2834!3d52.6871!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!5e0!3m2!1sde!2sde!4v1730000000000';
 const ADDRESS = 'Hauptstraße 1, 16547 Birkenwerder';
@@ -42,6 +43,19 @@ const PAGES = {
   jack: page(
     node('decoy', 'div', { style: { ...fill, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px' } }, node('decoy-text', 'p', { children: 'Tap here to continue' })),
     map('jack-map', { mapUrl: SHARE, style: { ...fill, zIndex: 5 }, rules: [{ id: 'j', selector: '& *', style: { opacity: '0' } }] }),
+  ),
+  // The recheck's payload (N1): the box transparent and fixed over the screen above a
+  // decoy, and rules that tried to stretch its button over the viewport.
+  twotap: page(
+    node('decoy2', 'div', { style: { ...fill, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px' } }, node('decoy2-text', 'p', { children: 'Tap twice to continue' })),
+    map('twotap-map', {
+      mapUrl: SHARE,
+      style: { ...fill, zIndex: 5, opacity: '0' },
+      rules: [
+        { id: 'a', selector: '& *', style: { opacity: '0' } },
+        { id: 'b', selector: '& button', style: { position: 'fixed', top: '0', left: '0', width: '100vw', height: '100vh' } },
+      ],
+    }),
   ),
   // The review's quieter payload: the note that Google receives data hidden, the button kept.
   quiet: page(map('quiet-map', { mapUrl: SHARE, mapAddress: ADDRESS, rules: [{ id: 'q', selector: '& p', style: { display: 'none' } }] })),
@@ -94,7 +108,9 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     evidence[`${engineName}: ${step}`] = [...requests];
   };
   const frame = () => tab.locator('iframe[data-fc-map-frame]');
-  const placeholder = () => tab.locator('[data-fc-map-placeholder]');
+  const placeholder = () => tab.locator('[data-fc-map-placeholder]:visible');
+  /** A banner opened from outside it ignores pointer clicks for a moment (CONSENT_TAP_GUARD_MS). */
+  const pastGuard = () => tab.waitForTimeout(CONSENT_TAP_GUARD_MS + 100);
   const banner = () => tab.locator('#fc-consent');
   const stored = () => tab.evaluate(() => JSON.parse(window.localStorage.getItem('lumitra-consent') ?? 'null') as Record<string, unknown> | null);
   const mapsCookie = async () => (await context.cookies()).find((c) => c.name === 'lumitra-consent-maps')?.value ?? null;
@@ -181,6 +197,7 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     await banner().getByRole('button', { name: 'Decline' }).click();
     await tab.getByRole('button', { name: 'Load map' }).click();
     await expect.poll(() => banner().isVisible()).toBe(true);
+    await pastGuard();
     // Asking is not answering.
     expect((await stored())?.maps).toBe(false);
     expect(await frame().count()).toBe(0);
@@ -210,6 +227,7 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
 
     await tab.getByRole('link', { name: 'Cookie settings' }).click();
     await expect.poll(() => banner().isVisible()).toBe(true);
+    await pastGuard();
     await banner().getByRole('button', { name: 'Decline' }).click();
     await expect.poll(() => frame().count()).toBe(0);
     expect(await placeholder().count()).toBe(1);
@@ -238,6 +256,7 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     // "Load map" then asks again, focused on the maps row, and only that row's Accept loads it.
     await tab.getByRole('button', { name: 'Load map' }).click();
     await expect.poll(() => banner().isVisible()).toBe(true);
+    await pastGuard();
     expect(await tab.evaluate(() => document.activeElement?.getAttribute('data-fc-consent-row'))).toBe('maps');
     await tab.getByRole('button', { name: MAPS_ROW_ACCEPT }).click();
     await expect.poll(() => frame().count()).toBe(1);
@@ -251,6 +270,7 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
       await open(`${origin}/map`);
       await tab.getByRole('button', { name: 'Load map' }).click();
       await expect.poll(() => banner().isVisible()).toBe(true);
+      await pastGuard();
       const accept = origin === mapsOnly ? banner().getByRole('button', { name: 'Accept' }) : tab.getByRole('button', { name: MAPS_ROW_ACCEPT });
       await accept.click();
       await expect.poll(() => frame().count()).toBe(1);
@@ -259,6 +279,7 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
       expect(await link.isVisible()).toBe(true);
       await link.click();
       await expect.poll(() => banner().isVisible()).toBe(true);
+      await pastGuard();
       expect(await banner().textContent()).toContain('Google Maps');
       // Decline answers every category the banner shows: a single "Decline", or "Decline all".
       await banner().getByRole('button', { name: origin === mapsOnly ? 'Decline' : 'Decline all' }).click();
@@ -275,31 +296,32 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     });
   }
 
-  it('a transparent map box over a decoy: a tap only opens the banner, nothing is consented', async () => {
+  it('the review\'s transparent box: stored rules no longer reach the placeholder, a tap only opens the banner', async () => {
     await open(`${mapsOnly}/jack`);
     await banner().getByRole('button', { name: 'Decline' }).click();
     await tab.waitForTimeout(300);
-    expect(await banner().isVisible()).toBe(false);
-    // The tap on "Tap here to continue" lands on the invisible "Load map".
-    expect(await tab.evaluate(() => document.elementFromPoint(640, 400)?.hasAttribute('data-fc-map-load'))).toBe(true);
-    await tab.mouse.click(640, 400);
+    // `& * { opacity: 0 }` on the box cannot reach into its shadow tree: the button shows.
+    const load = tab.getByRole('button', { name: 'Load map' });
+    expect(await load.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
+    await load.click();
     await tab.waitForTimeout(800);
     expect((await stored())?.maps).toBe(false);
     expect(await mapsCookie()).toBeNull();
     expect(await frame().count()).toBe(0);
     record('clickjack tap');
     expect(google()).toEqual([]);
-    // What the tap did: open the platform's banner, on top, saying what Google receives.
     expect(await banner().isVisible()).toBe(true);
     expect(await banner().textContent()).toContain('Google Ireland Limited');
     expect(await topAt('#fc-consent [data-fc-consent-accept]')).toBe('top');
     expect(errors).toEqual([]);
   });
 
-  it('the note hidden by a stored rule: the banner still says what Google receives before anyone can consent', async () => {
+  it('the note and the button stay as the platform drew them, whatever a stored rule says', async () => {
     await open(`${mapsOnly}/quiet`);
     await banner().getByRole('button', { name: 'Decline' }).click();
-    expect(await placeholder().locator('p').first().isVisible()).toBe(false);
+    // `& p { display: none }` does not reach the shadow tree: the note shows.
+    const note = placeholder().locator('p', { hasText: 'Google Ireland Limited' });
+    expect(await note.isVisible()).toBe(true);
     await tab.getByRole('button', { name: 'Load map' }).click();
     await expect.poll(() => banner().isVisible()).toBe(true);
     const text = banner().locator('#fc-consent-text');
@@ -309,6 +331,49 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     expect(google()).toEqual([]);
     expect(errors).toEqual([]);
   });
+
+  for (const [width, height] of [[390, 844], [1280, 800]] as const) {
+    for (const [label, site, acceptName] of [['maps only', () => mapsOnly, 'Accept'], ['analytics and maps', () => withAnalytics, MAPS_ROW_ACCEPT]] as const) {
+      it(`N1, two quick taps: the second lands on the real Accept and answers nothing (${width}px, ${label})`, async () => {
+        await context.close();
+        await start(width, height);
+        const origin = site();
+        await open(`${origin}/twotap`);
+        await banner().getByRole('button', { name: label === 'maps only' ? 'Decline' : 'Decline all' }).click();
+        await tab.waitForTimeout(300);
+        expect(await banner().isVisible()).toBe(false);
+        // The review's payload: the whole box transparent and stretched over a decoy. The
+        // box itself is the page's to style; its button is not, so it sits mid-box.
+        const loadBox = await tab.getByRole('button', { name: 'Load map' }).boundingBox();
+        if (!loadBox) throw new Error('no Load map button');
+        // Where the banner's Accept will appear: measured on a first opening, then closed.
+        await tab.evaluate(() => (window as unknown as { __lumitraConsent: { open: (c: string) => void } }).__lumitraConsent.open('maps'));
+        const acceptBox = await tab.getByRole('button', { name: acceptName }).boundingBox();
+        if (!acceptBox) throw new Error('no Accept');
+        await tab.keyboard.press('Escape');
+        await expect.poll(() => banner().isVisible()).toBe(false);
+        // Tap one on "Load map", tap two 120 ms later where Accept appears.
+        await tab.mouse.click(loadBox.x + loadBox.width / 2, loadBox.y + loadBox.height / 2);
+        await tab.waitForTimeout(120);
+        const atSecondTap = await tab.evaluate(([x, y]) => document.elementFromPoint(x, y)?.hasAttribute('data-fc-consent-accept') ?? false, [acceptBox.x + acceptBox.width / 2, acceptBox.y + acceptBox.height / 2]);
+        expect(atSecondTap).toBe(true);
+        await tab.mouse.click(acceptBox.x + acceptBox.width / 2, acceptBox.y + acceptBox.height / 2);
+        await tab.waitForTimeout(800);
+        expect((await stored())?.maps).toBe(false);
+        expect(await mapsCookie()).toBeNull();
+        expect(await frame().count()).toBe(0);
+        expect(await banner().isVisible()).toBe(true);
+        record(`N1 two taps, ${width}px, ${label}`);
+        expect(google()).toEqual([]);
+        // A key on the focused Accept answers at once: keyboard users are never held up.
+        await tab.getByRole('button', { name: acceptName }).focus();
+        await tab.keyboard.press('Enter');
+        await expect.poll(() => frame().count()).toBe(1);
+        expect((await stored())?.maps).toBe(true);
+        expect(errors).toEqual([]);
+      });
+    }
+  }
 
   it('works at phone width: no sideways scrolling, the button, the link and the banner in reach', async () => {
     await context.close();
@@ -325,6 +390,7 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     expect(link && link.x >= 0 && link.x + link.width <= 375).toBe(true);
     expect(google()).toEqual([]);
     await button.click();
+    await pastGuard();
     await tab.getByRole('button', { name: MAPS_ROW_ACCEPT }).click();
     await expect.poll(() => frame().count()).toBe(1);
     const frameBox = await frame().boundingBox();
@@ -346,6 +412,7 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     expect(await banner().textContent()).toContain('Google Maps');
     await tab.getByRole('button', { name: 'Karte laden' }).click();
     expect(await frame().count()).toBe(0);
+    await pastGuard();
     await banner().getByRole('button', { name: 'Akzeptieren' }).click();
     await expect.poll(() => frame().count()).toBe(1);
     expect(await frame().getAttribute('title')).toBe(BUSBASIS_TITLE);

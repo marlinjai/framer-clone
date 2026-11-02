@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, within } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
@@ -115,14 +115,21 @@ describe('the published page', () => {
 
 describe('the island', () => {
   const config = { mapUrl: SHARE, mapAddress: 'Werkstatt, Birkenwerder', mapLanguage: 'en' };
-  const frame = () => document.querySelector('iframe');
+  /** The platform's own part of the box: its shadow tree, out of reach of page styles. */
+  const shadowRoot = () => Array.from(document.querySelectorAll('div')).find((d) => d.shadowRoot)?.shadowRoot ?? null;
+  const own = () => {
+    const root = shadowRoot();
+    if (!root) throw new Error('no shadow root on the map box');
+    return within(root as unknown as HTMLElement);
+  };
+  const frame = () => shadowRoot()?.querySelector('iframe') ?? document.querySelector('iframe');
 
   it('"Load map" only opens the banner; the frame comes with the banner\'s yes and goes with a no', () => {
     const open = vi.fn();
     win.__lumitraConsent = { get: () => null, open };
     render(<MapEmbedIsland domProps={{ 'data-map-embed': 'google', style: { height: 300 } }} config={config} />);
     expect(frame()).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Load map' }));
+    fireEvent.click(own().getByRole('button', { name: 'Load map' }));
     expect(open).toHaveBeenCalledWith('maps');
     // Asking is not answering.
     expect(frame()).toBeNull();
@@ -136,12 +143,13 @@ describe('the island', () => {
     expect(loaded.getAttribute('referrerpolicy')).toBe('strict-origin-when-cross-origin');
     expect(loaded.getAttribute('sandbox')).toBe('allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
     expect(loaded.getAttribute('allow')).toBe('fullscreen');
-    expect(document.activeElement).toBe(loaded);
+    // Focus inside a shadow tree: the document sees the box, the tree sees the frame.
+    expect(shadowRoot()!.activeElement).toBe(loaded);
     act(() => {
       window.dispatchEvent(new CustomEvent('lumitra:consent', { detail: { maps: false } }));
     });
     expect(frame()).toBeNull();
-    expect(screen.getByRole('button', { name: 'Load map' })).toBeTruthy();
+    expect(own().getByRole('button', { name: 'Load map' })).toBeTruthy();
   });
 
   it('shows the map at once for a visitor who already consented, and ignores other categories', () => {
@@ -163,15 +171,28 @@ describe('the island', () => {
   it('without a consent runtime, loads nothing, says so, and keeps the open link', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     render(<MapEmbedIsland domProps={{}} config={config} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Load map' }));
+    fireEvent.click(own().getByRole('button', { name: 'Load map' }));
     expect(frame()).toBeNull();
     expect(error).toHaveBeenCalledWith(expect.stringContaining('no consent runtime'));
-    expect(screen.getByRole('link', { name: 'Open in Google Maps' })).toBeTruthy();
+    expect(own().getByRole('link', { name: 'Open in Google Maps' })).toBeTruthy();
+  });
+
+  it('keeps its own part out of reach of page styles, and leaves a light copy for a page without JavaScript', () => {
+    win.__lumitraConsent = { get: () => null, open: vi.fn() };
+    const { container } = render(<MapEmbedIsland domProps={{ 'data-map-embed': 'google' }} config={config} />);
+    const box = container.firstElementChild as HTMLElement;
+    expect(box.shadowRoot).not.toBeNull();
+    const rootStyle = (box.shadowRoot!.querySelector('[data-fc-map-root]') as HTMLElement).style;
+    expect(rootStyle.getPropertyValue('all')).toBe('initial');
+    expect(own().getByRole('button', { name: 'Load map' })).toBeTruthy();
+    // The light copy is what the server sent: no working button, the plain link.
+    expect(box.querySelector(':scope > [data-fc-map-placeholder] button')).toBeNull();
+    expect(box.querySelector(':scope > [data-fc-map-placeholder] a[data-fc-map-open]')).not.toBeNull();
   });
 
   it('opens Google Maps through a plain link that needs no consent', () => {
     render(<MapEmbedIsland domProps={{}} config={config} />);
-    const link = screen.getByRole('link', { name: 'Open in Google Maps' });
+    const link = own().getByRole('link', { name: 'Open in Google Maps' });
     expect(link.getAttribute('target')).toBe('_blank');
     expect(link.getAttribute('rel')).toBe('noopener noreferrer');
   });

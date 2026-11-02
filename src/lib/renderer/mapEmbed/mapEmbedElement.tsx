@@ -63,6 +63,23 @@ const LINK_STYLE: React.CSSProperties = {
   fontWeight: 600,
 };
 
+/**
+ * The root of the map's shadow tree (MapEmbedIsland). `all: initial` drops whatever
+ * the page lets the box inherit (a transparent text colour, a zero font size, a
+ * hidden visibility), then the platform's own look applies. Only what the box itself
+ * is (its size, its own opacity, where it sits) stays the page's.
+ */
+export const MAP_SHADOW_ROOT_STYLE: React.CSSProperties = {
+  all: 'initial',
+  display: 'block',
+  boxSizing: 'border-box',
+  width: '100%',
+  height: '100%',
+  fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+  color: '#111827',
+  visibility: 'visible',
+};
+
 /** What Google's embed needs to draw and to open its own links in a new tab, and nothing more. */
 export const MAP_FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox';
 

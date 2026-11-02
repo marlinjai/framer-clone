@@ -227,6 +227,35 @@ describe('a map asks through the banner', () => {
     expect(banner().hidden).toBe(true);
   });
 
+  it('ignores a quick second tap on a banner it just opened, but not keys, a later tap or one after a press inside', () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    store({ maps: false });
+    const api = load(['maps']);
+    expect(banner().hidden).toBe(true);
+    const accept = () => screen.getByRole('button', { name: 'Accept' });
+    // "Load map" opens it under the finger; the twin tap 120 ms later answers nothing.
+    api.open('maps');
+    now += 120;
+    fireEvent.click(accept(), { detail: 1 });
+    expect(api.get('maps')).toBe('denied');
+    expect(banner().hidden).toBe(false);
+    // A key on the focused button answers at once (a keyboard click has detail 0).
+    fireEvent.click(accept(), { detail: 0 });
+    expect(api.get('maps')).toBe('granted');
+    // Opened again from the footer link: a press inside the banner first, then a tap, answers.
+    cookieSettings();
+    fireEvent.pointerDown(banner());
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Decline' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Decline' }), { detail: 1 });
+    expect(api.get('maps')).toBe('denied');
+    // And once the guard has passed, a tap answers too.
+    api.open('maps');
+    now += 600;
+    fireEvent.click(accept(), { detail: 1 });
+    expect(api.get('maps')).toBe('granted');
+  });
+
   it('has no way to answer except the banner: no grant, and forged buttons do nothing', () => {
     const api = load(['maps']);
     expect(api.grant).toBeUndefined();

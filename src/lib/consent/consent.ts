@@ -55,6 +55,13 @@ export const CONSENT_BANNER_ID = 'fc-consent';
 export const TRACKER_SESSION_PREFIX = 'ap_';
 export const TRACKER_COOKIE = 'lumitra_variants_pub';
 
+/**
+ * How long a banner opened from outside it ("Load map", "Cookie settings", the
+ * `#cookie-settings` address) ignores pointer clicks on Accept and Decline, unless an
+ * earlier press landed inside it: the opening tap's twin must not answer.
+ */
+export const CONSENT_TAP_GUARD_MS = 500;
+
 /** The cookie mirroring a `maps` grant, read by the edge middleware (cspReportOnly.ts). */
 export const CONSENT_MAPS_COOKIE = MAPS_CONSENT_COOKIE;
 
@@ -227,7 +234,10 @@ export interface ConsentRuntimeConfig {
  * any page. `open(category)` is how a map's "Load map" asks: the banner shows the
  * page's questions and that one, focused on it, and closes once nothing it shows
  * is open. A map's placeholder never answers by itself, so no stored style can
- * turn a click on it into a consent nobody gave.
+ * turn a click on it into a consent nobody gave. A banner opened this way also
+ * ignores pointer clicks on Accept and Decline for CONSENT_TAP_GUARD_MS, unless an
+ * earlier press landed inside it: the banner appears under the finger that opened it,
+ * and a quick second tap aimed at a decoy must not answer. Keys always answer.
  *
  * Accepting analytics loads the tracker (and calls the loader's `enableTracking`
  * when it exposes one); declining it after an earlier "yes" removes what the
@@ -266,6 +276,14 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     `var C=${safeJson(config)};` +
     // mode: how the banner was opened. 'auto' (the page asked), 'focus' (a map asked), 'user' (Cookie settings).
     "var w=window,d=document,el=d.getElementById(C.id),mem={},loaded=false,opener=null,mode='auto',focusCat=null;" +
+    // The tap guard: a banner opened by something outside it ("Load map", the footer
+    // link, the address) appears under the visitor's finger, so a quick second tap aimed
+    // at a decoy would land on its Accept. For the guard's time after such an opening a
+    // pointer click answers nothing unless an earlier pointer press landed inside the
+    // banner. Keyboard activation (a click with detail 0) always answers.
+    `var guardUntil=0,downs=0,GUARD=${CONSENT_TAP_GUARD_MS};` +
+    'function guard(){guardUntil=Date.now()+GUARD;downs=0;}' +
+    'function guarded(ev){return ev.detail!==0&&Date.now()<guardUntil&&downs<2;}' +
     'function known(c){return C.all.indexOf(c)!==-1;}' +
     'function asks(c){return C.cats.indexOf(c)!==-1;}' +
     // The stored record for this version, or null.
@@ -337,20 +355,21 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     "if(stop){try{w.location.reload();}catch(e){}}" +
     "if(mode!=='user'&&!openShown())hide();else layout();}" +
     "function nameOf(t,attr){var v=t.getAttribute(attr);return v&&known(v)?[v]:shown();}" +
-    "function open(c){var a=d.activeElement;opener=a&&a!==d.body&&!(el&&el.contains(a))?a:null;" +
+    "function open(c){guard();var a=d.activeElement;opener=a&&a!==d.body&&!(el&&el.contains(a))?a:null;" +
     "if(c&&known(c)&&C.site.indexOf(c)!==-1){if(mode!=='user')mode='focus';focusCat=c;}else{mode='user';focusCat=null;}show(true);}" +
     "w.__lumitraConsent={open:open,accept:function(){answer(shown(),true);},decline:function(){answer(shown(),false);},get:function(c){return state(c||'analytics');},categories:C.cats.slice(),version:C.v};" +
+    "d.addEventListener('pointerdown',function(ev){if(el&&ev.target&&el.contains(ev.target))downs++;},true);" +
     "d.addEventListener('click',function(ev){var t=ev.target;while(t&&t.nodeType===1){" +
     // Only the banner's own buttons answer: a choice nobody made is not consent.
-    "if(el&&el.contains(t)&&t.hasAttribute('data-fc-consent-accept')){ev.preventDefault();answer(nameOf(t,'data-fc-consent-accept'),true);return;}" +
-    "if(el&&el.contains(t)&&t.hasAttribute('data-fc-consent-decline')){ev.preventDefault();answer(nameOf(t,'data-fc-consent-decline'),false);return;}" +
+    "if(el&&el.contains(t)&&t.hasAttribute('data-fc-consent-accept')){ev.preventDefault();if(guarded(ev))return;answer(nameOf(t,'data-fc-consent-accept'),true);return;}" +
+    "if(el&&el.contains(t)&&t.hasAttribute('data-fc-consent-decline')){ev.preventDefault();if(guarded(ev))return;answer(nameOf(t,'data-fc-consent-decline'),false);return;}" +
     "if(el&&el.contains(t)&&t.hasAttribute('data-fc-consent-close')){ev.preventDefault();if(!openShown())hide();return;}" +
     "var h=t.tagName==='A'?(t.getAttribute('href')||''):'';" +
     "if(h&&h.slice(-C.hash.length)===C.hash){ev.preventDefault();open();opener=t;return;}" +
     't=t.parentNode;}});' +
     "d.addEventListener('keydown',function(ev){if((ev.key==='Escape'||ev.key==='Esc')&&el&&!el.hidden&&!openShown()&&!pending()){hide();}});" +
     "if(state('analytics')==='granted')load();if(pending())show(false);" +
-    "if(w.location&&w.location.hash===C.hash){mode='user';show(true);}" +
+    "if(w.location&&w.location.hash===C.hash){mode='user';guard();show(true);}" +
     '})();'
   );
 }

@@ -43,10 +43,11 @@ const ORIGIN = 'https://harness.test';
 const ALLOWED_LOADS: ReadonlySet<string> = new Set(['image', 'media', 'texttrack']);
 // React adds its own image preload next to an img, which loads only what the img would.
 // A live form opens with its own spinner sheet (FormIsland).
-// A map box's own placeholder holds the load button (src/lib/renderer/mapEmbed); anywhere else it is
-// forged, and the frame is never in a rendered page at all: it exists only after consent.
+// A map box's own placeholder holds the load button (src/lib/renderer/mapEmbed), in its light copy or its
+// shadow tree; anywhere else it is forged, and the frame is never in a rendered page at all: it
+// exists only after consent.
 const EMBEDS = '[data-fc-consent-accept],[data-fc-consent-decline],[data-fc-sticky-cta-link],[data-fc-map-frame],' +
-  '[data-fc-map-load]:not([data-map-embed] > [data-fc-map-placeholder] > [data-fc-map-load]),script,style:not(form[data-form-id] > style:first-child),iframe,frame,frameset,object,embed,fencedframe,portal,link:not([rel=preload][as=image]),meta,base,webview';
+  '[data-fc-map-load]:not([data-map-embed] > [data-fc-map-placeholder] > [data-fc-map-load]):not([data-fc-map-root] > [data-fc-map-placeholder] > [data-fc-map-load]),script,style:not(form[data-form-id] > style:first-child),iframe,frame,frameset,object,embed,fencedframe,portal,link:not([rel=preload][as=image]),meta,base,webview';
 
 const CANARY = 'https://canary.invalid';
 
@@ -219,7 +220,11 @@ export async function runBatch(browser: Browser, browserName: string, surface: S
         for (const el of Array.from(root.querySelectorAll('*'))) {
           const shadow = shadowOf.call(el);
           if (shadow) {
-            found.push(`${probe} shadow-root`);
+            // A map box's island puts the platform's own placeholder in a shadow root, out of
+            // reach of stored rules (src/lib/renderer/mapEmbed). Any other shadow root, and
+            // anything that runs, fetches or embeds inside this one, is still a finding.
+            const mapsOwn = el.getAttribute('data-map-embed') === 'google' && shadow.firstElementChild?.hasAttribute('data-fc-map-root') && shadow.childElementCount === 1;
+            if (!mapsOwn) found.push(`${probe} shadow-root`);
             visit(shadow, probe);
           }
           if (Element.prototype.getAttribute.call(el, 'style')?.includes(styleHost) || getComputedStyle(el).backgroundImage.includes(styleHost)) found.push(`${probe} style`);

@@ -16,6 +16,10 @@
 //   - a later "no" (the banner's Decline, reopened from "Cookie settings") is
 //     announced the same way and takes the frame out again.
 //
+// The placeholder and the frame are drawn in a shadow root on the box, so stored rules
+// cannot hide the note or restyle the button (the recheck's N1); the banner's tap
+// guard (src/lib/consent/consent.ts) covers what a page can still do to the box itself.
+//
 // The frame's address is checked once more right before it is drawn
 // (isRebuiltMapSrc): nothing but an address this platform rebuilt can become an
 // iframe's `src`. A React island rather than a runtime that rewrites the DOM, so it
@@ -24,8 +28,9 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { isRebuiltMapSrc, readMapEmbed } from '@/lib/mapEmbed/mapEmbed';
-import { MAP_FRAME_SANDBOX, MAP_FRAME_STYLE, mapPlaceholder } from './mapEmbedElement';
+import { MAP_FRAME_SANDBOX, MAP_FRAME_STYLE, MAP_SHADOW_ROOT_STYLE, mapPlaceholder } from './mapEmbedElement';
 
 interface ConsentApi {
   get?: (category?: string) => string | null;
@@ -81,30 +86,52 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
     console.error('[map] no consent runtime on this page: the map cannot ask for consent, so it does not load');
   }, []);
 
+  // The platform's own part of the box lives in a shadow root, which no stored rule
+  // reaches: a page can restyle the box itself, never hide the note or stretch the
+  // button inside it. Attached after hydration, so server and client agree; from then
+  // on the light copy below (the server's, for a page without JavaScript) is no longer
+  // drawn, because a shadow host shows its shadow tree instead of its children.
+  const host = useRef<HTMLDivElement>(null);
+  const [shadow, setShadow] = useState<ShadowRoot | null>(null);
+  useEffect(() => {
+    const el = host.current;
+    if (!el) return;
+    try {
+      setShadow(el.shadowRoot ?? el.attachShadow({ mode: 'open' }));
+    } catch (error) {
+      // Only an element that cannot host one throws, which a div never is: said loudly.
+      console.error('[map] could not shield the map placeholder from page styles', error);
+    }
+  }, []);
+
   const src = view.src;
   const show = granted && isRebuiltMapSrc(src);
+  const own = show ? (
+    <iframe
+      ref={frame}
+      data-fc-map-frame=""
+      src={src}
+      title={view.title}
+      loading="lazy"
+      // The origin only: what a restricted Maps Embed API key checks.
+      referrerPolicy="strict-origin-when-cross-origin"
+      // Tested against Google's real embed in Chromium and WebKit on 2026-11-02: the map
+      // draws and its links open with exactly these. No top navigation, no forms,
+      // no downloads, and of the powerful features only fullscreen.
+      sandbox={MAP_FRAME_SANDBOX}
+      allow="fullscreen"
+      allowFullScreen
+      style={MAP_FRAME_STYLE}
+    />
+  ) : (
+    mapPlaceholder(view, { onLoad: load, liveLink: true })
+  );
   return React.createElement(
     'div',
-    domProps,
-    show ? (
-      <iframe
-        ref={frame}
-        data-fc-map-frame=""
-        src={src}
-        title={view.title}
-        loading="lazy"
-        // The origin only: what a restricted Maps Embed API key checks.
-        referrerPolicy="strict-origin-when-cross-origin"
-        // Tested against Google's real embed in Chromium and WebKit on 2026-11-02: the map
-        // draws and its links open with exactly these. No top navigation, no forms,
-        // no downloads, and of the powerful features only fullscreen.
-        sandbox={MAP_FRAME_SANDBOX}
-        allow="fullscreen"
-        allowFullScreen
-        style={MAP_FRAME_STYLE}
-      />
-    ) : (
-      mapPlaceholder(view, { onLoad: load, liveLink: true })
-    ),
+    { ...domProps, ref: host },
+    // The light copy: what the server rendered and a page without JavaScript shows.
+    // Its button does nothing (no script, nothing to ask with); the link works.
+    mapPlaceholder(view, { liveLink: true }),
+    shadow ? createPortal(<div data-fc-map-root="" style={MAP_SHADOW_ROOT_STYLE}>{own}</div>, shadow) : null,
   );
 }
