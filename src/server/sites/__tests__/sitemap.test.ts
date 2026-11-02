@@ -24,7 +24,10 @@ const productTree = {
   children: [{ id: 'pd', type: 'div', props: { 'data-component-kind': 'product-detail' }, bindings: { product: { mode: 'read', expression: 'x' } } }],
 };
 
-function site(pages: Array<{ pageId: string; slug: string; tree: unknown; noIndex?: boolean }>): PublishedSite {
+function site(
+  pages: Array<{ pageId: string; slug: string; tree: unknown; noIndex?: boolean }>,
+  components: PublishedSite['components'] = {},
+): PublishedSite {
   return {
     siteId: 's',
     workspaceId: 'ws',
@@ -37,6 +40,7 @@ function site(pages: Array<{ pageId: string; slug: string; tree: unknown; noInde
     lumitraEnabled: false,
     redirects: [],
     siteSettings: normalizeSiteSettings({}),
+    components,
     pages: pages.map((p) => ({
       pageId: p.pageId,
       slug: p.slug,
@@ -77,6 +81,28 @@ describe('loadSitemapExpansions', () => {
     expect(result.get('post')).toEqual(['r1', 'r2', 'r3']);
     expect(result.get('product')).toEqual(['tee', 'cap']);
     expect(result.has('about')).toBe(false);
+  });
+
+  it('hands the commerce lookup the tree with its placements expanded', async () => {
+    const definition = {
+      id: 'detail',
+      name: 'Detail',
+      page: { id: 'detail-page', appComponentTree: productTree, canvasNodes: {} },
+      inputs: [],
+      states: [],
+    } as unknown as PublishedSite['components'][string];
+    const commerceRepo = vi.fn(async () => ({ listProducts: vi.fn(async () => ({ products: [{ handle: 'tee' }], total: 1 })) }));
+    // The page itself decides it lists handles: that raw reader is the site walkers slice's.
+    const tree = { ...productTree, children: [...productTree.children, { id: 'p1', type: '#component', props: { component: 'detail' } }] };
+    const result = await loadSitemapExpansions(
+      site([{ pageId: 'product', slug: 'shop/:handle', tree }], { detail: definition }),
+      repos({ commerceRepo: commerceRepo as never }),
+    );
+    expect(result.get('product')).toEqual(['tee']);
+    const root = (commerceRepo.mock.calls as unknown as Array<[{ children: Array<{ id: string; type: string; children: Array<{ id: string }> }> }]>)[0][0];
+    expect(root.children[1].id).toBe('p1');
+    expect(root.children[1].type).toBe('div');
+    expect(root.children[1].children[0].id).toBe('p1__pd');
   });
 
   it('skips noindex pages and stops at the per-page cap', async () => {

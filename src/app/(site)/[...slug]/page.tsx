@@ -39,7 +39,6 @@ import {
 import { getPrimaryHostForRequest, resolveSiteForRequest } from '@/server/sites/requestSite';
 import { isNotFoundPage, renderSitePage } from '@/server/sites/renderSitePage';
 import { snapshotToComponentNode } from '@/lib/renderer/server/snapshotToComponentNode';
-import { NO_DEFINITIONS } from '@/lib/components/placement';
 import { effectiveSiteName } from '@/lib/site/siteSettings';
 import { buildBusinessJsonLd, pageMetadata, pagePath } from '@/lib/site/publishedHead';
 
@@ -102,7 +101,7 @@ export async function generateMetadata({ params }: SitePageProps): Promise<Metad
   // The designed 404 page answers its own path with the 404 (see below); its
   // metadata then comes from the (site) layout like every 404.
   if (isNotFoundPage(site, matched.page.pageId)) return {};
-  const adapted = snapshotToComponentNode(matched.page.snapshot, NO_DEFINITIONS);
+  const adapted = snapshotToComponentNode(matched.page.snapshot, site.components);
   return pageMetadata({
     page: adapted.metadata,
     settings: site.siteSettings,
@@ -133,7 +132,7 @@ export default async function SitePage({ params, searchParams }: SitePageProps) 
   // path answers with the 404 status too, rendered by (site)/not-found.tsx.
   if (isNotFoundPage(site, matched.page.pageId)) notFound();
 
-  const adapted = snapshotToComponentNode(matched.page.snapshot, NO_DEFINITIONS);
+  const adapted = snapshotToComponentNode(matched.page.snapshot, site.components);
   // A published page with no app component tree is malformed -> 404.
   if (!adapted.root) notFound();
 

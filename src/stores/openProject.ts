@@ -6,7 +6,7 @@
 // The store is a module singleton that survives client-side navigation, so
 // going Editor -> Preview -> Editor can keep one working copy, including work
 // not saved yet (a page just generated with AI). Whether it does is decided by
-// comparing three versions of the project's PAGES:
+// comparing three versions of the project's PAGES and reusable COMPONENTS:
 //   - the baseline: what this tab last loaded from, or saved to, the server;
 //   - the server copy just loaded;
 //   - the working copy in the store.
@@ -44,6 +44,18 @@ export interface OpenedProject {
    * overwrite the other work.
    */
   changedElsewhere: boolean;
+  /**
+   * The names of the reusable components changed elsewhere, when
+   * `changedElsewhere`: a Save here would put the old ones back on every page
+   * placing them, which a person cannot see by looking at the page in hand.
+   */
+  changedDefinitions: string[];
+}
+
+/** The two parts of a project this file compares. */
+export interface ProjectContent {
+  pages?: unknown;
+  components?: unknown;
 }
 
 /** Key-order independent JSON, so a database round trip compares equal. */
@@ -67,12 +79,47 @@ function pagesContent(pages: unknown): string {
   return stableJson(repaired);
 }
 
-// project id -> pages content of the last server version this tab knows.
-const baselines = new Map<string, string>();
+/** One version of a project: its pages, and each definition on its own, by id. */
+interface VersionContent {
+  pages: string;
+  components: Record<string, string>;
+}
 
-/** Record that the server now holds exactly these pages (after a load or a save). */
-export function markServerVersion(projectId: string, pages: unknown): void {
-  baselines.set(projectId, pagesContent(pages));
+function versionContent({ pages, components }: ProjectContent): VersionContent {
+  const definitions = Object.entries((components ?? {}) as Record<string, unknown>);
+  return {
+    pages: pagesContent(pages),
+    components: Object.fromEntries(definitions.map(([id, definition]) => [id, stableJson(definition)])),
+  };
+}
+
+/** The ids of the definitions added, removed or changed between two versions. */
+function changedDefinitionIds(from: VersionContent, to: VersionContent): string[] {
+  const ids = new Set([...Object.keys(from.components), ...Object.keys(to.components)]);
+  return [...ids].filter((id) => from.components[id] !== to.components[id]);
+}
+
+function sameVersion(a: VersionContent, b: VersionContent): boolean {
+  return a.pages === b.pages && changedDefinitionIds(a, b).length === 0;
+}
+
+/** A definition's name in a snapshot, if it holds that definition. */
+function definitionName(components: unknown, id: string): string | undefined {
+  return (components as Record<string, { name?: string }> | undefined)?.[id]?.name;
+}
+
+// project id -> content of the last server version this tab knows.
+const baselines = new Map<string, VersionContent>();
+
+/** Record that the server now holds exactly this project (after a load or a save). */
+export function markServerVersion(projectId: string, project: ProjectContent): void {
+  baselines.set(projectId, versionContent(project));
+}
+
+/** The warning for `changedElsewhere`, naming the components a Save would overwrite. */
+export function changedElsewhereMessage(changedDefinitions: readonly string[]): string {
+  const components = changedDefinitions.length > 0 ? ` Components changed there: ${changedDefinitions.join(', ')}.` : '';
+  return `This project was saved somewhere else since this tab loaded it, and this tab has unsaved changes too.${components} Saving here overwrites the other changes; loading the newer version discards the unsaved changes in this tab.`;
 }
 
 /** The page to show: the requested one if it exists, else home, else the first. */
@@ -101,19 +148,25 @@ export function openProject(
 ): OpenedProject {
   const previousProjectId = rootStore.editorUI.currentProject?.id;
   const existing = rootStore.projectStore.getProject(snapshot.id) as ProjectModelType | undefined;
-  const serverContent = pagesContent(snapshot.pages);
+  const serverContent = versionContent(snapshot);
   const baseline = baselines.get(snapshot.id);
 
   let keep = false;
   let changedElsewhere = false;
+  let changedDefinitions: string[] = [];
   if (existing) {
-    const workingContent = pagesContent(getSnapshot(existing).pages);
-    const serverChanged = baseline !== undefined && serverContent !== baseline;
-    const workingChanged = baseline === undefined || workingContent !== baseline;
+    const working = getSnapshot(existing);
+    const workingContent = versionContent(working);
+    const serverChanged = baseline !== undefined && !sameVersion(serverContent, baseline);
+    const workingChanged = baseline === undefined || !sameVersion(workingContent, baseline);
     if (!serverChanged) keep = true; // nothing new on the server: keep this tab's work
     else if (workingChanged) {
       keep = true; // both changed: keep the work here, warn before a Save
       changedElsewhere = true;
+      // A definition deleted over there is only named by this tab's copy.
+      changedDefinitions = changedDefinitionIds(baseline, serverContent)
+        .map((id) => definitionName(snapshot.components, id) ?? definitionName(working.components, id) ?? id)
+        .sort((a, b) => a.localeCompare(b));
     }
   }
 
@@ -130,7 +183,7 @@ export function openProject(
       id = rootStore.projectStore.ingestProjectSnapshot(snapshot);
     });
     project = rootStore.projectStore.getProject(id) as ProjectModelType | undefined;
-    markServerVersion(snapshot.id, snapshot.pages);
+    markServerVersion(snapshot.id, snapshot);
   }
 
   rootStore.editorUI.setCurrentProject(project);
@@ -139,7 +192,7 @@ export function openProject(
   // One project's undo steps never apply to another, and a (re)load is not
   // something to undo.
   if (!keep || previousProjectId !== project?.id) getHistoryStore()?.clear();
-  return { project, page, missingPageId, keptWorkingCopy: keep, changedElsewhere };
+  return { project, page, missingPageId, keptWorkingCopy: keep, changedElsewhere, changedDefinitions };
 }
 
 /** `?page=` of the current address (client only; null on the server). */

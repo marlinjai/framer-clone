@@ -53,6 +53,7 @@ import { createIntrinsicComponent } from '@/models/ComponentModel';
 import { jsonError, readBodyText, PROJECT_BODY_MAX_BYTES } from '@/lib/api/respond';
 import { projectNameSchema } from '@/lib/projectName';
 import { pageSnapshotSchema } from './_schema';
+import { parseModelComponents } from '@/models/ComponentDefinitionModel';
 import { defaultViewportSnapshots, withDefaultViewports } from '@/lib/canvas/defaultViewports';
 import {
   commerceSlugFor,
@@ -177,20 +178,26 @@ async function ensureCommerceProvisioned(
   }
 }
 
-// What the client may influence: a display name and, optionally, the PAGES to
-// start with (the editor's "Save as a new project" for the browser-only demo
-// project). Everything else (id, workspace scope, status, analytics binding)
+// What the client may influence: a display name and, optionally, the PAGES and
+// the reusable COMPONENTS they place (the editor's "Save as a new project" for
+// the browser-only demo project). Everything else (id, workspace scope, status, analytics binding)
 // is server-derived. The body is OPTIONAL: a bare POST with no body creates
 // "Untitled Project" with one empty home page.
 // The name follows the same rule as a rename (src/lib/projectName.ts).
 const createBodySchema = z.object({
   name: projectNameSchema.optional(),
-  project: z.object({ pages: z.record(z.string(), pageSnapshotSchema) }).passthrough().optional(),
+  project: z
+    .object({
+      pages: z.record(z.string(), pageSnapshotSchema),
+      components: z.record(z.string(), z.unknown()).optional(),
+    })
+    .passthrough()
+    .optional(),
 });
 
 /**
  * A new project from pages made in the browser (the demo editor). Only the
- * pages are taken: the id is minted here, the metadata is fresh, and any
+ * pages and their components are taken: the id is minted here, the metadata is fresh, and any
  * `lumitra` analytics binding in the input is dropped (a client never chooses
  * a key reference). Round-tripped through ProjectModel so a malformed page is
  * refused (thrown) rather than stored; pages without frames get the defaults.
@@ -199,6 +206,7 @@ function buildSnapshotFromPages(
   siteId: string,
   name: string,
   pages: Record<string, unknown>,
+  components: Record<string, unknown>,
   now: number,
 ): ProjectSnapshotOut {
   const repaired: Record<string, unknown> = {};
@@ -212,6 +220,7 @@ function buildSnapshotFromPages(
     // saved before Site settings existed keep `en`.
     siteSettings: NEW_PROJECT_SITE_SETTINGS,
     pages: repaired as never,
+    components: components as never,
   });
   return getSnapshot(project) as ProjectSnapshotOut;
 }
@@ -293,6 +302,7 @@ async function handlePOST(req: Request): Promise<Response> {
   //    POST with no body doesn't trip JSON.parse on an empty string.
   let name = 'Untitled Project';
   let pages: Record<string, unknown> | undefined;
+  let components: Record<string, unknown> = {};
   const body = await readBodyText(req, PROJECT_BODY_MAX_BYTES);
   if (!body.ok) return body.response;
   const raw = body.text;
@@ -322,6 +332,14 @@ async function handlePOST(req: Request): Promise<Response> {
           400,
         );
       }
+      // Reading a stored definition skips a bad one; here that would quietly turn
+      // its placements into Missing components in a project that claims to be
+      // saved, so the person is told, as for a page that cannot be read.
+      components = result.data.project.components ?? {};
+      const refused = parseModelComponents(components).refused[0];
+      if (refused) {
+        return jsonError('bad_body', `component ${refused.id} could not be read (${refused.reason}); nothing was created`, 400);
+      }
     }
   }
 
@@ -330,7 +348,7 @@ async function handlePOST(req: Request): Promise<Response> {
   const now = Date.now();
   let snapshot: ProjectSnapshotOut;
   try {
-    snapshot = pages ? buildSnapshotFromPages(siteId, name, pages, now) : buildEmptyDraftSnapshot(siteId, name, now);
+    snapshot = pages ? buildSnapshotFromPages(siteId, name, pages, components, now) : buildEmptyDraftSnapshot(siteId, name, now);
   } catch (err) {
     console.error('[projects] refused pages for a new project:', err);
     return jsonError('bad_body', 'the pages of this project could not be read; nothing was created', 400);

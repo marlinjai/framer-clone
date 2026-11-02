@@ -23,7 +23,7 @@ import { getSnapshot } from 'mobx-state-tree';
 import { UploadCloud } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/hooks/useStore';
-import { markServerVersion } from '@/stores/openProject';
+import { markServerVersion, type ProjectContent } from '@/stores/openProject';
 import { useSiteAddress } from '@/contexts/SiteAddressContext';
 import { TopBarStatus } from './TopBarStatus';
 import { checkBeforePublish, hasPublishIssues, type PublishCheck } from '@/lib/legal/publishCheck';
@@ -96,8 +96,8 @@ const PublishButton = observer(() => {
         setState({ kind: 'error', message });
         return;
       }
-      // The server now holds exactly these pages (see openProject).
-      markServerVersion(project.id, (snapshot as { pages?: unknown }).pages);
+      // The server now holds exactly this project (see openProject).
+      markServerVersion(project.id, snapshot as ProjectContent);
       const ok = payload as
         | { publishedPages?: unknown; liveUrl?: unknown; subdomain?: unknown }
         | null;

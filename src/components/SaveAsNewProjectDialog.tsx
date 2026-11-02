@@ -29,7 +29,7 @@ export interface SaveAsNewProjectDialogProps {
   onOpenChange: (open: boolean) => void;
   defaultName: string;
   /** The demo project's snapshot: its pages become the new project's. */
-  getSnapshot: () => { pages: Record<string, unknown> } & Record<string, unknown>;
+  getSnapshot: () => { pages: Record<string, unknown>; components?: Record<string, unknown> } & Record<string, unknown>;
   /** The page open now, to land on it in the new project. */
   currentPageId?: string;
   /** Called once the project exists: the demo must not be offered again. */
@@ -72,7 +72,7 @@ export default function SaveAsNewProjectDialog({
     setError(null);
     setNext(null);
     const snapshot = getSnapshot();
-    const result = await saveDemoAsProject(valid.name, snapshot.pages);
+    const result = await saveDemoAsProject(valid.name, snapshot.pages, snapshot.components);
     if (result.ok) {
       clearStashedDemoProject();
       onSaved?.();

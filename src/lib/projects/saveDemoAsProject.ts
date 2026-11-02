@@ -1,7 +1,8 @@
 // src/lib/projects/saveDemoAsProject.ts
 //
 // "Save as a new project" for the browser-only demo project: creates a
-// dashboard project in the active company from its pages (POST /api/projects,
+// dashboard project in the active company from its pages and the components
+// they place (POST /api/projects,
 // which mints the id and requires the company's Lumitra Sites grant and the
 // workspace admin permission, like "New project" on the dashboard). Every
 // failure becomes a sentence plus, where there is one, the next step.
@@ -22,6 +23,7 @@ export type SaveAsResult =
 export async function saveDemoAsProject(
   rawName: string,
   pages: Record<string, unknown>,
+  components?: Record<string, unknown>,
 ): Promise<SaveAsResult> {
   const valid = validateProjectName(rawName);
   if (!valid.ok) return { ok: false, message: valid.message };
@@ -31,7 +33,7 @@ export async function saveDemoAsProject(
     res = await fetch('/api/projects', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: valid.name, project: { pages } }),
+      body: JSON.stringify({ name: valid.name, project: { pages, components } }),
     });
   } catch {
     return { ok: false, message: 'Could not save: the network request failed. Nothing was created; try again.' };

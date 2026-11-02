@@ -149,6 +149,37 @@ describe('POST /api/projects (integration) — cross-workspace isolation', () =>
     ]);
   });
 
+  it('a project saved from the browser keeps its reusable components', async () => {
+    const tree = { id: 'r', type: 'div', componentType: 'host', props: {}, children: [] };
+    const body = {
+      name: 'With components',
+      project: {
+        pages: { home: { id: 'home', slug: '', metadata: { title: 'Home' }, appComponentTree: tree, canvasNodes: {} } },
+        components: {
+          card: {
+            id: 'card',
+            name: 'Card',
+            page: { id: 'card-page', slug: '', metadata: { title: 'Card' }, appComponentTree: { ...tree, id: 'c-root' }, canvasNodes: {} },
+            inputs: [],
+            states: [],
+          },
+        },
+      },
+    };
+    const res = await POST(
+      new Request('http://t/api/projects', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: 'lumitra_session=sess_a' },
+        body: JSON.stringify(body),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const { siteId } = await res.json();
+    const loaded = await getSiteRepository().loadProject(SCOPE_A, siteId);
+    expect(loaded.components.get('card')?.name).toBe('Card');
+    await prisma.site.deleteMany({ where: { id: siteId } });
+  });
+
   it('without the owner URL: 500 commerce_not_configured and no site row is written', async () => {
     const before = await prisma.site.count({ where: { workspaceId: 'ws_a' } });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

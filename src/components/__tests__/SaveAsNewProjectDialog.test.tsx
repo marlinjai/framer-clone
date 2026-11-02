@@ -27,13 +27,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function renderDialog() {
+function renderDialog(snapshot: typeof SNAPSHOT & { components?: Record<string, unknown> } = SNAPSHOT) {
   return render(
     <SaveAsNewProjectDialog
       open
       onOpenChange={() => {}}
       defaultName="Framer Clone Demo"
-      getSnapshot={() => SNAPSHOT}
+      getSnapshot={() => snapshot}
       currentPageId="p1"
       onSaved={onSaved}
     />,
@@ -44,6 +44,16 @@ const fail = (code: string, status = 403) =>
   new Response(JSON.stringify({ error: { code, message: code } }), { status });
 
 describe('Save as a new project', () => {
+  it('sends the components with the pages, so a placement stays a placement', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ siteId: 'new-site' }), { status: 200 }));
+    const components = { card: { id: 'card', name: 'Card' } };
+    renderDialog({ ...SNAPSHOT, components });
+    fireEvent.click(screen.getByRole('button', { name: 'Save project' }));
+    await waitFor(() => expect(replace).toHaveBeenCalled());
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body).project).toEqual({ pages: SNAPSHOT.pages, components });
+  });
+
   it('prefills the name; saving creates the project from the pages and opens it on the same page', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ siteId: 'new-site' }), { status: 200 }));
     renderDialog();

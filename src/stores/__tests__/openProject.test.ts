@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { getSnapshot } from 'mobx-state-tree';
 import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import ProjectModel, { type ProjectSnapshotOut } from '@/models/ProjectModel';
-import { markServerVersion, openProject, pickPage } from '../openProject';
+import { changedElsewhereMessage, markServerVersion, openProject, pickPage } from '../openProject';
 import { withDefaultViewports } from '@/lib/canvas/defaultViewports';
 
 let store: RootStoreType;
@@ -80,6 +80,105 @@ describe('openProject', () => {
   });
 });
 
+describe('openProject compares reusable components too', () => {
+  const definition = (name: string) => ({
+    id: 'nav',
+    name,
+    page: {
+      id: 'nav-page',
+      slug: '',
+      metadata: { title: 'Nav' },
+      appComponentTree: { id: 'n-root', type: 'header', componentType: 'host', props: {}, children: [] },
+      canvasNodes: {},
+    },
+    inputs: [],
+    states: [],
+  });
+
+  function withDefinition(name: string | null): ProjectSnapshotOut {
+    const snap = JSON.parse(JSON.stringify(serverSnapshot())) as ProjectSnapshotOut;
+    if (name === null) return snap;
+    return JSON.parse(JSON.stringify(getSnapshot(ProjectModel.create({ ...snap, components: { nav: definition(name) } as never }))));
+  }
+
+  // The pages must stay exactly alike, so only a definition can differ.
+  function samePages(base: ProjectSnapshotOut, name: string | null): ProjectSnapshotOut {
+    return { ...base, components: withDefinition(name).components };
+  }
+
+  it('no unsaved work here: takes a definition changed elsewhere, with identical pages', () => {
+    const base = withDefinition('Navbar');
+    openProject(store, base);
+    const out = openProject(store, samePages(base, 'Navbar edited elsewhere'));
+    expect(out.keptWorkingCopy).toBe(false);
+    expect(out.changedElsewhere).toBe(false);
+    expect(store.editorUI.currentProject!.components.get('nav')!.name).toBe('Navbar edited elsewhere');
+  });
+
+  it('a definition changed on both sides is a conflict that names it, with identical pages', () => {
+    const base = withDefinition('Navbar');
+    openProject(store, base);
+    store.editorUI.currentProject!.components.get('nav')!.page.setSlug('edited-here');
+    const out = openProject(store, samePages(base, 'Navbar edited elsewhere'));
+    expect(out.keptWorkingCopy).toBe(true);
+    expect(out.changedElsewhere).toBe(true);
+    expect(out.changedDefinitions).toEqual(['Navbar edited elsewhere']);
+    expect(store.editorUI.currentProject!.components.get('nav')!.page.slug).toBe('edited-here');
+  });
+
+  it('unsaved page work against a definition changed elsewhere is a conflict too', () => {
+    const base = withDefinition('Navbar');
+    openProject(store, base);
+    store.editorUI.currentProject!.createPage('Generated here, not saved');
+    const out = openProject(store, samePages(base, 'Navbar edited elsewhere'));
+    expect(out.changedElsewhere).toBe(true);
+    expect(out.changedDefinitions).toEqual(['Navbar edited elsewhere']);
+  });
+
+  it('names a definition deleted elsewhere from the copy in this tab', () => {
+    const base = withDefinition('Navbar');
+    openProject(store, base);
+    store.editorUI.currentProject!.components.get('nav')!.page.setSlug('edited-here');
+    expect(openProject(store, samePages(base, null)).changedDefinitions).toEqual(['Navbar']);
+  });
+
+  it('a conflict in pages alone names no component', () => {
+    const base = withDefinition('Navbar');
+    openProject(store, base);
+    store.editorUI.currentProject!.createPage('Generated here, not saved');
+    const p = ProjectModel.create(JSON.parse(JSON.stringify(base)));
+    p.createPage('Added elsewhere');
+    const out = openProject(store, JSON.parse(JSON.stringify(getSnapshot(p))));
+    expect(out.changedElsewhere).toBe(true);
+    expect(out.changedDefinitions).toEqual([]);
+  });
+
+  it('this tab saving a definition is not a change elsewhere', () => {
+    openProject(store, withDefinition('Navbar'));
+    const project = store.editorUI.currentProject!;
+    project.components.get('nav')!.page.setSlug('saved-here');
+    const saved = getSnapshot(project) as unknown as ProjectSnapshotOut;
+    markServerVersion(project.id, saved);
+    const out = openProject(store, JSON.parse(JSON.stringify(saved)) as ProjectSnapshotOut);
+    expect(out.keptWorkingCopy).toBe(true);
+    expect(out.changedElsewhere).toBe(false);
+  });
+
+  it('a snapshot with no components key compares equal to none', () => {
+    const base = withDefinition(null);
+    openProject(store, base);
+    const { components: _omitted, ...oldShape } = base;
+    const out = openProject(store, oldShape as ProjectSnapshotOut);
+    expect(out.keptWorkingCopy).toBe(true);
+    expect(out.changedElsewhere).toBe(false);
+  });
+
+  it('the warning names the components and stays as it was without any', () => {
+    expect(changedElsewhereMessage(['Footer', 'Navbar'])).toContain('Components changed there: Footer, Navbar.');
+    expect(changedElsewhereMessage([])).not.toContain('Components');
+  });
+});
+
 describe('openProject when the server copy changed meanwhile', () => {
   function savedElsewhere(): ProjectSnapshotOut {
     // Same project, a page added by another tab or person and saved.
@@ -112,7 +211,7 @@ describe('openProject when the server copy changed meanwhile', () => {
     const project = store.editorUI.currentProject!;
     project.createPage('Saved from here');
     const saved = getSnapshot(project) as unknown as ProjectSnapshotOut;
-    markServerVersion(project.id, saved.pages);
+    markServerVersion(project.id, saved);
     // The server now returns what this tab saved (key order may differ).
     const fromServer = JSON.parse(JSON.stringify(saved)) as ProjectSnapshotOut;
     const out = openProject(store, fromServer);

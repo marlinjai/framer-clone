@@ -423,6 +423,70 @@ describe('POST /api/projects (authorized)', () => {
       expect(snapshotArg.lumitra.enabled).toBe(false);
     });
 
+    const CARD = {
+      id: 'card',
+      name: 'Card',
+      page: {
+        id: 'card-page',
+        slug: '',
+        metadata: { title: 'Card' },
+        appComponentTree: { id: 'c-root', type: 'div', componentType: 'host', props: {}, children: [] },
+        canvasNodes: {},
+      },
+      inputs: [{ id: 'title', name: 'Title', type: 'text' }],
+      states: [],
+    };
+
+    it('takes the components with the pages, or every placement would be a Missing component', async () => {
+      const save = vi.fn().mockResolvedValue(undefined);
+      installRepo({ saveProject: save });
+      const snap = demoPages();
+
+      const res = await POST(createReq({ name: 'X', project: { pages: snap.pages, components: { card: CARD } } }));
+
+      expect(res.status).toBe(200);
+      const stored = save.mock.calls[0][1].components;
+      expect(Object.keys(stored)).toEqual(['card']);
+      expect(stored.card.name).toBe('Card');
+      expect(stored.card.inputs).toEqual(CARD.inputs);
+      // The parser ran: a definition has frames for the breakpoint mapping.
+      expect(Object.keys(stored.card.page.canvasNodes)).toHaveLength(3);
+    });
+
+    it('stores no definitions for a body without the key', async () => {
+      const save = vi.fn().mockResolvedValue(undefined);
+      installRepo({ saveProject: save });
+      await POST(createReq({ name: 'X', project: { pages: demoPages().pages } }));
+      expect(save.mock.calls[0][1].components).toEqual({});
+    });
+
+    it('400s for a definition it cannot read, before provisioning or writing anything', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const save = vi.fn();
+      installRepo({ saveProject: save });
+      const snap = demoPages();
+
+      for (const bad of [{ ...CARD, id: 'other' }, { ...CARD, page: { ...CARD.page, metadata: 7 } }]) {
+        const res = await POST(createReq({ name: 'X', project: { pages: snap.pages, components: { card: bad } } }));
+        expect(res.status).toBe(400);
+        const { error } = await res.json();
+        expect(error.code).toBe('bad_body');
+        expect(error.message).toContain('card');
+      }
+
+      expect(save).not.toHaveBeenCalled();
+      expect(mockProvision).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('400s for components that are not a record', async () => {
+      const save = vi.fn();
+      installRepo({ saveProject: save });
+      const res = await POST(createReq({ name: 'X', project: { pages: demoPages().pages, components: ['card'] } }));
+      expect(res.status).toBe(400);
+      expect(save).not.toHaveBeenCalled();
+    });
+
     it('repairs a page without breakpoint frames on the way in', async () => {
       const save = vi.fn().mockResolvedValue(undefined);
       installRepo({ saveProject: save });
