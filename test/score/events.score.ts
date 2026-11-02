@@ -11,13 +11,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { build } from 'esbuild';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type Page } from 'playwright';
 import type { BehaviourProgram } from '@/lib/behaviour/program';
 import { GATE_GLOBAL } from '@/lib/behaviour/names';
 import { EVENT_PROOFS, NOT_PROVEN, n, type EventProof } from './lib/eventProofs';
 import { renderThroughPublishedPage } from './lib/published';
+import { bundleRuntime, runtimeScripts } from './lib/runtime';
 import { allEntries } from './lib/universe';
 import { writeOut } from './lib/io';
 import { rowKey, type Cell } from './lib/types';
@@ -77,39 +77,14 @@ async function recordClip(browser: Browser): Promise<Buffer> {
   return Buffer.from(bytes);
 }
 
-/** The runtime and its chunks as one plain script, started as the island starts them. */
-async function bundleRuntime(): Promise<string> {
-  const bundled = await build({
-    stdin: {
-      contents: `
-        import { startBehaviour } from '@/lib/behaviour/runtime';
-        import { createRover } from '@/lib/behaviour/rove';
-        import * as verbs from '@/lib/behaviour/verbs';
-        window.__start = (program) => startBehaviour({ container: document, program, surface: 'published', verbs: verbs.createVerbs, extras: verbs, rove: createRover });
-      `,
-      resolveDir: process.cwd(),
-      loader: 'ts',
-    },
-    bundle: true,
-    write: false,
-    format: 'iife',
-    target: 'es2022',
-    alias: { '@': path.resolve('src') },
-    // `effect` reaches this with a dynamic import, which a plain script cannot split.
-    external: ['@/lib/effects/runtime'],
-  });
-  return bundled.outputFiles[0].text;
-}
-
 async function documentFor(event: string, proof: EventProof, runtime: string): Promise<string> {
   const on = { on: [{ id: 'proof', on: event, do: [{ set: 'hit', value: true }] }] };
   const state = [{ id: 'hit', name: 'hit', type: 'boolean', initial: false }, ...(proof.state ?? [])];
   const tree = n('proof-root', 'div', { behaviour: { state } }, ...proof.tree(on));
   const { html, behaviour } = await renderThroughPublishedPage({ tree, definitions: {} });
-  const program = JSON.stringify(behaviour as BehaviourProgram).replace(/</g, '\\u003c');
   // Held until the proof has its route ready, and started before the cause, so the
   // boot script's buffer has no part in what is proven.
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body>${html}<script>${runtime}</script><script>window.__start(${program})</script></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body>${html}${runtimeScripts(runtime, behaviour as BehaviourProgram)}</body></html>`;
 }
 
 const hitOn = (page: Page) => page.evaluate((attribute) => document.querySelector('[data-t="proof-root"]')?.getAttribute(attribute), HIT);

@@ -15,9 +15,11 @@ import path from 'node:path';
 import type { Page } from 'playwright';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { HOVER_GATE } from '@/lib/rules/states';
+import { deriveTabs } from '@/lib/behaviour/presets/tabs';
+import type { PresetNode } from '@/lib/behaviour/presets';
 import { n, run, t } from '../patterns';
 import type { GapId } from '../lib/types';
-import type { PublishedOutput } from '../lib/published';
+import { renderThroughPublishedPage, type PublishedOutput } from '../lib/published';
 
 const FIXTURE_DIR = path.resolve(process.cwd(), 'test/score/corpus/fixtures');
 
@@ -57,6 +59,46 @@ const el = (page: Page, id: string) => page.locator(`[data-parity-id="${id}"]`);
 const hover = (id: string): FixtureState => ({ id: `hover ${id}`, gap: 'selector-styles', apply: (page) => el(page, id).hover() });
 
 const FONT = 'Arial, sans-serif';
+
+/** The Radix tabs as the tabs preset stores them: its nodes laid out, then derived. Only the style is the fixture's. */
+function radixTabs(): ComponentNode {
+  const state = 'radix-tabs-active';
+  const trigger = (value: string, title: string, index: number) =>
+    t('button', title, parity(`trigger-${value}`, {
+      type: 'button',
+      role: 'tab',
+      'data-orientation': 'horizontal',
+      style: { border: 0, background: 'none', borderRadius: '6px', padding: '4px 8px', font: 'inherit', fontWeight: 500, cursor: 'pointer' },
+      rules: [{ id: 'on', selector: '&', when: { state, eq: index }, style: { background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' } }],
+    }));
+  const content = (value: string, text: string) =>
+    t('div', text, parity(`content-${value}`, { role: 'tabpanel', tabIndex: 0, 'data-orientation': 'horizontal', style: { paddingTop: '8px' } }));
+  return n(
+    'div',
+    parity('page', { style: { font: `14px/20px ${FONT}`, color: '#0a0a0a', padding: '24px', maxWidth: '480px' } }),
+    deriveTabs({
+      ...n(
+        'div',
+        parity('tabs', { dir: 'ltr', 'data-orientation': 'horizontal' }),
+        n(
+          'div',
+          parity('list', {
+            role: 'tablist',
+            'aria-label': 'Settings',
+            'aria-orientation': 'horizontal',
+            'data-orientation': 'horizontal',
+            style: { display: 'inline-flex', background: '#f5f5f5', borderRadius: '8px', padding: '3px', outline: 'none' },
+          }),
+          trigger('account', 'Account', 0),
+          trigger('password', 'Password', 1),
+        ),
+        content('account', 'Change your name.'),
+        content('password', 'Change your password.'),
+      ),
+      id: 'radix-tabs',
+    } as PresetNode) as ComponentNode,
+  );
+}
 
 /** A 32px circle as an SVG, the same bytes as in stylesheet-values.html. */
 const DOT_SVG = 'PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iOCIgZmlsbD0iIzFkNGVkOCIvPjwvc3ZnPg==';
@@ -516,73 +558,8 @@ export const FIXTURES: Fixture[] = [
     source: '@radix-ui/react-tabs',
     original: { mount: 'radix-tabs.tsx', css: 'radix.css' },
     initialGap: 'layout-difference',
-    tree: () => {
-      const trigger = (value: string, title: string, active: boolean) =>
-        t(
-          'button',
-          title,
-          parity(`trigger-${value}`, {
-            type: 'button',
-            role: 'tab',
-            'aria-selected': active ? 'true' : 'false',
-            id: `tab-${value}`,
-            'aria-controls': `panel-${value}`,
-            'data-state': active ? 'active' : 'inactive',
-            'data-orientation': 'horizontal',
-            tabIndex: active ? 0 : -1,
-            style: {
-              border: 0, borderRadius: '6px', padding: '4px 8px', font: 'inherit', fontWeight: 500, cursor: 'pointer',
-              ...(active ? { background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' } : { background: 'none' }),
-            },
-          }),
-        );
-      return n(
-        'div',
-        parity('page', { style: { font: `14px/20px ${FONT}`, color: '#0a0a0a', padding: '24px', maxWidth: '480px' } }),
-        n(
-          'div',
-          parity('tabs', { dir: 'ltr', 'data-orientation': 'horizontal' }),
-          n(
-            'div',
-            parity('list', {
-              role: 'tablist',
-              'aria-label': 'Settings',
-              'aria-orientation': 'horizontal',
-              'data-orientation': 'horizontal',
-              style: { display: 'inline-flex', background: '#f5f5f5', borderRadius: '8px', padding: '3px', outline: 'none' },
-            }),
-            trigger('account', 'Account', true),
-            trigger('password', 'Password', false),
-          ),
-          t(
-            'div',
-            'Change your name.',
-            parity('content-account', {
-              id: 'panel-account',
-              'aria-labelledby': 'tab-account',
-              role: 'tabpanel',
-              tabIndex: 0,
-              'data-state': 'active',
-              'data-orientation': 'horizontal',
-              style: { paddingTop: '8px' },
-            }),
-          ),
-          n(
-            'div',
-            parity('content-password', {
-              id: 'panel-password',
-              'aria-labelledby': 'tab-password',
-              role: 'tabpanel',
-              tabIndex: 0,
-              hidden: true,
-              'data-state': 'inactive',
-              'data-orientation': 'horizontal',
-              style: { paddingTop: '8px' },
-            }),
-          ),
-        ),
-      );
-    },
+    tree: radixTabs,
+    published: () => renderThroughPublishedPage({ tree: radixTabs(), definitions: {} }),
     states: [
       {
         id: 'arrow key changes the tab',

@@ -2,6 +2,11 @@
 // repository, so they reach the browser exactly as an author's page does. A node's
 // `data-t` is how a test finds it.
 
+import { PRESETS, type PresetNode } from '@/lib/behaviour/presets';
+import { addSlide, carousel } from '@/lib/behaviour/presets/carousel';
+import { addTab, tabs } from '@/lib/behaviour/presets/tabs';
+import { behaviourOf, withProps } from '@/lib/behaviour/presets/nodes';
+
 type Props = Record<string, unknown>;
 
 export interface StoredNode {
@@ -518,7 +523,50 @@ const captureAround = (): StoredNode => node('around-pay', 'div', captures, pay(
 const consent = (): StoredNode =>
   node('with-banner', 'div', { behaviour: { state: [flag('s')], on: [{ id: 'k', on: 'keydown', scope: 'document', keys: ['Escape'], do: [{ set: 's', value: false }] }] } }, pay());
 
+/** A preset exactly as the palette's function returns it, as a page stores it. `data-t` is what a test reads. */
+const preset = (at: PresetNode): StoredNode =>
+  ({ id: at.id, type: at.type, componentType: 'host', props: { 'data-t': at.id, ...(at.props as Props) }, children: (at.children ?? []).map(preset) });
+
+const presetPage = (...presets: PresetNode[]) => (): StoredNode => edges(...presets.map(preset));
+
+const FOUR_TABS = [
+  { title: 'Alpha', body: 'Alpha panel' },
+  { title: 'Beta', body: 'Beta panel' },
+  { title: 'Gamma', body: 'Gamma panel' },
+];
+
+/** A person's own trigger on the first tab, then a tab added: it has to survive the derive. */
+function editedTabs(): PresetNode {
+  const base = tabs({ seed: 'edited', items: FOUR_TABS });
+  const mine = { id: 'mine', on: 'click', do: [{ set: 'edited-mine', value: true }] };
+  const [list, ...rest] = base.children ?? [];
+  const [first, ...others] = list.children ?? [];
+  const withState = withProps(base, { behaviour: { ...behaviourOf(base), state: [...(behaviourOf(base).state ?? []), { id: 'edited-mine', name: 'Mine', type: 'boolean', initial: false }] } });
+  const ownTab = withProps(first, { behaviour: { ...behaviourOf(first), on: [...(behaviourOf(first).on ?? []), mine] } });
+  return addTab({ ...withState, children: [{ ...list, children: [ownTab, ...others] }, ...rest] }, { title: 'Delta', body: 'Delta panel' });
+}
+
+/** A phone gets the same nodes, so what matters there is whether they fit. */
+const PRESET_PAGES: Readonly<Record<string, () => StoredNode>> = {
+  'preset-tabs': presetPage(tabs({ seed: 'tabs', items: FOUR_TABS })),
+  'preset-tabs-vertical': presetPage(tabs({ seed: 'tabs', items: FOUR_TABS, orientation: 'vertical' })),
+  'preset-tabs-rtl': () => node('rtl', 'div', { dir: 'rtl', style: { direction: 'rtl' } }, preset(tabs({ seed: 'tabs', items: FOUR_TABS }))),
+  'preset-tabs-twice': presetPage(tabs({ seed: 'one', items: FOUR_TABS }), tabs({ seed: 'two', items: FOUR_TABS })),
+  'preset-tabs-nested': () => {
+    const outer = tabs({ seed: 'outer', items: FOUR_TABS });
+    const inner = tabs({ seed: 'inner', items: [{ title: 'Inner one', body: 'Inner panel one' }, { title: 'Inner two', body: 'Inner panel two' }] });
+    const [list, first, ...panels] = outer.children ?? [];
+    return preset({ ...outer, children: [list, { ...withProps(first, { children: undefined }), children: [inner] }, ...panels] });
+  },
+  'preset-tabs-edited': presetPage(editedTabs()),
+  'preset-toolbar': presetPage(PRESETS.toolbar('tools')),
+  'preset-tooltip': presetPage(PRESETS.tooltip('hint')),
+  'preset-carousel': presetPage(addSlide(carousel({ seed: 'show' }), 'Fourth slide')),
+  'preset-carousel-rotating': presetPage(carousel({ seed: 'show', rotateMs: 1000 })),
+};
+
 export const PAGES: Readonly<Record<string, () => StoredNode>> = {
+  ...PRESET_PAGES,
   plain: () => node('plain-page', 'p', { children: 'No behaviour here' }),
   still,
   effects,

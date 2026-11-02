@@ -18,6 +18,7 @@ import { chromium, type Browser, type Page } from 'playwright';
 import { build } from 'esbuild';
 import { FIXTURES, fixtureFile, readFixtureFile, type Fixture, type FixtureState } from './corpus/fixtures';
 import { BREAKPOINTS, bareDocument, publishedDocument, renderPublished } from './lib/published';
+import { bundleRuntime } from './lib/runtime';
 import { MAX_DIFF_RATIO, diffComputed, diffRatio, takeSnapshot, type Snapshot } from './lib/compare';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 import { OUT_DIR, writeOut } from './lib/io';
@@ -60,10 +61,12 @@ async function open(browser: Browser, html: string, viewport: { width: number; h
 
 describe('parity corpus', () => {
   let browser: Browser;
+  let runtime: string;
 
   beforeAll(async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     browser = await chromium.launch();
+    runtime = await bundleRuntime();
   });
   afterAll(async () => {
     await browser?.close();
@@ -75,9 +78,9 @@ describe('parity corpus', () => {
     for (const fixture of FIXTURES) {
       const original = await originalDocument(fixture);
       const output = fixture.published ? await fixture.published() : renderPublished(fixture.tree());
-      const replica = publishedDocument(output, CORPUS_SITE.pageBase);
-      const onDefaultBase = publishedDocument(output);
-      const bare = bareDocument(output);
+      const replica = publishedDocument(output, CORPUS_SITE.pageBase, runtime);
+      const onDefaultBase = publishedDocument(output, undefined, runtime);
+      const bare = bareDocument(output, runtime);
       const defaultBase = { pass: 0, total: 0 };
       const failures: CorpusFailure[] = [];
       const checks: CorpusResult['checks'] = {

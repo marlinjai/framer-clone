@@ -41,13 +41,18 @@ import {
   Send as SubmitIcon,
   PanelBottom as StickyCtaIcon,
   Link as LinkIcon,
+  PanelTop as TabsIcon,
+  Wrench as ToolbarIcon,
+  MessageSquare as TooltipIcon,
+  GalleryHorizontal as CarouselIcon,
 } from 'lucide-react';
 import type { IntrinsicElementType, PropsRecord } from '@/models/ComponentModel';
+import type { PresetKind } from '@/lib/behaviour/presets';
 import type { BindableSlotMeta } from '@/lib/bindings/types';
 import { FORM_KIND_ATTR, DEFAULT_FORM_NAME, DEFAULT_SUCCESS_MESSAGE, type FieldType } from '@/lib/forms/definition';
 import { DEFAULT_STICKY_CTA, STICKY_CTA_ATTR, STICKY_CTA_MARKER } from '@/lib/stickyCta/stickyCta';
 
-export type ComponentCategory = 'basic' | 'layout' | 'data' | 'commerce' | 'form';
+export type ComponentCategory = 'basic' | 'layout' | 'data' | 'commerce' | 'form' | 'interactive';
 
 /**
  * Data-component variants. The renderer dispatches on this field to the right
@@ -96,7 +101,37 @@ export interface ComponentRegistryEntry {
    * comes with name, email, message, consent and a submit button.
    */
   defaultChildren?: string[];
+  /**
+   * A behaviour preset: dropping this entry places the nodes its function returns
+   * (src/lib/behaviour/presets) instead of one element. `htmlType` and `defaultProps`
+   * then only describe the drag ghost.
+   */
+  preset?: PresetKind;
 }
+
+// ---------- interactive components (the behaviour model's presets) ----------
+// Ordinary nodes with stored behaviour, so what lands on the page edits like anything
+// else. Accordion, dialog and the other patterns plain HTML already brings stay out of
+// here until a palette slice offers them.
+
+const presetEntry = (id: PresetKind, label: string, icon: LucideIcon): ComponentRegistryEntry => ({
+  id,
+  label,
+  category: 'interactive',
+  preset: id,
+  icon,
+  iconClassName: 'bg-amber-100 text-amber-700',
+  htmlType: 'div',
+  defaultProps: {},
+  defaultSize: { width: 400, height: 240 },
+});
+
+const INTERACTIVE_COMPONENTS: Record<string, ComponentRegistryEntry> = {
+  tabs: presetEntry('tabs', 'Tabs', TabsIcon),
+  toolbar: presetEntry('toolbar', 'Toolbar', ToolbarIcon),
+  tooltip: presetEntry('tooltip', 'Tooltip', TooltipIcon),
+  carousel: presetEntry('carousel', 'Carousel', CarouselIcon),
+};
 
 // ---------- form components (published site essentials, decision 4) ----------
 // Marked with `data-form-kind` (src/lib/forms/definition.ts), never with
@@ -775,6 +810,7 @@ export const COMPONENT_REGISTRY: Record<string, ComponentRegistryEntry> = {
   },
 
   ...FORM_COMPONENTS,
+  ...INTERACTIVE_COMPONENTS,
 };
 
 export const listComponentsByCategory = (

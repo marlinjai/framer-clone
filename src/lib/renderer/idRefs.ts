@@ -118,6 +118,39 @@ function walkLevel<N extends IdNode>(node: N, visit: (node: N) => void): void {
 }
 
 /**
+ * A copied subtree whose element ids would repeat the original's: an `id` something in
+ * the copy points at gets `stem` added, and the references follow it. One nothing points
+ * at stays, as in a clone, since a rule may read it and a repeat of it breaks nothing.
+ * Hands back the same object when nothing changed.
+ */
+export function renewCopyIds<N extends IdNode>(root: N, stem: string): N {
+  const held: string[] = [];
+  const pointedAt = new Set<string>();
+  const read = (node: N): void => {
+    const id = idOf(node);
+    if (id !== undefined) held.push(id);
+    const props = propsOf(node);
+    if (props) referencesOf(props, pointedAt);
+    childrenOf(node).forEach(read);
+  };
+  read(root);
+  const ids = new Map(held.filter((id) => pointedAt.has(id)).map((id) => [id, `${id}-${stem}`]));
+  if (ids.size === 0) return root;
+  const write = (node: N): N => {
+    const props = propsOf(node);
+    const id = idOf(node);
+    const moved = id === undefined ? undefined : ids.get(id);
+    const followedProps = props ? withFollowedRefs(props, ids) : undefined;
+    return {
+      ...node,
+      ...(followedProps ? { props: moved === undefined ? followedProps : { ...followedProps, [isMap(node) ? 'name' : 'id']: moved } } : {}),
+      ...(Array.isArray(node.children) ? { children: childrenOf(node).map(write) } : {}),
+    };
+  };
+  return write(root);
+}
+
+/**
  * The tree with an `id` repeated by a clone made unique, and the references inside
  * each clone following it. Returns the same tree when there is nothing to do.
  */
