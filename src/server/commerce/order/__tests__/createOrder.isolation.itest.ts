@@ -20,7 +20,11 @@
 //      INSUFFICIENT stock PLACES the order SUCCESSFULLY: reserve returns ok,
 //      available_quantity goes NEGATIVE, NO OrderShortageError, and the order +
 //      line + reservation rows are written (a backorder line never rolls back the
-//      order).
+//      order);
+//   6. two companies of ONE tenant group share a schema, so nothing but the
+//      company column separates them: an order key belongs to its company. A
+//      reused key answers neither the other company's id nor its total, each
+//      company gets its own order and its own stock reservation.
 //
 // The end-to-end money paths (snapshots, tax treatments, idempotency, role
 // REVOKEs) are in createOrder.itest.ts; the control flow in createOrder.test.ts.
@@ -45,7 +49,9 @@ import postgres from 'postgres';
 
 import type { CommerceDB } from '../../db-types';
 import { commerceProvisionOptions } from '../../provisioning/provision';
-import { createOrder, type Cart } from '../createOrder';
+import { orderRepository } from '../../repository/order';
+import { readOrderTotal } from '../../repository/storefront';
+import { createOrder, orderLineRequestId, type Cart } from '../createOrder';
 import { DEMO_COMPANY_ID } from '@/lib/renderer/server/demoTenant';
 
 const DB_NAME = 'framer_clone_test';
@@ -54,6 +60,8 @@ const TG_A = assertTenantGroupId('018f9c10-0000-7000-8000-0000000009a9');
 const TG_B = assertTenantGroupId('018f9c10-0000-7000-8000-0000000009b9');
 const SCHEMA_A = tenantSchema(TG_A);
 const SCHEMA_B = tenantSchema(TG_B);
+// A second company in the SAME tenant group as DEMO_COMPANY_ID: one tg_ schema, so no schema wall between them.
+const OTHER_COMPANY_ID = '018f9c10-0000-7000-8000-00000000c0b2';
 
 let container: StartedTestContainer | undefined;
 let owner: postgres.Sql | undefined;
@@ -80,12 +88,14 @@ async function seedPriced(
     taxClass?: string | null;
     manageInventory?: boolean;
     allowBackorder?: boolean;
+    tenantId?: string;
   },
 ): Promise<Seed> {
+  const tenantId = opts.tenantId ?? DEMO_COMPANY_ID;
   const productId = randomUUID();
   await db
     .insertInto('product')
-    .values({ tenant_id: DEMO_COMPANY_ID, status: 'published',
+    .values({ tenant_id: tenantId, status: 'published',
       id: productId,
       title: 'P',
       handle: `h-${randomUUID()}`,
@@ -98,7 +108,7 @@ async function seedPriced(
   const sku = `SKU-${randomUUID()}`;
   await db
     .insertInto('product_variant')
-    .values({ tenant_id: DEMO_COMPANY_ID,
+    .values({ tenant_id: tenantId,
       id: variantId,
       product_id: productId,
       title: 'V',
@@ -113,12 +123,12 @@ async function seedPriced(
   const priceSetId = randomUUID();
   await db
     .insertInto('price_set')
-    .values({ tenant_id: DEMO_COMPANY_ID, id: priceSetId, variant_id: variantId, updated_at: new Date() })
+    .values({ tenant_id: tenantId, id: priceSetId, variant_id: variantId, updated_at: new Date() })
     .execute();
   const priceId = randomUUID();
   await db
     .insertInto('price')
-    .values({ tenant_id: DEMO_COMPANY_ID,
+    .values({ tenant_id: tenantId,
       id: priceId,
       price_set_id: priceSetId,
       currency_code: opts.currency ?? 'EUR',
@@ -248,7 +258,7 @@ describe('CM-09 createOrder isolation: atomic order WRITE (tenant schema)', () =
     const reservations = await dbA
       .selectFrom('reservation')
       .selectAll()
-      .where('request_id', '=', `${cart.requestId}:0`)
+      .where('request_id', '=', orderLineRequestId(DEMO_COMPANY_ID, cart.requestId, 0))
       .execute();
     expect(reservations).toHaveLength(1);
     const level = await readLevel(dbA, seed.inventoryItemId, seed.locationId);
@@ -300,13 +310,13 @@ describe('CM-09 createOrder isolation: atomic order WRITE (tenant schema)', () =
       const res = await dbA
         .selectFrom('reservation')
         .selectAll()
-        .where('request_id', '=', `${requestId}:${i}`)
+        .where('request_id', '=', orderLineRequestId(DEMO_COMPANY_ID, requestId, i))
         .execute();
       expect(res).toHaveLength(0);
       const mov = await dbA
         .selectFrom('stock_movement')
         .selectAll()
-        .where('request_id', '=', `${requestId}:${i}`)
+        .where('request_id', '=', orderLineRequestId(DEMO_COMPANY_ID, requestId, i))
         .execute();
       expect(mov).toHaveLength(0);
     }
@@ -352,7 +362,7 @@ describe('CM-09 createOrder isolation: atomic order WRITE (tenant schema)', () =
     const res = await dbA
       .selectFrom('reservation')
       .selectAll()
-      .where('request_id', '=', `${requestId}:0`)
+      .where('request_id', '=', orderLineRequestId(DEMO_COMPANY_ID, requestId, 0))
       .execute();
     expect(res).toHaveLength(1);
 
@@ -453,7 +463,7 @@ describe('CM-09 createOrder isolation: atomic order WRITE (tenant schema)', () =
     const res = await dbA
       .selectFrom('reservation')
       .selectAll()
-      .where('request_id', '=', `${requestId}:0`)
+      .where('request_id', '=', orderLineRequestId(DEMO_COMPANY_ID, requestId, 0))
       .execute();
     expect(res).toHaveLength(1);
 
@@ -461,5 +471,107 @@ describe('CM-09 createOrder isolation: atomic order WRITE (tenant schema)', () =
     const level = await readLevel(dbA, seed.inventoryItemId, seed.locationId);
     expect(level.reserved).toBe(5);
     expect(level.available).toBe(-3);
+  });
+});
+
+describe('an order key belongs to its company (two companies in one tenant group)', () => {
+  /** A one-line cart for `tenantId` on `seed`. */
+  function cartFor(tenantId: string, seed: Seed, requestId: string, quantity = 1): Cart {
+    return {
+      tenantId,
+      requestId,
+      currency: 'EUR',
+      taxRegion: 'DE',
+      lines: [{ inventoryItemId: seed.inventoryItemId, variantId: seed.variantId, quantity, locationId: seed.locationId }],
+    };
+  }
+
+  async function placed(cart: Cart): Promise<string> {
+    const result = await createOrder(tenantDb(ownerBase!, TG_A), TG_A, cart);
+    if (!result.ok) throw new Error(`order refused: ${JSON.stringify(result.shortages)}`);
+    return result.orderId;
+  }
+
+  /** The line item ids of `orderIds`: what a stock movement's ref_id points at. */
+  async function lineIds(db: Kysely<CommerceDB>, orderIds: string[]): Promise<string[]> {
+    const rows = await db.selectFrom('order_line_item').select('id').where('order_id', 'in', orderIds).execute();
+    return rows.map((row) => row.id);
+  }
+
+  it('a repeat within a company answers the same order and reserves once', async () => {
+    const db = tenantDb(ownerBase!, TG_A);
+    const seed = await seedPriced(db, { amountCents: 1000, stocked: 10 });
+    const cart = cartFor(DEMO_COMPANY_ID, seed, `iso-repeat-${randomUUID()}`, 2);
+
+    const first = await placed(cart);
+    expect(await placed(cart)).toBe(first);
+
+    expect((await readLevel(db, seed.inventoryItemId, seed.locationId)).reserved).toBe(2);
+  });
+
+  it('two companies using one key each get their own order, and each reserves its own stock', async () => {
+    const db = tenantDb(ownerBase!, TG_A);
+    const seedA = await seedPriced(db, { amountCents: 1000, stocked: 10 });
+    const seedB = await seedPriced(db, { amountCents: 7000, stocked: 10, tenantId: OTHER_COMPANY_ID });
+    const key = `iso-shared-${randomUUID()}`;
+
+    const orderA = await placed(cartFor(DEMO_COMPANY_ID, seedA, key, 2));
+    const orderB = await placed(cartFor(OTHER_COMPANY_ID, seedB, key, 3));
+
+    expect(orderB).not.toBe(orderA);
+    const rows = await db
+      .selectFrom('order')
+      .select(['id', 'tenant_id', 'total'])
+      .where('request_id', '=', key)
+      .orderBy('total')
+      .execute();
+    expect(rows).toEqual([
+      { id: orderA, tenant_id: DEMO_COMPANY_ID, total: 2380 },
+      { id: orderB, tenant_id: OTHER_COMPANY_ID, total: 24990 },
+    ]);
+
+    // The stock moved for both. A line key shared across companies would leave the second order unreserved.
+    expect((await readLevel(db, seedA.inventoryItemId, seedA.locationId)).reserved).toBe(2);
+    expect((await readLevel(db, seedB.inventoryItemId, seedB.locationId)).reserved).toBe(3);
+    const movements = await db
+      .selectFrom('stock_movement')
+      .select('inventory_item_id')
+      .where('ref_id', 'in', await lineIds(db, [orderA, orderB]))
+      .execute();
+    expect(movements.map((m) => m.inventory_item_id).sort()).toEqual(
+      [seedA.inventoryItemId, seedB.inventoryItemId].sort(),
+    );
+  });
+
+  it('concurrent duplicates of one key in two companies resolve to one winner per company', async () => {
+    const db = tenantDb(ownerBase!, TG_A);
+    const seedA = await seedPriced(db, { amountCents: 1000, stocked: 50 });
+    const seedB = await seedPriced(db, { amountCents: 2000, stocked: 50, tenantId: OTHER_COMPANY_ID });
+    const key = `iso-race-${randomUUID()}`;
+    const cartA = cartFor(DEMO_COMPANY_ID, seedA, key, 3);
+    const cartB = cartFor(OTHER_COMPANY_ID, seedB, key, 4);
+
+    const [a1, b1, a2, b2] = await Promise.all([placed(cartA), placed(cartB), placed(cartA), placed(cartB)]);
+
+    expect(a2).toBe(a1);
+    expect(b2).toBe(b1);
+    expect(b1).not.toBe(a1);
+    const rows = await db.selectFrom('order').select('id').where('request_id', '=', key).execute();
+    expect(rows).toHaveLength(2);
+    expect((await readLevel(db, seedA.inventoryItemId, seedA.locationId)).reserved).toBe(3);
+    expect((await readLevel(db, seedB.inventoryItemId, seedB.locationId)).reserved).toBe(4);
+  });
+
+  it("a foreign key or order id never reads back the other company's order", async () => {
+    const db = tenantDb(ownerBase!, TG_A);
+    const seed = await seedPriced(db, { amountCents: 1000, stocked: 10 });
+    const key = `iso-foreign-${randomUUID()}`;
+    const orderId = await placed(cartFor(DEMO_COMPANY_ID, seed, key));
+
+    expect((await orderRepository.findByRequestId(db, DEMO_COMPANY_ID, key))?.id).toBe(orderId);
+    expect(await orderRepository.findByRequestId(db, OTHER_COMPANY_ID, key)).toBeUndefined();
+
+    expect(await readOrderTotal(db, DEMO_COMPANY_ID, orderId)).toMatchObject({ totalCents: 1190, currency: 'EUR' });
+    expect(await readOrderTotal(db, OTHER_COMPANY_ID, orderId)).toBeNull();
   });
 });

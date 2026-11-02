@@ -381,6 +381,7 @@ export interface CreditNoteRefTable {
 /**
  * 005_minimal_orders: order ("order" is a reserved word; the key stays bare).
  * Full German order-level tax model; money columns are INTEGER cents.
+ * request_id is unique per company (026_order_request_key).
  */
 export interface OrderTable {
   id: string;
