@@ -1,9 +1,10 @@
 // @vitest-environment node
 //
-// The size limits of the contract, on the chunk as a browser receives it: bundled,
-// minified and gzipped. A limit only means something if it counts what the chunk imports,
-// so this is what keeps the parser out of the runtime: one stray import of format.ts
-// goes straight past it.
+// The size limits, bundled, minified and gzipped with esbuild, which takes a second. A
+// limit only means something if it counts what the chunk imports, so this is what keeps the
+// parser out of the runtime: one stray import of format.ts goes straight past it. The
+// limits themselves are held on Next's real chunks, which come out larger, in
+// test/behaviour/runtime.spec.ts.
 
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -41,9 +42,10 @@ describe('the behaviour chunks', () => {
     expect(bytes).toBeLessThanOrEqual(3 * KILOBYTE);
   });
 
-  it('verbs, with the key rules, stays within 2.5 kilobytes gzipped', async () => {
+  // Here it also carries dom.ts, which Next keeps in the core's chunk.
+  it('verbs stays within 3 kilobytes gzipped', async () => {
     const { bytes } = await gzippedSize('verbs.ts');
-    expect(bytes).toBeLessThanOrEqual(2.5 * KILOBYTE);
+    expect(bytes).toBeLessThanOrEqual(3 * KILOBYTE);
   });
 
   it.each(['runtime.ts', 'rove.ts', 'verbs.ts'])('%s holds no part of the parser, and no code from a string', async (entry) => {

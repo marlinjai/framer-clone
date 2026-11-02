@@ -9,6 +9,7 @@ import { build } from 'esbuild';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { gzipSync } from 'node:zlib';
 import { getPrismaClient } from '@/server/db';
 import { GATE_ATTR } from '@/lib/behaviour/names';
 import { START_STATE_TIMEOUT_MS } from '@/lib/effects/effects';
@@ -48,6 +49,24 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await getPrismaClient().$disconnect();
+});
+
+describe("the size of Next's real chunks, as gzip sends them", () => {
+  const CHUNKS_ON_DISK = path.resolve('.next/static/chunks');
+
+  it.each([
+    ['the core', RUNTIME_MARK, 5000],
+    ['rove', 'data-u-active', 3000],
+    ['verbs', 'the browser refused', 2500],
+  ])('holds %s to its limit', (name, mark, limit) => {
+    const found = fs.readdirSync(CHUNKS_ON_DISK).filter((file) => file.endsWith('.js'))
+      .map((file) => fs.readFileSync(path.join(CHUNKS_ON_DISK, file), 'utf8'))
+      .filter((text) => text.includes(mark));
+    expect(found).toHaveLength(1);
+    const bytes = gzipSync(found[0]).length;
+    note(`real chunk, gzipped: ${name} ${bytes}`);
+    expect(bytes).toBeLessThanOrEqual(limit);
+  });
 });
 
 const ENGINES: [string, BrowserType][] = [['chromium', chromium], ['webkit', webkit]];
