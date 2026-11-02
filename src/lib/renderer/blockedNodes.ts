@@ -11,7 +11,9 @@
 
 import { REVIEWED_ANIMATED_ATTRIBUTES } from '@/lib/ai/pageGen/reviewedVocabulary';
 import { FORM_CONFIG_PROPS } from '@/lib/forms/definition';
+import { DOM_MEMBER_NAMES } from '@/lib/renderer/domMemberNames.generated';
 import { isRenderedAttribute, isRenderedTag } from '@/lib/renderer/renderVocabulary';
+import { TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { STICKY_CTA_PROP_KEYS } from '@/lib/stickyCta/stickyCta';
 import { SAFE_PROPERTY, UNSAFE_VALUE, cssValueText, isContainedValue } from '@/lib/responsive/responsiveCss';
 
@@ -48,6 +50,26 @@ function isSafeAddress(address: string): boolean {
   return scheme === undefined || ADDRESS_SCHEMES.has(scheme) || MEDIA_DATA.test(text);
 }
 
+/**
+ * Names that replace what a page's own code calls. An `img` or a `form` with a
+ * `name`, and an `img` with an `id` beside any `name`, become a property of
+ * `document`: `name="createElement"` stopped every island on a page. Any `id` becomes
+ * a global, which is how `__next_f` and `webpackChunk_N_E` stopped hydration.
+ */
+const DOM_MEMBERS: ReadonlySet<string> = new Set(DOM_MEMBER_NAMES);
+const RESERVED_ID = /^__|^webpackChunk|^fc-|^ground-wrapper-/;
+
+/** Attributes read as CSS. A reference inside the page is how SVG paints, any other reaches a file. */
+const CSS_REFERENCE_ATTRIBUTES: ReadonlySet<string> = new Set([
+  'fill', 'stroke', 'filter', 'mask', 'cursor', 'clip-path', 'clippath', 'marker-start', 'markerstart',
+  'marker-mid', 'markermid', 'marker-end', 'markerend',
+]);
+
+function isForeignReference(value: string): boolean {
+  if (/\\|image-set\(|\bsrc\(/i.test(value)) return true;
+  return [...value.matchAll(/url\(\s*['"]?\s*([^'")\s]*)/gi)].some((match) => !match[1].startsWith('#'));
+}
+
 /** Addresses, sizes and the commas between them: a data address's own comma only splits off its payload. */
 const isSafeSrcset = (value: string): boolean => value.split(/[\s,]+/).every(isSafeAddress);
 
@@ -72,6 +94,9 @@ function isUnsafeValue(name: string, value: unknown): boolean {
   if (name === 'ref') return value !== undefined && value !== null;
   if (typeof value !== 'string') return false;
   if (name === 'attributename') return !REVIEWED_ANIMATED_ATTRIBUTES.has(value);
+  if (name === 'id') return RESERVED_ID.test(value) || DOM_MEMBERS.has(value);
+  if (name === 'name') return DOM_MEMBERS.has(value);
+  if (CSS_REFERENCE_ATTRIBUTES.has(name)) return isForeignReference(value);
   if (name === 'srcset') return !isSafeSrcset(value);
   return ADDRESS_ATTRIBUTES.has(name) && !isSafeAddress(value);
 }
@@ -90,19 +115,29 @@ export function isDroppedProp(name: string, value: unknown): boolean {
 
 /** The rule alone, for the panel: whether a node with this tag renders nothing. */
 export function isRefusedTag(tag: string): boolean {
+  // Exact: both renderers return a text node before any tag rule.
+  if (tag === TEXT_NODE_TYPE) return false;
   return BLOCKED_TAGS.has(tag.toLowerCase()) || !isRenderedTag(tag);
 }
 
-/** Whether a node with this resolved tag must render nothing. */
-export function isBlockedTag(tag: unknown): boolean {
-  if (typeof tag !== 'string' || !isRefusedTag(tag)) return false;
+/**
+ * Whether a node with this resolved tag must render nothing. `title` is an SVG name
+ * in the vocabulary. Anywhere else it is the document's, and React lifts it to `head`,
+ * so a node could rename the tab.
+ */
+export function isBlockedTag(tag: unknown, insideSvg = false): boolean {
+  if (typeof tag !== 'string') return false;
+  const documentTitle = tag.toLowerCase() === 'title' && !insideSvg;
+  if (!documentTitle && !isRefusedTag(tag)) return false;
   warnOnce(`<${tag.toLowerCase()}>`);
   return true;
 }
 
+const NODE_SETTINGS: ReadonlySet<string> = new Set(['query', 'bindings', 'effects', 'rules', 'behaviour', 'instance']);
+
 /** Settings the renderers read from the node. Off the element, as they should be, so nothing to report. */
 const isSettingsProp = (name: string): boolean =>
-  FORM_CONFIG_PROPS.has(name) || (STICKY_CTA_PROP_KEYS as readonly string[]).includes(name) || name === 'query' || name === 'bindings' || name === 'effects' || name === 'rules';
+  FORM_CONFIG_PROPS.has(name) || (STICKY_CTA_PROP_KEYS as readonly string[]).includes(name) || NODE_SETTINGS.has(name);
 
 /**
  * Whether a prop must not reach the DOM. React drops some of this for a known

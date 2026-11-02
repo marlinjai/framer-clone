@@ -18,12 +18,15 @@ import {
   svgElements,
 } from '../score/lib/universe';
 import type { Entry } from '../score/lib/types';
+import { DOM_MEMBER_NAMES } from '@/lib/renderer/domMemberNames.generated';
+import { RENDERED_ATTRIBUTES } from '@/lib/renderer/renderVocabulary';
 
 export interface ProbeNode {
   id: string;
   type: string;
   props: Record<string, unknown>;
   children?: ProbeNode[];
+  componentType?: string;
 }
 
 export interface Probe {
@@ -33,11 +36,18 @@ export interface Probe {
   node: ProbeNode;
   /** A click may leave the page: a plain link is meant to. */
   mayNavigate?: boolean;
+  /**
+   * Not a node's shape, as the save route may keep it. The model refuses this when
+   * the editor loads a page, so only the published route has to survive it.
+   */
+  malformed?: boolean;
 }
 
 /** Runs in the page: the harness defines it before any markup loads. */
 const run = (id: string) => `__hit('${id}')`;
 export const FOREIGN = 'https://probe.invalid';
+/** Where a refused CSS value points. Unlike FOREIGN, nothing may ever load from here. */
+export const STYLE_HOST = 'https://style.invalid';
 
 type Value = (id: string) => unknown;
 
@@ -202,6 +212,7 @@ const hostile = (what: string, type: string, parents: string[], props: (id: stri
 /** The tag spellings a browser or createElementNS reads as something else. */
 function tagProbes(): Probe[] {
   const tags = [
+    '#TEXT', '#Text', '#tExT', '#COMPONENT', '#Component', '#x', '#',
     'SCRIPT', 'ScRiPt', 'script ', ' script', '\tscript', 'script/', 'script>', '<script>', 'scr\u0000ipt', 'ſcript',
     'svg:script', 'SVG:script', 'x:script', 'x-y:script', 'a-b:script', 'svg:style', 'x:iframe', 'html:script', 'xhtml:script',
     'svg:a', 'x:a', 'svg:animate', 'x:set', 'math:a', 'iframe ', 'IFRAME', 'x:foreignObject',
@@ -268,17 +279,17 @@ function reactProbes(): Probe[] {
 }
 
 const STYLE_VALUES: ((id: string) => unknown)[] = [
-  (id) => `red;background:url(${FOREIGN}/${id})`,
-  (id) => `red;background-image:url("${FOREIGN}/${id}")`,
-  (id) => `url(${FOREIGN}/${id});color:red`,
-  (id) => `red}body{background:url(${FOREIGN}/${id})`,
+  (id) => `red;background:url(${STYLE_HOST}/${id})`,
+  (id) => `red;background-image:url("${STYLE_HOST}/${id}")`,
+  (id) => `url(${STYLE_HOST}/${id});color:red`,
   (id) => `red</style><script>${run(id)}</script>`,
   (id) => `red;}</style><img src=x onerror=${run(id)}>`,
   (id) => `expression(${run(id)})`,
   (id) => `url(javascript:${run(id)})`,
-  (id) => `@import url(${FOREIGN}/${id})`,
-  (id) => `/*"*/;background:url(${FOREIGN}/${id});/*"*/`,
-  (id) => ({ base: `red;background:url(${FOREIGN}/${id})` }),
+  (id) => `@import url(${STYLE_HOST}/${id})`,
+  (id) => `/*"*/;background:url(${STYLE_HOST}/${id});/*"*/`,
+  (id) => `"\\"";background:url(${STYLE_HOST}/${id});"`,
+  (id) => ({ base: `red;background:url(${STYLE_HOST}/${id})` }),
   (id) => ({ desktop: `red}</style><script>${run(id)}</script>`, tablet: 'blue' }),
   () => ({ toString: 'x' }),
   () => ['red'],
@@ -290,19 +301,109 @@ function styleProbes(): Probe[] {
     ['color', 'background', '--x', 'fontFamily'].map((key) => hostile(`style ${key}`, 'div', [], (id) => ({ style: { [key]: value(id) } }))),
   );
   list.push(
-    hostile('a style string', 'div', [], (id) => ({ style: `color:red;background:url(${FOREIGN}/${id})` })),
+    hostile('a style string', 'div', [], (id) => ({ style: `color:red;background:url(${STYLE_HOST}/${id})` })),
     hostile('a style array', 'div', [], () => ({ style: [{ color: 'red' }] })),
     hostile('a style number', 'div', [], () => ({ style: 1 })),
-    hostile('a style key with a declaration', 'div', [], (id) => ({ style: { 'color:red;background:url(x)': `url(${FOREIGN}/${id})` } })),
+    hostile('a style key with a declaration', 'div', [], (id) => ({ style: { 'color:red;background:url(x)': `url(${STYLE_HOST}/${id})` } })),
     hostile('a style key with a breakout', 'div', [], (id) => ({ style: { '</style><script>': run(id) } })),
-    hostile('a STYLE prop', 'div', [], (id) => ({ STYLE: `background:url(${FOREIGN}/${id})` })),
+    hostile('a STYLE prop', 'div', [], (id) => ({ STYLE: `background:url(${STYLE_HOST}/${id})` })),
     hostile('a rule closing its style element', 'div', [], (id) => ({ rules: [{ id: 'r', selector: `&:hover</style><script>${run(id)}</script>`, style: { color: 'red' } }] })),
     hostile('a rule value closing its style element', 'div', [], (id) => ({ rules: [{ id: 'r', selector: '&:hover', style: { color: `red</style><script>${run(id)}</script>` } }] })),
-    hostile('a rule importing a sheet', 'div', [], (id) => ({ rules: [{ id: 'r', define: `@import url(${FOREIGN}/${id})` }] })),
-    hostile('a rule loading an address', 'div', [], (id) => ({ rules: [{ id: 'r', selector: '&', style: { background: `url(${FOREIGN}/${id})` } }] })),
-    hostile('a style string on a custom element', 'x-y', [], (id) => ({ style: `background:url(${FOREIGN}/${id})` })),
+    hostile('a rule importing a sheet', 'div', [], (id) => ({ rules: [{ id: 'r', define: `@import url(${STYLE_HOST}/${id})` }] })),
+    hostile('a rule loading an address', 'div', [], (id) => ({ rules: [{ id: 'r', selector: '&', style: { background: `url(${STYLE_HOST}/${id})` } }] })),
+    hostile('a style string on a custom element', 'x-y', [], (id) => ({ style: `background:url(${STYLE_HOST}/${id})` })),
   );
   return list;
+}
+
+/** What the renderers' own attributes are called: a runtime acts on these. */
+function rendererAttributeProbes(): Probe[] {
+  const names = ['data-fc-consent-accept', 'data-fc-consent-decline', 'data-fc-n', 'data-fc-site-base', 'data-fc-sticky-cta-link'];
+  const spelled = names.flatMap((name) => [name, upper(name), mixed(name)]);
+  return spelled.flatMap((name) => ['div', 'a', 'x-y'].map((type) => hostile(`renderer attribute ${name} on <${type}>`, type, [], () => ({ [name]: '' }))));
+}
+
+/** What a page's own code reaches by name: a global through `id`, a method of `document` through `name`. */
+function nameProbes(full: boolean): Probe[] {
+  const globals = ['__next_f', '__next_s', '__fcImportTracker', '__lumitraConsent', 'webpackChunk_N_E', 'webpackChunk_x', 'fc-a', 'ground-wrapper-x'];
+  const members = full ? DOM_MEMBER_NAMES : ['createElement', 'querySelector', 'addEventListener', 'getElementById', 'cookie', 'forms', 'body', 'submit', 'action', 'elements'];
+  return [
+    ...globals.flatMap((id) => ['div', 'img', 'form'].map((type) => hostile(`id ${id} on <${type}>`, type, [], () => ({ id, name: 'kept' })))),
+    ...members.flatMap((name) => [
+      hostile(`name ${name} on <img>`, 'img', [], () => ({ name, src: '/x.png', alt: '' })),
+      hostile(`name ${name} on <form>`, 'form', [], () => ({ name })),
+      hostile(`id ${name} and a name on <img>`, 'img', [], () => ({ id: name, name: 'kept', src: '/x.png', alt: '' })),
+    ]),
+  ];
+}
+
+/** A paint or filter attribute reaching a file. A reference inside the page is how SVG works. */
+function cssReferenceProbes(): Probe[] {
+  // Not `filter`: the model reads that as a style on the canvas, where an image may load.
+  const names = ['fill', 'stroke', 'mask', 'cursor', 'clip-path', 'clipPath', 'marker-start', 'marker-mid', 'marker-end', 'markerEnd'];
+  const values = [
+    (id: string) => `url(${STYLE_HOST}/${id}.svg#g)`,
+    (id: string) => `URL("${STYLE_HOST}/${id}.svg#g")`,
+    (id: string) => `url( '${STYLE_HOST}/${id}.svg#g' )`,
+    (id: string) => `u\\72l(${STYLE_HOST}/${id}.svg#g)`,
+    (id: string) => `image-set("${STYLE_HOST}/${id}.png" 1x)`,
+  ];
+  return names.flatMap((name) => values.map((value) => hostile(`css reference ${name}`, 'rect', ['svg'], (id) => ({ [name]: value(id), width: 9, height: 9 }))));
+}
+
+/** Every name the gate lets through, on the one element where React writes properties. */
+function renderedNameProbes(): Probe[] {
+  return [...RENDERED_ATTRIBUTES].filter((name) => !['children', 'key', 'ref', 'style'].includes(name)).map((name) =>
+    hostile(`rendered name ${name} on <x-y>`, 'x-y', [], () => ({ [name]: 'x' })),
+  );
+}
+
+/** Stored as a function component: the registry is empty, so these must come to nothing. */
+function componentTypeProbes(): Probe[] {
+  return ['script', 'constructor', '__proto__', '#TEXT', 'iframe'].map((type) => {
+    const made = hostile(`a function component ${type}`, type, [], (id) => ({ children: run(id) }));
+    made.node.componentType = 'function';
+    return made;
+  });
+}
+
+/** A tree the save route keeps and no renderer may trip on. */
+function shapeProbes(): Probe[] {
+  const shapes: [string, Record<string, unknown>][] = [
+    ['children as text', { type: 'div', props: {}, children: 'x' }],
+    ['children as a number', { type: 'div', props: {}, children: 1 }],
+    ['children as an object', { type: 'div', props: {}, children: { type: 'p' } }],
+    ['a null child', { type: 'div', props: {}, children: [null] }],
+    ['a text child', { type: 'div', props: {}, children: ['x'] }],
+    ['a number child', { type: 'div', props: {}, children: [1] }],
+    ['an array child', { type: 'div', props: {}, children: [[{ type: 'p', props: {} }]] }],
+    ['a null child deep down', { type: 'div', props: {}, children: [{ type: 'p', props: {}, children: [null] }] }],
+    ['props as text', { type: 'div', props: 'x' }],
+    ['props as an array', { type: 'div', props: ['x'] }],
+    ['props as null', { type: 'div', props: null }],
+    ['no props', { type: 'div' }],
+    ['a numeric type', { type: 1, props: {} }],
+    ['a null type', { type: null, props: {} }],
+    ['an object type', { type: { a: 1 }, props: {} }],
+    ['no type', { props: {} }],
+    ['bindings as text', { type: 'div', props: {}, bindings: 'x' }],
+    ['bindings as an array', { type: 'div', props: {}, bindings: ['x'] }],
+    ['a null binding', { type: 'div', props: {}, bindings: { children: null } }],
+    ['effects as text', { type: 'div', props: { effects: 'x' } }],
+    ['rules as an object', { type: 'div', props: { rules: { a: 1 } } }],
+    ['behaviour as an object', { type: 'div', props: { behaviour: { a: 1 } } }],
+    ['an object id', { type: 'div', id: { a: 1 }, props: {} }],
+    ['instance as an object', { type: 'div', props: { instance: { a: 1 } } }],
+    ['instance with null definitions', { type: 'div', props: { instance: { inputs: {}, bindings: {}, inputDefinitions: [null] } } }],
+    ['instance with odd definitions', { type: 'div', props: { instance: { inputs: {}, bindings: {}, inputDefinitions: [{}] } } }],
+    ['a text node with children', { type: '#text', props: { children: 'x' }, children: 'y' }],
+  ];
+  return shapes.map(([what, node]) => {
+    const made = probe(`shape: ${what}`, 'div', [], () => ({ props: {} }));
+    made.node = { id: made.id, ...node } as unknown as ProbeNode;
+    made.malformed = true;
+    return made;
+  });
 }
 
 export function buildProbes(full: boolean): Probe[] {
@@ -311,6 +412,12 @@ export function buildProbes(full: boolean): Probe[] {
     ...elementProbes(),
     ...tagProbes(),
     ...reactProbes(),
+    ...shapeProbes(),
+    ...rendererAttributeProbes(),
+    ...nameProbes(full),
+    ...cssReferenceProbes(),
+    ...renderedNameProbes(),
+    ...componentTypeProbes(),
     ...styleProbes(),
     ...animationProbes(),
     ...handlerProbes(full),

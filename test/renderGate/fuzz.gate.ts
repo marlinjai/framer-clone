@@ -19,9 +19,27 @@ const REPORT = 'test/renderGate/.out/findings.json';
 
 const BROWSERS: [string, BrowserType][] = [['chromium', chromium], ['webkit', webkit]];
 
+/**
+ * WebKit stops following links after a burst of navigations from one page, which the
+ * leave canary showed. So a batch holds fewer of what a click can take away.
+ */
+const MAX_NAVIGATING = 60;
+const mayLeave = (probe: Probe) => /^<(?:a|area|form|button|input)\b/i.test(probe.what);
+
 function batches(probes: readonly Probe[]): Probe[][] {
   const out: Probe[][] = [];
-  for (let i = 0; i < probes.length; i += BATCH_SIZE) out.push(probes.slice(i, i + BATCH_SIZE));
+  let batch: Probe[] = [];
+  let navigating = 0;
+  for (const probe of probes) {
+    batch.push(probe);
+    if (mayLeave(probe)) navigating++;
+    if (batch.length === BATCH_SIZE || navigating === MAX_NAVIGATING) {
+      out.push(batch);
+      batch = [];
+      navigating = 0;
+    }
+  }
+  if (batch.length > 0) out.push(batch);
   return out;
 }
 

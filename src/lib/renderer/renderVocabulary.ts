@@ -33,12 +33,9 @@ const PAGE_ONLY_TAGS = words(`
   acronym big center dir font nobr rb rtc strike tt
 `);
 
-/** The text node's type (./textNode.ts): it emits no element, so no tag rule is about it. */
-const TEXT_NODE = '#text';
-
 /** Lower case: SVG spells `linearGradient`, and a stored tag may come in any case. */
 export const RENDERED_TAGS: ReadonlySet<string> = new Set(
-  [...REVIEWED_HTML_TAGS, ...REVIEWED_SVG_TAGS, ...REVIEWED_MATHML_TAGS, ...PAGE_ONLY_TAGS, TEXT_NODE].map((tag) => tag.toLowerCase()),
+  [...REVIEWED_HTML_TAGS, ...REVIEWED_SVG_TAGS, ...REVIEWED_MATHML_TAGS, ...PAGE_ONLY_TAGS].map((tag) => tag.toLowerCase()),
 );
 
 /**
@@ -57,6 +54,9 @@ const PAGE_ONLY_ATTRIBUTES = words(`
   xmlns xmlns:xlink xmlnsxlink xml:lang xmllang xml:space xmlspace
   align axis bgcolor border cellpadding cellspacing char charoff clear face frame hspace noshade
   nowrap rules summary valign vspace
+  itemid itemprop itemref itemscope itemtype list
+  about property resource typeof vocab
+  instance
   columnalign columnlines columnspacing mathbackground mathcolor mathsize rowalign rowlines rowspacing
   children key ref suppresscontenteditablewarning suppresshydrationwarning
 `);
@@ -67,10 +67,11 @@ export const RENDERED_ATTRIBUTES: ReadonlySet<string> = new Set([...REVIEWED_ATT
 /**
  * Attributes judged and refused, by what they would do. Refused by default means a
  * name here and a name nobody has seen are treated alike, except that the hyphenated
- * ones have to be named: see AUTHOR_ATTRIBUTE.
+ * ones have to be named: see AUTHOR_ATTRIBUTE. `prefix` is here because Element has
+ * a read-only property of that name, which stops React on a custom element.
  */
 export const REFUSED_RENDER_ATTRIBUTES: ReadonlySet<string> = new Set(words(`
-  srcdoc is nonce
+  srcdoc is nonce prefix
   ping attributionsrc attributionsourceid browsingtopics interestfor
   shadowrootclonable shadowrootcustomelementregistry shadowrootdelegatesfocus shadowrootmode
   shadowrootreferencetarget shadowrootserializable shadowrootslotassignment
@@ -87,26 +88,35 @@ export const REFUSED_RENDER_ATTRIBUTES: ReadonlySet<string> = new Set(words(`
   selection stagemode subscriptshift superscriptshift svgview switch text truespeed version watch zoomandpan
 `));
 
+/** What the renderers' own attributes start with: the consent runtime acts on these, so none comes from a node. */
+const RENDERER_ATTRIBUTE = /^data-fc-/;
+
 /** A custom element's shape. A colon would let createElementNS read `x-y:script` as `script`. */
 const CUSTOM_ELEMENT = /^[a-z][a-z0-9._]*-[a-z0-9._-]*$/;
 
 const DATA_OR_ARIA = /^(?:data|aria)-[a-z0-9._:-]+$/;
 
 /**
- * A page author's own attribute, `my-attribute`. With no script on a page nothing
- * reads it, a browser leaves hyphens to authors, and React never treats such a name
- * as a property of a custom element, which is what makes other unknown names unsafe.
+ * The one deliberate exception to refusing by default, and so a refusal list:
+ * a page author's own attribute, `my-attribute`, which the panel offers. With no
+ * script on a page nothing reads it, and React never treats such a name as a property
+ * of a custom element, which is what makes other unknown names unsafe. A future
+ * browser attribute with a hyphen would pass until the data lists it, and then
+ * renderVocabulary.test.ts asks for a decision.
  */
 const AUTHOR_ATTRIBUTE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/;
 
 /** Whether a page may hold this tag, in any case. */
 export function isRenderedTag(tag: string): boolean {
   const name = tag.toLowerCase();
+  // `#TEXT` lower-cases into nothing a browser can create.
+  if (name.startsWith('#')) return false;
   return RENDERED_TAGS.has(name) || CUSTOM_ELEMENT.test(name);
 }
 
 /** Whether a page may hold an attribute of this lower-case name. The value has its own rules. */
 export function isRenderedAttribute(name: string): boolean {
+  if (RENDERER_ATTRIBUTE.test(name)) return false;
   if (RENDERED_ATTRIBUTES.has(name) || DATA_OR_ARIA.test(name)) return true;
   return AUTHOR_ATTRIBUTE.test(name) && !REFUSED_RENDER_ATTRIBUTES.has(name);
 }

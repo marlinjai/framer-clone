@@ -11,7 +11,7 @@
 
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { isSafeHref } from '@/lib/links/safeHref';
-import { isRefusedTag } from '@/lib/renderer/blockedNodes';
+import { isDroppedProp, isRefusedTag } from '@/lib/renderer/blockedNodes';
 import { isRenderedAttribute } from '@/lib/renderer/renderVocabulary';
 import { bareTextRefusal, isTextNodeType } from '@/lib/renderer/textNode';
 import { cssPropertyName, cssStyleKey, unsafeDeclaration } from '@/lib/responsive/responsiveCss';
@@ -153,7 +153,8 @@ export function attributeValueError(attribute: string, value: string): string | 
   if (URL_ATTRIBUTES.has(name) && value.trim() !== '' && !isSafeHref(value)) {
     return 'Not saved: use a page path (/contact), #section, https://, mailto: or tel:';
   }
-  return SCRIPT_ADDRESS.test(value) ? 'Not saved: this value could run code.' : null;
+  if (SCRIPT_ADDRESS.test(value)) return 'Not saved: this value could run code.';
+  return isDroppedProp(attributeProp(attribute, ''), value) ? 'Not saved: this value is reserved by the page itself.' : null;
 }
 
 /** Present or absent is the whole value: React reads the string "false" as true. */

@@ -16,6 +16,7 @@ import ComponentModel, { ComponentTypeEnum, type ComponentInstance } from '@/mod
 import HeadlessComponentRenderer from '@/lib/renderer/HeadlessComponentRenderer';
 import { renderComponentNode } from '@/lib/renderer/server/renderComponentNode';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
+import { wellFormedTree } from '@/lib/renderer/publish/nodeShape';
 
 interface WireProbe {
   id: string;
@@ -33,13 +34,17 @@ const BREAKPOINTS = [{ id: 'desktop', minWidth: 1200, label: 'Desktop' }];
 const toSnapshot = (node: Record<string, unknown>): Record<string, unknown> => ({
   id: node.id,
   type: node.type,
-  componentType: ComponentTypeEnum.HOST,
+  componentType: node.componentType ?? ComponentTypeEnum.HOST,
   props: node.props,
   children: ((node.children ?? []) as Record<string, unknown>[]).map(toSnapshot),
 });
 
 function element(surface: 'island' | 'canvas', node: Record<string, unknown>): React.ReactNode {
-  if (surface === 'island') return renderComponentNode(node as unknown as ComponentNode);
+  if (surface === 'island') {
+    // An island's nodes have been through hydrateBindings, which takes a tree through this.
+    const tree = wellFormedTree(node);
+    return tree ? renderComponentNode(tree as ComponentNode) : null;
+  }
   const component = ComponentModel.create(toSnapshot(node) as never) as ComponentInstance;
   return <HeadlessComponentRenderer component={component} breakpointId="desktop" allBreakpoints={BREAKPOINTS} />;
 }

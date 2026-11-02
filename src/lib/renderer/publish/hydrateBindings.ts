@@ -54,6 +54,7 @@
 // runtime-island hydration for the interactive commerce kinds is ALSO gated on
 // the static-html wave. Do NOT wire any of it here.
 
+import { wellFormedTree } from '@/lib/renderer/publish/nodeShape';
 import { applyBindings, type Props } from '@/lib/bindings/resolver/applyBindings';
 import { isTextNodeType, renderableText } from '@/lib/renderer/textNode';
 import { MISSING_TYPE, serializedBytes } from '@/lib/components/placement';
@@ -264,7 +265,9 @@ export async function hydrateBindings(
   // The page frame drives `{{page.params.*}}` resolution (RecordView row id,
   // ProductDetail handle) and `{{product.href}}` (the site's product page path).
   const rootScope = pushPageFrame(createScope(), pageParams, productPagePath);
-  const root = await hydrateNode(pageTree, rootScope, { ...repos, budget });
+  const tree = wellFormedTree(pageTree);
+  if (!tree) return { type: MISSING_TYPE };
+  const root = await hydrateNode(tree, rootScope, { ...repos, budget });
   // A root that hides itself: the page still serves, with nothing on it.
   return root ?? { type: MISSING_TYPE };
 }

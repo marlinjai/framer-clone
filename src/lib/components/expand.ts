@@ -124,7 +124,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 export function placementInstanceOf(props: unknown): PlacementInstance | undefined {
   const instance = isRecord(props) ? props.instance : undefined;
-  return isRecord(instance) ? (instance as unknown as PlacementInstance) : undefined;
+  // Expansion writes this, but a stored page is opaque JSON, so its shape is checked here.
+  if (!isRecord(instance) || !isRecord(instance.inputs) || !isRecord(instance.bindings)) return undefined;
+  if (!Array.isArray(instance.inputDefinitions) || !instance.inputDefinitions.every(isRecord)) return undefined;
+  return instance as unknown as PlacementInstance;
 }
 
 export function withoutInstance(node: ComponentNode): ComponentNode {
