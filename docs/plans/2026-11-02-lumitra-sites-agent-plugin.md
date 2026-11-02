@@ -81,6 +81,8 @@ The patterns to follow already exist:
 
 **6. Dogfood:** build the new lumitra.co page through the plugin. Every friction becomes a slice. The page is published to a `sites.lumitra.co` address first. Moving the lumitra.co domain is Marlin's yes.
 
+**7. The in-editor AI works the same way (added 2026-11-02 at Marlin's request).** Generate and Polish stop being single-shot: the server runs an agent loop over the same site operations, renders the page, looks at the screenshots per breakpoint and revises, the way Claude Code redesigns a site. It is taught the full vocabulary the score measures, closing the "accepted, not taught" rows of `docs/primitives-score/latest.md`.
+
 **Rough size:** two to three agent weeks across the six steps, as a judgement rather than a measurement. Steps 1 and 2 ship on their own first.
 
 ## What only Marlin can do
