@@ -9,7 +9,7 @@
 
 import ts from 'typescript';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
-import { isDroppedProp, isBlockedTag, safeInlineStyle, withoutDocumentId } from '@/lib/renderer/blockedNodes';
+import { continuesSvgContent, isDroppedId, isDroppedProp, isBlockedTag, safeInlineStyle } from '@/lib/renderer/blockedNodes';
 import { isRenderedAttribute } from '@/lib/renderer/renderVocabulary';
 import { TEXT_NODE_TYPE, refusesBareText } from '@/lib/renderer/textNode';
 import { isVoidTag } from '@/lib/drag/voidTags';
@@ -245,7 +245,7 @@ function readAttribute({ evaluator, budget }: LayerContext, attribute: ts.JsxAtt
   if (value === null || value === undefined) return { claim: converted('attribute', 'emptyValue', key), reads };
   const stored = toPlain(value);
   if (isDroppedProp(name, stored)) return { claim: left('refused-attribute', 'refusedAttribute', key) };
-  if (name === 'id' && withoutDocumentId(tag, { id: stored }).id === undefined) return { claim: left('refused-attribute', 'refusedAttribute', key) };
+  if (name === 'id' && isDroppedId(tag, stored)) return { claim: left('refused-attribute', 'refusedAttribute', key) };
   const external = typeof stored === 'string' && fetchesElsewhere(lower, tag.toLowerCase(), stored);
   return {
     store: { name, value: stored },
@@ -384,7 +384,7 @@ function convertElement(context: LayerContext, element: ts.JsxElement | ts.JsxSe
       for (const child of element.children) ledger.claimSubtree(file.source, child, left('expression', 'voidChildren', key));
     } else {
       const lower = tag.toLowerCase();
-      const inner = { key, scope, insideSvg: lower !== 'foreignobject' && (insideSvg || lower === 'svg'), parentTag: tag, depth: depth + 1 };
+      const inner = { key, scope, insideSvg: lower === 'svg' || (insideSvg && continuesSvgContent(lower)), parentTag: tag, depth: depth + 1 };
       convertChildren(context, element.children, inner, contents);
     }
   }
