@@ -1,22 +1,22 @@
 {
-  "generatedAt": "2026-11-02T09:07:57.279Z",
+  "generatedAt": "2026-11-02T10:36:20.762Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 373,
+  "durationSeconds": 278,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1794,
-        "fail": 39,
+        "pass": 1795,
+        "fail": 38,
         "notTested": 0,
         "total": 1833
       },
       "renderer": {
-        "pass": 1754,
-        "fail": 79,
+        "pass": 1755,
+        "fail": 78,
         "notTested": 0,
         "total": 1833
       },
@@ -139,14 +139,14 @@
       },
       "html-event-handler": {
         "format": {
-          "pass": 91,
-          "fail": 9,
+          "pass": 92,
+          "fail": 8,
           "notTested": 0,
           "total": 100
         },
         "renderer": {
-          "pass": 91,
-          "fail": 9,
+          "pass": 92,
+          "fail": 8,
           "notTested": 0,
           "total": 100
         },
@@ -3650,7 +3650,7 @@
       "html-element-attribute:video.preload": "pass pass pass pass pass",
       "html-element-attribute:video.src": "pass pass pass pass pass",
       "html-element-attribute:video.width": "pass pass attribute-read-as-style pass attribute-read-as-style",
-      "html-event-handler:onanimationcancel": "blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers blocked-event-handlers",
+      "html-event-handler:onanimationcancel": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onanimationend": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onanimationiteration": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
       "html-event-handler:onanimationstart": "pass pass blocked-event-handlers blocked-event-handlers blocked-event-handlers",
@@ -8731,12 +8731,12 @@
     {
       "id": "blocked-event-handlers",
       "description": "A stored event handler attribute is a string of code, so both renderers drop it on purpose (blockedNodes.ts). A cell here means no stored action ran from a real cause: the note says why, and the published page and the format already run most of them (events.score.ts). The canvas, the panel and the AI columns still wait for slices B10 to B12.",
-      "matrixCells": 318,
+      "matrixCells": 316,
       "corpusChecks": 0,
       "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
-      "cost": 318
+      "cost": 316
     },
     {
       "id": "ai-tag-allowlist",
