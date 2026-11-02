@@ -8,7 +8,7 @@
 // and authored rules follow. Pressed is last because pressing also hovers, and a
 // later rule wins a tie.
 
-import { isDefinitionRule, type StoredRule } from './rules';
+import { isDefinitionRule, type RuleDraft, type StoredRule } from './rules';
 
 export type NamedStateId = 'hover' | 'focused' | 'pressed';
 
@@ -30,6 +30,26 @@ export const NAMED_STATES: readonly NamedState[] = [
   { id: 'focused', label: 'Focused', selector: '&:focus-visible', implies: [] },
   { id: 'pressed', label: 'Pressed', selector: '&:active', implies: ['hover'] },
 ];
+
+/** The name a rule goes by in the panel: its state, its selector, or its condition when it applies to the node itself. */
+export function ruleLabel(rule: StoredRule): string {
+  if (isDefinitionRule(rule)) return rule.define;
+  const state = namedStateOf(rule);
+  if (state) return state.label;
+  const condition = (rule.at ?? []).join(' ');
+  if (rule.selector === '&' && condition) return condition;
+  return condition ? `${condition} ${rule.selector}` : rule.selector;
+}
+
+/**
+ * A rule as a person means it: typing `:hover` asks for the Hover state, which is that
+ * selector behind its gate. Anything else is left as it was written.
+ */
+export function asNamedState(rule: RuleDraft): RuleDraft {
+  if ('define' in rule) return rule;
+  const state = NAMED_STATES.find((candidate) => candidate.selector === rule.selector);
+  return state?.at && (rule.at ?? []).length === 0 ? { ...rule, at: [...state.at] } : rule;
+}
 
 /** The named state with this id, if it is one. */
 export function namedState(id: string): NamedState | undefined {
