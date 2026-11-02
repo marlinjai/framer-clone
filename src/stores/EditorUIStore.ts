@@ -94,6 +94,11 @@ const EditorUIStore = types.model('EditorUI', {
   // by handle; undefined means the first in the catalogue. Never saved with the project.
   previewProductHandle: undefined as string | undefined,
   isResizing: false,
+  // One rule shown on every copy of its node as though it applied (a state on
+  // the canvas is otherwise dead). `ruleId` is a stored rule's id or a named state,
+  // and the sheet expands it through src/lib/rules/states.ts, so Pressed shows Hover
+  // too. Editor session only: not saved with the project, not in undo history.
+  previewRule: null as { componentId: string; ruleId: string } | null,
   // The preview shown over the editor (PreviewOverlay), from this store: no
   // navigation and no server round trip. The editor's own keyboard shortcuts
   // stand down while it is open. Editor session only.
@@ -146,6 +151,10 @@ const EditorUIStore = types.model('EditorUI', {
   },
 
   /** Shows or hides the preview over the editor (PreviewOverlay). */
+  setPreviewRule(preview: { componentId: string; ruleId: string } | null) {
+    self.previewRule = preview;
+  },
+
   setPreviewOpen(open: boolean) {
     self.previewOpen = open;
     // Nothing that floats over the canvas outlives the switch.

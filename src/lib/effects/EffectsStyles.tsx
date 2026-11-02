@@ -5,9 +5,10 @@
 // included when a `scope` attribute selector gates them (the preview frame);
 // the published page injects its start-state rules from an inline script
 // instead (see publishedEffectsScript), so without JavaScript nothing is
-// hidden.
+// hidden. Hover presets are not here: they are part of the rule sheet, on the
+// preview as on the published page (hoverPresetRules).
 import React from 'react';
-import { EFFECTS_BASE_CSS, startStateCss } from './effects';
+import { startStateCss } from './effects';
 import { LENIS_CSS } from './smoothScroll';
 
 export interface EffectsStylesProps {
@@ -19,10 +20,10 @@ export interface EffectsStylesProps {
 
 export function EffectsStyles({ startScope, smoothScroll = false }: EffectsStylesProps) {
   const css = [
-    EFFECTS_BASE_CSS,
     startScope !== undefined ? startStateCss(startScope) : '',
     smoothScroll ? LENIS_CSS : '',
   ].filter(Boolean).join('\n');
+  if (!css) return null;
   // The text is built from constants only: nothing user-authored reaches it.
   return <style data-fc-effects="" dangerouslySetInnerHTML={{ __html: css }} />;
 }

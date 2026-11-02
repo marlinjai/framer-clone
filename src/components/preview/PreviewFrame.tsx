@@ -18,6 +18,7 @@ import { observer } from 'mobx-react-lite';
 import HeadlessPageRenderer from '@/lib/renderer/HeadlessPageRenderer';
 import { FX_ATTR } from '@/lib/effects/effects';
 import { EffectsStyles } from '@/lib/effects/EffectsStyles';
+import { PreviewRuleStyles } from '@/lib/rules/CanvasRuleStyles';
 import { prefersReducedMotion, startEffects } from '@/lib/effects/runtime';
 import { startSmoothScroll } from '@/lib/effects/smoothScroll';
 import { pickBreakpointForWidth } from '@/lib/renderer/pickBreakpoint';
@@ -122,6 +123,11 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
       }}
     >
       <EffectsStyles startScope={`[${FX_ATTR.scope}] `} smoothScroll={smoothScroll} />
+      <PreviewRuleStyles
+        tree={page.appComponentTree}
+        frame={{ breakpointId, width, height }}
+        breakpoints={viewportNodes.map(v => ({ id: v.breakpointId!, minWidth: v.breakpointMinWidth! }))}
+      />
       <HeadlessPageRenderer page={page} breakpointId={breakpointId} />
     </div>
   );

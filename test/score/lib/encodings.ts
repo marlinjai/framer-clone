@@ -19,7 +19,7 @@ const NODE = '.fc_r-probe.fc_r-probe';
  * but a space inside a selector is the descendant combinator, so `& ul li` must not
  * compare equal to the compound `.nodeul` followed by `li`.
  */
-const normalize = (text: string): string => text.replace(/\s+/g, ' ').replace(/ ?([{}]) ?/g, '$1').trim();
+export const normalize = (text: string): string => text.replace(/\s+/g, ' ').replace(/ ?([{}]) ?/g, '$1').trim();
 const declared = `{color:${PROBE_COLOR}`;
 
 /** A row as a stored rule, and the texts that prove it reached the sheet. */

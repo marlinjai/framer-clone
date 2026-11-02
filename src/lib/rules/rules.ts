@@ -585,6 +585,22 @@ export function definitionIdentity(rule: ParsedDefinitionRule): string {
   ].join('|');
 }
 
+/**
+ * A page's claims on definition identities, in walk order. Identical definitions
+ * dedupe. A different one with the same identity is a clash and the first wins. The
+ * rule's id is left out: two nodes may hold one definition under two ids.
+ */
+export function definitionClaims(): (rule: ParsedDefinitionRule) => { claim: 'first' | 'same' | 'clash'; body: string } {
+  const claimed = new Map<string, string>();
+  return (rule) => {
+    const identity = definitionIdentity(rule);
+    const body = JSON.stringify([rule.atRule, rule.name, rule.style, rule.blocks]);
+    const first = claimed.get(identity);
+    if (first === undefined) claimed.set(identity, body);
+    return { claim: first === undefined ? 'first' : first === body ? 'same' : 'clash', body };
+  };
+}
+
 // --- values and addresses -------------------------------------------------
 
 /** Why a value's text is refused, or null. A tab or newline is left to the emitter to normalise. */

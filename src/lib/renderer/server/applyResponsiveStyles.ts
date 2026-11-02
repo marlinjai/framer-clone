@@ -78,7 +78,7 @@ import {
 } from '@/lib/responsive/responsiveCss';
 import { isTextNodeType } from '@/lib/renderer/textNode';
 import {
-  definitionIdentity,
+  definitionClaims,
   hasExternalAddress,
   holdsTooManyBlocks,
   isRuleList,
@@ -150,8 +150,7 @@ export function applyResponsiveStyles(
   const authored: AuthoredRulesInput[] = [];
   const definitions: DefinitionInput[] = [];
   const hoverPresets = new Set<HoverKind>();
-  /** A definition's identity -> the body that claimed it, in walk order. */
-  const claimed = new Map<string, string>();
+  const claim = definitionClaims();
   /** Bodies that lost a claim, so a clash on a cloned row is reported once. */
   const clashing = new Set<string>();
   /** className -> the serialized input it was issued for (dedupe of cloned rows). */
@@ -196,14 +195,10 @@ export function applyResponsiveStyles(
   };
 
   const claimDefinition = (node: ComponentNode, rule: ParsedDefinitionRule): void => {
-    const identity = definitionIdentity(rule);
-    // The rule's id is left out: two nodes may hold one definition under two ids.
-    const body = JSON.stringify([rule.atRule, rule.name, rule.style, rule.blocks]);
-    const first = claimed.get(identity);
-    if (first === undefined) {
-      claimed.set(identity, body);
+    const { claim: result, body } = claim(rule);
+    if (result === 'first') {
       definitions.push({ node: node.id ?? 'unnamed', rule });
-    } else if (first !== body && !clashing.has(body)) {
+    } else if (result === 'clash' && !clashing.has(body)) {
       clashing.add(body);
       problems.push({ node: node.id ?? 'unnamed', rule: rule.id, reason: 'another definition on this page already has this name' });
     }

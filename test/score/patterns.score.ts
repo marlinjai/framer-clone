@@ -7,26 +7,18 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type Page } from 'playwright';
 import { getSnapshot } from 'mobx-state-tree';
-import ComponentModel, { ComponentTypeEnum } from '@/models/ComponentModel';
+import ComponentModel from '@/models/ComponentModel';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
 import { validateGeneration } from '@/lib/ai/pageGen/validate';
 import { PATTERNS, treeVocabulary } from './patterns';
 import { BREAKPOINTS, publishedDocument, renderPublished } from './lib/published';
-import { bundleEditor } from './lib/canvasBundle';
+import { bundleEditor, mountOnCanvas, toSnapshot } from './lib/canvasBundle';
 import { ariaPatterns } from './lib/universe';
 import { writeOut } from './lib/io';
 import { rowKey, type Cell } from './lib/types';
 
 const aiContext = { breakpoints: deriveBreakpointKeys(BREAKPOINTS.map(({ label, minWidth }) => ({ label, minWidth }))) };
-
-const toSnapshot = (node: ComponentNode): Record<string, unknown> => ({
-  id: node.id,
-  type: node.type,
-  componentType: ComponentTypeEnum.HOST,
-  props: node.props ?? {},
-  children: (node.children ?? []).map(toSnapshot),
-});
 
 function storesAll(root: ComponentNode): boolean {
   const created = getSnapshot(ComponentModel.create(toSnapshot(root))) as { type: string; props: unknown; children: unknown[] };
@@ -52,23 +44,6 @@ function generatorKeeps(root: ComponentNode): { kept: boolean; lost: string } {
   const after = treeVocabulary(out as unknown as ComponentNode);
   const lost = [...before.tags, ...before.props].filter((x) => !after.tags.has(x) && !after.props.has(x));
   return { kept: lost.length === 0, lost: lost.join(', ') };
-}
-
-/** The editor open on one frame, with the tree in it. A broken mount throws: that is a harness error, not a score. */
-async function mountOnCanvas(browser: Browser, bundle: string, tree: ComponentNode): Promise<Page> {
-  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-  page.setDefaultTimeout(1500);
-  const crashes: string[] = [];
-  page.on('pageerror', (error) => crashes.push(error.message));
-  // No server behind this page: every request the editor makes gets an empty answer.
-  await page.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
-  await page.goto('http://canvas-probe.local/');
-  await page.setContent('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div></body></html>');
-  await page.addScriptTag({ path: bundle });
-  await page.evaluate((snapshot) => (window as unknown as { __placeTree: (s: unknown) => void }).__placeTree(snapshot), toSnapshot(tree));
-  await page.locator(`[data-viewport-content-id] [data-inner-component-id="${tree.id}"]`).first().waitFor({ state: 'attached' });
-  if (crashes.length > 0) throw new Error(`the editor crashed on the canvas: ${crashes[0]}`);
-  return page;
 }
 
 describe('coverage matrix: WAI-ARIA Authoring Practices patterns', () => {

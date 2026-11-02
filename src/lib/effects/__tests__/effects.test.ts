@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   EFFECT_LIMITS,
-  EFFECTS_BASE_CSS,
   FX_ATTR,
   FX_VAR,
   appearStart,
   compactEffects,
   effectDomAcrossBreakpoints,
   effectDomForBreakpoint,
-  hoverPresetClass,
   hoverPresetRules,
   normalizeAppear,
   normalizeScroll,
@@ -63,7 +61,8 @@ describe('cascade', () => {
 describe('DOM output', () => {
   it('for one breakpoint: attributes and custom properties, nothing for none', () => {
     const dom = effectDomForBreakpoint(resolveEffects({ appear: slideUp, hover: 'lift' }, 'desktop', BPS))!;
-    expect(dom.attributes).toEqual({ [FX_ATTR.appear]: '', [FX_ATTR.hover]: 'lift' });
+    expect(dom.attributes).toEqual({ [FX_ATTR.appear]: '' });
+    expect(dom.hover).toBe('lift');
     expect(dom.style[FX_VAR.startY]).toBe('20px');
     expect(dom.style[FX_VAR.startOpacity]).toBe('0');
     expect(dom.needsRuntime).toBe(true);
@@ -109,19 +108,28 @@ describe('DOM output', () => {
 });
 
 describe('hover preset rules', () => {
-  // The preview's text and the published rules are one set of numbers under one set of gates.
-  const asAttribute = (kind: HoverKind) => (text: string) => text.replace(`.${hoverPresetClass(kind)}`, `[${FX_ATTR.hover}=${kind}]`);
+  const POINTER = '@media (hover:hover) and (pointer:fine)';
+  const MOTION = '@media (hover:hover) and (pointer:fine) and (prefers-reduced-motion:no-preference)';
+  const TRANSITION = 'transition:translate 160ms ease,opacity 160ms ease';
 
-  it.each(['dim', 'underline', 'lift'] as const)('%s has the rule text of the preview, on one class', (kind) => {
-    for (const { wrappers, text } of hoverPresetRules(kind)) {
-      expect(wrappers).toHaveLength(1);
-      const gate = EFFECTS_BASE_CSS.indexOf(`${wrappers[0]}{`);
-      expect(gate).toBeGreaterThanOrEqual(0);
-      const block = EFFECTS_BASE_CSS.slice(gate, EFFECTS_BASE_CSS.indexOf('\n}', gate));
-      const rule = asAttribute(kind)(text);
-      if (rule.includes(':hover')) expect(block).toContain(rule);
-      else expect(block).toContain(rule.slice(rule.indexOf('{')));
-    }
+  // The numbers and gates as they have always been, written out rather than imported:
+  // the preview and the published page both read these rules now.
+  it('holds the numbers and the gates of each kind, on one class', () => {
+    expect(hoverPresetRules('dim')).toEqual([
+      { wrappers: [POINTER], text: '.fc_fx-dim:hover{opacity:0.8}' },
+      { wrappers: [MOTION], text: `.fc_fx-dim{${TRANSITION}}` },
+    ]);
+    expect(hoverPresetRules('underline')).toEqual([
+      { wrappers: [POINTER], text: '.fc_fx-underline:hover{text-decoration-line:underline;text-underline-offset:0.2em}' },
+    ]);
+    expect(hoverPresetRules('lift')).toEqual([
+      { wrappers: [MOTION], text: `.fc_fx-lift{${TRANSITION}}` },
+      { wrappers: [MOTION], text: '.fc_fx-lift:hover{translate:0 -2px}' },
+    ]);
+  });
+
+  it('takes the selector of one copy, for the canvas', () => {
+    expect(hoverPresetRules('dim', '[data-x]').map(({ text }) => text)).toEqual(['[data-x]:hover{opacity:0.8}', `[data-x]{${TRANSITION}}`]);
   });
 
   it('none has no rules', () => {
@@ -139,14 +147,15 @@ describe('hover preset rules', () => {
 
 describe('stylesheets and boot script', () => {
   it('moves only transform and opacity, never transition: all, and gates motion', () => {
-    const css = EFFECTS_BASE_CSS + startStateCss();
+    const presets = (['lift', 'dim', 'underline'] as const).flatMap((kind) => hoverPresetRules(kind));
+    const css = presets.flatMap(({ wrappers, text }) => [...wrappers, text]).join('\n') + startStateCss();
     expect(css).not.toMatch(/transition:\s*all/);
     expect(css).not.toMatch(/ease-in[^-]/);
     expect(css).toContain('prefers-reduced-motion:no-preference');
-    expect(EFFECTS_BASE_CSS).toContain('(hover:hover) and (pointer:fine)');
+    expect(css).toContain('(hover:hover) and (pointer:fine)');
     // Lift moves only with motion allowed.
-    const motionBlock = EFFECTS_BASE_CSS.split('prefers-reduced-motion:no-preference')[1];
-    expect(motionBlock).toContain('=lift]:hover');
+    const lift = hoverPresetRules('lift').find(({ text }) => text.includes(':hover'));
+    expect(lift?.wrappers[0]).toContain('prefers-reduced-motion:no-preference');
   });
 
   it('scopes the start state and releases it once shown', () => {

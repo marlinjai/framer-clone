@@ -33,7 +33,8 @@ describe('preview effects', () => {
     const { container } = render(<HeadlessPageRenderer page={setup()} breakpointId="bp-d" />);
     const hero = container.querySelector('section')!;
     expect(hero.hasAttribute(FX_ATTR.appear)).toBe(true);
-    expect(hero.getAttribute(FX_ATTR.hover)).toBe('dim');
+    expect(hero.classList.contains('fc_fx-dim')).toBe(true);
+    expect(hero.hasAttribute('data-fx-h')).toBe(false);
     expect(hero.style.getPropertyValue(FX_VAR.startY)).toBe('24px');
     expect(hero.hasAttribute('effects')).toBe(false);
   });
@@ -42,6 +43,15 @@ describe('preview effects', () => {
     const { container } = render(<HeadlessPageRenderer page={setup()} breakpointId="bp-p" />);
     const hero = container.querySelector('section')!;
     expect(hero.hasAttribute(FX_ATTR.appear)).toBe(false);
-    expect(hero.getAttribute(FX_ATTR.hover)).toBe('dim');
+    expect(hero.classList.contains('fc_fx-dim')).toBe(true);
+  });
+
+  it('adds the preset class to a stored className and gives an unset preset none', () => {
+    const page = setup();
+    page.appComponentTree.addChild(createIntrinsicComponent('card', 'article', { className: 'card', effects: { hover: 'lift' } }));
+    page.appComponentTree.addChild(createIntrinsicComponent('plain', 'aside', { effects: { hover: 'none' } }));
+    const { container } = render(<HeadlessPageRenderer page={page} breakpointId="bp-d" />);
+    expect(container.querySelector('article')!.className).toBe('card fc_fx-lift');
+    expect(container.querySelector('aside')!.hasAttribute('class')).toBe(false);
   });
 });

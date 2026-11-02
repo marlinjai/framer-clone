@@ -63,6 +63,19 @@ export function findRuleIndex(rules: readonly StoredRule[], id: string): number 
   return own !== -1 ? own : rules.findIndex((rule) => namedStateOf(rule)?.id === id);
 }
 
+/**
+ * What previewing `id` activates on a node: the stored rules, by id, and whether its
+ * hover preset shows with them. `id` is a stored rule's own or a state's, which may
+ * have no rule yet: Hover over a preset and nothing else is exactly that case.
+ */
+export function previewedBy(rules: readonly StoredRule[], id: string): { ids: Set<string>; hover: boolean } {
+  const index = findRuleIndex(rules, id);
+  const state = index === -1 ? namedState(id) : namedStateOf(rules[index]);
+  const active = state ? activeWith(state.id) : [id];
+  const found = active.map((rule) => findRuleIndex(rules, rule)).filter((at) => at !== -1);
+  return { ids: new Set(found.map((at) => rules[at].id)), hover: state !== undefined && active.includes('hover') };
+}
+
 const stateRank = (rule: StoredRule): number => {
   const state = namedStateOf(rule);
   return state ? NAMED_STATES.indexOf(state) : NAMED_STATES.length;

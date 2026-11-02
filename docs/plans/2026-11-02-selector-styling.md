@@ -413,7 +413,7 @@ measured in slice 6, not assumed.
 
 | Published page | Canvas |
 |---|---|
-| `.fc_r-a1.fc_r-a1` | `[data-component-id="tablet-a1"]`, the copy in one frame |
+| `.fc_r-a1.fc_r-a1` | `[data-viewport-content-id] [data-component-id="tablet-a1"]`, the copy in one frame, or `[data-floating-root-id] [data-component-id="-a1"]`. The root is needed: the preview overlay shares the document and renders the same ids |
 | One block per breakpoint in a media query | Values resolved for that frame by `resolveCascade`, with no query |
 | Real `:hover` | Dead unless previewed (below) |
 | Moves Normal into the class | Normal stays inline, every rule declaration gets `!important` |
@@ -424,8 +424,18 @@ touching the canvas's inline path. A stored `!important` is stripped first, or t
 invalid and the rule vanishes on the canvas only. Ids that are not `[A-Za-z0-9_-]` are skipped with the
 warning, so an id cannot break the attribute string.
 
+`!important` also beats an animation, which the published page's rule does not. So a rule that starts an
+animation keeps the properties a keyframe on the page moves at their normal weight: `{opacity:0;animation:
+u-reveal 1s forwards}` would otherwise stay hidden on the canvas, and on `::before`, which has no Normal to
+carry the start state, it is the only way to write a reveal. A property set by one rule and animated by
+another still shows the rule's value, an accepted edge. The page caps scale by the number of frames, so a
+page the published sheet holds whole is not cut on the canvas.
+
 **Editor-owned properties are never emitted on the canvas:** `pointer-events`, `user-select`,
 `-webkit-user-select`, `-webkit-touch-callout` and `cursor`, listed in `surfaces.ts` with a test for each.
+Slice 6 added three that do the same damage, each proven necessary on the mounted editor: `all`, which
+resets every one of those, `interactivity`, whose `inert` takes a node out of hit testing with
+`pointer-events` untouched, and `-webkit-user-modify`, which turns a contentEditable box read only.
 `!important` beats inline, and `ComponentRenderer` writes these inline so a node can be selected, a locked
 node cannot, and inline text editing works. In Chromium a rule `pointer-events:none!important` over inline
 `auto` made a node unclickable, and Radix and shadcn output is full of those rules. These properties work
@@ -451,10 +461,13 @@ tries to select it, and pressing to drag would show Pressed. State reflected in 
 
 | Condition | On the canvas |
 |---|---|
-| `width`, `height`, `aspect-ratio`, `orientation` with constant numbers, plain or `min-`/`max-` or in range form, where the name may stand on either side because the parser swaps a `<` | Evaluated against the frame's own size when the sheet is built: the block is written or omitted. Tailwind's `lg:` then stays out of the Mobile frame |
-| A width query that cannot be evaluated (`em`, `calc()`, `or`) | Omitted unless previewed, with a note on the rule's row |
+| `width`, `height`, `aspect-ratio`, `orientation` with constant numbers, plain or `min`/`max` or in range form, where the name may stand on either side because the parser swaps a `<` | Evaluated against the frame's own size when the sheet is built: the block is written or omitted. Tailwind's `lg:` then stays out of the Mobile frame. A number is `px`, or `rem` at 16px, because Tailwind 4 compiles `lg:` to `(width >= 64rem)` |
+| A width query that cannot be evaluated (`em`, `calc()`, `or`) | Omitted unless previewed, with a note on the rule's row. `mediaVerdict` tells this case apart for that note, which arrives with the rows in slices 7 and 8 |
 | Media types and all other media features: `print`, `prefers-*`, `hover`, `pointer`, `forced-colors` and the rest | Dead until previewed, like the pointer states. `screen` and `all` are true |
-| `@supports`, `@container`, `@scope`, `@starting-style` | Real |
+| `@supports`, `@container`, `@scope`, `@starting-style` | Real. A pointer state in an `@scope` prelude is rewritten like one in a selector |
+
+A floating element has no frame, so its conditions read the largest frame, which is also how its values
+resolve (`resolveCascade` reads an empty breakpoint as the largest).
 
 **Previewing is per rule, and it is general.** `EditorUIStore` gets a volatile
 `previewRule: { componentId, ruleId } | null`. The sheet expands it through `states.ts` into a set, so
@@ -463,11 +476,14 @@ five pseudo-classes are written `:is(*, :hover)`, which matches and keeps the sp
 environment wrappers are removed. So Hover, a dark rule and a print rule are all shown the same way. It
 applies to every copy of the node, so each frame shows its own breakpoint's value and Hover at Tablet can
 be compared with Hover at Desktop side by side. A selection outline stays around the node and a small
-badge beside it names the state.
+badge beside it names the state; the badge needs something that sets `previewRule`, so it comes with the
+state switch in slice 7. A hover preset keeps its normal weight when previewed, because it also loses to an
+inline value on the published page.
 
 **Animations stay at rest.** After the rules, for `*`, `*::before` and `*::after` under both
 `[data-viewport-content-id]` and `[data-floating-root-id]`:
-`animation-duration:0s!important;animation-delay:0s!important;animation-iteration-count:1!important`. That
+`animation-duration:0s!important;animation-delay:0s!important;animation-iteration-count:1!important`, with
+the root repeated so it ties a stored timing on `&` and wins by coming last. That
 gives a `forwards` reveal its end state and an infinite one its rest (proven in the review), where
 `animation:none` would leave a Normal `opacity:0` invisible and `*` alone would miss pseudo-elements. A
 stored animation timing with a higher specificity still runs, an accepted edge. A node whose rule is
@@ -479,7 +495,8 @@ previewed skips this, which is how a keyframe is played.
 `surface: 'preview'` scopes to `[data-preview-frame]`, evaluates width conditions against the frame, keeps
 real pseudo-classes and real environment conditions, and does not neutralise animations. Hover presets
 use the same shared classes as the published page. The editor-owned list does not apply, because a
-preview has no selection. The start-state rules stay where they are.
+preview has no selection. The start-state rules stay where they are. The field-sizing constant ends this
+sheet too, scoped to the frame, so a control measures as it does when published.
 
 ## The panel
 
@@ -667,7 +684,7 @@ That is 94 rows. With `:scope` in slice 3, the 12 exclusions and the 11 that sta
 | 3 | `rules-conditions` | `src/lib/rules/rules.ts`, `responsiveCss.ts`, `corpus/fixtures.ts` | | 2 | Format and renderer for `css-at-rule:@media`, `@supports`, `@container`, `@scope`, `@starting-style`, the 33 media features other than `width`, and `:scope` (39 rows). Fixtures `container-query`, `print-styles` |
 | 4 | `rules-definitions` | `src/lib/rules/rules.ts`, `responsiveCss.ts`, `applyResponsiveStyles.ts`, `corpus/fixtures.ts`, `samples.json` | | 2 | Format and renderer for `@keyframes`, `@font-face`, `@font-feature-values`, `@font-palette-values`, `@counter-style`, `@property`, `@position-try` (7 rows). Per-at-rule identity, Regular and Bold both kept. Fixture `keyframes` |
 | 5 | `rules-hover-presets` | `effects.ts`, `applyEffects.ts`, `responsiveCss.ts`, `renderPublishedPage.tsx`, `publishedEffects.test.tsx` | | 3; **precondition:** the operator's read-only count | No row, on purpose: a preset never counts. The preview keeps its old path until slice 6. Proof: published HTML identical apart from the attribute becoming a class and the hover text moving; in Chromium, computed styles for each kind unchanged on hover, on a touch profile and under reduced motion; a sentinel node with an SVG `data:` background, its own `transition` and a stored `translate` shows all three as before |
-| 6 | `rules-canvas` | `src/lib/rules/surfaces.ts`, `CanvasRuleStyles.tsx`, `ResponsivePageRenderer.tsx`, `PreviewFrame.tsx`, `HeadlessComponentRenderer.tsx`, `effects.ts`, `EffectsStyles.tsx`, `EditorUIStore.ts`, `src/lib/effects/__tests__/effects.test.ts`, `src/lib/renderer/__tests__/headlessEffects.test.tsx`, `matrix.canvas.score.tsx` | | 3, 4, 5 | Canvas for all 140 rows. Browser proof on the mounted editor: no reaction to the pointer, previewed Hover in two frames, previewed Pressed showing Hover's values, an inline-styled node beaten by its rule, a rule that cannot make a node unselectable, a locked node selectable or text uneditable, a `forwards` reveal at rest including `::before` and floating elements. The canvas parity check |
+| 6 | `rules-canvas` | `src/lib/rules/surfaces.ts`, `surfaceSheet.ts`, `CanvasRuleStyles.tsx`, `ResponsivePageRenderer.tsx`, `PreviewFrame.tsx`, `HeadlessComponentRenderer.tsx`, `effects.ts`, `EffectsStyles.tsx`, `EditorUIStore.ts`, `src/lib/effects/__tests__/effects.test.ts`, `src/lib/renderer/__tests__/headlessEffects.test.tsx`, `matrix.canvas.score.tsx` | | 3, 4, 5 | Canvas for all 140 rows. Browser proof on the mounted editor: no reaction to the pointer, previewed Hover in two frames, previewed Pressed showing Hover's values, an inline-styled node beaten by its rule, a rule that cannot make a node unselectable, a locked node selectable or text uneditable, a `forwards` reveal at rest including `::before` and floating elements. The canvas parity check |
 | 7 | `rules-state-switch` | `StateSwitch.tsx`, `useStyleTarget.ts`, the six style sections, `breakpointSource.ts`, `HudSurface.tsx`, `RightSidebar.tsx`, `matrix.panel.jsdom.score.tsx` | | 6, `fleet-general-editor` | Panel for `:hover`, `:active`, `:focus-visible` (3 rows). All four stateful paths in tests, and a browser proof of Hover at Tablet from the panel to a published page |
 | 8 | `rules-custom` | `parseCssText` in `rules.ts`, a custom rule field and list, `matrix.panel.jsdom.score.tsx`, `report.ts` | | 7 | Panel for the other 137 rows, labelled `raw field` |
 | 9 | `rules-ai` | `validate.ts`, `ai/review/ops.ts`, `promptSections`, goldens, `report.ts` | | 3, 4, 6, `fleet-ai-allowlists` | AI for all 140 rows, labelled `accepted, not taught` where the prompt does not teach them |
